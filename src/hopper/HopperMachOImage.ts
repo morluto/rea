@@ -450,7 +450,7 @@ export const prepareHopperMachOImage = async (
     resourceScope: options.resourceScope,
     fileSystem: options.fileSystem,
   };
-  const { signal, observer } = options;
+  const { signal } = options;
   if (signal?.aborted) return err(new HopperCancelledError(signal.reason));
   if (image.method === "thin_verified_copy") {
     const prepared = await prepareThinHopperMachOImage(
@@ -458,7 +458,7 @@ export const prepareHopperMachOImage = async (
       sourceSha256,
       image,
       destination,
-      { signal, observer, ...copyDependencies },
+      { signal, ...copyDependencies },
     );
     return signal?.aborted && prepared.ok
       ? err(new HopperCancelledError(signal.reason))
@@ -474,7 +474,6 @@ export const prepareHopperMachOImage = async (
     sourcePath,
     destination,
     signal,
-    observer,
     ...copyDependencies,
     selectBytes: (bytes, position) => {
       hash.update(bytes);
@@ -533,12 +532,11 @@ const prepareThinHopperMachOImage = async (
   destination: string,
   options: {
     readonly signal: AbortSignal | undefined;
-    readonly observer: HopperImageCopyOptions["observer"];
     readonly resourceScope: ArtifactResourceScope;
     readonly fileSystem?: HopperImageCopyOptions["fileSystem"];
   },
 ): Promise<Result<string, HopperStartError | HopperCancelledError>> => {
-  const { signal, observer, resourceScope, fileSystem } = options;
+  const { signal, resourceScope, fileSystem } = options;
   const hash = createHash("sha256");
   const prefix = Buffer.alloc(12);
   let prefixLength = 0;
@@ -546,7 +544,6 @@ const prepareThinHopperMachOImage = async (
     sourcePath,
     destination,
     signal,
-    observer,
     resourceScope,
     fileSystem,
     selectBytes: (bytes) => {

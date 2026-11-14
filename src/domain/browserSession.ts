@@ -1,7 +1,10 @@
 import { z } from "zod";
 import { utcDateTimeSchema } from "./offsetDateTime.js";
 
-import { webRuntimeCommandTimeoutSchema } from "./browserDeadline.js";
+import {
+  browserDiscoveryTimeoutSchema,
+  webRuntimeCommandTimeoutSchema,
+} from "./browserDeadline.js";
 import {
   browserAllowedOriginsSchema,
   browserObservationEndpointSchema,
@@ -13,6 +16,7 @@ import { browserVersionSchema } from "./browserObservationSchemas.js";
 export const observeWebSessionInputSchema = z.strictObject({
   cdp_endpoint: browserObservationEndpointSchema,
   allowed_origins: browserAllowedOriginsSchema,
+  discovery_timeout_ms: browserDiscoveryTimeoutSchema,
   target_id: z.string().min(1),
   observation_ms: z.int().min(1).default(10_000),
   command_timeout_ms: webRuntimeCommandTimeoutSchema,

@@ -409,9 +409,16 @@ export const parseDumpsysPackageOutput = (
         parsedPackageAvailable = true;
     } else if (key === "versionName" && details.versionName === null)
       details.versionName = rawValue;
-    else if (key === "versionCode" && details.versionCode === null) {
-      const parsed = /^(-?\d+)/u.exec(value);
-      if (parsed !== null) details.versionCode = parsed[1]!;
+    else if (key === "versionCode") {
+      const parsed = /^(-?\d+)(?=\s|$)/u.exec(value);
+      if (parsed === null)
+        issues.add({
+          command: "dumpsys package",
+          field: "version_code",
+          reason: "invalid_format",
+          raw_line: line,
+        });
+      else if (details.versionCode === null) details.versionCode = parsed[1]!;
     } else if (key === "firstInstallTime" && details.firstInstallTime === null)
       details.firstInstallTime = value === "" ? null : value;
     else if (key === "lastUpdateTime" && details.lastUpdateTime === null)
@@ -422,7 +429,10 @@ export const parseDumpsysPackageOutput = (
     )
       details.installerPackageName = absentInstallerOrName(value);
     else if (key === "userId" || key === "appId") {
-      const parsed = /^(\d+)/u.exec(value);
+      // The decimal ID must end its token: Package Manager separates later
+      // fields with whitespace, so attached text makes the declaration
+      // malformed instead of admitting its digit prefix.
+      const parsed = /^(\d+)(?:\s|$)/u.exec(value);
       const admitted = parsed === null ? null : safeInteger(parsed[1]!);
       if (admitted === null)
         issues.add({

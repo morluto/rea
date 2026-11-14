@@ -281,16 +281,26 @@ it
     } satisfies Parameters<typeof validateVerifierJadxConfiguration>[0];
     const script = String.raw`
     import assert from 'node:assert/strict';
+    import fs from 'node:fs';
+    import { syncBuiltinESMExports } from 'node:module';
     import { validateVerifierJadxConfiguration } from ${JSON.stringify(new URL("../../../scripts/lib/jadx-configuration-inspection.mjs", import.meta.url).href)};
     import { OwnedFileHandle } from ${JSON.stringify(new URL("../../../dist/filesystem/OwnedFileHandle.js", import.meta.url).href)};
     import { ArtifactResourceRetryFailure } from ${JSON.stringify(new URL("../../../dist/artifacts/ArtifactResourceScope.js", import.meta.url).href)};
     const [serializedConfiguration, mode] = process.argv.slice(1);
     const configuration = JSON.parse(serializedConfiguration);
     const handles = new Set();
+    const originalOpen = fs.promises.open;
+    fs.promises.open = async (...args) => {
+      const handle = await originalOpen(...args);
+      if (args[0] === configuration.jar) handles.add(handle);
+      return handle;
+    };
+    syncBuiltinESMExports();
     let attempts = 0, denied = true;
     const originalClose = OwnedFileHandle.prototype.close;
     OwnedFileHandle.prototype.close = async function () {
-      handles.add(this.handle); attempts++;
+      if (!handles.has(this.handle)) return originalClose.call(this);
+      attempts++;
       if ((mode === 'retry-close' && attempts === 1) || (mode === 'retained-close' && denied)) throw new Error('controlled archive close refusal');
       return originalClose.call(this);
     };
@@ -317,6 +327,8 @@ it
     } finally {
       denied = false;
       OwnedFileHandle.prototype.close = originalClose;
+      fs.promises.open = originalOpen;
+      syncBuiltinESMExports();
       for (const handle of handles) await handle.close();
     }
   `;

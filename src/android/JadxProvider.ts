@@ -313,10 +313,10 @@ export class JadxProvider implements AndroidAnalysisPort {
           : AbortSignal.any([signal, this.#shutdown.signal]),
     });
     this.#inspections.add(pending);
-    void pending.then(
-      () => this.#inspections.delete(pending),
-      () => this.#inspections.delete(pending),
-    );
+    const remove = (): void => {
+      this.#inspections.delete(pending);
+    };
+    void pending.then(remove, remove);
     return pending;
   }
 

@@ -12,6 +12,7 @@ import {
   pwntoolsDecoderFailure,
   pwntoolsUnavailable,
   capturedPwntoolsOutput,
+  pwntoolsBudgetRecovery,
 } from "./PwntoolsFailures.js";
 import { randomUUID } from "node:crypto";
 import { access, stat, writeFile } from "node:fs/promises";
@@ -61,16 +62,23 @@ import type {
 } from "../../process/ProviderProcess.js";
 import { PendingOperations } from "../../process/PendingOperations.js";
 import {
-  pwntoolsResourceLimitsSchema,
+  pwntoolsResourceLimitsSchemaFor,
   readPwntoolsFailureEvidence,
 } from "./PwntoolsResourceLimits.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
-import { PWNTOOLS_LIMITS } from "./PwntoolsRelease.js";
+import {
+  PWNTOOLS_LIMITS,
+  pwntoolsProducerLimitsSchema,
+  resolvePwntoolsLimits,
+  type PwntoolsProducerLimitsInput,
+  type PwntoolsProducerLimits,
+} from "../../domain/native/pwntoolsResourceLimits.js";
+import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { PWNTOOLS_PROVIDER_IDENTITY } from "./PwntoolsProviderIdentity.js";
 import { pwntoolsInputBytes } from "./PwntoolsInputLimit.js";
 
 /** Names the detected host so a host refusal is not read as a target refusal. */
-export const pwntoolsHostRequirement = (
+const pwntoolsHostRequirement = (
   platform: NodeJS.Platform,
   arch: string,
 ): string =>
@@ -100,6 +108,7 @@ export interface PwntoolsDecoderProfile<
   Input extends {
     readonly path: string;
     readonly pwntools_timeout_ms?: number | undefined;
+    readonly producer_limits?: PwntoolsProducerLimitsInput | undefined;
   },
   Payload,
   Report extends DecoderReport,
@@ -130,6 +139,7 @@ export interface PwntoolsDecoderProfile<
     readonly options: ExecutionOptions | undefined;
     readonly runCommand: PwntoolsCommand;
     readonly timeoutMs: number;
+    readonly producerLimits: PwntoolsProducerLimits;
   }) => Promise<Report>;
 }
 
@@ -138,6 +148,7 @@ export class PwntoolsDecoder<
   Input extends {
     readonly path: string;
     readonly pwntools_timeout_ms?: number | undefined;
+    readonly producer_limits?: PwntoolsProducerLimitsInput | undefined;
   },
   Payload,
   Report extends DecoderReport,
@@ -244,14 +255,45 @@ export class PwntoolsDecoder<
     options?: ExecutionOptions,
   ): Promise<Result<Report, AnalysisError>> {
     const environment = snapshotEnvironment(this.environment);
+    const selectedLimits = pwntoolsProducerLimitsSchema.safeParse(
+      input.producer_limits === undefined ? {} : input.producer_limits,
+    );
+    if (!selectedLimits.success)
+      return err(
+        analysisInputErrorFromIssues(
+          this.profile.operation,
+          selectedLimits.error.issues.map((issue) => ({
+            ...issue,
+            path: ["producer_limits", ...issue.path],
+          })),
+          input,
+        ),
+      );
     const pending = await this.#retire();
     if (pending !== undefined) return err(pending);
     const OPERATION = this.profile.operation;
-    const timeoutMs = input.pwntools_timeout_ms ?? PWNTOOLS_LIMITS.timeoutMs;
+    const timeoutMs =
+      input.pwntools_timeout_ms ?? PWNTOOLS_LIMITS.command_timeout_ms;
+    let producerLimits = {
+      ...resolvePwntoolsLimits(selectedLimits.data),
+      command_timeout_ms: timeoutMs,
+    };
+    let inputBytesSource:
+      | "default"
+      | "setting"
+      | "runtime"
+      | "request"
+      | undefined;
     const context = {
       operation: OPERATION,
       providerId: this.identity.id,
       timeoutMs,
+      get producerLimits() {
+        return producerLimits;
+      },
+      get inputBytesSource() {
+        return inputBytesSource;
+      },
     };
     const replySchema = z.discriminatedUnion("ok", [
       z.strictObject({
@@ -271,7 +313,9 @@ export class PwntoolsDecoder<
           "decoder",
         ]),
         message: z.string(),
-        reported_limits: pwntoolsResourceLimitsSchema.nullable().optional(),
+        reported_limits: pwntoolsResourceLimitsSchemaFor(producerLimits)
+          .nullable()
+          .optional(),
       }),
     ]);
     let root: Pick<PrivateRuntimeRoot, "path" | "close"> | undefined;
@@ -279,12 +323,11 @@ export class PwntoolsDecoder<
     let replyFinalization: AnalysisError | undefined;
     let phase: "configuration" | "artifact-read" | "decoder" = "configuration";
     const executablePath = environment.REA_PWNTOOLS_PYTHON ?? "";
-    let selectedPath = executablePath;
     const failure = (cause: unknown) =>
       pwntoolsDecoderFailure(
         cause,
         phase,
-        selectedPath,
+        phase === "configuration" ? executablePath : input.path,
         executablePath,
         {},
         context,
@@ -306,29 +349,36 @@ export class PwntoolsDecoder<
           { userMessage: requirement },
         );
       }
-      if (!isAbsolute(selectedPath))
+      if (!isAbsolute(executablePath))
         throw pwntoolsUnavailable(
           "Set REA_PWNTOOLS_PYTHON to an absolute caller-supplied Python executable with pwntools 4.15.0, pyelftools 0.33 and Unicorn 2.1.2; REA never installs Python or packages.",
-          selectedPath,
+          executablePath,
           undefined,
           undefined,
           context,
         );
-      await access(selectedPath, constants.X_OK);
-      if (!(await stat(selectedPath)).isFile())
+      await access(executablePath, constants.X_OK);
+      if (!(await stat(executablePath)).isFile())
         throw pwntoolsUnavailable(
           "Selected Python executable must be a regular executable file, not a directory: " +
-            selectedPath,
-          selectedPath,
+            executablePath,
+          executablePath,
           undefined,
           undefined,
           context,
         );
-      const inputLimit = pwntoolsInputBytes(environment);
+      const inputLimit =
+        selectedLimits.data.input_bytes === undefined
+          ? pwntoolsInputBytes(environment)
+          : {
+              configured: true as const,
+              bytes: selectedLimits.data.input_bytes,
+              source: "request" as const,
+            };
       if (!inputLimit.configured)
         throw pwntoolsUnavailable(
           inputLimit.error,
-          selectedPath,
+          executablePath,
           undefined,
           undefined,
           {
@@ -336,8 +386,12 @@ export class PwntoolsDecoder<
             configurationKey: "REA_PWNTOOLS_MAX_INPUT_BYTES",
           },
         );
+      inputBytesSource = inputLimit.source;
       phase = "artifact-read";
-      selectedPath = input.path;
+      producerLimits = {
+        ...resolvePwntoolsLimits(selectedLimits.data, inputLimit.bytes),
+        command_timeout_ms: timeoutMs,
+      };
       const snapshot = await readStableArtifact(
         input.path,
         inputLimit.bytes,
@@ -380,11 +434,15 @@ export class PwntoolsDecoder<
       }
       await writeFile(
         requestPath,
-        JSON.stringify({ snapshot_path: snapshotPath, reply_path: replyPath }),
+        JSON.stringify({
+          snapshot_path: snapshotPath,
+          reply_path: replyPath,
+          producer_limits: producerLimits,
+        }),
         { flag: "wx", mode: 0o600 },
       );
       const execution = await this.#runCommand(
-        timeoutMs,
+        producerLimits,
         {
           command: environment.REA_PWNTOOLS_PYTHON ?? "",
           arguments: [
@@ -412,7 +470,7 @@ export class PwntoolsDecoder<
         try {
           file = await readStableArtifact(
             replyPath,
-            PWNTOOLS_LIMITS.outputBytes,
+            producerLimits.output_bytes,
             options?.signal,
             undefined,
             this.#resources,
@@ -483,6 +541,12 @@ export class PwntoolsDecoder<
           {
             cause,
             capturedOutput,
+            ...(cause instanceof ArtifactReaderFailure &&
+            cause.reason === "limit"
+              ? {
+                  remediationAction: `Increase producer_limits.output_bytes above ${String(producerLimits.output_bytes)} bytes on the next call (CLI --producer-limits JSON); no restart is required. File, worker memory and transport limits remain independent.`,
+                }
+              : {}),
             ...(cause instanceof ArtifactReaderFailure
               ? { cleanup: cause.cleanup }
               : {}),
@@ -503,11 +567,11 @@ export class PwntoolsDecoder<
           throw new AnalysisResourceConstraintError(
             OPERATION,
             "memory",
-            `${reply.message} cpuSeconds is ${String(PWNTOOLS_LIMITS.cpuSeconds)}. Output is ${String(PWNTOOLS_LIMITS.outputBytes)} bytes, diagnostics are ${String(PWNTOOLS_LIMITS.diagnosticBytes)} bytes, and address space is ${String(PWNTOOLS_LIMITS.addressSpaceBytes)} bytes. This release has no runtime override.`,
+            `${reply.message} ${pwntoolsBudgetRecovery(producerLimits)}`,
             reply.reported_limits ?? null,
             {
               capturedOutput,
-              remediationAction: `Review the reported worker memory limits and available host memory. cpuSeconds ${String(PWNTOOLS_LIMITS.cpuSeconds)}, the ${String(PWNTOOLS_LIMITS.outputBytes)}-byte output allowance, the ${String(PWNTOOLS_LIMITS.diagnosticBytes)}-byte diagnostic allowance, and the ${String(PWNTOOLS_LIMITS.addressSpaceBytes)}-byte address-space allowance have no runtime override. pwntools_timeout_ms does not raise them. Repeating the unchanged request fails the same way.`,
+              remediationAction: `Review reported limits and available host memory; allocation failure alone does not prove exhaustion. ${pwntoolsBudgetRecovery(producerLimits)}`,
             },
           );
         if (reply.reason === "format")
@@ -536,6 +600,7 @@ export class PwntoolsDecoder<
         if (reply.reason === "output-limit")
           throw new AnalysisOutputError(OPERATION, reply.message, {
             capturedOutput,
+            remediationAction: `Increase producer_limits.output_bytes above ${String(producerLimits.output_bytes)} bytes on the next call (CLI --producer-limits JSON); no restart is required. File output follows the selected output allowance unless file_bytes is explicit. Tighter inherited limits and transport remain independent.`,
           });
         throw new ProviderAdapterError(this.identity.id, OPERATION, {
           diagnostics: {
@@ -573,12 +638,19 @@ export class PwntoolsDecoder<
                 resources: this.#resources,
                 options,
                 runCommand: (spawn, classifyFailure) =>
-                  this.#runCommand(timeoutMs, spawn, options, classifyFailure),
+                  this.#runCommand(
+                    producerLimits,
+                    spawn,
+                    options,
+                    classifyFailure,
+                  ),
                 timeoutMs,
+                producerLimits,
               }),
         );
       }
-    } catch (cause: unknown) {
+    } catch (caught: unknown) {
+      let cause = caught;
       if (replyFinalization !== undefined && cause !== replyFinalization) {
         const primary = failure(cause);
         cause = replyFinalization.cleanupIncomplete
@@ -605,11 +677,12 @@ export class PwntoolsDecoder<
         cause,
         root?.path,
         this.#resources,
+        producerLimits,
       );
       const primary = pwntoolsDecoderFailure(
         cause,
         phase,
-        selectedPath,
+        phase === "configuration" ? executablePath : input.path,
         executablePath,
         evidence,
         context,
@@ -650,7 +723,7 @@ export class PwntoolsDecoder<
   }
 
   async #runCommand(
-    timeoutMs: number,
+    limits: PwntoolsProducerLimits,
     spawn: OwnedProviderProcessSpawnOptions,
     options: ExecutionOptions | undefined,
     failure: (cause: unknown) => AnalysisError,
@@ -671,8 +744,8 @@ export class PwntoolsDecoder<
             expectedCommand: spawn.expectedCommand ?? null,
           },
           {
-            timeoutMs,
-            diagnosticBytes: PWNTOOLS_LIMITS.diagnosticBytes,
+            timeoutMs: limits.command_timeout_ms,
+            diagnosticBytes: limits.diagnostic_bytes,
           },
           {
             ...(options?.signal === undefined

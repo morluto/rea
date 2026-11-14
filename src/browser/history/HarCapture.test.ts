@@ -794,9 +794,13 @@ it.each(["[2001:db8::1]", "[::1]", "[::ffff:192.0.2.1]"])(
         _extension: { serverIPAddress: address },
       },
     });
-    expect(decoded.records[0]?.limitations).toContain(
-      "This capture declares Playwright 1.58.2 and reports bracketed IPv6 serverIPAddress. Original spellings are retained; brackets were removed only from valid IPv6 values in the validation copy. Producer declarations are not authenticated.",
+    const limitation = decoded.records[0]?.limitations.find((line) =>
+      line.includes("Playwright 1.58.2"),
     );
+    expect(limitation).toMatch(/bracketed IPv6.*serverIPAddress/iu);
+    expect(limitation).toMatch(/original spellings.*retained/iu);
+    expect(limitation).toMatch(/brackets.*only.*valid IPv6.*validation copy/iu);
+    expect(limitation).toMatch(/producer declarations.*not authenticated/iu);
     expect(
       decoded.records[1]?.limitations.some((limitation) =>
         limitation.includes("bracketed IPv6 serverIPAddress"),
@@ -825,9 +829,15 @@ it.each(["[2620:0:860:ed1a::1]", "[::1]"])(
     expect(decoded.records[0]).toMatchObject({
       reported: { serverIPAddress: address },
     });
-    expect(decoded.records[0]?.limitations).toContain(
-      "This capture declares Chromium DevTools (WebInspector 537.36) and reports bracketed IPv6 serverIPAddress. Original spellings are retained; brackets were removed only from valid IPv6 values in the validation copy. Producer declarations are not authenticated.",
+    const limitation = decoded.records[0]?.limitations.find((line) =>
+      line.includes("WebInspector 537.36"),
     );
+    expect(limitation).toMatch(
+      /Chromium DevTools.*bracketed IPv6.*serverIPAddress/iu,
+    );
+    expect(limitation).toMatch(/original spellings.*retained/iu);
+    expect(limitation).toMatch(/brackets.*only.*valid IPv6.*validation copy/iu);
+    expect(limitation).toMatch(/producer declarations.*not authenticated/iu);
     expect(
       decoded.records[1]?.limitations.some((limitation) =>
         limitation.includes("bracketed IPv6 serverIPAddress"),
@@ -953,7 +963,10 @@ it.each([
     const enclosing = depth - 3;
     const text = `{"log":{"version":"1.2","creator":{"name":"fixture","version":"1"},"entries":[],"_extension":${"[".repeat(enclosing)}${innermost}${"]".repeat(enclosing)}}}`;
     if (accepted) expect(decodeHarCapture(text, []).total_records).toBe(0);
-    else expect(() => decodeHarCapture(text, [])).toThrow("nesting budget");
+    else
+      expect(() => decodeHarCapture(text, [])).toThrow(
+        expect.objectContaining({ reason: "input-limit" }),
+      );
   },
 );
 
@@ -965,7 +978,7 @@ it("rejects excessive extension nesting instead of returning a partial capture",
       JSON.stringify({ ...historicalHar(), _extension: extension }),
       [],
     ),
-  ).toThrow("nesting budget");
+  ).toThrow(expect.objectContaining({ reason: "input-limit" }));
 });
 
 it.each([

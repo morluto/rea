@@ -1,3 +1,5 @@
+import { createPackageVerifierCommands } from "./lib/verify-package-commands.mjs";
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -26,22 +28,25 @@ const environment = {
   npm_config_cache: join(workspace, "npm-cache"),
 };
 delete environment.HOPPER_TARGET_PATH;
+const commands = await createPackageVerifierCommands({
+  workspace: {
+    path: workspace,
+    close: () => rm(workspace, { recursive: true, force: true }),
+  },
+});
 let result;
-try {
+await withVerifierCleanup(async () => {
   const packageRoot = await installCanaryPackage(
     source,
     workspace,
     environment,
+    commands,
   );
-  result = await verifyInstalledCanaryPackage(
-    packageRoot,
-    version,
-    workspace,
-    environment,
-  );
-} finally {
-  await rm(workspace, { recursive: true, force: true });
-}
+  result = await verifyInstalledCanaryPackage(packageRoot, version, workspace, {
+    environment: environment,
+    commands,
+  });
+}, [() => commands.close()]);
 process.stdout.write(
   `${JSON.stringify({ verifier_run: await completeVerifierRun(verifierRun), package: "rea-agents", version, source, ...result })}\n`,
 );

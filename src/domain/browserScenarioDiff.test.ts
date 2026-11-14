@@ -308,8 +308,8 @@ it("reports a shared unknown redirect predecessor only once", () => {
   for (const diff of diffs) {
     expect(diff.status).toBe("unknown");
     expect(diff.before_sha256).toBe(diff.after_sha256);
-    expect(diff.reason).toBe(
-      "Redirect predecessor evidence is missing; network transaction identity remains unknown.",
+    expect(diff.reason).toMatch(
+      /redirect predecessor evidence.*missing.*network transaction identity.*unknown/iu,
     );
   }
 });
@@ -361,6 +361,7 @@ const concurrentCapture = (
   ).map((event, index) => ({ ...event, sequence: index + 1 }));
   return browserScenarioCaptureSchema.parse({
     ...base,
+    scenario: { ...base.scenario, event_families: ["network"] },
     events: {
       items: events,
       retained: events.length,
@@ -421,6 +422,7 @@ const redirectChainCapture = (swapLeaves = false, reverseReceipt = false) => {
     .map((event, index) => ({ ...event, sequence: index + 1 }));
   return browserScenarioCaptureSchema.parse({
     ...base,
+    scenario: { ...base.scenario, event_families: ["network"] },
     events: {
       items: events,
       retained: events.length,
@@ -1072,6 +1074,61 @@ describe("browser scenario comparison validation", () => {
           step_id: "open-settings",
         }),
       ]),
+    });
+  });
+
+  const duplicateLastStepCapture = () => {
+    const base = scenarioCapture({});
+    return {
+      ...base,
+      scenario: { ...base.scenario, action_count: 2 },
+      steps: [...base.steps, { ...base.steps[1]!, step_index: 2 }],
+    };
+  };
+
+  it("keeps a duplicated step id unaligned without classifying it as absent", () => {
+    const compared = compareBrowserScenarios(
+      compareBrowserScenariosInputSchema.parse({
+        before_scenario: duplicateLastStepCapture(),
+        after_scenario: scenarioCapture({}),
+      }),
+    );
+
+    expect(compared.overall_status).toBe("unknown");
+    expect(compared.alignment).toMatchObject({
+      status: "partial",
+      aligned_steps: 1,
+      before_only: [],
+      after_only: [],
+      failures: [
+        expect.objectContaining({
+          code: "duplicate_before_step_id",
+          step_id: "open-settings",
+        }),
+      ],
+    });
+  });
+
+  it("mirrors the duplicate classification when the later capture repeats the id", () => {
+    const compared = compareBrowserScenarios(
+      compareBrowserScenariosInputSchema.parse({
+        before_scenario: scenarioCapture({}),
+        after_scenario: duplicateLastStepCapture(),
+      }),
+    );
+
+    expect(compared.overall_status).toBe("unknown");
+    expect(compared.alignment).toMatchObject({
+      status: "partial",
+      aligned_steps: 1,
+      before_only: [],
+      after_only: [],
+      failures: [
+        expect.objectContaining({
+          code: "duplicate_after_step_id",
+          step_id: "open-settings",
+        }),
+      ],
     });
   });
 

@@ -252,7 +252,7 @@ const readCliHeader = (
     bytes,
     sections,
     rva: directory.rva,
-    size: 72,
+    size: 16,
     scope: "cli.header",
   });
   const prefix = readManagedCliHeaderPrefix(
@@ -273,6 +273,15 @@ const readCliHeader = (
       "CLI header size is outside its PE data directory",
       offset,
     );
+  // cb owns the complete header extent, including opaque backed extensions.
+  // Admit it before reading remaining fields or publishing a location range.
+  mapRva({
+    bytes,
+    sections,
+    rva: directory.rva,
+    size: headerSize,
+    scope: "cli.header",
+  });
   if (metadata.rva === 0 || metadata.size === 0)
     throw managedFailure(
       "invalid-cli-header",

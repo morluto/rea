@@ -1,10 +1,11 @@
 import { expect, it } from "vitest";
 import { createEvidence } from "../../domain/evidence.js";
+import { inspectAnalysisViewInputSchema } from "../../domain/analysisView/analysisViewRequest.js";
+import { analysisViewResultSchema } from "../../domain/analysisView/analysisViewResult.js";
 import {
-  analysisViewResultSchema,
-  inspectAnalysisViewInputSchema,
-} from "../../domain/analysisView/analysisView.js";
-import { projectNativeLoadImageView } from "../../domain/analysisView/nativeLoadImageView.js";
+  RELOCATION_SYMBOL_UNRECORDED,
+  projectNativeLoadImageView,
+} from "../../domain/analysisView/nativeLoadImageView.js";
 import type { NativeLoadImage } from "../../domain/native/nativeLoadImage.js";
 import {
   nativeDosLoadImageFixture,
@@ -80,7 +81,7 @@ it("distinguishes recorded, absent, and historical unrecorded relocation symbols
     { record: { symbol: "external_symbol" } },
     { record: { symbol: null } },
   ]);
-  expect(current.unknowns.join(" ")).not.toContain("symbol was not recorded");
+  expect(current.unknowns).not.toContain(RELOCATION_SYMBOL_UNRECORDED);
 
   report.observations.relocations[1]!.symbol = "";
   const emptyName = await view(report, request);
@@ -88,15 +89,15 @@ it("distinguishes recorded, absent, and historical unrecorded relocation symbols
   if (emptyName.items.collection !== "relocations")
     throw new Error("Expected relocations");
   expect(emptyName.items.rows?.[1]?.record).toMatchObject({ symbol: "" });
-  expect(emptyName.unknowns.join(" ")).not.toContain("symbol was not recorded");
+  expect(emptyName.unknowns).not.toContain(RELOCATION_SYMBOL_UNRECORDED);
 
   delete report.observations.relocations[0]!.symbol;
   const historical = await view(report, request);
   if (historical.kind !== "native-load-image") throw new Error("Expected page");
   expect(historical.items.rows?.[0]?.record).not.toHaveProperty("symbol");
-  expect(historical.unknowns.join(" ")).toContain("symbol was not recorded");
+  expect(historical.unknowns).toContain(RELOCATION_SYMBOL_UNRECORDED);
   const omitted = await view(report, { ...request, fields: ["address"] });
-  expect(omitted.unknowns.join(" ")).not.toContain("symbol was not recorded");
+  expect(omitted.unknowns).not.toContain(RELOCATION_SYMBOL_UNRECORDED);
 });
 
 it("summarizes measured ELF facts without upgrading unsupported verification", async () => {

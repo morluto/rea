@@ -1,4 +1,4 @@
-import { existsSync, statSync } from "node:fs";
+import { statSync } from "node:fs";
 import { win32 } from "node:path";
 import { windowsPathEntries } from "../process/WindowsExecutable.js";
 
@@ -11,7 +11,7 @@ export interface WindowsExecutableLookup {
 
 const isRegularFile = (path: string): boolean => {
   try {
-    return existsSync(path) && statSync(path).isFile();
+    return statSync(path).isFile();
   } catch {
     return false;
   }

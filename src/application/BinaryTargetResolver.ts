@@ -25,7 +25,6 @@ import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { childFailureDiagnostics } from "../domain/analysisErrorProjection.js";
 import { constants, type Stats } from "node:fs";
-import { createHash } from "node:crypto";
 import { access, realpath, stat, type FileHandle } from "node:fs/promises";
 import { extname } from "node:path";
 
@@ -35,6 +34,7 @@ import {
   RegularFileChangedError,
   type StableRegularFileDescriptor,
 } from "../filesystem/RegularFile.js";
+import { hashStableRegularFileDescriptor } from "../filesystem/StableFileHash.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import type {
   BinaryTarget,
@@ -97,6 +97,7 @@ import {
   isDfuSeFile,
 } from "../domain/firmware/dfuse.js";
 import { hasFitImagesNode } from "../domain/firmware/fitImage.js";
+import { hasMftFileRecordHeader } from "../domain/windows/ntfsMft.js";
 import {
   locateEspFlashLayout,
   type EspFlashSelection,
@@ -142,6 +143,7 @@ import {
   type MachoLoadCommandTableHeader,
 } from "../domain/apple/machoLoadCommands.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 
 const XML_PLIST_PROBE_CHUNK_BYTES = 64 * 1024;
@@ -162,8 +164,9 @@ export interface BinaryTargetResolverOptions {
 
 /**
  * Resolve and classify a readable local target before a provider is selected.
- * FAT Mach-O inputs select the host-compatible architecture, otherwise their
- * first declared supported slice, so setup remains non-interactive; unsupported
+ * FAT Mach-O inputs select the host-compatible slice. Several subtypes of that
+ * family use subtype preference, then the earliest capability variant.
+ * Otherwise the first foreign family declared once is selected. Unsupported
  * or ambiguous inputs are returned as typed errors.
  */
 export const parseBinaryTarget = async (
@@ -172,9 +175,25 @@ export const parseBinaryTarget = async (
 ): Promise<
   Result<BinaryTarget, BinaryTargetError | AnalysisCancelledError>
 > => {
-  const cwd = options.cwd ?? process.cwd();
   const { signal } = options;
-  const candidate = absoluteCallerPath(input, { cwd });
+  const admitted = localPathStringSchema.safeParse(input);
+  if (!admitted.success) {
+    if (signal?.aborted === true)
+      return err(
+        new AnalysisCancelledError("resolve_binary_target", {
+          cause: signal.reason,
+        }),
+      );
+    return err(
+      new BinaryTargetError(
+        input,
+        admitted.error.issues[0]?.message ?? "Invalid local path",
+        { cause: admitted.error },
+      ),
+    );
+  }
+  const cwd = options.cwd ?? process.cwd();
+  const candidate = absoluteCallerPath(admitted.data, { cwd });
   // Failures before canonicalization concern the selected path itself; later
   // failures concern the canonical path opened with symbolic links rejected.
   let stage: TargetFilesystemStage = "resolve";
@@ -189,7 +208,7 @@ export const parseBinaryTarget = async (
     throwIfTargetResolutionCancelled(signal);
     const resolved = await resolveAppBundle(canonical);
     throwIfTargetResolutionCancelled(signal);
-    if (!resolved.ok) return err(resolved.error);
+    if (!resolved.ok) return resolved;
     const { executable: path, infoPlist } = resolved.value;
     const bundle =
       infoPlist === undefined ? {} : { bundleInfoPlist: infoPlist };
@@ -307,7 +326,7 @@ const readOpenedBinaryTarget = async (
     path,
     sourcePath,
     ...bundle,
-    sha256: await sha256Handle(handle, path, metadata, signal),
+    sha256: await sha256Handle(source, path, signal),
   });
   const hostArchitecture = options.hostArchitecture ?? process.arch;
   const { targetKind, formatHint, signal, architecture, entryPoint } = options;
@@ -728,8 +747,8 @@ const throwIfTargetResolutionCancelled = (signal?: AbortSignal): void => {
 const detectArtifactFormat = async (
   path: string,
   source: StableRegularFileDescriptor,
-  signal?: AbortSignal,
-  sourcePath = path,
+  signal: AbortSignal | undefined,
+  sourcePath: string,
 ): Promise<
   | Exclude<
       BinaryTarget["format"],
@@ -816,6 +835,7 @@ const detectArtifactFormat = async (
     });
   if (esp === "esp-image") return "esp-image";
   if (hasFitImagesNode(magic)) return "fit";
+  if (hasMftFileRecordHeader(magic)) return "ntfs-mft";
   // Binary plists, including keyed archives, often use other extensions.
   if (hasBinaryPlistSignature(magic)) return "plist";
   const named = namedArtifactFormat(lower);
@@ -899,6 +919,7 @@ const isArchiveFormat = (
     "dfuse",
     "esp-flash-image",
     "fit",
+    "ntfs-mft",
   ].includes(format);
 
 /** Whether the leading bytes begin any executable header family, valid or not. */
@@ -950,36 +971,20 @@ const readLeadingBytes = async (
   return bytes;
 };
 
+/** The admitted target's SHA-256 from the descriptor that was classified. */
 const sha256Handle = async (
-  handle: FileHandle,
+  source: StableRegularFileDescriptor,
   path: string,
-  initial: Stats,
   signal?: AbortSignal,
 ): Promise<string> => {
-  const hash = createHash("sha256");
-  const chunk = Buffer.allocUnsafe(64 * 1024);
-  let position = 0;
-  while (true) {
-    throwIfTargetResolutionCancelled(signal);
-    const observed = await handle.read(
-      chunk,
-      0,
-      Math.min(chunk.length, initial.size - position + 1),
-      position,
-    );
-    throwIfTargetResolutionCancelled(signal);
-    if (observed.bytesRead === 0) break;
-    hash.update(chunk.subarray(0, observed.bytesRead));
-    position += observed.bytesRead;
-    if (position > initial.size)
-      throw new BinaryTargetError(path, "target grew while being read");
-  }
-  throwIfTargetResolutionCancelled(signal);
   try {
-    await assertStableRegularFileIdentity(handle, path, initial, {
-      symlinks: "reject",
-      ...(signal === undefined ? {} : { signal }),
-    });
+    return (
+      await hashStableRegularFileDescriptor(source, path, {
+        // Target admission refuses a symbolic-link final component.
+        symlinks: "reject",
+        ...(signal === undefined ? {} : { signal }),
+      })
+    ).sha256;
   } catch (cause: unknown) {
     throwIfTargetResolutionCancelled(signal);
     if (cause instanceof RegularFileChangedError)
@@ -988,10 +993,6 @@ const sha256Handle = async (
       });
     throw cause;
   }
-  throwIfTargetResolutionCancelled(signal);
-  if (position !== initial.size)
-    throw new BinaryTargetError(path, "target changed while being read");
-  return hash.digest("hex");
 };
 
 const resolveAppBundle = async (

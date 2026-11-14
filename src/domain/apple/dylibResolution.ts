@@ -21,6 +21,7 @@ import {
   isLazyLoadCommand,
   type TracedRootSlice,
 } from "./dylibResolutionFindings.js";
+import { appendAll } from "../appendAll.js";
 
 /**
  * Normalized path below the analyzed root: nonempty segments joined by single
@@ -188,8 +189,9 @@ const edgeSchema = z.strictObject({
   }),
   install_name_matches: z.boolean().nullable(),
   /**
-   * The loader was reached through a conditional edge, so it might not load;
-   * this edge describes what happens only if it does.
+   * The loader's dependency-expansion chain crosses a conditional edge.
+   * This edge applies only if that chain is used, even when another edge
+   * independently loads the same image.
    */
   loader_conditional: z.boolean(),
 });
@@ -253,9 +255,14 @@ export type DylibTrace = Omit<
 
 interface LoadedImage {
   readonly slice: MachoSlice;
-  /** Images from the process root to this image; the rpath stack, outermost first. */
+  /** Some edge that first loaded this image has unresolved facts. */
+  readonly conditional: boolean;
+}
+
+interface DependencyExpansion {
+  readonly image: string;
+  /** Images on this traversal's rpath stack, outermost first. */
   readonly chain: readonly string[];
-  /** Some edge on the chain has unresolved candidate or platform facts. */
   readonly conditional: boolean;
 }
 
@@ -268,6 +275,7 @@ interface ProcessContext {
   >;
   readonly searchOverrides: readonly DyldSearchOverride[];
   readonly environmentRoots: Set<string>;
+  readonly unknownArchitectureCandidates: Set<string>;
   readonly unknownPlatformCandidates: Set<string>;
   readonly undecodableSymlinkTargets: Map<string, string>;
   readonly implicitMacOSPlatformCandidates: Set<string>;
@@ -307,25 +315,22 @@ const candidateTemplates = (
   dependency: MachoDependency,
   loader: string,
   context: ProcessContext,
+  chain: readonly string[],
 ): CandidateTemplate[] => {
   const name = dependency.install_name;
   if (!name.startsWith("@rpath/")) {
-    const source = name.startsWith("@executable_path")
-      ? "executable_path"
-      : name.startsWith("@loader_path")
-        ? "loader_path"
-        : "literal";
+    const expansion = expandCandidatePath(name, directoryOf(loader), context);
     return [
       {
-        expansion: expandCandidatePath(name, directoryOf(loader), context),
-        source,
+        expansion,
+        source: expansion.prefix ?? "literal",
         rpath: null,
         rpathOwner: null,
       },
     ];
   }
   const rest = name.slice("@rpath/".length);
-  const owners = [...(context.loaded.get(loader)?.chain ?? [loader])].reverse();
+  const owners = [...chain].reverse();
   return owners.flatMap((owner) =>
     (context.loaded.get(owner)?.slice.rpaths ?? []).map((rpath) => {
       const base = expandCandidatePath(rpath, directoryOf(owner), context);
@@ -379,8 +384,10 @@ const evaluateCandidate = async (
       machoImageSlices(facts),
       context.processIdentity,
     );
-    if (selection.kind === "unknown") outcome = "undetermined";
-    else if (selection.kind === "missing") outcome = "architecture-missing";
+    if (selection.kind === "unknown") {
+      outcome = "undetermined";
+      context.unknownArchitectureCandidates.add(lookup.path);
+    } else if (selection.kind === "missing") outcome = "architecture-missing";
     // Dependency commands require a dylib; generic dyld image loadability
     // also admits main executables and bundles for different operations.
     else if (selection.slice.file_type_code !== 6) outcome = "not-loadable";
@@ -523,11 +530,10 @@ const resolution = (candidates: readonly Candidate[]): Edge["resolution"] => {
 
 const resolveDependency = async (
   dependency: MachoDependency,
-  loader: string,
+  expansion: DependencyExpansion,
   context: ProcessContext,
 ): Promise<Edge> => {
-  const current = context.loaded.get(loader);
-  const chain = current?.chain ?? [loader];
+  const { image: loader, chain, conditional: loaderConditional } = expansion;
   const loaded = dependency.install_name.startsWith("@rpath/")
     ? context.byInstallName.get(dependency.install_name)
     : undefined;
@@ -542,7 +548,12 @@ const resolveDependency = async (
       resolved_path: loaded,
     });
   else
-    for (const template of candidateTemplates(dependency, loader, context)) {
+    for (const template of candidateTemplates(
+      dependency,
+      loader,
+      context,
+      chain,
+    )) {
       const candidate = await evaluateCandidate(template, context);
       candidates.push(candidate);
       // dyld stops at the first loadable candidate.
@@ -591,13 +602,14 @@ const resolveDependency = async (
       slice === undefined || slice.install_name === null
         ? null
         : slice.install_name === dependency.install_name,
-    loader_conditional: current?.conditional ?? false,
+    loader_conditional: loaderConditional,
   };
 };
 
 /**
  * Follow dyld4's dependents-first order: resolve every dependency of one
- * image, then recurse into the images it newly loaded, in load-command order.
+ * image, then recurse into all its dependencies in load-command order. An image
+ * can already be loaded by a sibling before its dependents have been expanded.
  */
 const traceProcess = async (
   context: ProcessContext,
@@ -607,7 +619,6 @@ const traceProcess = async (
   const edges: Edge[] = [];
   context.loaded.set(context.root, {
     slice: rootSlice,
-    chain: [context.root],
     conditional: false,
   });
   if (
@@ -615,23 +626,41 @@ const traceProcess = async (
     rootSlice.install_name.startsWith("@rpath/")
   )
     context.byInstallName.set(rootSlice.install_name, context.root);
-  const pending = [context.root];
+  const expanded = new Set<string>();
+  const pending: DependencyExpansion[] = [
+    { image: context.root, chain: [context.root], conditional: false },
+  ];
   while (pending.length > 0) {
     if (signal?.aborted)
       throw new AnalysisCancelledError("trace_dylib_resolution", {
         cause: signal.reason,
       });
-    const loader = pending.pop() ?? "";
-    const current = context.loaded.get(loader);
-    if (current === undefined) continue;
-    const created: string[] = [];
-    for (const dependency of current.slice.dependencies) {
-      const edge = await resolveDependency(dependency, loader, context);
+    const next = pending.pop();
+    if (next === undefined || expanded.has(next.image)) continue;
+    const loader = next.image;
+    const loaded = context.loaded.get(loader);
+    if (loaded === undefined) continue;
+    expanded.add(loader);
+    const current = {
+      ...next,
+      conditional: loaded.conditional || next.conditional,
+    };
+    const dependents: DependencyExpansion[] = [];
+    for (const dependency of loaded.slice.dependencies) {
+      const edge = await resolveDependency(dependency, current, context);
       edges.push(edge);
       // dyld loads lazy images on first use, not at launch.
       if (isLazyLoadCommand(dependency.command)) continue;
       const image = edge.resolution.image;
-      if (image === null || context.loaded.has(image)) continue;
+      if (image === null || expanded.has(image)) continue;
+      const conditional =
+        current.conditional || edge.resolution.status === "conditional";
+      dependents.push({
+        image,
+        chain: [...next.chain, image],
+        conditional,
+      });
+      if (context.loaded.has(image)) continue;
       const facts = context.images.get(image);
       const selection =
         facts?.status === "parsed"
@@ -641,10 +670,8 @@ const traceProcess = async (
       const { slice } = selection;
       context.loaded.set(image, {
         slice,
-        chain: [...current.chain, image],
         // A modeled earlier search uncertainty can make this image conditional.
-        conditional:
-          current.conditional || edge.resolution.status === "conditional",
+        conditional,
       });
       if (
         slice.install_name !== null &&
@@ -652,9 +679,8 @@ const traceProcess = async (
         !context.byInstallName.has(slice.install_name)
       )
         context.byInstallName.set(slice.install_name, image);
-      created.push(image);
     }
-    pending.push(...created.reverse());
+    for (const dependent of dependents.reverse()) pending.push(dependent);
   }
   return edges;
 };
@@ -672,6 +698,7 @@ const projectTraceResult = (input: {
   readonly edges: readonly Edge[];
   readonly withoutArchitecture: readonly string[];
   readonly environmentRoots: ReadonlySet<string>;
+  readonly unknownArchitectureCandidates: ReadonlySet<string>;
   readonly unknownPlatformCandidates: ReadonlySet<string>;
   readonly undecodableSymlinkTargets: ReadonlyMap<string, string>;
   readonly implicitMacOSPlatformCandidates: ReadonlySet<string>;
@@ -705,6 +732,7 @@ const projectTraceResult = (input: {
         unparsed.length === 0 &&
         input.withoutArchitecture.length === 0 &&
         input.environmentRoots.size === 0 &&
+        input.unknownArchitectureCandidates.size === 0 &&
         input.unknownPlatformCandidates.size === 0 &&
         input.undecodableSymlinkTargets.size === 0 &&
         input.rootEnumeration?.status !== "unknown"
@@ -725,6 +753,11 @@ const projectTraceResult = (input: {
         ? []
         : [
             `Roots ${[...input.environmentRoots].join(", ")} request applicable image-selection inputs through LC_DYLD_ENVIRONMENT that are not modeled; affected dependencies or inserted images remain uncertain.`,
+          ]),
+      ...(input.unknownArchitectureCandidates.size === 0
+        ? []
+        : [
+            `In-root dylib candidates ${[...input.unknownArchitectureCandidates].sort(compare).join(", ")} have unknown architecture compatibility and are not treated as incompatible. Their dependent graphs may be incomplete.`,
           ]),
       ...(input.unknownPlatformCandidates.size === 0
         ? []
@@ -760,6 +793,7 @@ export const traceDylibLoading = async (
   const edges: Edge[] = [];
   const withoutArchitecture: string[] = [];
   const environmentRoots = new Set<string>();
+  const unknownArchitectureCandidates = new Set<string>();
   const unknownPlatformCandidates = new Set<string>();
   const undecodableSymlinkTargets = new Map<string, string>();
   const implicitMacOSPlatformCandidates = new Set<string>();
@@ -790,8 +824,9 @@ export const traceDylibLoading = async (
         environmentRoots.add(root);
       roots.push({ image: root, architecture: slice.architecture });
       rootSlices.push({ image: root, slice });
-      edges.push(
-        ...(await traceProcess(
+      appendAll(
+        edges,
+        await traceProcess(
           {
             view,
             root,
@@ -802,6 +837,7 @@ export const traceDylibLoading = async (
             },
             searchOverrides,
             environmentRoots,
+            unknownArchitectureCandidates,
             unknownPlatformCandidates,
             undecodableSymlinkTargets,
             implicitMacOSPlatformCandidates,
@@ -813,7 +849,7 @@ export const traceDylibLoading = async (
           },
           slice,
           request.signal,
-        )),
+        ),
       );
     }
   }
@@ -824,6 +860,7 @@ export const traceDylibLoading = async (
     edges,
     withoutArchitecture,
     environmentRoots,
+    unknownArchitectureCandidates,
     unknownPlatformCandidates,
     undecodableSymlinkTargets,
     implicitMacOSPlatformCandidates,

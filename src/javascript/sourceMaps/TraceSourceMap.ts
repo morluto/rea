@@ -1,3 +1,8 @@
+import {
+  WEB_SOURCE_MAP_LIMITS,
+  sourceMapLimitRecovery,
+  type SourceMapLimits,
+} from "../../domain/sourceMapLimits.js";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { getHeapStatistics } from "node:v8";
@@ -15,7 +20,6 @@ import { resolveJavaScriptSourceMapUrl } from "../../domain/javascript/javascrip
 import {
   webSourceMapReportSchema,
   type WebSourceMapReport,
-  WEB_SOURCE_MAP_LIMITS,
 } from "../../domain/webSourceLocation.js";
 import type { WebSourcePosition } from "../../domain/webSourcePosition.js";
 import {
@@ -30,8 +34,9 @@ export const traceSourceMap = (
   text: string,
   url: string,
   position: WebSourcePosition,
+  limits: SourceMapLimits = WEB_SOURCE_MAP_LIMITS,
 ): WebSourceMapReport => {
-  const inspected = inspectSourceMap(text);
+  const inspected = inspectSourceMap(text, { limits });
   const decodedLeaves = decodeValidatedSourceMapLeaves(inspected.leaves, url);
   let map: TraceMap;
   if (inspected.format === "regular") {
@@ -71,10 +76,10 @@ export const traceSourceMap = (
   for (const segment of segments) {
     const match = originalMatch(segment, map, url, inspected.declarations);
     bytes += Buffer.byteLength(JSON.stringify(match)) + 1;
-    if (bytes > WEB_SOURCE_MAP_LIMITS.outputBytes)
+    if (bytes > limits.outputBytes)
       throw new SourceMapFormatFailure(
         "limit",
-        "Complete source-map point evidence exceeds the 32 MiB output budget; no partial evidence was returned.",
+        `Complete source-map point evidence exceeds output admission; no partial evidence was returned. ${sourceMapLimitRecovery("output_bytes", limits.outputBytes)}`,
       );
     matches.push(match);
   }
@@ -104,7 +109,7 @@ export const traceSourceMap = (
             node_compatibility_version: runtime.nodeCompatibilityVersion,
             v8_heap_limit_bytes: null,
             process_memory_limit_bytes: javaScriptWorkerMemoryLimitBytes(
-              WEB_SOURCE_MAP_LIMITS.codecHeapMiB,
+              limits.codecHeapMiB,
             ),
           },
     format: inspected.format,

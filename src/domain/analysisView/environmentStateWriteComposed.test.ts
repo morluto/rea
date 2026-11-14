@@ -272,34 +272,30 @@ describe("compositions serving could not keep", () => {
   );
 });
 
-it(
-  "indexes a wide body's repeated values once, and only when a string is left to compose",
-  { timeout: 5_000 },
-  () => {
-    const n = 8_000;
-    const shared = `https://shared.example.test/${"x".repeat(64)}`;
-    const body: JsonObject = Object.fromEntries(
-      Array.from({ length: n }, (_, index) => [`e${String(index)}`, shared]),
-    );
-    const rules: FieldRule[] = Array.from({ length: n }, (_, index) => ({
-      field: `e${String(index)}`,
-      rule: "echo",
-    }));
-    let reads = 0;
-    const counted = new Proxy(body, {
-      get: (target, key) => {
-        reads += 1;
-        return Reflect.get(target, key);
-      },
-    });
-    const composer = createdComposer(counted, rules, []);
-    expect(reads).toBe(0);
-    expect(composer("e0")).toBeUndefined();
-    expect(composer("e1")).toBeUndefined();
-    // One read per source to index them, once, and one per composed field.
-    expect(reads).toBe(n + 2);
-  },
-);
+it("indexes a wide body's repeated values once, and only when a string is left to compose", () => {
+  const n = 8_000;
+  const shared = `https://shared.example.test/${"x".repeat(64)}`;
+  const body: JsonObject = Object.fromEntries(
+    Array.from({ length: n }, (_, index) => [`e${String(index)}`, shared]),
+  );
+  const rules: FieldRule[] = Array.from({ length: n }, (_, index) => ({
+    field: `e${String(index)}`,
+    rule: "echo",
+  }));
+  let reads = 0;
+  const counted = new Proxy(body, {
+    get: (target, key) => {
+      reads += 1;
+      return Reflect.get(target, key);
+    },
+  });
+  const composer = createdComposer(counted, rules, []);
+  expect(reads).toBe(0);
+  expect(composer("e0")).toBeUndefined();
+  expect(composer("e1")).toBeUndefined();
+  // One read per source to index them, once, and one per composed field.
+  expect(reads).toBe(n + 2);
+});
 
 describe("slug spellings", () => {
   it("spells & in a slug part as the word only when the part says so", () => {

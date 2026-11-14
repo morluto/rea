@@ -1,16 +1,21 @@
+import {
+  selectedSourceMapLimits,
+  localSourceMapLimitsSchema,
+  sourceMapLimitRecovery,
+} from "../../domain/sourceMapLimits.js";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import type { WebSourceMapPort } from "../../application/WebSourceLocationPorts.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import {
   AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
   AnalysisInputError,
 } from "../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { err, type Result } from "../../domain/result.js";
-import { noRuntimeOverrideSentence } from "../../domain/browserDeadline.js";
 import {
   DEFAULT_WEB_SOURCE_MAP_DECODE_TIMEOUT_MS,
-  WEB_SOURCE_MAP_LIMITS,
   type WebSourceMapReport,
 } from "../../domain/webSourceLocation.js";
 import { sourceMapCodecInputSchema } from "./SourceMapCodecProtocol.js";
@@ -20,7 +25,6 @@ import {
   type SourceMapCleanupRetention,
   type SourceMapDecoderDependencies,
 } from "./SourceMapCommand.js";
-import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { jsonParts } from "../../domain/jsonSerialization.js";
 const OPERATION = "trace_web_source_location";
 
@@ -40,22 +44,20 @@ export class SourceMapDecoder implements WebSourceMapPort {
     if (this.#closing)
       return Promise.resolve(
         err(
-          new ProviderCleanupError(
+          new AnalysisCapabilityUnavailableError(
             "source-map-decoder",
-            [],
-            { reason: "Provider is closing" },
-            { operation: OPERATION },
+            OPERATION,
+            "Provider is closing",
           ),
         ),
       );
     const operation = this.#tail.then(() =>
       this.#closing
         ? err(
-            new ProviderCleanupError(
+            new AnalysisCapabilityUnavailableError(
               "source-map-decoder",
-              [],
-              { reason: "Provider is closing" },
-              { operation: OPERATION },
+              OPERATION,
+              "Provider is closing",
             ),
           )
         : this.#trace(input, options),
@@ -72,7 +74,17 @@ export class SourceMapDecoder implements WebSourceMapPort {
     options?: ExecutionOptions,
   ): Promise<Result<WebSourceMapReport, AnalysisError>> {
     const cleanupFailure = await this.#retryCleanup();
-    if (cleanupFailure !== undefined) return err(cleanupFailure);
+    if (cleanupFailure !== undefined)
+      return err(
+        options?.signal?.aborted
+          ? analysisErrorWithCancellation(
+              cleanupFailure,
+              new AnalysisCancelledError(OPERATION, {
+                cause: options.signal.reason,
+              }),
+            )
+          : cleanupFailure,
+      );
     if (options?.signal?.aborted)
       return err(
         new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
@@ -84,21 +96,31 @@ export class SourceMapDecoder implements WebSourceMapPort {
     });
     if (!request.success)
       return err(new AnalysisInputError(OPERATION, { cause: request.error }));
-    const capacityFailure = () =>
-      new ArtifactOperationError(
+    const selected = localSourceMapLimitsSchema.safeParse(input.limits ?? {});
+    if (!selected.success)
+      return err(new AnalysisInputError(OPERATION, { cause: selected.error }));
+    const limits = selectedSourceMapLimits(selected.data);
+    const capacityFailure = (
+      field: "map_bytes" | "output_bytes",
+      value: number,
+    ) => {
+      const recovery = sourceMapLimitRecovery(field, value);
+      return new ArtifactOperationError(
         OPERATION,
         "limit",
         undefined,
-        `${input.path}: Source-map input exceeds the ${String(WEB_SOURCE_MAP_LIMITS.mapBytes)}-byte map or ${String(WEB_SOURCE_MAP_LIMITS.outputBytes)}-byte encoded request budget. ${noRuntimeOverrideSentence("Those budgets stay fixed.", "decode_timeout_ms")}`,
+        `${input.path}: Source-map admission exhausted. ${recovery}`,
+        { remediationAction: recovery },
       );
-    if (Buffer.byteLength(input.text) > WEB_SOURCE_MAP_LIMITS.mapBytes)
-      return err(capacityFailure());
+    };
+    if (Buffer.byteLength(input.text) > limits.mapBytes)
+      return err(capacityFailure("map_bytes", limits.mapBytes));
     const encoded: string[] = [];
     let encodedBytes = 0;
     for (const part of jsonParts(request.data)) {
       const bytes = Buffer.byteLength(part);
-      if (bytes > WEB_SOURCE_MAP_LIMITS.outputBytes - encodedBytes)
-        return err(capacityFailure());
+      if (bytes > limits.outputBytes - encodedBytes)
+        return err(capacityFailure("output_bytes", limits.outputBytes));
       encoded.push(part);
       encodedBytes += bytes;
     }
@@ -115,6 +137,7 @@ export class SourceMapDecoder implements WebSourceMapPort {
       this.dependencies,
       retainedCleanup,
       input.decodeTimeoutMs ?? DEFAULT_WEB_SOURCE_MAP_DECODE_TIMEOUT_MS,
+      limits,
     );
     if (retainedCleanup.owner !== undefined)
       this.#pendingCleanup = retainedCleanup.owner;

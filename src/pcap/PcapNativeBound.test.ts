@@ -1,3 +1,4 @@
+import { BOUNDED_PRODUCER_LIMITS } from "../domain/producerResourceLimits.js";
 import { chmod, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -9,7 +10,6 @@ import {
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import {
-  BOUNDED_PRODUCER_LIMITS,
   prlimitCeilingArguments,
   type LinuxResourceLimits,
 } from "../process/LinuxResourceLimits.js";
@@ -159,8 +159,8 @@ it("rejects a directory or a command that does not identify as util-linux prlimi
       ).rejects.toMatchObject({
         _tag: "AnalysisCapabilityUnavailableError",
         // The limiter owns the repair; readiness keeps it over Wireshark advice.
-        remediationAction: expect.stringContaining(
-          "REA_TSHARK_PRLIMIT_COMMAND",
+        remediationAction: expect.stringMatching(
+          /REA_TSHARK_PRLIMIT_COMMAND.*\/usr\/bin\/prlimit.*absolute.*executable.*util-linux prlimit/iu,
         ) as unknown,
         diagnostics: {
           configuration_key: "REA_TSHARK_PRLIMIT_COMMAND",

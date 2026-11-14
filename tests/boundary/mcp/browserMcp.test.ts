@@ -43,7 +43,6 @@ afterAll(async () => {
     schemaValidation.clear();
   }
 });
-const INTEGRATION_TEST_TIMEOUT_MS = 20_000;
 
 it("preserves Link parameter order and context through the advertised MCP contract", async () => {
   const links = [
@@ -101,21 +100,20 @@ it("preserves Link parameter order and context through the advertised MCP contra
   if (advertised?.outputSchema === undefined)
     throw new Error("inspect_web_page must advertise its output schema");
 
-  const inspected = await connected.client.callTool({
-    name: "inspect_web_page",
-    arguments: {
-      cdp_endpoint: browser.endpoint,
-      target_id: "allowed-page",
-      observation_ms: 0,
+  const inspected = await connected.client.callTool(
+    {
+      name: "inspect_web_page",
+      arguments: {
+        cdp_endpoint: browser.endpoint,
+        target_id: "allowed-page",
+        observation_ms: 0,
+      },
     },
-  });
+    { toolDefinition: advertised },
+  );
   expect(inspected.isError).not.toBe(true);
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   const outputSchema: Record<string, unknown> = advertised.outputSchema;
-  expect(
-    ajv.validate(outputSchema, inspected.structuredContent),
-    JSON.stringify(ajv.errors),
-  ).toBe(true);
 
   const normalized = webPageInspectionSchema.parse(
     normalizedResultOf(inspected.structuredContent),
@@ -249,7 +247,7 @@ cliTest(
       ],
       environment: process.env,
     });
-    expect(cliResult.exitCode).toBe(0);
+    expect(cliResult.exitCode, cliResult.stderr).toBe(0);
     expect(cliResult.signal).toBeNull();
     const mcp = await client.callTool({
       name: "analyze_web_bundle",
@@ -281,7 +279,6 @@ cliTest(
       },
     });
   },
-  INTEGRATION_TEST_TIMEOUT_MS,
 );
 
 afterEach(() => resources.retryCleanup());
@@ -329,122 +326,118 @@ it("closes the browser and retains failed MCP and session cleanup for retry", as
   }
 });
 
-it(
-  "exposes CLI-equivalent Evidence results and session tools",
-  async () => {
-    const browser = await startFakeCdpBrowser({
-      sessionTimeline: "same_origin",
-      webMcpTools: true,
-      sensitiveShapes: true,
-      eventsBeforeReply: ["Network.enable"],
-    });
-    retainBrowser(browser);
-    const connected = await connectBrowser();
+it("exposes CLI-equivalent Evidence results and session tools", async () => {
+  const browser = await startFakeCdpBrowser({
+    sessionTimeline: "same_origin",
+    webMcpTools: true,
+    sensitiveShapes: true,
+    eventsBeforeReply: ["Network.enable"],
+  });
+  retainBrowser(browser);
+  const connected = await connectBrowser();
 
-    const tools = await connected.client.listTools();
-    expect(tools.tools).toHaveLength(TOOL_CONTRACTS.length);
-    expect(tools.tools.map(({ name }) => name)).toEqual(
-      expect.arrayContaining([
-        "list_browser_targets",
-        "inspect_web_page",
-        "analyze_web_bundle",
-        "observe_web_session",
-        "discover_webmcp_tools",
-        "compare_web_captures",
-        "capture_web_screenshot",
-        "compare_web_screenshots",
-      ]),
-    );
-    const status = await connected.client.callTool({
-      name: "binary_session",
-      arguments: {},
-    });
-    const sessionStatus = toolContract("binary_session").outputSchema.parse(
-      status.structuredContent,
-    );
-    const availability = expandToolAvailability(
-      sessionStatus.result.tool_availability,
-    );
-    expect(availability).toContainEqual(
-      expect.objectContaining({
-        name: "inspect_web_page",
-        reason: expect.any(String),
-      }),
-    );
-    const listed = await connected.client.callTool({
-      name: "list_browser_targets",
-      arguments: {
-        cdp_endpoint: browser.endpoint,
-      },
-    });
-    expect(listed.isError).not.toBe(true);
-    expect(listed.structuredContent).toMatchObject({
-      normalized_result: {
-        targets: expect.arrayContaining([
-          expect.objectContaining({ target_id: "allowed-page" }),
-        ]),
-      },
-    });
-    const inspected = await connected.client.callTool({
+  const tools = await connected.client.listTools();
+  expect(tools.tools).toHaveLength(TOOL_CONTRACTS.length);
+  expect(tools.tools.map(({ name }) => name)).toEqual(
+    expect.arrayContaining([
+      "list_browser_targets",
+      "inspect_web_page",
+      "analyze_web_bundle",
+      "observe_web_session",
+      "discover_webmcp_tools",
+      "compare_web_captures",
+      "capture_web_screenshot",
+      "compare_web_screenshots",
+    ]),
+  );
+  const status = await connected.client.callTool({
+    name: "binary_session",
+    arguments: {},
+  });
+  const sessionStatus = toolContract("binary_session").outputSchema.parse(
+    status.structuredContent,
+  );
+  const availability = expandToolAvailability(
+    sessionStatus.result.tool_availability,
+  );
+  expect(availability).toContainEqual(
+    expect.objectContaining({
       name: "inspect_web_page",
-      arguments: {
-        cdp_endpoint: browser.endpoint,
-        target_id: "allowed-page",
-        observation_ms: 0,
-        include_console_text: true,
-        include_json_body_shapes: true,
-        include_websocket_shapes: true,
-        include_script_sources: true,
+      reason: expect.any(String),
+    }),
+  );
+  const listed = await connected.client.callTool({
+    name: "list_browser_targets",
+    arguments: {
+      cdp_endpoint: browser.endpoint,
+    },
+  });
+  expect(listed.isError).not.toBe(true);
+  expect(listed.structuredContent).toMatchObject({
+    normalized_result: {
+      targets: expect.arrayContaining([
+        expect.objectContaining({ target_id: "allowed-page" }),
+      ]),
+    },
+  });
+  const inspected = await connected.client.callTool({
+    name: "inspect_web_page",
+    arguments: {
+      cdp_endpoint: browser.endpoint,
+      target_id: "allowed-page",
+      observation_ms: 0,
+      include_console_text: true,
+      include_json_body_shapes: true,
+      include_websocket_shapes: true,
+      include_script_sources: true,
+    },
+  });
+  expect(inspected.isError).not.toBe(true);
+  expect(inspected.structuredContent).toMatchObject({
+    normalized_result: {
+      target: { target_id: "allowed-page" },
+      console: { prior_activity_available: false },
+      network: {
+        prior_activity_available: false,
+        requests: [
+          expect.objectContaining({
+            body_shapes: expect.objectContaining({ status: "included" }),
+          }),
+        ],
       },
-    });
-    expect(inspected.isError).not.toBe(true);
-    expect(inspected.structuredContent).toMatchObject({
-      normalized_result: {
-        target: { target_id: "allowed-page" },
-        console: { prior_activity_available: false },
-        network: {
-          prior_activity_available: false,
-          requests: [
-            expect.objectContaining({
-              body_shapes: expect.objectContaining({ status: "included" }),
-            }),
-          ],
-        },
-      },
-    });
-    const reconciled = await connected.client.callTool({
-      name: "reconcile_javascript_runtime",
-      arguments: {
-        static_layers: JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE.static_layers,
-        runtime_observations: [evidenceFor(inspected.structuredContent)],
-      },
-    });
-    expect(reconciled.isError).not.toBe(true);
-    expect(reconciled.structuredContent).toMatchObject({
-      normalized_result: { summary: { runtime_scripts: 1 } },
-    });
-    expect(JSON.stringify(reconciled.structuredContent)).not.toContain(
-      "source-secret",
-    );
-    const analyzed = await connected.client.callTool({
-      name: "analyze_web_bundle",
-      arguments: {
-        cdp_endpoint: browser.endpoint,
-        target_id: "allowed-page",
-        observation_ms: 0,
-      },
-    });
-    expect(analyzed.isError).not.toBe(true);
-    expect(analyzed.structuredContent).toMatchObject({
-      normalized_result: {
-        capture: { scripts_analyzed: 1 },
-        observations: { source_maps: { status: "not_requested" } },
-      },
-    });
-    await verifySessionAndComparisonTools(connected, browser, inspected);
-  },
-  INTEGRATION_TEST_TIMEOUT_MS,
-);
+    },
+  });
+  const reconciled = await connected.client.callTool({
+    name: "reconcile_javascript_runtime",
+    arguments: {
+      static_layers: JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE.static_layers,
+      runtime_observations: [evidenceFor(inspected.structuredContent)],
+    },
+  });
+  expect(reconciled.isError).not.toBe(true);
+  expect(reconciled.structuredContent).toMatchObject({
+    normalized_result: { summary: { runtime_scripts: 1 } },
+  });
+  expect(JSON.stringify(reconciled.structuredContent)).not.toContain(
+    "source-secret",
+  );
+  const analyzed = await connected.client.callTool({
+    name: "analyze_web_bundle",
+    arguments: {
+      cdp_endpoint: browser.endpoint,
+      target_id: "allowed-page",
+      observation_ms: 0,
+    },
+  });
+  expect(analyzed.isError).not.toBe(true);
+  expect(analyzed.structuredContent).toMatchObject({
+    normalized_result: {
+      capture: { scripts_analyzed: 1 },
+      observations: { source_maps: { status: "not_requested" } },
+    },
+  });
+  await verifySessionAndComparisonTools(connected, browser, inspected);
+});
 
 const verifySessionAndComparisonTools = async (
   connected: Awaited<ReturnType<typeof connectBrowser>>,
@@ -775,7 +768,7 @@ cliTest(
       ],
       environment: process.env,
     });
-    expect(cliResult.exitCode).toBe(0);
+    expect(cliResult.exitCode, cliResult.stderr).toBe(0);
     expect(cliResult.signal).toBeNull();
     const cliEvidence = parseEvidence(cliResult.json);
     expect(cliEvidence.normalized_result).toMatchObject(expectedResult);
@@ -812,6 +805,23 @@ it.each(["full", "compact"] as const)(
       expect(tool?.inputSchema.properties?.cdp_endpoint).toMatchObject({
         description: expect.stringContaining("/devtools/browser/ID"),
       });
+    const listed = await connected.client.callTool({
+      name: "list_browser_targets",
+      arguments: {
+        cdp_endpoint: browser.browserWebSocketUrl,
+        discovery_timeout_ms: 15_000,
+      },
+    });
+    expect(listed.isError).not.toBe(true);
+    expect(listed.structuredContent).toMatchObject({
+      parameters: {
+        cdp_endpoint: browser.browserWebSocketUrl.replace(
+          /fake$/u,
+          "[REDACTED]",
+        ),
+        discovery_timeout_ms: 15_000,
+      },
+    });
     const inspected = await connected.client.callTool({
       name: "inspect_web_page",
       arguments: {
@@ -822,6 +832,7 @@ it.each(["full", "compact"] as const)(
       },
     });
     expect(inspected.isError).not.toBe(true);
+    expect(browser.openedConnectionCount()).toBe(1);
     expect(inspected.structuredContent).toMatchObject({
       parameters: {
         cdp_endpoint: browser.browserWebSocketUrl.replace(

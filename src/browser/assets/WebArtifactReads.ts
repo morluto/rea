@@ -35,6 +35,8 @@ export interface WebArtifactReadContext {
   readonly targetPath: string;
   /** Whether the caller named this file, rather than a manifest deriving it. */
   readonly callerSelected: boolean;
+  /** Exact resource recovery supplied by the selected artifact owner. */
+  readonly limitRecovery?: string;
 }
 
 /** A malformed producer document, distinct from host I/O failures. */
@@ -199,8 +201,15 @@ const webArtifactPrimaryError = (
       context.operation,
       cause.reason,
       cause.details,
-      cause.message,
-      { cause },
+      cause.reason === "limit" && context.limitRecovery !== undefined
+        ? `${cause.message} ${context.limitRecovery}`
+        : cause.message,
+      {
+        cause,
+        ...(cause.reason === "limit" && context.limitRecovery !== undefined
+          ? { remediationAction: context.limitRecovery }
+          : {}),
+      },
     );
   if (
     cause instanceof Error &&

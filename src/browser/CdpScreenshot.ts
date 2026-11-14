@@ -11,9 +11,9 @@ import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { cdpOriginScopeRefusal } from "./CdpOriginScopeError.js";
 import {
   selectCdpFrameIdentity,
-  cdpFrameRecordFacts,
   cdpFrameEventFacts,
 } from "./CdpFrameIdentity.js";
+import type { CdpFrameTree } from "./protocol/CdpFrameTree.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
 import type { CdpConnection, CdpEvent } from "./CdpConnection.js";
 import {
@@ -23,7 +23,6 @@ import {
 } from "./CdpCaptureValues.js";
 import {
   observeCdpFrameUrl,
-  observeMainFrameUrl,
   classifyCdpFrameUrl,
 } from "./CdpCaptureDocuments.js";
 
@@ -63,10 +62,7 @@ export const captureCdpScreenshot = async (
     context.sessionId,
     context.signal,
   );
-  const initialFrame = recordValue(
-    recordValue(recordValue(before)?.frameTree)?.frame,
-  );
-  const beforeObservation = observeCdpFrameUrl(initialFrame);
+  const beforeObservation = before.root.url;
   const beforeFacts = classifyCdpFrameUrl(beforeObservation, origins);
   if (
     beforeFacts.scope === "outside_policy" ||
@@ -76,12 +72,13 @@ export const captureCdpScreenshot = async (
   if (beforeObservation.kind !== "observed")
     throw new BrowserObservationError("inspect_web_page", "protocol_error");
   const beforeUrl = beforeFacts.url;
-  const mainFrame = cdpFrameRecordFacts(initialFrame);
+  const mainFrame = before.root.facts;
   if (
     beforeUrl === undefined ||
     beforeFacts.origin === null ||
     mainFrame.frameId === null ||
     mainFrame.identityIssue !== null ||
+    mainFrame.loaderIssue !== null ||
     mainFrame.parentRelation !== "root"
   )
     throw new BrowserObservationError(
@@ -97,6 +94,9 @@ export const captureCdpScreenshot = async (
     loaderId: mainFrame.loaderId,
     completeness: new CdpCaptureCompleteness(),
   };
+  const unknownInitialLoader =
+    mainFrame.loaderId === undefined || mainFrame.loaderId === "";
+  if (unknownInitialLoader) navigation.completeness.attachLimited("screenshot");
   const removeListener = context.connection.onEvent((event) => {
     if (event.sessionId !== context.sessionId) return;
     observeScreenshotNavigation(event, origins, navigation);
@@ -110,7 +110,7 @@ export const captureCdpScreenshot = async (
       throw new BrowserObservationError("inspect_web_page", "target_changed");
   };
   let screenshot: Awaited<ReturnType<typeof captureScreenshotImage>>;
-  let after: unknown;
+  let after: CdpFrameTree;
   try {
     const viewport = await readScreenshotViewport(context);
     assertCurrentDocument();
@@ -149,7 +149,7 @@ export const captureCdpScreenshot = async (
   assertCurrentDocument();
   if (navigation.leftScope)
     throw cdpOriginScopeRefusal("capture_web_screenshot");
-  const afterObservation = observeMainFrameUrl(after);
+  const afterObservation = after.root.url;
   const afterFacts = classifyCdpFrameUrl(afterObservation, origins);
   if (
     afterFacts.scope === "outside_policy" ||
@@ -159,8 +159,43 @@ export const captureCdpScreenshot = async (
   if (navigation.invalidIdentity || afterObservation.kind !== "observed")
     throw new BrowserObservationError("inspect_web_page", "protocol_error");
   const afterUrl = afterFacts.url;
-  if (navigation.changed || afterUrl !== beforeUrl || afterUrl === undefined)
+  const afterFrame = after.root.facts;
+  if (
+    afterFrame.identityIssue !== null ||
+    afterFrame.parentRelation !== "root" ||
+    afterFrame.loaderIssue !== null
+  )
+    throw new BrowserObservationError(
+      "capture_web_screenshot",
+      "protocol_error",
+    );
+  if (
+    navigation.changed ||
+    afterUrl !== beforeUrl ||
+    afterUrl === undefined ||
+    afterFrame.frameId !== mainFrame.frameId ||
+    (mainFrame.loaderId !== undefined &&
+      mainFrame.loaderId !== "" &&
+      afterFrame.loaderId !== undefined &&
+      afterFrame.loaderId !== "" &&
+      afterFrame.loaderId !== mainFrame.loaderId)
+  )
     throw new BrowserObservationError("inspect_web_page", "target_changed");
+  if (
+    mainFrame.loaderId !== undefined &&
+    mainFrame.loaderId !== "" &&
+    (afterFrame.loaderId === undefined || afterFrame.loaderId === "")
+  )
+    throw new BrowserObservationError(
+      "capture_web_screenshot",
+      "protocol_error",
+      {
+        detail:
+          "CDP omitted the final document loader identity, so screenshot stability could not be verified.",
+        remediationAction:
+          "Retry after the selected page has finished loading.",
+      },
+    );
   await context.progress?.report({
     phase: "browser_observation",
     completed: 2,
@@ -180,6 +215,11 @@ export const captureCdpScreenshot = async (
     artifact: createWebScreenshotArtifact(screenshot.bytes),
     completeness: navigation.completeness.snapshot(),
     limitations: [
+      ...(unknownInitialLoader
+        ? [
+            "The initial document loader identity was unavailable, so document stability could not be verified. Retry after the page finishes loading.",
+          ]
+        : []),
       "The screenshot contains the visible viewport, including on-screen content.",
       "REA does not scroll, evaluate JavaScript, or capture beyond the current viewport.",
     ],

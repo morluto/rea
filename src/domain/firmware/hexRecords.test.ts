@@ -6,11 +6,7 @@ import {
   createHexRecordDecoder,
   detectHexRecordEncoding,
 } from "./hexRecords.js";
-import {
-  INTEL_HEX_MAX_LINE_CHARS,
-  SREC_MAX_LINE_CHARS,
-  type HexRecordEncoding,
-} from "./hexRecordSyntax.js";
+import type { HexRecordEncoding } from "./hexRecordSyntax.js";
 import {
   INTEL_HEX_I16,
   INTEL_HEX_I32_GAP,
@@ -213,7 +209,7 @@ describe("Intel HEX lines, termination and limits", () => {
     expect(decoded.regions).toHaveLength(2);
     expect(decoded.metadata.termination).toBe("absent");
     expect(decoded.limitations).toEqual([
-      "Intel HEX has no termination record; the file may be truncated.",
+      expect.stringMatching(/no termination record.*may be truncated/iu),
     ]);
   });
 
@@ -233,14 +229,14 @@ describe("Intel HEX lines, termination and limits", () => {
       0,
       Array.from({ length: 255 }, () => 1),
     );
-    expect(longest).toHaveLength(INTEL_HEX_MAX_LINE_CHARS);
+    expect(longest).toHaveLength(521);
     expect(image(`${longest}\r\n:00000001FF\n`).metadata.data_bytes).toBe(255);
     const decoded = decode(`${longest}0\n`);
     expect(decoded).toMatchObject({
       ok: false,
       error: {
         kind: "format",
-        message: "line 1: line exceeds the 521-character Intel HEX maximum",
+        message: expect.stringMatching(/line 1.*521.*Intel HEX/iu),
       },
     });
   });
@@ -376,7 +372,7 @@ describe("S-record decoding", () => {
       0,
       Array.from({ length: 252 }, () => 1),
     );
-    expect(longest).toHaveLength(SREC_MAX_LINE_CHARS);
+    expect(longest).toHaveLength(514);
     expect(image(`${longest}\n`, "srec").metadata.data_bytes).toBe(252);
     expect(decode(`${longest} 0\n`, "srec").ok).toBe(false);
   });

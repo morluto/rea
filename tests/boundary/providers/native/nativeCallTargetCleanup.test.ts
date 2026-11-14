@@ -7,6 +7,7 @@ import {
   nativeMachoTargetForFile,
 } from "../../../fixtures/nativeCommands.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
 import { AnalysisOutputError } from "../../../../src/domain/analysisErrorCore.js";
 import { resolvedAnalysisError } from "../../../../src/domain/analysisErrorBase.js";
 import { err, ok } from "../../../../src/domain/result.js";
@@ -131,12 +132,15 @@ it("joins admitted preflight before closing the tracer", async () => {
   ).createClient(target);
   onTestFinished(async () => {
     resume();
-    await observing;
-    read.mockRestore();
-    await client.close();
+    try {
+      await observing;
+    } finally {
+      read.mockRestore();
+      await client.close();
+    }
   });
   const observing = client.execute("observe_native_calls", parameters);
-  await entered;
+  await awaitAcknowledgement(entered, observing, "native target read");
   let closed = false;
   const closing = client.close().then((result) => {
     closed = true;
@@ -247,6 +251,7 @@ it("retains a completed hash when cancellation arrives after successful descript
     cleanupIncomplete: false,
     diagnostics: { completed_hash: { sha256: target.sha256 } },
   });
+  expect(result.error.cause).toBe(reason);
   expect(trace).not.toHaveBeenCalled();
 });
 
@@ -274,5 +279,6 @@ it("does not adopt an arbitrary thrown tracer cleanup marker", async () => {
     cause: marker,
     cleanupIncomplete: false,
   });
+  expect(result.error.cause).toBe(marker);
   expect(result.error.cleanupResources).toEqual([]);
 });

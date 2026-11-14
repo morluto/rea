@@ -1,7 +1,6 @@
 import { expect, it } from "vitest";
 import {
   androidLocaleDirectorySuffix,
-  androidLocaleQualifierSchema,
   apktoolInputSchemas,
   classifyAndroidStringsTable,
   DEFAULT_APKTOOL_DECODE_TIMEOUT_MS,
@@ -77,7 +76,12 @@ it.each([
 ])(
   "refuses suffixes outside the bounded locale selection contract: %s",
   (suffix) => {
-    expect(androidLocaleQualifierSchema.safeParse(suffix).success).toBe(false);
+    expect(
+      apktoolInputSchemas.decode_android_resources.safeParse({
+        path: "/targets/app.apk",
+        locale: suffix,
+      }).success,
+    ).toBe(false);
     expect(classifyAndroidStringsTable(suffix)).toEqual({
       kind: "other",
       suffix,

@@ -4,7 +4,12 @@ import { writeFile, readFile, copyFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { releaseAfter } from "./lib/verifier-cleanup.mjs";
+import {
+  assertVerifierCleanupComplete,
+  createVerifierRun,
+  completeVerifierRun,
+} from "./lib/verifier-run.mjs";
 import { verifyCompleteToolCatalog } from "./lib/verify-package-core.mjs";
 import { connectRecordedCrash } from "./verify/recorded-crash/public.mjs";
 import {
@@ -41,6 +46,7 @@ const entrypoint =
 const failures = [];
 const sessions = [];
 let sentinel;
+let verifier;
 let cases = 0;
 let trace;
 let catalogTools;
@@ -91,9 +97,13 @@ try {
     advertised.filter((tool) => tool.name === "inspect_recorded_crash").length,
     1,
   );
-  const catalog = await verifyCompleteToolCatalog(basic.client, {
-    timeout: 90_000,
-  });
+  const catalog = await verifyCompleteToolCatalog(
+    basic.client,
+    {
+      timeout: 90_000,
+    },
+    environment,
+  );
   for (const name of [
     "inspect_binary_layout",
     "inspect_recorded_crash",
@@ -196,17 +206,6 @@ try {
       assert.equal(value.threads.length, 1);
       cases++;
     }
-    for (const [name, kind, label] of [
-      ["aarch64-archext", 0x70000000, "PT_AARCH64_ARCHEXT"],
-      ["aarch64-unwind", 0x70000001, "PT_AARCH64_UNWIND"],
-    ]) {
-      const value = await basic.inspect(mode, fixtures[name]);
-      assert.equal(value.architecture, "aarch64-little-endian");
-      assert.equal(value.segments[0]?.type_id, kind);
-      assert.equal(value.segments[0]?.type, label);
-      assert.equal(value.threads.length, 0);
-      cases++;
-    }
     const noSignals = await basic.inspect(mode, fixtures["unknown-signals"]);
     assert.equal(noSignals.signals.length, 0);
     assert.equal(noSignals.threads.length, 2);
@@ -216,9 +215,19 @@ try {
     assert.equal(noNotes.threads.length, 0);
     assert.equal(noNotes.note_interpretation_completeness, "unknown");
     cases++;
-    for (const [name, architecture, type] of [
-      ["aarch64-archext", "aarch64-little-endian", "PT_AARCH64_ARCHEXT"],
-      ["aarch64-unwind", "aarch64-little-endian", "PT_AARCH64_UNWIND"],
+    for (const [name, architecture, type, typeId] of [
+      [
+        "aarch64-archext",
+        "aarch64-little-endian",
+        "PT_AARCH64_ARCHEXT",
+        0x70000000,
+      ],
+      [
+        "aarch64-unwind",
+        "aarch64-little-endian",
+        "PT_AARCH64_UNWIND",
+        0x70000001,
+      ],
       ["aarch64-mte-opaque", "aarch64-little-endian", 0x70000002],
       ["amd64-processor-opaque", "x86_64-little-endian", 0x70000001],
     ]) {
@@ -226,6 +235,8 @@ try {
       assert.equal(auxiliary.architecture, architecture);
       assert.equal(auxiliary.segments.length, 1);
       assert.equal(auxiliary.segments[0].type, type);
+      if (typeId !== undefined)
+        assert.equal(auxiliary.segments[0].type_id, typeId);
       assert.equal(auxiliary.notes.length, 0);
       assert.equal(auxiliary.threads.length, 0);
       assert.equal(auxiliary.note_interpretation_completeness, "unknown");
@@ -339,24 +350,24 @@ try {
 } catch (cause) {
   failures.push(cause);
 } finally {
-  for (const close of [
-    ...sessions.map((session) => () => session.close()),
-    ...(sentinel ? [() => sentinel.close()] : []),
-    () => root.close(),
-  ]) {
-    try {
-      await close();
-    } catch (cause) {
-      failures.push(cause);
-    }
+  // Sessions, the sentinel and any surviving descendant may still use files
+  // under the root, so it is released only after all of them are proven gone.
+  try {
+    await releaseAfter(
+      [
+        ...sessions.map((session) => () => session.close()),
+        ...(sentinel ? [() => sentinel.close()] : []),
+        async () => {
+          verifier = await completeVerifierRun(run);
+          assertVerifierCleanupComplete(verifier.process_lineage);
+        },
+      ],
+      () => root.close(),
+      root.path,
+    )();
+  } catch (cause) {
+    failures.push(cause);
   }
-}
-const verifier = await completeVerifierRun(run);
-try {
-  assert.equal(verifier.process_lineage.status, "verified");
-  assert.deepEqual(verifier.process_lineage.descendants, []);
-} catch (cause) {
-  failures.push(cause);
 }
 const result = {
   status: failures.length === 0 ? "passed" : "failed",

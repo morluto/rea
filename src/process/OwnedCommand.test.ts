@@ -3,6 +3,7 @@ import { PassThrough, Writable } from "node:stream";
 import { expect, it, vi } from "vitest";
 
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { OwnedCommandFailure, runOwnedCommand } from "./OwnedCommand.js";
 import type { ProcessCleanupResult } from "./ProcessOwnership.js";
 
@@ -95,6 +96,7 @@ it("captures synchronous EOF output after supervision and interprets it before c
 });
 
 it("waits for delayed input finalization after output closes", async () => {
+  const controller = new AbortController();
   const finalizing = createDeferred<void>();
   let finishInput: () => void = () => {};
   const input = new Writable({
@@ -115,6 +117,7 @@ it("waits for delayed input finalization after output closes", async () => {
       observeCompleted,
     },
     {
+      signal: controller.signal,
       launcher: async () => ({
         process: fixture.child,
         ownership: fixture.ownership,
@@ -122,14 +125,26 @@ it("waits for delayed input finalization after output closes", async () => {
       }),
     },
   );
-  await finalizing.promise;
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  expect(observeCompleted).not.toHaveBeenCalled();
-  expect(fixture.cleanup).not.toHaveBeenCalled();
-  finishInput();
-  await expect(pending).resolves.toMatchObject({ exitCode: 0 });
-  expect(observeCompleted).toHaveBeenCalledOnce();
-  expect(fixture.cleanup).toHaveBeenCalledOnce();
+  try {
+    await awaitAcknowledgement(
+      finalizing.promise,
+      pending,
+      "input finalization",
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(observeCompleted).not.toHaveBeenCalled();
+    expect(fixture.cleanup).not.toHaveBeenCalled();
+    const finish = finishInput;
+    finishInput = () => {};
+    finish();
+    await expect(pending).resolves.toMatchObject({ exitCode: 0 });
+    expect(observeCompleted).toHaveBeenCalledOnce();
+    expect(fixture.cleanup).toHaveBeenCalledOnce();
+  } finally {
+    controller.abort();
+    finishInput();
+    await pending.catch(() => undefined);
+  }
 });
 
 it.each([2_000, null])(
@@ -168,13 +183,22 @@ it.each([2_000, null])(
       cancellation: { reason },
       cleanupFailure: null,
     });
-    await finalizing.promise;
-    controller.abort(reason);
-    await rejected;
-    expect(observeCompleted).not.toHaveBeenCalled();
-    expect(fixture.cleanup).toHaveBeenCalledOnce();
-    expect(input.destroyed).toBe(true);
-    expect(fixture.child.kill).not.toHaveBeenCalled();
+    try {
+      await awaitAcknowledgement(
+        finalizing.promise,
+        pending,
+        "input finalization",
+      );
+      controller.abort(reason);
+      await rejected;
+      expect(observeCompleted).not.toHaveBeenCalled();
+      expect(fixture.cleanup).toHaveBeenCalledOnce();
+      expect(input.destroyed).toBe(true);
+      expect(fixture.child.kill).not.toHaveBeenCalled();
+    } finally {
+      controller.abort(reason);
+      await pending.catch(() => undefined);
+    }
   },
 );
 
@@ -291,8 +315,9 @@ it("reports a premature input close as a collection failure", async () => {
   ).rejects.toMatchObject({
     reason: "process",
     collectionFailure: true,
-    message:
-      "stdin stream failed: closed before writable finalization completed",
+    message: expect.stringMatching(
+      /stdin stream failed.*closed before writable finalization completed/i,
+    ),
     processError: {
       message: "closed before writable finalization completed",
     },

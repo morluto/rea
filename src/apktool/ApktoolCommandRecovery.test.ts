@@ -31,9 +31,11 @@ const provider = () =>
     environment: { REA_APKTOOL_COMMAND: "/authored/apktool" },
   });
 const version = {
-  stdout: { text: "2.9.3\n" },
-  stderr: { text: "" },
-} as Awaited<ReturnType<typeof runOwnedCommand>>;
+  stdout: { text: "2.9.3\n", bytes: 6, observedBytes: 6 },
+  stderr: { text: "", bytes: 0, observedBytes: 0 },
+  exitCode: 0,
+  signal: null,
+};
 const inspect = (client: ApktoolProvider, signal?: AbortSignal) =>
   client.execute(
     { operation: "inspect_apktool_client", input: {} },
@@ -255,8 +257,8 @@ it("attributes prerequisite cleanup to decode and preserves its live recovery", 
   try {
     const result = await client.execute({
       operation: "decode_android_resources",
-      input: {},
-    } as never);
+      input: { path: "/fixture/input.apk", include_strings: false },
+    });
     if (result.ok) throw new Error("Expected prerequisite failure");
     expect(result.error).toMatchObject({
       operation: "decode_android_resources",

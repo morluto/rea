@@ -2,8 +2,12 @@ import { readdir } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
+import {
+  artifactFileCancellationCause,
+  bindArtifactFileCleanup,
+} from "../../artifacts/ArtifactFileOperation.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
@@ -11,10 +15,16 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { describeValidationFailure } from "../../domain/validationFailure.js";
+import { regularFileCancellation } from "../../filesystem/OwnedRegularFile.js";
+import {
+  bindRegularFileCleanup,
+  RetainedRegularFileCleanupFailure,
+} from "../RegularFileRead.js";
 import type { LinuxApplicationRefusal } from "../../desktop/LinuxApplicationInventory.js";
 import { resolveProgram } from "../../desktop/ProgramLookup.js";
 import type { ObservedWindow } from "../../desktop/X11WindowObserver.js";
 import type { OutputRefusal } from "./DesktopCaptureOutput.js";
+import { processInspectionCancellationError } from "../../providers/OwnedCommandCleanup.js";
 
 export const DESKTOP_OPERATION = "capture_desktop_application";
 
@@ -59,6 +69,12 @@ export const applicationRefusal = (
         `No desktop entry with that id was found in ${refusal.searched.join(", ")}.`,
         ["desktop_entry"],
         "Pass an installed entry's id (for example org.xfce.mousepad) or its absolute path, or name the program with --executable.",
+      );
+    case "desktop_entry_search_incomplete":
+      return inputError(
+        `The search for a desktop entry with that id under ${refusal.searched.join(", ")} stopped before it could tell whether one is installed.`,
+        ["desktop_entry"],
+        "Pass the entry's absolute path, or narrow the installed entries under those folders.",
       );
     case "desktop_entry_invalid":
       return inputError(
@@ -182,6 +198,8 @@ export const checkDesktopCaptureHost = async (
     );
   const existing = await readdir(request.output).catch((cause: unknown) => {
     if ((cause as NodeJS.ErrnoException).code === "ENOENT") return [];
+    if ((cause as NodeJS.ErrnoException).code === "ENOTDIR")
+      throw outputRefusal(request.output, "not_a_directory");
     throw cause;
   });
   if (existing.length > 0) throw outputRefusal(request.output, "not_empty");
@@ -195,23 +213,74 @@ export const desktopOperationFailure = (
   operation: string,
   label: string,
 ): AnalysisError => {
-  if (cause instanceof AnalysisError) return cause;
-  // A resource that could not be released stays reported, with its owner.
-  if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {
+  let failure: AnalysisError;
+  const inspectionCancellation = processInspectionCancellationError(
+    cause,
+    operation,
+  );
+  if (cause instanceof AnalysisError) failure = cause;
+  else if (inspectionCancellation !== undefined)
+    failure = inspectionCancellation;
+  else if (cause instanceof RetainedRegularFileCleanupFailure) {
+    const cancellation = regularFileCancellation(cause);
+    const primary =
+      cause.outcome.kind === "failed" &&
+      cause.outcome.cause instanceof AnalysisError
+        ? cause.outcome.cause
+        : cancellation === undefined
+          ? undefined
+          : new AnalysisCancelledError(operation, {
+              cause: cancellation.reason,
+            });
     const error = new ProviderAdapterError(DESKTOP_PROVIDER.id, operation, {
       cause,
+      ...(primary === undefined ? {} : { cleanupPrimary: primary }),
+      cleanup: {
+        reason: describeValidationFailure(cause.cleanupCause),
+        resources: [cause.path],
+      },
+      userMessage: `${label} could not close an input file.`,
+    });
+    bindRegularFileCleanup(cause, error);
+    failure = error;
+  }
+  // A resource that could not be released stays reported, with its owner.
+  else if (
+    cause instanceof ArtifactReaderFailure &&
+    cause.cleanup !== undefined
+  ) {
+    const primary =
+      cause.reason === "cancelled"
+        ? new AnalysisCancelledError(operation, {
+            cause: artifactFileCancellationCause(cause),
+          })
+        : undefined;
+    const error = new ProviderAdapterError(DESKTOP_PROVIDER.id, operation, {
+      cause,
+      ...(primary === undefined ? {} : { cleanupPrimary: primary }),
       cleanup: cause.cleanup,
       diagnostics: { phase: operation },
       userMessage: `${label} could not release a resource it used: ${describeValidationFailure(cause)}`,
     });
     bindArtifactFileCleanup(cause, error);
-    return error;
-  }
-  if (signal?.aborted === true)
-    return new AnalysisCancelledError(operation, { cause: signal.reason });
-  return new ProviderAdapterError(DESKTOP_PROVIDER.id, operation, {
-    cause,
-    diagnostics: { phase: operation },
-    userMessage: `${label} could not complete: ${describeValidationFailure(cause)}`,
-  });
+    failure = error;
+  } else if (
+    cause instanceof ArtifactReaderFailure &&
+    cause.reason === "cancelled"
+  ) {
+    failure = new AnalysisCancelledError(operation, {
+      cause: artifactFileCancellationCause(cause),
+    });
+  } else
+    failure = new ProviderAdapterError(DESKTOP_PROVIDER.id, operation, {
+      cause,
+      diagnostics: { phase: operation },
+      userMessage: `${label} could not complete: ${describeValidationFailure(cause)}`,
+    });
+  return signal?.aborted === true
+    ? analysisErrorWithCancellation(
+        failure,
+        new AnalysisCancelledError(operation, { cause: signal.reason }),
+      )
+    : failure;
 };

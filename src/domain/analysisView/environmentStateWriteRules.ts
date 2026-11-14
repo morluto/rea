@@ -407,6 +407,23 @@ export interface WriteCall {
   readonly body: JsonObject | undefined;
 }
 
+/** Parameter lookup keys preserve repeated placeholder occurrences by segment position. */
+export const pathParameterKeys = (template: string): Map<number, string> => {
+  const parameters = segmentsOf(template).flatMap((segment, index) =>
+    isParam(segment) ? [[index, segment.slice(1, -1)] as const] : [],
+  );
+  const repeated =
+    new Set(parameters.map(([, name]) => name)).size !== parameters.length;
+  // If any name repeats, encode every key so a literal name cannot collide with
+  // an indexed key. Unique-name templates retain their established lookup keys.
+  return new Map(
+    parameters.map(([index, name]) => [
+      index,
+      repeated ? JSON.stringify([index, name]) : name,
+    ]),
+  );
+};
+
 /** The value each template parameter takes in a concrete path, decoded; undefined when the path does not instantiate it. */
 export const pathValuesOf = (
   template: string,
@@ -416,13 +433,14 @@ export const pathValuesOf = (
   const concrete = segmentsOf(path);
   if (pattern.length !== concrete.length) return undefined;
   const values = new Map<string, string>();
+  const keys = pathParameterKeys(template);
   for (const [index, segment] of pattern.entries()) {
     const value = concrete[index]!;
     if (!isParam(segment)) {
       if (segment !== value) return undefined;
       continue;
     }
-    values.set(segment.slice(1, -1), decodedSegment(value));
+    values.set(keys.get(index)!, decodedSegment(value));
   }
   return values;
 };

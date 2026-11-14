@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { WEB_SOURCE_MAP_LIMITS } from "../../domain/webSourceLocation.js";
+import {
+  WEB_SOURCE_MAP_LIMITS,
+  sourceMapLimitRecovery,
+  type SourceMapLimits,
+} from "../../domain/sourceMapLimits.js";
 import {
   classifySourceMapSection,
   classifySourceMapSections,
@@ -41,13 +45,14 @@ interface PendingMap {
   readonly stop: Offset | null;
 }
 
-/** Shared structural constraints configurable only for stricter consumers. */
+/** Aggregate structural work shared by maps in one selected inspection. */
 export interface SourceMapStructureBudget {
   records: number;
 }
 
 export interface SourceMapStructureOptions {
   readonly profile?: "browser-collection";
+  readonly limits?: SourceMapLimits;
   readonly budget?: SourceMapStructureBudget;
   readonly check?: () => void;
 }
@@ -61,6 +66,16 @@ export class SourceMapFormatFailure extends Error {
     super(message);
   }
 }
+
+/** Report schema rejection through the one failure type consumers classify. */
+const parseStructure = <Schema extends z.ZodType>(
+  schema: Schema,
+  value: unknown,
+): z.output<Schema> => {
+  const parsed = schema.safeParse(value);
+  if (parsed.success) return parsed.data;
+  throw new SourceMapFormatFailure("format", parsed.error.message);
+};
 
 /** Raw declaration identity, separate from flattened engine URL identity. */
 export interface SourceMapSourceDeclaration {
@@ -98,7 +113,11 @@ const codecLeaf = (
 
 const compare = (a: Offset, b: Offset): number =>
   a.line - b.line || a.column - b.column;
-const addOffset = (base: Offset, offset: Offset): Offset => {
+const addOffset = (
+  base: Offset,
+  offset: Offset,
+  limits: SourceMapLimits,
+): Offset => {
   const result = {
     line: base.line + offset.line,
     column: offset.column + (offset.line === 0 ? base.column : 0),
@@ -106,20 +125,24 @@ const addOffset = (base: Offset, offset: Offset): Offset => {
   if (
     !Number.isSafeInteger(result.line) ||
     !Number.isSafeInteger(result.column) ||
-    result.line >= WEB_SOURCE_MAP_LIMITS.decodedRows
+    result.line >= limits.decodedRows
   )
     throw new SourceMapFormatFailure(
       "limit",
-      "Indexed offset exceeds the 262144 generated-row decoder budget.",
+      `Indexed offset exceeds the generated-row decoder budget. ${sourceMapLimitRecovery("decoded_rows", limits.decodedRows)}`,
     );
   return result;
 };
 
-const consumeRecords = (budget: { records: number }, count: number): void => {
-  if (count > WEB_SOURCE_MAP_LIMITS.decodedRecords - budget.records)
+const consumeRecords = (
+  budget: { records: number },
+  limits: SourceMapLimits,
+  count: number,
+): void => {
+  if (count > limits.decodedRecords - budget.records)
     throw new SourceMapFormatFailure(
       "limit",
-      `Source-map structure exceeds the ${WEB_SOURCE_MAP_LIMITS.decodedRecords}-record decoder budget.`,
+      `Source-map structure exceeds the decoder budget. ${sourceMapLimitRecovery("decoded_records", limits.decodedRecords)}`,
     );
   budget.records += count;
 };
@@ -137,9 +160,10 @@ const addSections = ({
   readonly budget: { records: number };
   readonly options: SourceMapStructureOptions;
 }): void => {
+  const limits = options.limits ?? WEB_SOURCE_MAP_LIMITS;
   options.check?.();
-  consumeRecords(budget, rawSections.length);
-  const sections = z.array(sectionSchema).parse(rawSections);
+  consumeRecords(budget, limits, rawSections.length);
+  const sections = parseStructure(z.array(sectionSchema), rawSections);
   const embeddedMaps: Extract<
     SourceMapSection,
     { readonly kind: "embedded" }
@@ -176,14 +200,14 @@ const addSections = ({
       );
     const next = sections[index + 1];
     const nextOffset =
-      next === undefined ? null : addOffset(node.offset, next.offset);
+      next === undefined ? null : addOffset(node.offset, next.offset, limits);
     const stop =
       nextOffset === null
         ? node.stop
         : node.stop === null || compare(nextOffset, node.stop) < 0
           ? nextOffset
           : node.stop;
-    const offset = addOffset(node.offset, section.offset);
+    const offset = addOffset(node.offset, section.offset, limits);
     pending.push({
       value: map,
       path: [...node.path, index],
@@ -195,6 +219,7 @@ const addSections = ({
 
 const inspectMappingLayout = (
   mappings: string,
+  limits: SourceMapLimits,
   check?: () => void,
 ): { lines: number; segments: number } => {
   let lines = 1;
@@ -241,13 +266,10 @@ const inspectMappingLayout = (
         digits = 0;
       }
     }
-    if (
-      segments > WEB_SOURCE_MAP_LIMITS.decodedSegments ||
-      lines > WEB_SOURCE_MAP_LIMITS.decodedRows
-    )
+    if (segments > limits.decodedSegments || lines > limits.decodedRows)
       throw new SourceMapFormatFailure(
         "limit",
-        "Source-map layout exceeds the 262144 segment/generated-row decoder budget.",
+        `Source-map layout exceeds decoder admission. ${sourceMapLimitRecovery(segments > limits.decodedSegments ? "decoded_segments" : "decoded_rows", segments > limits.decodedSegments ? limits.decodedSegments : limits.decodedRows)}`,
       );
   }
   finish();
@@ -259,32 +281,41 @@ const inspectLeaf = (
   budget: { records: number },
   options: SourceMapStructureOptions,
 ): z.output<typeof leafSchema> => {
+  const limits = options.limits ?? WEB_SOURCE_MAP_LIMITS;
   options.check?.();
-  consumeRecords(budget, 1);
+  consumeRecords(budget, limits, 1);
   if (
     typeof node.value !== "object" ||
     node.value === null ||
     Array.isArray(node.value)
   )
-    return leafSchema.parse(node.value);
+    return parseStructure(leafSchema, node.value);
   const rawMap = node.value as Readonly<Record<string, unknown>>;
   const rawSources = rawMap.sources;
   const rawNames = rawMap.names;
   const rawContents = rawMap.sourcesContent;
-  consumeRecords(budget, Array.isArray(rawSources) ? rawSources.length : 0);
-  consumeRecords(budget, Array.isArray(rawNames) ? rawNames.length : 0);
-  consumeRecords(budget, Array.isArray(rawContents) ? rawContents.length : 0);
+  consumeRecords(
+    budget,
+    limits,
+    Array.isArray(rawSources) ? rawSources.length : 0,
+  );
+  consumeRecords(budget, limits, Array.isArray(rawNames) ? rawNames.length : 0);
+  consumeRecords(
+    budget,
+    limits,
+    Array.isArray(rawContents) ? rawContents.length : 0,
+  );
   options.check?.();
-  const leaf = leafSchema.parse(node.value);
-  const layout = inspectMappingLayout(leaf.mappings, options.check);
-  consumeRecords(budget, layout.segments + layout.lines);
+  const leaf = parseStructure(leafSchema, node.value);
+  const layout = inspectMappingLayout(leaf.mappings, limits, options.check);
+  consumeRecords(budget, limits, layout.segments + layout.lines);
   if (
-    layout.segments > WEB_SOURCE_MAP_LIMITS.decodedSegments ||
-    node.offset.line + layout.lines > WEB_SOURCE_MAP_LIMITS.decodedRows
+    layout.segments > limits.decodedSegments ||
+    node.offset.line + layout.lines > limits.decodedRows
   )
     throw new SourceMapFormatFailure(
       "limit",
-      "Source-map layout exceeds the 262144 segment/generated-row decoder budget.",
+      `Source-map layout exceeds decoder admission. ${sourceMapLimitRecovery(layout.segments > limits.decodedSegments ? "decoded_segments" : "decoded_rows", layout.segments > limits.decodedSegments ? limits.decodedSegments : limits.decodedRows)}`,
     );
   return leaf;
 };
@@ -292,10 +323,11 @@ const inspectLeaf = (
 /** Validate structure before allocation, retaining raw declarations and section boundaries. */
 export const inspectSourceMap = (
   text: string,
+  options: SourceMapStructureOptions = {},
 ): ReturnType<typeof inspectSourceMapValue> => {
   const jsonText = sourceMapJsonText(text);
   const value: unknown = JSON.parse(jsonText);
-  return inspectSourceMapValue(value);
+  return inspectSourceMapValue(value, options);
 };
 
 /** Return validated leaves when a consumer needs decoded rows after preflight. */
@@ -308,8 +340,9 @@ export const inspectSourceMapValue = (
   readonly declarations: readonly SourceMapSourceDeclaration[];
   readonly leaves: readonly SourceMapLeaf[];
 } => {
+  const limits = options.limits ?? WEB_SOURCE_MAP_LIMITS;
   options.check?.();
-  const root = mapHeaderSchema.parse(value);
+  const root = parseStructure(mapHeaderSchema, value);
   const declarations: SourceMapSourceDeclaration[] = [];
   const leaves: SourceMapLeaf[] = [];
   const pending: PendingMap[] = [
@@ -320,10 +353,10 @@ export const inspectSourceMapValue = (
     options.check?.();
     const node = pending.pop();
     if (node === undefined) break;
-    if (node.path.length > WEB_SOURCE_MAP_LIMITS.sectionDepth)
+    if (node.path.length > limits.sectionDepth)
       throw new SourceMapFormatFailure(
         "limit",
-        "Indexed source-map nesting exceeds the 64-level decoder stack budget.",
+        `Indexed source-map nesting exceeds decoder admission. ${sourceMapLimitRecovery("section_depth", limits.sectionDepth)}`,
       );
     const sections = classifySourceMapSections(node.value);
     if (sections.kind === "invalid")
@@ -366,4 +399,98 @@ export const inspectSourceMapValue = (
     declarations,
     leaves,
   };
+};
+
+/**
+ * Leaf maps reachable within the decoder's section depth and record budgets.
+ * Deeper or excess sections are dropped rather than expanded, so a map the
+ * decoder refused for its limits cannot allocate past them here.
+ */
+const boundedSourceMapLeaves = (
+  root: unknown,
+  options: Pick<SourceMapStructureOptions, "limits" | "check">,
+): Record<string, unknown>[] => {
+  const limits = options.limits ?? WEB_SOURCE_MAP_LIMITS;
+  const leaves: Record<string, unknown>[] = [];
+  if (
+    typeof root !== "object" ||
+    root === null ||
+    Array.isArray(root) ||
+    (root as { version?: unknown }).version !== 3
+  )
+    return leaves;
+  const pending: { map: unknown; depth: number }[] = [{ map: root, depth: 0 }];
+  let records = 0;
+  while (pending.length > 0) {
+    options.check?.();
+    const current = pending.pop();
+    if (current === undefined) break;
+    const sections = classifySourceMapSections(current.map);
+    if (sections.kind === "invalid") continue;
+    if (sections.kind === "regular") {
+      leaves.push(current.map as Record<string, unknown>);
+      continue;
+    }
+    if (current.depth >= limits.sectionDepth) continue;
+    records += sections.sections.length;
+    if (records > limits.decodedRecords) break;
+    for (let index = sections.sections.length - 1; index >= 0; index -= 1) {
+      const section = classifySourceMapSection(sections.sections[index]);
+      if (section.kind === "embedded")
+        pending.push({ map: section.map, depth: current.depth + 1 });
+    }
+  }
+  return leaves;
+};
+
+/** Recover observed source content without treating incomplete maps as absent. */
+export const inspectSourceMapSourceContent = (
+  text: string,
+  options: Pick<SourceMapStructureOptions, "limits" | "check"> = {},
+):
+  | { readonly embedded: boolean; readonly complete: true }
+  | {
+      readonly embedded: boolean;
+      readonly complete: false;
+      readonly failure: SourceMapFormatFailure;
+    } => {
+  options.check?.();
+  let value: unknown;
+  try {
+    value = JSON.parse(sourceMapJsonText(text));
+  } catch (cause) {
+    if (!(cause instanceof SyntaxError)) throw cause;
+    return {
+      embedded: false,
+      complete: false,
+      failure: new SourceMapFormatFailure("format", cause.message),
+    };
+  }
+  const hasContent = (
+    inspection: ReturnType<typeof inspectSourceMapValue>,
+  ): boolean =>
+    inspection.declarations.some(
+      (declaration) =>
+        declaration.content !== null && declaration.content.length > 0,
+    );
+  try {
+    return {
+      embedded: hasContent(inspectSourceMapValue(value, options)),
+      complete: true,
+    };
+  } catch (failure) {
+    if (!(failure instanceof SourceMapFormatFailure)) throw failure;
+    const budget = { records: 0 };
+    let embedded = false;
+    for (const leaf of boundedSourceMapLeaves(value, options)) {
+      try {
+        const inspected = inspectSourceMapValue(leaf, { ...options, budget });
+        embedded ||= hasContent(inspected);
+      } catch (cause) {
+        if (!(cause instanceof SourceMapFormatFailure)) throw cause;
+        // An unresolved leaf cannot discard content observed in valid siblings.
+      }
+    }
+    return { embedded, complete: false, failure };
+  }
 };

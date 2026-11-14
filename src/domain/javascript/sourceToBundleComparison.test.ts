@@ -450,8 +450,9 @@ describe("source-map declaration resolution", () => {
       expectedSource: "webpack://a.js",
       expectedResolution: {
         kind: "unresolved",
-        reason:
-          "Source reference uses a non-hierarchical URL without a file pathname.",
+        reason: expect.stringMatching(
+          /non-hierarchical URL.*without a file pathname/i,
+        ),
       },
     },
     {

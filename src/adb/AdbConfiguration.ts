@@ -32,9 +32,9 @@ const VERSION_TIMEOUT_MS = 10_000;
 
 const ADB_VERSION_REMEDIATION = `Set ${ADB_BINARY_ENV} to an Android SDK Platform-Tools adb binary whose \`adb version\` reports its version, or put one on PATH.`;
 /** Repair when the selected adb binary does not exist. */
-export const ADB_MISSING_REMEDIATION = `Set ${ADB_BINARY_ENV} to an absolute path to an existing adb binary.`;
+const ADB_MISSING_REMEDIATION = `Set ${ADB_BINARY_ENV} to an absolute path to an existing adb binary.`;
 /** Repair when execution of the adb binary selected by the environment is denied. */
-export const ADB_NOT_EXECUTABLE_REMEDIATION = `Set ${ADB_BINARY_ENV} to an absolute path to the adb executable file, not a directory, and check execute permission on it and search permission on its parent directories.`;
+const ADB_NOT_EXECUTABLE_REMEDIATION = `Set ${ADB_BINARY_ENV} to an absolute path to the adb executable file, not a directory, and check execute permission on it and search permission on its parent directories.`;
 const VERSION_MAX_OUTPUT_BYTES = 64 * 1024;
 
 /** How the adb binary was selected for this provider instance. */
@@ -163,10 +163,15 @@ export const parseAdbVersionOutput = (stdout: string): AdbClientIdentity => {
   const build = /^Version\s+(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)\s*$/mu.exec(
     stdout,
   );
-  const installed = /^Installed as\s+(.+)$/mu.exec(stdout);
+  // The literal delimiter and line ending belong to the protocol; path
+  // whitespace belongs to the reported executable identity.
+  const installed = /^Installed as ([^\n]*)$/mu
+    .exec(stdout)?.[1]
+    ?.replace(/\r$/u, "");
   return {
     version: build === null ? null : build[1]!.trim(),
-    installedPath: installed === null ? null : installed[1]!.trim(),
+    installedPath:
+      installed === undefined || installed === "" ? null : installed,
   };
 };
 

@@ -1,3 +1,4 @@
+import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { Cli, z } from "incur";
 import pino from "pino";
 import { readFile, readdir, writeFile } from "node:fs/promises";
@@ -76,10 +77,9 @@ const fixture = async (kind: (typeof kinds)[number]) => {
     createManager,
     () => service,
   );
-  onTestFinished(async () => {
-    await service.close();
-    await manager.closeAll();
-  });
+  onTestFinished(() =>
+    closeVerifierResources([() => service.close(), () => manager.closeAll()]),
+  );
   const commandName =
     kind === "gdb"
       ? CLI_COMMANDS.debugWithGdb

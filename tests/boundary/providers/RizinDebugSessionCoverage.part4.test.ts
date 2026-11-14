@@ -3,14 +3,13 @@ import { access, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { rizinTestInferiorTty } from "./RizinTestInferiorTty.js";
 import {
   createRizinCoverageHarness,
   createInjectedProcess,
   incompleteStop,
 } from "./RizinDebugSessionCoverage.fixtures.js";
 
-const { cleanup, makeProvider, start, startInjected, createManager } =
+const { cleanup, makeProvider, start, startInjected } =
   createRizinCoverageHarness();
 afterEach(cleanup);
 
@@ -32,9 +31,11 @@ it.skipIf(process.platform === "win32")(
           });
       },
     });
-    const { manager, started } = await startInjected(injected.spawnProcess, {
-      frameTimeoutMs: 1000,
-    });
+    const { manager, started } = await startInjected(
+      injected.spawnProcess,
+      {},
+      { REA_DEBUGGER_COMMAND_DEADLINE_MS: "1000" },
+    );
     expect(started.ok).toBe(true);
     if (!started.ok) return;
 
@@ -64,10 +65,13 @@ it.skipIf(process.platform === "win32")(
           });
       },
     });
-    const { manager, started } = await startInjected(injected.spawnProcess, {
-      frameTimeoutMs: 1000,
-      stopProcess: async () => ({ status: "stopped" }),
-    });
+    const { manager, started } = await startInjected(
+      injected.spawnProcess,
+      {
+        stopProcess: async () => ({ status: "stopped" }),
+      },
+      { REA_DEBUGGER_COMMAND_DEADLINE_MS: "1000" },
+    );
     expect(started.ok).toBe(true);
     if (!started.ok) return;
     const result = await manager.execute(started.value.session_id, "large");
@@ -256,10 +260,13 @@ it.skipIf(process.platform === "win32")(
     const provider = await makeProvider(
       'process.stdout.write("\\0"); process.stdin.setEncoding("utf8"); process.stdin.on("data", (chunk) => { if (chunk.includes("slow")) process.stdout.write("partial\\0"); });',
     );
-    const { manager, sessionId } = await start(provider, {
-      frameTimeoutMs: 25,
-      stopProcess: incompleteStop,
-    });
+    const { manager, sessionId } = await start(
+      provider,
+      {
+        stopProcess: incompleteStop,
+      },
+      { REA_DEBUGGER_COMMAND_DEADLINE_MS: "25" },
+    );
     const result = await manager.execute(sessionId, "slow");
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -294,10 +301,13 @@ process.stdin.on("data", (chunk) => {
   }
 });`,
     );
-    const { manager, sessionId } = await start(provider, {
-      frameTimeoutMs: 1000,
-      stopProcess: incompleteStop,
-    });
+    const { manager, sessionId } = await start(
+      provider,
+      {
+        stopProcess: incompleteStop,
+      },
+      { REA_DEBUGGER_COMMAND_DEADLINE_MS: "1000" },
+    );
     const result = await manager.execute(sessionId, "many");
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -372,9 +382,11 @@ process.stdin.on("data", (chunk) => {
   }
 });`,
     );
-    const { manager, sessionId } = await start(provider, {
-      frameTimeoutMs: 5_000,
-    });
+    const { manager, sessionId } = await start(
+      provider,
+      {},
+      { REA_DEBUGGER_COMMAND_DEADLINE_MS: "5000" },
+    );
     const first = manager.execute(sessionId, "first");
     await expect
       .poll(() => manager.status(sessionId)?.recent_output)

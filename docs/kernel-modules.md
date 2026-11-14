@@ -50,7 +50,9 @@ when section names were complete; it does not establish the absence of version
 metadata in `__version_ext_names` and `__version_ext_crcs`, which Linux uses
 with `CONFIG_EXTENDED_MODVERSIONS` and this workflow does not decode.
 
-`.gnu.linkonce.this_module` is reported as present, absent, or unknown.
+`.gnu.linkonce.this_module` is reported as present, absent, unknown, or
+unsupported. `unsupported` means the section is stored `SHF_COMPRESSED`; its
+file range is reported and the payload is not inflated.
 `layout` is always `unknown` because `struct module` changes with the kernel
 version and is not decoded. File-backed `__ksymtab*` sections are listed in
 section-header order by name and file range; their records are not decoded.
@@ -59,7 +61,7 @@ without their names. `.init.text` and `.exit.text` report the
 observed file-backed size. A compressed payload reports the stored size and a
 limitation that the decoded size is unknown.
 
-The signature trailer is the 27-byte magic `~Module signature appended~\n`
+The signature trailer is the 28-byte magic `~Module signature appended~\n`
 preceded by a 12-byte `module_signature` (`algo`, `hash`, `id_type`,
 `signer_len`, `key_id_len`, three pad bytes, and big-endian `sig_len`). When
 those parameter fields are zero and `id_type` is PKCS#7 (`2`), the preceding
@@ -70,14 +72,35 @@ trailer is observed absence, not proof the module is unsigned.
 When section names are incomplete, a missing named section is `unknown`
 rather than `absent`. An empty file-backed section is present and empty.
 
+`coverage.status` is `partial` when supported facts cannot all be examined or
+interpreted, including incomplete section names, malformed or unsupported
+metadata, and omitted duplicate named sections. When multiple `.modinfo`,
+`__versions`, `.gnu.linkonce.this_module`, `.init.text`, or `.exit.text`
+sections exist, the first is examined and a limitation identifies the omission.
+`complete` covers the supported inspection described here; it does not claim
+that `struct module`, symbol-table records, or certificate chains were decoded.
+
 ## Limits and failures
 
 The selected file is limited to 64 MiB by default (512 MiB maximum). At most
 8192 `.modinfo` and `__versions` entries plus listed `__ksymtab*` sections are
 examined by default (65536 maximum); `coverage.examined_entries` counts all
-three. Exceeding that budget fails with no partial success. Keys longer
-than 256 bytes and values longer than 4096 bytes stay malformed per entry;
-the field that fits is still copied. A `__ksymtab*` section name longer than
+three. Exceeding that budget fails with no partial success. `.modinfo` keys
+retain at most 256 bytes and values at most 4096 bytes by default. A larger
+field becomes `null` and is named in the entry's `omitted_fields`; the field
+that fits is still copied. Structural `status` and `reason` remain independent:
+a terminated, nonempty `key=value` entry stays `observed` when its text is
+omitted, while overall coverage becomes `partial`. Source range and digest
+remain available.
+
+Raise `max_modinfo_key_bytes` or `max_modinfo_value_bytes` on the next MCP call
+to retain the omitted text. The returned limitation names the required byte
+budget. CLI flags are `--max-modinfo-key-bytes` and `--max-modinfo-value-bytes`.
+Each accepts an integer from 1 through 536870912 bytes, matching the maximum
+input size. No restart is required; file, entry and raw-hex budgets do not
+change. These are per-call controls, not runtime settings.
+
+A `__ksymtab*` section name longer than
 256 bytes keeps its range with `name: null` and `ksymtab_name_exceeds_limit`. Inline raw hex stops at 4096 bytes and
 the SHA-256 remains.
 
@@ -91,10 +114,12 @@ entries. `SHT_NOBITS` or a declared range that leaves the file is
 `SHF_COMPRESSED` payloads are not inflated
 (`modinfo_section_compressed`, `versions_section_compressed`).
 
-An appended magic with fewer than 12 preceding bytes is
-`signature_trailer_truncated`. A `sig_len` that does not leave at least one
-module byte is `signature_length_inconsistent`. Nonzero `algo`, `hash`,
-signer, key-id, or pad fields for PKCS#7 are `signature_parameters_nonzero`.
+`signature_trailer_truncated` is reserved for an appended magic with fewer
+than 12 preceding bytes. ELF admission requires at least 52 (ELF32) or 64
+(ELF64) bytes, so this inspection never returns it for an admitted file. A
+`sig_len` that does not leave at least one module byte is
+`signature_length_inconsistent`. Nonzero `algo`, `hash`, signer, key-id, or
+pad fields for PKCS#7 are `signature_parameters_nonzero`.
 A parameter block whose `id_type` is not PKCS#7 is
 `signature_id_type_not_pkcs7` and is unsupported rather than a validated
 signature.

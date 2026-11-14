@@ -117,6 +117,7 @@ const unread = (
   container_file_offset: declaration.offset,
   size: declaration.size,
   status,
+  malformed_kind: status === "malformed" ? "structure" : null,
   reason,
   commands: [],
   range: null,
@@ -143,6 +144,10 @@ const readSlice = async (
   // and dropped so a large table of small commands stays one buffer.
   const commands: MachoEncryptionCommand[] = [];
   let encryptionCommands = 0;
+  const encryption: {
+    first: ValidEncryptionCommand | null;
+    failure: string | null;
+  } = { first: null, failure: null };
   // Null once this slice's segments need more records than the shared
   // mapping budget has left; none are retained past that point.
   let segments: MachoLoadCommand[] | null = [];
@@ -155,6 +160,7 @@ const readSlice = async (
   }: MachoReadIssue): MachoSliceEncryption => ({
     ...base,
     status: status === "unsupported" ? "unknown" : "malformed",
+    malformed_kind: status === "unsupported" ? null : "structure",
     reason,
     commands,
     range: null,
@@ -164,8 +170,12 @@ const readSlice = async (
   const framed = frameLoadCommands(table, (command) => {
     if (isEncryptionCommand(command.command)) {
       encryptionCommands += 1;
+      const decoded = decodeEncryptionCommand(command);
       if (commands.length < RETAINED_ENCRYPTION_COMMANDS)
-        commands.push(decodeEncryptionCommand(command));
+        commands.push(decoded);
+      const checked = classifyCommand(decoded, header, slice.size);
+      if (checked.status === "malformed") encryption.failure ??= checked.reason;
+      else encryption.first ??= checked.command;
     } else if (
       segments !== null &&
       (command.command === LC_SEGMENT || command.command === LC_SEGMENT_64)
@@ -187,15 +197,44 @@ const readSlice = async (
     return {
       ...base,
       status: "malformed",
+      malformed_kind: "structure",
       reason: identityIssue,
       commands,
       range: null,
     };
-  const outcome = classify(commands, encryptionCommands, header, slice.size);
-  if (outcome.status !== "valid")
-    return { ...base, ...outcome, commands, range: null };
+  if (encryption.failure !== null)
+    return {
+      ...base,
+      status: "malformed",
+      malformed_kind: "structure",
+      reason:
+        encryptionCommands > 1
+          ? `slice has ${encryptionCommands} encryption load commands; ${encryption.failure}`
+          : encryption.failure,
+      commands,
+      range: null,
+    };
+  if (encryptionCommands > 1)
+    return {
+      ...base,
+      status: "malformed",
+      malformed_kind: "duplicate-commands",
+      reason: `slice has ${encryptionCommands} encryption load commands`,
+      commands,
+      range: null,
+    };
+  const command = encryption.first;
+  if (command === null)
+    return {
+      ...base,
+      status: "absent",
+      malformed_kind: null,
+      reason: null,
+      commands,
+      range: null,
+    };
   const range = encryptedRange(
-    outcome.command,
+    command,
     header,
     segments,
     slice.offset,
@@ -206,7 +245,8 @@ const readSlice = async (
   if (range.mapping.status === "mapped") budget.remaining -= segmentRecords;
   return {
     ...base,
-    status: outcome.command.cryptid === 0 ? "not-encrypted" : "encrypted",
+    status: command.cryptid === 0 ? "not-encrypted" : "encrypted",
+    malformed_kind: null,
     reason: null,
     commands,
     range,
@@ -236,31 +276,23 @@ const decodeEncryptionCommand = ({
   };
 };
 
+type ValidEncryptionCommand = MachoEncryptionCommand & {
+  readonly cryptoff: number;
+  readonly cryptsize: number;
+  readonly cryptid: number;
+};
 type Classification =
   | {
       readonly status: "valid";
-      readonly command: MachoEncryptionCommand & {
-        readonly cryptoff: number;
-        readonly cryptsize: number;
-        readonly cryptid: number;
-      };
+      readonly command: ValidEncryptionCommand;
     }
-  | { readonly status: "absent"; readonly reason: null }
   | { readonly status: "malformed"; readonly reason: string };
 
-const classify = (
-  commands: readonly MachoEncryptionCommand[],
-  count: number,
+const classifyCommand = (
+  command: MachoEncryptionCommand,
   header: MachoSliceHeader,
   sliceSize: number,
 ): Classification => {
-  if (count === 0) return { status: "absent", reason: null };
-  const [command] = commands;
-  if (command === undefined || count > 1)
-    return {
-      status: "malformed",
-      reason: `slice has ${count} encryption load commands`,
-    };
   const width = header.wide ? 64 : 32;
   const expectedKind = header.wide
     ? "LC_ENCRYPTION_INFO_64"

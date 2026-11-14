@@ -187,6 +187,16 @@ export interface SwiftDispatchReaders {
 
 const hex = (value: bigint) => `0x${value.toString(16)}`;
 const decoded = { status: "decoded" as const, reason: null };
+
+/**
+ * Conformance flags admitted for static witness table decoding:
+ * - Type-reference kind: bits 3..5 (0x38)
+ * - Retroactive conformance: bit 6 (0x40)
+ *
+ * Conditional requirements (bits 8..15), generic witness tables (bit 17),
+ * and resilient witness flags (bit 16) remain unadmitted.
+ */
+const SWIFT_STATIC_WITNESS_FLAGS_MASK = 0x78;
 /** Create a Swift ABI signed-relative pointer decoder that records relative_pointers. */
 export const createSwiftRelativeReader = (input: {
   bytes: Buffer;
@@ -234,9 +244,29 @@ export const createSwiftRelativeReader = (input: {
           );
     let fileOffset: number | null = null;
     let reason: string | null = null;
+    const unknownIndirect = (reason: string): SwiftRelativeValue => {
+      if (budget.admit())
+        result.relative_pointers.push({
+          field: read.location(field),
+          target: { address: null, file_offset: null },
+          displacement,
+          indirectable,
+          indirect,
+          decode: { status: "partial", reason },
+          evidence: read.evidence(field, "Swift ABI indirect relative pointer"),
+        });
+      return { kind: "unknown", reason };
+    };
     try {
       if (indirect && target !== null) {
-        const pointer = read.resolvePointer(target);
+        let pointer: PointerResolution;
+        try {
+          pointer = read.resolvePointer(target);
+        } catch (cause) {
+          const failure = expectedSwiftMetadataReadFailure(cause);
+          if (failure === null) throw cause;
+          return unknownIndirect(failure);
+        }
         if (pointer.kind === "bind") {
           if (budget.admit())
             result.relative_pointers.push({
@@ -259,21 +289,7 @@ export const createSwiftRelativeReader = (input: {
           };
         }
         if (pointer.kind === "unknown" || pointer.kind === "unsupported") {
-          const unresolved = pointer.reason;
-          if (budget.admit())
-            result.relative_pointers.push({
-              field: read.location(field),
-              target: { address: null, file_offset: null },
-              displacement,
-              indirectable,
-              indirect,
-              decode: { status: "partial", reason: unresolved },
-              evidence: read.evidence(
-                field,
-                "Swift ABI indirect relative pointer",
-              ),
-            });
-          return { kind: "unknown", reason: unresolved };
+          return unknownIndirect(pointer.reason);
         }
         const indirectTarget = pointer.target;
         target =
@@ -283,7 +299,8 @@ export const createSwiftRelativeReader = (input: {
       }
       if (target !== null) fileOffset = read.offset(target);
     } catch (cause) {
-      reason = cause instanceof Error ? cause.message : String(cause);
+      reason = expectedSwiftMetadataReadFailure(cause);
+      if (reason === null) throw cause;
     }
     if (budget.admit())
       result.relative_pointers.push({
@@ -385,7 +402,7 @@ export const decodeSwiftDispatchFacets = (input: {
           protocol !== null &&
           protocolFacts.readable &&
           typeReference.staticWitnessIdentity &&
-          (flags & ~0x38) === 0;
+          (flags & ~SWIFT_STATIC_WITNESS_FLAGS_MASK) === 0;
         staticWitness &&=
           typeReference.kind === 2 || typeReference.generic === false;
         let witnessReason: string | null = staticWitness
@@ -553,7 +570,8 @@ export const decodeSwiftDispatchFacets = (input: {
           }
         }
       } catch (cause) {
-        const message = cause instanceof Error ? cause.message : String(cause);
+        const message = expectedSwiftMetadataReadFailure(cause);
+        if (message === null) throw cause;
         issues.push(
           issue(
             "swift_conformances_static_witness_slots",

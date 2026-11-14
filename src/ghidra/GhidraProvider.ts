@@ -68,7 +68,11 @@ import {
   type GhidraInstallationHost,
   type GhidraInstallationInspection,
 } from "./GhidraInstallation.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
+} from "../domain/analysisErrorCore.js";
 import { resolveGhidraAnalysisSeeds } from "./GhidraAnalysisSeeds.js";
 import {
   admitGhidraLanguageOverride,
@@ -200,8 +204,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
         : undefined;
     const availability = this.#availability(installation, readiness);
     if (availability.status === "available" && signal.aborted)
-      throw new AnalysisCancelledError("binary_session", {
-        cause: signal.reason,
+      throw cancelledBy("binary_session", signal, {
         diagnostics: availability.diagnostics,
       });
     return {
@@ -391,8 +394,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
           );
         if (result.ok && signal.aborted)
           return err(
-            new AnalysisCancelledError("open_binary", {
-              cause: signal.reason,
+            cancelledBy("open_binary", signal, {
               diagnostics: {
                 completed_profile_digest: result.value.profile?.digest ?? null,
               },
@@ -496,11 +498,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
     );
     if (!extensions.ok) return extensions;
     if (options?.signal?.aborted === true)
-      return err(
-        new AnalysisCancelledError("open_binary", {
-          cause: options.signal.reason,
-        }),
-      );
+      return err(cancelledBy("open_binary", options.signal));
     const seeds = await resolveGhidraAnalysisSeeds(
       this.config.ghidraSeedFile,
       this.#inspectionResources,
@@ -622,10 +620,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       callerSignal === undefined
         ? this.#lifetime.signal
         : AbortSignal.any([callerSignal, this.#lifetime.signal]);
-    if (signal.aborted)
-      throw new AnalysisCancelledError("ghidra:inspection", {
-        cause: signal.reason,
-      });
+    if (signal.aborted) throw cancelledBy("ghidra:inspection", signal);
     const work = Promise.resolve().then(() => operation(signal));
     this.#inspectionWork.add(work);
     try {
@@ -640,16 +635,14 @@ export class GhidraProvider implements AnalysisProviderCandidate {
     operation: string,
     scope?: ProviderInspectionScope,
   ): Promise<GhidraInstallationInspection> {
-    if (callerSignal?.aborted)
-      throw new AnalysisCancelledError(operation, {
-        cause: callerSignal.reason,
-      });
+    if (callerSignal?.aborted) throw cancelledBy(operation, callerSignal);
     if (scope?.active) {
       const observed = this.#observations.get(scope);
       if (observed?.lifetime === this.#lifetime.signal)
         return observed.installation;
     }
     let attempt = this.#inspectionAttempt;
+    const draining = attempt?.signal.aborted === true;
     if (attempt === undefined) {
       attempt = new SharedStartupAttempt(
         (signal) =>
@@ -670,22 +663,24 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       );
       const owned = attempt;
       this.#inspectionAttempt = owned;
-      void owned.promise.then(
-        () => {
-          if (this.#inspectionAttempt === owned)
-            this.#inspectionAttempt = undefined;
-        },
-        () => {
-          if (this.#inspectionAttempt === owned)
-            this.#inspectionAttempt = undefined;
-        },
-      );
+      const clearInspection = (): void => {
+        if (this.#inspectionAttempt === owned)
+          this.#inspectionAttempt = undefined;
+      };
+      void owned.promise.then(clearInspection, clearInspection);
     }
     const waited = await attempt.wait(callerSignal);
     if (waited.status === "cancelled")
-      throw new AnalysisCancelledError(operation, {
-        cause: callerSignal?.reason,
-      });
+      throw cancelledBy(operation, carriedReason(waited.reason));
+    if (
+      draining &&
+      !callerSignal?.aborted &&
+      !waited.value.ok &&
+      waited.value.error instanceof AnalysisCancelledError &&
+      !waited.value.error.cleanupIncomplete &&
+      waited.value.error.cause === attempt.signal.reason
+    )
+      return this.#inspectInstallation(callerSignal, operation, scope);
     if (!waited.value.ok)
       throw analysisClientFailureForOperation(
         waited.value.error,
@@ -696,12 +691,13 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       waited.value.value.status === "available" &&
       (callerSignal?.aborted || attempt.signal.aborted)
     )
-      throw new AnalysisCancelledError(operation, {
-        cause: callerSignal?.aborted
-          ? callerSignal.reason
-          : attempt.signal.reason,
-        diagnostics: ghidraInstallationDiagnostics(waited.value.value),
-      });
+      throw cancelledBy(
+        operation,
+        carriedReason(
+          callerSignal?.aborted ? callerSignal.reason : attempt.signal.reason,
+        ),
+        { diagnostics: ghidraInstallationDiagnostics(waited.value.value) },
+      );
     if (scope?.active && !callerSignal?.aborted && !attempt.signal.aborted)
       this.#observations.set(scope, {
         lifetime: this.#lifetime.signal,

@@ -23,25 +23,43 @@ export interface OwnedWorkerRuntimeOptions {
   readonly cleanupRegistry?: WorkerCleanupRegistry;
 }
 
-/** Retained worker runtimes one host retries before admitting another child. */
-export class WorkerCleanupRegistry {
-  readonly #pending = new Set<OwnedWorkerRuntime>();
+/** A resource owner that can retry its own retained cleanup. */
+export interface RetainedWorkerCleanup {
+  retryRetainedCleanup(): Promise<void>;
+}
 
-  has(runtime: OwnedWorkerRuntime): boolean {
+/** Retained worker resources one host retries before admitting another child. */
+export class WorkerCleanupRegistry {
+  readonly #pending = new Set<RetainedWorkerCleanup>();
+
+  has(runtime: RetainedWorkerCleanup): boolean {
     return this.#pending.has(runtime);
   }
 
-  add(runtime: OwnedWorkerRuntime): void {
+  add(runtime: RetainedWorkerCleanup): void {
     this.#pending.add(runtime);
   }
 
-  delete(runtime: OwnedWorkerRuntime): void {
+  delete(runtime: RetainedWorkerCleanup): void {
     this.#pending.delete(runtime);
   }
 
-  async retry(except?: OwnedWorkerRuntime): Promise<void> {
-    for (const owner of [...this.#pending])
-      if (owner !== except) await owner.retryRetainedCleanup();
+  async retry(except?: RetainedWorkerCleanup): Promise<void> {
+    const failures: unknown[] = [];
+    for (const owner of [...this.#pending]) {
+      if (owner === except) continue;
+      try {
+        await owner.retryRetainedCleanup();
+      } catch (cause: unknown) {
+        failures.push(cause);
+      }
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1)
+      throw new AggregateError(
+        failures,
+        "Owned worker cleanup remains incomplete",
+      );
   }
 }
 
@@ -134,6 +152,7 @@ export class OwnedWorkerRuntime {
   #lastRunId: string | undefined;
   #terminalCloseRequested = false;
   #inputFailure: Error | undefined;
+  #launchFailure: { readonly cause: unknown } | undefined;
   #stdinGeneration = 0;
   readonly #stdoutListeners = new Set<{
     readonly stream: Readable;
@@ -171,6 +190,11 @@ export class OwnedWorkerRuntime {
   /** First error observed on the current child's request stream, if any. */
   get inputFailure(): Error | undefined {
     return this.#inputFailure;
+  }
+
+  /** Failure observed at the current launcher call, without reclassifying its cause. */
+  get launchFailure(): { readonly cause: unknown } | undefined {
+    return this.#launchFailure;
   }
 
   /** Keep a returned typed cleanup error live until this exact owner releases. */
@@ -225,6 +249,7 @@ export class OwnedWorkerRuntime {
     const ownRetry = this.#registry.has(this)
       ? this.#retryPending()
       : Promise.resolve();
+    this.#launchFailure = undefined;
     const acquisition = ownRetry.then(async () => {
       if (this.#closed) this.#closed = false;
       await this.#start(spawnOptions, initialize);
@@ -338,10 +363,16 @@ export class OwnedWorkerRuntime {
     this.#cleanupEpoch ??= new OwnedWorkerRuntimeCleanupEpoch(this.#root.path);
     if (this.#closing) throw new ProcessAdmissionError("runtime_closing");
     this.#lastRunId = spawnOptions.runId;
-    const spawned = await (this.options.launcher ?? spawnOwnedProviderProcess)({
-      ...spawnOptions,
-      cwd: this.#root.path,
-    });
+    let spawned: Awaited<ReturnType<typeof spawnOwnedProviderProcess>>;
+    try {
+      spawned = await (this.options.launcher ?? spawnOwnedProviderProcess)({
+        ...spawnOptions,
+        cwd: this.#root.path,
+      });
+    } catch (cause: unknown) {
+      this.#launchFailure = { cause };
+      throw cause;
+    }
     this.#inputFailure = undefined;
     this.#observeStdin(spawned.process.stdin);
     this.#cleanupEpoch.setRunId(spawned.ownership?.runId ?? spawnOptions.runId);

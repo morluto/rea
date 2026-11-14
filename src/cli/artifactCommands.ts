@@ -13,9 +13,12 @@ import { withCommandCancellation } from "./commandCancellation.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ARTIFACT_GRAPH_PROVIDER } from "../domain/investigationProviders.js";
 import { keyedArchiveInputSchema } from "../domain/apple/keyedArchive.js";
+import { dylibResolutionInputSchema } from "../domain/apple/dylibResolution.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { z } from "incur";
 import { cliDecimalField } from "./options.js";
+import { producerLimitsOption } from "./producerLimitsOption.js";
+import { artifactReaderLimitsInputSchema } from "../domain/artifactReaderLimits.js";
 
 import { artifactExtractionInputSchema } from "../contracts/artifactToolContracts.js";
 
@@ -31,6 +34,13 @@ const keyedArchiveInputBinding = {
   operation: "inspect_keyed_archive",
   fields: { path: "archive" },
 } as const;
+
+const artifactLimitsOption = producerLimitsOption(
+  artifactReaderLimitsInputSchema,
+  "artifact-limits",
+).describe(
+  "JSON artifact producer admissions: bun, dotnet_bundle, node_sea, godot, and expanded_bytes. Omitted fields keep defaults; changes apply on the next call without restart. Independent of summary/paging and client delivery limits.",
+);
 
 export const registerArtifactCommands = (
   cli: CliInstance,
@@ -100,12 +110,9 @@ const registerDylibResolutionCommand = (
       ),
     }),
     options: z.object({
-      root: z
-        .array(z.string())
-        .optional()
-        .describe(
-          "Process root relative to the bundle or the Mach-O's directory (repeatable)",
-        ),
+      root: dylibResolutionInputSchema.shape.roots.describe(
+        "Process root relative to the bundle or the Mach-O's directory (repeatable)",
+      ),
       architecture: z
         .enum(["arm64", "arm64e", "x86_64"])
         .optional()
@@ -254,6 +261,7 @@ const registerExtractionCommand = (
     }),
     options: z.object({
       // Incur needs an ordinary optional; keep the owning contract's metadata.
+      artifactLimits: artifactLimitsOption,
       outputRoot: artifactExtractionInputSchema.shape.output_root
         .unwrap()
         .optional()
@@ -277,6 +285,9 @@ const registerExtractionCommand = (
           "extract_artifact",
           {
             integrity_policy: options.integrityPolicy,
+            ...(options.artifactLimits === undefined
+              ? {}
+              : { artifact_limits: options.artifactLimits }),
             output_root: createArtifactExtractionDestination(
               options.outputRoot,
             ),
@@ -306,6 +317,7 @@ const registerInspectionCommand = (
     }),
     options: z.object({
       ...analysisEvidenceDeliveryOptions,
+      artifactLimits: artifactLimitsOption,
       integrityPolicy: z
         .enum(["fail", "record-and-continue"])
         .default("fail")
@@ -327,7 +339,12 @@ const registerInspectionCommand = (
           const complete = await runProviderAnalysis(
             args.path,
             "inspect_artifact",
-            { integrity_policy: options.integrityPolicy },
+            {
+              integrity_policy: options.integrityPolicy,
+              ...(options.artifactLimits === undefined
+                ? {}
+                : { artifact_limits: options.artifactLimits }),
+            },
             logger,
             signal,
             undefined,

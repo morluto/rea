@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAXIMUM_GHIDRA_VALUE_FLOW_RECORDS } from "../analysisResourceLimits.js";
 
 /** A decompiler p-code varnode location or literal value. */
 export const nativeVarnodeSchema = z.strictObject({
@@ -45,13 +46,32 @@ export const nativePcodeEffectSchema = z.strictObject({
   value_input: z.int().nonnegative().nullable(),
 });
 
+/** Accepted projection budgets; historical observations may omit these facts. */
+export const nativeValueFlowLimitsSchema = z.strictObject({
+  max_operations: z.int().min(1).max(MAXIMUM_GHIDRA_VALUE_FLOW_RECORDS),
+  max_inputs_per_operation: z
+    .int()
+    .min(1)
+    .max(MAXIMUM_GHIDRA_VALUE_FLOW_RECORDS),
+  max_edges: z.int().min(1).max(MAXIMUM_GHIDRA_VALUE_FLOW_RECORDS),
+});
+export type NativeValueFlowLimits = z.infer<typeof nativeValueFlowLimitsSchema>;
+
 /** Bounded data-flow observations; STORE is not necessarily a persistent/global write. */
 export const availableNativeValueFlowSchema = z.strictObject({
   available: z.literal(true),
   provenance: z.literal("ghidra-high-pcode"),
+  limits: nativeValueFlowLimitsSchema.exactOptional(),
+  limits_reached: z
+    .array(z.enum(["max_operations", "max_inputs_per_operation", "max_edges"]))
+    .exactOptional(),
   operations: z.array(nativePcodeOperationSchema),
   def_use: z.array(nativePcodeDefUseSchema),
-  effects: z.array(nativePcodeEffectSchema),
+  effects: z
+    .array(nativePcodeEffectSchema)
+    .describe(
+      "Observed p-code effects. Memory reads and writes cover LOAD and STORE operations only; direct memory address varnodes in other operations are excluded. An empty list does not establish no memory access.",
+    ),
   parameters: z.array(
     z.strictObject({
       ordinal: z.int().nonnegative(),

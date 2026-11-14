@@ -15,6 +15,16 @@ import {
 } from "./JadxConfiguration.js";
 import { JADX_JAR_CONFIGURATION_REMEDIATION } from "./JadxRelease.js";
 
+/** Client settings consulted by this readiness probe. */
+export const JADX_DOCTOR_SETTINGS = [
+  "REA_JADX_MCP_JAR",
+  "JAVA_HOME",
+  "PATH",
+  "REA_JADX_HEAP_MIB",
+  "REA_JADX_ACTIVE_PROCESSOR_COUNT",
+  "REA_JADX_OPERATION_TIMEOUT_MS",
+] as const;
+
 /** Project the validated JADX configuration into the doctor contract. */
 export const inspectJadxProvider = async (
   environment: Readonly<Record<string, string | undefined>>,

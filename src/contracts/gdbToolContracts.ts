@@ -5,7 +5,7 @@ import {
   commandEvidenceDetailSchema,
   gdbCommandResultSchema,
 } from "../domain/commandObservation.js";
-import { gdbCommandSummaryViewResultSchema } from "../domain/analysisView/analysisView.js";
+import { gdbCommandSummaryViewResultSchema } from "../domain/analysisView/analysisViewResult.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import { analysisDetailOutputSchemaOf } from "./analysisDetail.js";
 import { toolContractMetadata } from "./toolEffects.js";
@@ -19,7 +19,7 @@ export const GDB_TOOL_CONTRACTS = [
     ...toolContractMetadata("start_gdb_session"),
     kind: "native-provider",
     description:
-      "Start a BYO GDB process in MI3 mode when available, suppress startup files, and disable auto-loading. Persistent GDB sessions are available only on Linux, where REA can verify live inferior output descriptors through /proc before detaching; macOS descriptor verification is not implemented, and Windows Job Object cleanup can terminate debugger inferiors. Optionally set inferior_tty to a caller-selected terminal for future inferior runs; REA verifies the setting through GDB/MI before the session becomes ready. The selected terminal must remain available after GDB exits. A live inferior can be detached during close only while this durable output sink remains verified. The session persists in this REA MCP server process and receives an explicit session ID.",
+      "Start a persistent caller-supplied GDB session and return its session ID. Linux only; detaching a live inferior during close requires a verified durable output TTY. Startup suppresses init files and auto-loading, preferring MI3. Optional inferior_tty selects a verified terminal for later inferior runs; keep it available after GDB exits so close can detach a live inferior safely. The session belongs to this REA server process.",
     inputSchema: z.strictObject({
       inferior_tty: localPathStringSchema
         .optional()
@@ -38,7 +38,7 @@ export const GDB_TOOL_CONTRACTS = [
     ...toolContractMetadata("gdb_console"),
     kind: "native-provider",
     description:
-      "Run one unrestricted GDB CLI command through MI interpreter-exec console and return raw MI, console, target, and log records inline with Evidence. Default detail complete preserves the original Evidence. Explicit detail summary retains that complete parent and returns every ordered MI record once, omitting duplicate stream groupings and raw mirrors; parent_evidence_id supports later inspect_analysis_view summary queries and complete Evidence export. A command timeout preserves collected records with completion_status unknown and stops the owned debugger session. Commands can execute shell, alter target state, access files, and use network. Closing the debugger never implies target termination. In a shared MCP server, this admitted command closes any active binary-analysis session; after its effects have settled, call open_binary before further analysis. Close an active Ghidra session explicitly first.",
+      "Run one unrestricted command in a persistent GDB session; commands can run shell, change target state, access files and network. Returns ordered MI/console/target/log Evidence. A timeout retains collected records with completion_status unknown and stops the owned debugger; closing does not imply target termination. Default complete preserves full Evidence; summary retains it and omits duplicate stream/raw mirrors for inspect_analysis_view summary queries. In a shared server this command retires active binary analysis: close Ghidra explicitly first, then reopen the binary after command effects settle.",
     inputSchema: z.strictObject({
       session_id: sessionId,
       command: z.string().min(1),
@@ -63,7 +63,7 @@ export const GDB_TOOL_CONTRACTS = [
     ...toolContractMetadata("gdb_session_status"),
     kind: "native-provider",
     description:
-      "Return the observed lifecycle state and bounded recent MI records and process diagnostics for one persistent REA GDB session; truncation and invalid-UTF-8 fields report discarded or lossy data.",
+      "Return the observed lifecycle state and bounded recent MI records and process diagnostics for one persistent REA GDB session; closed_reason says why a closed session stopped, and truncation and invalid-UTF-8 fields report discarded or lossy data.",
     inputSchema: z.strictObject({ session_id: sessionId }),
     outputSchema: z.strictObject({
       session_id: sessionId,
@@ -79,6 +79,12 @@ export const GDB_TOOL_CONTRACTS = [
       diagnostics_truncated: z.boolean(),
       inferior_tty: z.string().nullable(),
       inferior_tty_verified: z.boolean(),
+      closed_reason: z
+        .string()
+        .exactOptional()
+        .describe(
+          "Present when state is closed: why the session stopped accepting commands. Close it and start a new session to continue.",
+        ),
     }),
     examples: [
       {

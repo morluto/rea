@@ -44,7 +44,9 @@ are outside admitted signature semantics and keep unknown mappings.
 ## Resource admission
 
 Typed producer rows, names and declaration tokenization are admitted before
-allocation against the existing 32 MiB WABT output representation capacity.
+allocation against the selected `max_interface_bytes` allowance (default 32 MiB).
+Inspection and comparison select this allowance independently; comparison cannot
+restore producer facts omitted under a smaller inspection allowance.
 Comparison uses linear grouping and cooperative transport yields; it never
 builds Cartesian duplicate pairings. CLI JSON input retains the shared file
 admission gate. Token usage and peak process-family memory remain unmeasured.

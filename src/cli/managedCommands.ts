@@ -19,9 +19,39 @@ import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { registerProjectManagedApplicationGraph } from "./managedProjectGraphCommand.js";
 import { managedMembersInputSchema } from "../contracts/managed/managedToolContracts.js";
+import { managedReconstructionImportRequestSchema } from "../domain/managed/managedReconstruction.js";
+import { managedNativeVerificationRequestSchema } from "../domain/managed/managedNativeVerificationSchemas.js";
+import { getEvidenceInputContract } from "../domain/evidenceInputContract.js";
+import { jsonInputArgument } from "./jsonInputArgument.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { managedInspectionBudgetShape } from "../domain/managed/managedInspectionLimits.js";
+import { cliDecimalField } from "./options.js";
+
+const managedBudgetOptions = {
+  maxSnapshotBytes: cliDecimalField(
+    managedInspectionBudgetShape.max_snapshot_bytes,
+  ),
+  maxMetadataRepresentationBytes: cliDecimalField(
+    managedInspectionBudgetShape.max_metadata_representation_bytes,
+  ),
+};
+
+const managedBudgetParameters = (options: {
+  readonly maxSnapshotBytes?: number | undefined;
+  readonly maxMetadataRepresentationBytes?: number | undefined;
+}) => ({
+  ...(options.maxSnapshotBytes === undefined
+    ? {}
+    : { max_snapshot_bytes: options.maxSnapshotBytes }),
+  ...(options.maxMetadataRepresentationBytes === undefined
+    ? {}
+    : {
+        max_metadata_representation_bytes:
+          options.maxMetadataRepresentationBytes,
+      }),
+});
 
 export const registerManagedCommands = (
   cli: CliInstance,
@@ -49,12 +79,13 @@ const registerInspectManagedArtifact = (
         "Managed PE executable or assembly path",
       ),
     }),
-    run: ({ args }) =>
+    options: z.object(managedBudgetOptions),
+    run: ({ args, options }) =>
       logCliCommand(logger, "inspect-managed-artifact", () =>
         runProviderAnalysis(
           args.path,
           "inspect_managed_artifact",
-          {},
+          managedBudgetParameters(options),
           logger,
         ).then(projectCliAnalysisResult),
       ),
@@ -75,6 +106,7 @@ const registerInspectManagedMembers = (
       ),
     }),
     options: z.object({
+      ...managedBudgetOptions,
       type: managedMembersInputSchema.shape.type_names.describe(
         "Inspect only members declared by this exact type full name, and the string literals they load, such as System.Threading.Monitor; a nested type is named by its bare name, which selects every nested type of that name (repeatable)",
       ),
@@ -93,7 +125,12 @@ const registerInspectManagedMembers = (
           runProviderAnalysis(
             args.path,
             "inspect_managed_members",
-            options.type === undefined ? {} : { type_names: options.type },
+            {
+              ...managedBudgetParameters(options),
+              ...(options.type === undefined
+                ? {}
+                : { type_names: options.type }),
+            },
             logger,
             signal,
             {
@@ -123,12 +160,13 @@ const registerInspectManagedNativeBoundaries = (
         "Managed PE executable or assembly path",
       ),
     }),
-    run: ({ args }) =>
+    options: z.object(managedBudgetOptions),
+    run: ({ args, options }) =>
       logCliCommand(logger, "inspect-managed-native-boundaries", () =>
         runProviderAnalysis(
           args.path,
           "inspect_managed_native_boundaries",
-          {},
+          managedBudgetParameters(options),
           logger,
         ).then(projectCliAnalysisResult),
       ),
@@ -153,6 +191,7 @@ const registerCompareManagedMembers = (
       "Compare managed PE/CLI member inventories by exact declared type, name, and signature; names alone never form a match",
     args: compareManagedMemberArgs,
     options: z.object({
+      ...managedBudgetOptions,
       type: managedMembersInputSchema.shape.type_names.describe(
         "Compare only members declared by this exact type full name on both sides, as selected by inspect-managed-members --type; use it when a whole-assembly comparison exceeds capacity (repeatable)",
       ),
@@ -167,6 +206,15 @@ const registerCompareManagedMembers = (
                 {
                   leftPath: args.leftPath,
                   rightPath: args.rightPath,
+                  ...(options.maxSnapshotBytes === undefined
+                    ? {}
+                    : { maxSnapshotBytes: options.maxSnapshotBytes }),
+                  ...(options.maxMetadataRepresentationBytes === undefined
+                    ? {}
+                    : {
+                        maxRepresentationBytes:
+                          options.maxMetadataRepresentationBytes,
+                      }),
                   ...(options.type === undefined
                     ? {}
                     : { typeNames: options.type }),
@@ -196,9 +244,11 @@ const registerImportManagedReconstruction = (
     description:
       "Import decompiler-produced managed reconstruction against exact static member evidence",
     args: z.object({
-      inputJson: z
-        .string()
-        .describe("Inline managed reconstruction JSON or JSON file path"),
+      inputJson: jsonInputArgument(
+        "Inline managed reconstruction JSON or JSON file path",
+        getEvidenceInputContract(managedReconstructionImportRequestSchema)
+          .frameSchema,
+      ),
     }),
     options: z.object({ evidenceBundle: evidenceBundleOption }),
     run: ({ args, options }) =>
@@ -234,9 +284,11 @@ const registerVerifyManagedNativeBoundaries = (
     description:
       "Verify managed P/Invoke declarations against authenticated native Evidence",
     args: z.object({
-      inputJson: z
-        .string()
-        .describe("Inline managed/native verification JSON or JSON file path"),
+      inputJson: jsonInputArgument(
+        "Inline managed/native verification JSON or JSON file path",
+        getEvidenceInputContract(managedNativeVerificationRequestSchema)
+          .frameSchema,
+      ),
     }),
     options: z.object({ evidenceBundle: evidenceBundleOption }),
     run: ({ args, options }) =>

@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { createInspectionResources } from "../../tests/fixtures/inspectionResources.js";
+import { hopperImageCopyFileSystem } from "../../tests/fixtures/hopperImageCopyFileSystem.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
@@ -445,12 +446,13 @@ it("retains the caller reason when a FAT copy is cancelled after its final write
     {
       resourceScope: new ArtifactResourceScope(),
       signal: controller.signal,
-      observer: {
-        afterChunkWritten: async (copiedBytes) => {
+      fileSystem: hopperImageCopyFileSystem(
+        destination,
+        async (copiedBytes) => {
           expect(copiedBytes).toBe(FAT32_SLICE_SIZE);
           controller.abort(reason);
         },
-      },
+      ),
     },
   );
 
@@ -791,12 +793,13 @@ it("retains an owned partial thin image and exact cancellation reason after a wr
     {
       resourceScope: new ArtifactResourceScope(),
       signal: controller.signal,
-      observer: {
-        afterChunkWritten: async (copiedBytes) => {
+      fileSystem: hopperImageCopyFileSystem(
+        destination,
+        async (copiedBytes) => {
           announceWrite?.(copiedBytes);
           await writeGate;
         },
-      },
+      ),
     },
   );
 
@@ -835,8 +838,9 @@ it.each([0, 129])(
     expect(result.error).toMatchObject({
       _tag: "BinaryTargetError",
       path,
-      reason:
-        "FAT architecture table is truncated or exceeds the supported 128 entries",
+      reason: expect.stringMatching(
+        /FAT architecture table.*truncated.*128 entries/i,
+      ),
     });
   },
 );

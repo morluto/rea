@@ -17,7 +17,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
-import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import { releaseAfter, withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 
 if (process.platform !== "linux")
@@ -30,6 +30,19 @@ if (!isAbsolute(process.env.REA_SIGROK_COMMAND ?? ""))
   );
 const entrypoint =
   process.argv[2] ?? fileURLToPath(new URL("./rea.mjs", import.meta.url));
+// Read host limits before acquiring the root so a failure cannot leak it.
+const inheritedAddressSpace = (await readFile("/proc/self/limits", "utf8"))
+  .split("\n")
+  .find((line) => line.startsWith("Max address space "))
+  ?.trim()
+  .match(/^Max address space\s+(\S+)\s+(\S+)\s+bytes$/u);
+assert.ok(inheritedAddressSpace);
+const expectedAddressSpace = Math.min(
+  1073741824,
+  ...inheritedAddressSpace
+    .slice(1)
+    .map((value) => (value === "unlimited" ? Infinity : Number(value))),
+);
 const run = createVerifierRun();
 const root = await PrivateRuntimeRoot.create({
   prefix: "rea-signal-verifier-",
@@ -93,18 +106,6 @@ lines.push(`#${tick + 1000}`, "1!");
 const source = lines.join("\n") + "\n";
 let cases = 0;
 const discoveryMeasurements = [];
-const inheritedAddressSpace = (await readFile("/proc/self/limits", "utf8"))
-  .split("\n")
-  .find((line) => line.startsWith("Max address space "))
-  ?.trim()
-  .match(/^Max address space\s+(\S+)\s+(\S+)\s+bytes$/u);
-assert.ok(inheritedAddressSpace);
-const expectedAddressSpace = Math.min(
-  1073741824,
-  ...inheritedAddressSpace
-    .slice(1)
-    .map((value) => (value === "unlimited" ? Infinity : Number(value))),
-);
 
 await withVerifierCleanup(async () => {
   await writeFile(path, source);
@@ -437,7 +438,14 @@ await withVerifierCleanup(async () => {
     "paged.vcd",
     "recording with spaces.vcd",
   ]);
-}, [() => client.close(), () => transport.close(), () => root.close()]);
+}, [
+  // The MCP server child reads files under the root until it has exited.
+  releaseAfter(
+    [() => client.close(), () => transport.close()],
+    () => root.close(),
+    root.path,
+  ),
+]);
 console.log(
   JSON.stringify(
     {

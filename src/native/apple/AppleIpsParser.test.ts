@@ -59,6 +59,30 @@ it("accepts only JSON whitespace around each object", () => {
   );
 });
 
+it("accepts previously recorded rows that omit newly added unknown-key fields", () => {
+  const bytes = appleIpsBytes();
+  const current = parseAppleIps(bytes, artifact(bytes), input);
+  expect(current.threads.length).toBeGreaterThan(0);
+  expect(current.threads[0]?.frames.length).toBeGreaterThan(0);
+  expect(current.images.length).toBeGreaterThan(0);
+  const historical = {
+    ...current,
+    threads: current.threads.map(
+      ({ unlisted_keys: _threadKeys, ...thread }) => ({
+        ...thread,
+        frames: thread.frames.map(
+          ({ unlisted_keys: _frameKeys, ...frame }) => frame,
+        ),
+      }),
+    ),
+    images: current.images.map(
+      ({ unlisted_keys: _imageKeys, ...image }) => image,
+    ),
+  };
+  expect(appleIpsSchema.safeParse(historical).success).toBe(true);
+  expect(appleIpsSchema.safeParse(current).success).toBe(true);
+});
+
 it.each([
   "not-a-uuid",
   "Z".repeat(32),
@@ -170,17 +194,17 @@ it("reads a 309 crash report, uppercase UUID, and lossless register", () => {
 
 it("refuses a stackshot bug_type without a crash body", () => {
   const bytes = appleIpsBytes({ bugType: "288" });
-  expect(() => parseAppleIps(bytes, artifact(bytes), input)).toThrow(
-    AppleIpsFormatFailure,
-  );
+  let failure: unknown;
   try {
     parseAppleIps(bytes, artifact(bytes), input);
   } catch (cause) {
-    expect(cause).toMatchObject({
-      kind: "unsupported",
-      message: expect.stringContaining("288"),
-    });
+    failure = cause;
   }
+  expect(failure).toBeInstanceOf(AppleIpsFormatFailure);
+  expect(failure).toMatchObject({
+    kind: "unsupported",
+    message: expect.stringContaining("288"),
+  });
 });
 
 it("fails closed on a truncated crash body", () => {

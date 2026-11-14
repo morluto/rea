@@ -4,7 +4,7 @@ import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js
 import {
   ownMember,
   isObject,
-  locateItem,
+  locateItems,
   pointerTo,
   same,
   scalarText,
@@ -174,7 +174,7 @@ const requestRule = (
   index: BodyIndex,
   field: string,
   value: JsonValue,
-): FieldRule | undefined => {
+): FieldRule | "ambiguous-path" | undefined => {
   const { body, pathValues } = evidence.call;
   if (Object.hasOwn(body, field) && same(body[field], value))
     return { field, rule: "echo" };
@@ -185,9 +185,11 @@ const requestRule = (
     if (from !== undefined) return { field, rule: "copy", from };
   }
   const text = scalarText(value);
-  for (const [name, pathValue] of pathValues)
-    if (text !== undefined && text === pathValue)
-      return { field, rule: "path", from: name };
+  const paths = [...pathValues].filter(
+    ([, value]) => text !== undefined && text === value,
+  );
+  if (paths.length > 1) return "ambiguous-path";
+  if (paths.length === 1) return { field, rule: "path", from: paths[0]![0] };
   const slugged = typeof value === "string" && value.length >= 3;
   const source = slugged ? index.slugs.get(value) : undefined;
   return source === undefined ? undefined : slugRule(field, source);
@@ -357,8 +359,14 @@ export const explainCreate = (
   const index = indexBody(evidence.call.body);
   // The member each slug the held entities' `&` spellings refused was slugged from.
   const refusedSlugs = new Map<string, string>();
+  let ambiguousPath = false;
   for (const [field, value] of Object.entries(evidence.entity)) {
     const requested = requestRule(evidence, index, field, value);
+    if (requested === "ambiguous-path") {
+      ambiguousPath = true;
+      unexplained.push(field);
+      continue;
+    }
     const held = heldSlugRule(requested, evidence.call.body, evidence.type);
     if (requested?.rule === "slug" && held === undefined)
       refusedSlugs.set(field, requested.from);
@@ -468,12 +476,14 @@ export const explainCreate = (
     rules,
     body: blank.length === 0 ? shaped : { ...shaped, blank },
     // A template rebuilds only its generated value, so other text it keeps ties it like a constant.
-    tied: [
-      ...[...constants, ...templates].map((field) =>
-        ownMember(evidence.entity, field)!,
-      ),
-      ...literals,
-    ].some((text) => tokens.some((token) => containsDelimited(text, token))),
+    tied:
+      ambiguousPath ||
+      [
+        ...[...constants, ...templates].map((field) =>
+          ownMember(evidence.entity, field)!,
+        ),
+        ...literals,
+      ].some((text) => tokens.some((token) => containsDelimited(text, token))),
   };
 };
 
@@ -646,8 +656,11 @@ export const responseShapeOf = (
 ): WriteResponse => {
   if (empty) return { ordinal, shape: "empty", pointer: null };
   if (body === undefined) return { ordinal, shape: "recorded", pointer: null };
-  const located = locateItem(body, entity.id);
-  if (located?.keys.includes(entity.idField) === true)
+  const candidates = locateItems(body, entity.id, entity.idField);
+  if (candidates.length > 1)
+    return { ordinal, shape: "recorded", pointer: null };
+  const located = candidates[0];
+  if (located !== undefined)
     return { ordinal, shape: "entity", pointer: located.pointer };
   if (scalarText(body) === entity.id)
     return { ordinal, shape: "identity", pointer: "" };

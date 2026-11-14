@@ -49,11 +49,15 @@ afterEach(() => {
   vi.mocked(runOwnedCommand).mockReset();
 });
 
-const completed = (text: string): ProviderProcessSnapshot =>
-  ({
-    stdout: { text },
-    stderr: { text: "" },
-  }) as ProviderProcessSnapshot;
+const completed = (text: string): ProviderProcessSnapshot => {
+  const bytes = Buffer.byteLength(text);
+  return {
+    stdout: { text, bytes, observedBytes: bytes },
+    stderr: { text: "", bytes: 0, observedBytes: 0 },
+    exitCode: 0,
+    signal: null,
+  };
+};
 
 const installLauncher = (): void => {
   vi.mocked(runOwnedCommand).mockImplementation(async (spawn, limits) => {

@@ -1,3 +1,4 @@
+import { jsonPointerTokens } from "../jsonPointer.js";
 import type { JsonValue } from "../jsonValue.js";
 
 type JsonObject = { [key: string]: JsonValue };
@@ -7,12 +8,7 @@ const isObject = (value: JsonValue | undefined): value is JsonObject =>
 
 /** A list counter's member names: a top-level member's name not starting with `/`, else a pointer (`/pageInfo/totalRows`, `/~1total`). */
 export const counterPath = (counter: string): string[] =>
-  counter.startsWith("/")
-    ? counter
-        .slice(1)
-        .split("/")
-        .map((token) => token.replaceAll("~1", "/").replaceAll("~0", "~"))
-    : [counter];
+  counter.startsWith("/") ? jsonPointerTokens(counter) : [counter];
 
 /** A list counter's recorded value, or undefined when the body lacks it. */
 export const counterAt = (

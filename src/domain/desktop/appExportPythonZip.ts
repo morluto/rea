@@ -1,14 +1,13 @@
 /**
- * The exported module's zip reader: the central directory read a record at a
- * time, entries read in bounded chunks, and each entry's view by the rules a
- * file's follow, with REA's limits and wording. Part of the module's helpers.
+ * The exported module's zip and gzip readers: the central directory read a
+ * record at a time, entries read in bounded chunks, a gzip file's document
+ * within an entry's limits, and each one's view by the rules a file's follow,
+ * with REA's limits and wording. Part of the module's helpers.
  */
 export const PYTHON_ZIP_HELPERS = String.raw`
-MAX_ZIP_ENTRIES = 1000
-MAX_ZIP_ENTRY_BYTES = 16 * 1024 * 1024
-MAX_ZIP_BYTES = 64 * 1024 * 1024
-MAX_ZIP_RATIO = 100
 ZIP_READ_CHUNK = 64 * 1024
+#: Small, since the end of each gzip member copies what is left of the piece it was read from.
+GZIP_READ_CHUNK = 4 * 1024
 ZIP_END = b"PK\x05\x06"
 ZIP_CENTRAL = b"PK\x01\x02"
 ZIP64_LOCATOR = b"PK\x06\x07"
@@ -24,13 +23,7 @@ def _entry_view(name: str, data: bytes) -> dict:
     for header, form, inside in NOT_READ_INSIDE:
         if data.startswith(header):
             return {"format": form, "view": None, "error": f"{inside} inside an archive is not read"}
-    try:
-        text = data.decode("utf-8-sig") if b"\x00" not in data[:8192] else None
-    except UnicodeDecodeError:
-        text = None
-    if text is None:
-        return {"format": "binary", "view": None}
-    return _text_view(name, text, len(data))
+    return _bytes_view(name, data)
 
 
 def _zip_refusal(info, spent: int):
@@ -40,11 +33,11 @@ def _zip_refusal(info, spent: int):
     if info.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
         return f"compressed with method {info.compress_type}, which the view does not read"
     if info.file_size > MAX_ZIP_ENTRY_BYTES:
-        return "larger than the 16 MiB an entry's view reads"
+        return f"larger than the {_view_byte_limit(MAX_ZIP_ENTRY_BYTES)} an entry's view reads"
     if info.file_size > MAX_ZIP_RATIO * info.compress_size:
         return f"expands more than {MAX_ZIP_RATIO} times, so it is not read"
     if spent + info.file_size > MAX_ZIP_BYTES:
-        return "past the 64 MiB read from one archive"
+        return f"past the {_view_byte_limit(MAX_ZIP_BYTES)} read from one archive"
     return None
 
 
@@ -67,16 +60,16 @@ def _entry_bytes(archive, info):
     return data if len(data) == info.file_size else None
 
 
-def _zip_entry(archive, info, refusal):
+def _zip_entry(archive, info, refusal, name):
     """One entry of a zip view: its name, size and digest, and its own format and view, or why it was not read."""
-    entry = {"name": info.filename, "size": info.file_size, "sha256": None, "format": None, "view": None,
+    entry = {"name": name, "size": info.file_size, "sha256": None, "format": None, "view": None,
              "view_error": refusal}
     if refusal is not None:
         return entry
     data = _entry_bytes(archive, info)
     if data is None:
         return {**entry, "view_error": "its compressed data is damaged"}
-    view = _entry_view(info.filename, data)
+    view = _entry_view(name, data)
     return {**entry, "sha256": hashlib.sha256(data).hexdigest(), "format": view["format"],
             "view": view.get("view"), "view_error": view.get("error")}
 
@@ -113,35 +106,48 @@ def _zip_end(file, size: int):
 
 
 def _zip_unicode_path(raw: bytes, flags: int, extra: bytes):
-    """An Info-ZIP Unicode Path when zip.js uses it: version 1, no UTF-8 flag, and the CRC-32 of the stored name."""
-    at = 0
+    """The last Info-ZIP Unicode Path, validated only after it replaces earlier claims, as in zip.js."""
+    at, data, length = 0, None, 0
+    while at + 4 <= len(extra):
+        kind, size = struct.unpack_from("<HH", extra, at)
+        if kind == 0x7075:
+            data, length = extra[at + 4:at + 4 + size], size
+        at += 4 + size
+    usable = (data is not None and length >= 5 and len(data) == length and data[0] == 1 and not flags & 0x800
+              and int.from_bytes(data[1:5], "little") == zlib.crc32(raw))
+    return data[5:] if usable else None
+
+
+def _zip_name(raw: bytes, flags: int, unicode_path):
+    """The exact REA name, shared by directory classification and the retained entry view."""
+    if flags & 0x800:
+        return raw.decode("utf-8")
+    return raw.decode("cp437") if unicode_path is None else unicode_path.decode("utf-8")
+
+
+def _zip_kept_record(fixed: bytes, rest: bytes, name_length: int, extra_length: int):
+    """Remove already-interpreted Unicode claims from the bounded decoder copy. zipfile otherwise interprets each
+    occurrence, retaining an earlier valid name or rejecting invalid UTF-8 that zip.js already superseded.
+    All other fields, comments and the original artifact bytes remain unchanged."""
+    raw, extra = rest[:name_length], rest[name_length:name_length + extra_length]
+    kept, at = bytearray(), 0
     while at + 4 <= len(extra):
         kind, length = struct.unpack_from("<HH", extra, at)
-        if kind == 0x7075:
-            data = extra[at + 4:at + 4 + length]
-            usable = (length >= 5 and len(data) == length and data[0] == 1 and not flags & 0x800
-                      and int.from_bytes(data[1:5], "little") == zlib.crc32(raw))
-            return data[5:] if usable else None
-        at += 4 + length
-    return None
-
-
-def _zip_ends_in_slash(raw: bytes, flags: int, extra: bytes):
-    """Whether an entry's name, as REA decodes it, ends in a slash; None when it must be UTF-8 and is not."""
-    utf8 = _zip_unicode_path(raw, flags, extra)
-    if utf8 is None and flags & 0x800:
-        utf8 = raw
-    if utf8 is None:
-        return raw.endswith(b"/")
-    try:
-        return utf8.decode("utf-8").endswith("/")
-    except UnicodeDecodeError:
-        return None
+        end = at + 4 + length
+        if end > len(extra):
+            raise zipfile.BadZipFile("Corrupt extra field")
+        if kind != 0x7075:
+            kept += extra[at:end]
+        at = end
+    kept += extra[at:]
+    header = bytearray(fixed)
+    struct.pack_into("<H", header, 30, len(kept))
+    return header + raw + kept + rest[name_length + extra_length:]
 
 
 def _zip_directory(file, size: int, keep: int):
     """An archive's central directory read a record at a time, keeping the first file entries' records, as many as keep allows, and
-    counting the rest, as REA reads it: (start, declared offset, records, count), or None when it cannot be read.
+    counting the rest, as REA reads it: (start, declared offset, records, count, names), or None when it cannot be read.
     Directories are told apart as zip.js tells them: a final slash, a Unix directory mode, or the MS-DOS attribute."""
     located = _zip_end(file, size)
     if located is None:
@@ -151,7 +157,7 @@ def _zip_directory(file, size: int, keep: int):
     if start < 0:
         return None
     file.seek(start)
-    records, count, at = [], 0, start
+    records, names, count, at = [], [], 0, start
     while at < end:
         fixed = file.read(46)
         if at + 46 > end or len(fixed) < 46 or fixed[:4] != ZIP_CENTRAL:
@@ -163,14 +169,14 @@ def _zip_directory(file, size: int, keep: int):
         at += 46 + name_length + extra_length + comment_length
         if len(rest) < name_length + extra_length + comment_length or at > end:
             return None
-        slash = _zip_ends_in_slash(rest[:name_length], flags, rest[name_length:name_length + extra_length])
-        if slash is None:
-            return None
-        if not (slash or (external >> 16) & 0o170000 == 0o040000 or (made_by >> 8 == 0 and external & 0x10)):
+        unicode_path = _zip_unicode_path(rest[:name_length], flags, rest[name_length:name_length + extra_length])
+        name = _zip_name(rest[:name_length], flags, unicode_path)
+        if not (name.endswith("/") or (external >> 16) & 0o170000 == 0o040000 or (made_by >> 8 == 0 and external & 0x10)):
             count += 1
             if len(records) < keep:
-                records.append(fixed + rest)
-    return start, declared, records, count
+                records.append(_zip_kept_record(fixed, rest, name_length, extra_length))
+                names.append(name)
+    return start, declared, records, count, names
 
 
 class _BoundedArchive(io.RawIOBase):
@@ -207,31 +213,74 @@ class _BoundedArchive(io.RawIOBase):
         return count
 
 
-def _zip(path: Path) -> dict:
+def _zip(file, size: int) -> dict:
     """A zip archive's file entries in archive order, up to REA's entry, size, ratio and archive limits; nothing is
     extracted to disk, no archive inside is opened, and zipfile is shown only the directory records listed."""
     entries, spent = [], 0
     try:
-        with path.open("rb") as file:
-            directory = _zip_directory(file, os.fstat(file.fileno()).st_size, MAX_ZIP_ENTRIES)
-            if directory is None:
-                raise zipfile.BadZipFile("no readable central directory")
-            start, declared, records, count = directory
-            kept = b"".join(records)
-            offset = declared if declared <= 0xFFFFFFFF else start
-            # zipfile follows a Zip64 locator signature wherever one sits before the end record, and the kept records
-            # may end in those bytes, so a real Zip64 end record and locator for them come first.
-            tail = (kept
-                    + struct.pack("<4sQ2H2I4Q", ZIP64_END, 44, 45, 45, 0, 0, len(records), len(records), len(kept), offset)
-                    + struct.pack("<4sIQI", ZIP64_LOCATOR, 0, offset + len(kept), 1)
-                    + struct.pack("<4s4H2IH", ZIP_END, 0, 0, len(records), len(records), len(kept), offset, 0))
-            with zipfile.ZipFile(_BoundedArchive(file, start, tail)) as archive:
-                for info in archive.infolist():
-                    refusal = _zip_refusal(info, spent)
-                    spent += info.file_size if refusal is None else 0
-                    entries.append(_zip_entry(archive, info, refusal))
+        directory = _zip_directory(file, size, MAX_ZIP_ENTRIES)
+        if directory is None:
+            raise zipfile.BadZipFile("no readable central directory")
+        start, declared, records, count, names = directory
+        kept = b"".join(records)
+        offset = declared if declared <= 0xFFFFFFFF else start
+        # zipfile follows a Zip64 locator signature wherever one sits before the end record, and the kept records
+        # may end in those bytes, so a real Zip64 end record and locator for them come first.
+        tail = (kept
+                + struct.pack("<4sQ2H2I4Q", ZIP64_END, 44, 45, 45, 0, 0, len(records), len(records), len(kept), offset)
+                + struct.pack("<4sIQI", ZIP64_LOCATOR, 0, offset + len(kept), 1)
+                + struct.pack("<4s4H2IH", ZIP_END, 0, 0, len(records), len(records), len(kept), offset, 0))
+        with zipfile.ZipFile(_BoundedArchive(file, start, tail)) as archive:
+            for info, name in zip(archive.infolist(), names, strict=True):
+                refusal = _zip_refusal(info, spent)
+                spent += info.file_size if refusal is None else 0
+                entries.append(_zip_entry(archive, info, refusal, name))
     except (zipfile.BadZipFile, zlib.error, EOFError, NotImplementedError, OSError, ValueError, struct.error):
         return {"format": "zip", "view": None, "error": "not a readable zip archive"}
     view = {"entries": entries, "entry_count": count, "truncated": count > len(entries)}
     return {"format": "zip", "view": view, "truncated": view["truncated"]}
+
+
+def _gunzip(data: bytes, limit: int):
+    """A gzip stream's document, its members joined as REA joins them, or None once it passes limit bytes, where
+    decompressing stops: data after a member that starts with a zero byte is padding and ends the stream. It is read
+    a piece at a time, so a member's end carries over only the rest of its piece. Raises zlib.error or EOFError when
+    the stream is damaged or cut short."""
+    document, member, rest, at = bytearray(), zlib.decompressobj(16 + zlib.MAX_WBITS), b"", 0
+    while True:
+        if not rest:
+            if at >= len(data):
+                raise EOFError("the gzip stream is cut short")
+            rest, at = data[at:at + GZIP_READ_CHUNK], at + GZIP_READ_CHUNK
+        document += member.decompress(rest, limit + 1 - len(document))
+        if len(document) > limit:
+            return None
+        if not member.eof:
+            rest = member.unconsumed_tail
+            continue
+        rest = member.unused_data
+        if not rest and at < len(data):
+            rest, at = data[at:at + GZIP_READ_CHUNK], at + GZIP_READ_CHUNK
+        if not rest or rest[0] == 0:
+            return bytes(document)
+        member = zlib.decompressobj(16 + zlib.MAX_WBITS)
+
+
+def _gzip(name: str, data: bytes) -> dict:
+    """A gzip file's view: its document's, decompressed within an archive entry's size and ratio limits and read by
+    the rules a file's follow; a database inside is not read."""
+    compressed = {"format": None, "compression": "gzip", "view": None}
+    try:
+        document = _gunzip(data, min(MAX_ZIP_ENTRY_BYTES, MAX_ZIP_RATIO * len(data)))
+    except (zlib.error, EOFError):
+        return {**compressed, "error": "not a readable gzip stream"}
+    if document is None:
+        return {**compressed, "error": f"expands more than {MAX_ZIP_RATIO} times, so it is not read"
+                if MAX_ZIP_RATIO * len(data) < MAX_ZIP_ENTRY_BYTES
+                else f"larger than the {_view_byte_limit(MAX_ZIP_ENTRY_BYTES)} a compressed document's view reads"}
+    for header, form, inside in NOT_READ_INSIDE:
+        if form != "zip" and document.startswith(header):
+            return {**compressed, "format": form, "error": f"{inside} inside a gzip file is not read"}
+    view = _zip(io.BytesIO(document), len(document)) if document.startswith(ZIP_HEADER) else _bytes_view(name, document)
+    return {**view, "compression": "gzip"}
 `;

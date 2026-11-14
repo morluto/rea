@@ -14,6 +14,11 @@ import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
 import { withPlaywrightExecutionBoundary } from "./PlaywrightExecutionBoundary.js";
 import {
+  admitCdpReply,
+  CdpMalformedReply,
+  type CdpSendResult,
+} from "./protocol/CdpCommands.js";
+import {
   releaseLateScenarioCommand,
   scenarioCommandPending,
   scenarioCommandTimeoutMs,
@@ -26,20 +31,6 @@ const storageKeyResponse = z.object({ storageKey: z.string() });
 const targetInfoResponse = z.object({
   targetInfo: z.object({ targetId: z.string() }),
 });
-interface StorageFrameTree {
-  readonly frame: {
-    readonly id: string;
-    readonly securityOrigin?: string | undefined;
-  };
-  readonly childFrames?: StorageFrameTree[] | undefined;
-}
-const storageFrameTree: z.ZodType<StorageFrameTree> = z.lazy(() =>
-  z.object({
-    frame: z.object({ id: z.string(), securityOrigin: z.string().optional() }),
-    childFrames: z.array(storageFrameTree).optional(),
-  }),
-);
-const frameTreeResponse = z.object({ frameTree: storageFrameTree });
 type StorageEventMethod =
   | "Runtime.executionContextCreated"
   | "Runtime.executionContextDestroyed"
@@ -93,14 +84,21 @@ type StorageSeed = {
   session: [string, string][];
 };
 
+type StorageTransportSend = (
+  method: string,
+  params?: Record<string, unknown>,
+  timeoutMs?: number,
+) => Promise<unknown>;
+
 interface StorageTarget {
   readonly parentId: string | undefined;
   readonly topLevelTargetId: string;
-  readonly send: (
-    method: string,
+  /** Replies of registered commands are admitted by their result schemas. */
+  readonly send: <M extends string>(
+    method: M,
     params?: Record<string, unknown>,
     timeoutMs?: number,
-  ) => Promise<unknown>;
+  ) => Promise<CdpSendResult<M>>;
   readonly contexts: Map<
     number,
     z.infer<typeof storageContextSchema>["context"]
@@ -339,12 +337,17 @@ export class PlaywrightScenarioStorage {
   private createTarget(
     parentId: string | undefined,
     topLevelTargetId: string,
-    send: StorageTarget["send"],
+    send: StorageTransportSend,
   ): StorageTarget {
     return {
       parentId,
       topLevelTargetId,
-      send,
+      send: async (method, params, timeoutMs) =>
+        admitCdpReply(
+          method,
+          await send(method, params, timeoutMs),
+          "capture_browser_scenario",
+        ),
       contexts: new Map(),
       scripts: new Map(),
       ready: Promise.resolve(),
@@ -381,11 +384,11 @@ export class PlaywrightScenarioStorage {
     });
   }
 
-  private sendObserved(
+  private sendObserved<M extends string>(
     target: StorageTarget,
-    method: string,
+    method: M,
     params?: Record<string, unknown>,
-  ): Promise<unknown> {
+  ): Promise<CdpSendResult<M>> {
     return withPlaywrightExecutionBoundary(
       () => target.send(method, params),
       undefined,
@@ -469,7 +472,8 @@ export class PlaywrightScenarioStorage {
     // A child command deadline is already the caller-facing failure. Storing
     // it keeps the command name, selected deadline, and recovery advice.
     this.#failure ??=
-      cause instanceof BrowserObservationError && cause.reason === "timeout"
+      cause instanceof CdpMalformedReply ||
+      (cause instanceof BrowserObservationError && cause.reason === "timeout")
         ? cause
         : new BrowserObservationError(
             "capture_browser_scenario",
@@ -542,19 +546,11 @@ export class PlaywrightScenarioStorage {
     target: StorageTarget,
     frameId: string,
   ): Promise<string> {
-    const { frameTree } = frameTreeResponse.parse(
-      await this.sendObserved(target, "Page.getFrameTree"),
-    );
-    const pending = [frameTree];
-    while (pending.length > 0) {
-      const current = pending.pop()!;
-      if (current.frame.id === frameId) {
-        const origin = current.frame.securityOrigin;
-        if (origin !== undefined && origin !== "") return origin;
-        break;
-      }
-      pending.push(...(current.childFrames ?? []));
-    }
+    const tree = await this.sendObserved(target, "Page.getFrameTree");
+    const origin = tree.frames.find(
+      (frame) => frame.facts.frameId === frameId,
+    )?.securityOrigin;
+    if (origin !== undefined && origin !== "") return origin;
     throw new Error(
       "The browser did not establish the private storage seed frame's security origin.",
     );

@@ -249,3 +249,20 @@ it("does not initialize a class self name during computed-key evaluation", () =>
   expect(ir.callSites[0]).toBeDefined();
   expect(ir.callSites[0]?.resolution).not.toBe("exact");
 });
+
+it.each(["__proto__", '"__proto__"', "['__proto__']"])(
+  "distinguishes prototype setters from own data keys in loader-write scoping: %s",
+  (key) => {
+    const ir = analyze(`
+      with ({require: local, [Symbol.unscopables]: {${key}: {require: true}}}) {
+        require = replacement;
+      }
+      const selected = require("node:fs");
+    `);
+    const selected = onlyBinding(ir, "selected");
+    if (key.startsWith("[")) {
+      // A computed key is an own data property, so it supplies no inherited exclusion.
+      expect(selected.provenance.status).toBe("module");
+    } else expect(selected.provenance.status).not.toBe("module");
+  },
+);

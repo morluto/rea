@@ -1,7 +1,10 @@
 import { IL2CPP_METADATA_PROVIDER_IDENTITY } from "./Il2CppMetadataProviderIdentity.js";
-import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
-import { Il2cppBinaryFormatFailure } from "./Il2cppBinaryFormat.js";
+import {
+  Il2cppBinaryFormatFailure,
+  IL2CPP_BINARY_BYTES,
+} from "./Il2cppBinaryFormat.js";
 import { Il2cppMetadataFormatFailure } from "./Il2cppMetadataFormat.js";
+import { inspectIl2cppMetadataV108 } from "./Il2cppMetadataV108.js";
 import type { AnalysisPartialObservation } from "../domain/analysisErrorBase.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { setImmediate } from "node:timers/promises";
@@ -11,13 +14,16 @@ import {
 } from "../artifacts/readStableArtifact.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { stableArtifactInputRecovery } from "../artifacts/StableArtifactFailure.js";
+import {
+  projectOwnedArtifactIdentityFailure,
+  projectSelectedArtifactFileFailure,
+  stableArtifactInputFailure,
+} from "../artifacts/StableArtifactFailure.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   artifactFileCompletion,
   bindArtifactFileCleanup,
-  artifactFileCancellationCause,
   assertArtifactReadActive,
 } from "../artifacts/ArtifactFileOperation.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -29,8 +35,6 @@ import { createIl2cppMetadataAdmission } from "./Il2cppMetadataAdmission.js";
 import { hexAddress as hex } from "./Il2cppBinaryImage.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import {
-  AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
@@ -59,8 +63,6 @@ import {
 
 const OPERATION = "inspect_il2cpp_metadata";
 const INPUT_BYTES = 256 * 1024 * 1024;
-// GameAssembly binaries of large games reach several hundred megabytes.
-const BINARY_BYTES = 1024 * 1024 * 1024;
 // A 12.9 MB Unity 6000.4 file with 112,232 methods serializes to 7.8 MB.
 const OUTPUT_BYTES = 64 * 1024 * 1024;
 /** Instruction form the module-array fallback matched, per architecture. */
@@ -71,9 +73,9 @@ const inferredReferenceForm = (architecture: string) =>
 const failureForPrimary = (
   facts: ArtifactFilePrimaryFacts,
   path: string,
-  field: "path" | "binary_path" = "path",
-  maximum = INPUT_BYTES,
-  metadataPath = path,
+  field: "path" | "binary_path",
+  maximum: number,
+  metadataPath: string,
 ): AnalysisError => {
   const { cause, origin } = facts;
   if (origin === "owned-or-classified" && cause instanceof AnalysisError)
@@ -114,22 +116,12 @@ const failureForPrimary = (
           },
         ]);
   }
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "integrity"
-  )
-    return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {
-      cause,
-    });
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "cancelled"
-  )
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
-    });
+  const identityFailure = projectOwnedArtifactIdentityFailure(
+    facts,
+    OPERATION,
+    path,
+  );
+  if (identityFailure !== undefined) return identityFailure;
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure
@@ -146,26 +138,16 @@ const failureForPrimary = (
         },
       );
     if (cause.reason === "path")
-      return new AnalysisInputError(
-        OPERATION,
-        { cause, ...stableArtifactInputRecovery(cause) },
-        [{ path: [field], reason: "invalid_format", message: cause.message }],
-      );
+      return stableArtifactInputFailure(cause, OPERATION, field);
   }
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(OPERATION, path, cause.code, {
-        cause,
-      });
-    if (isSelectedRegularFileError(cause))
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: [field],
-          reason: "invalid_value",
-          message: `Selected artifact could not be read (${String(cause.code)}): ${path}.`,
-        },
-      ]);
-  }
+  const fileFailure = projectSelectedArtifactFileFailure(
+    cause,
+    OPERATION,
+    path,
+    "artifact",
+    field,
+  );
+  if (fileFailure !== undefined) return fileFailure;
   return new ProviderAdapterError(
     IL2CPP_METADATA_PROVIDER_IDENTITY.id,
     OPERATION,
@@ -298,6 +280,7 @@ const metadataSourceEvidence = (
       }
     | undefined = undefined,
   previous?: AnalysisPartialObservation,
+  v108?: NonNullable<Awaited<ReturnType<typeof inspectIl2cppMetadataV108>>>,
 ) =>
   createEvidence(
     {
@@ -350,10 +333,16 @@ const metadataSourceEvidence = (
         ...(counts === undefined
           ? {}
           : { validated_section_row_counts: { ...counts } }),
+        ...(v108 === undefined ? {} : { version_108_partial_inventory: v108 }),
       },
       confidence: "observed",
       limitations: [
         "This partial source observation does not contain a complete metadata inventory. Section row counts, when available, are derived from the validated header extents and record layout; names and relationships may remain unexamined.",
+        ...(v108 === undefined
+          ? []
+          : [
+              "The version 108 header layout has not been checked against the reporter's file. Only section extents and a bounded sample of metadata strings were observed; type, method, literal, and binary layouts remain unverified and are not decoded.",
+            ]),
       ],
       locations: [
         { kind: "artifact-path", path: artifact.path },
@@ -469,6 +458,29 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
         const artifact = sourceArtifact(input.path, snapshot);
         observed.artifact = artifact;
         assertArtifactReadActive(options?.signal);
+        const v108 = await inspectIl2cppMetadataV108(
+          snapshot.bytes,
+          async () => {
+            await this.yieldControl();
+            assertArtifactReadActive(options?.signal);
+          },
+        );
+        assertArtifactReadActive(options?.signal);
+        if (v108 !== null) {
+          const failure = new AnalysisUnsupportedTargetError(
+            OPERATION,
+            input.path,
+            "unsupported-version: metadata version 108 has a partial header and string observation; type, method and binary layouts are not decoded",
+          );
+          failure.partialObservation = metadataSourceEvidence(
+            artifact,
+            undefined,
+            selectedBinarySource(),
+            undefined,
+            v108,
+          );
+          return err(failure);
+        }
         const limit = this.outputBytes;
         const admission = createIl2cppMetadataAdmission(
           limit,
@@ -523,7 +535,7 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
           try {
             const binary = await this.#readArtifact(
               binaryPath,
-              BINARY_BYTES,
+              IL2CPP_BINARY_BYTES,
               options?.signal,
               (artifact) => {
                 observed.binary = artifact;
@@ -556,7 +568,7 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
               cause,
               binaryPath,
               "binary_path",
-              BINARY_BYTES,
+              IL2CPP_BINARY_BYTES,
               input.path,
             );
             failure.partialObservation = metadataSourceEvidence(

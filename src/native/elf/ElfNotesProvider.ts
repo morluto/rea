@@ -1,28 +1,25 @@
+import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
 import {
+  projectOwnedArtifactIdentityFailure,
+  projectSelectedArtifactFileFailure,
   projectStableArtifactFailure,
-  stableArtifactInputRecovery,
+  stableArtifactInputFailure,
   projectArtifactCloseFailure,
 } from "../../artifacts/StableArtifactFailure.js";
-import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
+import {
+  type StableArtifactSnapshot,
+  readStableArtifact,
+} from "../../artifacts/readStableArtifact.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
-  artifactFileCancellationCause,
 } from "../../artifacts/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import type { ElfNotesPort } from "../../application/binaryDiagnostics/ElfNotesPort.js";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
-import {
-  AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
-  AnalysisInputError,
-  AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
   MAX_INSPECT_ELF_NOTE_ENTRIES,
@@ -31,7 +28,6 @@ import {
 } from "../../domain/native/elfNotes.js";
 import { err, ok } from "../../domain/result.js";
 import { ELF_NOTES_PROVIDER } from "../../domain/investigationProviders.js";
-import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
 import {
   ElfNoteSectionNameBudgetFailure,
   parseElfNotes,
@@ -57,9 +53,10 @@ export class ElfNotesProvider implements ElfNotesPort {
   }
 
   async inspect(input: InspectElfNotesInput, options?: ExecutionOptions) {
+    let snapshot: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
-        const snapshot = await readStableArtifact(
+        snapshot = await readStableArtifact(
           input.path,
           input.max_file_bytes,
           options?.signal,
@@ -79,7 +76,7 @@ export class ElfNotesProvider implements ElfNotesPort {
         );
       });
     } catch (cause) {
-      return err(elfNotesFailure(cause, input));
+      return err(elfNotesFailure(cause, input, snapshot));
     }
   }
 }
@@ -126,42 +123,14 @@ const elfNotesFailurePrimary = (
         remediationAction: sectionNameBudgetRemediation(cause),
       },
     );
-  if (cause instanceof BinaryFormatFailure)
-    return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(
-          OPERATION,
-          input.path,
-          cause.message,
-          { cause },
-        )
-      : new AnalysisInputError(OPERATION, { cause }, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: cause.message,
-          },
-        ]);
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "integrity"
-  )
-    return new AnalysisArtifactChangedError(
-      OPERATION,
-      input.path,
-      cause.message,
-      {
-        cause,
-      },
-    );
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "cancelled"
-  )
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
-    });
+  const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
+  if (formatFailure !== undefined) return formatFailure;
+  const identityFailure = projectOwnedArtifactIdentityFailure(
+    facts,
+    OPERATION,
+    input.path,
+  );
+  if (identityFailure !== undefined) return identityFailure;
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure
@@ -196,32 +165,15 @@ const elfNotesFailurePrimary = (
       );
     }
     if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(
-        OPERATION,
-        { cause, ...stableArtifactInputRecovery(cause) },
-        [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: cause.message,
-          },
-        ],
-      );
+      return stableArtifactInputFailure(cause, OPERATION);
   }
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(OPERATION, input.path, cause.code, {
-        cause,
-      });
-    if (isSelectedRegularFileError(cause))
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_value",
-          message: `Selected ELF image could not be read (${String(cause.code)}): ${input.path}.`,
-        },
-      ]);
-  }
+  const fileFailure = projectSelectedArtifactFileFailure(
+    cause,
+    OPERATION,
+    input.path,
+    "ELF image",
+  );
+  if (fileFailure !== undefined) return fileFailure;
   return new ArtifactOperationError(
     OPERATION,
     origin === "owned-or-classified" && cause instanceof ArtifactReaderFailure
@@ -233,7 +185,11 @@ const elfNotesFailurePrimary = (
   );
 };
 
-const elfNotesFailure = (cause: unknown, input: InspectElfNotesInput) => {
+const elfNotesFailure = (
+  cause: unknown,
+  input: InspectElfNotesInput,
+  snapshot?: StableArtifactSnapshot,
+) => {
   const primary = elfNotesFailurePrimary(
     artifactFilePrimaryFacts(cause),
     input,
@@ -244,5 +200,6 @@ const elfNotesFailure = (cause: unknown, input: InspectElfNotesInput) => {
     input.path,
     ELF_NOTES_PROVIDER.id,
     OPERATION,
+    snapshot,
   );
 };

@@ -114,7 +114,7 @@ it("composes provider diagnostics from selected configuration rather than ambien
     REA_IDA_MCP_CONFIG: "/selected/ida.json",
     REA_JEB_MCP_URL: "http://127.0.0.1:8425/mcp",
   });
-  const inspections = await host.providerInspections?.();
+  const inspections = await host.providerInspections?.([]);
   expect(inspections?.find(({ id }) => id === "ghidra")?.configured).toBe(true);
   expect(inspections?.find(({ id }) => id === "jeb")).toMatchObject({
     configured: true,
@@ -226,8 +226,11 @@ it("includes the macOS Hopper installer diagnostic in setup remediation", async 
     if (result.status !== "failed") throw new Error("expected setup failure");
     expect(result.remediation).not.toContain("\u001b");
   } finally {
-    await host.close?.();
-    install.mockRestore();
+    try {
+      await host.close?.();
+    } finally {
+      install.mockRestore();
+    }
   }
 });
 

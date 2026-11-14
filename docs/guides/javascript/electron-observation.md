@@ -265,6 +265,9 @@ retained arrays and counters without invoking application iterators or Array
 species.
 
 Listener-chain recognition distinguishes owned, unowned and unknown metadata.
+Only a directly owned wrapper establishes hook dispatch. An application's data
+link to an owned wrapper remains unknown: `.listener` can name that wrapper
+without invoking it.
 Data links may be inherited; absence is established only after completing the
 bounded prototype lookup. Exhausting either walk, encountering a getter or seeing a Proxy leaves
 ownership unknown. The hook preserves native registration without adding another

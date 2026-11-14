@@ -191,6 +191,8 @@ export async function verifyPackagePack({ root, workspace, commands }) {
     throw new Error("package did not expose both rea command entry points");
   if (!packedFiles.includes("package/scripts/lib/cli-process-environment.mjs"))
     throw new Error("package omitted the CLI process environment owner");
+  if (!packedFiles.includes("package/scripts/lib/runtime-admission.mjs"))
+    throw new Error("package omitted the CLI runtime admission owner");
   if (packedFiles.some((path) => path.startsWith("package/.agents/")))
     throw new Error(
       "package included authored skill sources instead of only the generated bundle",
@@ -264,6 +266,39 @@ export async function verifyPackagePack({ root, workspace, commands }) {
       )
         throw new Error(`Packaged plugin ${path} is missing its shared icon`);
   }
+  const cursorManifest = JSON.parse(
+    (
+      await commands.exec("tar", [
+        "-xOf",
+        tarball,
+        "package/.cursor-plugin/plugin.json",
+      ])
+    ).stdout,
+  );
+  const cursorServer = JSON.parse(
+    (await commands.exec("tar", ["-xOf", tarball, "package/mcp.json"])).stdout,
+  );
+  const cursorLogo = String(cursorManifest.logo ?? "").replace(/^\.\//u, "");
+  const cursorSkill =
+    "package/.cursor-plugin/skills/reverse-engineer-anything/SKILL.md";
+  if (
+    cursorManifest.version !== packedManifest.version ||
+    cursorManifest.skills !== ".cursor-plugin/skills" ||
+    cursorLogo !== "assets/rea-plugin.png" ||
+    cursorManifest.mcpServers !== undefined ||
+    cursorServer.mcpServers?.rea?.command !== "npx" ||
+    JSON.stringify(cursorServer.mcpServers?.rea?.args) !==
+      JSON.stringify([
+        "-y",
+        `${packedManifest.name}@${packedManifest.version}`,
+        "mcp",
+      ]) ||
+    !packedFiles.includes(`package/${cursorLogo}`) ||
+    !packedFiles.includes(cursorSkill)
+  )
+    throw new Error(
+      "Packaged Cursor plugin does not ship the pinned server, skill, and logo",
+    );
   if (packedFiles.includes("package/.mcp.json"))
     throw new Error("Plugin metadata must not register a project MCP server");
   if (!packedFiles.includes("package/.codex-plugin/mcp.json"))

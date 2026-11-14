@@ -35,12 +35,26 @@ cliTest(
     await writeFile(bad, bytes);
 
     const healthy = await cli.run({
-      arguments: ["compare-managed-members", good, good, "--json"],
+      arguments: [
+        "compare-managed-members",
+        good,
+        good,
+        "--max-snapshot-bytes",
+        String(bytes.length),
+        "--max-metadata-representation-bytes",
+        "1048576",
+        "--json",
+      ],
     });
     expect(healthy.exitCode, healthy.stderr).toBe(0);
     expect(healthy.json).toMatchObject({
       operation: "compare_managed_members",
-      parameters: { left_path: good, right_path: good },
+      parameters: {
+        left_path: good,
+        right_path: good,
+        max_snapshot_bytes: bytes.length,
+        max_metadata_representation_bytes: 1048576,
+      },
     });
 
     for (const field of ["leftPath", "rightPath"] as const) {
@@ -120,7 +134,7 @@ cliTest(
       const sha256 = createHash("sha256").update(bytes).digest("hex");
       await writeFile(path, bytes);
       await writeFile(peerPath, bytes);
-      const inspected = await cli.sharedCliRun!({
+      const inspected = await cli.run({
         arguments: ["inspect-managed-members", path, "--json"],
       });
       expect(inspected.exitCode, inspected.stderr).toBe(0);
@@ -146,7 +160,7 @@ cliTest(
             : {}),
         });
       }
-      const compared = await cli.sharedCliRun!({
+      const compared = await cli.run({
         arguments: ["compare-managed-members", path, path, "--json"],
       });
       expect(compared.exitCode, compared.stderr).toBe(0);
@@ -256,6 +270,14 @@ cliTest(
     expect(wholeReport.right.resource_limits).toEqual(limits);
     expect(wholeReport.limitations).toEqual(
       comparisonLimitations(leftSource.report, rightSource.report),
+    );
+    expect(wholeReport.limitations).toContainEqual(
+      expect.stringMatching(
+        /right.*metadata\.representation.*do not establish absence/i,
+      ),
+    );
+    expect(wholeReport.limitations).toContainEqual(
+      expect.stringMatching(/smaller selection.*type_names.*--type/i),
     );
     const mcpCompared = await call("compare_managed_members", {
       left: leftSource.evidence,

@@ -19,12 +19,12 @@ import {
   signerInfo,
   tlv,
 } from "../../../tests/fixtures/apkSignature/v1SignatureBlock.js";
-import {
-  decodeV1SignatureBlock,
-  MAX_ASN1_ELEMENTS,
-  MAX_V1_BLOCK_CERTIFICATES,
-  MAX_V1_SIGNER_INFOS,
-} from "./apkV1SignatureBlock.js";
+import { decodeV1SignatureBlock } from "./apkV1SignatureBlock.js";
+
+// Fixed input boundaries exercise the decoder without importing its internal limits.
+const MAX_V1_BLOCK_CERTIFICATES = 32;
+const MAX_V1_SIGNER_INFOS = 32;
+const MAX_ASN1_ELEMENTS = 65_536;
 
 const sha256 = (bytes: Uint8Array): string =>
   createHash("sha256").update(bytes).digest("hex");
@@ -202,8 +202,9 @@ describe("v1 signature block (PKCS#7 SignedData)", () => {
     let nested: Uint8Array = Uint8Array.from([0x05, 0x00]);
     for (let i = 0; i < 64; i += 1) nested = indefinite(0x30, nested);
     expect(errorOf(nested)).toEqual({
-      kind: "malformed-pkcs7",
-      detail: "ASN.1 nesting exceeds 32 levels.",
+      kind: "budget-exceeded",
+      resource: "asn1-depth",
+      limit: 32,
     });
   });
 });
@@ -411,3 +412,42 @@ it.each([0, 1])(
     });
   },
 );
+
+it("keeps a valid constructed CMS content depth refusal distinct from malformed input", () => {
+  let content = tlv(0x04, Uint8Array.of(1));
+  const block = () =>
+    signedDataBlock({
+      certificates: [LEAF_CERTIFICATE],
+      signerInfos: [signerInfo({ names: LEAF_CERTIFICATE })],
+      encapsulatedContent: content,
+    });
+  expect(decodeV1SignatureBlock(block()).ok).toBe(true);
+  for (let depth = 0; depth < 40; depth += 1)
+    content = indefinite(0x24, content);
+  expect(errorOf(block())).toEqual({
+    kind: "budget-exceeded",
+    resource: "asn1-depth",
+    limit: 32,
+  });
+});
+
+it("preserves the canonical OID byte allowance for a valid unknown digest algorithm", () => {
+  const algorithm = tlv(
+    0x06,
+    Uint8Array.from([0x2a, ...Array<number>(64).fill(0)]),
+  );
+  expect(
+    errorOf(
+      signedDataBlock({
+        certificates: [LEAF_CERTIFICATE],
+        signerInfos: [
+          signerInfo({
+            names: LEAF_CERTIFICATE,
+            digestAlgorithmOid: algorithm,
+          }),
+        ],
+        digestAlgorithmOid: algorithm,
+      }),
+    ),
+  ).toEqual({ kind: "budget-exceeded", resource: "oid-bytes", limit: 64 });
+});

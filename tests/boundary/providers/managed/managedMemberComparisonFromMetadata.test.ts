@@ -2280,13 +2280,32 @@ describe("managed member comparison of raw-signature contention", () => {
       ...base,
       result: { ...base.result, methods: [], fields: [field] },
     };
-    for (const result of [
-      compareManagedMembers(withOwnerless, resolvedOnly),
-      compareManagedMembers(resolvedOnly, withOwnerless),
-    ])
+    for (const [result, leftTokens, rightTokens] of [
+      [
+        compareManagedMembers(withOwnerless, resolvedOnly),
+        [field.token, "0x04000002"],
+        [field.token],
+      ],
+      [
+        compareManagedMembers(resolvedOnly, withOwnerless),
+        [field.token],
+        [field.token, "0x04000002"],
+      ],
+    ] as const) {
       expect(
         result.fields.filter(({ match }) => match.status === "matched"),
       ).toEqual([]);
+      expect(result.fields.length).toBeGreaterThan(0);
+      expect(comparedTokens(result, "fields", "left")).toEqual(
+        [...leftTokens].sort(),
+      );
+      expect(comparedTokens(result, "fields", "right")).toEqual(
+        [...rightTokens].sort(),
+      );
+      expect(result.fields.every((item) => item.status === "unknown")).toBe(
+        true,
+      );
+    }
   });
 });
 
@@ -2668,6 +2687,9 @@ describe("managed member comparison of unresolved owners", () => {
       },
     });
     const result = compareManagedMembers(side("Main"), side("Renamed"));
+    expect(result.methods.length).toBeGreaterThan(0);
+    expect(comparedTokens(result, "methods", "left")).toEqual([method.token]);
+    expect(comparedTokens(result, "methods", "right")).toEqual([method.token]);
 
     for (const item of result.methods)
       expect(item.match.status).not.toBe("matched");
@@ -2786,12 +2808,16 @@ describe("managed member comparison of unresolved owners", () => {
       },
     };
 
-    for (const result of [
-      compareManagedMembers(left, right),
-      compareManagedMembers(right, left),
-    ])
+    for (const [result, leftToken, rightToken] of [
+      [compareManagedMembers(left, right), method.token, "0x06000002"],
+      [compareManagedMembers(right, left), "0x06000002", method.token],
+    ] as const) {
+      expect(result.methods.length).toBeGreaterThan(0);
+      expect(comparedTokens(result, "methods", "left")).toEqual([leftToken]);
+      expect(comparedTokens(result, "methods", "right")).toEqual([rightToken]);
       for (const item of result.methods)
         expect(item.match.status).not.toBe("matched");
+    }
   });
 });
 
@@ -3446,6 +3472,25 @@ const withTwin = (
     },
   };
 };
+
+/** Every retained source token, including unresolved candidates with no selected identity. */
+const comparedTokens = (
+  result: ReturnType<typeof compareManagedMembers>,
+  kind: "methods" | "fields",
+  side: "left" | "right",
+) =>
+  [
+    ...new Set(
+      result[kind]
+        .flatMap((item) => [
+          item[side]?.token,
+          ...(side === "left"
+            ? item.match.candidate_left_tokens
+            : item.match.candidate_right_tokens),
+        ])
+        .filter((token) => token !== undefined),
+    ),
+  ].sort();
 
 const inspect = (bytes: Buffer, path: string, typeNames?: string[]) => {
   const target = managedPeFixtureTarget(bytes, path);

@@ -1,3 +1,4 @@
+import { processInspectionCancellationError } from "../providers/OwnedCommandCleanup.js";
 import { APKTOOL_PROVIDER_IDENTITY } from "./ApktoolProviderIdentity.js";
 import { countDecodedFiles } from "./ApktoolDecodedInventory.js";
 import { ApktoolWorkspace } from "./ApktoolWorkspace.js";
@@ -31,6 +32,7 @@ import { providerConfigurationRefusal } from "../domain/providerConfigurationRef
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import {
   apktoolResultSchemas,
+  apktoolStringTablesRequested,
   DEFAULT_APKTOOL_DECODE_TIMEOUT_MS,
   MAX_APKTOOL_DECODE_TIMEOUT_MS,
   type ApktoolRequest,
@@ -44,6 +46,8 @@ import {
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
   AnalysisUnsupportedTargetError,
+  cancelledBy,
+  OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
@@ -169,6 +173,12 @@ const apktoolCommandFailure = (
   limits: DecodeLimits,
 ): AnalysisError => {
   const capturedOutput = capturedApktoolFailureOutput(cause);
+  const inspectionCancellation =
+    !(cause instanceof OwnedCommandFailure) ||
+    cause.preparationFailure !== undefined
+      ? processInspectionCancellationError(cause, operation)
+      : undefined;
+  if (inspectionCancellation !== undefined) return inspectionCancellation;
   if (!(cause instanceof OwnedCommandFailure))
     return new ProviderAdapterError("apktool", operation, {
       cause,
@@ -180,9 +190,9 @@ const apktoolCommandFailure = (
     });
 
   const output = cause.snapshot;
-  if (cause.reason === "cancelled")
+  if (cause.reason === "cancelled" && cause.cancellation !== undefined)
     return new AnalysisCancelledError(operation, {
-      cause: cause.cancellation?.reason,
+      cause: cause.cancellation.reason,
       ...(capturedOutput === undefined ? {} : { capturedOutput }),
     });
   if (cause.reason === "timeout")
@@ -292,7 +302,7 @@ export class ApktoolProvider {
   inspectAvailability(signal?: AbortSignal): Promise<ProviderAvailability> {
     if (this.#closing)
       return Promise.reject(
-        new AnalysisCancelledError("inspect_apktool_client"),
+        cancelledBy("inspect_apktool_client", OwnerCancellation.ownerClosed),
       );
     const operationSignal =
       signal === undefined
@@ -368,7 +378,7 @@ export class ApktoolProvider {
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     if (this.#closing)
       return Promise.resolve(
-        err(new AnalysisCancelledError(request.operation)),
+        err(cancelledBy(request.operation, OwnerCancellation.ownerClosed)),
       );
     const signal =
       options?.signal === undefined
@@ -666,7 +676,7 @@ export class ApktoolProvider {
           : "complete";
 
       completedDecode.strings = [...projectedStrings.strings];
-      if (input.locales !== undefined || input.string_tables_only === true)
+      if (apktoolStringTablesRequested(input))
         completedDecode.string_tables = [...projectedStrings.tables];
       completedDecode.coverage = coverage;
       if (!projection.ok) throw projection.error.cause;

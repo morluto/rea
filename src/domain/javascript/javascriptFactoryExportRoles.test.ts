@@ -3,7 +3,7 @@ import { runInNewContext } from "node:vm";
 import { transformSync } from "esbuild";
 import { expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 
 it.each([false, true])(
   "retains generated esbuild exports with module use %s",

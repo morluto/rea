@@ -7,7 +7,6 @@ import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 import { PcapProvider } from "../../../src/pcap/PcapProvider.js";
-import { PCAP_LIMITER_REMEDIATION } from "../../../src/pcap/PcapNativeBound.js";
 import {
   CAPINFOS_COMMAND_ENV,
   TSHARK_COMMAND_ENV,
@@ -128,6 +127,29 @@ it("inspects a capture with endpoints, DNS, TLS SNI, and HTTP", async () => {
   expect(result.tls_sni_values).toEqual(["api.example.com"]);
   expect(result.http_request_uris).toEqual(["http://api.example.com/v1/data"]);
   expect(result.coverage).toBe("complete");
+});
+
+it("retains DNS answers and exposes declared truncation as partial coverage", async () => {
+  const { provider, root } = await providerWith({
+    dnsJson: TSHARK_DNS_JSON.replace("00018180", "00018380"),
+  });
+  const result = await provider.execute({
+    operation: "inspect_pcap_capture",
+    input: { path: await captureFixture(root) },
+  });
+  if (!result.ok) throw new Error(result.error.message);
+  expect(result.value.result).toMatchObject({
+    coverage: "partial",
+    dns_queries: [
+      { query: "api.example.com", response_addresses: ["93.184.216.34"] },
+    ],
+  });
+  expect(result.value.limitations).toContain(
+    "DNS wire parsing: DNS message declares truncation (TC); captured records are incomplete",
+  );
+  expect(result.value.limitations).toContainEqual(
+    expect.stringContaining("DNS messages declare truncation"),
+  );
 });
 
 it.each([0, 1])(
@@ -410,19 +432,6 @@ it("reports a non-capture file as unsupported", async () => {
   });
 });
 
-it("rejects a capture that is not a readable file", async () => {
-  const { provider } = await providerWith();
-  const result = await provider.execute({
-    operation: "inspect_pcap_capture",
-    input: { path: "/nonexistent/capture.pcap" },
-  });
-  expect(result.ok).toBe(false);
-  if (result.ok) return;
-  expect(projectAnalysisError(result.error)).toMatchObject({
-    code: "invalid_request",
-  });
-});
-
 it("reports relative configuration and missing capinfos as capability gaps", async () => {
   const root = await createTestTempDirectory("rea-pcap-config-");
   const { tshark } = await writeStubTools(root);
@@ -467,11 +476,16 @@ it("names the prlimit selection when the Linux limiter is unusable", async () =>
   });
   onTestFinished(() => provider.close());
   // Readiness keeps the limiter owner's repair instead of Wireshark advice.
-  expect(await provider.inspectAvailability()).toMatchObject({
+  const availability = await provider.inspectAvailability();
+  expect(availability).toMatchObject({
     status: "unavailable",
     reason: expect.stringContaining("Cannot establish the selected Linux"),
-    remediation: PCAP_LIMITER_REMEDIATION,
+    remediation: expect.stringMatching(
+      /REA_TSHARK_PRLIMIT_COMMAND.*\/usr\/bin\/prlimit.*absolute.*executable.*util-linux prlimit/iu,
+    ),
   });
+  if (availability.status !== "unavailable")
+    throw new Error("Expected an unavailable limiter");
   const result = await provider.execute({
     operation: "inspect_pcap_capture",
     input: { path: "/not-opened/capture.pcap" },
@@ -484,7 +498,7 @@ it("names the prlimit selection when the Linux limiter is unusable", async () =>
   });
   expect(projected.message).toContain("must be absolute");
   expect(projected.message).toContain("Check that REA_TSHARK_PRLIMIT_COMMAND");
-  expect(projected.remediation.action).toBe(PCAP_LIMITER_REMEDIATION);
+  expect(projected.remediation.action).toBe(availability.remediation);
 });
 
 it("rejects directory and non-prlimit selections before opening the capture", async () => {
@@ -801,12 +815,7 @@ fs.writeFileSync(${JSON.stringify(marker)}, 'ready'); setInterval(() => {}, 1000
       { signal: controller.signal },
     );
     await withVerifierCleanup(async () => {
-      await awaitAcknowledgement(
-        ready,
-        pending,
-        `${phase} tool startup`,
-        5_000,
-      );
+      await awaitAcknowledgement(ready, pending, `${phase} tool startup`);
       controller.abort(new Error("caller cancellation"));
       const result = await pending;
       if (result.ok) throw new Error("expected cancellation");

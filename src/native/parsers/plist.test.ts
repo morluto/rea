@@ -59,8 +59,8 @@ it.each([
 ] as const)(
   "bounds ordinary %s by the projected JSON capacity, including scalar wrappers",
   (encoding) => {
-    // One level for typed scalar fields and one for normalized_result.value.
-    const maximum = MAX_JSON_DEPTH - 2;
+    // Typed scalar fields, report.value and Evidence.normalized_result each add a level.
+    const maximum = MAX_JSON_DEPTH - 3;
     for (const depth of [maximum, maximum + 1]) {
       let binary: PlistValue = Buffer.from([0, 1]);
       if (encoding === "binary data")
@@ -99,7 +99,9 @@ it.each([
       } else {
         if (!parsed.ok) throw parsed.error;
         expect(() =>
-          jsonValueSchema.parse({ value: parsed.value.value }),
+          jsonValueSchema.parse({
+            normalized_result: { value: parsed.value.value },
+          }),
         ).not.toThrow();
         let leaf: unknown = parsed.value.value;
         for (let level = 0; level < depth; level += 1) {

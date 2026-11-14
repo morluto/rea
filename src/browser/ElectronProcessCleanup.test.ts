@@ -61,30 +61,33 @@ describe.skipIf(process.platform === "win32")(
         processIdentities: (members) =>
           Promise.resolve(
             new Map(
-              members.map((member) => [
-                member.pid,
-                withholdToken && member.pid === 100
-                  ? {
-                      state: "absent" as const,
-                      reason:
-                        process.platform === "darwin"
-                          ? ("not-in-snapshot" as const)
-                          : ("not-found-in-caller-pid-namespace" as const),
-                    }
-                  : {
-                      state: "readable" as const,
-                      identity: `start-${String(member.pid)}`,
-                      lifecycle: {
-                        state: "observed" as const,
-                        lifecycle: "non-zombie" as const,
+              members.map(({ pid }) => {
+                const current = rows.find((entry) => entry.pid === pid);
+                return [
+                  pid,
+                  current === undefined
+                    ? {
+                        state: "absent" as const,
+                        reason:
+                          process.platform === "darwin"
+                            ? ("not-in-snapshot" as const)
+                            : ("not-found-in-caller-pid-namespace" as const),
+                      }
+                    : {
+                        state: "readable" as const,
+                        identity: `start-${String(pid)}`,
+                        lifecycle: {
+                          state: "observed" as const,
+                          lifecycle: "non-zombie" as const,
+                        },
+                        relation: {
+                          state: "observed" as const,
+                          parentPid: current.parentPid,
+                          processGroupId: current.processGroupId,
+                        },
                       },
-                      relation: {
-                        state: "observed" as const,
-                        parentPid: member.parentPid,
-                        processGroupId: member.processGroupId,
-                      },
-                    },
-              ]),
+                ];
+              }),
             ),
           ),
         signalGroup: vi.fn(() => {

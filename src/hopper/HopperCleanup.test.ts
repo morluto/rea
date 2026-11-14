@@ -9,7 +9,10 @@ import { Socket } from "node:net";
 import pino from "pino";
 import { describe, expect, it, vi } from "vitest";
 
-import { ok } from "../domain/result.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { HopperProcessError } from "../domain/hopperErrors.js";
+import { err, ok } from "../domain/result.js";
+import { observeProcessStartIdentity } from "../process/ProcessOwnershipObservation.js";
 import type { BridgeLaunch } from "./BridgeLauncher.js";
 import {
   cleanupHopperSession,
@@ -73,6 +76,59 @@ const externalApplicationResources = (): HopperOwnedResources => ({
   },
 });
 
+it.each(["throw", "reject"] as const)(
+  "releases owned runtime and lease when cleanup progress observers %s",
+  async (failureMode) => {
+    const parent = await createTestTempDirectory(
+      "rea-hopper-progress-cleanup-",
+    );
+    const runtimeRoot = await PrivateRuntimeRoot.create({ parent });
+    const backingPath = join(runtimeRoot.path, "image.macho");
+    await writeFile(backingPath, "owned backing bytes");
+    const resources = externalApplicationResources();
+    const releaseLease = vi.fn(async () => undefined);
+    resources.externalApplication = undefined;
+    resources.runtimeRoot = runtimeRoot;
+    resources.launch = {
+      ...resources.launch!,
+      preparedImagePath: backingPath,
+      releaseLease,
+    };
+    const request = vi.fn(async () =>
+      ok({ shutdown: true, analysis_stopped: true, document_closed: true }),
+    );
+    try {
+      const result = await cleanupHopperSession({
+        socket: new Socket(),
+        resources,
+        activeRequest: null,
+        retainDocument: false,
+        progress: {
+          report: () => {
+            const cause = new Error("observer failed");
+            if (failureMode === "throw") throw cause;
+            return Promise.reject(cause);
+          },
+        },
+        logger: loggerHarness().logger,
+        onDiagnostic: undefined,
+        request,
+        releaseTransport: () => undefined,
+      });
+      expect(result).toEqual(ok(null));
+      expect(request).toHaveBeenCalledExactlyOnceWith("shutdown_document");
+      await expect(access(backingPath)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      expect(releaseLease).toHaveBeenCalledOnce();
+      expect(resources.runtimeRoot).toBeUndefined();
+      expect(resources.launch).toBeUndefined();
+    } finally {
+      await runtimeRoot.close();
+    }
+  },
+);
+
 describe("external Hopper process exit confirmation", () => {
   it("confirms only the captured GUI process exit and releases its transport", async () => {
     const resources = externalApplicationResources();
@@ -89,7 +145,7 @@ describe("external Hopper process exit confirmation", () => {
     expect(released).toEqual([undefined]);
   });
 
-  it.each(["present", "unverified"] as const)(
+  it.each(["exiting", "present", "unverified"] as const)(
     "does not confirm an external application while its exact identity is %s",
     async (observation) => {
       const resources = externalApplicationResources();
@@ -102,6 +158,58 @@ describe("external Hopper process exit confirmation", () => {
       );
       expect(resources.shutdownConfirmed).toBe(false);
       expect(releaseTransport).not.toHaveBeenCalled();
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "names the failed shutdown request and the live application it retains",
+    async () => {
+      // This test process is a live, exactly identified application.
+      const identity = await observeProcessStartIdentity(process.pid);
+      if (identity?.state !== "readable")
+        throw new Error("Expected a readable identity for the test process");
+      const resources = externalApplicationResources();
+      resources.externalApplication = { pid: process.pid, identity };
+      const result = await cleanupHopperSession({
+        socket: new Socket(),
+        resources,
+        activeRequest: null,
+        retainDocument: false,
+        progress: undefined,
+        logger: loggerHarness().logger,
+        onDiagnostic: undefined,
+        request: async (method) =>
+          err(
+            new HopperProcessError(null, {
+              operation: method,
+              providerState: "unreachable",
+            }),
+          ),
+        releaseTransport: () => undefined,
+      });
+      if (result.ok)
+        throw new Error("Expected the live application to be kept");
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        details: {
+          diagnostics: {
+            issues: [
+              {
+                resource: "hopper-document",
+                reason:
+                  "authenticated shutdown acknowledgement was not observed",
+              },
+            ],
+            authenticated_application: "readable",
+            shutdown_request: {
+              method: "shutdown_document",
+              status: "failed",
+              error_tag: "HopperProcessError",
+              provider_state: "unreachable",
+            },
+            application_exit: "present",
+          },
+        },
+      });
     },
   );
 });
@@ -176,6 +284,22 @@ describe("Hopper shutdown rejection diagnostics", () => {
     expect(result).toMatchObject({
       ok: false,
       error: { cleanupResources: ["hopper-document"] },
+    });
+    if (result.ok) throw new Error("Expected the document to be retained");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      details: {
+        diagnostics: {
+          shutdown_request: {
+            method: "shutdown",
+            status: "unconfirmed",
+            fallback: {
+              method: "shutdown_document",
+              status: "failed",
+              error_tag: "HopperProcessError",
+            },
+          },
+        },
+      },
     });
     expect(logs).toContainEqual(
       expect.objectContaining({

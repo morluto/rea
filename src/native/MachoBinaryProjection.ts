@@ -136,7 +136,7 @@ const STRING_FIELDS = new Map<number, string>([
   [0x39, "triple"],
 ]);
 
-const bytesText = (input: Uint8Array, fixed = false) => {
+const bytesText = (input: Uint8Array, fixed: boolean) => {
   const end = fixed ? input.indexOf(0) : -1;
   const bytes = end < 0 ? input : input.subarray(0, end);
   try {
@@ -530,6 +530,9 @@ export const projectMachoBinary = (
       decoded = true;
       const owner = textFact(row.note.owner, true, commandLimitations);
       fields.data_owner = owner.text;
+      fields.data_owner_storage_hex = Buffer.from(row.note.owner).toString(
+        "hex",
+      );
       if (owner.bytesHex !== null) fields.data_owner_bytes_hex = owner.bytesHex;
       fields.offset = rawNumber(row.note.offset, 16);
       fields.size = rawNumber(row.note.size, 16);

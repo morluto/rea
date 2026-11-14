@@ -264,11 +264,7 @@ const collectTransportFacts = (
     return;
   }
   for (const [frameIndex, frame] of data.frames.entries()) {
-    if (
-      !object(frame) ||
-      frame.frame_type === undefined ||
-      frame.frame_type === null
-    ) {
+    if (!object(frame) || typeof frame.frame_type !== "string") {
       fact.incomplete_fact_records.push(ordinal);
       continue;
     }

@@ -410,6 +410,14 @@ original ZIP spelling. Omitted filters include all scoped facts; `[]` matches
 none. Class selection never narrows the global inventory used for table-class
 attribution.
 
+Only libraries inside the selected APK are examined. `native_inventory.manifest_splits`
+reports the root manifest's `android:requiredSplitTypes` and the
+`<application>` `android:isSplitRequired` flag, decoded without loading the APK.
+When the manifest requires splits, or those requirements cannot be read, native
+libraries may live in split APKs that were not examined: `library_inventory` is
+then `partial` with an unknown that says so, and a binding with no candidate is
+`unknown` rather than `unmatched`.
+
 Independent `declarations`, `libraries`, `candidates` and `bindings` collections
 have stable IDs and source ordinals. Candidates retain APK/library digests,
 ABI, function addresses and file offsets. Table candidates also retain section,
@@ -545,7 +553,8 @@ and each upstream request and reply collected before the failure. Failed replies
 remain available even when their payload cannot be interpreted. Cancellation
 also stops target hashing before provider admission.
 
-These operations do not execute the APK or provide split APK/AAB handling,
+The JADX package, class, method and reference operations do not execute the APK
+or provide split APK/AAB handling,
 signature validation, full resource-table semantics, native-library analysis or
 Android runtime capture. An `.aab` suffix is a ZIP archive, not an APK, so
 Android tools and the application graph do not treat it as a standalone APK.
@@ -664,9 +673,13 @@ uses native memory. A typed JVM memory allocation failure during APK loading
 reports `resource_constraint` with the observed maximum heap in bytes. Known
 heap failures name `REA_JADX_HEAP_MIB` in remediation; other memory regions
 remain unknown. A healthy doctor configuration check does not establish that
-any particular APK fits. Failures before the bridge can report a typed result
-and upstream errors from other operations retain their existing diagnostics;
-error text alone does not establish memory exhaustion.
+any particular APK fits. If the launcher stops before the bridge answers and
+its retained stderr carries HotSpot's `java.lang.OutOfMemoryError: Java heap
+space` or `GC overhead limit exceeded`, REA reports `resource_constraint` with
+`observed_max_heap_bytes: null`, since no runtime fact measured the heap, and
+the same `REA_JADX_HEAP_MIB` remediation. Other failures before the bridge can
+report a typed result and upstream errors from other operations retain their
+existing diagnostics; error text alone does not establish memory exhaustion.
 
 Independent REA instances have independent queues. Whole
 operations have a **120-second** execution deadline by default, starting after

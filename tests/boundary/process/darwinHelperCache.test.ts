@@ -279,9 +279,13 @@ it.skipIf(!posix)(
     });
     const controller = new AbortController();
     const prepared = reader.prepare(controller.signal);
-    setTimeout(() => controller.abort(new Error("caller cancelled")), 200);
+    const reason = new Error("caller cancelled");
+    setTimeout(() => controller.abort(reason), 200);
     const cancelled = Date.now();
-    await expect(prepared).rejects.toThrow("caller cancelled");
+    await expect(prepared).rejects.toMatchObject({
+      _tag: "ProcessOwnershipInspectionCancelled",
+      reason,
+    });
     await reader.close();
     expect(Date.now() - cancelled).toBeLessThan(5_000);
     expect(await xcrun.compilations()).toBe(0);
@@ -471,8 +475,12 @@ it.skipIf(!posix)(
       const deadline = Date.now() + 10_000;
       while ((await xcrun.compilations()) === 0 && Date.now() < deadline)
         await new Promise((resolve) => setTimeout(resolve, 10));
-      controller.abort(new Error("caller cancelled"));
-      await expect(prepared).rejects.toThrow("caller cancelled");
+      const reason = new Error("caller cancelled");
+      controller.abort(reason);
+      await expect(prepared).rejects.toMatchObject({
+        _tag: "ProcessOwnershipInspectionCancelled",
+        reason,
+      });
     } finally {
       await reader.close();
     }

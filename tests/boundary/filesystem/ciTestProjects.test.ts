@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
+import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -161,45 +162,60 @@ describe("Vitest project configuration", () => {
     );
   });
 
-  it.each([
-    { flags: [], timeout: 30_000, lines: 68 },
-    { flags: ["--coverage"], timeout: 60_000, lines: 68 },
-    { flags: ["--coverage.enabled"], timeout: 60_000, lines: 68 },
-    { flags: ["--coverage=false"], timeout: 30_000, lines: 68 },
-    {
-      flags: ["--coverage.enabled=false"],
-      timeout: 30_000,
-      lines: 68,
-    },
-    {
-      flags: ["--coverage.provider=v8"],
-      timeout: 30_000,
-      lines: 68,
-    },
-    {
-      flags: ["--coverage.enabled", "--shard", "1/6"],
-      timeout: 60_000,
-      lines: 0,
-    },
-    {
-      flags: ["--coverage.enabled=false", "--shard=1/6"],
-      timeout: 30_000,
-      lines: 0,
-    },
-  ])(
-    "resolves worker resources from actual CLI options: $flags",
-    async ({ flags, timeout, lines }) => {
+  it.each(
+    [
+      { flags: [], timeout: 30_000, lines: 68 },
+      { flags: ["--coverage"], timeout: 60_000, lines: 68 },
+      { flags: ["--coverage.enabled"], timeout: 60_000, lines: 68 },
+      { flags: ["--coverage=false"], timeout: 30_000, lines: 68 },
+      {
+        flags: ["--coverage.enabled=false"],
+        timeout: 30_000,
+        lines: 68,
+      },
+      {
+        flags: ["--coverage.provider=v8"],
+        timeout: 30_000,
+        lines: 68,
+      },
+      {
+        flags: ["--coverage.enabled", "--shard", "1/6"],
+        timeout: 60_000,
+        lines: 0,
+      },
+      {
+        flags: ["--coverage.enabled=false", "--shard=1/6"],
+        timeout: 30_000,
+        lines: 0,
+      },
+    ].flatMap((policy) =>
+      // Hosted CI owns a four-core runner: up to four workers, doubled deadlines.
+      [
+        { ...policy, hosted: false, workers: 2, scale: 1 },
+        { ...policy, hosted: true, workers: 4, scale: 2 },
+      ],
+    ),
+  )(
+    "resolves worker resources from actual CLI options: $flags (hosted: $hosted)",
+    async ({ flags, timeout, lines, hosted, workers, scale }) => {
       const root = await createTestTempDirectory("rea-vitest-worker-policy-");
       const script = join(root, "worker-policy.mjs");
       await writeFile(
         script,
         `
       import config from ${JSON.stringify(pathToFileURL(join(repository, "vitest.config.ts")).href)};
-      const project = config.test.projects.find(project => project.test.name === 'cli-boundary');
+      const project = (name) => config.test.projects.find(project => project.test.name === name).test;
+      const deadlines = (name) => [project(name).testTimeout, project(name).hookTimeout];
       console.log(JSON.stringify({
-        execArgv: project.test.execArgv,
-        timeout: config.test.testTimeout,
+        execArgv: project('cli-boundary').execArgv,
+        deadlines: {
+          default: [config.test.testTimeout, config.test.hookTimeout],
+          source: deadlines('domain'),
+          built: deadlines('cli-boundary'),
+          longRunning: config.test.tags.find(tag => tag.name === 'long-running').timeout,
+        },
         lines: config.test.coverage.thresholds.lines,
+        workers: config.test.maxWorkers,
       }));
     `,
       );
@@ -208,15 +224,26 @@ describe("Vitest project configuration", () => {
         ["--import", "tsx", script, ...flags],
         {
           cwd: repository,
+          // Select the runner explicitly; CI itself sets GITHUB_ACTIONS.
+          env: { ...process.env, GITHUB_ACTIONS: hosted ? "true" : "" },
           timeout: 10_000,
           maxBuffer: 64 * 1024,
           stopSignal: "SIGTERM",
         },
       );
+      // Deadlines are hang detection owned by the project: the source
+      // deadline scales with coverage and hosted runners, built projects allow
+      // four times it, and the long-running tag ten times.
       expect(JSON.parse(result.stdout)).toEqual({
         execArgv: ["--max-old-space-size=512"],
-        timeout,
+        deadlines: {
+          default: [timeout * scale, timeout * scale],
+          source: [timeout * scale, timeout * scale],
+          built: [4 * timeout * scale, 4 * timeout * scale],
+          longRunning: 10 * timeout * scale,
+        },
         lines,
+        workers: Math.min(workers, availableParallelism()),
       });
     },
   );

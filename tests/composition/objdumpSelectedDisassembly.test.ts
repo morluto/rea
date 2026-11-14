@@ -63,8 +63,10 @@ it.each([
         artifact_changed: false,
         completion_status: "complete",
       });
-      expect(result.value.limitations).toContain(
-        "Disassembly is scoped to the caller-selected symbol using the provider's matching and symbol-boundary semantics; an empty match does not establish artifact-wide absence.",
+      expect(result.value.limitations).toContainEqual(
+        expect.stringMatching(
+          /caller-selected symbol.*provider.*symbol-boundary.*empty match.*not establish artifact-wide absence/iu,
+        ),
       );
     } finally {
       await service.close();
