@@ -855,6 +855,24 @@ describe("Ghidra platform support", () => {
     }
   });
 
+  it("versions loader relocation semantics by database-mutation authority", async () => {
+    const semantics = async (platform: NodeJS.Platform) => {
+      const resolved = await provider(
+        installationHost(platform),
+      ).resolveAnalysisProfile(peTarget("x86_64"));
+      if (!resolved.ok) throw resolved.error;
+      return resolved.value.profile?.parameters.loader_relocation_semantics;
+    };
+    // Windows P0 cannot mark blocks volatile, so its snapshots must not replay
+    // as volatile-protected pseudocode.
+    expect(await semantics("win32")).toBe(
+      "read-only-relocation-limitations-v1",
+    );
+    expect(await semantics("linux")).toBe(
+      "volatile-read-only-relocation-blocks-v1",
+    );
+  });
+
   it("commits the PE role and managed classification to profile identity", async () => {
     const ghidra = provider(installationHost("win32"));
     const application = peTarget("x86_64");
@@ -1455,6 +1473,7 @@ describe("Ghidra client projection", () => {
       call_relationship_coverage: "observed-call-inventory-and-discovery-v7",
       function_dossier_coverage: "observed-facets-and-call-relationships-v1",
       native_value_flow_projection: "accepted-runtime-budgets-v1",
+      loader_relocation_semantics: "volatile-read-only-relocation-blocks-v1",
     });
 
     const result = await ghidra

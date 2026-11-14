@@ -362,6 +362,19 @@ flag and affected callers are repaired in the same pass. Unknown imports and
 genuine no-return imports keep their flags. Analysis profiles version this repair
 so snapshots produced before it are not reused. Windows P0 does not run it.
 
+Ghidra imports loader relocation destinations with their file bytes, but the
+runtime loader may supply a different value, for example an ELF copy relocation
+of `stderr` into RELRO. Before decompiling, a fresh non-Windows import marks each
+loaded, initialized, non-writable block that contains a relocation destination
+volatile in the ephemeral database, so the decompiler cannot fold the on-disk
+value into a constant. Permissions and source `FileBytes` are unchanged; the
+whole block is affected because Ghidra sets volatility per block. A procedure
+that reads such a destination adds a limitation naming the relocation. Windows
+P0 and existing projects (`REA_GHIDRA_PROJECT_PATH`) have no database-mutation
+authority: they add the same limitation, but their pseudocode may still show the
+file-backed value. ELF relocatable objects and core files are excluded.
+Analysis profiles version this behavior.
+
 `npm run verify:ghidra` compiles the versioned C oracle into debug and stripped
 host-native targets (x86-64/AArch64 ELF on Linux or Mach-O on macOS), plus a native
 DWARF 4 type-layout object. It proves the admitted operations, external functions, resolved thunks, exports, stripped-name

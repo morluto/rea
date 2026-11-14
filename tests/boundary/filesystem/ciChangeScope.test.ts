@@ -769,6 +769,18 @@ it.each([
     { code: true, ghidra_bridge: true, runtime: false, package: false },
   ],
   [
+    "scripts/verify-ghidra-loader-relocation.mjs",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "tests/conformance/ghidra/ReaLoaderRelocationProbe.java",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "tests/conformance/ghidra/loader-relocation-provider.c",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
     "src/ghidra/GhidraBridgeSources.ts",
     { code: true, ghidra_bridge: true, runtime: true, package: true },
   ],
