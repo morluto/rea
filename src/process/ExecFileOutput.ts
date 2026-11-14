@@ -1,3 +1,4 @@
+import { isUtf8 } from "node:buffer";
 import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
 import {
   execFile,
@@ -87,6 +88,9 @@ export interface ExecFileOutputFailure {
   readonly stdoutBytes?: number;
   readonly stderrBytes?: number;
   readonly collectionFailure?: boolean;
+  /** The decoded stream holds replacement characters for invalid UTF-8. */
+  readonly stdoutInvalidUtf8?: boolean;
+  readonly stderrInvalidUtf8?: boolean;
   /** The process never started; `code` is the spawn errno, not an exit. */
   readonly spawnFailed?: true;
 }
@@ -105,6 +109,8 @@ export const execFileOutputFailure = (
   const stdoutBytes = Reflect.get(cause, "stdoutBytes");
   const stderrBytes = Reflect.get(cause, "stderrBytes");
   const collectionFailure = Reflect.get(cause, "collectionFailure");
+  const stdoutInvalidUtf8 = Reflect.get(cause, "stdoutInvalidUtf8");
+  const stderrInvalidUtf8 = Reflect.get(cause, "stderrInvalidUtf8");
   const spawnFailed = Reflect.get(cause, "spawnFailed");
   if (typeof stdout !== "string" || typeof stderr !== "string")
     return undefined;
@@ -127,6 +133,8 @@ export const execFileOutputFailure = (
     outputTruncated:
       outputTruncated === true || code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
     ...(collectionFailure === true ? { collectionFailure: true } : {}),
+    ...(stdoutInvalidUtf8 === true ? { stdoutInvalidUtf8: true } : {}),
+    ...(stderrInvalidUtf8 === true ? { stderrInvalidUtf8: true } : {}),
     ...(spawnFailed === true ? { spawnFailed: true } : {}),
   };
 };
@@ -163,9 +171,26 @@ export const execFileFailureCapturedOutput = (
   ...(failure.stderrBytes === undefined
     ? {}
     : { stderr_bytes: failure.stderrBytes }),
-  exit_code: typeof failure.code === "number" ? failure.code : null,
+  // An exit status of output that was not fully collected is not reported.
+  exit_code:
+    failure.collectionFailure !== true && typeof failure.code === "number"
+      ? failure.code
+      : null,
   signal: failure.signal,
   truncated: failure.outputTruncated,
+  ...capturedInvalidUtf8(failure),
+});
+
+/** Captured-output markers for the streams a runner reported as invalid UTF-8. */
+export const capturedInvalidUtf8 = (output: {
+  readonly stdoutInvalidUtf8?: boolean;
+  readonly stderrInvalidUtf8?: boolean;
+}): Pick<
+  AnalysisCapturedOutput,
+  "stdout_invalid_utf8" | "stderr_invalid_utf8"
+> => ({
+  ...(output.stdoutInvalidUtf8 === true ? { stdout_invalid_utf8: true } : {}),
+  ...(output.stderrInvalidUtf8 === true ? { stderr_invalid_utf8: true } : {}),
 });
 
 /**
@@ -214,10 +239,14 @@ export const execFileBytes = (
     ): void => {
       if (error !== null) {
         admitSpawnFailure(error);
+        // Decoding replaces invalid UTF-8, so the failure marks those streams
+        // before the text is projected.
         Reflect.set(error, "stdout", stdout.toString("utf8"));
         Reflect.set(error, "stderr", stderr.toString("utf8"));
         Reflect.set(error, "stdoutBytes", stdout.byteLength);
         Reflect.set(error, "stderrBytes", stderr.byteLength);
+        if (!isUtf8(stdout)) Reflect.set(error, "stdoutInvalidUtf8", true);
+        if (!isUtf8(stderr)) Reflect.set(error, "stderrInvalidUtf8", true);
         reject(error);
         return;
       }
@@ -395,10 +424,15 @@ export const execFileOutput = (
   readonly stderr: string;
   readonly stdoutBytes: number;
   readonly stderrBytes: number;
+  /** The decoded stream holds replacement characters for invalid UTF-8. */
+  readonly stdoutInvalidUtf8?: true;
+  readonly stderrInvalidUtf8?: true;
 }> =>
   execFileBytes(command, arguments_, options).then(({ stdout, stderr }) => ({
     stdout: stdout.toString("utf8"),
     stderr: stderr.toString("utf8"),
     stdoutBytes: stdout.byteLength,
     stderrBytes: stderr.byteLength,
+    ...(isUtf8(stdout) ? {} : { stdoutInvalidUtf8: true as const }),
+    ...(isUtf8(stderr) ? {} : { stderrInvalidUtf8: true as const }),
   }));
