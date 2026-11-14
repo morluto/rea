@@ -303,7 +303,8 @@ export type BinaryTarget =
           | "uf2"
           | "dfuse"
           | "fit"
-          | "ntfs-mft";
+          | "ntfs-mft"
+          | "systemd-journal";
       })
   | (BinaryTargetIdentity &
       NonExecutableMetadata & {

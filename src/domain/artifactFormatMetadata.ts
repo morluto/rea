@@ -7,6 +7,7 @@ import {
 } from "./windows/ntfsMftAttributes.js";
 import { z } from "zod";
 import { MFT_INLINE_HEADER_LIMIT } from "./windows/ntfsMft.js";
+import { JOURNAL_INLINE_OBJECT_LIMIT } from "./linux/systemdJournal.js";
 
 import { jsonRecordSchema } from "./jsonRecord.js";
 import { jsonValueSchema } from "./jsonValue.js";
@@ -362,6 +363,75 @@ export const ntfsMftMetadataSchema = z.strictObject({
   file_name_count: offset.exactOptional(),
   file_name_incomplete_record_count: offset.exactOptional(),
   attribute_incomplete_record_count: offset.exactOptional(),
+});
+
+/** systemd journal header and object-table facts. */
+export const systemdJournalHeaderSchema = z.strictObject({
+  compatible_flags: uint32,
+  compatible_flag_names: z.array(z.string()),
+  incompatible_flags: uint32,
+  incompatible_flag_names: z.array(z.string()),
+  state: z.string(),
+  file_id: z.string(),
+  machine_id: z.string(),
+  tail_entry_boot_id: z.string(),
+  seqnum_id: z.string(),
+  header_size: offset,
+  arena_size: offset,
+  data_hash_table_offset: offset,
+  data_hash_table_size: offset,
+  field_hash_table_offset: offset,
+  field_hash_table_size: offset,
+  tail_object_offset: offset,
+  n_objects: offset,
+  n_entries: offset,
+  tail_entry_seqnum: offset,
+  head_entry_seqnum: offset,
+  entry_array_offset: offset,
+  head_entry_realtime: offset,
+  tail_entry_realtime: offset,
+  tail_entry_monotonic: offset,
+  // Null when the declared header predates the field's introduction.
+  n_data: offset.nullable(),
+  n_fields: offset.nullable(),
+  n_tags: offset.nullable(),
+  n_entry_arrays: offset.nullable(),
+  data_hash_chain_depth: offset.nullable(),
+  field_hash_chain_depth: offset.nullable(),
+  tail_entry_array_offset: uint32.nullable(),
+  tail_entry_array_n_entries: uint32.nullable(),
+  tail_entry_offset: offset.nullable(),
+  // Fields whose declared value exceeded 2^53-1 and report that ceiling.
+  overflowed_fields: z.array(z.string()),
+});
+
+export const systemdJournalObjectHeaderSchema = z.strictObject({
+  offset: offset,
+  type: z.string(),
+  raw_type: uint32,
+  flags: uint32,
+  flag_names: z.array(z.string()),
+  size: offset,
+  compressed: z.boolean(),
+});
+
+export const systemdJournalMetadataSchema = z.strictObject({
+  kind: z.literal("systemd-journal"),
+  header: systemdJournalHeaderSchema,
+  object_count: offset,
+  valid_object_count: offset,
+  truncated_object_count: offset,
+  unknown_type_object_count: offset,
+  object_type_counts: z.array(
+    z.strictObject({ type: z.string(), count: offset }),
+  ),
+  object_headers: z
+    .array(systemdJournalObjectHeaderSchema)
+    .max(JOURNAL_INLINE_OBJECT_LIMIT),
+  omitted_object_headers: offset,
+  object_header_start_index: offset,
+  next_object_header_index: offset.nullable(),
+  trailing_bytes: offset,
 });
 
 /**
@@ -952,6 +1022,7 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   uf2MetadataSchema,
   uf2RegionMetadataSchema,
   ntfsMftMetadataSchema,
+  systemdJournalMetadataSchema,
   dfuSeMetadataSchema,
   dfuSeElementMetadataSchema,
   espFlashImageMetadataSchema,
@@ -1105,6 +1176,10 @@ const declarationsByKind: {
   "ntfs-mft": {
     notCompared:
       "Its fields come from the file's own FILE record headers and resident file-name attributes, which content comparison covers.",
+  },
+  "systemd-journal": {
+    notCompared:
+      "Its fields come from the file's own header and object headers, which content comparison covers.",
   },
   dfuse: {
     notCompared:

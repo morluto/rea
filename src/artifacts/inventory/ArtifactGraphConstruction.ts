@@ -12,6 +12,7 @@ import { hasUf2Block } from "../../domain/firmware/uf2.js";
 import { isDfuSeFile } from "../../domain/firmware/dfuse.js";
 import { hasFitImagesNode } from "../../domain/firmware/fitImage.js";
 import { hasMftFileRecordHeader } from "../../domain/windows/ntfsMft.js";
+import { hasSystemdJournalHeader } from "../../domain/linux/systemdJournal.js";
 import type { ArtifactClassificationEvidence } from "../ArtifactClassificationProbe.js";
 import { asarHeaderAdmissionFailure } from "../AsarHeader.js";
 import { hasDestinationPath } from "../ArtifactPaths.js";
@@ -644,6 +645,7 @@ export const classifyArtifactBytes = (
   if (recognizeEspImage(prefix, fileSize) === "esp-image") return "esp-image";
   if (hasFitImagesNode(prefix)) return "fit";
   if (hasMftFileRecordHeader(prefix)) return "ntfs-mft";
+  if (hasSystemdJournalHeader(prefix)) return "systemd-journal";
   if (hasBinaryPlistSignature(prefix)) return "plist";
   if (hasXmlPlistSignature(prefix)) return "plist";
   const fatFormat = classifyFatArtifact(evidence, fileSize);
