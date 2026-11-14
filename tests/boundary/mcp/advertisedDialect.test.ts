@@ -33,6 +33,8 @@ describe("portable regex grammar", () => {
     ["^\\p{L}+$", "unicode-property"],
     ["^a{1,1001}$", "repeat-above-1000"],
     ["^(?:a{32}){32}$", "nested-repeat-above-1000"],
+    ["^a{01}$", "repeat-leading-zero"],
+    ["^a{1,010}$", "repeat-leading-zero"],
     ["^\\/[^\\x00]*$", "escape:\\/"],
     ["^(?i)a$", "inline-flags-or-other-group"],
     ["^\\-$", "escaped-hyphen-outside-class"],
