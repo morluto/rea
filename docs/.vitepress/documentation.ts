@@ -329,6 +329,11 @@ export const documentationSections = [
         route: "/raw-binary",
       },
       {
+        text: "Mach-O dSYM companion",
+        source: "providers/dsym.md",
+        route: "/dsym",
+      },
+      {
         text: "IDA provider",
         source: "providers/ida-provider.md",
         route: "/ida-provider",

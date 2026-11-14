@@ -3,6 +3,7 @@ import type { GhidraCheckpointSelection } from "./GhidraCheckpoint.js";
 import type { BridgeMaxRequestBytes } from "../config/bridgeMaxRequestBytes.js";
 import type { Result } from "../domain/result.js";
 import type { LinuxCgroupMemoryState } from "../process/LinuxCgroupMemory.js";
+import type { MachODebugCompanion } from "../domain/binaryTargetTypes.js";
 import type { GhidraLauncher } from "./GhidraLauncher.js";
 import type { GhidraSessionError } from "./GhidraSessionError.js";
 import type { GhidraSessionInfo } from "./GhidraSessionValues.js";
@@ -44,6 +45,8 @@ export interface GhidraClientOptions {
   readonly targetPath: string;
   readonly targetSha256: string;
   readonly existingProject?: boolean;
+  /** Caller-admitted dSYM companion staged beside the private import. */
+  readonly debugCompanion?: MachODebugCompanion;
   readonly checkpoint?: GhidraCheckpointSelection;
   /** Installation host shared by runtime allocation and snapshot admission. */
   readonly platform?: NodeJS.Platform;

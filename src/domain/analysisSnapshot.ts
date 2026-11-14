@@ -44,6 +44,7 @@ import {
 import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 import { canonicalJsonDigestSteps } from "./canonicalJsonDigestSteps.js";
 import { freezeJsonSnapshot } from "./immutableJson.js";
+import { machODebugCompanionCommitmentSchema } from "./machoDebugCompanion.js";
 import {
   binaryArchitectureSchema,
   rawBinaryEntryPointSchema,
@@ -98,16 +99,30 @@ const subjectBaseSchema = z.object({
   sha256: digestSchema,
 });
 const subjectSchema = withEvidenceSubjectDeclaration(subjectBaseSchema);
-const targetIdentitySchema = z.object({
+/** Non-Mach-O targets never carry a Mach-O dSYM companion. */
+const nonMachOTargetIdentitySchema = z.object({
   sha256: digestSchema,
   kind: kindSchema,
   architecture: architectureSchema.nullable(),
+  debug_companion: z.null().default(null),
+});
+const machOTargetIdentitySchema = nonMachOTargetIdentitySchema.extend({
+  /** Absent in snapshots written before companion admission; null when none. */
+  debug_companion: machODebugCompanionCommitmentSchema.nullable().default(null),
 });
 const targetSchema = z.discriminatedUnion("format", [
-  targetIdentitySchema.extend({
+  machOTargetIdentitySchema.extend({
+    format: z.enum(["mach-o", "mach-o-universal"]),
+    architecture: architectureSchema
+      .exclude([...RAW_ONLY_ARCHITECTURES])
+      .nullable(),
+  }),
+  nonMachOTargetIdentitySchema.extend({
     format: z.enum(
       formatSchema.options.filter(
         (format) =>
+          format !== "mach-o" &&
+          format !== "mach-o-universal" &&
           format !== "raw-binary" &&
           format !== "gamecube-dol" &&
           format !== "esp-flash-image",
@@ -117,20 +132,20 @@ const targetSchema = z.discriminatedUnion("format", [
       .exclude([...RAW_ONLY_ARCHITECTURES])
       .nullable(),
   }),
-  targetIdentitySchema.extend({
+  nonMachOTargetIdentitySchema.extend({
     format: z.literal("raw-binary"),
     kind: z.literal("executable"),
     architecture: binaryArchitectureSchema,
     entry_point: rawBinaryEntryPointSchema,
   }),
-  targetIdentitySchema.extend({
+  nonMachOTargetIdentitySchema.extend({
     format: z.literal("gamecube-dol"),
     kind: z.literal("executable"),
     architecture: z.literal("powerpc"),
     entry_point: rawBinaryEntryPointSchema,
   }),
   // The caller's inputs select how the dump is read, so they are identity.
-  targetIdentitySchema.extend({
+  nonMachOTargetIdentitySchema.extend({
     format: z.literal("esp-flash-image"),
     kind: z.literal("archive"),
     architecture: z.null(),
@@ -415,6 +430,7 @@ export const snapshotTarget = (target: BinaryTarget): AnalysisSnapshotTarget =>
         sha256: target.sha256,
         kind: target.kind,
         architecture: target.architecture,
+        debug_companion: null,
         format: target.format,
         entry_point: target.entryPoint,
       }
@@ -423,6 +439,7 @@ export const snapshotTarget = (target: BinaryTarget): AnalysisSnapshotTarget =>
           sha256: target.sha256,
           kind: target.kind,
           architecture: target.architecture,
+          debug_companion: null,
           format: target.format,
           entry_point: target.entryPoint,
         }
@@ -431,16 +448,39 @@ export const snapshotTarget = (target: BinaryTarget): AnalysisSnapshotTarget =>
             sha256: target.sha256,
             kind: target.kind,
             architecture: null,
+            debug_companion: null,
             format: target.format,
             flash_offset: target.espFlash.flashOffset,
             partition_table_offset: target.espFlash.partitionTableOffset,
           }
-        : {
-            sha256: target.sha256,
-            kind: target.kind,
-            architecture: target.architecture ?? null,
-            format: target.format,
-          };
+        : target.format === "mach-o" || target.format === "mach-o-universal"
+          ? {
+              sha256: target.sha256,
+              kind: target.kind,
+              architecture: target.architecture,
+              debug_companion: machOCompanionIdentity(target),
+              format: target.format,
+            }
+          : {
+              sha256: target.sha256,
+              kind: target.kind,
+              architecture: target.architecture ?? null,
+              debug_companion: null,
+              format: target.format,
+            };
+
+/** A dSYM change is a different analysis input, not the same target. */
+const machOCompanionIdentity = (
+  target: BinaryTarget,
+): AnalysisSnapshotTarget["debug_companion"] =>
+  (target.format === "mach-o" || target.format === "mach-o-universal") &&
+  target.debugCompanion !== undefined
+    ? {
+        source_path: target.debugCompanion.sourcePath,
+        uuid: target.debugCompanion.uuid,
+        member_sha256: target.debugCompanion.memberSha256,
+      }
+    : null;
 
 /** Build the immutable provider/profile binding used by a cached snapshot. */
 export const snapshotBinding = (
@@ -460,6 +500,7 @@ export const snapshotMatchesTarget = (
   snapshot.kind === target.kind &&
   snapshot.format === target.format &&
   snapshot.architecture === (target.architecture ?? null) &&
+  sameDebugCompanion(snapshot, target) &&
   (snapshot.format !== "raw-binary" ||
     (target.format === "raw-binary" &&
       snapshot.entry_point === target.entryPoint)) &&
@@ -471,6 +512,21 @@ export const snapshotMatchesTarget = (
       snapshot.flash_offset === target.espFlash.flashOffset &&
       snapshot.partition_table_offset ===
         target.espFlash.partitionTableOffset));
+
+/** A dSYM change is a different analysis input, not the same target. */
+const sameDebugCompanion = (
+  snapshot: AnalysisSnapshotTarget,
+  target: BinaryTarget,
+): boolean => {
+  const selected = machOCompanionIdentity(target);
+  const recorded = snapshot.debug_companion ?? null;
+  if (selected === null || recorded === null) return selected === recorded;
+  return (
+    recorded.uuid === selected.uuid &&
+    recorded.member_sha256 === selected.member_sha256 &&
+    recorded.source_path === selected.source_path
+  );
+};
 
 /** Compare a snapshot binding with the selected concrete analysis profile. */
 export const snapshotMatchesProfile = (
@@ -657,6 +713,17 @@ export const evidenceMatchesEntry = (
     evidenceContentDigest(evidence),
   ]) === entryEvidenceKey(entry, snapshot.binding);
 
+/**
+ * The target shape hashed into query IDs. A null companion is stripped so a
+ * bare target hashes exactly like the snapshots written before companion
+ * admission; a present companion keeps its key.
+ */
+const queryIdTarget = (target: AnalysisSnapshotTarget): JsonValue => {
+  if (target.debug_companion != null) return target;
+  const { debug_companion: _stripped, ...legacy } = target;
+  return legacy;
+};
+
 /** Compute the stable lookup key for one provider/profile-specific query. */
 export const analysisQueryId = (
   target: AnalysisSnapshotTarget,
@@ -665,7 +732,14 @@ export const analysisQueryId = (
   parameters: Readonly<Record<string, JsonValue>>,
 ): string =>
   `query_${createHash("sha256")
-    .update(canonicalJson({ target, binding, operation, parameters }))
+    .update(
+      canonicalJson({
+        target: queryIdTarget(target),
+        binding,
+        operation,
+        parameters,
+      }),
+    )
     .digest("hex")}`;
 
 /** Create one serializable snapshot entry from a successful provider call. */

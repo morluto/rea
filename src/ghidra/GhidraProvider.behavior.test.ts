@@ -6656,6 +6656,205 @@ it("reports an unsupported existing-project target as an invalid REA_GHIDRA_PROJ
   }
 });
 
+it("rejects dsym_path in existing-project mode and requires matching debug_companion profile commitments before client creation", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rea-dsym-project-"));
+  await mkdir(join(root, "selected.rep"));
+  await writeFile(join(root, "selected.gpr"), "marker");
+  let clientCreates = 0;
+  const neverCreateClient: GhidraProviderClientFactory = () => {
+    clientCreates++;
+    throw new Error(
+      "A rejected profile/companion combination cannot create a native client",
+    );
+  };
+  const existingGhidra = provider(installationHost(), neverCreateClient, {
+    REA_GHIDRA_PROJECT_PATH: join(root, "selected.gpr"),
+  });
+  const freshGhidra = provider(installationHost(), neverCreateClient);
+  onTestFinished(async () => {
+    await existingGhidra.closeOwnedResources();
+    await freshGhidra.closeOwnedResources();
+    await rm(root, { recursive: true, force: true });
+  });
+  const baseTarget: BinaryTarget = {
+    path: "/tmp/fixture",
+    sha256: "a".repeat(64),
+    kind: "executable",
+    format: "mach-o",
+    architecture: "x86_64",
+    availableArchitectures: ["x86_64"],
+  };
+  const companion = {
+    sourcePath: "/tmp/fixture.dSYM",
+    memberPath: "/tmp/fixture.dSYM/Contents/Resources/DWARF/fixture",
+    memberSha256: "b".repeat(64),
+    memberSizeBytes: 64,
+    uuid: "11111111-2222-3333-4444-555555555555",
+  };
+  const companionTarget: BinaryTarget = {
+    ...baseTarget,
+    debugCompanion: companion,
+  };
+
+  const rejectedProfile =
+    await existingGhidra.resolveAnalysisProfile(companionTarget);
+  expect(rejectedProfile.ok).toBe(false);
+  if (!rejectedProfile.ok) {
+    expect(rejectedProfile.error).toMatchObject({
+      _tag: "ConfigurationError",
+      settings: [
+        {
+          setting: "REA_GHIDRA_PROJECT_PATH",
+          constraint: expect.stringContaining("-process -noanalysis"),
+        },
+      ],
+      remediationAction: expect.stringContaining("omit dsym_path"),
+    });
+  }
+
+  const existingProfile =
+    await existingGhidra.resolveAnalysisProfile(baseTarget);
+  if (!existingProfile.ok || existingProfile.value.profile === null)
+    throw new Error("Expected existing-project profile for bare Mach-O target");
+  const existingClient = existingGhidra.createClient(
+    companionTarget,
+    existingProfile.value.profile,
+  );
+  onTestFinished(async () => {
+    await existingClient.close();
+  });
+  const existingExec = await existingClient.execute("list_procedures", {});
+  expect(existingExec).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "ProviderAdapterError",
+      operation: "list_procedures",
+      diagnostics: {
+        rejection: "existing_project_debug_companion",
+        reason: expect.stringContaining("-process -noanalysis"),
+      },
+    },
+  });
+
+  const bareFreshProfile = await freshGhidra.resolveAnalysisProfile(baseTarget);
+  const companionFreshProfile =
+    await freshGhidra.resolveAnalysisProfile(companionTarget);
+  if (
+    !bareFreshProfile.ok ||
+    bareFreshProfile.value.profile === null ||
+    !companionFreshProfile.ok ||
+    companionFreshProfile.value.profile === null
+  )
+    throw new Error("Expected fresh Mach-O profiles");
+  const mismatchedCompanionClient = freshGhidra.createClient(
+    companionTarget,
+    bareFreshProfile.value.profile,
+  );
+  const mismatchedBareClient = freshGhidra.createClient(
+    baseTarget,
+    companionFreshProfile.value.profile,
+  );
+  onTestFinished(async () => {
+    await mismatchedCompanionClient.close();
+    await mismatchedBareClient.close();
+  });
+  for (const client of [mismatchedCompanionClient, mismatchedBareClient]) {
+    expect(await client.execute("list_procedures", {})).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "ProviderAdapterError",
+        operation: "list_procedures",
+        diagnostics: {
+          rejection: "debug_companion_profile_mismatch",
+          reason:
+            "Resolve dsym_path into a matching analysis profile before opening the session.",
+        },
+      },
+    });
+  }
+  expect(clientCreates).toBe(0);
+});
+
+it.skipIf(process.platform === "win32")(
+  "commits distinct checkpoint keys for bare and debug-companion Mach-O profiles",
+  async () => {
+    const checkpointDir = await mkdtemp(join(tmpdir(), "rea-dsym-checkpoint-"));
+    const checkpointGhidra = provider(
+      installationHost(),
+      () => {
+        throw new Error("Profile resolution must not create a client");
+      },
+      { REA_GHIDRA_CHECKPOINT_DIR: checkpointDir },
+    );
+    onTestFinished(async () => {
+      await checkpointGhidra.closeOwnedResources();
+      await rm(checkpointDir, { recursive: true, force: true });
+    });
+    const baseTarget: BinaryTarget = {
+      path: "/tmp/fixture",
+      sha256: "a".repeat(64),
+      kind: "executable",
+      format: "mach-o",
+      architecture: "x86_64",
+      availableArchitectures: ["x86_64"],
+    };
+    const companion = {
+      sourcePath: "/tmp/fixture.dSYM",
+      memberPath: "/tmp/fixture.dSYM/Contents/Resources/DWARF/fixture",
+      memberSha256: "b".repeat(64),
+      memberSizeBytes: 64,
+      uuid: "11111111-2222-3333-4444-555555555555",
+    };
+    const bareCheckpoint =
+      await checkpointGhidra.resolveAnalysisProfile(baseTarget);
+    const companionCheckpoint = await checkpointGhidra.resolveAnalysisProfile({
+      ...baseTarget,
+      debugCompanion: companion,
+    });
+    const otherCompanionCheckpoint =
+      await checkpointGhidra.resolveAnalysisProfile({
+        ...baseTarget,
+        debugCompanion: { ...companion, memberSha256: "d".repeat(64) },
+      });
+    if (
+      !bareCheckpoint.ok ||
+      bareCheckpoint.value.profile === null ||
+      !companionCheckpoint.ok ||
+      companionCheckpoint.value.profile === null ||
+      !otherCompanionCheckpoint.ok ||
+      otherCompanionCheckpoint.value.profile === null
+    )
+      throw new Error("Expected checkpoint Mach-O profiles");
+    expect(
+      companionCheckpoint.value.profile.parameters.debug_companion,
+    ).toEqual({
+      source_path: "/tmp/fixture.dSYM",
+      uuid: "11111111-2222-3333-4444-555555555555",
+      member_sha256: "b".repeat(64),
+    });
+    expect(
+      new Set([
+        bareCheckpoint.value.profile.digest,
+        companionCheckpoint.value.profile.digest,
+        otherCompanionCheckpoint.value.profile.digest,
+      ]).size,
+    ).toBe(3);
+    expect(
+      new Set([
+        JSON.stringify(
+          bareCheckpoint.value.profile.parameters.owned_checkpoint,
+        ),
+        JSON.stringify(
+          companionCheckpoint.value.profile.parameters.owned_checkpoint,
+        ),
+        JSON.stringify(
+          otherCompanionCheckpoint.value.profile.parameters.owned_checkpoint,
+        ),
+      ]).size,
+    ).toBe(3);
+  },
+);
+
 it("keeps saved project reports as shared historical Evidence without applying fresh overrides", async () => {
   const root = await mkdtemp(join(tmpdir(), "rea-history-project-"));
   await mkdir(join(root, "history.rep"));

@@ -232,6 +232,9 @@ const registerOpenLifecycleTool = ({
           ...(input.entry_point === undefined
             ? {}
             : { entryPoint: input.entry_point }),
+          ...(input.dsym_path === undefined
+            ? {}
+            : { dsymPath: input.dsym_path }),
           ...(input.flash_offset === undefined &&
           input.partition_table_offset === undefined
             ? {}

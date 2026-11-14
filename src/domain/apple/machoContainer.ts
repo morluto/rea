@@ -371,9 +371,12 @@ export const readFatSliceDeclarations = (
 };
 
 /** Find an overlapping pair without changing the declarations' table order. */
-export const findOverlappingFatSlices = (
-  declarations: readonly FatSliceDeclaration[],
-): readonly [FatSliceDeclaration, FatSliceDeclaration] | null => {
+export const findOverlappingFatSlices = <
+  T extends { readonly offset: number; readonly size: number } =
+    FatSliceDeclaration,
+>(
+  declarations: readonly T[],
+): readonly [T, T] | null => {
   const ranges = [...declarations].sort((a, b) => a.offset - b.offset);
   for (let index = 1; index < ranges.length; index++) {
     const previous = ranges[index - 1];

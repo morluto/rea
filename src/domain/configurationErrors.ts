@@ -68,11 +68,13 @@ export interface BinaryTargetErrorOptions extends AnalysisErrorOptions {
     | "wasm_requires_static_inspection"
     | "file_format_rejected"
     | "load_selection_rejected"
-    | BundleTargetConstraint;
+    | BundleTargetConstraint
+    | "debug_companion_rejected";
   /** Info.plist whose declaration selected, or failed to select, the program file. */
   readonly infoPlist?: string;
   /** Bundle paths examined before resolution failed. */
   readonly probedPaths?: readonly string[];
+  /** Producer-owned recovery when the default constraint advice does not apply. */
   readonly remediationAction?: string;
 }
 

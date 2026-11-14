@@ -40,6 +40,7 @@ export interface BinarySessionOpenOptions {
   readonly formatHint?: ExecutableFormatHint;
   readonly architecture?: BinaryArchitecture;
   readonly entryPoint?: string;
+  readonly dsymPath?: string;
   /** Inputs for format=esp-flash-image. */
   readonly espFlash?: EspFlashSelection;
   readonly snapshot?: AnalysisSnapshot;
@@ -105,6 +106,7 @@ export const resolveSessionOpen = async (
     ...(options.entryPoint === undefined
       ? {}
       : { entryPoint: options.entryPoint }),
+    ...(options.dsymPath === undefined ? {} : { dsymPath: options.dsymPath }),
     ...(options.espFlash === undefined ? {} : { espFlash: options.espFlash }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   });

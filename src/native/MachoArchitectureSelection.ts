@@ -14,7 +14,7 @@ const preferredSubtypes = <Subtype extends number>(
 ): { readonly subtype: Subtype; readonly name: string }[] =>
   order.map((subtype) => ({ subtype, name: names[subtype] }));
 
-interface MachoArchitecturePolicy {
+export interface MachoArchitecturePolicy {
   readonly cpuType: number;
   readonly subtypes: readonly {
     readonly subtype: number;
@@ -22,6 +22,15 @@ interface MachoArchitecturePolicy {
   }[];
   readonly variantName?: RegExp;
 }
+
+type MachoCpuSliceIdentity =
+  | { readonly cpuType: number; readonly cpuSubtype: number }
+  | { readonly cpuType: number; readonly cpuSubtypeBase: number };
+
+const sliceCpuSubtypeBase = (slice: MachoCpuSliceIdentity): number =>
+  "cpuSubtypeBase" in slice
+    ? slice.cpuSubtypeBase
+    : machoCpuSubtypeBase(slice.cpuSubtype);
 
 /** One preference order for FAT subtype identities and Apple tool slice names. */
 export const MACHO_ARCHITECTURE_POLICIES: Readonly<
@@ -64,6 +73,62 @@ export const machoSubtypeRank = (
     (candidate) => candidate.subtype === machoCpuSubtypeBase(subtype),
   );
   return rank < 0 ? policy.subtypes.length : rank;
+};
+
+/**
+ * Whether a container declares the same `(cpuType, cpuSubtypeBase)` more than
+ * once for `cpuType`, leaving whole-container consumers without a unique slice.
+ */
+export const hasDuplicateMachoCpuSubtype = (
+  cpuType: number,
+  slices: readonly MachoCpuSliceIdentity[],
+): boolean => {
+  const seen = new Set<number>();
+  for (const slice of slices) {
+    if (slice.cpuType !== cpuType) continue;
+    const base = sliceCpuSubtypeBase(slice);
+    if (seen.has(base)) return true;
+    seen.add(base);
+  }
+  return false;
+};
+
+export type RankedMachoSliceSelection<T> =
+  | { readonly status: "selected"; readonly slice: T }
+  | { readonly status: "absent" }
+  | { readonly status: "ambiguous" };
+
+/**
+ * Select one slice for `policy` by subtype preference, keeping FAT table order
+ * across distinct equal-ranked subtypes and rejecting duplicate base subtypes at
+ * the winning rank as ambiguous.
+ */
+export const selectRankedMachoSlice = <T extends MachoCpuSliceIdentity>(
+  policy: MachoArchitecturePolicy,
+  slices: readonly T[],
+): RankedMachoSliceSelection<T> => {
+  let best: T | undefined;
+  let bestBase = 0;
+  let bestRank = Number.POSITIVE_INFINITY;
+  let ambiguous = false;
+  for (const slice of slices) {
+    if (slice.cpuType !== policy.cpuType) continue;
+    const base = sliceCpuSubtypeBase(slice);
+    const rank = machoSubtypeRank(policy, base);
+    if (best !== undefined && rank >= bestRank) {
+      // Equal ranks keep FAT table order unless the slices share a subtype.
+      if (rank === bestRank && base === bestBase) ambiguous = true;
+      continue;
+    }
+    best = slice;
+    bestBase = base;
+    bestRank = rank;
+    ambiguous = false;
+  }
+  if (best === undefined) return { status: "absent" };
+  return ambiguous
+    ? { status: "ambiguous" }
+    : { status: "selected", slice: best };
 };
 
 /** codesign's architecture name for one FAT CPU identity, when known. */

@@ -76,7 +76,13 @@ export type ExecutableMetadata =
       readonly universalSlice?: never;
     }
   | {
-      readonly format: "mach-o" | "elf" | "dos-mz" | "dos-com";
+      readonly format: "mach-o";
+      readonly architecture: HeaderArchitecture;
+      readonly availableArchitectures: readonly HeaderArchitecture[];
+      readonly universalSlice?: never;
+    }
+  | {
+      readonly format: "elf" | "dos-mz" | "dos-com";
       readonly architecture: HeaderArchitecture;
       readonly availableArchitectures: readonly HeaderArchitecture[];
       readonly universalSlice?: never;

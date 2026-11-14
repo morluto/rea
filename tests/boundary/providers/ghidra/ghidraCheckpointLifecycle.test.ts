@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import {
   access,
+  mkdir,
   mkdtemp,
   readFile,
   readdir,
@@ -287,5 +288,114 @@ it.skipIf(process.platform === "win32")(
     for (const root of f.launcher.runtimeRoots)
       await expect(access(root)).rejects.toThrow();
     expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "stages a debugCompanion for initial checkpoint creation and skips re-staging on checkpoint restore",
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-checkpoint-companion-"));
+    roots.push(root);
+    const targetPath = join(root, "target");
+    await writeFile(targetPath, "source target bytes");
+    const targetSha256 = createHash("sha256")
+      .update("source target bytes")
+      .digest("hex");
+    const dsymPath = join(root, "target.dSYM");
+    const dwarfDir = join(dsymPath, "Contents", "Resources", "DWARF");
+    await mkdir(dwarfDir, { recursive: true });
+    const memberPath = join(dwarfDir, "target");
+    const memberBytes = Buffer.from("dwarf companion bytes");
+    await writeFile(memberPath, memberBytes);
+    const memberSha256 = createHash("sha256").update(memberBytes).digest("hex");
+    const debugCompanion = {
+      sourcePath: dsymPath,
+      memberPath,
+      memberSha256,
+      memberSizeBytes: memberBytes.byteLength,
+      uuid: "11111111-2222-3333-4444-555555555555",
+    };
+    const companionProfile = createAnalysisProfile(
+      { id: "ghidra", name: "Ghidra", version: "12.1.4" },
+      {
+        checkpoint_test: true,
+        debug_companion: {
+          source_path: dsymPath,
+          uuid: debugCompanion.uuid,
+          member_sha256: memberSha256,
+        },
+      },
+    );
+    const initialSelection = await resolveGhidraCheckpoint(
+      root,
+      targetSha256,
+      companionProfile,
+      new ArtifactResourceScope(),
+    );
+    const initialLauncher = new GhidraFixtureLauncher("checkpoint");
+    launchers.push(initialLauncher);
+    const initial = new GhidraClient({
+      launcher: initialLauncher,
+      targetPath,
+      targetSha256,
+      debugCompanion,
+      providerVersion: "12.1.4",
+      profileDigest: companionProfile.digest,
+      checkpoint: initialSelection,
+      startupTimeoutMs: 10_000,
+    });
+    clients.push(initial);
+    expect((await initial.start()).ok).toBe(true);
+    expect(initial.checkpointRestore()).toBeNull();
+    expect(
+      (await readdir(initialLauncher.runtimeRoots[0]!)).some((name) =>
+        name.endsWith(".dSYM"),
+      ),
+    ).toBe(true);
+    expect((await initial.close()).ok).toBe(true);
+
+    // Remove the unleased member between sessions; checkpoint restore does not
+    // re-stage DWARF bytes because the packed Program already ingested them.
+    await rm(memberPath, { force: true });
+
+    const resumedSelection = await resolveGhidraCheckpoint(
+      root,
+      targetSha256,
+      companionProfile,
+      new ArtifactResourceScope(),
+    );
+    const resumedLauncher = new GhidraFixtureLauncher("exit_tools");
+    launchers.push(resumedLauncher);
+    const resumed = new GhidraClient({
+      launcher: resumedLauncher,
+      targetPath,
+      targetSha256,
+      debugCompanion,
+      providerVersion: "12.1.4",
+      profileDigest: companionProfile.digest,
+      checkpoint: resumedSelection,
+      startupTimeoutMs: 10_000,
+    });
+    clients.push(resumed);
+    expect((await resumed.start()).ok).toBe(true);
+    expect(resumed.checkpointRestore()).not.toBeNull();
+    expect(
+      (await readdir(resumedLauncher.runtimeRoots[0]!)).some((name) =>
+        name.endsWith(".dSYM"),
+      ),
+    ).toBe(false);
+    const failed = await resumed.callTool("list_documents", {});
+    expect(failed.ok).toBe(false);
+    if (failed.ok) return;
+    expect(failed.error.diagnostics).toMatchObject({
+      target_admission: {
+        dsym: {
+          source_path: dsymPath,
+          member_sha256: memberSha256,
+          uuid: debugCompanion.uuid,
+          staged_member: null,
+        },
+      },
+    });
   },
 );
