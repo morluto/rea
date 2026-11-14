@@ -692,7 +692,8 @@ const errorMessage = (cause: unknown): string =>
 /** Keep the typed cleanup ownership facts a generic message would discard. */
 const cleanupFailureDetail = (cause: unknown): string => {
   const detail = `MCP stdio cleanup failed: ${errorMessage(cause)}`;
-  if (!(cause instanceof AnalysisError) || !cause.cleanupIncomplete) return detail;
+  if (!(cause instanceof AnalysisError) || !cause.cleanupIncomplete)
+    return detail;
   const resources = cause.cleanupResources;
   if (resources.length === 0) return detail;
   const reason =
