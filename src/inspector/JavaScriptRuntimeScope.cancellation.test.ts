@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -108,8 +108,20 @@ afterEach(async () => {
   );
 });
 
+const isolatedTmpdir = async (): Promise<string> => {
+  // Node's lossy discovery metadata (underscore replacement of quotes/backslashes) makes
+  // paths with an underscore ambiguous to the location guard; derive the working root
+  // without underscores rather than changing that intentional behavior.
+  const sanitized = tmpdir().replace(/_/g, "-");
+  if (sanitized === tmpdir()) return tmpdir();
+  await mkdir(sanitized, { recursive: true });
+  return sanitized;
+};
+
 const targetFile = async (): Promise<string> => {
-  const root = await mkdtemp(join(tmpdir(), "rea-inspector-cancel-"));
+  const root = await mkdtemp(
+    join(await isolatedTmpdir(), "rea-inspector-cancel-"),
+  );
   roots.push(root);
   const path = join(root, "entry.js");
   await writeFile(path, "// inert target file\n");
