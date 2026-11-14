@@ -7,6 +7,10 @@ import type { Evidence } from "../domain/evidence.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import type { Result } from "../domain/result.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import {
+  analysisEvidenceDeliveryOptions,
+  deliverCliAnalysisEvidence,
+} from "./analysisEvidenceDelivery.js";
 import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
@@ -58,6 +62,18 @@ export interface CliContractProjection<Field extends string> {
    * reason. The contract's own default applies.
    */
   readonly omit?: { readonly [Key in Field]?: string };
+  /**
+   * The command delivers complete Evidence or a summary saved beside a
+   * bundle: it adds `--detail` and `--evidence_output`. A contract `detail`
+   * field selects that delivery and is not passed to the analysis.
+   */
+  readonly evidenceDelivery?: true;
+  /**
+   * Where the contract's cross-field rules first refuse a combination.
+   * `argv` reports them as CLI validation errors naming CLI keys; by default
+   * the service's contract parse reports them as an `invalid_request`.
+   */
+  readonly crossFieldRules?: "argv";
 }
 
 /** One contract from a contract group, keeping its exact schema types. */
@@ -85,6 +101,11 @@ export interface ContractCommandContext {
   readonly operation: string;
   /** Each caller-path field as the caller spelled it, before resolution. */
   readonly callerInputs: Readonly<Record<string, string>>;
+  /** The selected delivery, for a projection with `evidenceDelivery`. */
+  readonly delivery: {
+    readonly detail: "complete" | "summary";
+    readonly evidenceOutput: string | undefined;
+  };
 }
 
 /** A closeable one-shot service that inspects one contract input. */
@@ -96,27 +117,53 @@ export interface EvidenceInspectionService {
   close(): Promise<void>;
 }
 
+const primaryCallerPath = ({
+  operation,
+  callerInputs,
+}: ContractCommandContext): string => {
+  const callerPath = callerInputs.path;
+  if (callerPath === undefined)
+    throw new Error(`${operation} has no caller path field named path`);
+  return callerPath;
+};
+
+/**
+ * Inspect through a closeable service, then deliver complete Evidence or a
+ * summary with its bundle, recording the caller's spelling of `path`.
+ */
+export const deliverWithService =
+  (service: () => EvidenceInspectionService, providerId: string) =>
+  (input: unknown, context: ContractCommandContext) => {
+    const callerInputPath = primaryCallerPath(context);
+    const owned = service();
+    return deliverCliAnalysisEvidence({
+      callerInputPath,
+      run: () => owned.inspect(input, { signal: context.signal }),
+      service: owned,
+      providerId,
+      operation: context.operation,
+      signal: context.signal,
+      detail: context.delivery.detail,
+      evidenceOutput: context.delivery.evidenceOutput,
+    });
+  };
+
 /**
  * Inspect through a closeable service, finish its cleanup, and record the
  * caller's spelling of `path` in the Evidence.
  */
 export const inspectWithService =
   (service: () => EvidenceInspectionService, providerId: string) =>
-  (
-    input: unknown,
-    { signal, operation, callerInputs }: ContractCommandContext,
-  ) => {
-    const callerPath = callerInputs.path;
-    if (callerPath === undefined)
-      throw new Error(`${operation} has no caller path field named path`);
+  (input: unknown, context: ContractCommandContext) => {
+    const callerPath = primaryCallerPath(context);
     const owned = service();
     return finishCliEvidenceCommand(
       callerPath,
-      () => owned.inspect(input, { signal }),
+      () => owned.inspect(input, { signal: context.signal }),
       owned,
       providerId,
-      operation,
-      signal,
+      context.operation,
+      context.signal,
     ).then(projectCliAnalysisResult);
   };
 
@@ -125,6 +172,8 @@ interface FieldBinding {
   readonly key: string;
   readonly positional: boolean;
   readonly callerPath: boolean;
+  /** The field selects CLI Evidence delivery and is not analysis input. */
+  readonly delivery: boolean;
 }
 
 /** A command registered from a contract; the parity guard reads these. */
@@ -133,6 +182,8 @@ export interface ContractCommandBinding {
   readonly contract: ProjectedContract;
   readonly fields: readonly FieldBinding[];
   readonly omitted: readonly string[];
+  /** CLI options with no contract field, such as `evidence_output`. */
+  readonly cliOnly: readonly string[];
   /** Map parsed CLI arguments and options to the contract input. */
   readonly toContractInput: (
     args: Readonly<Record<string, unknown>>,
@@ -152,8 +203,22 @@ const camelCase = (field: string): string =>
     letter.toUpperCase(),
   );
 
+/** The contract object admits this field's key being absent. */
 const admitsOmission = (field: z.ZodType): boolean =>
-  field.safeParse(undefined).success;
+  z.object({ value: field }).safeParse({}).success;
+
+/**
+ * Argv cannot carry an explicit undefined, so an exact-optional field admits
+ * the same values as an optional one. Incur's help shows boolean flags and
+ * enum choices only through `optional`.
+ */
+const argvOptional = (field: z.ZodType): z.ZodType => {
+  if (!(field instanceof z.ZodExactOptional)) return field;
+  const optional = (field.unwrap() as z.ZodType).optional();
+  return field.description === undefined
+    ? optional
+    : optional.describe(field.description);
+};
 
 /** Caller-relative spelling of an absolute-path contract field. */
 const callerPathField = (field: z.ZodType): z.ZodType => {
@@ -252,8 +317,8 @@ const projectObjectConstraints = (
  * Register one CLI command whose arguments and options are projected from a
  * tool contract. Field schemas, bounds, defaults and help come from the
  * contract; decimal integers use the shared argv grammar; cross-field rules
- * run once through the contract with issue paths renamed to CLI keys. The
- * handler receives the contract input, with caller paths made absolute.
+ * stay with the contract (see `crossFieldRules`). The handler receives the
+ * contract input, with caller paths made absolute.
  */
 export const registerContractCommand = <
   Contract extends ProjectedContract,
@@ -295,18 +360,26 @@ export const registerContractCommand = <
       (field) => !positionals.includes(field) && !omitted.includes(field),
     ),
   ];
+  const evidenceDelivery = projection.evidenceDelivery === true;
   const fields: FieldBinding[] = ordered.map((field) => ({
     field,
     key: fieldProjections[field]?.name ?? camelCase(field),
     positional: positionals.includes(field),
     callerPath: callerPaths.has(field),
+    delivery: evidenceDelivery && field === "detail",
   }));
+  const deliveryOptions: Record<string, z.ZodType> = evidenceDelivery
+    ? Object.hasOwn(shape, "detail")
+      ? { evidence_output: analysisEvidenceDeliveryOptions.evidence_output }
+      : analysisEvidenceDeliveryOptions
+    : {};
   const keyOf = new Map(fields.map((binding) => [binding.field, binding.key]));
   const rename = (field: string): string => keyOf.get(field) ?? field;
 
   const cliSchema = (binding: FieldBinding): z.ZodType => {
     const field = shape[binding.field]!;
     const description = fieldProjections[binding.field]?.description;
+    if (binding.delivery) return analysisEvidenceDeliveryOptions.detail;
     if (binding.callerPath) {
       const admitted = callerPathField(field);
       return description === undefined
@@ -314,7 +387,7 @@ export const registerContractCommand = <
         : admitted.describe(description);
     }
     assertArgvField(contract.name, binding.field, field);
-    const admitted = cliDecimalShape({ field }).field;
+    const admitted = cliDecimalShape({ field: argvOptional(field) }).field;
     return description === undefined
       ? admitted
       : admitted.describe(description);
@@ -333,7 +406,7 @@ export const registerContractCommand = <
     const input: Record<string, unknown> = {};
     for (const binding of fields) {
       const value = (binding.positional ? args : options)[binding.key];
-      if (value === undefined) continue;
+      if (value === undefined || binding.delivery) continue;
       input[binding.field] =
         binding.callerPath && typeof value === "string"
           ? absoluteCallerPath(value)
@@ -342,11 +415,14 @@ export const registerContractCommand = <
     return input;
   };
 
-  // Cross-field rules belong to the contract. Run its own object checks on
-  // the options mapped to contract names, then report CLI keys. Positional
-  // values are not visible to an options refinement; the service's contract
-  // parse still enforces any rule that reads them.
-  const checks = contract.inputSchema._zod.def.checks ?? [];
+  // Cross-field rules belong to the contract. When requested, run its own
+  // object checks on the options mapped to contract names, then report CLI
+  // keys. Positional values are not visible to an options refinement; the
+  // service's contract parse still enforces every rule.
+  const checks =
+    projection.crossFieldRules === "argv"
+      ? (contract.inputSchema._zod.def.checks ?? [])
+      : [];
   const contractChecks = z
     .object({})
     .loose()
@@ -369,7 +445,10 @@ export const registerContractCommand = <
           }
         });
   const constraints = projectObjectConstraints(contract, rename);
-  const optionsObject = z.object(groupShape(false));
+  const optionsObject = z.object({
+    ...groupShape(false),
+    ...deliveryOptions,
+  });
   const options = refined(
     constraints === undefined ? optionsObject : optionsObject.meta(constraints),
   );
@@ -401,7 +480,19 @@ export const registerContractCommand = <
             toContractInput(rawArgs, rawOptions) as z.input<
               Contract["inputSchema"]
             >,
-            { signal, operation: contract.name, callerInputs },
+            {
+              signal,
+              operation: contract.name,
+              callerInputs,
+              delivery: {
+                detail:
+                  rawOptions.detail === "summary" ? "summary" : "complete",
+                evidenceOutput:
+                  typeof rawOptions.evidence_output === "string"
+                    ? rawOptions.evidence_output
+                    : undefined,
+              },
+            },
           ),
         ),
       );
@@ -413,6 +504,7 @@ export const registerContractCommand = <
     contract,
     fields,
     omitted,
+    cliOnly: Object.keys(deliveryOptions),
     toContractInput,
   });
   bindings.set(cli, registered);

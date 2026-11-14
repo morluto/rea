@@ -1,4 +1,3 @@
-import { inspectDevicetreeInputSchema } from "../domain/firmware/devicetree.js";
 import { z } from "incur";
 import { cliDecimalField } from "./options.js";
 import { producerLimitsOption } from "./producerLimitsOption.js";
@@ -29,19 +28,15 @@ import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { inspectBinaryLayoutInputSchema } from "../domain/native/binaryLayout.js";
 import { inspectRecordedCrashInputSchema } from "../domain/native/recordedCrash.js";
-import { inspectNativeExportsInputSchema } from "../domain/native/nativeExports.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { withEvidenceCallerInputPath } from "../domain/evidence.js";
 import { BYTE_ENTROPY_PROVIDER } from "../domain/investigationProviders.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
-import {
-  analysisEvidenceDeliveryOptions,
-  deliverCliAnalysisEvidence,
-} from "./analysisEvidenceDelivery.js";
 import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../contracts/native/binaryDiagnosticsToolContracts.js";
 import {
   contractNamed,
+  deliverWithService,
   inspectWithService,
   registerContractCommand,
 } from "./contractCommand.js";
@@ -287,95 +282,43 @@ export const registerBinaryDiagnosticsCommands = (
     },
     inspectWithService(createPeResourcesService, "rea-pe-resources"),
   );
-  cli.command(CLI_COMMANDS.inspectDevicetree, {
-    description: "Inspect a flattened devicetree blob without executing it",
-    args: z.object({
-      path: localPathStringSchema.describe("Local flattened devicetree image"),
-    }),
-    options: z.object({
-      maxFileBytes: cliDecimalField(
-        inspectDevicetreeInputSchema.shape.max_file_bytes,
-      ).describe("Maximum FDT file size in bytes"),
-      maxNodes: cliDecimalField(
-        inspectDevicetreeInputSchema.shape.max_nodes,
-      ).describe("Maximum number of device-tree nodes"),
-      maxProperties: cliDecimalField(
-        inspectDevicetreeInputSchema.shape.max_properties,
-      ).describe("Maximum number of device-tree properties"),
-      maxDepth: cliDecimalField(
-        inspectDevicetreeInputSchema.shape.max_depth,
-      ).describe("Maximum device-tree nesting depth"),
-      ...analysisEvidenceDeliveryOptions,
-    }),
-    run: ({ args, options }) =>
-      withCommandCancellation(async (signal) => {
-        const devicetree = createDevicetreeService();
-        return await logCliCommand(
-          logger,
-          CLI_COMMANDS.inspectDevicetree,
-          async () =>
-            deliverCliAnalysisEvidence({
-              callerInputPath: args.path,
-              run: () =>
-                devicetree.inspect(
-                  {
-                    path: absoluteCallerPath(args.path),
-                    max_file_bytes: options.maxFileBytes,
-                    max_nodes: options.maxNodes,
-                    max_properties: options.maxProperties,
-                    max_depth: options.maxDepth,
-                  },
-                  { signal },
-                ),
-              service: devicetree,
-              providerId: "rea-devicetree",
-              operation: "inspect_devicetree",
-              signal,
-              detail: options.detail,
-              evidenceOutput: options.evidence_output,
-            }),
-        );
-      }),
-  });
-  cli.command(CLI_COMMANDS.inspectNativeExports, {
-    description:
-      "Inspect a PE or ELF image's export table without executing it",
-    args: z.object({
-      path: localPathStringSchema.describe("Local PE or ELF image"),
-    }),
-    options: z.object({
-      maxFileBytes: cliDecimalField(
-        inspectNativeExportsInputSchema.shape.max_file_bytes,
-      ),
-      ...analysisEvidenceDeliveryOptions,
-    }),
-    run: ({ args, options }) =>
-      withCommandCancellation(async (signal) => {
-        const exports = createNativeExportsService();
-        return await logCliCommand(
-          logger,
-          CLI_COMMANDS.inspectNativeExports,
-          async () =>
-            deliverCliAnalysisEvidence({
-              callerInputPath: args.path,
-              run: () =>
-                exports.inspect(
-                  {
-                    path: absoluteCallerPath(args.path),
-                    max_file_bytes: options.maxFileBytes,
-                  },
-                  { signal },
-                ),
-              service: exports,
-              providerId: "rea-native-exports",
-              operation: "inspect_native_exports",
-              signal,
-              detail: options.detail,
-              evidenceOutput: options.evidence_output,
-            }),
-        );
-      }),
-  });
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_devicetree"),
+    {
+      command: CLI_COMMANDS.inspectDevicetree,
+      description: "Inspect a flattened devicetree blob without executing it",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      evidenceDelivery: true,
+      fields: {
+        path: { description: "Local flattened devicetree image" },
+        max_file_bytes: { description: "Maximum FDT file size in bytes" },
+        max_nodes: { description: "Maximum number of device-tree nodes" },
+        max_properties: {
+          description: "Maximum number of device-tree properties",
+        },
+        max_depth: { description: "Maximum device-tree nesting depth" },
+      },
+    },
+    deliverWithService(createDevicetreeService, "rea-devicetree"),
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_native_exports"),
+    {
+      command: CLI_COMMANDS.inspectNativeExports,
+      description:
+        "Inspect a PE or ELF image's export table without executing it",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      evidenceDelivery: true,
+      fields: { path: { description: "Local PE or ELF image" } },
+    },
+    deliverWithService(createNativeExportsService, "rea-native-exports"),
+  );
   const service = createBinaryLayoutService(environment);
   cli.command(CLI_COMMANDS.inspectBinaryLayout, {
     description:
