@@ -4,7 +4,7 @@ import type { Logger } from "pino";
 import { logCliCommand } from "../cliLogging.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import type { Evidence } from "../domain/evidence.js";
+import type { CallerInputPaths, Evidence } from "../domain/evidence.js";
 import type { Result } from "../domain/result.js";
 import { deliverCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
 import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
@@ -46,49 +46,64 @@ export interface EvidenceInspectionService {
   close(): Promise<void>;
 }
 
-const primaryCallerPath = ({
+/**
+ * The caller's spelling of `path`, and of each other caller-path field keyed
+ * by its contract field name.
+ */
+const callerSpellings = ({
   operation,
   callerInputs,
-}: ContractCommandContext): string => {
-  const callerPath = callerInputs.path;
-  if (callerPath === undefined)
+}: ContractCommandContext): {
+  readonly path: string;
+  readonly others: CallerInputPaths | undefined;
+} => {
+  const { path, ...others } = callerInputs;
+  if (path === undefined)
     throw new Error(`${operation} has no caller path field named path`);
-  return callerPath;
+  return {
+    path,
+    others: Object.keys(others).length === 0 ? undefined : others,
+  };
 };
 
 /**
  * Inspect through a closeable service, finish its cleanup, and record the
- * caller's spelling of `path` in the Evidence.
+ * caller's spelling of each selected path in the Evidence.
  */
 export const inspectWithService =
   (service: () => EvidenceInspectionService, providerId: string) =>
   (input: unknown, context: ContractCommandContext) => {
-    const callerPath = primaryCallerPath(context);
+    const spellings = callerSpellings(context);
     const owned = service();
     return finishCliEvidenceCommand(
-      callerPath,
+      spellings.path,
       () => owned.inspect(input, { signal: context.signal }),
       owned,
       providerId,
       context.operation,
       context.signal,
+      spellings.others,
     ).then(projectCliAnalysisResult);
   };
 
 /**
  * Inspect through a closeable service, then deliver complete Evidence or a
- * summary with its bundle, recording the caller's spelling of `path`.
+ * summary with its bundle, recording the caller's spelling of each selected
+ * path.
  */
 export const deliverWithService =
   (service: () => EvidenceInspectionService, providerId: string) =>
   (input: unknown, context: ContractCommandContext) => {
-    const callerInputPath = primaryCallerPath(context);
+    const spellings = callerSpellings(context);
     const { delivery } = context;
     if (delivery === undefined)
       throw new Error(`${context.operation} does not declare evidenceDelivery`);
     const owned = service();
     return deliverCliAnalysisEvidence({
-      callerInputPath,
+      callerInputPath: spellings.path,
+      ...(spellings.others === undefined
+        ? {}
+        : { callerInputPaths: spellings.others }),
       run: () => owned.inspect(input, { signal: context.signal }),
       service: owned,
       providerId,
