@@ -37,7 +37,15 @@ cliTest(
       REA_BROWSER_EXECUTABLE: "relative-missing-browser",
     };
     const cliResponse = await cli.run({
-      arguments: ["trace-web-module-imports", manifestPath, "0", "--json"],
+      arguments: [
+        "trace-web-module-imports",
+        process.platform === "win32"
+          ? "manifest.json"
+          : "lexical/link/../manifest.json",
+        "0",
+        "--json",
+      ],
+      cwd: root,
       environment: {
         ...environment,
         // This single CLI invocation cannot reuse a newly written cache.

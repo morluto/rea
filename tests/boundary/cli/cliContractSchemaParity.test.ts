@@ -112,12 +112,24 @@ const snake = (name: string): string =>
 
 /** The object shape a contract validates, through refinements and pipes. */
 const contractShape = (
-  schema: z.ZodType,
+  schema: unknown,
 ): Readonly<Record<string, z.ZodType>> | undefined => {
   let current: unknown = schema;
   for (let depth = 0; depth < 8; depth += 1) {
     if (current instanceof z.ZodObject)
       return current.shape as Record<string, z.ZodType>;
+    if (current instanceof z.ZodUnion) {
+      const shapes = current.options.map((option) => contractShape(option));
+      const first = shapes[0];
+      if (first === undefined || shapes.some((shape) => shape === undefined))
+        return undefined;
+      const common = Object.fromEntries(
+        Object.entries(first).filter(([key, value]) =>
+          shapes.every((shape) => shape?.[key] === value),
+        ),
+      );
+      return Object.keys(common).length === 0 ? undefined : common;
+    }
     const def = (current as { _zod?: { def?: Record<string, unknown> } })._zod
       ?.def;
     const inner = def?.["in"] ?? def?.["innerType"] ?? def?.["schema"];
@@ -208,6 +220,14 @@ describe("CLI and contract field admission parity", () => {
   it("probes constrained strings without needing a valid sample", () => {
     const probes = probesFor(z.string().regex(/^[a-f0-9]{64}$/u));
     expect(probes.map(({ id }) => id)).toEqual(["empty", "nul"]);
+  });
+  it("compares union fields shared by every operation", () => {
+    const limit = z.number().int().positive();
+    const schema = z.discriminatedUnion("operation", [
+      z.object({ operation: z.literal("one"), limit }),
+      z.object({ operation: z.literal("two"), limit }),
+    ]);
+    expect(contractShape(schema)).toEqual({ limit });
   });
   it("admits no new value the contract refuses, and the baseline only shrinks", () => {
     const { mismatches, compared, commandsCompared, uncomparable } =

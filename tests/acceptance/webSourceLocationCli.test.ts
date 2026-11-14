@@ -202,14 +202,17 @@ cliTest(
     const response = await cli.run({
       arguments: [
         "trace-web-source-location",
-        manifest,
+        process.platform === "win32"
+          ? "manifest.json"
+          : "lexical/link/../manifest.json",
         "0",
-        map,
+        "app.js.map",
         fixture.sourceMap.url,
         "1",
         "0",
         "--json",
       ],
+      cwd: root,
       environment: {
         REA_LOG_LEVEL: "silent",
         REA_BROWSER_EXECUTABLE: "relative-unconfigured-browser",
