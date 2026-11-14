@@ -10,7 +10,7 @@ import {
   unlink,
   type FileHandle,
 } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
+import { join } from "node:path";
 
 import {
   ArtifactFileCleanupFailure,
@@ -35,6 +35,7 @@ import {
   readStableFileBytes,
 } from "../filesystem/readStableFileBytes.js";
 import { RegularFileChangedError } from "../filesystem/RegularFile.js";
+import { xdgBase } from "./XdgBase.js";
 
 /** The most bytes a secret file of at most `characters` may hold: those in UTF-8 and a line break. */
 const maxFileBytes = (characters: number) => characters * 4 + 2;
@@ -44,11 +45,12 @@ export const buildSecretsDirectory = (
   environment: Readonly<NodeJS.ProcessEnv>,
   platform: NodeJS.Platform = process.platform,
 ): string => {
-  const xdg = environment.XDG_CONFIG_HOME;
-  const root =
-    xdg !== undefined && isAbsolute(xdg)
-      ? xdg
-      : join(homeDirectoryFromEnvironment(environment, platform), ".config");
+  const root = xdgBase(environment.XDG_CONFIG_HOME, () =>
+    // Resolve the home fallback only when it is the one that applies: on a host
+    // without a passwd entry for the caller it can throw, and an absolute
+    // XDG_CONFIG_HOME leaves it unused.
+    join(homeDirectoryFromEnvironment(environment, platform), ".config"),
+  );
   return join(root, "rea", "build-secrets");
 };
 
