@@ -141,6 +141,10 @@ const symbolicImage = (
     readonly destination?: bigint;
     readonly records?: number;
     readonly symbolIndex?: number;
+    /** Link address of symbol 1; also marks it defined in section 1. */
+    readonly symbolValue?: bigint;
+    /** st_info type of symbol 1 (0 unless given). */
+    readonly symbolType?: number;
   } = {},
 ): Buffer => {
   const records = layout.records ?? 1;
@@ -167,6 +171,12 @@ const symbolicImage = (
     );
   }
   bytes.writeBigUInt64LE(symbolSize, 0x200 + 24 + 16);
+  if (layout.symbolValue !== undefined) {
+    bytes.writeUInt16LE(1, 0x200 + 24 + 6);
+    bytes.writeBigUInt64LE(layout.symbolValue, 0x200 + 24 + 8);
+  }
+  if (layout.symbolType !== undefined)
+    bytes.writeUInt8(layout.symbolType, 0x200 + 24 + 4);
   return bytes;
 };
 
@@ -276,6 +286,52 @@ it("writes nothing for a COPY of a zero-size symbol", () => {
   const { writes, result } = walk(symbolicImage(5n, 0n));
   expect(writes).toEqual([]);
   expect(result.pointer_coverage_known).toBe(true);
+});
+
+it.each([
+  ["AArch64", 183, 257],
+  ["x86-64", 62, 1],
+] as const)(
+  "resolves a %s word-sized absolute relocation against a defined symbol",
+  (_name, machine, kind) => {
+    const { writes, result } = walk(
+      symbolicImage(BigInt(kind), 0n, { symbolValue: 0x4000n }),
+      undefined,
+      machine,
+    );
+    expect(writes).toMatchObject([
+      {
+        address: 0x300n,
+        value: 0x4000n,
+        source: { encoding: "rela", kind },
+        symbol_index: 1,
+        addend: 0n,
+      },
+    ]);
+    expect(result.pointer_coverage_known).toBe(true);
+  },
+);
+
+it("leaves an absolute relocation unknown when its symbol is undefined", () => {
+  const { writes, result } = walk(symbolicImage(257n, 0n), undefined, 183);
+  expect(writes).toMatchObject([
+    {
+      address: 0x300n,
+      value: null,
+      source: { encoding: "rela", kind: 257 },
+      symbol_index: 1,
+    },
+  ]);
+  expect(result.pointer_coverage_known).toBe(true);
+});
+
+it("leaves an absolute relocation unknown when its symbol is an IFUNC resolver", () => {
+  const { writes } = walk(
+    symbolicImage(257n, 0n, { symbolValue: 0x4000n, symbolType: 10 }),
+    undefined,
+    183,
+  );
+  expect(writes).toMatchObject([{ address: 0x300n, value: null }]);
 });
 
 it.each([
