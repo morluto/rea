@@ -44,8 +44,13 @@ export const androidIntentFilterSchema = z.strictObject({
 });
 export const androidComponentMetadataSchema = z.strictObject({
   name: z.string().nullable(),
+  // Historical records omitted metadata values and resources; omission stays unknown.
+  value: z.string().nullable().optional(),
+  resource: z.string().nullable().optional(),
   location: androidManifestLocationSchema.nullable(),
 });
+export const observedAndroidComponentMetadataSchema =
+  androidComponentMetadataSchema.required();
 
 export const androidManifestComponentSchema = z.strictObject({
   kind: z.enum(ANDROID_COMPONENT_KINDS),
@@ -75,6 +80,7 @@ export const androidManifestComponentSchema = z.strictObject({
   grant_uri_permissions_declaration: z.string().nullable().optional(),
   intent_filters: z.array(androidIntentFilterSchema).optional(),
   meta_data: z.array(androidComponentMetadataSchema).optional(),
+  properties: z.array(androidComponentMetadataSchema).optional(),
 });
 export type AndroidManifestComponent = Readonly<
   z.output<typeof androidManifestComponentSchema>
@@ -87,7 +93,10 @@ export const androidManifestComponentsSchema = z.strictObject({
 
 /** Current producers observe every declaration facet; historical readers accept omissions. */
 export const observedAndroidManifestComponentSchema =
-  androidManifestComponentSchema.required();
+  androidManifestComponentSchema.required().extend({
+    meta_data: z.array(observedAndroidComponentMetadataSchema),
+    properties: z.array(observedAndroidComponentMetadataSchema),
+  });
 export type ObservedAndroidManifestComponent = Readonly<
   z.output<typeof observedAndroidManifestComponentSchema>
 >;

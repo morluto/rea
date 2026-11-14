@@ -26,6 +26,10 @@ import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import type { OwnedProviderProcessSpawnOptions } from "../process/ProviderProcess.js";
 import { analyzeJadxRequest, type JadxToolPort } from "./JadxAnalysis.js";
+import {
+  readAndroidAppFunctionAssets,
+  type AndroidAppFunctionAssetScan,
+} from "./AndroidAppFunctions.js";
 import { readAndroidNativeInventory } from "./AndroidNativeInventory.js";
 import type { AndroidNativeDeclarations } from "../domain/android/androidNativeDeclarations.js";
 import {
@@ -83,7 +87,13 @@ export class JadxSession {
   #nativeLibraries:
     | { readonly key: string; readonly value: AndroidJniLibraries }
     | undefined;
+  #appFunctionAssets:
+    | { readonly key: string; readonly value: AndroidAppFunctionAssetScan }
+    | undefined;
   #jniObservation: NonNullable<AndroidPartialObservation["jni"]> | undefined;
+  #appFunctionsObservation:
+    | NonNullable<AndroidPartialObservation["app_functions"]>
+    | undefined;
 
   constructor(
     options: Omit<OwnedProviderProcessSpawnOptions, "runId" | "stdin">,
@@ -118,6 +128,7 @@ export class JadxSession {
     };
     this.#observedCalls = [];
     this.#jniObservation = undefined;
+    this.#appFunctionsObservation = undefined;
     if (request.operation === "inspect_android_jni_bindings") {
       const selected = request.input;
       this.#jniObservation = {
@@ -205,10 +216,67 @@ export class JadxSession {
         heap_limit_mib:
           Math.floor(runtime.max_heap_bytes / (1024 * 1024)) || null,
       } as const;
+      const interruption = (reason: unknown) =>
+        context.deadline.aborted && reason === context.deadline.reason
+          ? new AnalysisTimeoutError(request.operation, timeoutMs, {
+              cause: reason,
+              ...jadxOperationTimeoutGuidance(timeoutMs),
+            })
+          : new AnalysisCancelledError(request.operation, {
+              cause: reason,
+            });
       const result = await analyzeJadxRequest(tools, request, {
         loaded,
         engine,
         mapping,
+        ...(request.operation !== "inspect_android_package"
+          ? {}
+          : {
+              appFunctionsAssets: async (manifestBindings) => {
+                const observation: NonNullable<
+                  AndroidPartialObservation["app_functions"]
+                > = {
+                  manifest_status: manifestBindings.status,
+                  services: [...manifestBindings.services],
+                  referenced_asset_paths: [
+                    ...manifestBindings.referencedAssetPaths,
+                  ],
+                  manifest_limitations: [...manifestBindings.limitations],
+                  assets: null,
+                };
+                this.#appFunctionsObservation = observation;
+                const key = JSON.stringify(
+                  manifestBindings.referencedAssetPaths,
+                );
+                if (this.#appFunctionAssets?.key === key) {
+                  const cached = this.#appFunctionAssets.value;
+                  observation.assets = {
+                    scan_state: "completed",
+                    status: cached.status,
+                    examined_entries: cached.examinedEntries,
+                    schemas: [...cached.schemas],
+                    limitations: [...cached.limitations],
+                  };
+                  return cached;
+                }
+                const value = await readAndroidAppFunctionAssets({
+                  snapshot,
+                  referencedPaths: manifestBindings.referencedAssetPaths,
+                  resources: context.resources,
+                  signal,
+                  onObservation: (checkpoint) => {
+                    observation.assets = checkpoint;
+                  },
+                  interruption,
+                });
+                if (
+                  value.status === "complete" &&
+                  value.schemas.every((s) => s.status === "complete")
+                )
+                  this.#appFunctionAssets = { key, value };
+                return value;
+              },
+            }),
         ...(request.operation !== "inspect_android_jni_bindings"
           ? {}
           : {
@@ -248,20 +316,7 @@ export class JadxSession {
                       if (this.#jniObservation !== undefined)
                         this.#jniObservation.libraries = checkpoint;
                     },
-                    interruption: (reason) =>
-                      context.deadline.aborted &&
-                      reason === context.deadline.reason
-                        ? new AnalysisTimeoutError(
-                            request.operation,
-                            timeoutMs,
-                            {
-                              cause: reason,
-                              ...jadxOperationTimeoutGuidance(timeoutMs),
-                            },
-                          )
-                        : new AnalysisCancelledError(request.operation, {
-                            cause: reason,
-                          }),
+                    interruption,
                   });
                   if (
                     value.inventory.status === "complete" &&
@@ -273,6 +328,31 @@ export class JadxSession {
               },
             }),
       });
+      const schemaLocations =
+        request.operation === "inspect_android_package" &&
+        result !== null &&
+        typeof result === "object" &&
+        !Array.isArray(result) &&
+        "app_functions" in result &&
+        result.app_functions !== null &&
+        typeof result.app_functions === "object" &&
+        !Array.isArray(result.app_functions) &&
+        "schemas" in result.app_functions &&
+        Array.isArray(result.app_functions.schemas)
+          ? [
+              ...new Set(
+                result.app_functions.schemas.flatMap((schema) =>
+                  schema !== null &&
+                  typeof schema === "object" &&
+                  !Array.isArray(schema) &&
+                  typeof schema.path === "string" &&
+                  schema.path.length > 0
+                    ? [schema.path]
+                    : [],
+                ),
+              ),
+            ].map((path) => ({ kind: "artifact-path" as const, path }))
+          : [];
       const raw = jsonObjectSchema.parse({
         server,
         bridge_sha256: context.bridgeHash,
@@ -294,7 +374,10 @@ export class JadxSession {
               : [...JADX_LIMITATIONS, ...androidMappingLimitations(mapping)],
           locations:
             request.operation === "inspect_android_package"
-              ? [{ kind: "artifact-path", path: "AndroidManifest.xml" }]
+              ? [
+                  { kind: "artifact-path", path: "AndroidManifest.xml" },
+                  ...schemaLocations,
+                ]
               : [],
         },
       );
@@ -340,6 +423,9 @@ export class JadxSession {
       ...(this.#jniObservation === undefined
         ? {}
         : { jni: this.#jniObservation }),
+      ...(this.#appFunctionsObservation === undefined
+        ? {}
+        : { app_functions: this.#appFunctionsObservation }),
     };
   }
 

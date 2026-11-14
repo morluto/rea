@@ -18,6 +18,7 @@ import {
   androidManifestViewResultSchema,
   androidComponentsViewResultSchema,
   androidComponentSummaryViewResultSchema,
+  androidAppFunctionsViewResultSchema,
   androidJniSummaryViewResultSchema,
   androidJniPageViewResultSchema,
   analysisViewResultSchema,
@@ -47,10 +48,22 @@ async function assertAndroidPackageSelectedFacetContract(options: {
   parent: Evidence;
   retained: (id: string) => Evidence | undefined;
   sourceStatus: string;
+  appFunctionsStatus?: string;
 }): Promise<void> {
-  const { client, toolDefinition, apk, parent, retained, sourceStatus } =
-    options;
-  for (const facet of ["components", "component-summary"] as const) {
+  const {
+    client,
+    toolDefinition,
+    apk,
+    parent,
+    retained,
+    sourceStatus,
+    appFunctionsStatus,
+  } = options;
+  for (const facet of [
+    "components",
+    "component-summary",
+    "app-functions",
+  ] as const) {
     const selected = await client.callTool(
       {
         name: "inspect_android_package",
@@ -67,13 +80,19 @@ async function assertAndroidPackageSelectedFacetContract(options: {
     const projected =
       facet === "components"
         ? androidComponentsViewResultSchema.parse(result)
-        : androidComponentSummaryViewResultSchema.parse(result);
+        : facet === "component-summary"
+          ? androidComponentSummaryViewResultSchema.parse(result)
+          : androidAppFunctionsViewResultSchema.parse(result);
     // A fresh acquisition gets its own Evidence ID even when the engine is reused.
     const selectedParent = retained(projected.parent_evidence_id);
     expect(selectedParent?.operation).toBe("inspect_android_package");
     expect(selectedParent?.subject).toEqual(parent.subject);
     expect(selectedParent?.normalized_result).toEqual(parent.normalized_result);
-    expect(projected.source_status).toBe(sourceStatus);
+    expect(projected.source_status).toBe(
+      facet === "app-functions"
+        ? (appFunctionsStatus ?? sourceStatus)
+        : sourceStatus,
+    );
   }
 }
 
@@ -363,6 +382,7 @@ it.skipIf(process.platform === "win32")(
       parent,
       retained: (id) => session.evidenceById(id),
       sourceStatus: report.components.status,
+      appFunctionsStatus: report.app_functions.status,
     });
     const before = JSON.stringify(parent);
     await unlink(apk);

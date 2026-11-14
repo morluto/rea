@@ -3,6 +3,10 @@ import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { androidResultSchemas } from "../android/androidAnalysis.js";
 import {
+  androidAppFunctionsSummarySchema,
+  summarizeAndroidAppFunctions,
+} from "../android/androidAppFunctions.js";
+import {
   androidManifestComponentSchema,
   androidManifestComponentsSchema,
   type AndroidManifestComponent,
@@ -37,7 +41,12 @@ export {
   androidManifestViewRequestSchema,
   androidComponentsViewRequestSchema,
   androidComponentSummaryViewRequestSchema,
+  androidAppFunctionsViewRequestSchema,
 } from "../android/androidPackageQuery.js";
+export {
+  androidAppFunctionsSchema,
+  androidAppFunctionsSummarySchema,
+} from "../android/androidAppFunctions.js";
 
 const packageSchema = androidResultSchemas.inspect_android_package;
 const readReport = createAnalysisViewResultReader(packageSchema);
@@ -51,6 +60,7 @@ export const androidPackageSummarySchema = packageSchema.extend({
     text_code_units: z.int().nonnegative(),
     text_included: z.literal(false),
   }),
+  app_functions_summary: androidAppFunctionsSummarySchema,
 });
 
 export const androidManifestViewItemSchema = analysisTextPageItemSchema.extend({
@@ -117,7 +127,7 @@ export const projectAndroidPackageView = (
           path: ["view"],
           reason: "invalid_value",
           message:
-            "Android package Evidence supports summary, manifest and component views.",
+            "Android package Evidence supports summary, manifest, component and app-functions views.",
         },
       ]),
     );
@@ -181,6 +191,9 @@ export const projectAndroidPackageView = (
           text_code_units: text.length,
           text_included: false as const,
         },
+        app_functions_summary: summarizeAndroidAppFunctions(
+          report.app_functions,
+        ),
       },
       coverage: completeWithinViewCoverage(1, 1),
     });
@@ -204,6 +217,61 @@ export const projectAndroidPackageView = (
       },
       coverage: page.value.coverage,
     });
+  }
+  const tooLarge = (subject: string): Result<never, AnalysisError> =>
+    err(
+      new AnalysisResourceConstraintError(
+        "inspect_analysis_view",
+        "transport",
+        `The Android ${subject} view exceeds the analysis-view byte budget; select fewer fields or a smaller page. Complete parent Evidence remains retained.`,
+        {
+          parent_evidence_id: parent.evidenceId,
+          limit_bytes: PAGE_BYTES,
+          facet: view.facet,
+        },
+        ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
+      ),
+    );
+  if (view.facet === "app-functions") {
+    const appFunctions = report.app_functions;
+    const summary = summarizeAndroidAppFunctions(appFunctions);
+    const result = {
+      ...shared,
+      kind: "android" as const,
+      facet: "app-functions" as const,
+      view,
+      source_status: appFunctions.status,
+      summary,
+      app_functions: appFunctions,
+      limitations: boundedViewMessages(
+        [...parent.limitations, ...appFunctions.limitations],
+        parent.evidenceId,
+        "limitations",
+      ),
+      unknowns: boundedViewMessages(
+        [
+          ...shared.unknowns,
+          "AppFunction declarations and XML schema assets are static observations and do not establish runtime registration, caller authorization, or execution.",
+          ...(appFunctions.status === "complete"
+            ? []
+            : [
+                `AppFunctions source coverage is ${appFunctions.status}; empty or partial results do not establish absence from the APK.`,
+              ]),
+        ],
+        parent.evidenceId,
+        "unknowns",
+      ),
+      coverage: completeWithinViewCoverage(
+        summary.service_count + summary.schema_count,
+        summary.service_count + summary.schema_count,
+      ),
+    };
+    return jsonValueByteLength(
+      result as unknown as JsonValue,
+      PROJECTION_BYTES,
+    ) > PROJECTION_BYTES
+      ? tooLarge("app-functions")
+      : ok(result);
   }
 
   const rows = report.components.items;
@@ -230,20 +298,6 @@ export const projectAndroidPackageView = (
       "unknowns",
     ),
   };
-  const tooLarge = (): Result<never, AnalysisError> =>
-    err(
-      new AnalysisResourceConstraintError(
-        "inspect_analysis_view",
-        "transport",
-        "The Android component view exceeds the analysis-view byte budget; select fewer fields or a smaller page. Complete parent Evidence remains retained.",
-        {
-          parent_evidence_id: parent.evidenceId,
-          limit_bytes: PAGE_BYTES,
-          facet: view.facet,
-        },
-        ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
-      ),
-    );
   // Admit caller selections and provenance before building filter indexes or output rows.
   if (
     jsonValueByteLength(
@@ -251,7 +305,7 @@ export const projectAndroidPackageView = (
       PROJECTION_BYTES,
     ) > PROJECTION_BYTES
   )
-    return tooLarge();
+    return tooLarge("component");
   const kinds = view.kinds === undefined ? undefined : new Set(view.kinds);
   const names = view.names === undefined ? undefined : new Set(view.names);
   const actions =
@@ -312,7 +366,7 @@ export const projectAndroidPackageView = (
       result as unknown as JsonValue,
       PROJECTION_BYTES,
     ) > PROJECTION_BYTES
-      ? tooLarge()
+      ? tooLarge("component")
       : ok(result);
   }
 
@@ -334,7 +388,7 @@ export const projectAndroidPackageView = (
   let bytes =
     DIGEST_BYTES +
     jsonValueByteLength(envelope as unknown as JsonValue, PROJECTION_BYTES);
-  if (bytes > PAGE_BYTES) return tooLarge();
+  if (bytes > PAGE_BYTES) return tooLarge("component");
   const fields =
     view.fields === undefined ? undefined : new Set<string>(view.fields);
   const items: z.output<typeof androidComponentViewRowSchema>[] = [];
@@ -362,7 +416,7 @@ export const projectAndroidPackageView = (
       jsonValueByteLength(item as unknown as JsonValue, PAGE_BYTES - bytes) +
       Number(items.length > 0);
     if (bytes + added > PAGE_BYTES) {
-      if (items.length === 0) return tooLarge();
+      if (items.length === 0) return tooLarge("component");
       byte_limited = true;
       if (!filtered) break;
       continue;
@@ -381,6 +435,6 @@ export const projectAndroidPackageView = (
   };
   return jsonValueByteLength(result as unknown as JsonValue, PROJECTION_BYTES) >
     PROJECTION_BYTES
-    ? tooLarge()
+    ? tooLarge("component")
     : ok(result);
 };

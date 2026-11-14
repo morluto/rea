@@ -182,9 +182,48 @@ it("keeps historical declaration omissions unknown rather than absent", () => {
     "grant_uri_permissions",
     "intent_filters",
     "meta_data",
+    "properties",
     "location",
   ])
     expect(parsed.items[0]).not.toHaveProperty(field);
+});
+
+it("accepts historical component metadata entries that predate value and resource retention", () => {
+  const parsed =
+    androidResultSchemas.inspect_android_package.shape.components.parse({
+      status: "complete",
+      items: [
+        {
+          kind: "service",
+          declared_name: ".LegacyService",
+          name: "com.example.LegacyService",
+          exported: false,
+          exported_default: false,
+          permission: null,
+          permission_source: "none",
+          intent_filter_count: 0,
+          actions: [],
+          categories: [],
+          foreground_service_type: null,
+          authorities: null,
+          target_activity: null,
+          declaration_coverage: "complete",
+          meta_data: [
+            {
+              name: "legacy.meta",
+              location: { line: 4, column: 6, offset: 80 },
+            },
+          ],
+        },
+      ],
+      limitations: [],
+    });
+  expect(parsed.items[0]?.meta_data).toEqual([
+    { name: "legacy.meta", location: { line: 4, column: 6, offset: 80 } },
+  ]);
+  expect(parsed.items[0]?.meta_data?.[0]).not.toHaveProperty("value");
+  expect(parsed.items[0]?.meta_data?.[0]).not.toHaveProperty("resource");
+  expect(parsed.items[0]).not.toHaveProperty("properties");
 });
 
 const MANIFEST = `<?xml version="1.0" encoding="utf-8"?>
@@ -1260,7 +1299,7 @@ it.each([
 });
 
 it("keeps intent-filter relationships and exact declarations in one source-located projection", () => {
-  const xml = `<manifest xmlns:a="http://schemas.android.com/apk/res/android" xmlns:other="urn:other" package="com.example">\r\n <application>\r\n  <!-- 😀 --> <activity a:name=".Main" a:enabled="@bool/ready" a:process=":worker">\r\n   <intent-filter a:priority="@integer/rank"><action a:name="VIEW"/><data a:scheme="https" a:host="example.test" a:pathPrefix="/items" other:path="not-android"/></intent-filter>\r\n   <meta-data a:name="public.configuration" a:value="retained-in-text"/>\r\n   <intent-filter a:priority="-10"><action a:name="EDIT"/><category a:name="DEFAULT"/><data a:mimeType="text/plain"/></intent-filter>\r\n  </activity>\r\n </application>\r\n</manifest>`;
+  const xml = `<manifest xmlns:a="http://schemas.android.com/apk/res/android" xmlns:other="urn:other" package="com.example">\r\n <application>\r\n  <!-- 😀 --> <activity a:name=".Main" a:enabled="@bool/ready" a:process=":worker">\r\n   <intent-filter a:priority="@integer/rank"><action a:name="VIEW"/><data a:scheme="https" a:host="example.test" a:pathPrefix="/items" other:path="not-android"/></intent-filter>\r\n   <meta-data a:name="public.configuration" a:value="retained-in-text" other:resource="@xml/foreign"/>\r\n   <property a:name="android.app.appfunctions" a:value="assets/app_functions_v2.xml" a:resource="@xml/app_functions" other:value="ignored"/>\r\n   <intent-filter a:priority="-10"><action a:name="EDIT"/><category a:name="DEFAULT"/><data a:mimeType="text/plain"/></intent-filter>\r\n  </activity>\r\n </application>\r\n</manifest>`;
   const result = parseAndroidManifestComponents(xml, "complete", "30");
   expect(result.status).toBe("complete");
   const component = result.items[0]!;
@@ -1306,10 +1345,19 @@ it("keeps intent-filter relationships and exact declarations in one source-locat
   expect(component.meta_data).toEqual([
     {
       name: "public.configuration",
+      value: "retained-in-text",
+      resource: null,
       location: expect.objectContaining({ offset: xml.indexOf("<meta-data") }),
     },
   ]);
-  expect(JSON.stringify(component.meta_data)).not.toContain("retained-in-text");
+  expect(component.properties).toEqual([
+    {
+      name: "android.app.appfunctions",
+      value: "assets/app_functions_v2.xml",
+      resource: "@xml/app_functions",
+      location: expect.objectContaining({ offset: xml.indexOf("<property") }),
+    },
+  ]);
 });
 
 it("preserves original declaration ordinals across omitted unnamed components", () => {

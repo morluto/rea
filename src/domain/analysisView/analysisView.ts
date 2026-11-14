@@ -156,6 +156,7 @@ export {
   androidManifestViewResultSchema,
   androidComponentsViewResultSchema,
   androidComponentSummaryViewResultSchema,
+  androidAppFunctionsViewResultSchema,
   pcapCaptureSummaryViewResultSchema,
   dartAotSummaryViewResultSchema,
   javaScriptRoutesViewResultSchema,

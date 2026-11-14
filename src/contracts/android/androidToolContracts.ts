@@ -11,6 +11,7 @@ import {
   androidManifestViewResultSchema,
   androidComponentsViewResultSchema,
   androidComponentSummaryViewResultSchema,
+  androidAppFunctionsViewResultSchema,
   androidClassSummaryViewResultSchema,
   androidMethodSummaryViewResultSchema,
   androidJniSummaryViewResultSchema,
@@ -53,7 +54,7 @@ export const ANDROID_TOOL_CONTRACTS = [
     name: "inspect_android_package",
     ...toolContractMetadata("inspect_android_package"),
     description:
-      "Inspect APK package/SDK/permission declarations, decoded manifest, static components and class/resource counts without executing it or verifying signatures. Requires caller-supplied JADX MCP JAR and JDK. Default complete returns full Evidence; detail summary retains it and omits manifest text/raw duplicates. With summary, view kind android selects facet components (exact filters, fields, paging), component-summary or manifest (UTF-16 text pages); complete detail rejects view. Use normalized_result.parent_evidence_id with inspect_analysis_view for later views. Component source_index identifies the original declaration, and declaration_coverage preserves unknowns.",
+      "Inspect APK package/SDK/permission declarations, decoded manifest, static components, AppFunctions, and class/resource counts without executing it or verifying signatures. Requires caller-supplied JADX MCP JAR and JDK. Default complete returns full Evidence; detail summary retains it and omits manifest text/raw duplicates. With summary, view kind android selects facet components (exact filters, fields, paging), component-summary, app-functions (declared AppFunctionService bindings, bundled XML schema assets and summary counts), or manifest (UTF-16 text pages); complete detail rejects view. Use normalized_result.parent_evidence_id with inspect_analysis_view for later views. Component source_index identifies the original declaration, and declaration_coverage preserves unknowns.",
     kind: "android-provider",
     inputSchema: androidPackageInspectionInputSchema,
     outputSchema: evidenceResultOf(
@@ -63,6 +64,7 @@ export const ANDROID_TOOL_CONTRACTS = [
         androidManifestViewResultSchema,
         androidComponentsViewResultSchema,
         androidComponentSummaryViewResultSchema,
+        androidAppFunctionsViewResultSchema,
       ]),
     ),
     examples: [
