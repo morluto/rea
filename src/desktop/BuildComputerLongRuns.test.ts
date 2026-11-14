@@ -282,6 +282,46 @@ it("preserves a completed command's receipt if the supervisor reports a later fa
   expect(owner.cleanupResources).toEqual([]);
 });
 
+it("retains an unsettled finished command until computer teardown clears it", async () => {
+  const computer = {
+    exec: async (argv: readonly string[]) => {
+      if (argv[4] === "run-begin") return response({ started: true });
+      if (argv[4] === "run-poll" || argv[4] === "run-cancel")
+        return response({
+          finished: true,
+          settled: false,
+          exit_code: 0,
+          stdout_bytes: 4,
+          stderr: "partial",
+          timed_out: true,
+          error:
+            "A process outside the supervised group still holds the command's stderr, so its output is incomplete.",
+        });
+      throw new Error("unexpected command");
+    },
+    homeFiles: async () => new Map(),
+    redacted: (text: string) => text,
+  } as ControlledComputer;
+  const owner = new BuildComputerLongRuns(computer);
+  const failure = await owner
+    .run(["export-desktop-application"], options(new AbortController().signal))
+    .catch((error: unknown) => error);
+  if (!(failure instanceof ProviderCleanupError))
+    throw new Error("expected retained cleanup");
+  expect(failure.cleanupPrimary?.userMessage).toContain(
+    "outside the supervised group",
+  );
+  expect(failure.diagnostics).toMatchObject({
+    completed_command: { stdout_bytes: 4, exit_code: 0, timed_out: true },
+  });
+  expect(await owner.release()).toMatchObject({ verified: false });
+  expect(owner.cleanupResources).toHaveLength(1);
+  expect(failure.cleanupIncomplete).toBe(true);
+  owner.resolveAfterVerifiedComputerTeardown();
+  expect(owner.cleanupResources).toEqual([]);
+  expect(failure.cleanupIncomplete).toBe(false);
+});
+
 it("preserves a new cancellation while retrying a previous job's cleanup", async () => {
   const first = new AbortController();
   const second = new AbortController();
