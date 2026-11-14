@@ -28,7 +28,10 @@ import { inspectWebPageInputSchema } from "../../../src/domain/browserObservatio
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { javascriptRuntimeReconciliationResultSchema } from "../../../src/domain/javascript/javascriptRuntimeReconciliationSchemas.js";
 import { parseRuntimeCapture } from "../../../src/domain/javascript/javascriptRuntimeReconciliationCaptureParsing.js";
-import { startFakeV8Inspector } from "../../fixtures/inspector/fakeV8Inspector.js";
+import {
+  nodeDiscoveryTargetUrl,
+  startFakeV8Inspector,
+} from "../../fixtures/inspector/fakeV8Inspector.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 import { createNodeDiscoveryTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -406,8 +409,8 @@ test("includes targets outside the old caller root filter", async () => {
   const fixture = await runtimeFixture();
   const outside = await temporaryFile("outside.js");
   const fake = await startFakeV8Inspector({
-    targetUrl: pathToFileURL(fixture.entry).href,
-    additionalTargetUrl: pathToFileURL(outside).href,
+    targetUrl: nodeDiscoveryTargetUrl(fixture.entry),
+    additionalTargetUrl: nodeDiscoveryTargetUrl(outside),
   });
   try {
     const result = await new V8InspectorProvider().listTargets({
