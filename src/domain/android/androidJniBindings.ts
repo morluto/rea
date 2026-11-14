@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
+  androidManifestSplitsSchema,
   androidNativeDeclarationSchema,
   androidNativeDeclarationsSchema,
   type AndroidNativeDeclarations,
@@ -146,7 +147,11 @@ export const androidJniBindingSchema = z.strictObject({
 export const androidJniReportSchema = z.strictObject({
   apk: z.strictObject({ path: z.string(), sha256: digest }),
   selection: androidJniSelectionSchema,
-  native_inventory: androidNativeDeclarationsSchema.omit({ methods: true }),
+  // Reports saved before the bridge read split facts omit them; live
+  // inventories always carry them.
+  native_inventory: androidNativeDeclarationsSchema
+    .omit({ methods: true })
+    .extend({ manifest_splits: androidManifestSplitsSchema.exactOptional() }),
   library_inventory: androidJniLibraryInventorySchema,
   declarations: z.array(androidJniDeclarationSchema),
   selected_declaration_ids: z.array(z.string()),

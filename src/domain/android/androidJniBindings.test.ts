@@ -412,6 +412,21 @@ describe("split APK requirements", () => {
     });
   });
 
+  it("still reads a saved report from before split facts were recorded", () => {
+    const result = withSplits({
+      status: "observed",
+      required_split_types: [],
+      split_required: false,
+    });
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    const { manifest_splits: _omitted, ...native_inventory } =
+      result.value.native_inventory;
+    expect(
+      androidJniReportSchema.safeParse({ ...result.value, native_inventory })
+        .success,
+    ).toBe(true);
+  });
+
   it("leaves an APK without required splits complete", () => {
     const result = withSplits({
       status: "observed",

@@ -204,6 +204,8 @@ class ReaJadxBridge {
   // response allowance accounts for worst-case JSON escaping before retention.
   private static final int NATIVE_DEX_BYTES = 64 * 1024 * 1024;
   private static final int NATIVE_MANIFEST_BYTES = 8 * 1024 * 1024;
+  private static final int NATIVE_SPLIT_TYPES = 64;
+  private static final int NATIVE_SPLIT_TYPE_CHARS = 256;
   private static final long NATIVE_TOTAL_DEX_BYTES = 256L * 1024 * 1024;
   // This JSON is escaped again inside an 8 MiB MCP frame.
   private static final long NATIVE_JSON_BYTES = 4L * 1024 * 1024;
@@ -300,20 +302,25 @@ class ReaJadxBridge {
           .parse(new java.io.ByteArrayInputStream(bytes)).getCodeStr());
     } catch (IOException | RuntimeException failure) {
       if (failure instanceof java.util.concurrent.CancellationException) throw (RuntimeException) failure;
+      String reason = "Root AndroidManifest.xml split requirements could not be read: "
+          + failure.getClass().getSimpleName()
+          + (failure.getMessage() == null ? "" : " (" + failure.getMessage() + ")");
       return Map.of("status", "unknown", "reason",
-          "Root AndroidManifest.xml split requirements could not be read: "
-              + failure.getClass().getSimpleName()
-              + (failure.getMessage() == null ? "" : " (" + failure.getMessage() + ")"));
+          reason.length() > 512 ? reason.substring(0, 512) : reason);
     }
   }
 
-  /** Split requirements declared by decoded manifest text. */
+  /** Split requirements declared by decoded manifest text, within a fixed report allowance. */
   static Map<String, Object> manifestSplitFacts(String xml) {
     Element root = manifestRoot(xml);
     String android = "http://schemas.android.com/apk/res/android";
     List<String> types = new ArrayList<>();
     for (String type : root.getAttributeNS(android, "requiredSplitTypes").split(",")) {
-      if (!type.isBlank()) types.add(type.strip());
+      if (type.isBlank()) continue;
+      if (types.size() == NATIVE_SPLIT_TYPES || type.strip().length() > NATIVE_SPLIT_TYPE_CHARS)
+        throw new IllegalArgumentException("requiredSplitTypes exceeds the " + NATIVE_SPLIT_TYPES
+            + "-entry, " + NATIVE_SPLIT_TYPE_CHARS + "-character report allowance");
+      types.add(type.strip());
     }
     boolean required = false;
     for (Node child = root.getFirstChild(); child != null; child = child.getNextSibling()) {
@@ -378,6 +385,8 @@ class ReaJadxBridge {
       // Before any early return, so every result states whether splits hold code.
       inventory.manifestSplits = manifestSplitRequirements(archive,
           names.getOrDefault("AndroidManifest.xml", 0));
+      // Split facts share the retained JSON allowance; escaping is at most 6x.
+      inventory.retainedBytes += 64L + 6L * inventory.manifestSplits.toString().length();
       long totalBytes = 0;
       int entryIndex = -1;
       directory = archive.entries();
