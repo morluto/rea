@@ -19,6 +19,7 @@ import { DESKTOP_EXPORT_FRAMEWORK_VERSION } from "../domain/desktop/appExport.js
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { execFileOutputFailure } from "../process/ExecFileOutput.js";
 import { agentEnvInterpreter } from "./AgentEnvComputerHelper.js";
+import { ArtifactFileCleanupFailure } from "../artifacts/ArtifactFileOperation.js";
 import {
   agentEnvReportedVersion,
   defaultBuildComputerArchive,
@@ -85,7 +86,11 @@ export const readDesktopBuildFacts = async (
       ? agentEnvInterpreter(
           { ...input.environment, REA_AGENT_ENV_COMMAND: agentEnv.path },
           "desktop_build_doctor",
-        ).catch(() => "python3")
+          input.resources,
+        ).catch((cause: unknown) => {
+          if (cause instanceof ArtifactFileCleanupFailure) throw cause;
+          return "python3";
+        })
       : "python3",
   );
   const chosenCommand = (
@@ -426,7 +431,12 @@ const registrationFacts = async (
                 : agentEnvInterpreter(
                     { ...environment, REA_AGENT_ENV_COMMAND: effectiveRunner },
                     "desktop_build_doctor",
-                  ).catch(() => undefined),
+                    input.resources,
+                  ).catch((cause: unknown) => {
+                    if (cause instanceof ArtifactFileCleanupFailure)
+                      throw cause;
+                    return undefined;
+                  }),
           );
           if (archive.status === "unknown") unchecked.push(name);
           else if (archive.status !== "current") compared.push(name);

@@ -19,6 +19,8 @@ import {
 } from "../process/ProviderProcess.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { withOwnedFileHandle } from "../filesystem/OwnedRegularFile.js";
+import { hostReadFailure } from "./HostFileRead.js";
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -69,11 +71,19 @@ const executable = async (path: string): Promise<boolean> =>
     () => false,
   );
 
-const readHead = async (path: string): Promise<string> =>
+const readHead = async (
+  path: string,
+  resources?: ArtifactResourceScope,
+): Promise<string> =>
   withOwnedFileHandle(
     path,
     new OwnedFileHandle(await open(path, "r")),
-    {},
+    resources === undefined
+      ? {}
+      : {
+          retainFailedClose: (handle) =>
+            resources.retain({ kind: "file-handle", resource: path, handle }),
+        },
     async (file) => {
       const { buffer, bytesRead } = await file.read(
         Buffer.alloc(512),
@@ -93,6 +103,7 @@ const readHead = async (path: string): Promise<string> =>
 export const agentEnvInterpreter = async (
   environment: Readonly<NodeJS.ProcessEnv>,
   operation: string,
+  resources?: ArtifactResourceScope,
 ): Promise<string> => {
   const command = environment.REA_AGENT_ENV_COMMAND;
   if (command === undefined || !isAbsolute(command))
@@ -104,8 +115,10 @@ export const agentEnvInterpreter = async (
   let head: string;
   try {
     program = await realpath(command);
-    head = await readHead(program);
+    head = await readHead(program, resources);
   } catch (cause: unknown) {
+    const failure = hostReadFailure(cause);
+    if (failure !== cause) throw failure;
     throw unavailable(
       operation,
       `REA_AGENT_ENV_COMMAND ${command} cannot be read.`,

@@ -1657,7 +1657,19 @@ export class GhidraClient {
   }
 
   #readMemoryCgroup(): Promise<LinuxCgroupMemoryState | undefined> {
-    return (this.#options.readMemoryCgroup ?? readLinuxCgroupMemoryState)();
+    return (
+      this.#options.readMemoryCgroup?.() ??
+      this.#fileResources.run(() =>
+        readLinuxCgroupMemoryState({
+          retainFailedClose: (path, handle) =>
+            this.#fileResources.retain({
+              kind: "file-handle",
+              resource: path,
+              handle,
+            }),
+        }),
+      )
+    );
   }
 
   /**
