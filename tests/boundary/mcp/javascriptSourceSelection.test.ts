@@ -19,12 +19,19 @@ import {
 import { createStrippedAsarAddon } from "../../fixtures/strippedAsarAddon.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+// Compile SDK output validators for the tools a test calls, not the whole catalog.
+const schemaValidation = createMcpSchemaValidation();
 
 const createSelectionClient = () => {
-  const client = new Client({
-    name: "javascript-source-selection",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "javascript-source-selection",
+      version: "1",
+    },
+    { jsonSchemaValidator: schemaValidation },
+  );
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [resolve("scripts/rea.mjs"), "mcp"],

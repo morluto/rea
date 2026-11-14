@@ -8,6 +8,10 @@ import { z } from "zod";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+// Compile SDK output validators for the tools a test calls, not the whole catalog.
+const schemaValidation = createMcpSchemaValidation();
 
 const scenarios = [
   {
@@ -82,10 +86,13 @@ cliTest.for(["full", "compact"] as const)(
     const home = await createTestTempDirectory(
       "rea-browser-scenario-mcp-home-",
     );
-    const client = new Client({
-      name: "browser-scenario-input-diagnostics",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "browser-scenario-input-diagnostics",
+        version: "1",
+      },
+      { jsonSchemaValidator: schemaValidation },
+    );
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [resolve("scripts/rea.mjs"), "mcp"],

@@ -16,6 +16,10 @@ import {
   artifactInventorySummaryViewResultSchema,
 } from "../../src/domain/analysisView/analysisView.js";
 import { workspaceCliTest as test } from "../support/cli/workspaceCliFixture.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
+
+// Compile SDK output validators for the tools a test calls, not the whole catalog.
+const schemaValidation = createMcpSchemaValidation();
 
 const checkProjectedMember = async (
   client: Client,
@@ -125,10 +129,13 @@ for (const format of ["dotnet-bundle", "pyinstaller"] as const) {
       GHIDRA_INSTALL_DIR: workspace.path("unavailable-ghidra"),
     };
     const outputs: string[] = [];
-    const client = new Client({
-      name: "rea-dotnet-bundle-acceptance",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "rea-dotnet-bundle-acceptance",
+        version: "1",
+      },
+      { jsonSchemaValidator: schemaValidation },
+    );
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [resolve("scripts/rea.mjs"), "mcp"],

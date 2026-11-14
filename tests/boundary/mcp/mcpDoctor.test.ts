@@ -39,6 +39,10 @@ import {
   mcpDoctorDeadlineRecovery,
   MCP_STARTUP_POLICY,
 } from "../../../src/mcpStartupPolicy.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+// Compile SDK output validators for the tools a test calls, not the whole catalog.
+const schemaValidation = createMcpSchemaValidation();
 
 const expectDoctorDeadline = (
   detail: string | undefined,
@@ -594,7 +598,10 @@ describe("production MCP doctor probe validation", () => {
     const root = await createTestTempDirectory("rea-mcp-doctor-reply-");
     const snapshotPath = join(root, "reply.json");
     const environment = { PATH: process.env.PATH ?? "" };
-    const client = new Client({ name: "doctor-reply-capture", version: "1" });
+    const client = new Client(
+      { name: "doctor-reply-capture", version: "1" },
+      { jsonSchemaValidator: schemaValidation },
+    );
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [resolve("scripts/rea.mjs"), "mcp"],

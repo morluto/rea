@@ -10,6 +10,10 @@ import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+// Compile SDK output validators for the tools a test calls, not the whole catalog.
+const schemaValidation = createMcpSchemaValidation();
 
 const compareContract = toolContract("compare_application_versions");
 const analyzeContract = toolContract("analyze_javascript_application");
@@ -51,10 +55,13 @@ const runJson = async (
   });
 };
 const connectMcp = async (root: string) => {
-  const client = new Client({
-    name: "application-input-identities",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "application-input-identities",
+      version: "1",
+    },
+    { jsonSchemaValidator: schemaValidation },
+  );
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [resolve("scripts/rea.mjs"), "mcp"],
