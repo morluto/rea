@@ -91,6 +91,10 @@ const mergeAllOf = (schema: Schema): Schema => {
       }
     }
   }
+  // A closed object's properties and patterns are scoped to its own schema
+  // object. Hoisting its closure beside another member's properties can
+  // reject names accepted by the original conjunction.
+  delete merged.additionalProperties;
   return merged;
 };
 
@@ -242,7 +246,12 @@ class DialectProjection {
         if (required.length > 0) out.required = required;
       }
     }
-    if (source.additionalProperties === false) out.additionalProperties = false;
+    if (
+      source.additionalProperties === false &&
+      (!isRecord(source.patternProperties) ||
+        Object.keys(source.patternProperties).length === 0)
+    )
+      out.additionalProperties = false;
   }
 
   /** A tuple advertises the union of its positions. */
@@ -305,8 +314,14 @@ class DialectProjection {
       return;
     }
     if (branches.length === 1 && isRecord(branches[0])) {
-      for (const [key, keyword] of Object.entries(branches[0]))
+      const branch = branches[0];
+      // As with `allOf`, a closure is scoped to its own properties: once the
+      // parent's properties win, neither closure may reject the branch's.
+      const scoped =
+        Object.hasOwn(out, "properties") && Object.hasOwn(branch, "properties");
+      for (const [key, keyword] of Object.entries(branch))
         if (!Object.hasOwn(out, key)) out[key] = keyword;
+      if (scoped) delete out.additionalProperties;
       return;
     }
     if (branches.length < 2) return;
@@ -333,7 +348,8 @@ class DialectProjection {
     path: string,
     parentType: unknown,
   ): unknown[] {
-    return distinct(
+    const branchNotes: string[][] = [];
+    const projectedBranches = distinct(
       branches.flatMap((branch) => {
         const typed =
           typeof parentType === "string" &&
@@ -343,7 +359,9 @@ class DialectProjection {
           branch.oneOf === undefined
             ? { ...branch, type: parentType }
             : branch;
-        const projected = this.project(typed, path);
+        const projection = new DialectProjection();
+        const projected = projection.project(typed, path);
+        branchNotes.push(projection.notes);
         return isRecord(projected) &&
           Array.isArray(projected.anyOf) &&
           onlyKeys(projected, ["anyOf"])
@@ -351,6 +369,9 @@ class DialectProjection {
           : [projected];
       }),
     );
+    for (const note of branchNotes[0] ?? [])
+      if (branchNotes.every((notes) => notes.includes(note))) this.note(note);
+    return projectedBranches;
   }
 }
 
