@@ -11,6 +11,7 @@ import {
 } from "../../../src/domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { OwnedCommandFailure } from "../../../src/process/OwnedCommand.js";
+import { selectArtifactCommandPath } from "../../../src/process/ArtifactCommandPath.js";
 
 it.skipIf(process.platform !== "darwin")(
   "preserves opaque cancellation during native ownership preparation without acquiring caller resources",
@@ -254,6 +255,8 @@ it.each([
       launcher: async () => {
         throw Object.assign(new Error(`spawn /selected/tshark ${code}`), {
           code,
+          syscall: "spawn /selected/tshark",
+          path: "/selected/tshark",
         });
       },
       retain: () => {
@@ -266,3 +269,87 @@ it.each([
     });
   },
 );
+
+it("attributes a refused limiter spawn to the limiter, not Wireshark", async () => {
+  const limiter = await selectArtifactCommandPath(process.execPath);
+  const failure = await runPcapCommand({
+    operation: "inspect_pcap_capture",
+    command: "/selected/tshark",
+    arguments: [],
+    inputPath: "/authored-capture.pcap",
+    limits: { timeoutMs: 5000, maxOutputBytes: 1024 },
+    environment: {},
+    signal: undefined,
+    nativeBound: { limiter: { command: limiter, arguments: [] } },
+    launcher: async () => {
+      throw Object.assign(new Error("refused"), {
+        code: "EPERM",
+        syscall: `spawn ${limiter.invocationPath}`,
+        path: limiter.invocationPath,
+      });
+    },
+    retain: () => {
+      throw new Error("No provider resources were acquired");
+    },
+  }).catch((cause: unknown) => cause);
+  expect(failure).toMatchObject({
+    _tag: "AnalysisCapabilityUnavailableError",
+    message: expect.stringContaining(
+      `capture limiter ${limiter.invocationPath}`,
+    ),
+    remediationAction: expect.stringContaining("REA_TSHARK_PRLIMIT_COMMAND"),
+  });
+});
+
+it("keeps the failing stage unknown when the limiter process exits unsuccessfully", async () => {
+  const limiter = await selectArtifactCommandPath(process.execPath);
+  const failure = await runPcapCommand({
+    operation: "inspect_pcap_capture",
+    command: "/selected/tshark",
+    arguments: [],
+    inputPath: "/authored-capture.pcap",
+    limits: { timeoutMs: 5000, maxOutputBytes: 1024 },
+    environment: {},
+    signal: undefined,
+    nativeBound: {
+      limiter: {
+        command: limiter,
+        arguments: [
+          "-e",
+          "process.stderr.write('refused'); process.exitCode = 126",
+        ],
+      },
+    },
+    retain: (owner) =>
+      onTestFinished(async () => {
+        await owner.stop();
+      }),
+  }).catch((cause: unknown) => cause);
+  expect(failure).toBeInstanceOf(AnalysisProtocolError);
+  if (!(failure instanceof AnalysisProtocolError)) throw failure;
+  expect(failure.message).toContain(
+    "whether the limiter or selected tool failed is unknown",
+  );
+});
+
+it("does not attribute an errno without spawn identity to the selected tool", async () => {
+  const failure = await runPcapCommand({
+    operation: "inspect_pcap_client",
+    command: "/selected/tshark",
+    arguments: ["--version"],
+    limits: { timeoutMs: 5000, maxOutputBytes: 1024 },
+    environment: {},
+    signal: undefined,
+    launcher: async () => {
+      throw Object.assign(new Error("ownership setup denied"), {
+        code: "EPERM",
+      });
+    },
+    retain: () => {
+      throw new Error("No provider resources were acquired");
+    },
+  }).catch((cause: unknown) => cause);
+  expect(failure).toBeInstanceOf(AnalysisProtocolError);
+  if (!(failure instanceof AnalysisProtocolError)) throw failure;
+  expect(failure.message).toContain("failing stage is unknown");
+});

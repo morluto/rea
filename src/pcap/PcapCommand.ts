@@ -15,6 +15,7 @@ import {
 import { createPcapDiagnosticProjection } from "./PcapDiagnosticOutput.js";
 import {
   AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
   AnalysisProtocolError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
@@ -37,6 +38,7 @@ import {
 } from "../process/WindowsBatchCommand.js";
 import { classifyLaunchFailure } from "../process/launchFailure.js";
 import { pcapToolUnavailable } from "./PcapConfiguration.js";
+import { PCAP_LIMITER_REMEDIATION } from "./PcapNativeBound.js";
 
 export type PcapCommandLauncher = NonNullable<
   Parameters<typeof runOwnedCommand>[2]
@@ -113,6 +115,7 @@ export const runPcapCommand = async (options: {
     LANG: "C",
   };
   let cleanup: PcapCommandCleanup | undefined;
+  let commandAttempted = false;
   try {
     const batch = process.platform === "win32" && isWindowsBatchFile(command);
     const invocation = batch
@@ -139,6 +142,7 @@ export const runPcapCommand = async (options: {
     const selectedLimiter = options.nativeBound?.limiter?.command;
     if (selectedLimiter !== undefined)
       await assertArtifactCommandPath(selectedLimiter, operation, { signal });
+    commandAttempted = true;
     const output = await runOwnedCommand(
       {
         ...boundedInvocation,
@@ -293,7 +297,25 @@ export const runPcapCommand = async (options: {
         details,
       );
     const refusal = classifyLaunchFailure(cause);
-    if (refusal !== undefined)
+    const selectedLimiter =
+      options.nativeBound?.limiter?.command.invocationPath;
+    const launchedPath = selectedLimiter ?? command;
+    const spawnRefusal =
+      refusal !== undefined &&
+      cause instanceof Error &&
+      "syscall" in cause &&
+      cause.syscall === `spawn ${launchedPath}` &&
+      "path" in cause &&
+      cause.path === launchedPath;
+    if (spawnRefusal && selectedLimiter !== undefined) {
+      const reason = `Selected capture limiter ${selectedLimiter} could not be launched (${refusal.code}).`;
+      throw new AnalysisCapabilityUnavailableError("pcap", operation, reason, {
+        ...details,
+        userMessage: `${reason} ${PCAP_LIMITER_REMEDIATION}`,
+        remediationAction: PCAP_LIMITER_REMEDIATION,
+      });
+    }
+    if (spawnRefusal)
       throw pcapToolUnavailable(
         operation,
         refusal.kind === "missing"
@@ -307,6 +329,25 @@ export const runPcapCommand = async (options: {
         : cause instanceof Error
           ? cause.message
           : String(cause);
+    if (!commandAttempted)
+      throw new AnalysisProtocolError(
+        `Preparing the owned packet command failed: ${diagnostic}`,
+        details,
+      );
+    if (refusal !== undefined && !spawnRefusal)
+      throw new AnalysisProtocolError(
+        `The packet command could not start; the failing stage is unknown: ${diagnostic}`,
+        details,
+      );
+    if (
+      selectedLimiter !== undefined &&
+      cause instanceof OwnedCommandFailure &&
+      cause.reason === "process"
+    )
+      throw new AnalysisProtocolError(
+        `The bounded packet command failed; whether the limiter or selected tool failed is unknown: ${diagnostic}`,
+        details,
+      );
     if (options.inputPath === undefined)
       throw pcapToolUnavailable(
         operation,
