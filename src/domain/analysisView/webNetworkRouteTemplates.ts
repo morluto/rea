@@ -49,6 +49,98 @@ export type Reserve = (bytes: number) => boolean;
 const requestSchema = z.object({
   request: z.object({ url: z.unknown(), method: z.unknown() }),
 });
+/** Header names by the surface they appeared in; values are never read. */
+export interface RecordedHeaderNames {
+  readonly request: ReadonlySet<string>;
+  readonly cookie: ReadonlySet<string>;
+  readonly setCookie: ReadonlySet<string>;
+  /** A member whose name is not a string, so the name list cannot be complete. */
+  readonly unreadableMember: boolean;
+}
+/**
+ * The recorded spelling, including the empty name a schema-valid HAR member may
+ * carry; only a non-string member is unreadable.
+ */
+const recordedName = z.string();
+/**
+ * Charge one recorded array's names without copying them, so the reservation
+ * precedes the input-sized name list this reader derives.
+ */
+const recordedNamesBytes = (value: unknown): number => {
+  if (!Array.isArray(value)) return 0;
+  let bytes = ENTRY_BYTES * value.length;
+  for (const member of value)
+    if (typeof member === "object" && member !== null && "name" in member) {
+      const name: unknown = (member as { readonly name: unknown }).name;
+      if (typeof name === "string") bytes += textBytes(name.length);
+    }
+  return bytes;
+};
+/** Read one recorded array without letting a malformed member discard the rest. */
+const memberNames = (value: unknown): readonly unknown[] =>
+  Array.isArray(value)
+    ? value.map((member: unknown) =>
+        typeof member === "object" && member !== null && "name" in member
+          ? (member as { readonly name: unknown }).name
+          : undefined,
+      )
+    : [];
+/** Collect header, cookie and set-cookie names; no value member is inspected. */
+export const readRecordedHeaderNames = (
+  reported: unknown,
+  temporary: Reserve,
+): RecordedHeaderNames | null => {
+  const record =
+    typeof reported === "object" && reported !== null
+      ? (reported as {
+          readonly request?: unknown;
+          readonly response?: unknown;
+        })
+      : {};
+  const request =
+    typeof record.request === "object" && record.request !== null
+      ? (record.request as {
+          readonly headers?: unknown;
+          readonly cookies?: unknown;
+        })
+      : {};
+  const response =
+    typeof record.response === "object" && record.response !== null
+      ? (record.response as { readonly cookies?: unknown })
+      : {};
+  const arrays = [request.headers, request.cookies, response.cookies];
+  // Reserve every input-sized name list before deriving any of them, so an
+  // over-budget record costs nothing proportional to the rejected input.
+  if (!temporary(RECORD_SCRATCH_BYTES)) return null;
+  for (const array of arrays) {
+    const bytes = recordedNamesBytes(array);
+    if (bytes > 0 && !temporary(bytes)) return null;
+  }
+  const groups = arrays.map(memberNames);
+  // A collection that is recorded but not an array cannot establish that the
+  // name list is empty; only an omitted collection is observed absence.
+  const unreadableCollection = arrays.some(
+    (value) => value !== undefined && !Array.isArray(value),
+  );
+  const names = (members: readonly unknown[]) => {
+    const selected = new Set<string>();
+    for (const member of members) {
+      const parsed = recordedName.safeParse(member);
+      if (parsed.success) selected.add(parsed.data);
+    }
+    return selected;
+  };
+  return {
+    request: names(groups[0]!),
+    cookie: names(groups[1]!),
+    setCookie: names(groups[2]!),
+    unreadableMember:
+      unreadableCollection ||
+      groups.some((members) =>
+        members.some((member) => typeof member !== "string"),
+      ),
+  };
+};
 // Conservative representation allowances, not an enforced V8 heap limit.
 // Fixed charges include the accumulator, bucket/set entries, array growth and
 // page/schema projection. Text includes UTF-16 storage and two worst-case JSON
