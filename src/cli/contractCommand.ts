@@ -8,6 +8,7 @@ import type { CallerInputPaths, Evidence } from "../domain/evidence.js";
 import type { Result } from "../domain/result.js";
 import { deliverCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
 import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
+import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import {
   describeContractCommand,
@@ -91,6 +92,25 @@ export const inspectWithService =
       context.operation,
       context.signal,
       spellings.others,
+    ).then(projectCliAnalysisResult);
+  };
+
+/**
+ * Run an analysis that selects no target path through a closeable service
+ * and finish its cleanup.
+ */
+export const analyzeWithService =
+  (service: () => EvidenceInspectionService, providerId: string) =>
+  (input: unknown, context: ContractCommandContext) => {
+    if (Object.keys(context.callerInputs).length > 0)
+      throw new Error(`${context.operation} selects a caller path`);
+    const owned = service();
+    return finishAnalysisCommand(
+      () => owned.inspect(input, { signal: context.signal }),
+      owned,
+      providerId,
+      context.operation,
+      context.signal,
     ).then(projectCliAnalysisResult);
   };
 
@@ -204,23 +224,17 @@ export const registerContractCommand = <
       const values = { ...options, ...args };
       return withCommandCancellation((signal) =>
         logCliCommand(logger, description.command, async () => {
-          const delivery = description.delivery?.(values);
-          if (delivery?.ok === false)
-            return projectAnalysisError(delivery.error);
-          return run(
-            description.toContractInput(values) as z.input<
-              Contract["inputSchema"]
-            >,
-            {
-              signal,
-              operation: contract.name,
-              callerInputs: description.callerInputs(values),
-              delivery: delivery?.value,
-              cliOptions: description.cliOptionValues(
-                values,
-              ) as CliOptionValues<CliOptions>,
-            },
-          );
+          const admitted = description.admit(values);
+          if (!admitted.ok) return projectAnalysisError(admitted.error);
+          return run(admitted.value.input as z.input<Contract["inputSchema"]>, {
+            signal,
+            operation: contract.name,
+            callerInputs: description.callerInputs(values),
+            delivery: admitted.value.delivery,
+            cliOptions: description.cliOptionValues(
+              values,
+            ) as CliOptionValues<CliOptions>,
+          });
         }),
       );
     },
