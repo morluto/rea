@@ -214,6 +214,7 @@ const requestShutdown = async (
   const shutdown = await input
     .request(method)
     .catch((cause: unknown) => err(shutdownRequestFailure(method, cause)));
+  let fallback: Result<JsonValue, HopperError> | undefined;
   if (
     shutdown.ok &&
     isHopperCleanupRequired(shutdown.value) &&
@@ -223,7 +224,9 @@ const requestShutdown = async (
       .cleanup()
       .catch(providerCleanupFailure);
     if (!state.cleanupResult.cleaned) {
-      input.resources.shutdownConfirmed = await fallbackDocumentShutdown(input);
+      fallback = await fallbackDocumentShutdown(input);
+      input.resources.shutdownConfirmed =
+        fallback.ok && isHopperShutdownAcknowledgement(fallback.value);
     }
   } else if (shutdown.ok) {
     input.resources.shutdownConfirmed = isHopperShutdownAcknowledgement(
@@ -238,6 +241,19 @@ const requestShutdown = async (
         ? "confirmed"
         : "unconfirmed",
     ...(shutdown.ok ? {} : shutdownErrorDetails(shutdown.error)),
+    ...(fallback === undefined
+      ? {}
+      : {
+          fallback: {
+            method: "shutdown_document",
+            status: !fallback.ok
+              ? "failed"
+              : input.resources.shutdownConfirmed
+                ? "confirmed"
+                : "unconfirmed",
+            ...(fallback.ok ? {} : shutdownErrorDetails(fallback.error)),
+          },
+        }),
   };
   if (
     !shutdown.ok ||
@@ -254,7 +270,7 @@ const requestShutdown = async (
 
 const fallbackDocumentShutdown = async (
   input: HopperCleanupInput,
-): Promise<boolean> => {
+): Promise<Result<JsonValue, HopperError>> => {
   const fallback = await input
     .request("shutdown_document")
     .catch((cause: unknown) =>
@@ -270,7 +286,7 @@ const fallbackDocumentShutdown = async (
       },
       "Hopper document shutdown fallback was not confirmed",
     );
-  return confirmed;
+  return fallback;
 };
 
 const shutdownRequestFailure = (

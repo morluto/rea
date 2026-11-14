@@ -161,52 +161,57 @@ describe("external Hopper process exit confirmation", () => {
     },
   );
 
-  it("names the failed shutdown request and the live application it retains", async () => {
-    // This test process is a live, exactly identified application.
-    const identity = await observeProcessStartIdentity(process.pid);
-    if (identity?.state !== "readable")
-      throw new Error("Expected a readable identity for the test process");
-    const resources = externalApplicationResources();
-    resources.externalApplication = { pid: process.pid, identity };
-    const result = await cleanupHopperSession({
-      socket: new Socket(),
-      resources,
-      activeRequest: null,
-      retainDocument: false,
-      progress: undefined,
-      logger: loggerHarness().logger,
-      onDiagnostic: undefined,
-      request: async (method) =>
-        err(
-          new HopperProcessError(null, {
-            operation: method,
-            providerState: "unreachable",
-          }),
-        ),
-      releaseTransport: () => undefined,
-    });
-    if (result.ok) throw new Error("Expected the live application to be kept");
-    expect(projectAnalysisError(result.error)).toMatchObject({
-      details: {
-        diagnostics: {
-          issues: [
-            {
-              resource: "hopper-document",
-              reason: "authenticated shutdown acknowledgement was not observed",
+  it.skipIf(process.platform === "win32")(
+    "names the failed shutdown request and the live application it retains",
+    async () => {
+      // This test process is a live, exactly identified application.
+      const identity = await observeProcessStartIdentity(process.pid);
+      if (identity?.state !== "readable")
+        throw new Error("Expected a readable identity for the test process");
+      const resources = externalApplicationResources();
+      resources.externalApplication = { pid: process.pid, identity };
+      const result = await cleanupHopperSession({
+        socket: new Socket(),
+        resources,
+        activeRequest: null,
+        retainDocument: false,
+        progress: undefined,
+        logger: loggerHarness().logger,
+        onDiagnostic: undefined,
+        request: async (method) =>
+          err(
+            new HopperProcessError(null, {
+              operation: method,
+              providerState: "unreachable",
+            }),
+          ),
+        releaseTransport: () => undefined,
+      });
+      if (result.ok)
+        throw new Error("Expected the live application to be kept");
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        details: {
+          diagnostics: {
+            issues: [
+              {
+                resource: "hopper-document",
+                reason:
+                  "authenticated shutdown acknowledgement was not observed",
+              },
+            ],
+            authenticated_application: "readable",
+            shutdown_request: {
+              method: "shutdown_document",
+              status: "failed",
+              error_tag: "HopperProcessError",
+              provider_state: "unreachable",
             },
-          ],
-          authenticated_application: "readable",
-          shutdown_request: {
-            method: "shutdown_document",
-            status: "failed",
-            error_tag: "HopperProcessError",
-            provider_state: "unreachable",
+            application_exit: "present",
           },
-          application_exit: "present",
         },
-      },
-    });
-  });
+      });
+    },
+  );
 });
 
 describe("Hopper shutdown rejection diagnostics", () => {
@@ -279,6 +284,22 @@ describe("Hopper shutdown rejection diagnostics", () => {
     expect(result).toMatchObject({
       ok: false,
       error: { cleanupResources: ["hopper-document"] },
+    });
+    if (result.ok) throw new Error("Expected the document to be retained");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      details: {
+        diagnostics: {
+          shutdown_request: {
+            method: "shutdown",
+            status: "unconfirmed",
+            fallback: {
+              method: "shutdown_document",
+              status: "failed",
+              error_tag: "HopperProcessError",
+            },
+          },
+        },
+      },
     });
     expect(logs).toContainEqual(
       expect.objectContaining({
