@@ -4,7 +4,9 @@ import type { Logger } from "pino";
 import { logCliCommand } from "../cliLogging.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import type { CallerInputPaths, Evidence } from "../domain/evidence.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
 import { deliverCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
 import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
@@ -40,6 +42,13 @@ export interface ContractCommandContext<
   readonly operation: string;
   /** Each caller-path field as the caller spelled it, before resolution. */
   readonly callerInputs: CallerInputPaths;
+  /**
+   * The session target as the caller spelled it, for a projection with
+   * `sessionTarget`; undefined otherwise.
+   */
+  readonly sessionTarget: string | undefined;
+  /** Contract fields the CLI spells differently, for input issue paths. */
+  readonly inputBinding: ContractCliDescription["inputBinding"];
   /** The admitted delivery, for a projection with `evidenceDelivery`. */
   readonly delivery: CliEvidenceDeliveryChoice | undefined;
   /** The projection's CLI-only options, whose effect the handler owns. */
@@ -102,6 +111,34 @@ export const inspectWithService =
       spellings.others,
     ).then(projectCliAnalysisResult);
   };
+
+/**
+ * Open the session target as an MCP session would hold it, run the contract
+ * operation on the remaining input, and name renamed fields by their CLI key
+ * in input issues.
+ */
+export const runOnSessionTarget =
+  (
+    runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
+    logger: Logger,
+  ) =>
+  (input: object, context: ContractCommandContext) => {
+    if (context.sessionTarget === undefined)
+      throw new Error(`${context.operation} declares no session target`);
+    return runProviderAnalysis(
+      context.sessionTarget,
+      context.operation as SessionTargetOperation,
+      // Argv values are decoded text, and absent options are left out.
+      input as Readonly<Record<string, JsonValue>>,
+      logger,
+      context.signal,
+    ).then((result) => projectCliAnalysisResult(result, context.inputBinding));
+  };
+
+/** Operations `runProviderAnalysis` runs on an opened session target. */
+type SessionTargetOperation = Parameters<
+  DirectAnalysis["runProviderAnalysis"]
+>[1];
 
 /**
  * Run an analysis that selects no target path through a closeable service
@@ -201,9 +238,12 @@ export const registerContractCommand = <
   ) => Promise<Value>,
 ): void => {
   const description = describeContractCommand(contract, projection);
-  const positionals = description.parameters.filter(
-    ({ positional }) => positional,
-  );
+  const positionals = [
+    ...(description.sessionTarget === undefined
+      ? []
+      : [description.sessionTarget]),
+    ...description.parameters.filter(({ positional }) => positional),
+  ];
   const alias = Object.fromEntries(
     description.parameters.flatMap(({ key, alias: short, positional }) =>
       short === undefined || positional ? [] : [[key, short]],
@@ -238,6 +278,11 @@ export const registerContractCommand = <
             signal,
             operation: contract.name,
             callerInputs: description.callerInputs(values),
+            sessionTarget:
+              description.sessionTarget === undefined
+                ? undefined
+                : (values[description.sessionTarget.key] as string),
+            inputBinding: description.inputBinding,
             delivery: admitted.value.delivery,
             cliOptions: description.cliOptionValues(
               values,

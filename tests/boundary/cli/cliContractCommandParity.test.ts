@@ -242,6 +242,10 @@ describe("CLI commands projected from tool contracts", () => {
         "inspect-wasm-artifact",
         "inspect-firmware-regions",
         "extract-firmware",
+        "inspect-keyed-archive",
+        "trace-dylib-resolution",
+        "inspect-asset-catalog",
+        "decode-interface-builder",
       ]),
     );
   });
@@ -264,11 +268,14 @@ describe("CLI commands projected from tool contracts", () => {
       const optionKeys = Object.keys(
         (command.options as z.ZodObject | undefined)?.shape ?? {},
       );
-      expect(argKeys).toEqual(
-        description.parameters
+      expect(argKeys).toEqual([
+        ...(description.sessionTarget === undefined
+          ? []
+          : [description.sessionTarget.key]),
+        ...description.parameters
           .filter(({ positional }) => positional)
           .map(({ key }) => key),
-      );
+      ]);
       expect(optionKeys.toSorted()).toEqual(
         [
           ...description.parameters
@@ -596,6 +603,61 @@ describe("Flattened object fields of contract commands", () => {
         flatten: { range: { a: {}, b: {} }, value: { a: {} } },
       }),
     ).toThrow("probe.value is not an optional object");
+  });
+});
+
+const sessionTargeted = each.filter(
+  ([, description]) => description.sessionTarget !== undefined,
+);
+
+describe("Session targets of contract commands", () => {
+  it.each(sessionTargeted)(
+    "%s takes the session target first and keeps it out of the contract input",
+    (_command, description) => {
+      const target = description.sessionTarget!;
+      const command = registered.get(description.command)!;
+      const args = (command.args as z.ZodObject).shape;
+      expect(Object.keys(args)[0]).toBe(target.key);
+      for (const value of ["rel/app", "/abs/app"])
+        expect(admits(args[target.key] as z.ZodType, value)).toBe(true);
+      for (const value of [undefined, "", "a\0b"])
+        expect(admits(args[target.key] as z.ZodType, value)).toBe(false);
+      const values = {
+        ...argvValues(description, {}),
+        [target.key]: "rel/app",
+      };
+      expect(Object.values(description.toContractInput(values))).not.toContain(
+        "rel/app",
+      );
+      expect(description.callerInputs(values)).toEqual({});
+    },
+  );
+
+  it.each(sessionTargeted)(
+    "%s names each renamed contract field by its CLI key in input issues",
+    (_command, description) => {
+      expect(description.inputBinding.operation).toBe(
+        description.contract.name,
+      );
+      for (const { field, key, member } of description.parameters)
+        if (member === undefined)
+          expect(description.inputBinding.fields[field]).toBe(
+            key === field ? undefined : key,
+          );
+    },
+  );
+
+  it("refuses a session target beside a contract field keyed path", () => {
+    expect(() =>
+      describeContractCommand(
+        { name: "probe", inputSchema: z.object({ path: z.string() }) },
+        {
+          command: "probe",
+          description: "Probe",
+          sessionTarget: { description: "Target" },
+        },
+      ),
+    ).toThrow("probe projects two fields to one CLI key");
   });
 });
 
