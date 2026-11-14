@@ -148,10 +148,14 @@ const inflateSection = (
       }),
     );
   } catch (cause) {
+    // Only a padded section whose storage-derived allowance is below the fixed
+    // cap is bounded by its storage size; otherwise the fixed cap applies.
     throw inflateFailure(
       cause,
       allocationMaximum,
-      peFileAlignment !== undefined && peFileAlignment > 0,
+      peFileAlignment !== undefined &&
+        peFileAlignment > 0 &&
+        allocationMaximum < RUST_UNCOMPRESSED_BYTES,
     );
   }
   const compressedBytes = result.consumedBytes;
@@ -196,7 +200,7 @@ const inflateSection = (
 const inflateFailure = (
   cause: unknown,
   maximum: number,
-  paddedStorage: boolean,
+  storageBounded: boolean,
 ): Error => {
   const code =
     cause instanceof Error && "code" in cause ? String(cause.code) : "";
@@ -206,7 +210,7 @@ const inflateFailure = (
       // The stream length is unknown until inflate finishes, so a padded PE
       // section is bounded by its storage size; say so instead of implying the
       // smaller limit derived from the consumed stream.
-      paddedStorage
+      storageBounded
         ? `Inflated dependency JSON exceeds the ${String(maximum)}-byte allowance derived from the padded section's storage size; the zlib stream length is unknown until it inflates, so the smaller stream-based limit could not be applied first`
         : "Inflated dependency JSON exceeds the size limit",
     );
