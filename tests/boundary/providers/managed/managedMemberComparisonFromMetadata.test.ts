@@ -513,7 +513,36 @@ describe("managed edge identity resolution", () => {
       });
   });
 
-  it("retains unknown identity for cyclic scope, TypeSpec and historical edges", () => {
+  it("compares identical artifacts calling a TypeSpec-owned MemberRef as unchanged", () => {
+    const spec = observeEdgeTarget({
+      memberRefParentRaw: 12,
+      typeSpecSignatures: [Buffer.from([0x15, 0x12, 9, 1, 8])],
+    });
+    expect(spec.result.call_edges[0]?.target_identity_sha256).not.toBeNull();
+    expect(compareManagedMembers(spec, spec).methods[0]?.status).toBe(
+      "unchanged",
+    );
+  });
+
+  it("marks the same generic base type with a different instantiation as changed", () => {
+    const integer = observeEdgeTarget({
+      memberRefParentRaw: 12,
+      typeSpecSignatures: [Buffer.from([0x15, 0x12, 9, 1, 8])],
+    });
+    const string = observeEdgeTarget({
+      memberRefParentRaw: 12,
+      typeSpecSignatures: [Buffer.from([0x15, 0x12, 9, 1, 0x0e])],
+    });
+    expect(integer.result.call_edges[0]?.target_identity_sha256).not.toEqual(
+      string.result.call_edges[0]?.target_identity_sha256,
+    );
+    expect(compareManagedMembers(integer, string).methods[0]).toMatchObject({
+      status: "changed",
+      dimensions: ["call-target"],
+    });
+  });
+
+  it("retains unknown identity for cyclic scope and historical edges", () => {
     const cyclic = observeEdgeTarget({
       typeReferences: [
         { namespace: "Fixture", name: "Outer", enclosingRow: 3 },
@@ -521,13 +550,6 @@ describe("managed edge identity resolution", () => {
       ],
     });
     expect(compareManagedMembers(cyclic, cyclic).methods[0]?.status).toBe(
-      "unknown",
-    );
-    const spec = observeEdgeTarget({
-      memberRefParentRaw: 12,
-      typeSpecSignatures: [Buffer.from([0x15, 0x12, 9, 1, 8])],
-    });
-    expect(compareManagedMembers(spec, spec).methods[0]?.status).toBe(
       "unknown",
     );
     const source = observeEdgeTarget();

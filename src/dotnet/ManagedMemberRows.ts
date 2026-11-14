@@ -1,3 +1,4 @@
+import { typeSpecDigestLookup } from "./ManagedTypeNames.js";
 import { readFieldDefinitionRow } from "./ManagedFieldDefinitionRows.js";
 import { createManagedFieldConstantReader } from "./ManagedFieldConstants.js";
 import { readMemberReferenceRowFacts } from "./ManagedMemberReferenceRows.js";
@@ -255,6 +256,7 @@ export const parseMemberRefs = (
   const refs: ManagedMemberRef[] = [];
   const core = new Map<string, MemberCore>();
   const issues: ManagedParseIssue[] = [];
+  const typeSpecDigest = typeSpecDigestLookup(bytes, layout, issues);
   const table = layout.table(10);
   for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
     readManagedValue(() => {
@@ -311,6 +313,7 @@ export const parseMemberRefs = (
           parent.kind === "valid" ? parent : null,
           decoded,
           declarationTypeName,
+          typeSpecDigest,
         ),
       });
     }, issues);

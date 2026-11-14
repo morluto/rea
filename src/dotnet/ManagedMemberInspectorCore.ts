@@ -109,6 +109,7 @@ export const memberTargetIdentity = (
   declaringType: Pick<MetadataTokenFact, "table" | "row"> | null,
   signature: ManagedSignature,
   typeName: DeclarationTypeName,
+  typeSpec?: (row: number) => Buffer | null,
 ): string | null => {
   if (
     declaringType === null ||
@@ -117,6 +118,17 @@ export const memberTargetIdentity = (
   )
     return null;
   const { table, row } = declaringType;
+  if (table === 27) {
+    const spec = typeSpec?.(row) ?? null;
+    return spec === null
+      ? null
+      : createHash("sha256")
+          .update("managed-member-typespec-v1\0")
+          .update(spec)
+          .update(Buffer.from(signature.resolved_sha256, "hex"))
+          .update(name)
+          .digest("hex");
+  }
   if (table !== 1 && table !== 2) return null;
   const owner = typeName(table, row);
   return owner === null

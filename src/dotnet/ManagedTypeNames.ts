@@ -1,5 +1,7 @@
 import type { ManagedTypeReferenceLookup } from "./ManagedTypeReferences.js";
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
+import { createHash } from "node:crypto";
+
 import {
   fullName,
   specSignatureFacts,
@@ -78,5 +80,40 @@ export const typeNameLookup = (
       ) ?? null;
     names.set(token, name);
     return name;
+  };
+};
+
+/**
+ * Digest each TypeSpec row's signature blob bytes, once per row. A TypeSpec
+ * names its instantiation in the blob, so identical artifacts digest equal
+ * and a different generic argument list digests apart, even when the nominal
+ * generic type is the same. A row that fails to read stays null: identity
+ * consumers keep reporting the call target as unknown, fail-closed.
+ */
+export const typeSpecDigestLookup = (
+  bytes: Buffer,
+  layout: ManagedMetadataLayout,
+  issues: ManagedParseIssue[],
+): ((row: number) => Buffer | null) => {
+  const digests = new Map<number, Buffer | null>();
+  return (row) => {
+    const known = digests.get(row);
+    if (known !== undefined) return known;
+    const digest =
+      readManagedValue(() => {
+        const cursor = metadataRowCursor(bytes, layout, 27, row);
+        const spec = readMetadataBlob(
+          bytes,
+          layout,
+          cursor.readIndex(layout.blobIndexSize),
+          layout.blob?.size ?? 0,
+        );
+        return createHash("sha256")
+          .update("managed-typespec-v1\0")
+          .update(spec)
+          .digest();
+      }, issues) ?? null;
+    digests.set(row, digest);
+    return digest;
   };
 };
