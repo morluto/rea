@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import {
   mavenGradleMetadataSchema,
   type MavenGradleMetadata,
@@ -585,7 +585,7 @@ it("refuses Gradle metadata whose rows would repeat variant names past the repor
 });
 
 it("reports the repeated variant-name refusal as a fixed report allowance", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-gradle-report-"));
+  const root = await createTestTempDirectory("rea-gradle-report-");
   const path = join(root, "demo.module");
   await writeFile(path, repeatedVariantModule());
   const provider = new MavenGradleMetadataProvider();
