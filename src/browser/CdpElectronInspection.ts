@@ -13,24 +13,19 @@ import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
 import {
   delayWithCancellation,
-  resourceContentSize,
-  recordValue,
-  recordsValue,
-  type UnknownRecord,
   requiredRecord,
   cdpStringValue,
 } from "./CdpCaptureValues.js";
 import {
-  frameTreeResources,
   cdpFrameUrl,
   snapshotDocuments,
-  walkFrameTrees,
+  type CdpFrameUrlObservation,
 } from "./CdpCaptureDocuments.js";
-import {
-  cdpFrameRecordFacts,
-  cdpFrameEventFacts,
-  type CdpFrameFacts,
-} from "./CdpFrameIdentity.js";
+import { cdpFrameEventFacts, type CdpFrameFacts } from "./CdpFrameIdentity.js";
+import type {
+  CdpFrameTree,
+  CdpFrameTreeNode,
+} from "./protocol/CdpFrameTree.js";
 import { snapshotDocumentNodes, snapshotNodeAt } from "./CdpSnapshotNodes.js";
 import { cdpSnapshotString } from "./CdpSnapshotStrings.js";
 import {
@@ -416,8 +411,14 @@ const invalidateFrameGenerations = (
 /** Only a known URL and loader together can prove a duplicate document event. */
 const frameDocument = (
   facts: CdpFrameFacts,
+  observation?: CdpFrameUrlObservation,
 ): ElectronFrameDocument | undefined => {
-  const url = cdpFrameUrl(facts.source);
+  const url =
+    observation === undefined
+      ? cdpFrameUrl(facts.source)
+      : observation.kind === "observed"
+        ? observation.url
+        : undefined;
   if (
     url === undefined ||
     url === "" ||
@@ -432,18 +433,15 @@ const frameDocument = (
 
 /** Protocol identities are observations, separate from asynchronous file authorization. */
 const seedFrameDocuments = (
-  result: unknown,
+  tree: CdpFrameTree,
   generations: ReadonlyMap<string, number>,
   documents: ReadonlyMap<string, ElectronFrameDocument>,
   state: ElectronInspectionState,
 ): Set<string> => {
   const unproven = new Set<string>();
-  const tree = recordValue(recordValue(result)?.frameTree);
-  if (tree === undefined) return unproven;
-  for (const entry of walkFrameTrees(tree)) {
-    const facts = cdpFrameRecordFacts(recordValue(entry.frame));
+  for (const { facts, url } of tree.frames) {
     const id = facts.frameId;
-    const document = frameDocument(facts);
+    const document = frameDocument(facts, url);
     if (
       id !== null &&
       document === undefined &&
@@ -667,44 +665,40 @@ const assertStableMainFrame = async (
 };
 
 export const captureFrames = async (
-  result: unknown,
+  tree: CdpFrameTree,
   completeness: CdpCaptureCompleteness,
   asarHeaderAdmission: AsarHeaderAdmission,
   signal?: AbortSignal,
 ): Promise<ElectronFrameInventory> => {
-  const frameTree = recordValue(requiredRecord(result).frameTree);
-  if (frameTree === undefined)
-    throw new BrowserObservationError("inspect_web_page", "protocol_error");
+  if (tree.omittedFrames)
+    completeness.exclude("frames", "invalid_protocol_value", null);
   const frames: ElectronPageInspection["frames"] = [];
-  const enclosingParents = new Map<UnknownRecord, string>();
+  const provedFrames = new Set<CdpFrameTreeNode>();
   const parents = new Map<string, string | null>();
   const excludedFrameIds = new Set<string>();
-  for (const tree of walkFrameTrees(frameTree, (count) =>
-    completeness.exclude("frames", "invalid_protocol_value", count),
-  )) {
+  for (const node of tree.frames) {
     throwIfElectronInspectionCancelled(signal);
-    const frame = recordValue(tree.frame);
-    const facts = cdpFrameRecordFacts(frame);
+    const { facts, enclosing } = node;
     const frameId = facts.frameId;
     const parentId = facts.parentId;
     // Only the enclosing tree root may omit its parent. Children must agree
     // with a structurally proved enclosing frame, independent of its file policy.
     // Malformed ancestry cannot grant proof to a frame or its descendants.
     const ancestryKnown =
-      tree === frameTree
+      enclosing === undefined
         ? facts.parentRelation === "root"
         : facts.parentRelation === "child" &&
           parentId !== null &&
-          parentId === enclosingParents.get(tree);
-    if (frame === undefined || frameId === null || !ancestryKnown) {
+          provedFrames.has(enclosing) &&
+          parentId === enclosing.facts.frameId;
+    if (facts.source === undefined || frameId === null || !ancestryKnown) {
       completeness.exclude("frames", "invalid_protocol_value");
       continue;
     }
     parents.set(frameId, parentId ?? null);
-    for (const child of recordsValue(tree.childFrames))
-      enclosingParents.set(child, frameId);
+    provedFrames.add(node);
     const path = await authorizedElectronFile(
-      cdpStringValue(frame.url) ?? "",
+      node.url.kind === "missing" ? "" : node.url.scopeUrl,
       signal,
       "inspect_electron_page",
       asarHeaderAdmission,
@@ -727,23 +721,26 @@ const captureResources = async (
   context: ElectronContext,
   completeness: CdpCaptureCompleteness,
 ): Promise<ElectronPageInspection["resources"]> => {
-  const result = await context.connection.send(
+  const tree = await context.connection.send(
     "Page.getResourceTree",
     {},
     context.sessionId,
     context.signal,
   );
-  const root = recordValue(requiredRecord(result).frameTree);
-  if (root === undefined)
-    throw new BrowserObservationError("inspect_web_page", "protocol_error");
+  if (tree.omittedResources)
+    completeness.exclude("resources", "invalid_protocol_value", null);
+  if (tree.malformedResources > 0)
+    completeness.exclude(
+      "resources",
+      "invalid_protocol_value",
+      tree.malformedResources,
+    );
   const resources: ElectronPageInspection["resources"] = [];
   const seen = new Set<string>();
-  for (const resource of frameTreeResources(root, (count) =>
-    completeness.exclude("resources", "invalid_protocol_value", count),
-  )) {
+  for (const resource of tree.resources) {
     throwIfElectronInspectionCancelled(context.signal);
     const path = await authorizedElectronFile(
-      cdpStringValue(resource.url) ?? "",
+      resource.url ?? "",
       context.signal,
       "inspect_electron_page",
       context.asarHeaderAdmission,
@@ -752,13 +749,13 @@ const captureResources = async (
       completeness.exclude("resources", "out_of_target_scope");
       continue;
     }
-    const contentSize = resourceContentSize(resource.contentSize);
+    const { contentSize } = resource;
     if (!contentSize.ok)
       completeness.exclude("resources", "invalid_protocol_value");
     const item = {
       file_path: path,
-      type: cdpStringValue(resource.type) ?? "Other",
-      mime_type: cdpStringValue(resource.mimeType) ?? "",
+      type: resource.type ?? "Other",
+      mime_type: resource.mimeType ?? "",
       content_size: contentSize.ok ? contentSize.value : null,
     };
     const resourceKey = `electron_resource_${digestCanonicalValue(item, "CDP capture")}`;

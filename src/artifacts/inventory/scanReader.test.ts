@@ -87,8 +87,9 @@ const entry: ArtifactEntry = {
 };
 const readerFailingWith = (failure: ArtifactReaderFailure): ArtifactReader => ({
   format: "asar",
-  async *entries() {
+  async *entries(_signal, options) {
     yield entry;
+    options?.onCoverage?.({ status: "complete", limitations: [] });
   },
   async open() {
     throw failure;
@@ -131,6 +132,28 @@ it("keeps known member enumeration complete when only its content is unavailable
   expect(result.occurrences).toMatchObject([
     { logical_path: "member", hash_status: "unavailable", artifact_id: null },
   ]);
+});
+
+it("reports unknown coverage naming a reader that never declared its coverage", async () => {
+  const reader: ArtifactReader = {
+    format: "asar",
+    async *entries() {
+      yield entry;
+    },
+    open: async () => Readable.from([Buffer.from("x")]),
+    provenance: () => [],
+    async close() {},
+  };
+  const result = await scanReader(reader, [reader]);
+  expect(result.occurrences).toMatchObject([
+    { logical_path: "member", hash_status: "verified" },
+  ]);
+  expect(result.traversal).toEqual({
+    status: "unknown",
+    limitations: [
+      "The asar reader ended its traversal without declaring coverage; members it did not list are unknown.",
+    ],
+  });
 });
 
 it.each(["closed reader", "content failure with incomplete cleanup"])(
