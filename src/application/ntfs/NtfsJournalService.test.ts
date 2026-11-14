@@ -73,6 +73,38 @@ it("preserves the completed file identity when MFT interpretation fails", async 
   }
 });
 
+it("refuses an oversized acquisition as a fixed ceiling, not host memory", async () => {
+  const resources = new ArtifactResourceScope();
+  const directory = await createTestTempDirectory("rea-ntfs-oversized-");
+  const mftPath = join(directory, "mft");
+  const file = await open(mftPath, "w");
+  await file.truncate(64 * 1024 * 1024 + 1);
+  await file.close();
+  try {
+    const result = await inspectNtfsJournalEvidence(
+      { mft_path: mftPath, journal_path: "/fixture/journal" },
+      resources,
+    );
+    if (result.ok) throw new Error("expected a size refusal");
+    const projected = projectAnalysisError(result.error);
+    expect(projected).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        refusal: {
+          kind: "fixed_ceiling",
+          allowance: "The NTFS journal file allowance",
+          limit: 64 * 1024 * 1024,
+          unit: "bytes",
+        },
+      },
+    });
+    expect(projected.remediation.action).not.toMatch(/host memory/u);
+  } finally {
+    await resources.close();
+  }
+});
+
 it("retains both acquisitions through a failed journal close and cleanup retry", async () => {
   const directory = await createTestTempDirectory("rea-ntfs-partial-");
   const mftPath = join(directory, "mft");

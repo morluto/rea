@@ -1,3 +1,4 @@
+import { fixedAllowanceOptions } from "../../../domain/fixedAllowanceRemediation.js";
 import { getHeapStatistics } from "node:v8";
 import { LosslessNumber, isSafeNumber } from "lossless-json";
 import type {
@@ -36,6 +37,7 @@ const readRecord = (bytes: Buffer): unknown => {
       "memory",
       "Insufficient heap headroom for trace record expansion.",
       { input_bytes: bytes.length, required_headroom_bytes: required },
+      { measuredExhaustion: true },
     );
   let value: string;
   try {
@@ -147,7 +149,17 @@ class TraceStreamRead {
           "memory",
           cause.message,
           { parser_nodes: PLAYWRIGHT_TRACE_LIMITS.factsBytes / 256 },
-          { cause },
+          {
+            cause,
+            ...fixedAllowanceOptions(
+              "The Playwright trace record parser allowance",
+              "parser",
+              {
+                limit: PLAYWRIGHT_TRACE_LIMITS.factsBytes / 256,
+                unit: "parser nodes",
+              },
+            ),
+          },
         );
       this.diagnostic(line.line, "malformed-record", cause.message);
       this.#headerSeen = true;
