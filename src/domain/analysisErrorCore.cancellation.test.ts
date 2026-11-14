@@ -3,6 +3,7 @@ import {
   AnalysisCancelledError,
   cancelledBy,
   carriedReason,
+  isAborted,
   OwnerCancellation,
 } from "./analysisErrorCore.js";
 import { projectAnalysisError } from "./analysisErrorProjection.js";
@@ -46,6 +47,16 @@ it("keeps the cancellation projection unchanged by the reason it carries", () =>
   expect(JSON.stringify(projectAnalysisError(fromOwner))).not.toContain(
     "OwnerCancellation",
   );
+});
+
+it("narrows only an aborted signal for cancelledBy", () => {
+  const controller = new AbortController();
+  const optional: AbortSignal | undefined = controller.signal;
+  expect(isAborted(undefined)).toBe(false);
+  expect(isAborted(optional)).toBe(false);
+  controller.abort("caller");
+  if (!isAborted(optional)) throw new Error("Expected an aborted signal");
+  expect(cancelledBy("probe", optional).cause).toBe("caller");
 });
 
 it("does not accept a cause beside the required reason", () => {

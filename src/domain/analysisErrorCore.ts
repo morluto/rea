@@ -353,6 +353,14 @@ export type CancellationReason =
   | CarriedCancellationReason
   | OwnerCancellation;
 
+/** A signal observed aborted, so its `reason` is the cancellation's reason. */
+export type AbortedSignal = AbortSignal & { readonly aborted: true };
+
+/** Whether an optional signal has aborted; narrows it to pass to `cancelledBy`. */
+export const isAborted = (
+  signal: AbortSignal | undefined,
+): signal is AbortedSignal => signal?.aborted === true;
+
 /** Options for a cancellation; its cause is always the required reason. */
 export type CancelledOptions = Omit<AnalysisErrorOptions, "cause"> & {
   readonly cause?: never;
