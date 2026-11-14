@@ -2189,6 +2189,8 @@ family exclusions continue to apply.
 
 ### Tool family advertising scope
 
+Available since REA 6.9.0 (the feature landed in [#7228](https://github.com/morluto/rea/pull/7228) after the 6.8.0 publish; `rea-agents@6.8.0` contains none of it).
+
 Agents pay context for every advertised tool schema, and clients that send
 catalog payloads with each request (see the Claude Code measurements above)
 can spend more context on tool definitions than on the investigation. Setting
