@@ -200,9 +200,7 @@ export class ProcessCaptureInspectionFailure extends ProcessCaptureError {
         ...(darwin?.capturedOutput === undefined
           ? {}
           : { capturedOutput: darwin.capturedOutput }),
-        ...(darwin?.compilerOutcome?.outcome === "timed_out"
-          ? { retryable: true }
-          : {}),
+        ...(darwin?.compilerTimedOut === true ? { retryable: true } : {}),
         ...(inspectionFailure instanceof ProcessOwnershipIdentityBatchFailure
           ? {
               diagnostics: {

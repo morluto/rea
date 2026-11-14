@@ -124,7 +124,19 @@ export const translateNativeCommandFailure = (
           })
         : cancellationPrimary && cancelled !== undefined
           ? cancelled
-          : new ProviderAdapterError(IDENTITY.id, operation, options);
+          : // The ownership helper's compiler deadline is a retryable timeout
+            // with its own setting, not a provider failure.
+            darwin?.compileTimeout !== undefined
+            ? new AnalysisTimeoutError(
+                operation,
+                darwin.compileTimeout.timeoutMs,
+                {
+                  ...options,
+                  userMessage: darwin.compileTimeout.userMessage,
+                  remediationAction: darwin.compileTimeout.remediationAction,
+                },
+              )
+            : new ProviderAdapterError(IDENTITY.id, operation, options);
     return retainProcessInspectionCleanup(
       preparation,
       bindCleanup(error),
