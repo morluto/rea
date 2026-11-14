@@ -1,4 +1,5 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
+import { addFormats } from "@modelcontextprotocol/client/validators/ajv";
 import { describe, expect, it } from "vitest";
 
 import { advertisedInputDialectViolations } from "./advertisedDialect.js";
@@ -20,6 +21,7 @@ const expectWidening = (
 ) => {
   const { schema } = project({ value: canonical });
   const ajv = new Ajv2020({ strict: false });
+  addFormats(ajv);
   const validateCanonical = ajv.compile({
     type: "object",
     properties: { value: canonical },
@@ -30,6 +32,62 @@ const expectWidening = (
       expect(validateAdvertised({ value }), JSON.stringify(value)).toBe(true);
   return schema.properties as Record<string, unknown>;
 };
+
+it("does not move a closed allOf member's property scope onto another member", () => {
+  expectWidening(
+    {
+      allOf: [
+        { type: "object", properties: { a: { type: "string" } } },
+        {
+          type: "object",
+          properties: { a: { type: "string" }, b: { type: "string" } },
+          additionalProperties: false,
+        },
+      ],
+    },
+    [{ a: "x", b: "y" }],
+  );
+});
+
+it("does not move a single union branch's closure onto the parent's properties", () => {
+  expectWidening(
+    {
+      type: "object",
+      properties: { a: { type: "string" } },
+      anyOf: [
+        {
+          type: "object",
+          properties: { a: { type: "string" }, b: { type: "string" } },
+          additionalProperties: false,
+        },
+      ],
+    },
+    [{ a: "x", b: "y" }],
+  );
+});
+
+it("leaves objects open when dropped pattern properties admit names", () => {
+  expectWidening(
+    {
+      type: "object",
+      patternProperties: { "^b$": { type: "string" } },
+      additionalProperties: false,
+    },
+    [{ b: "ok" }],
+  );
+});
+
+it("does not make a union branch's omitted rule into global guidance", () => {
+  const { guidance } = project({
+    value: {
+      anyOf: [
+        { type: "string", not: { enum: ["reserved"] } },
+        { type: "string", enum: ["reserved"] },
+      ],
+    },
+  });
+  expect(guidance.join(" ")).not.toContain('must not be "reserved"');
+});
 
 describe("portable advertised dialect projection", () => {
   it.each([

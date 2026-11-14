@@ -1,4 +1,9 @@
 import { portablePatternViolations } from "./advertisedDialect.js";
+import {
+  INVALID_BASE64_CHARACTER_PATTERN,
+  INVALID_BASE64_PADDING_PATTERN,
+  INVALID_CANONICAL_BASE64_PAD_BITS_PATTERN,
+} from "../domain/stringPatterns.js";
 
 /**
  * An advertised `pattern` re-emitted into the portable regex grammar.
@@ -14,13 +19,17 @@ export type PortablePatternProjection =
 
 class Unexpressible extends Error {}
 
-// Any string, as runs separated by NUL. A single-class loop keeps V8 from
-// recording one backtracking frame per character on large inputs.
+// Any string, as runs separated by NUL.
 const ANY_STRING = "[^\\x00]*(?:\\x00[^\\x00]*)*";
+const UNBOUNDED_BASE64_PROBES = new Set([
+  INVALID_BASE64_CHARACTER_PATTERN.source,
+  INVALID_BASE64_PADDING_PATTERN.source,
+  INVALID_CANONICAL_BASE64_PAD_BITS_PATTERN.source,
+]);
 const ANY_CHARACTER = "(?:[^\\x00]|\\x00)";
 const NON_ASCII = "[^\\x00-\\x7f]";
 const ALNUM = /^[A-Za-z0-9]$/u;
-const LITERAL_OUTSIDE_CLASS = new Set("_ !#%&,:;<=>@`~'\"-");
+const LITERAL_OUTSIDE_CLASS = new Set("_ !#%&,:;<=>@`~'\"-/");
 const ESCAPED_OUTSIDE_CLASS = new Set("^$\\.*+?()[]{}|/");
 const LITERAL_IN_CLASS = new Set("!#%&,:;<=>@`~'\" _.+*?$");
 const ESCAPED_IN_CLASS = new Set("^$\\.*+?()[]{}|/-");
@@ -42,7 +51,7 @@ const emitInClass = (code: number, rangeEndpoint: boolean): string => {
   // A punctuator that starts a range is read as a literal followed by `-` in
   // some engines, so range endpoints use the hexadecimal form.
   if (!rangeEndpoint && LITERAL_IN_CLASS.has(character)) return character;
-  if (!rangeEndpoint && ESCAPED_IN_CLASS.has(character))
+  if (!rangeEndpoint && character !== "/" && ESCAPED_IN_CLASS.has(character))
     return `\\${character}`;
   return hex(code);
 };
@@ -410,8 +419,11 @@ class Projector {
       } else members.push(low);
     }
     this.#index++;
-    const inner = this.source.slice(start + (negated ? 2 : 1), this.#index - 1);
-    const { ascii, nonAscii } = this.#membership(`[${inner}]`, members);
+    const source = this.source.slice(start, this.#index);
+    const { ascii: matched, nonAscii } = this.#membership(source, members);
+    const ascii = negated
+      ? new Set(ASCII_CODES.filter((code) => !matched.has(code)))
+      : matched;
     return emitClass(ascii, nonAscii, negated, this.#widen);
   }
 
@@ -467,6 +479,9 @@ export const projectPortablePattern = (
   if (cached !== undefined) return cached;
   let projection: PortablePatternProjection;
   try {
+    // Anchoring these unbounded negative probes requires a repeated universal
+    // prefix; V8 v-mode can overflow its stack on a large valid base64 value.
+    if (UNBOUNDED_BASE64_PROBES.has(pattern)) throw new Unexpressible();
     // JSON Schema validators read `pattern` with Unicode semantics.
     new RegExp(pattern, "u");
     const projected = new Projector(pattern).project();
