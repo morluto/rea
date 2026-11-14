@@ -1,8 +1,11 @@
 import type { FileHandle } from "node:fs/promises";
+import { open, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
 import { expect, it, vi } from "vitest";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   FileReadCancelled,
   readFileHandleChunks,
@@ -99,6 +102,49 @@ it("removes cancellation observation after normal stream completion", async () =
   controller.abort(null);
   expect(source.errored).toBeNull();
 });
+
+it.each([false, true])(
+  "preserves a rejected descriptor read before error forwarding (same reason: %s)",
+  async (sameReason) => {
+    const root = await createTestTempDirectory("rea-read-rejection-forward-");
+    const path = join(root, "write-only");
+    await writeFile(path, "inert bytes");
+    const handle = await open(path, "w");
+    const controller = new AbortController();
+    const original = handle.read.bind(handle);
+    const reason = new Error("caller cancelled after read rejection");
+    let physical: unknown;
+    const read = vi
+      .spyOn(handle, "read")
+      .mockImplementationOnce(async (...args) => {
+        try {
+          return await original(...args);
+        } catch (cause: unknown) {
+          physical = cause;
+          queueMicrotask(() =>
+            queueMicrotask(() => controller.abort(sameReason ? cause : reason)),
+          );
+          throw cause;
+        }
+      });
+    try {
+      const source = readFileHandleChunks(handle, {
+        signal: controller.signal,
+      });
+      const outcome: unknown = await buffer(source).catch(
+        (cause: unknown) => cause,
+      );
+      expect(physical).toBeInstanceOf(Error);
+      expect(outcome).toBe(physical);
+      expect(controller.signal.aborted).toBe(true);
+      expect(source.readCoverage()).toEqual({ kind: "incomplete", bytes: 0n });
+      expect(read).toHaveBeenCalledOnce();
+    } finally {
+      read.mockRestore();
+      await handle.close();
+    }
+  },
+);
 
 it.each(["range", "eof"])(
   "retains physical %s coverage independently of stream delivery",
