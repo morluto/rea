@@ -4,6 +4,7 @@ import {
   inspectV8CodeCacheInputSchema,
   v8CodeCacheSchema,
   V8_CODE_CACHE_HEADER_BYTES,
+  V8_CODE_CACHE_NARROW_HEADER_BYTES,
   type V8CodeCache,
 } from "../domain/v8/v8CodeCache.js";
 import { parseV8CodeCache } from "./V8CodeCacheParser.js";
@@ -194,9 +195,9 @@ it("fails closed on a payload-length mismatch", () => {
 });
 
 it("fails closed on a truncated header", () => {
-  expect(() => parse(real.subarray(0, V8_CODE_CACHE_HEADER_BYTES - 1))).toThrow(
-    expect.objectContaining({ kind: "malformed" }),
-  );
+  expect(() =>
+    parse(real.subarray(0, V8_CODE_CACHE_NARROW_HEADER_BYTES - 1)),
+  ).toThrow(expect.objectContaining({ kind: "malformed" }));
 });
 
 it("fails closed when fewer payload bytes follow the header than it declares", () => {
@@ -255,3 +256,61 @@ it("raises min_string_bytes and reports only runs that long", () => {
 
 const realSlice = (bytes: Buffer, offset: number, length: number): string =>
   bytes.subarray(offset, offset + length).toString("latin1");
+
+it("admits the 28-byte header a 32-bit producer writes", () => {
+  // `kHeaderSize` is `POINTER_SIZE_ALIGN(kUnalignedHeaderSize)` and `kUnalignedHeaderSize` is
+  // 28, so the header is padded after its words: a 64-bit build writes 32 header bytes and a
+  // 32-bit build writes 28. Only the trailing padding differs, and the declared payload length
+  // states which one the container carries.
+  const narrow = Buffer.concat([
+    real.subarray(0, V8_CODE_CACHE_NARROW_HEADER_BYTES),
+    real.subarray(V8_CODE_CACHE_HEADER_BYTES),
+  ]);
+  const report = parse(narrow);
+
+  expect(narrow.readUInt32LE(20)).toBe(
+    narrow.length - V8_CODE_CACHE_NARROW_HEADER_BYTES,
+  );
+  expect(report.header.header_bytes).toBe(V8_CODE_CACHE_NARROW_HEADER_BYTES);
+  expect(report.payload.offset).toBe(V8_CODE_CACHE_NARROW_HEADER_BYTES);
+  // Nothing but the padding is removed, so the payload is identical.
+  expect(report.payload.sha256).toBe(parse(real).payload.sha256);
+  // The word table covers exactly the header this container carries.
+  expect(report.header.fields).toHaveLength(7);
+  expect(report.header.fields.map((entry) => entry.offset)).toEqual([
+    0, 4, 8, 12, 16, 20, 24,
+  ]);
+});
+
+it("fails closed when the declared payload leaves no admitted header size", () => {
+  // Padding that is neither 28 nor 32 bytes is not a container this reader admits.
+  expect(() =>
+    parse(
+      Buffer.concat([
+        real.subarray(0, V8_CODE_CACHE_NARROW_HEADER_BYTES + 2),
+        real.subarray(V8_CODE_CACHE_HEADER_BYTES),
+      ]),
+    ),
+  ).toThrow(expect.objectContaining({ kind: "malformed" }));
+});
+
+it("refuses a wide container that is only four bytes short", () => {
+  // Truncating a 32-byte-header cache by four bytes makes `bytes.length - declaredPayload`
+  // equal 28, which is the narrow header size. The wide header's alignment word sits exactly
+  // there and V8 leaves it zero, so the zero word is the only evidence that the container is
+  // short and its payload is one word shorter than it claims.
+  const short = real.subarray(0, real.length - 4);
+  expect(short.readUInt32LE(28)).toBe(0);
+  expect(() => parse(short)).toThrow(
+    expect.objectContaining({ kind: "malformed" }),
+  );
+  // A real narrow container has payload where that padding would sit.
+  const narrow = Buffer.concat([
+    real.subarray(0, V8_CODE_CACHE_NARROW_HEADER_BYTES),
+    real.subarray(V8_CODE_CACHE_HEADER_BYTES),
+  ]);
+  expect(narrow.readUInt32LE(V8_CODE_CACHE_NARROW_HEADER_BYTES)).not.toBe(0);
+  expect(parse(narrow).header.header_bytes).toBe(
+    V8_CODE_CACHE_NARROW_HEADER_BYTES,
+  );
+});
