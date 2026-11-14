@@ -183,6 +183,29 @@ export class DarwinProcessOwnershipInspectionError extends Error {
   readonly cleanupFailure: AnalysisError | undefined;
   readonly cancellation: { readonly reason: unknown } | undefined;
 
+  /** Whether helper preparation failed because its compiler hit its deadline. */
+  get compilerTimedOut(): boolean {
+    return this.compilerOutcome?.outcome === "timed_out";
+  }
+
+  /** The compiler deadline and its recovery, when it is known. */
+  get compileTimeout():
+    | {
+        readonly timeoutMs: number;
+        readonly userMessage: string;
+        readonly remediationAction: string;
+      }
+    | undefined {
+    const outcome = this.compilerOutcome;
+    if (outcome?.outcome !== "timed_out" || outcome.timeoutMs === undefined)
+      return undefined;
+    return {
+      timeoutMs: outcome.timeoutMs,
+      userMessage: `The macOS process ownership helper compiler reached its REA_SWIFTC_COMPILE_TIMEOUT_MS deadline of ${String(outcome.timeoutMs)} ms.`,
+      remediationAction: swiftcCompileTimeoutRecovery(outcome.timeoutMs),
+    };
+  }
+
   /** Preserve the physical preparation failure while following the exact cleanup owner. */
   withCleanupFailure(
     cleanup: AnalysisError,
