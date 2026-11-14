@@ -42,9 +42,9 @@ import { AnalysisInputError } from "../analysisErrorCore.js";
 import type { EvidenceIntegrityError } from "../evidenceErrors.js";
 import { analysisInputErrorFromIssues } from "../inputIssueProjection.js";
 import { err, ok, type Result } from "../result.js";
+import { nonEmptyTextSchema } from "../textSchemas.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
-const textSchema = z.string().min(1);
 
 const managedApplicationGraphReferenceShape = z.strictObject({
   managed_artifact: evidenceInputSchema.optional(),
@@ -135,7 +135,7 @@ export const managedApplicationGraphResultSchema = z
       status: z.enum(["complete-within-inputs", "partial"]),
     }),
     evidence_links: z.array(evidenceIdSchema).min(1).max(3),
-    limitations: z.array(textSchema),
+    limitations: z.array(nonEmptyTextSchema),
   })
   .superRefine((result, context) => {
     const [rootId] = result.graph.root_node_ids;

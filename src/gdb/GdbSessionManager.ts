@@ -57,6 +57,7 @@ import {
   type ProcessStartTimeReader,
   verifyOwnedInferiorsEnded,
 } from "../process/ownedDebuggerSession.js";
+import { utf8HeadExcerpt } from "../domain/utf8HeadExcerpt.js";
 
 const STARTUP_TIMEOUT_MS = 10_000;
 
@@ -194,15 +195,7 @@ const truncateUtf8RecordPrefix = (line: string): string => {
   const budget =
     MAX_RECENT_MI_LINE_BYTES -
     Buffer.byteLength(RECENT_RECORD_TRUNCATION_MARKER, "utf8");
-  let prefix = "";
-  let retainedBytes = 0;
-  for (const codePoint of line) {
-    const codePointBytes = Buffer.byteLength(codePoint, "utf8");
-    if (retainedBytes + codePointBytes > budget) break;
-    prefix += codePoint;
-    retainedBytes += codePointBytes;
-  }
-  return `${prefix}${RECENT_RECORD_TRUNCATION_MARKER}`;
+  return `${utf8HeadExcerpt(line, budget).text}${RECENT_RECORD_TRUNCATION_MARKER}`;
 };
 
 /** Bound parser memory when a capped MI record contains extreme nesting. */

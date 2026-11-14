@@ -8,10 +8,10 @@ import { javascriptRuntimeUnresolvedLocationSchema } from "./javascriptRuntimeOb
 import { javascriptApplicationGraphSchema } from "./javascriptApplicationGraph.js";
 import { digestSchema, prefixedDigestSchema } from "../digests.js";
 import { urlDeclaresQueryOrFragment } from "../urlComponents.js";
+import { nonEmptyTextSchema } from "../textSchemas.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const nodeIdSchema = prefixedDigestSchema("jag_node");
-const boundedTextSchema = z.string().min(1);
 const safePrefixSchema = z
   .string()
   .refine(
@@ -171,7 +171,7 @@ const captureSummarySchema = z.strictObject({
   capture_sha256: digestSchema,
   kind: z.enum(["browser", "electron", "v8-inspector", "electron-active"]),
   target_node_id: nodeIdSchema,
-  target_key: boundedTextSchema,
+  target_key: nonEmptyTextSchema,
   target_location: z
     .string()
     .min(1)
@@ -282,7 +282,7 @@ export const javascriptRuntimeReconciliationResultSchema = z.strictObject({
     used_for_primary_matching: z.literal(false),
     static_layer_count: z.int().min(0),
     runtime_script_declarations: z.int().min(0),
-    limitation: boundedTextSchema,
+    limitation: nonEmptyTextSchema,
   }),
   coverage: z.strictObject({
     status: z.enum(["complete-within-inputs", "partial", "truncated"]),
@@ -293,7 +293,7 @@ export const javascriptRuntimeReconciliationResultSchema = z.strictObject({
     omitted_graph_items: z.int().min(0),
   }),
   evidence_links: z.array(evidenceIdSchema).min(2),
-  limitations: z.array(boundedTextSchema),
+  limitations: z.array(nonEmptyTextSchema),
 });
 
 export type ReconcileJavaScriptRuntimeInput = z.infer<

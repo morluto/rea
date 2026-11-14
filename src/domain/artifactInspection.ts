@@ -25,8 +25,8 @@ import { evidenceSchema, parseEvidence, type Evidence } from "./evidence.js";
 import { offsetText } from "./firmware/espImageStructures.js";
 import { jsonValueSchema } from "./jsonValue.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
+import { nonEmptyTextSchema } from "./textSchemas.js";
 
-const textSchema = z.string().min(1);
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const artifactIdSchema = prefixedDigestSchema("art");
 
@@ -38,22 +38,22 @@ const inspectionObservationSchema = z.strictObject({
     "container-header",
     "reconstruction",
   ]),
-  subject: textSchema,
+  subject: nonEmptyTextSchema,
   value: jsonValueSchema,
   evidence_id: evidenceIdSchema,
 });
 
 const inspectionHypothesisSchema = z.strictObject({
   hypothesis_id: prefixedDigestSchema("aih"),
-  statement: textSchema,
+  statement: nonEmptyTextSchema,
   confidence: z.enum(["medium", "low"]),
   basis_evidence_ids: z.array(evidenceIdSchema).min(1),
-  limitation: textSchema,
+  limitation: nonEmptyTextSchema,
 });
 
 const inspectionContradictionBaseSchema = z.strictObject({
   contradiction_id: prefixedDigestSchema("aic"),
-  statement: textSchema,
+  statement: nonEmptyTextSchema,
   occurrence_id: prefixedDigestSchema("occ"),
 
   evidence_id: evidenceIdSchema,
@@ -66,8 +66,8 @@ const inspectionContradictionSchema = z.union([
 ]);
 
 const nextProbeSchema = z.strictObject({
-  operation: textSchema,
-  rationale: textSchema,
+  operation: nonEmptyTextSchema,
+  rationale: nonEmptyTextSchema,
   authority: z.enum([
     "artifact-bytes",
     "managed-static-analysis",
@@ -79,7 +79,7 @@ const nextProbeSchema = z.strictObject({
 const unexploredBranchSchema = z.strictObject({
   branch_id: prefixedDigestSchema("aib"),
   reason: z.enum(["format-specific-analysis-required", "unknown-format"]),
-  detail: textSchema,
+  detail: nonEmptyTextSchema,
   next_probe: nextProbeSchema.nullable(),
   evidence_id: evidenceIdSchema,
 });
@@ -91,7 +91,7 @@ export const artifactInspectionResultSchema = z.strictObject({
     manifest_id: prefixedDigestSchema("agm"),
     root_artifact_id: artifactIdSchema,
     root_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-    root_format: textSchema,
+    root_format: nonEmptyTextSchema,
   }),
   substeps: z
     .array(
@@ -125,7 +125,7 @@ export const artifactInspectionResultSchema = z.strictObject({
     next_probes_omitted: z.int().min(0),
   }),
   evidence_links: z.array(evidenceIdSchema).min(1),
-  limitations: z.array(textSchema),
+  limitations: z.array(nonEmptyTextSchema),
 });
 
 export type ArtifactInspectionResult = z.infer<
