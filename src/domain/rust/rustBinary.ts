@@ -12,15 +12,40 @@ import {
   machoSliceArchitectureSchema,
   machoTargetSelectionSchema,
 } from "../apple/machoTargetSelection.js";
+import {
+  MAX_CARGO_GIT_SLUG_BYTES,
+  MAX_CARGO_REGISTRY_INDEX_BYTES,
+  MAX_CARGO_SEMVER_BYTES,
+  isValidCargoRegistryIndex,
+  isValidCargoSemver,
+  minimumInferredCrateMatchBytes,
+  parseExactRustcVersionBanner,
+  splitCargoGitCheckoutSegments,
+  splitCargoRegistryCrateSegment,
+} from "./rustSourceFingerprints.js";
 
 /** Known revisions used to interpret compatible cargo-auditable documents. */
 export const RUST_AUDITABLE_FORMAT_VERSIONS = [0, 1, 8] as const;
 /** Default compiler-path retention; callers can select a larger bounded prefix. */
 export const DEFAULT_RUSTC_HASH_LIMIT = 64;
 
+export const DEFAULT_MAX_RUST_INFERRED_CRATES = 1000;
+export const MAX_RUST_INFERRED_CRATES_LIMIT = 10_000;
+export const MAX_RUSTC_VERSIONS_LIMIT = 64;
+export const MAX_RUST_FINGERPRINT_SCAN_BYTES = 64 * 1024 * 1024;
+
+export const rustMaxInferredCratesSchema = z
+  .number()
+  .int()
+  .min(1)
+  .max(MAX_RUST_INFERRED_CRATES_LIMIT);
+
 const index = z.int().nonnegative();
 const rustcHash = z.string().regex(/^[0-9a-f]{40}$/u);
+const cargoGitCheckoutId = z.string().regex(/^[0-9a-f]{16}$/u);
+const shortOrFullHexHash = z.string().regex(/^[0-9a-f]{7,40}$/u);
 export const rustPackageFeaturesSchema = z.array(z.string().min(1)).nullable();
+export const rustInferredCrateSourceKindSchema = z.enum(["registry", "git"]);
 
 /** One embedded package, with omitted kind and root preserved as null and false. */
 export const rustPackageSchema = z.strictObject({
@@ -75,12 +100,70 @@ export const rustcCommitSchema = z.strictObject({
     .min(1),
 });
 
-/** One explicit local executable or library, independent of a disassembler target. */
-export const inspectRustBinaryInputSchema = z.strictObject({
+/** One distinct Cargo crate fingerprint inferred from read-only source paths. */
+export const rustInferredCrateSchema = z.strictObject({
+  name: z.string().min(1).max(MAX_CARGO_GIT_SLUG_BYTES),
+  version: z.string().min(5).max(MAX_CARGO_SEMVER_BYTES).nullable(),
+  source_kind: rustInferredCrateSourceKindSchema,
+  registry_index: z
+    .string()
+    .min(1)
+    .max(MAX_CARGO_REGISTRY_INDEX_BYTES)
+    .nullable(),
+  checkout_id: cargoGitCheckoutId.nullable(),
+  revision: shortOrFullHexHash.nullable(),
+  first_file_offset: index,
+  reference_count: z.int().positive(),
+});
+
+/** Bounded Cargo crate inventory inferred from read-only panic and debug paths. */
+export const rustInferredCratesSchema = z.strictObject({
+  evidence_kind: z.literal("inferred"),
+  items: z.array(rustInferredCrateSchema).max(MAX_RUST_INFERRED_CRATES_LIMIT),
+  discovered_count: index,
+  max_items: rustMaxInferredCratesSchema,
+  truncated: z.boolean(),
+});
+
+/** One distinct `rustc` toolchain version banner recovered from read-only or `.comment` bytes. */
+export const rustcVersionSchema = z.strictObject({
+  banner: z.string().min(11).max(160),
+  version: z.string().min(5).max(128),
+  channel: z.enum(["stable", "beta", "nightly", "dev"]),
+  commit_hash: shortOrFullHexHash.nullable(),
+  commit_date: z
+    .string()
+    .regex(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/u)
+    .nullable(),
+  first_file_offset: index,
+  reference_count: z.int().positive(),
+});
+
+/** Bounded `rustc` toolchain banner inventory recovered alongside inferred crates. */
+export const rustcVersionsSchema = z.strictObject({
+  evidence_kind: z.literal("inferred"),
+  items: z.array(rustcVersionSchema).max(MAX_RUSTC_VERSIONS_LIMIT),
+  discovered_count: index,
+  truncated: z.boolean(),
+});
+
+/** Plain input shape reused by query and CLI request schemas before refinement. */
+export const inspectRustBinaryInputObjectSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to the selected executable or library",
   ),
   architecture: machoSliceArchitectureSchema.exactOptional(),
+  include_inferred_crates: z
+    .boolean()
+    .exactOptional()
+    .describe(
+      "Also scan read-only and ELF .comment sections for Cargo crate source-path fingerprints and rustc version banners",
+    ),
+  max_inferred_crates: rustMaxInferredCratesSchema
+    .describe(
+      `Maximum distinct inferred Cargo crates (1-${String(MAX_RUST_INFERRED_CRATES_LIMIT)}; default ${String(DEFAULT_MAX_RUST_INFERRED_CRATES)}; requires include_inferred_crates: true)`,
+    )
+    .exactOptional(),
   producer_limits: rustProducerLimitsField,
   max_rustc_hashes: z
     .int()
@@ -90,6 +173,30 @@ export const inspectRustBinaryInputSchema = z.strictObject({
       `Maximum distinct inferred compiler paths to retain (default ${String(DEFAULT_RUSTC_HASH_LIMIT)}). Omitted paths leave compiler coverage partial without discarding dependency facts. Raise this value on the next call to recover a larger prefix; complete-report byte admission still applies.`,
     ),
 });
+
+/** Shared option-dependency check for provider and delivery request schemas. */
+export const checkInspectRustBinaryOptions = (
+  input: {
+    readonly include_inferred_crates?: boolean | undefined;
+    readonly max_inferred_crates?: number | undefined;
+  },
+  context: z.RefinementCtx,
+): void => {
+  if (
+    input.max_inferred_crates !== undefined &&
+    input.include_inferred_crates !== true
+  )
+    context.addIssue({
+      code: "custom",
+      path: ["max_inferred_crates"],
+      message:
+        "max_inferred_crates requires include_inferred_crates to be true.",
+    });
+};
+
+/** One explicit local executable or library, independent of a disassembler target. */
+export const inspectRustBinaryInputSchema =
+  inspectRustBinaryInputObjectSchema.superRefine(checkInspectRustBinaryOptions);
 
 /** Bounded cargo-auditable observation. A missing section is null, not an empty dependency list. */
 export const rustBinarySchema = z
@@ -107,6 +214,8 @@ export const rustBinarySchema = z
     selected_slice: machoTargetSelectionSchema.exactOptional(),
     auditable_metadata: rustAuditableMetadataSchema.nullable(),
     rustc_commit: rustcCommitSchema.nullable(),
+    inferred_crates: rustInferredCratesSchema.exactOptional(),
+    rustc_versions: rustcVersionsSchema.exactOptional(),
     limitations: z.array(z.string()),
   })
   .superRefine((report, context) => {
@@ -116,11 +225,26 @@ export const rustBinarySchema = z
       checkPackages(metadata, context);
     }
     checkRustc(report.artifact.bytes, report.rustc_commit, context);
+    if (
+      (report.inferred_crates !== undefined) !==
+      (report.rustc_versions !== undefined)
+    )
+      issue(
+        context,
+        ["rustc_versions"],
+        "inferred_crates and rustc_versions must be collected or omitted together.",
+      );
+    checkInferredCrates(report.artifact.bytes, report.inferred_crates, context);
+    checkRustcVersions(report.artifact.bytes, report.rustc_versions, context);
     checkSlice(report, context);
   });
 
 export type RustPackage = z.infer<typeof rustPackageSchema>;
 export type RustAuditableMetadata = z.infer<typeof rustAuditableMetadataSchema>;
+export type RustInferredCrate = z.infer<typeof rustInferredCrateSchema>;
+export type RustInferredCrates = z.infer<typeof rustInferredCratesSchema>;
+export type RustcVersion = z.infer<typeof rustcVersionSchema>;
+export type RustcVersions = z.infer<typeof rustcVersionsSchema>;
 export type RustBinary = z.infer<typeof rustBinarySchema>;
 export type InspectRustBinaryInput = z.infer<
   typeof inspectRustBinaryInputSchema
@@ -330,6 +454,14 @@ const checkSlice = (report: RustBinary, context: z.RefinementCtx): void => {
       offset,
       bytes: 48,
     })) ?? []),
+    ...(report.inferred_crates?.items.map((item) => ({
+      offset: item.first_file_offset,
+      bytes: minimumInferredCrateMatchBytes(item),
+    })) ?? []),
+    ...(report.rustc_versions?.items.map((item) => ({
+      offset: item.first_file_offset,
+      bytes: item.banner.length,
+    })) ?? []),
   ];
   if (
     !selectedSliceAgreesWithReport(
@@ -369,5 +501,165 @@ const checkRustc = (
         "rustc path hash is duplicated or its file offset is outside the artifact.",
       );
     seen.add(entry.hash);
+  }
+};
+
+const isValidInferredCrateFields = (item: RustInferredCrate): boolean => {
+  if (item.source_kind === "registry") {
+    return (
+      item.version !== null &&
+      item.registry_index !== null &&
+      item.checkout_id === null &&
+      item.revision === null &&
+      isValidCargoSemver(item.version) &&
+      isValidCargoRegistryIndex(item.registry_index) &&
+      splitCargoRegistryCrateSegment(`${item.name}-${item.version}`)?.name ===
+        item.name
+    );
+  }
+  if (
+    item.version !== null ||
+    item.registry_index !== null ||
+    item.checkout_id === null ||
+    item.revision === null
+  )
+    return false;
+  const split = splitCargoGitCheckoutSegments(
+    `${item.name}-${item.checkout_id}`,
+    item.revision,
+  );
+  return split?.name === item.name && split.checkout_id === item.checkout_id;
+};
+
+const checkInferredCrates = (
+  fileBytes: number,
+  crates: RustBinary["inferred_crates"],
+  context: z.RefinementCtx,
+): void => {
+  if (crates === undefined) return;
+  if (crates.items.length > crates.max_items)
+    issue(
+      context,
+      ["inferred_crates", "items"],
+      "Recovered inferred Cargo crates exceed max_items.",
+    );
+  if (crates.discovered_count < crates.items.length)
+    issue(
+      context,
+      ["inferred_crates", "discovered_count"],
+      "discovered_count must be at least the number of retained inferred_crates items.",
+    );
+  if (crates.discovered_count > crates.items.length && !crates.truncated)
+    issue(
+      context,
+      ["inferred_crates", "truncated"],
+      "truncated must be true when discovered_count exceeds retained inferred_crates items.",
+    );
+  const seen = new Set<string>();
+  let previousOffset = -1;
+  for (const [position, item] of crates.items.entries()) {
+    if (!isValidInferredCrateFields(item))
+      issue(
+        context,
+        ["inferred_crates", "items", position],
+        "Inferred Cargo crate fields do not match canonical registry or git checkout path syntax.",
+      );
+    const key = JSON.stringify([
+      item.source_kind,
+      item.name,
+      item.version,
+      item.registry_index,
+      item.checkout_id,
+      item.revision,
+    ]);
+    if (seen.has(key))
+      issue(
+        context,
+        ["inferred_crates", "items", position],
+        "Inferred Cargo crate identity is duplicated.",
+      );
+    seen.add(key);
+    if (
+      !inside(
+        fileBytes,
+        item.first_file_offset,
+        minimumInferredCrateMatchBytes(item),
+      )
+    )
+      issue(
+        context,
+        ["inferred_crates", "items", position, "first_file_offset"],
+        "Inferred Cargo crate file offset is outside the selected artifact.",
+      );
+    if (item.first_file_offset <= previousOffset)
+      issue(
+        context,
+        ["inferred_crates", "items", position, "first_file_offset"],
+        "Inferred Cargo crates must be strictly ordered by ascending first_file_offset.",
+      );
+    previousOffset = item.first_file_offset;
+  }
+};
+
+const checkRustcVersions = (
+  fileBytes: number,
+  versions: RustBinary["rustc_versions"],
+  context: z.RefinementCtx,
+): void => {
+  if (versions === undefined) return;
+  if (versions.items.length > MAX_RUSTC_VERSIONS_LIMIT)
+    issue(
+      context,
+      ["rustc_versions", "items"],
+      "Recovered rustc version banners exceed the maximum limit.",
+    );
+  if (versions.discovered_count < versions.items.length)
+    issue(
+      context,
+      ["rustc_versions", "discovered_count"],
+      "discovered_count must be at least the number of retained rustc_versions items.",
+    );
+  if (versions.discovered_count > versions.items.length && !versions.truncated)
+    issue(
+      context,
+      ["rustc_versions", "truncated"],
+      "truncated must be true when discovered_count exceeds retained rustc_versions items.",
+    );
+  const seen = new Set<string>();
+  let previousOffset = -1;
+  for (const [position, item] of versions.items.entries()) {
+    const parsed = parseExactRustcVersionBanner(item.banner);
+    if (
+      parsed === null ||
+      parsed.version !== item.version ||
+      parsed.channel !== item.channel ||
+      parsed.commit_hash !== item.commit_hash ||
+      parsed.commit_date !== item.commit_date
+    )
+      issue(
+        context,
+        ["rustc_versions", "items", position, "banner"],
+        "rustc version banner fields do not match the parsed banner text.",
+      );
+    if (seen.has(item.banner))
+      issue(
+        context,
+        ["rustc_versions", "items", position, "banner"],
+        "rustc version banner is duplicated.",
+      );
+    seen.add(item.banner);
+    if (!inside(fileBytes, item.first_file_offset, item.banner.length))
+      issue(
+        context,
+        ["rustc_versions", "items", position, "first_file_offset"],
+        "rustc version banner file offset is outside the selected artifact.",
+      );
+    if (item.first_file_offset <= previousOffset)
+      issue(
+        context,
+        ["rustc_versions", "items", position, "first_file_offset"],
+        "rustc version banners must be strictly ordered by ascending first_file_offset.",
+      );
+    previousOffset = item.first_file_offset;
   }
 };

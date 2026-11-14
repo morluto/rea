@@ -8,6 +8,8 @@ import { readBinaryContainer } from "../native/metadata/readBinaryContainer.js";
 import type {
   RustAuditableMetadata,
   RustBinary,
+  RustInferredCrates,
+  RustcVersions,
 } from "../domain/rust/rustBinary.js";
 import { DEFAULT_RUSTC_HASH_LIMIT } from "../domain/rust/rustBinary.js";
 import { RUST_PRODUCER_DEFAULTS } from "../domain/rust/rustResourceLimits.js";
@@ -16,9 +18,16 @@ import {
   RustAuditableFormatFailure,
   RustAuditableResourceFailure,
 } from "./RustAuditableReader.js";
+import { recoverRustSourceFingerprintsAsync } from "./RustInferredCrates.js";
 
 const RUSTC_PREFIX = Buffer.from("/rustc/");
 const HASH_BYTES = 40;
+
+export interface ReadRustBinaryImageOptions {
+  readonly includeInferredCrates?: boolean | undefined;
+  readonly maxInferredCrates?: number | undefined;
+  readonly checkActive?: (() => void) | undefined;
+}
 
 /** Container identity plus optional dependency metadata and inferred rustc commits. */
 export interface RustBinaryImage {
@@ -28,6 +37,8 @@ export interface RustBinaryImage {
   readonly byte_order: RustBinary["byte_order"];
   readonly auditable_metadata: RustAuditableMetadata | null;
   readonly rustc_commit: RustBinary["rustc_commit"];
+  readonly inferred_crates?: RustInferredCrates;
+  readonly rustc_versions?: RustcVersions;
   readonly section_names_limitation?: string;
 }
 
@@ -39,21 +50,79 @@ export const readRustBinaryImage = (
 ): RustBinaryImage => {
   const container = readContainer(bytes);
   const dependency = dependencySection(container.format, container.sections);
-  return {
-    format: container.format,
-    architecture: container.architecture,
-    bits: container.bits,
-    byte_order: container.byte_order,
-    auditable_metadata:
-      dependency === null
-        ? null
-        : readDependency(bytes, container.format, dependency, maxOutputBytes),
-    rustc_commit: rustcCommit(bytes, container, maxRustcHashes, maxOutputBytes),
-    ...(container.section_names_limitation === undefined
-      ? {}
-      : { section_names_limitation: container.section_names_limitation }),
-  };
+  return buildRustBinaryImage(
+    bytes,
+    container,
+    dependency,
+    undefined,
+    maxRustcHashes,
+    maxOutputBytes,
+  );
 };
+
+/**
+ * Asynchronous variant of `readRustBinaryImage` that yields to the event loop
+ * between bounded fingerprint scan chunks so `AbortSignal` timers and IPC/CLI
+ * cancellation signals are observed promptly.
+ */
+export const readRustBinaryImageAsync = async (
+  bytes: Buffer,
+  maxRustcHashes: number | undefined,
+  maxOutputBytes: number,
+  options?: ReadRustBinaryImageOptions,
+): Promise<RustBinaryImage> => {
+  options?.checkActive?.();
+  if (options?.includeInferredCrates !== true)
+    return readRustBinaryImage(bytes, maxRustcHashes, maxOutputBytes);
+  const container = readContainer(bytes);
+  const dependency = dependencySection(container.format, container.sections);
+  options.checkActive?.();
+  const fingerprints = await recoverRustSourceFingerprintsAsync(
+    bytes,
+    container,
+    options.maxInferredCrates,
+    options.checkActive,
+  );
+  options.checkActive?.();
+  return buildRustBinaryImage(
+    bytes,
+    container,
+    dependency,
+    fingerprints,
+    maxRustcHashes ?? DEFAULT_RUSTC_HASH_LIMIT,
+    maxOutputBytes,
+  );
+};
+
+const buildRustBinaryImage = (
+  bytes: Buffer,
+  container: BinaryContainer,
+  dependency: ImageSection | null,
+  fingerprints:
+    | Awaited<ReturnType<typeof recoverRustSourceFingerprintsAsync>>
+    | undefined,
+  maxRustcHashes: number,
+  maxOutputBytes: number,
+): RustBinaryImage => ({
+  format: container.format,
+  architecture: container.architecture,
+  bits: container.bits,
+  byte_order: container.byte_order,
+  auditable_metadata:
+    dependency === null
+      ? null
+      : readDependency(bytes, container.format, dependency, maxOutputBytes),
+  rustc_commit: rustcCommit(bytes, container, maxRustcHashes, maxOutputBytes),
+  ...(fingerprints === undefined
+    ? {}
+    : {
+        inferred_crates: fingerprints.inferred_crates,
+        rustc_versions: fingerprints.rustc_versions,
+      }),
+  ...(container.section_names_limitation === undefined
+    ? {}
+    : { section_names_limitation: container.section_names_limitation }),
+});
 
 const readContainer = (bytes: Buffer) => {
   try {
