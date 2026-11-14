@@ -124,7 +124,7 @@ export class GodotPckArtifactReader extends PositionalArtifactReader {
       entries.push(metadata);
     }
     await this.verifyCarrier(signal);
-    return { entries, coverage: undefined };
+    return { entries, coverage: { status: "complete", limitations: [] } };
   }
   async #readEntry(
     cursor: PckCursor,

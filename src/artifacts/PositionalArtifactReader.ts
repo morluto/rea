@@ -27,8 +27,8 @@ export type PositionalArtifactEntry = ArtifactEntry & {
 /** The entries one preparation established and the coverage to report. */
 export interface PositionalArtifactEntries {
   readonly entries: readonly PositionalArtifactEntry[];
-  /** Undefined when coverage is complete without limitations. */
-  readonly coverage: ArtifactReaderTraversal | undefined;
+  /** The coverage the preparation established, including complete coverage. */
+  readonly coverage: ArtifactReaderTraversal;
 }
 
 /**
@@ -86,6 +86,7 @@ export abstract class PositionalArtifactReader implements ArtifactReader {
       await this.#source.read(signal);
     });
     this.assertOpen(signal);
+    // An unprepared reader declares nothing, which consumers read as unknown.
     if (this.#coverage !== undefined)
       options?.onCoverage?.({
         ...this.#coverage,

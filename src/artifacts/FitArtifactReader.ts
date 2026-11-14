@@ -208,11 +208,10 @@ export class FitArtifactReader implements ArtifactReader {
     this.#assertOpen(signal);
     this.#entries = entries;
     this.#metadata = structure.metadata;
-    if (structure.limitations.length > 0)
-      this.#coverage = {
-        status: "complete",
-        limitations: structure.limitations,
-      };
+    this.#coverage = {
+      status: "complete",
+      limitations: structure.limitations,
+    };
   }
 
   /** One streamed pass per image feeds every supported digest. */

@@ -24,6 +24,7 @@ import {
   sameArtifactEntry,
   type ArtifactEntry,
   type ArtifactReader,
+  type ArtifactTraversalOptions,
 } from "./ArtifactReader.js";
 import { streamChunkToBuffer } from "./StreamBytes.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
@@ -57,12 +58,17 @@ export class MachOSliceArtifactReader implements ArtifactReader {
     this.#source = new ArtifactFileSource(path, "Universal Mach-O", source);
   }
 
-  async *entries(signal?: AbortSignal): AsyncIterable<ArtifactEntry> {
+  async *entries(
+    signal?: AbortSignal,
+    options?: ArtifactTraversalOptions,
+  ): AsyncIterable<ArtifactEntry> {
     const enumeration = this.#readEntries(signal);
     this.#enumerations.add(enumeration);
     try {
       yield* enumeration;
       this.#assertOpen(signal);
+      // Every FAT slice is listed; a disagreement with lipo fails the traversal.
+      options?.onCoverage?.({ status: "complete", limitations: [] });
     } finally {
       this.#enumerations.delete(enumeration);
     }

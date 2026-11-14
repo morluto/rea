@@ -175,10 +175,11 @@ export class NodeSeaArtifactReader extends PositionalArtifactReader {
     this.#admission = undefined;
     return {
       entries,
-      coverage:
-        fuse.fuseContradiction === null
-          ? undefined
-          : { status: "complete", limitations: [fuse.fuseContradiction] },
+      coverage: {
+        status: "complete",
+        limitations:
+          fuse.fuseContradiction === null ? [] : [fuse.fuseContradiction],
+      },
     };
   }
 }

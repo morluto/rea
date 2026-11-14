@@ -21,7 +21,10 @@ import {
   type ArtifactReader,
   type ArtifactReaderTraversal,
 } from "../ArtifactReader.js";
-import { ArtifactTraversalObservation } from "../ArtifactTraversalObservation.js";
+import {
+  ArtifactTraversalObservation,
+  declaredArtifactEntries,
+} from "../ArtifactTraversalObservation.js";
 import {
   DirectoryArtifactEntryAccessDenied,
   DirectoryArtifactReader,
@@ -201,25 +204,22 @@ const inventoryEntries = (
   reader: ArtifactReader,
   prefix: string,
 ): AsyncIterator<ArtifactEntry> =>
-  reader
-    .entries(context.signal, {
-      onCoverage: context.traversal.onCoverage,
-      ...(reader instanceof DirectoryArtifactReader &&
-      context.acquisitionLimits !== undefined
-        ? {
-            maximumEntries:
-              context.acquisitionLimits.maximumEntries -
-              context.entriesExamined,
-          }
-        : {}),
-      onOmission: (omission) =>
-        context.traversal.onOmission({
-          ...omission,
-          path:
-            prefix.length === 0 ? omission.path : `${prefix}/${omission.path}`,
-        }),
-    })
-    [Symbol.asyncIterator]();
+  declaredArtifactEntries(reader, context.signal, {
+    onCoverage: context.traversal.record,
+    ...(reader instanceof DirectoryArtifactReader &&
+    context.acquisitionLimits !== undefined
+      ? {
+          maximumEntries:
+            context.acquisitionLimits.maximumEntries - context.entriesExamined,
+        }
+      : {}),
+    onOmission: (omission) =>
+      context.traversal.omit({
+        ...omission,
+        path:
+          prefix.length === 0 ? omission.path : `${prefix}/${omission.path}`,
+      }),
+  })[Symbol.asyncIterator]();
 
 const visitArtifactEntries = async (
   context: ScanContext,
@@ -314,7 +314,7 @@ const visitArtifactEntries = async (
           cause instanceof ArtifactEntryContentUnavailable
             ? cause.traversal
             : { status: "unknown" as const, limitations: [limitation] };
-        if (traversal !== undefined) context.traversal.onCoverage(traversal);
+        if (traversal !== undefined) context.traversal.record(traversal);
         occurrence.hash_status = "unavailable";
         occurrence.limitations.push(limitation);
       }
@@ -369,7 +369,7 @@ const visitArtifactEntries = async (
       cause instanceof InventoryAcquisitionLimit ||
       cause instanceof DirectoryArtifactTraversalLimit
     )
-      context.traversal.onCoverage({
+      context.traversal.record({
         status: "unknown",
         limitations: [cause.message],
       });
