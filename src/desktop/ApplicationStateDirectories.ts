@@ -1,6 +1,8 @@
 import { lstat, readdir } from "node:fs/promises";
 import { basename, join } from "node:path";
 
+import { absoluteStateBase } from "./absoluteStateBase.js";
+
 import type { DesktopApplicationInventory } from "../domain/desktop/desktopCapture.js";
 
 /** The environment whose XDG folders, and the home whose dot-folders, may hold the application's state. */
@@ -63,11 +65,13 @@ export const stateDirectories = async (
   { environment, home }: StateLocations,
   extra: readonly string[],
 ): Promise<DesktopApplicationInventory["state_directories"]> => {
+  // Relative XDG paths silently become state candidates under cwd, which is
+  // the wrong root and can escape the caller's filesystem scope entirely.
   const bases = [
-    environment.XDG_CONFIG_HOME || join(home, ".config"),
-    environment.XDG_DATA_HOME || join(home, ".local/share"),
-    environment.XDG_STATE_HOME || join(home, ".local/state"),
-    environment.XDG_CACHE_HOME || join(home, ".cache"),
+    absoluteStateBase(environment.XDG_CONFIG_HOME, join(home, ".config")),
+    absoluteStateBase(environment.XDG_DATA_HOME, join(home, ".local/share")),
+    absoluteStateBase(environment.XDG_STATE_HOME, join(home, ".local/state")),
+    absoluteStateBase(environment.XDG_CACHE_HOME, join(home, ".cache")),
   ];
   const variants = new Set(
     names

@@ -52,3 +52,29 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     }
   },
 );
+
+it.skipIf(process.platform === "win32")(
+  "falls back to home folder when XDG_STATE (and relatives) are relative",
+  async () => {
+    const home = await createTestTempDirectory("state-dirs-relative-xdg-");
+    const absolute = join(home, ".config", "notes");
+    const environmentVertex = "relative-config";
+    const directories = await stateDirectories(
+      ["notes"],
+      {
+        home,
+        environment: { XDG_CONFIG_HOME: environmentVertex },
+      },
+      [],
+    );
+    expect(directories).toEqual(
+      expect.arrayContaining([expect.objectContaining({ path: absolute })]),
+    );
+    // Relative XDG must not leak a candidate under the caller's working directory.
+    expect(directories).toEqual(
+      expect.not.arrayContaining([
+        expect.objectContaining({ path: join("relative-config", "notes") }),
+      ]),
+    );
+  },
+);
