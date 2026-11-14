@@ -58,5 +58,6 @@ or segment payload declared outside the file returns no partial report, except t
 symbol name over its budget leaves the import rows `unknown` and keeps the
 header rows. A GNU property note over its budget, or a compressed note section
 that may hold one, leaves the CET and BTI/PAC rows `unknown` and keeps the header
-rows. A dynamic-table budget still fails the ELF report. The image is never
-executed.
+rows. Duplicate or descending property types within one GNU property note
+trigger a malformed-input refusal. A dynamic-table budget still fails the ELF
+report. The image is never executed.
