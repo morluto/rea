@@ -162,6 +162,28 @@ check(
   ],
 );
 
+// Node clamps a timer delay above the signed 32-bit bound to 1 ms. Durations
+// use MAX_NODE_TIMER_DELAY_MS or timerDurationMsSchema from their one owner.
+// The allowed files bound signed 32-bit integers that are not timer delays.
+check(
+  "signed 32-bit bound literal (use MAX_NODE_TIMER_DELAY_MS or timerDurationMsSchema from src/domain/analysisResourceLimits for durations)",
+  files,
+  /\b2_?147_?483_?647\b/u,
+  [
+    "src/domain/analysisResourceLimits.ts",
+    // JADX MCP `limit` argument: a Java int, not a duration.
+    "src/android/JadxAnalysis.ts",
+    // DEX static `int` value range.
+    "src/domain/android/androidAnalysis.ts",
+    // Signed 32-bit bitmask operand range.
+    "src/domain/javascript/javascriptSemanticResources.ts",
+    // Recorded crash pid, signal number and code fields.
+    "src/domain/native/recordedCrash.ts",
+    // Java int parsing for Ghidra launch properties.
+    "src/ghidra/GhidraInstallationPolicy.ts",
+  ],
+);
+
 if (failures.length > 0) {
   console.error(`Architecture guards failed:\n\n${failures.join("\n\n")}\n`);
   process.exit(1);

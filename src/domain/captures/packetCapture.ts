@@ -1,3 +1,4 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../analysisResourceLimits.js";
 import { z } from "zod";
 import { processArgumentSchema } from "../process/processArgument.js";
 import { fixedTupleSchema } from "../fixedTupleSchema.js";
@@ -36,7 +37,7 @@ const captureInputShape = z.strictObject({
     .number()
     .int()
     .positive()
-    .max(2147483647)
+    .max(MAX_NODE_TIMER_DELAY_MS)
     .nullable()
     .default(null)
     .describe(
