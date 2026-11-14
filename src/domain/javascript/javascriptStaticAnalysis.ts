@@ -70,6 +70,7 @@ import {
 import type { ParsedJavaScriptSource } from "./javascriptSourceParser.js";
 
 import { createJavaScriptRpcScan } from "./javascriptRpcEndpoints.js";
+import { finishElectronWindowOpenHandlersSteps } from "./electronStaticWindowOpen.js";
 import {
   hasUncertainTypeOnlyModuleSideEffect,
   TYPE_ONLY_MODULE_SIDE_EFFECT_LIMITATION,
@@ -138,6 +139,7 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
   finishBundlerExports(accumulator, index);
   yield* finishElectronNativeBindingsSteps(findings, index);
   yield* finishElectronBrowserWindowsSteps(findings, index);
+  yield* finishElectronWindowOpenHandlersSteps(findings);
   yield* finishElectronDynamicCodeSteps(findings, index);
   if (accumulator.pendingModuleRequireCalls.length > 0) {
     yield* index.indexMemberMutationFactsSteps();

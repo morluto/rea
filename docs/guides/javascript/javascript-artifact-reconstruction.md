@@ -599,6 +599,22 @@ the same artifact. Inline option syntax keeps its observed Evidence. This
 does not execute code or establish runtime configuration; popup overrides from
 `setWindowOpenHandler` are not covered by this constant-options resolution.
 
+Separately, a proven Electron window/view's `webContents.setWindowOpenHandler` can
+contribute an inline `overrideBrowserWindowOptions` configuration when a
+synchronous inline callback directly returns an object with literal
+`action: "allow"`. A one-return block body is also supported. Its explicit
+`webPreferences` and resolvable preload use the same option and path owners as
+constructor options. The graph retains the response's source range and an
+inferred association to the opener's source allocation; these configuration
+records contribute to the window and preload summary counts. They are labeled
+as popup configurations, not observed popup creation or runtime parent identity.
+No preferences are inherited and omitted properties do not become defaults.
+
+Denied or dynamic actions, asynchronous/generator callbacks, conditional or
+multi-statement returns, callback references, unresolved response keys and
+unproven or mutated receivers do not establish a popup configuration. This is
+bounded static extraction, not callback execution or complete popup coverage.
+
 A hoisted function does not establish initialization timing by declaration order.
 For classic scripts, the shared index also accounts for matching literal global
 property accesses through `globalThis`, `window`, `self`, and `this`, including

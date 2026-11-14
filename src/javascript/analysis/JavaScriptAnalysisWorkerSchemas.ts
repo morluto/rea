@@ -160,6 +160,12 @@ const windowShape = {
   window_constructor: z
     .enum(["BaseWindow", "BrowserView", "WebContentsView"])
     .exactOptional(),
+  window_open_handler: z
+    .strictObject({
+      opener_location: range,
+      registration_location: range,
+    })
+    .exactOptional(),
   options_status: z.enum(["object-literal", "dynamic", "missing"]),
   web_preferences_status: z.enum(["object-literal", "dynamic", "missing"]),
   web_preferences: z.array(
