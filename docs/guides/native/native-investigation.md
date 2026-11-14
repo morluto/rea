@@ -673,6 +673,29 @@ per-row `hidden` marker from lipo output. Mach-O image and Electron fuse
 inspection include the row in architecture selection while retaining that
 marker in their reported slices.
 
+The four app resource commands, `inspect_plist`, `inspect_asset_catalog`,
+`inspect_keyed_archive`, and `decode_interface_builder`, use a separate read-only
+resource session when the CLI input is a bundle directory. They do not require
+`CFBundleExecutable`, resolve a program by filename convention, or establish
+executable identity. For MCP, select the app with `open_bundle_resources` before
+querying its resources. `inspect_plist` defaults to the selected bundle's
+Info.plist. A declared executable is not opened or validated by this resource
+route either.
+
+Resource-only Evidence has a null `subject`; results identify the selected
+root through `resource_root`, and executable target digests remain null. Use
+the reported per-resource provenance for the bytes actually read. A supported
+Info.plist layout identifies a resource root; it does not establish that the
+plist contents or every resource can be decoded. Parsing, resource selection,
+and filesystem failures remain explicit outcomes of their respective readers.
+
+Executable analysis still uses `open_binary` and the ordinary binary admission
+checks. Missing or invalid executable declarations, unsafe program names, and
+unresolved program paths remain typed failures on that route. Resource sessions
+do not support binary-only operations or binary analysis snapshots. See the
+[resource session contract](../../reference/mcp-contracts.md#identity-and-discovery)
+for session status and provenance semantics.
+
 `inspect_plist.format` describes the selected source, not plutil's conversion
 format. Sources explicitly identified as XML, binary or JSON retain those
 labels. For generic text, a bounded source-prefix probe recognizes leading XML
