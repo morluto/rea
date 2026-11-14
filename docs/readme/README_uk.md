@@ -24,7 +24,7 @@
 
 [Швидкий старт](#швидкий-старт) · [Як працює REA](#як-працює-rea) · [Що можна аналізувати](#що-можна-аналізувати) · [Приклади](#приклади) · [Створення RL-середовищ](#build-rl-environments) · [Поширені запитання](#поширені-запитання) · [Документація](#документація)
 
-<code>npx rea-agents setup</code>
+<code>npx rea-agents@6.9.0 setup</code>
 
 </div>
 
@@ -75,7 +75,7 @@ REA підключає вашого агента до інструментів �
 Якщо Node.js і npm встановлено, виконайте:
 
 ```bash
-npx rea-agents setup
+npx rea-agents@6.9.0 setup
 ```
 
 Виберіть агентів, перевірте запропоновані зміни та схваліть їх. Налаштування додає MCP-сервер REA та відповідні інструкції робочих процесів, створюючи резервні копії наявної конфігурації. Після цього перезапустіть агента.
@@ -101,7 +101,7 @@ MCP типово використовує компактні вхідні схе
 Перевірте розпакований каталог застосунку JavaScript/Electron або файл ASAR:
 
 ```bash
-npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+npx -y rea-agents@6.9.0 analyze-javascript-application /absolute/path/to/app --json
 ```
 
 Результат містить модулі, імпорти, межі Electron і підтвердження для них. Замініть шлях своїм, наприклад `"D:/apps/example"` у Windows.
@@ -134,12 +134,12 @@ rea update
 Якщо використовуєте `npx`, оновіть налаштування агента командою:
 
 ```bash
-npx rea-agents@latest setup
+npx rea-agents@6.9.0 setup
 ```
 
-Перевірте зміни налаштувань і перезапустіть агента. Для разових команд CLI використовуйте `npx rea-agents@latest`, а потім потрібну команду.
+Перевірте зміни налаштувань і перезапустіть агента. Для разових команд CLI використовуйте `npx rea-agents@6.9.0`, а потім потрібну команду.
 
-З Bun використовуйте `bunx rea-agents@latest` замість `npx rea-agents@latest`.
+З Bun використовуйте `bunx rea-agents@6.9.0` замість `npx rea-agents@6.9.0`.
 
 ## Як працює REA
 
@@ -311,7 +311,7 @@ REA запускає Hopper, коли він потрібен для опера�
 <details>
 <summary><strong>Що дає встановлення skill із skills.sh?</strong></summary>
 
-Skill надає агенту інструкції дослідження. Використовуйте `npx rea-agents setup`, щоб зареєструвати MCP-сервер REA та встановити відповідні інструкції, а потім перезапустіть агента. Дивіться [встановлення лише skill](../getting-started/installation.md#skill-only-installation).
+Skill надає агенту інструкції дослідження. Використовуйте `npx rea-agents@6.9.0 setup`, щоб зареєструвати MCP-сервер REA та встановити відповідні інструкції, а потім перезапустіть агента. Дивіться [встановлення лише skill](../getting-started/installation.md#skill-only-installation).
 
 </details>
 
@@ -343,7 +343,7 @@ rea update
 Для налаштування агента через `npx`:
 
 ```bash
-npx rea-agents@latest setup
+npx rea-agents@6.9.0 setup
 ```
 
 Якщо використовуєте агента, завершіть [оновлення налаштувань](#оновіть-rea) і перезапустіть його. Повторіть те саме завдання. Якщо проблема залишається, [відкрийте issue](https://github.com/morluto/rea/issues) із версією REA, типом цілі, кроками відтворення та виводом помилки.

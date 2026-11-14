@@ -24,7 +24,7 @@
 
 [Démarrage rapide](#démarrage-rapide) · [Comment fonctionne REA](#comment-fonctionne-rea) · [Ce que vous pouvez analyser](#ce-que-vous-pouvez-analyser) · [Études de cas](#études-de-cas) · [Créer des environnements RL](#build-rl-environments) · [Questions fréquentes](#questions-fréquentes) · [Documentation](#documentation)
 
-<code>npx rea-agents setup</code>
+<code>npx rea-agents@6.9.0 setup</code>
 
 </div>
 
@@ -75,7 +75,7 @@ Sous Linux, les lancements de Ghidra, JADX et des outils de firmware, ainsi que 
 Une fois Node.js et npm installés, exécutez :
 
 ```bash
-npx rea-agents setup
+npx rea-agents@6.9.0 setup
 ```
 
 Choisissez vos agents, vérifiez les modifications proposées et approuvez-les. Setup ajoute le serveur MCP de REA et les instructions de workflow correspondantes, et sauvegarde la configuration existante. Redémarrez ensuite votre agent.
@@ -102,7 +102,7 @@ Remplacez Notes par votre application cible et la fonctionnalité que vous voule
 Inspectez le répertoire extrait ou l'archive ASAR d'une application JavaScript/Electron :
 
 ```bash
-npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+npx -y rea-agents@6.9.0 analyze-javascript-application /absolute/path/to/app --json
 ```
 
 Le résultat comprend les modules, les imports, les frontières Electron et les preuves associées. Remplacez le chemin par votre cible, par exemple `"D:/apps/example"` sous Windows.
@@ -135,10 +135,10 @@ Pour actualiser les enregistrements de vos agents et le skill, exécutez la comm
 Si vous utilisez `npx`, mettez à jour la configuration de votre agent avec :
 
 ```bash
-npx rea-agents@latest setup
+npx rea-agents@6.9.0 setup
 ```
 
-Vérifiez les modifications proposées par Setup et redémarrez votre agent. Pour des commandes CLI ponctuelles, utilisez `npx rea-agents@latest` suivi de la commande. Avec Bun, utilisez `bunx rea-agents@latest` à la place de `npx rea-agents@latest`.
+Vérifiez les modifications proposées par Setup et redémarrez votre agent. Pour des commandes CLI ponctuelles, utilisez `npx rea-agents@6.9.0` suivi de la commande. Avec Bun, utilisez `bunx rea-agents@6.9.0` à la place de `npx rea-agents@6.9.0`.
 
 ## Comment fonctionne REA
 
@@ -308,7 +308,7 @@ REA lance Hopper lorsqu'une opération en a besoin. Sous macOS, une boîte de di
 <details>
 <summary><strong>Que fait l'installation du skill depuis skills.sh ?</strong></summary>
 
-Le skill fournit des instructions d'investigation à votre agent. Utilisez `npx rea-agents setup` pour enregistrer le serveur MCP de REA et installer les instructions correspondantes, puis redémarrez votre agent. Consultez [l'installation du skill seul](../getting-started/installation.md#skill-only-installation).
+Le skill fournit des instructions d'investigation à votre agent. Utilisez `npx rea-agents@6.9.0 setup` pour enregistrer le serveur MCP de REA et installer les instructions correspondantes, puis redémarrez votre agent. Consultez [l'installation du skill seul](../getting-started/installation.md#skill-only-installation).
 
 </details>
 
@@ -340,7 +340,7 @@ rea update
 Pour une configuration d'agent via `npx` :
 
 ```bash
-npx rea-agents@latest setup
+npx rea-agents@6.9.0 setup
 ```
 
 Si vous utilisez un agent, terminez l'[actualisation de la configuration](#mettre-à-jour-rea) et redémarrez-le. Relancez la même tâche. Si le problème persiste, [ouvrez une issue](https://github.com/morluto/rea/issues) en indiquant votre version de REA, le type de cible, les étapes pour reproduire le problème et la sortie d'erreur.

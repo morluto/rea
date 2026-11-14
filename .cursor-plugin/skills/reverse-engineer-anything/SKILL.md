@@ -61,7 +61,7 @@ registration with an existing installation’s absolute runtime and entry script
 A concrete CLI fallback for an operator-supplied JavaScript tree or ASAR is:
 
 ```bash
-npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+npx -y rea-agents@6.9.0 analyze-javascript-application /absolute/path/to/app --json
 ```
 
 No MCP registration or native engine is required. Read the returned Evidence,
@@ -69,7 +69,7 @@ graph, limitations, and unknowns with the same care as an MCP result; the CLI
 returns the Evidence record directly. This fallback does not establish that
 MCP is configured. Native CLI tasks still require their selected engine.
 Prefer an existing `rea` CLI. When none is installed and REA package acquisition
-is within the authorized scope, use `npx -y rea-agents@latest` in its place from a
+is within the authorized scope, use `npx -y rea-agents@6.9.0` in its place from a
 trusted directory outside the target project, with absolute target paths. Managed
 setup binds the current installation directly; retain its runtime and package
 cache entry, or restore that installation before repairing its registration.

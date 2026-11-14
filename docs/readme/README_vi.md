@@ -24,7 +24,7 @@
 
 [Bắt đầu nhanh](#bắt-đầu-nhanh) · [Cách REA hoạt động](#cách-rea-hoạt-động) · [Những gì bạn có thể phân tích](#những-gì-bạn-có-thể-phân-tích) · [Các nghiên cứu điển hình](#các-nghiên-cứu-điển-hình) · [Xây dựng môi trường RL](#build-rl-environments) · [Câu hỏi thường gặp](#câu-hỏi-thường-gặp) · [Tài liệu](#tài-liệu)
 
-<code>npx rea-agents setup</code>
+<code>npx rea-agents@6.9.0 setup</code>
 
 </div>
 
@@ -75,7 +75,7 @@ Trên Linux, khởi chạy Ghidra, JADX và công cụ firmware cùng phân tíc
 Sau khi cài Node.js và npm, chạy:
 
 ```bash
-npx rea-agents setup
+npx rea-agents@6.9.0 setup
 ```
 
 Chọn các tác nhân, xem lại những thay đổi được đề xuất và chấp thuận. Quá trình thiết lập thêm máy chủ MCP của REA cùng hướng dẫn quy trình tương ứng, đồng thời sao lưu cấu hình hiện có. Sau đó khởi động lại tác nhân.
@@ -101,7 +101,7 @@ Thay Notes bằng ứng dụng mục tiêu và chỉ rõ tính năng bạn muố
 Kiểm tra thư mục ứng dụng JavaScript/Electron đã giải nén hoặc tệp ASAR:
 
 ```bash
-npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+npx -y rea-agents@6.9.0 analyze-javascript-application /absolute/path/to/app --json
 ```
 
 Kết quả bao gồm mô-đun, các khai báo import, ranh giới Electron và bằng chứng tương ứng. Thay đường dẫn bằng mục tiêu của bạn, chẳng hạn `"D:/apps/example"` trên Windows.
@@ -134,12 +134,12 @@ Cập nhật Bun toàn cục cần Bun 1.2.17 trở lên. Nâng cấp Bun cũ th
 Nếu dùng `npx`, cập nhật thiết lập tác nhân bằng:
 
 ```bash
-npx rea-agents@latest setup
+npx rea-agents@6.9.0 setup
 ```
 
-Xem lại thay đổi cấu hình và khởi động lại tác nhân. Với lệnh CLI dùng một lần, dùng `npx rea-agents@latest` rồi thêm lệnh cần chạy.
+Xem lại thay đổi cấu hình và khởi động lại tác nhân. Với lệnh CLI dùng một lần, dùng `npx rea-agents@6.9.0` rồi thêm lệnh cần chạy.
 
-Với Bun, dùng `bunx rea-agents@latest` thay cho `npx rea-agents@latest`.
+Với Bun, dùng `bunx rea-agents@6.9.0` thay cho `npx rea-agents@6.9.0`.
 
 ## Cách REA hoạt động
 
@@ -311,7 +311,7 @@ REA khởi chạy Hopper khi một thao tác cần đến nó. Trên macOS, hộ
 <details>
 <summary><strong>Cài skill từ skills.sh có tác dụng gì?</strong></summary>
 
-Skill cung cấp hướng dẫn điều tra cho tác nhân. Dùng `npx rea-agents setup` để đăng ký máy chủ MCP của REA và cài hướng dẫn tương ứng, sau đó khởi động lại tác nhân. Xem [chỉ cài skill](../getting-started/installation.md#skill-only-installation).
+Skill cung cấp hướng dẫn điều tra cho tác nhân. Dùng `npx rea-agents@6.9.0 setup` để đăng ký máy chủ MCP của REA và cài hướng dẫn tương ứng, sau đó khởi động lại tác nhân. Xem [chỉ cài skill](../getting-started/installation.md#skill-only-installation).
 
 </details>
 
@@ -343,7 +343,7 @@ rea update
 Với thiết lập tác nhân qua `npx`:
 
 ```bash
-npx rea-agents@latest setup
+npx rea-agents@6.9.0 setup
 ```
 
 Nếu dùng tác nhân, hãy hoàn tất [làm mới thiết lập](#cập-nhật-rea) và khởi động lại nó. Thử lại cùng tác vụ. Nếu vấn đề vẫn còn, [mở issue](https://github.com/morluto/rea/issues) với phiên bản REA, loại mục tiêu, các bước tái hiện và đầu ra lỗi.

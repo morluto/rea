@@ -24,7 +24,7 @@
 
 [Quick start](#quick-start) · [How REA works](#how-rea-works) · [What you can analyze](#what-you-can-analyze) · [Showcases](#showcases) · [Build RL environments](#build-rl-environments) · [FAQ](#faq) · [Documentation](#documentation)
 
-<code>npx rea-agents setup</code>
+<code>npx rea-agents@6.9.0 setup</code>
 
 </div>
 
@@ -80,7 +80,7 @@ checks. Recovery steps are in `docs/getting-started/installation.md` under
 With Node.js and npm installed, run:
 
 ```bash
-npx rea-agents setup
+npx rea-agents@6.9.0 setup
 ```
 
 Choose your agents, review the proposed changes, and approve them. Setup adds
@@ -122,7 +122,7 @@ Replace Notes with your target app and the feature you want to understand.
 Inspect an extracted JavaScript/Electron app directory or ASAR:
 
 ```bash
-npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+npx -y rea-agents@6.9.0 analyze-javascript-application /absolute/path/to/app --json
 ```
 
 The result includes modules, imports, Electron boundaries and their evidence.
@@ -167,12 +167,14 @@ by the update.
 If you use `npx`, update your agent setup with:
 
 ```bash
-npx rea-agents@latest setup
+npx rea-agents@6.9.0 setup
 ```
 
-Review the setup changes and restart your agent. For one-off CLI commands,
-use `npx rea-agents@latest` followed by the command. With Bun, use
-`bunx rea-agents@latest` in place of `npx rea-agents@latest`.
+Review the setup changes and restart your agent. The examples above pin `6.9.0` so copying them does not follow every publish. For one-off CLI commands,
+use `npx rea-agents@6.9.0` followed by the command. With Bun, use
+`bunx rea-agents@6.9.0` in place of `npx rea-agents@6.9.0`. Replace `rea-agents@6.9.0` with
+`rea-agents@latest` only when you intend npm to take each new release without review;
+`@latest` is an opt-in, not the default.
 
 ## How REA works
 
@@ -380,7 +382,7 @@ Hopper manually if needed. See
 <details>
 <summary><strong>What does installing the skill from skills.sh do?</strong></summary>
 
-The skill supplies investigation instructions for your agent. Use `npx rea-agents setup`
+The skill supplies investigation instructions for your agent. Use `npx rea-agents@6.9.0 setup`
 to register REA's MCP server and install the matching instructions, then restart
 your agent. See [skill-only installation](docs/getting-started/installation.md#skill-only-installation).
 
@@ -417,7 +419,7 @@ rea update
 For agent setup through `npx`:
 
 ```bash
-npx rea-agents@latest setup
+npx rea-agents@6.9.0 setup
 ```
 
 If you're using an agent, complete the [setup refresh](#update-rea) and restart

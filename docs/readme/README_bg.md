@@ -24,7 +24,7 @@
 
 [Бърз старт](#бърз-старт) · [Как работи REA](#как-работи-rea) · [Какво можете да анализирате](#какво-можете-да-анализирате) · [Примери](#примери) · [Създаване на RL среди](#build-rl-environments) · [Често задавани въпроси](#често-задавани-въпроси) · [Документация](#документация)
 
-<code>npx rea-agents setup</code>
+<code>npx rea-agents@6.9.0 setup</code>
 
 </div>
 
@@ -81,7 +81,7 @@ REA свързва агента ви с инструменти за изслед
 След като имате инсталирани Node.js и npm, изпълнете:
 
 ```bash
-npx rea-agents setup
+npx rea-agents@6.9.0 setup
 ```
 
 Изберете агентите си, прегледайте предложените промени и ги одобрете. Настройката
@@ -128,7 +128,7 @@ Claude Code/Codex.
 архив:
 
 ```bash
-npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+npx -y rea-agents@6.9.0 analyze-javascript-application /absolute/path/to/app --json
 ```
 
 Резултатът включва модули, импорти, границите на Electron и доказателствата за
@@ -175,12 +175,12 @@ rea update
 Ако използвате `npx`, обновете настройката на агента си с:
 
 ```bash
-npx rea-agents@latest setup
+npx rea-agents@6.9.0 setup
 ```
 
 Прегледайте промените от настройката и рестартирайте агента. За еднократни CLI
-команди използвайте `npx rea-agents@latest`, последвано от командата. С Bun
-използвайте `bunx rea-agents@latest` вместо `npx rea-agents@latest`.
+команди използвайте `npx rea-agents@6.9.0`, последвано от командата. С Bun
+използвайте `bunx rea-agents@6.9.0` вместо `npx rea-agents@6.9.0`.
 
 ## Как работи REA
 
@@ -400,7 +400,7 @@ REA стартира Hopper, когато дадена операция се н�
 <summary><strong>Какво прави инсталирането на умението (skill) от skills.sh?</strong></summary>
 
 Умението дава на агента ви инструкции как да провежда изследвания. Използвайте
-`npx rea-agents setup`, за да регистрирате MCP сървъра на REA и да инсталирате
+`npx rea-agents@6.9.0 setup`, за да регистрирате MCP сървъра на REA и да инсталирате
 съответните инструкции, след което рестартирайте агента. Вижте
 [инсталиране само на умението](../getting-started/installation.md#skill-only-installation).
 
@@ -439,7 +439,7 @@ rea update
 За настройка на агента чрез `npx`:
 
 ```bash
-npx rea-agents@latest setup
+npx rea-agents@6.9.0 setup
 ```
 
 Ако използвате агент, извършете

@@ -17,7 +17,7 @@ Setup previews configuration changes and asks for approval before applying them.
 ## Start setup
 
 ```bash
-npx rea-agents setup
+npx rea-agents@6.9.0 setup
 ```
 
 Choose the agents to configure, review the proposed paths and changes, and
@@ -31,7 +31,7 @@ During package resolution, npm may print a deprecation warning for `prebuild-ins
 from transitive native dependencies (such as Frida). This warning originates from
 the upstream dependency tree and does not affect REA or indicate setup failure.
 
-For the latest published release, use `npx rea-agents@latest setup`.
+These examples pin `6.9.0` so they do not follow every npm publish; replace it with `rea-agents@latest` only when you intentionally want npm to take each new release without review. `@latest` is an opt-in, not the default.
 [Package-runner and global-installation options](#package-runners-and-global-installation)
 cover explicit versions, Bun, runtime requirements, and the curl wrapper.
 
@@ -253,7 +253,7 @@ For REA setup, an empty `CLAUDE_CONFIG_DIR` is treated as unset: registration
 goes to `~/.claude.json` and the skill goes to `~/.claude/skills`.
 
 ```bash
-CLAUDE_CONFIG_DIR=~/.claude-rea npx rea-agents setup --client claude_code
+CLAUDE_CONFIG_DIR=~/.claude-rea npx rea-agents@6.9.0 setup --client claude_code
 CLAUDE_CONFIG_DIR=~/.claude-rea claude
 ```
 
@@ -269,8 +269,8 @@ environment and can otherwise inspect or recreate default-profile state:
 
 ```bash
 CLAUDE_CONFIG_DIR=~/.claude-rea claude mcp list
-CLAUDE_CONFIG_DIR=~/.claude-rea npx rea-agents doctor --client claude_code --skill --json
-CLAUDE_CONFIG_DIR=~/.claude-rea npx -y rea-agents@latest setup --client claude_code --dry-run
+CLAUDE_CONFIG_DIR=~/.claude-rea npx rea-agents@6.9.0 doctor --client claude_code --skill --json
+CLAUDE_CONFIG_DIR=~/.claude-rea npx -y rea-agents@6.9.0 setup --client claude_code --dry-run
 ```
 
 After reviewing an update plan, rerun that same prefixed setup command without
@@ -293,10 +293,10 @@ restore the previous selection afterward:
 $previousClaudeConfigDir = $env:CLAUDE_CONFIG_DIR
 try {
   $env:CLAUDE_CONFIG_DIR = Join-Path $HOME ".claude-rea"
-  npx rea-agents setup --client claude_code
+  npx rea-agents@6.9.0 setup --client claude_code
   claude mcp list
-  npx rea-agents doctor --client claude_code --skill --json
-  npx -y rea-agents@latest setup --client claude_code --dry-run
+  npx rea-agents@6.9.0 doctor --client claude_code --skill --json
+  npx -y rea-agents@6.9.0 setup --client claude_code --dry-run
   # After reviewing the plan, repeat setup without --dry-run and approve it.
   claude
   # Profile removal, when intended, also belongs inside this selected scope:
@@ -452,7 +452,7 @@ their own status. `open_binary` keeps the refusal described above.
 
 ## Diagnose, update, and remove
 
-`rea doctor --json` is strictly read-only. `rea update` updates only the npm or Bun global installation that owns the running CLI. Source checkouts and package-runner copies must be updated through the mechanism that owns them; a fresh package-runner invocation can use `npx rea-agents@latest` or `bunx rea-agents@latest`. `rea uninstall` removes only REA-owned agent registrations and skill files; `--purge-data` additionally removes REA cache and state paths.
+`rea doctor --json` is strictly read-only. `rea update` updates only the npm or Bun global installation that owns the running CLI. Source checkouts and package-runner copies must be updated through the mechanism that owns them; a fresh package-runner invocation can use `npx rea-agents@6.9.0` or `bunx rea-agents@6.9.0`. `rea uninstall` removes only REA-owned agent registrations and skill files; `--purge-data` additionally removes REA cache and state paths.
 
 ```bash
 rea update
@@ -531,7 +531,7 @@ entry:
 
    ```powershell
    npm.cmd cache npx rm REA_CACHE_KEY
-   npx.cmd --yes rea-agents@6.7.0 doctor --json
+   npx.cmd --yes rea-agents@6.7.0 doctor --json  # install-pin: allow — version reported in issue #5259
    ```
 
    Keep the key argument: this recovery does not require clearing all npm caches
@@ -663,7 +663,7 @@ and the release boundary above. Static JavaScript CLI inspection can proceed
 while MCP is unavailable:
 
 ```bash
-npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+npx -y rea-agents@6.9.0 analyze-javascript-application /absolute/path/to/app --json
 ```
 
 It returns the complete Evidence record directly and requires no native engine.
@@ -2048,7 +2048,7 @@ REA cannot validate package acquisition that happens before its entrypoint start
 To request the latest release explicitly, use:
 
 ```bash
-npx rea-agents@latest setup
+npx rea-agents@6.9.0 setup
 ```
 
 REA runs the version npm selects. To update older agent registrations, run the
@@ -2066,7 +2066,7 @@ Setup binds persistent MCP registrations to the installation that performed setu
 Running current setup later migrates recognized legacy package-runner registrations
 through the normal reviewed setup transaction.
 
-With Bun, `bunx rea-agents setup` (or `bunx rea-agents@latest setup`) is the
+With Bun, `bunx rea-agents@6.9.0 setup` is the
 equivalent acquisition entry point. Managed registrations use the selected Bun
 executable and REA entry script directly. Windows registrations likewise use
 absolute runtime and script paths, without a package-runner command shim.
@@ -2088,7 +2088,7 @@ only.
 Running `npm install rea-agents` without `--global` installs the executable only
 in the current project's `node_modules/.bin`; it does not make `rea` available
 on the shell `PATH`. Use the setup command above for the guided setup
-journey, `npx -y rea-agents@latest` for unattended one-off commands, or install globally
+journey, `npx -y rea-agents@6.9.0` for unattended one-off commands, or install globally
 with `npm install --global rea-agents` for a shell-visible `rea` command.
 
 For many concurrent agent sessions, run setup directly from a global installation
@@ -2130,7 +2130,7 @@ without asking npm to resolve the workspace's dependency graph.
 The optional curl wrapper installs only the global npm package:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/morluto/rea/rea-agents-6.9.0/install.sh | bash
 ```
 
 It prints the version, runtime, npm command, and destination before installing. When a controlling terminal exists it starts `rea setup`; otherwise it prints the command to run later.
@@ -2138,7 +2138,7 @@ It prints the version, runtime, npm command, and destination before installing. 
 Pass options with `bash -s --`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh |
+curl -fsSL https://raw.githubusercontent.com/morluto/rea/rea-agents-6.9.0/install.sh |
   bash -s -- --dry-run
 ```
 
@@ -2146,7 +2146,7 @@ To review a version-pinned installer before running it, select the release
 version, download its tagged script, and inspect the downloaded file:
 
 ```bash
-rea_version=6.7.0
+rea_version=6.9.0
 curl -fsSL "https://raw.githubusercontent.com/morluto/rea/rea-agents-${rea_version}/install.sh" -o rea-install.sh
 less rea-install.sh
 ```

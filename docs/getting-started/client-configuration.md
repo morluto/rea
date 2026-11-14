@@ -948,7 +948,7 @@ npm install --global rea-agents
 ```
 
 See [package runners and global installation](installation.md#package-runners-and-global-installation)
-for runtime requirements and installation options. Running `npx rea-agents setup`
+for runtime requirements and installation options. Running `npx rea-agents@6.9.0 setup`
 alone does not create either installation; do not use its temporary package-cache path.
 Use a llama.cpp build whose `llama-server --help` lists
 `--mcp-servers-config`; older builds without that option cannot use this route.

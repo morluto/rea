@@ -24,7 +24,7 @@
 
 [البدء السريع](#البدء-السريع) · [كيف يعمل REA](#كيف-يعمل-rea) · [ما الذي يمكنك تحليله](#ما-الذي-يمكنك-تحليله) · [دراسات الحالة](#دراسات-الحالة) · [إنشاء بيئات التعلم المعزز](#build-rl-environments) · [الأسئلة الشائعة](#الأسئلة-الشائعة) · [أدوات GNU objdump وRizin](../reverse-engineering-tools.md) · [التوثيق](#التوثيق)
 
-<code>npx rea-agents setup</code>
+<code>npx rea-agents@6.9.0 setup</code>
 
 </div>
 
@@ -75,7 +75,7 @@
 بعد تثبيت Node.js وnpm، نفّذ:
 
 ```bash
-npx rea-agents setup
+npx rea-agents@6.9.0 setup
 ```
 
 اختر الوكلاء، وراجع التغييرات المقترحة، ثم وافق عليها. يضيف الإعداد خادم MCP الخاص بـ REA وتعليمات سير العمل المطابقة، مع الاحتفاظ بنسخ احتياطية من الإعدادات الموجودة. أعد تشغيل وكيلك بعد ذلك.
@@ -101,7 +101,7 @@ npx rea-agents setup
 افحص مجلد تطبيق JavaScript/Electron بعد فك حزمه، أو ملف ASAR:
 
 ```bash
-npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+npx -y rea-agents@6.9.0 analyze-javascript-application /absolute/path/to/app --json
 ```
 
 تتضمن النتيجة الوحدات وعمليات الاستيراد وحدود Electron والأدلة المتعلقة بها. استبدل المسار بمسار هدفك، مثل `"D:/apps/example"` على Windows.
@@ -134,12 +134,12 @@ rea update
 إذا كنت تستخدم `npx`، فحدّث إعداد وكيلك بالأمر التالي:
 
 ```bash
-npx rea-agents@latest setup
+npx rea-agents@6.9.0 setup
 ```
 
-راجع تغييرات الإعداد وأعد تشغيل وكيلك. لأوامر CLI التي تنفّذها مرة واحدة، استخدم `npx rea-agents@latest` متبوعًا بالأمر المطلوب.
+راجع تغييرات الإعداد وأعد تشغيل وكيلك. لأوامر CLI التي تنفّذها مرة واحدة، استخدم `npx rea-agents@6.9.0` متبوعًا بالأمر المطلوب.
 
-مع Bun، استخدم `bunx rea-agents@latest` بدلًا من `npx rea-agents@latest`.
+مع Bun، استخدم `bunx rea-agents@6.9.0` بدلًا من `npx rea-agents@6.9.0`.
 
 ## كيف يعمل REA
 
@@ -311,7 +311,7 @@ agent-env run ./my-env
 <details>
 <summary><strong>ماذا يفعل تثبيت المهارة من skills.sh؟</strong></summary>
 
-توفّر المهارة تعليمات الاستقصاء لوكيلك. استخدم `npx rea-agents setup` لتسجيل خادم MCP الخاص بـ REA وتثبيت التعليمات المطابقة، ثم أعد تشغيل وكيلك. راجع [تثبيت المهارة وحدها](../getting-started/installation.md#skill-only-installation).
+توفّر المهارة تعليمات الاستقصاء لوكيلك. استخدم `npx rea-agents@6.9.0 setup` لتسجيل خادم MCP الخاص بـ REA وتثبيت التعليمات المطابقة، ثم أعد تشغيل وكيلك. راجع [تثبيت المهارة وحدها](../getting-started/installation.md#skill-only-installation).
 
 </details>
 
@@ -343,7 +343,7 @@ rea update
 لإعداد الوكيل عبر `npx`:
 
 ```bash
-npx rea-agents@latest setup
+npx rea-agents@6.9.0 setup
 ```
 
 إذا كنت تستخدم وكيلًا، فأكمل [تحديث الإعداد](#تحديث-rea) وأعد تشغيله. أعد محاولة المهمة نفسها. إذا استمرت المشكلة، [افتح issue](https://github.com/morluto/rea/issues) يتضمن إصدار REA، ونوع الهدف، وخطوات إعادة الإنتاج، ومخرجات الخطأ.
