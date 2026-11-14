@@ -1023,8 +1023,8 @@ partial diagnostics and preflights do not establish complete mutation outcomes
 or qualify the release revision for mutation coverage.
 
 Fast CI starts the source-only projects after classification, independently of
-build and static checks, and runs eight built-dependent shards after the build.
-Those nine test jobs still select every portable test. Full qualification keeps six
+build and static checks, and runs twelve built-dependent shards after the build.
+Those thirteen test jobs still select every portable test. Full qualification keeps six
 complete Vitest shards with coverage. Neither tier retries tests. Canonical
 project ownership lives in `scripts/lib/test-projects.mjs`, shared by Vitest,
 CI group execution, and development-test preparation. A test importing compiled

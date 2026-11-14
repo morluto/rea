@@ -851,7 +851,7 @@ artifact records it. Each file keeps its full duration on one worker. Extra
 workers overlap other files in the same sequence group, and `process-boundary`
 runs after that group. Every discovered file still belongs to exactly one shard;
 worker limits and project ordering remain unchanged. Fast qualification keeps
-eight built shards without coverage. The merge job rejects successful reports
+twelve built shards without coverage. The merge job rejects successful reports
 with missing, unexpected, or duplicate portable files. Coverage instrumentation
 and aggregate thresholds remain enforced in full qualification.
 Missing or unusable history falls back to Vitest's default assignment. Only
