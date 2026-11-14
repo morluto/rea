@@ -9,6 +9,7 @@ import type {
   ReconstructionVerificationResult,
 } from "./reconstructionVerificationSchemas.js";
 import type { ResidualUnknown } from "./residualUnknown.js";
+import { isNormalizedViewDimension } from "./functionComparisonSchemas.js";
 
 /** Select the latest revision of each residual unknown. */
 export const reconstructionUnknownHeads = (
@@ -23,21 +24,26 @@ export const reconstructionUnknownHeads = (
   return heads;
 };
 
-/** Overall claims include every scoped dimension; individual claims keep their scope. */
+/**
+ * Overall claims include every scoped exact dimension; individual claims keep
+ * their scope. Opt-in normalized views sit outside the overall status.
+ */
 export const reconstructionClaimUnknowns = (
   heads: ReadonlyMap<string, ResidualUnknown>,
   comparisonId: string,
   sourceIds: readonly string[],
   dimensions?: readonly string[],
 ): ResidualUnknown[] => {
+  const coversScope = (scoped: string): boolean =>
+    dimensions === undefined ||
+    dimensions.includes(scoped) ||
+    (dimensions.includes("overall") && !isNormalizedViewDimension(scoped));
   const appliesToClaim = (item: ResidualUnknown): boolean => {
     const scope = item.comparison_conclusion_scope;
     return (
       scope === undefined ||
       (scope.comparison_evidence_id === comparisonId &&
-        (dimensions === undefined ||
-          dimensions.includes("overall") ||
-          scope.dimensions.some((dimension) => dimensions.includes(dimension))))
+        scope.dimensions.some(coversScope))
     );
   };
   const evidenceIds = new Set([comparisonId, ...sourceIds]);
