@@ -1,21 +1,17 @@
-import { execFile } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { promisify } from "node:util";
 
 import { describe, expect } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
-const run = promisify(execFile);
-
 describe.skipIf(process.platform !== "darwin")(
   "native Mach-O CLI chained import names",
   () => {
     cliTest(
       "names a weak-def-coalesce import that the undefined symbol table omits",
-      async ({ cli }) => {
+      async ({ cli, processes }) => {
         const directory = await createTestTempDirectory("rea-macho-imports-");
         const source = join(directory, "coalesce.cpp");
         // Taking an exported inline function's address makes the linker bind
@@ -29,7 +25,7 @@ describe.skipIf(process.platform !== "darwin")(
           ].join("\n"),
         );
         const library = join(directory, "libcoalesce.dylib");
-        await run("/usr/bin/xcrun", [
+        const compiled = await processes.run("/usr/bin/xcrun", [
           "clang++",
           "-arch",
           "arm64",
@@ -38,12 +34,16 @@ describe.skipIf(process.platform !== "darwin")(
           "-o",
           library,
         ]);
-        const { stdout } = await run("/usr/bin/xcrun", [
+        expect(compiled.exitCode, compiled.stderr).toBe(0);
+        const imports = await processes.run("/usr/bin/xcrun", [
           "dyld_info",
           "-imports",
           library,
         ]);
-        expect(stdout).toMatch(/__Z3inli {2}\(from <weak-def-coalesce>\)/u);
+        expect(imports.exitCode, imports.stderr).toBe(0);
+        expect(imports.stdout).toMatch(
+          /__Z3inli {2}\(from <weak-def-coalesce>\)/u,
+        );
         const result = await cli.run({
           arguments: ["inspect-macho", library, "--json"],
           environment: {

@@ -45,6 +45,7 @@ const select = (
     offsets: file.offsets,
     offset: result.ok ? result.value.fileOffset : undefined,
     limitations: result.ok ? result.value.limitations : [],
+    kind: result.ok ? undefined : result.error.kind,
     message: result.ok ? undefined : result.error.message,
   };
 };
@@ -101,9 +102,11 @@ describe("selectNativeImage subtype names", () => {
       [CPU_ARM64, 0],
     ] as const;
     const arm64e = select(cpus, "arm64e");
-    expect(arm64e.message).toBe(
-      "Universal Mach-O holds several arm64e slices (arm64 (subtype 0x2), arm64 (subtype 0x80000002), arm64 (subtype 0x0)); no slice was selected. Select architecture arm64.",
-    );
+    // The refusal is the caller's to correct and names a selector that works,
+    // which the next selection proves.
+    expect(arm64e.kind).toBe("architecture");
+    expect(arm64e.offset).toBeUndefined();
+    expect(arm64e.message).toMatch(/Select architecture arm64\.$/u);
     const arm64 = select(cpus, "arm64");
     expect(arm64.offset).toBe(arm64.offsets[2]);
     expect(arm64.limitations).toEqual([
@@ -112,29 +115,25 @@ describe("selectNativeImage subtype names", () => {
   });
 
   it("refuses a subtype that no slice of the family has", () => {
-    expect(
-      select(
-        [
-          [CPU_ARM64, 0],
-          [CPU_ARM64, 1],
-        ],
-        "arm64e",
-      ).message,
-    ).toBe(
-      "Universal Mach-O holds arm64 (subtype 0x0), arm64 (subtype 0x1); no slice has the arm64e subtype.",
+    // Two same-family slices leave no single selector to offer.
+    const ambiguous = select(
+      [
+        [CPU_ARM64, 0],
+        [CPU_ARM64, 1],
+      ],
+      "arm64e",
     );
+    expect(ambiguous.kind).toBe("architecture");
+    expect(ambiguous.message).not.toMatch(/Select architecture/u);
     // A lone family slice is read by its family name, so the refusal names it.
-    expect(
-      select(
-        [
-          [CPU_X86_64, 3],
-          [CPU_ARM64, 0],
-        ],
-        "arm64e",
-      ).message,
-    ).toBe(
-      "Universal Mach-O holds x86_64 (subtype 0x3), arm64 (subtype 0x0); no slice has the arm64e subtype. Select architecture arm64.",
-    );
+    const lone: readonly (readonly [number, number])[] = [
+      [CPU_X86_64, 3],
+      [CPU_ARM64, 0],
+    ];
+    const refused = select(lone, "arm64e");
+    expect(refused.kind).toBe("architecture");
+    expect(refused.message).toMatch(/Select architecture arm64\.$/u);
+    expect(select(lone, "arm64").offset).toBeDefined();
   });
 
   it("refuses slices that differ only in capability bits", () => {
