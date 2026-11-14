@@ -1,0 +1,57 @@
+import { expect, it } from "vitest";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
+  OwnerCancellation,
+} from "./analysisErrorCore.js";
+import { projectAnalysisError } from "./analysisErrorProjection.js";
+
+it("takes the cause from each kind of required cancellation reason", () => {
+  const callerReason = { caller: "stop" };
+  const controller = new AbortController();
+  controller.abort(callerReason);
+
+  const fromSignal = cancelledBy("probe", controller.signal);
+  const fromEarlier = cancelledBy("outer", fromSignal);
+  const fromCarried = cancelledBy("carried", carriedReason(callerReason));
+  const fromOwner = cancelledBy("closed", OwnerCancellation.ownerClosed);
+
+  expect(fromSignal).toBeInstanceOf(AnalysisCancelledError);
+  expect(fromSignal.operation).toBe("probe");
+  expect(fromSignal.cause).toBe(callerReason);
+  expect(fromEarlier.cause).toBe(callerReason);
+  expect(fromCarried.cause).toBe(callerReason);
+  expect(fromOwner.cause).toBe(OwnerCancellation.ownerClosed);
+  expect(OwnerCancellation.ownerClosed.kind).toBe("owner-closed");
+});
+
+it("keeps the cancellation projection unchanged by the reason it carries", () => {
+  const controller = new AbortController();
+  controller.abort(new Error("caller detail"));
+  const cleanup = { reason: "retained", resources: ["/tmp/owned"] };
+
+  const fromSignal = cancelledBy("probe", controller.signal, {
+    userMessage: "Stopped.",
+    cleanup,
+  });
+  const fromOwner = cancelledBy("probe", OwnerCancellation.ownerClosed, {
+    userMessage: "Stopped.",
+    cleanup,
+  });
+
+  expect(projectAnalysisError(fromOwner)).toEqual(
+    projectAnalysisError(fromSignal),
+  );
+  expect(JSON.stringify(projectAnalysisError(fromOwner))).not.toContain(
+    "OwnerCancellation",
+  );
+});
+
+it("does not accept a cause beside the required reason", () => {
+  const controller = new AbortController();
+  controller.abort("caller");
+  // @ts-expect-error The reason argument owns the cause.
+  const error = cancelledBy("probe", controller.signal, { cause: "other" });
+  expect(error.cause).toBe("caller");
+});

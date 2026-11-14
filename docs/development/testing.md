@@ -180,6 +180,16 @@ cause when a directly checked caller `AbortSignal` is converted to an
 follow indirect cancellation helpers, or prove that an explicit cause equals
 the caller's reason. Keep focused boundary and lifecycle tests for those facts.
 
+Build a cancellation with `cancelledBy` from `src/domain/analysisErrorCore.ts`.
+Its reason argument is required: an aborted `AbortSignal`, an earlier
+`AnalysisCancelledError`, a `carriedReason(...)` recovered from an inner
+failure, or an `OwnerCancellation` when REA itself closed the work's owner. The
+architecture guard rejects a direct `new AnalysisCancelledError(` outside that
+module. Files that still construct one directly are listed with their counts in
+`scripts/verify/architecture-guard-baselines.json`; a file may not exceed its
+count, and after removing copies run
+`node scripts/verify/architecture-guards.mjs --shrink-baselines` to lower it.
+
 `rea/no-evidence-json-preadmission` rejects direct generic JSON parses in
 `createEvidence` payload expressions; it does not analyze intermediate values.
 `rea/no-positional-tool-contract` rejects catalog indices used to select
