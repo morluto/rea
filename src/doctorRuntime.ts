@@ -22,6 +22,10 @@ import {
   KUNA_DOCTOR_SETTINGS,
   inspectKunaProvider,
 } from "./kuna/KunaDoctor.js";
+import {
+  RADARE2_DOCTOR_SETTINGS,
+  inspectRadare2Provider,
+} from "./radare2/Radare2Doctor.js";
 import { readIdaConfiguration } from "./ida/IdaConfiguration.js";
 import { selectLinuxPrivateDisplayStrategy } from "./hopper/LinuxPrivateDisplayProbe.js";
 import { ok } from "./domain/result.js";
@@ -183,6 +187,7 @@ const PROVIDER_SETTINGS: Readonly<Record<string, readonly string[]>> = {
   ida: IDA_DOCTOR_SETTINGS,
   jadx: JADX_DOCTOR_SETTINGS,
   kuna: KUNA_DOCTOR_SETTINGS,
+  radare2: RADARE2_DOCTOR_SETTINGS,
 };
 
 /**
@@ -410,6 +415,15 @@ export const createSystemDoctorHost = (
         ) ??
           (await inspectKunaProvider(inspectionEnvironment, process.platform, {
             resourceScope,
+            signal: inspectionSignal,
+          })),
+        unresolvedProvider(
+          "radare2",
+          selected,
+          inspectionEnvironment,
+          process.platform,
+        ) ??
+          (await inspectRadare2Provider(inspectionEnvironment, {
             signal: inspectionSignal,
           })),
       ] satisfies readonly DoctorProviderInspection[];

@@ -3,7 +3,6 @@ import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
 import { countTaskRows } from "./appTaskChecks.js";
 import type { DesktopStatePath } from "./desktopState.js";
 import { sqliteRowIdentity } from "./stateChanges.js";
-import { appendAll } from "../appendAll.js";
 
 type Version = DesktopStatePath["versions"][number];
 type Suggestion = DesktopTaskCheckInput;
@@ -174,7 +173,7 @@ export const rowSuggestions = (
           "row_absent",
           rowWhere(old, row, (column) => old.key.includes(column)),
         );
-    appendAll(suggestions, unkeyedRowSuggestions(file, name, old, table));
+    suggestions.push(...unkeyedRowSuggestions(file, name, old, table));
     if (old.rows.length !== table.rows.length)
       suggestions.push({
         kind: "row_count",

@@ -15,6 +15,7 @@ import { CUTTER_TOOL_CONTRACTS } from "./cutterToolContracts.js";
 import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "./reverseEngineeringToolContracts.js";
 import { GDB_TOOL_CONTRACTS } from "./gdbToolContracts.js";
 import { RIZIN_DEBUG_TOOL_CONTRACTS } from "./rizinDebugToolContracts.js";
+import { RADARE2_SESSION_TOOL_CONTRACTS } from "./radare2SessionToolContracts.js";
 import { ARTIFACT_TOOL_CONTRACTS } from "./artifactToolContracts.js";
 import { RELEASE_EXPOSURE_TOOL_CONTRACTS } from "./releaseExposureToolContracts.js";
 import { APK_SIGNATURE_TOOL_CONTRACTS } from "./apkSignature/apkSignatureToolContracts.js";
@@ -92,6 +93,7 @@ export const TOOL_CONTRACT_GROUPS = {
   PCAP_TOOL_CONTRACTS,
   PYTHON_PYC_TOOL_CONTRACTS,
   RELEASE_EXPOSURE_TOOL_CONTRACTS,
+  RADARE2_SESSION_TOOL_CONTRACTS,
   REVERSE_ENGINEERING_TOOL_CONTRACTS,
   RIZIN_DEBUG_TOOL_CONTRACTS,
   RUST_TOOL_CONTRACTS,
@@ -140,6 +142,7 @@ export const TOOL_FAMILY_DEFINITIONS = [
       ...TOOL_CONTRACT_GROUPS.REVERSE_ENGINEERING_TOOL_CONTRACTS,
       ...TOOL_CONTRACT_GROUPS.GDB_TOOL_CONTRACTS,
       ...TOOL_CONTRACT_GROUPS.RIZIN_DEBUG_TOOL_CONTRACTS,
+      ...TOOL_CONTRACT_GROUPS.RADARE2_SESSION_TOOL_CONTRACTS,
     ],
   },
   {

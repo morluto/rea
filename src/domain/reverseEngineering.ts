@@ -26,7 +26,7 @@ export const reverseCommandOutputBytesSchema = z
     `Combined stdout/stderr byte budget before decoding (default ${String(DEFAULT_REVERSE_COMMAND_OUTPUT_BYTES)}, range 1..${String(MAX_REVERSE_COMMAND_OUTPUT_BYTES)}). Applies on the next call without restarting REA. The maximum reserves JSON-escaping space for both Evidence mirrors under Node's single-string ceiling. Reaching it stops collection and requests provider termination; completion remains unknown. Confirm effects and cleanup before repeating a command. Does not raise the MCP client's receive buffer.`,
   );
 
-/** Per-call deadline for one-shot objdump and rizin commands. */
+/** Per-call deadline for one-shot objdump, rizin, and radare2 commands. */
 export const reverseCommandTimeoutSchema = z
   .number()
   .int()
@@ -143,8 +143,35 @@ export const rizinInputSchema = z
   })
   .strict();
 
+/** Caller-selected Radare2 command against one local artifact. */
+export const radare2InputSchema = z
+  .object({
+    path: z.string().min(1),
+    command: z
+      .string()
+      .min(1)
+      .refine(
+        (value) => !/[\r\n\u0000]/u.test(value),
+        "A single command line is required",
+      ),
+    ...commandExecutionFields,
+  })
+  .strict();
+
+/** Caller-selected radiff2 comparison of two local artifacts. */
+export const radiff2InputSchema = z
+  .object({
+    path_a: z.string().min(1),
+    path_b: z.string().min(1),
+    operation: z.enum(["functions", "bytes"]),
+    ...commandExecutionFields,
+  })
+  .strict();
+
 export type ObjdumpSelection =
   | z.input<typeof objdumpArtifactInputSchema>
   | z.input<typeof objdumpDisassemblyInputSchema>
   | z.input<typeof objdumpArchitecturesInputSchema>;
 export type RizinInput = z.output<typeof rizinInputSchema>;
+export type Radare2Input = z.output<typeof radare2InputSchema>;
+export type Radiff2Input = z.output<typeof radiff2InputSchema>;

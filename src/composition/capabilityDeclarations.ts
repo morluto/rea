@@ -93,6 +93,9 @@ import { PWNTOOLS_PROVIDER_IDENTITY } from "../native/pwntools/PwntoolsProviderI
 import { OBJDUMP_PROVIDER_IDENTITY } from "../objdump/ObjdumpProviderIdentity.js";
 import { PCAP_PROVIDER_IDENTITY } from "../pcap/PcapProviderIdentity.js";
 import { PYTHON_PYC_PROVIDER_IDENTITY } from "../python/PythonPycProviderIdentity.js";
+import { RADARE2_PROVIDER_IDENTITY } from "../radare2/Radare2Command.js";
+import { RADIFF2_PROVIDER_IDENTITY } from "../radare2/Radiff2Command.js";
+import { RADARE2_SESSION_PROVIDER_IDENTITY } from "../radare2/Radare2SessionManager.js";
 import { RIZIN_DEBUGGER_PROVIDER_IDENTITY } from "../rizin/RizinDebuggerProviderIdentity.js";
 import { RIZIN_PROVIDER_IDENTITY } from "../rizin/RizinProviderIdentity.js";
 import { RUST_BINARY_PROVIDER_IDENTITY } from "../rust/RustBinaryProviderIdentity.js";
@@ -503,6 +506,15 @@ export const CAPABILITY_DECLARATIONS = {
     providers: [
       providerBinding(OBJDUMP_PROVIDER_IDENTITY, ["inspect_with_objdump"]),
       providerBinding(RIZIN_PROVIDER_IDENTITY, ["execute_rizin_command"]),
+      providerBinding(RADARE2_PROVIDER_IDENTITY, ["execute_radare2_command"]),
+      providerBinding(RADIFF2_PROVIDER_IDENTITY, ["compare_with_radiff2"]),
+    ],
+  },
+  radare2Sessions: {
+    providers: [
+      providerBinding(RADARE2_SESSION_PROVIDER_IDENTITY, {
+        group: "RADARE2_SESSION_TOOL_CONTRACTS",
+      }),
     ],
   },
   rizinDebugSessions: {

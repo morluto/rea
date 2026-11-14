@@ -62,6 +62,7 @@ import {
   createGdbSessionManager,
   createRizinDebugSessionManager,
 } from "./debuggerSessions.js";
+import { Radare2SessionManager } from "../radare2/Radare2SessionManager.js";
 import { persistentDebuggerHostSupported } from "../process/PersistentDebuggerHost.js";
 import { pcapCaptureHostSupported } from "../domain/pcap/pcapAnalysis.js";
 import {
@@ -456,6 +457,10 @@ const modules = {
   rizinDebugSessions: capability(
     ({ providerEnvironment }) =>
       createRizinDebugSessionManager(providerEnvironment),
+    (value) => value.closeAll(),
+  ),
+  radare2Sessions: capability(
+    ({ providerEnvironment }) => new Radare2SessionManager(providerEnvironment),
     (value) => value.closeAll(),
   ),
   android: service(

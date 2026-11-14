@@ -33,7 +33,12 @@ it.each(["objdump", "rizin"] as const)(
       },
     };
     const service = new ReverseEngineeringService({
-      commands: { objdump: () => profile, rizin: () => profile },
+      commands: {
+        objdump: () => profile,
+        rizin: () => profile,
+        radare2: () => profile,
+        radiff2: () => profile,
+      },
     });
     const inspect = (max_output_bytes: number) =>
       provider === "objdump"
@@ -1044,4 +1049,109 @@ it("marks signal-terminated provider output incomplete", async () => {
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+describe("Radare2 command service", () => {
+  it("returns radare2 evidence for a successful command", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "rea-radare2-happy-"));
+    const path = join(directory, "fixture.bin");
+    await writeFile(path, "fixture");
+    const service = new ReverseEngineeringService({
+      run: async () => ({ stdout: "bin info", stderr: "", code: 0 }),
+    });
+
+    try {
+      const result = await service.executeRadare2Command({
+        path,
+        command: "ij",
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.provider.id).toBe("radare2");
+      expect(result.value.raw_result).toMatchObject({
+        stdout: "bin info",
+        stderr: "",
+        exit_code: 0,
+        completion_status: "complete",
+      });
+      expect(result.value.limitations.join(" ")).toContain(
+        "not bound to Evidence",
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects multiline Radare2 command input before launching the provider", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "rea-radare2-input-"));
+    const path = join(directory, "fixture.bin");
+    await writeFile(path, "fixture");
+    let invoked = false;
+    const service = new ReverseEngineeringService({
+      run: async () => {
+        invoked = true;
+        return { stdout: "", stderr: "" };
+      },
+    });
+
+    try {
+      const result = await service.executeRadare2Command({
+        path,
+        command: "ij\nq",
+      });
+      expect(result.ok).toBe(false);
+      expect(invoked).toBe(false);
+      if (!result.ok) expect(result.error._tag).toBe("AnalysisInputError");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("radiff2 comparison service", () => {
+  it("returns radiff2 evidence for a function-level comparison", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "rea-radiff2-"));
+    const pathA = join(directory, "a.bin");
+    const pathB = join(directory, "b.bin");
+    await writeFile(pathA, "fixture-a");
+    await writeFile(pathB, "fixture-b");
+    const service = new ReverseEngineeringService({
+      run: async () => ({ stdout: '[{"match":"MATCH"}]', stderr: "", code: 0 }),
+    });
+
+    try {
+      const result = await service.compareWithRadiff2({
+        path_a: pathA,
+        path_b: pathB,
+        operation: "functions",
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.provider.id).toBe("radiff2");
+      expect(result.value.raw_result).toMatchObject({
+        stdout: '[{"match":"MATCH"}]',
+        exit_code: 0,
+        completion_status: "complete",
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an unknown operation before launching the provider", async () => {
+    let invoked = false;
+    const service = new ReverseEngineeringService({
+      run: async () => {
+        invoked = true;
+        return { stdout: "", stderr: "" };
+      },
+    });
+    const result = await service.compareWithRadiff2({
+      path_a: "/tmp/a",
+      path_b: "/tmp/b",
+      operation: "unknown" as "functions",
+    });
+    expect(result.ok).toBe(false);
+    expect(invoked).toBe(false);
+  });
 });

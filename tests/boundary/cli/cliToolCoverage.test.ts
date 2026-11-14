@@ -21,6 +21,7 @@ const CLI_COMMAND_TOOL_ALIASES = Object.freeze({
   "list-objdump-architectures": ["inspect_with_objdump"],
   "debug-with-gdb": ["gdb_console"],
   "debug-with-rizin": ["rizin_debug_command"],
+  "compare-with-radiff2": ["compare_with_radiff2"],
 });
 
 /** MCP operations without a dedicated CLI command or direct command alias. */
@@ -89,6 +90,10 @@ const MCP_TOOLS_WITHOUT_DEDICATED_CLI = Object.freeze([
   "start_rizin_debug_session",
   "rizin_debug_session_status",
   "close_rizin_debug_session",
+  "start_radare2_session",
+  "radare2_command",
+  "radare2_session_status",
+  "close_radare2_session",
   "start_frida_session",
   "load_frida_script",
   "resume_frida_session",

@@ -110,6 +110,7 @@ import { registerReverseEngineeringTools } from "./registerReverseEngineeringToo
 import { registerCutterTools } from "./registerCutterTools.js";
 import { registerGdbTools } from "./registerGdbTools.js";
 import { registerRizinDebugTools } from "./registerRizinDebugTools.js";
+import { registerRadare2SessionTools } from "./registerRadare2SessionTools.js";
 
 export interface CreateServerOptions extends CapabilityServiceOptions {
   readonly analysisSettings?: AnalysisSettings;
@@ -243,6 +244,7 @@ export const createServer = (
     firmwareAnalysis,
     gdbSessions,
     rizinDebugSessions,
+    radare2Sessions,
     android,
     pcap,
     flutter,
@@ -434,12 +436,13 @@ export const createServer = (
           : () => session.invalidateSnapshotForExternalMutation(),
         session === undefined
           ? undefined
-          : (path, signal, operation, rebindFailure) =>
+          : (path, signal, operation, rebindFailure, operationName) =>
               session.withAdmittedExternalMutation(
                 path,
                 signal,
                 operation,
                 rebindFailure,
+                operationName,
               ),
         evidenceById,
       );
@@ -463,6 +466,14 @@ export const createServer = (
       registerRizinDebugTools(
         server,
         rizinDebugSessions,
+        toolLogger,
+        delivery,
+        recordSessionEvidence,
+        session,
+      );
+      registerRadare2SessionTools(
+        server,
+        radare2Sessions,
         toolLogger,
         delivery,
         recordSessionEvidence,
