@@ -8,6 +8,40 @@ const sourceRoots = [
   fileURLToPath(new URL("./", import.meta.url)),
 ];
 let hooks;
+let transformTypeScript;
+
+const nodeTransform = (source, url) =>
+  nodeModule.stripTypeScriptTypes(source, {
+    mode: "transform",
+    sourceMap: true,
+    sourceUrl: url,
+  });
+
+// Node 26 keeps only strip mode, which rejects the parameter properties, enums
+// and namespaces owned source uses. Its in-process replacement is rolldown's.
+const selectTypeScriptTransform = async () => {
+  try {
+    nodeModule.stripTypeScriptTypes("", { mode: "transform" });
+    return nodeTransform;
+  } catch {
+    const { transformSync } = await import("rolldown/utils");
+    return (source, url) => {
+      const transformed = transformSync(url, source, {
+        lang: "ts",
+        sourcemap: true,
+      });
+      if (transformed.errors.length > 0)
+        throw new AggregateError(
+          transformed.errors,
+          `Verifier module source did not transform: ${url}`,
+        );
+      const map = Buffer.from(JSON.stringify(transformed.map)).toString(
+        "base64",
+      );
+      return `${transformed.code}\n//# sourceMappingURL=data:application/json;base64,${map}\n//# sourceURL=${url}`;
+    };
+  }
+};
 
 const ownedSourcePath = (url) => {
   if (!url.startsWith("file:")) return undefined;
@@ -95,11 +129,7 @@ const loadSource = (url, context, nextLoad) => {
   return {
     ...loaded,
     format,
-    source: nodeModule.stripTypeScriptTypes(source, {
-      mode: "transform",
-      sourceMap: true,
-      sourceUrl: url,
-    }),
+    source: transformTypeScript(source, url),
   };
 };
 
@@ -116,6 +146,7 @@ export const importVerifierSource = async (url, parent) => {
     throw new Error(
       "This REA source loader requires the Node.js version pinned in .nvmrc; run nvm use and invoke source build and verifier scripts with node and npm. Installed REA packages have separate runtime support.",
     );
+  transformTypeScript ??= await selectTypeScriptTransform();
   hooks ??= nodeModule.registerHooks({
     resolve: resolveSource,
     load: loadSource,
