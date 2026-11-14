@@ -33,14 +33,10 @@ const hexRecordRegions = (
       },
       bytes: region.bytes,
     })),
-    ...(image.terminated && image.limitations.length === 0
-      ? {}
-      : {
-          coverage: {
-            status: image.terminated ? "complete" : "unknown",
-            limitations: image.limitations,
-          },
-        }),
+    coverage: {
+      status: image.terminated ? "complete" : "unknown",
+      limitations: image.limitations,
+    },
   }),
 });
 

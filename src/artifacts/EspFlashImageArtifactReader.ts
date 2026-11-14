@@ -119,10 +119,7 @@ export class EspFlashImageArtifactReader extends PositionalArtifactReader {
       entries: plan.regions.map((region) =>
         regionEntry(region, written.get(region), fileSize),
       ),
-      coverage:
-        facts.coverage === "unknown" || limitations.length > 0
-          ? { status: facts.coverage, limitations }
-          : undefined,
+      coverage: { status: facts.coverage, limitations },
     };
   }
 

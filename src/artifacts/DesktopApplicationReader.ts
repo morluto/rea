@@ -13,6 +13,7 @@ import {
   type ArtifactResourceOwner,
 } from "./ArtifactResourceScope.js";
 import { abortIfNeeded } from "./ArtifactHash.js";
+import { declaredArtifactEntries } from "./ArtifactTraversalObservation.js";
 import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
 import {
   inspectDesktopFile,
@@ -270,7 +271,7 @@ const scanDirectory = async (
     "Unity reference decoding stops after a witness in each Data/Managed directory; other assemblies' references are unexamined. Header facts remain per-file.",
   ];
   try {
-    for await (const entry of reader.entries(signal, {
+    for await (const entry of declaredArtifactEntries(reader, signal, {
       maximumEntries: input.max_entries,
       onOmission: (omission) => {
         if (omission.kind !== "directory-descendants") {

@@ -170,14 +170,18 @@ export class DirectoryArtifactReader implements ArtifactReader {
       );
     }
     abortIfNeeded(signal);
-    if (unrepresentableNameCount > 0)
-      options?.onCoverage?.({
-        status: "unknown",
-        examinedEntries: examined,
-        limitations: [
-          `Directory contains ${String(unrepresentableNameCount)} entry name(s) that are not valid UTF-8; no filesystem operations were performed for them. First raw basename bytes: ${firstUnrepresentableNameHex ?? "unknown"}.`,
-        ],
-      });
+    options?.onCoverage?.(
+      unrepresentableNameCount > 0
+        ? {
+            status: "unknown",
+            examinedEntries: examined,
+            limitations: [
+              `Directory contains ${String(unrepresentableNameCount)} entry name(s) that are not valid UTF-8; no filesystem operations were performed for them. First raw basename bytes: ${firstUnrepresentableNameHex ?? "unknown"}.`,
+            ],
+          }
+        : // Unreadable directories declared their own omission above.
+          { status: "complete", limitations: [] },
+    );
   }
 
   /** Admission facts, shared with traversal; the selected root may be a symlink. */
