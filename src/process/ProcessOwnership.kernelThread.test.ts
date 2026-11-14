@@ -118,7 +118,9 @@ it("exonerates an unrelated kernel thread whose token read raced its exit", asyn
   ).resolves.toEqual({
     cleaned: true,
     signaled: false,
-    unverified: [{ pid: kernelThread.pid, diagnostic: "ESRCH: no such process" }],
+    unverified: [
+      { pid: kernelThread.pid, diagnostic: "ESRCH: no such process" },
+    ],
   });
 });
 
