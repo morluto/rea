@@ -1183,6 +1183,40 @@ describe("web bundle artifact metadata", () => {
   });
 });
 
+describe("wide web bundle script observation merge", () => {
+  it("merges 130,000 endpoints from a single analyzed script without overflowing the call stack", () => {
+    const captured = inspection("fetch('/unused');");
+    const script = captured.scripts.items.find(isIncludedScript);
+    if (script === undefined)
+      throw new Error("Missing included script fixture");
+    const many = Array.from({ length: 130_000 }, (_, index) => ({
+      value: `/ep-${String(index)}`,
+      mechanism: "fetch",
+      location: { script_key: script.script_key, line: index + 1, column: 0 },
+    }));
+    const analyzed = {
+      status: "analyzed" as const,
+      script_key: script.script_key,
+      parse_status: "parsed" as const,
+      visited_ast_nodes: 0,
+      widened_return_references: false,
+      observations: {
+        edges: [],
+        routes: [],
+        endpoints: many,
+        webmcp_declarations: [],
+      },
+      inferences: [],
+    };
+    const result = buildCapturedWebBundleAnalysis(
+      captured,
+      { status: "not_requested", requested: 0, processed: 0, items: [] },
+      [analyzed],
+    );
+    expect(result.observations.endpoints).toHaveLength(130_000);
+  });
+});
+
 describe("deep captured web bundle syntax", () => {
   it("retains evidence after a parser-admitted deep property chain", () => {
     const source = `const value = root${".next".repeat(12_000)};\nimport "./last.js";\nfetch("/after");`;

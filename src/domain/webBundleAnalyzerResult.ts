@@ -219,11 +219,15 @@ const mergeScriptResults = (
       accumulator.recoveredScripts.push(result.script_key);
     if (result.widened_return_references)
       accumulator.widenedScripts.push(result.script_key);
-    accumulator.edges.push(...result.observations.edges);
-    accumulator.routes.push(...result.observations.routes);
-    accumulator.endpoints.push(...result.observations.endpoints);
-    accumulator.webMcp.push(...result.observations.webmcp_declarations);
-    accumulator.inferences.push(...result.inferences);
+    // Avoid spreading wide arrays onto the call stack; iterate instead.
+    for (const item of result.observations.edges) accumulator.edges.push(item);
+    for (const item of result.observations.routes)
+      accumulator.routes.push(item);
+    for (const item of result.observations.endpoints)
+      accumulator.endpoints.push(item);
+    for (const item of result.observations.webmcp_declarations)
+      accumulator.webMcp.push(item);
+    for (const item of result.inferences) accumulator.inferences.push(item);
   }
   return accumulator;
 };
