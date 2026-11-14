@@ -1377,13 +1377,42 @@ When the deadline elapses, the `provider_timeout` error names
 fresh-import mode it also suggests `REA_GHIDRA_DISABLED_ANALYZERS` for analyzers
 that dominate the time and `REA_GHIDRA_PROJECT_PATH` for reusing a completed
 analysis; in existing-project mode it omits that import and analyzer advice.
-REA parses the supplied configuration environment and
-passes the deadline to each provider client; a startup failure is returned by the query that triggered it,
-without exposing partial analysis. This deadline is separate from MCP transport
-initialization and the client's deadline for that individual tool call. A client
-can time out earlier even when Ghidra would complete within its startup deadline.
-See [Ghidra first-query deadlines and recovery](../reference/mcp-contracts.md#ghidra-first-query-deadlines-and-recovery)
-for client options and the close/reopen recovery flow.
+
+**Large C++ binaries — a Ghidra decompiler caveat.** The default Ghidra import
+runs an analyzer family named `Non-Returning Functions - Discovered`. When a
+call site matches one it declares non-returning (common for allocators such as
+`operator new` in a real large project), the decompiler
+cuts the body **at that call, silently**; the emitted pseudocode ends there and
+REA cannot distinguish that from a legitimate end-of-body, so the body
+presented as evidence is _truncated without any explicit signal in the
+evidence_.
+
+- To recover the complete body, export the variable before the provider starts:
+
+  ```bash
+  export REA_GHIDRA_DISABLED_ANALYZERS=Non-Returning Functions - Discovered
+  rea decompile <target> <function> --provider ghidra --format json
+  ```
+
+  (Each invocation imports the target from scratch and re-runs the analysis
+  without that analyzer.)
+
+- For repeated work on the same large binary, analyze it once into a Ghidra
+  project and select it at read time — see
+  [Reuse an existing Ghidra project](#reuse-an-existing-ghidra-project),
+  where `REA_GHIDRA_PROJECT_PATH` opens the pre-analyzed project and
+  `REA_GHIDRA_PROGRAM_NAME` selects one program; this avoids the fresh-import
+  work the analysis pays per invocation.
+- If the analysis does not fit inside `REA_GHIDRA_STARTUP_TIMEOUT_MS`, raise
+  that variable in the server environment; or rely on a pre-analyzed
+  `REA_GHIDRA_PROJECT_PATH` as above instead of raising it every time.
+  REA parses the supplied configuration environment and
+  passes the deadline to each provider client; a startup failure is returned by the query that triggered it,
+  without exposing partial analysis. This deadline is separate from MCP transport
+  initialization and the client's deadline for that individual tool call. A client
+  can time out earlier even when Ghidra would complete within its startup deadline.
+  See [Ghidra first-query deadlines and recovery](../reference/mcp-contracts.md#ghidra-first-query-deadlines-and-recovery)
+  for client options and the close/reopen recovery flow.
 
 The 330-second default can be changed on a running MCP server by setting
 `ghidra.startup_timeout_ms` through `update_analysis_settings`. The next accepted
