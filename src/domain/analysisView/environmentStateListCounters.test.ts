@@ -6,7 +6,11 @@ import {
 } from "../../../tests/fixtures/analysisView.js";
 import { environmentStateViewOf } from "../../../tests/fixtures/environmentStateWrites.js";
 import { renderQueryList } from "./environmentStateListQuery.js";
-import { renderStateList, type JsonObject } from "./environmentStateRules.js";
+import {
+  recordedItemCount,
+  renderStateList,
+  type JsonObject,
+} from "./environmentStateRules.js";
 
 const vessel = (id: number, status: string): JsonObject => ({
   Id: id,
@@ -179,4 +183,40 @@ it("keeps a direction-only recording on its recorded members instead of learning
     checked_record_ordinals: [0, 1],
   });
   expect(view).not.toHaveProperty("query.parameters.direction");
+});
+
+it("admits non-negative safe integers and rejects fractional, negative or unsafe values in recorded item counts", () => {
+  for (const valid of [
+    0,
+    1,
+    42,
+    Number.MAX_SAFE_INTEGER,
+    "0",
+    "1",
+    "42",
+    String(Number.MAX_SAFE_INTEGER),
+  ])
+    expect(recordedItemCount(valid), String(valid)).toBe(Number(valid));
+
+  for (const invalid of [
+    -1,
+    -42,
+    1.5,
+    Number.NaN,
+    Infinity,
+    -Infinity,
+    "-1",
+    "1.5",
+    "9007199254740992",
+    "999999999999999999999999",
+    null,
+    undefined,
+    [],
+    {},
+    "abc",
+  ])
+    expect(
+      recordedItemCount(invalid as JsonValue),
+      String(invalid),
+    ).toBeUndefined();
 });
