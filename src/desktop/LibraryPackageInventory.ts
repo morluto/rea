@@ -3,7 +3,8 @@ import {
   desktopLibraryPolicy,
   type DesktopLibraryPolicy,
 } from "../domain/desktop/libraryPolicy.js";
-import { realpath } from "node:fs/promises";
+import { lstat, readlink, realpath, stat } from "node:fs/promises";
+import { posix } from "node:path";
 
 import type { DesktopPackage } from "../domain/desktop/desktopCapture.js";
 import {
@@ -17,6 +18,7 @@ import {
   libraryClosure,
   libraryPackageNames,
   parseLinkerCache,
+  type LibraryLookupAlias,
 } from "../domain/desktop/libraryPackages.js";
 import {
   ownershipCandidates,
@@ -40,6 +42,88 @@ export type LibraryPackages = {
 >;
 
 const QUERY_BATCH = 200;
+
+/** The Ubuntu 24.04 base-files package supplies these exact usr-merge links. */
+const suppliedByComputerBase = (
+  path: string,
+  target: string,
+  machine: number,
+): boolean =>
+  (machine === 62 || machine === 183) &&
+  (path === "/bin" ||
+    path === "/sbin" ||
+    path === "/lib" ||
+    (machine === 62 && path === "/lib64")) &&
+  (target === `usr${path}` || target === `/usr${path}`);
+
+/** Remove dot traversal only after the filesystem resolves every preceding link. */
+const ownershipSpelling = async (path: string): Promise<string> => {
+  let traversed = "";
+  let spelling = "/";
+  for (const part of path.split("/")) {
+    if (part === "" || part === ".") continue;
+    traversed += `/${part}`;
+    spelling =
+      part === ".." ? await realpath(traversed) : posix.join(spelling, part);
+  }
+  return spelling;
+};
+
+/** Intermediate file/directory links needed to resolve a selected library. */
+const requiredAliases = async (
+  path: string,
+  machine: number,
+): Promise<LibraryLookupAlias[]> => {
+  const aliases = new Map<string, LibraryLookupAlias>();
+  const visited = new Set<string>();
+  const visit = async (
+    lookup: string,
+    directoryLeaf: boolean,
+    fileLeaf = false,
+  ): Promise<void> => {
+    const ends: number[] = [];
+    for (
+      let end = lookup.indexOf("/", lookup.startsWith("/") ? 1 : 0);
+      end !== -1;
+      end = lookup.indexOf("/", end + 1)
+    )
+      ends.push(end);
+    ends.push(lookup.length);
+    for (const end of ends) {
+      const prefix = lookup.slice(0, end);
+      if (!(await lstat(prefix)).isSymbolicLink()) continue;
+      // Canonical parents identify the link entry, not its target. Keep ../
+      // in the target spelling until the kernel resolves preceding links.
+      const alias = posix.join(
+        await realpath(posix.dirname(prefix)),
+        posix.basename(prefix),
+      );
+      const target = await readlink(prefix);
+      const directory = end !== lookup.length || directoryLeaf;
+      if (
+        (directory || fileLeaf) &&
+        !suppliedByComputerBase(alias, target, machine)
+      )
+        aliases.set(prefix, {
+          path: alias,
+          ownershipPath: await ownershipSpelling(prefix),
+        });
+      if (visited.has(alias)) continue;
+      visited.add(alias);
+      // The selected leaf is already queried with its DSO. Intermediate file
+      // links and directory links each retain their own package identity.
+      await visit(
+        posix.isAbsolute(target)
+          ? target
+          : `${posix.dirname(prefix)}/${target}`,
+        directory,
+        true,
+      );
+    }
+  };
+  await visit(path, false);
+  return [...aliases.values()];
+};
 
 const elfDependencies = async (
   path: string,
@@ -171,24 +255,45 @@ export const inspectLibraryPackages = async (
     { path: executable, dependencies: root.value },
     parseLinkerCache(cache),
     {
+      resolvePath: async (path) => {
+        try {
+          // Admit the full lookup before deriving its ownership leaf: splitting
+          // a regular file's trailing slash or dot component would erase ENOTDIR.
+          if (!(await isHostFile(path))) return undefined;
+          const resolvedPath = await realpath(path);
+          const directory = await realpath(posix.dirname(path));
+          const selected = posix.join(directory, posix.basename(path));
+          const identity = await stat(resolvedPath, { bigint: true });
+          return {
+            path: selected,
+            ownershipPath: await ownershipSpelling(path),
+            resolvedPath,
+            fileIdentity: `${identity.dev}:${identity.ino}`,
+            requiredAliases: await requiredAliases(path, root.value.machine),
+          };
+        } catch (cause) {
+          if (isRefusedRead(cause)) return undefined;
+          throw hostReadFailure(cause);
+        }
+      },
       dependencies: (path, expected) =>
         elfDependencies(path, signal, policy, expected),
       isFile: isHostFile,
     },
     policy.libraries,
   );
-  const located = await Promise.all(
-    closure.libraries.map(async ({ path }) => ({
+  const located = [
+    ...closure.libraries.map(({ path, resolvedPath, ownershipPath }) => ({
       path,
-      candidates: ownershipCandidates([
-        path,
-        ...(await realpath(path).then(
-          (physical) => [physical],
-          () => [],
-        )),
-      ]),
+      candidates: ownershipCandidates([ownershipPath, path, resolvedPath]),
     })),
-  );
+    // An intermediate lookup alias is its own required entry. Ownership of
+    // its physical target cannot establish who supplies that link.
+    ...closure.requiredAliases.map(({ path, ownershipPath }) => ({
+      path,
+      candidates: ownershipCandidates([ownershipPath, path]),
+    })),
+  ];
   const owners = await packageOwners(
     located.flatMap((library) => library.candidates),
     runQuery,
