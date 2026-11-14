@@ -23,10 +23,8 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
-  AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
 import {
   RUST_AUDITABLE_FORMAT_VERSIONS,
@@ -42,10 +40,8 @@ import {
   type RustBinaryImage,
 } from "./RustBinaryImage.js";
 import { requireSelectedNativeImage } from "../native/metadata/MachoSliceSelection.js";
-import {
-  RustAuditableFormatFailure,
-  RustAuditableResourceFailure,
-} from "./RustAuditableReader.js";
+import { RustAuditableResourceFailure } from "./RustAuditableReader.js";
+import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
 
 import {
   resolveRustProducerLimits,
@@ -347,20 +343,10 @@ const failureForPrimary = (
             )),
       },
     );
-  if (cause instanceof RustAuditableFormatFailure)
-    return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(OPERATION, path, cause.message, {
-          cause,
-          undecodedContent: cause.undecodedContent,
-        })
-      : new AnalysisInputError(OPERATION, { cause }, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: `Selected artifact ${path}: ${cause.message}`,
-          },
-        ]);
-  return artifactFailure(facts, path, limits);
+  return (
+    parseFailureAnalysisError(OPERATION, path, cause) ??
+    artifactFailure(facts, path, limits)
+  );
 };
 
 const failureFor = (
