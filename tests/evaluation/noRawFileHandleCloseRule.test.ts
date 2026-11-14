@@ -18,6 +18,11 @@ new RuleTester({ languageOptions: { parserOptions: { lang: "ts" } } }).run(
       "class C { readonly x: { close(): void }; d() { this.x.close(); } }",
       'import type { FileHandle } from "node:fs/promises"; class C { static h: FileHandle; h = { close() {} }; d() { this.h.close(); } }',
       'import { close } from "./local.js"; close(1);',
+      // `#h` and a constructor parameter property `h` are distinct fields.
+      'import type { FileHandle } from "node:fs/promises"; class C { #h = { close() {} }; constructor(private h: FileHandle) {} d() { this.#h.close(); } }',
+      // Object methods and ordinary functions bind their own `this`.
+      'import type { FileHandle } from "node:fs/promises"; class C { h!: FileHandle; d() { const other = { h: { close() {} }, d() { this.h.close(); } }; other.d(); } }',
+      'import type { FileHandle } from "node:fs/promises"; class C { h!: FileHandle; d() { return function (this: { h: { close(): void } }) { this.h.close(); }; } }',
     ],
     invalid: [
       {
@@ -26,6 +31,14 @@ new RuleTester({ languageOptions: { parserOptions: { lang: "ts" } } }).run(
       },
       {
         code: 'import type { FileHandle } from "node:fs/promises"; class C { static h: FileHandle; h = { close() {} }; static d() { this.h.close(); } }',
+        errors: [{ messageId: "raw" }],
+      },
+      {
+        code: 'import type { FileHandle } from "node:fs/promises"; class C { static h: FileHandle; static { this.h.close(); } }',
+        errors: [{ messageId: "raw" }],
+      },
+      {
+        code: 'import type { FileHandle } from "node:fs/promises"; class C { h!: FileHandle; d() { return () => this.h.close(); } }',
         errors: [{ messageId: "raw" }],
       },
       {

@@ -358,7 +358,9 @@ const registrationFacts = async (
   );
   const registered = statuses.filter(({ command }) => command.length > 0);
   const considered = selected ?? registered.map(({ client }) => client);
-  return Promise.all(
+  // Every admitted client inspection settles before a failure is reported, so
+  // no file a peer opened outlives the doctor operation that owns it.
+  const outcomes = await Promise.allSettled(
     considered.map(async (client) => {
       const status = registered.find((entry) => entry.client === client);
       const values = status === undefined ? undefined : recorded.get(client);
@@ -452,6 +454,11 @@ const registrationFacts = async (
         ...(runner === undefined ? {} : { runner }),
       };
     }),
+  );
+  const failure = outcomes.find((outcome) => outcome.status === "rejected");
+  if (failure !== undefined) throw failure.reason;
+  return outcomes.flatMap((outcome) =>
+    outcome.status === "fulfilled" ? [outcome.value] : [],
   );
 };
 

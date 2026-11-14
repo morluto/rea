@@ -107,6 +107,37 @@ const namesFileHandle = (sourceCode, annotation) => {
   return false;
 };
 
+/**
+ * The class body whose instance (or, when `isStatic`, whose constructor) the
+ * `this` at `node` refers to. Arrow functions borrow the enclosing `this`;
+ * ordinary functions and object methods bind their own, which is no class.
+ */
+const thisClass = (node) => {
+  for (let current = node.parent; current; current = current.parent) {
+    if (current.type === "ArrowFunctionExpression") continue;
+    if (
+      current.type === "FunctionExpression" ||
+      current.type === "FunctionDeclaration"
+    ) {
+      const method = current.parent;
+      return method?.type === "MethodDefinition" &&
+        method.value === current &&
+        method.parent?.type === "ClassBody"
+        ? { body: method.parent, isStatic: method.static === true }
+        : undefined;
+    }
+    if (
+      (current.type === "PropertyDefinition" ||
+        current.type === "AccessorProperty") &&
+      current.parent?.type === "ClassBody"
+    )
+      return { body: current.parent, isStatic: current.static === true };
+    if (current.type === "StaticBlock" && current.parent?.type === "ClassBody")
+      return { body: current.parent, isStatic: true };
+  }
+  return undefined;
+};
+
 /** A class field declared as a FileHandle, for `this.field.close()`. */
 const fieldHoldsFileHandle = (sourceCode, member) => {
   if (
@@ -116,42 +147,35 @@ const fieldHoldsFileHandle = (sourceCode, member) => {
   )
     return false;
   const property = member.property;
-  let isStatic = false;
-  for (let node = member.parent; node; node = node.parent) {
+  const owner = thisClass(member);
+  if (owner === undefined) return false;
+  return owner.body.body.some((element) => {
+    // Constructor parameter properties are public or TS-private names, never `#name`.
     if (
-      (node.type === "MethodDefinition" ||
-        node.type === "PropertyDefinition") &&
-      node.parent?.type === "ClassBody"
+      !owner.isStatic &&
+      property.type === "Identifier" &&
+      element.type === "MethodDefinition" &&
+      element.kind === "constructor"
     )
-      isStatic = node.static === true;
-    if (node.type !== "ClassBody") continue;
-    return node.body.some((element) => {
-      if (
-        !isStatic &&
-        element.type === "MethodDefinition" &&
-        element.kind === "constructor"
-      )
-        return element.value.params.some((parameter) => {
-          if (parameter.type !== "TSParameterProperty") return false;
-          const value = parameter.parameter;
-          const id = value.type === "AssignmentPattern" ? value.left : value;
-          return (
-            id.type === "Identifier" &&
-            id.name === property.name &&
-            namesFileHandle(sourceCode, id.typeAnnotation)
-          );
-        });
-      return (
-        element.type === "PropertyDefinition" &&
-        (element.static === true) === isStatic &&
-        element.key.type === property.type &&
-        element.key.name === property.name &&
-        (namesFileHandle(sourceCode, element.typeAnnotation) ||
-          opensFileHandle(sourceCode, element.value))
-      );
-    });
-  }
-  return false;
+      return element.value.params.some((parameter) => {
+        if (parameter.type !== "TSParameterProperty") return false;
+        const value = parameter.parameter;
+        const id = value.type === "AssignmentPattern" ? value.left : value;
+        return (
+          id.type === "Identifier" &&
+          id.name === property.name &&
+          namesFileHandle(sourceCode, id.typeAnnotation)
+        );
+      });
+    return (
+      element.type === "PropertyDefinition" &&
+      (element.static === true) === owner.isStatic &&
+      element.key.type === property.type &&
+      element.key.name === property.name &&
+      (namesFileHandle(sourceCode, element.typeAnnotation) ||
+        opensFileHandle(sourceCode, element.value))
+    );
+  });
 };
 
 /** Whether `identifier` is a variable declared or ever assigned as a FileHandle. */
