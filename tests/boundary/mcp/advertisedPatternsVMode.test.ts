@@ -15,7 +15,7 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 
 // Pattern portability across every profile is owned by
 // advertisedDialect.test.ts. This file keeps the composed canonical base64
-// constraint's advertised semantics after portable re-emission.
+// constraint's safe advertisement after portable re-emission.
 
 const advertised = (pattern: RegExp): string => {
   const projection = projectPortablePattern(pattern.source);
@@ -69,7 +69,7 @@ const listAdvertisedTools = async () => {
   return (await client.listTools()).tools;
 };
 
-it("advertises the composed canonical base64 constraint with exact SDK semantics", async () => {
+it("advertises base64 without rejecting valid inputs or overflowing V8", async () => {
   const tools = await listAdvertisedTools();
   const patterns: string[] = [];
   const canonicalBase64Leaves: Record<string, unknown>[] = [];
@@ -82,26 +82,32 @@ it("advertises the composed canonical base64 constraint with exact SDK semantics
       collectCanonicalBase64Leaves(schema, canonicalBase64Leaves);
     }
 
+  expect(patterns).toContain(advertised(BASE64_QUARTET_LENGTH_PATTERN));
   for (const pattern of [
-    BASE64_QUARTET_LENGTH_PATTERN,
     INVALID_BASE64_CHARACTER_PATTERN,
     INVALID_BASE64_PADDING_PATTERN,
     INVALID_CANONICAL_BASE64_PAD_BITS_PATTERN,
   ])
-    expect(patterns.includes(advertised(pattern)), pattern.source).toBe(true);
+    expect(projectPortablePattern(pattern.source)).toEqual({
+      kind: "unexpressible",
+    });
 
   expect(canonicalBase64Leaves.length).toBeGreaterThan(0);
   const sdkValidator = new AjvJsonSchemaValidator();
   const validators = canonicalBase64Leaves.map((schema) =>
     sdkValidator.getValidator(schema),
   );
-  for (const value of ["", "AA==", "AQID", "AB==", "AAA", "AA$=", "AA\n=="])
+  for (const value of ["", "AA==", "AQID"])
     expect(
       validators.map((validate) => validate(value).valid),
       JSON.stringify(value),
-    ).toEqual(
-      canonicalBase64Leaves.map(
-        () => value === "" || value === "AA==" || value === "AQID",
-      ),
-    );
+    ).toEqual(canonicalBase64Leaves.map(() => true));
+  const large = "A".repeat(8 * 1024 * 1024);
+  const base64Patterns = new Set(
+    canonicalBase64Leaves.flatMap((schema) =>
+      advertisedSchemaPatterns(schema).map(({ pattern }) => pattern),
+    ),
+  );
+  for (const pattern of base64Patterns)
+    expect(new RegExp(pattern, "v").test(large)).toBe(true);
 });

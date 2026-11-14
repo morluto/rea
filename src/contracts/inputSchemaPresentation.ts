@@ -363,11 +363,20 @@ const normalizationContext = (
     const { schema, scope, fact } = work[index]!;
     const ignoresSiblings =
       scope?.dialect === "draft-07" && typeof schema.$ref === "string";
+    const projection =
+      typeof schema.pattern === "string"
+        ? projectPortablePattern(schema.pattern)
+        : undefined;
+    const opaquePatternChanged =
+      !sites.get(scope)?.has(schema) &&
+      projection !== undefined &&
+      (projection.kind !== "exact" || projection.pattern !== schema.pattern);
     if (
       !ignoresSiblings &&
-      sites.get(scope)?.has(schema) &&
-      ((options.literals && hasNormalizedLiteral(schema)) ||
-        hasWidenedPattern(schema))
+      (opaquePatternChanged ||
+        (sites.get(scope)?.has(schema) &&
+          ((options.literals && hasNormalizedLiteral(schema)) ||
+            hasWidenedPattern(schema))))
     ) {
       fact.changed = true;
       changed.push(fact);
@@ -384,6 +393,14 @@ const normalizationContext = (
           !sites.get(references.enter(target.value, scope))?.has(target.value)
         )
           fact.opaqueReference = dependency;
+      } else if (target.kind === "anchor") {
+        // Named references are not resolved by this owner. Relax them when
+        // normalizing so a widened target cannot make a negation stricter.
+        fact.opaqueReference = fact;
+        if (!fact.changed) {
+          fact.changed = true;
+          changed.push(fact);
+        }
       }
     }
     if (!ignoresSiblings)
@@ -940,6 +957,9 @@ export const presentOutputJsonSchema = (
     pattern,
     projection: projectPortablePattern(pattern),
   }));
+  if (hasLiteralReference(root))
+    return normalizeAdvertisedSchema(root, OUTPUT_NORMALIZATION)
+      .schema as Record<string, unknown>;
   // Output schemas reach several megabytes. Exact re-emission changes no
   // dependent, so only a widened pattern needs the dependency analysis.
   if (patterns.some(({ projection }) => projection.kind !== "exact"))
@@ -953,6 +973,30 @@ export const presentOutputJsonSchema = (
   )
     return root;
   return replaceExactPatterns(root) as Record<string, unknown>;
+};
+
+/** A reference into literal data needs dependency analysis, not in-place rewriting. */
+const hasLiteralReference = (root: Record<string, unknown>): boolean => {
+  const pending: unknown[] = [root];
+  const visited = new WeakSet<object>();
+  while (pending.length > 0) {
+    const value = pending.pop();
+    if (!isObject(value) || visited.has(value)) continue;
+    visited.add(value);
+    if (typeof value.$ref === "string") {
+      try {
+        const reference = decodeURIComponent(value.$ref);
+        if (
+          /(?:^#\/|\/)(?:default|const|enum|examples)(?:\/|$)/u.test(reference)
+        )
+          return true;
+      } catch {
+        // An invalid fragment cannot name one of these locations.
+      }
+    }
+    pending.push(...schemaSubschemas(value, { includeDefinitions: true }));
+  }
+  return false;
 };
 
 /** Copy schema positions, replacing each pattern with its exact portable form. */
