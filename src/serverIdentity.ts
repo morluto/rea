@@ -20,8 +20,8 @@ export interface ConnectedClientIdentity {
 /** Device/inode equality, the only reliable same-entrypoint test across symlink/.. spellings. */
 const sameFileIdentity = (left: string, right: string): boolean => {
   try {
-    const leftStat = statSync(left);
-    const rightStat = statSync(right);
+    const leftStat = statSync(left, { bigint: true });
+    const rightStat = statSync(right, { bigint: true });
     return leftStat.dev === rightStat.dev && leftStat.ino === rightStat.ino;
   } catch {
     return false;
