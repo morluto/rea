@@ -16,6 +16,7 @@ import {
   CHECK_CASES,
   CHECK_VIEWS,
 } from "../../../src/domain/desktop/appTaskChecks.fixture.js";
+import { xmlView } from "../../../src/domain/desktop/stateFormats.js";
 import { SETTLE_TIMING } from "../../../src/domain/desktop/appSettle.js";
 import { renderTaskVerifier } from "../../../src/domain/desktop/appTaskPython.js";
 import {
@@ -297,6 +298,75 @@ it("evaluates every kind of file check without computer-exec as REA does", async
     typescript.map(({ description }) => description),
   );
 });
+
+it.each([
+  ["", true],
+  [" \t\r\n", true],
+  ["\ufeff", true],
+  ["\u0085", false],
+  ["\u001c", false],
+  ["\u2003", true],
+  ["\u200b", false],
+] as const)(
+  "grades numeric padding %j with the same trimming as REA",
+  async (padding, expected) => {
+    const file = "Documents/measurement.json";
+    const checks: DesktopTaskCheck[] = [
+      {
+        id: "measurement",
+        kind: "value_equals",
+        file,
+        pointer: "/value",
+        value: 5,
+        tolerance: 0,
+      },
+    ];
+    const views = {
+      [file]: {
+        format: "json" as const,
+        view: { value: `${padding}5${padding}` },
+        truncated: false,
+      },
+    };
+    expect(
+      evaluateTaskChecks(checks, new Map(Object.entries(views)))[0]?.passed,
+    ).toBe(expected);
+    const output = await runVerifier(checks, [[0, views]], [], { exec: false });
+    expect(output.results.map(({ result }) => result)).toEqual([expected]);
+  },
+);
+
+it.each([
+  ["\ufeff", true],
+  ["\u0085", false],
+] as const)(
+  "uses the same saved-time padding %j when resolving XML selectors",
+  async (padding, expected) => {
+    const file = "Documents/records.xml";
+    const view = xmlView(
+      `<rows><row><label>Alpha<saved>${padding}2026-11-13T10:00:00Z${padding}</saved></label><value>done</value></row></rows>`,
+    );
+    if (view === undefined) throw new Error("Expected XML fixture");
+    const views = {
+      [file]: { format: "xml" as const, view, truncated: false },
+    };
+    const checks: DesktopTaskCheck[] = [
+      {
+        id: "row",
+        kind: "value_equals",
+        file,
+        pointer:
+          "/root/children/[>label=Alpha]/children/[name=value]/children/0",
+        value: "done",
+      },
+    ];
+    expect(
+      evaluateTaskChecks(checks, new Map(Object.entries(views)))[0]?.passed,
+    ).toBe(expected);
+    const output = await runVerifier(checks, [[0, views]], [], { exec: false });
+    expect(output.results.map(({ result }) => result)).toEqual([expected]);
+  },
+);
 
 it("decodes JSON pointer escapes once in the exported verifier", async () => {
   const checks: DesktopTaskCheck[] = [

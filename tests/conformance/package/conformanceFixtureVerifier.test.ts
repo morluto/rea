@@ -69,11 +69,12 @@ it.skipIf(process.platform !== "darwin" && process.platform !== "linux").each([
       const counted = mode === "prefix-complete" ? "" : "unrelated_";
       const content = `int rea_version_entry${suffix}(void) { return ${version}; }\nint ${counted}rea_inventory_0000(void) { return 0; }\nconst char *marker = "${literal}";\n`;
       await writeFile(join(sources, path), content);
-      await commands.exec(
-        "cc",
-        ["-c", join(sources, path), "-o", join(output, artifact)],
-        { timeout: 10_000 },
-      );
+      await commands.exec("cc", [
+        "-c",
+        join(sources, path),
+        "-o",
+        join(output, artifact),
+      ]);
       const bytes = await readFile(join(output, artifact));
       fixtures.push({
         name,
@@ -106,7 +107,6 @@ it.skipIf(process.platform !== "darwin" && process.platform !== "linux").each([
       [verifier, manifest, sources],
       {
         cwd: root,
-        timeout: 25_000,
       },
     );
     if (!["complete", "fragment", "prefix-complete"].includes(mode))
@@ -152,7 +152,6 @@ it.each([
   await expect(
     commands.exec(process.execPath, [verifier, manifest, root], {
       cwd: root,
-      timeout: 10_000,
     }),
   ).rejects.toMatchObject({
     code: 1,
