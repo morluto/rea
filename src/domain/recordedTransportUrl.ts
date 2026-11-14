@@ -46,12 +46,24 @@ export const parseRecordedTransportUrl = (
     parsed !== null && (parsed.username !== "" || parsed.password !== "");
   const origin =
     absolute !== null && absolute.origin !== "null" ? absolute.origin : null;
-  if (prefix === null)
+  if (prefix === null) {
+    // A malformed special-scheme authority can still visibly contain userinfo.
+    // Its raw span is not reliable when the URL parser could not resolve it.
+    const malformedAuthority =
+      parsed === null
+        ? /^[\x00-\x20]*(?:https?|wss?|ftp|file):[\\/]+([^\\/?#]*)/iu.exec(
+            value,
+          )?.[1]
+        : undefined;
     return {
       origin,
       path: null,
-      credentials: hasCredentials ? "ambiguous" : null,
+      credentials:
+        hasCredentials || malformedAuthority?.includes("@") === true
+          ? "ambiguous"
+          : null,
     };
+  }
 
   const authorityStart = prefix[0].length;
   const protocol =
@@ -105,6 +117,14 @@ export const parseRecordedTransportUrl = (
     ...query,
   };
 };
+
+/** HTTP origin-form targets are paths even when they begin with two slashes. */
+export const parseRecordedHttpRequestTarget = (
+  value: string,
+): RecordedTransportUrl =>
+  value.startsWith("/")
+    ? { origin: null, path: null, credentials: null }
+    : parseRecordedTransportUrl(value);
 
 /** WHATWG form decoding; native fallback preserves replacement behavior on malformed escapes/UTF-8. */
 const formComponent = (raw: string): string => {

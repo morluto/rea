@@ -1,4 +1,5 @@
 import {
+  parseRecordedHttpRequestTarget,
   parseRecordedTransportUrl,
   type RecordedTransportUrl,
 } from "../domain/recordedTransportUrl.js";
@@ -18,6 +19,6 @@ export const parsePcapHttpUri = (
   value: string,
   role: PcapHttpUriRole,
 ): RecordedTransportUrl =>
-  role === "request-target" && value.startsWith("/")
-    ? { origin: null, path: null, credentials: null }
+  role === "request-target"
+    ? parseRecordedHttpRequestTarget(value)
     : parseRecordedTransportUrl(value);

@@ -159,6 +159,7 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
   inspect_il2cpp_metadata: evidence,
   inspect_model_artifact: evidence,
   inspect_api_contract: evidence,
+  inspect_warc_archive: evidence,
   inspect_ntfs_journal: evidence,
   inspect_playwright_trace: evidence,
   inspect_gpu_code_objects: evidence,
