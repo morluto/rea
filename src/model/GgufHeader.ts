@@ -113,7 +113,7 @@ export class GgufHeader {
   }> {
     if (NAMES[type] === undefined)
       rejectModel(`Unknown GGUF metadata type ${String(type)}`);
-    if (depth > MODEL_METADATA_NESTING)
+    if (type === 9 && depth >= MODEL_METADATA_NESTING)
       throw new ModelFormatFailure(
         "capacity",
         `GGUF metadata nesting exceeds ${String(MODEL_METADATA_NESTING)} array frames`,
