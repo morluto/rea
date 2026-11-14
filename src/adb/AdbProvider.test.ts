@@ -191,7 +191,7 @@ fi`,
     await Promise.allSettled([inspection, closing]);
     await provider.close();
   }
-}, 15_000);
+});
 
 it("fails closed when adb exits successfully without a recognized version", async () => {
   const stdout = `unexpected adb output ${"x".repeat(700)}\n`;

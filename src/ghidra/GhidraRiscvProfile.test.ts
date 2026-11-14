@@ -1,6 +1,5 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, parse, relative } from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { parseConfig } from "../config/parseConfig.js";
 import type {
@@ -31,7 +30,10 @@ import {
   GHIDRA_SESSION_CAPABILITIES,
   type GhidraSessionInfo,
 } from "./GhidraSessionValues.js";
-import { ghidraProfileInstallationHost as host } from "./GhidraInstallation.fixture.js";
+import {
+  createSimulatedInstallDirectory,
+  ghidraProfileInstallationHost as host,
+} from "./GhidraInstallation.fixture.js";
 import {
   ghidraPinnedLanguage,
   ghidraProfileLanguageOverride,
@@ -107,21 +109,19 @@ const ilp32 = (
   });
 
 let installDir = "";
+let disposeInstallDir: (() => Promise<void>) | undefined;
 beforeAll(async () => {
-  const root =
-    process.platform === "win32" ? join(process.cwd(), "build") : tmpdir();
-  await mkdir(root, { recursive: true });
-  installDir = await mkdtemp(join(root, "rea-ghidra-riscv-languages-"));
-  // The simulated Linux host needs a POSIX absolute path. A current-drive root
-  // path also reaches this real fixture on Windows without changing admission.
-  if (process.platform === "win32")
-    installDir = `/${relative(parse(installDir).root, installDir).replaceAll("\\", "/")}`;
+  const directory = await createSimulatedInstallDirectory(
+    "rea-ghidra-riscv-languages-",
+  );
+  installDir = directory.path;
+  disposeInstallDir = directory.dispose;
   const languages = join(installDir, "Ghidra/Processors/RISCV/data/languages");
   await mkdir(languages, { recursive: true });
   await writeFile(join(languages, "riscv.ldefs"), RISCV_LDEFS);
 });
 afterAll(async () => {
-  await rm(installDir, { recursive: true, force: true });
+  await disposeInstallDir?.();
 });
 
 const ghidra = (environment: Record<string, string> = {}) =>

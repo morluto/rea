@@ -21,6 +21,33 @@ import {
 import { readFileHandlePrefix } from "../../../src/filesystem/readFileHandlePrefix.js";
 import { abortIfNeeded } from "../../../src/artifacts/ArtifactHash.js";
 
+it.each(["close", "cancel"] as const)(
+  "does not complete an iNES inventory after %s while paused",
+  async (interruption) => {
+    const root = await createTestTempDirectory("rea-ines-paused-");
+    const path = join(root, "source.nes");
+    await writeFile(path, inesFixture());
+    const handle = await open(path, "r");
+    const reader = new InesArtifactReader(path, {
+      handle,
+      initial: await handle.stat(),
+    });
+    const controller = new AbortController();
+    try {
+      const entries = reader.entries(controller.signal)[Symbol.asyncIterator]();
+      expect((await entries.next()).done).toBe(false);
+      if (interruption === "close") await reader.close();
+      else controller.abort();
+      await expect(entries.next()).rejects.toMatchObject({
+        reason: interruption === "close" ? "unavailable" : "cancelled",
+      });
+    } finally {
+      await reader.close();
+      await handle.close();
+    }
+  },
+);
+
 // Complete the real I/O, then cancel while its caller is still awaiting it.
 const cancelAfterNextStat = (
   handle: FileHandle,

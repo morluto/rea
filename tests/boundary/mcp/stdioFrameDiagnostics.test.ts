@@ -3,12 +3,17 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { expect } from "vitest";
+import { afterAll, expect } from "vitest";
 import { z } from "zod";
 
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { byteEntropySchema } from "../../../src/domain/native/byteEntropy.js";
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+// Compile SDK output validators for the tools a test calls, not the whole catalog.
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
 workspaceCliTest.for([
   { mode: "deferred", profile: "full" },
@@ -37,7 +42,10 @@ workspaceCliTest.for([
     });
     const client = new Client(
       { name: "frame-diagnostic-regression", version: "1" },
-      { versionNegotiation: { mode: "legacy" } },
+      {
+        versionNegotiation: { mode: "legacy" },
+        jsonSchemaValidator: schemaValidation,
+      },
     );
     try {
       await client.connect(transport);

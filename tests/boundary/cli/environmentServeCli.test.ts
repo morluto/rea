@@ -41,7 +41,6 @@ describe("rea environment-serve refusals", () => {
           "0",
           "--json",
         ],
-        timeoutMs: 30_000,
       });
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject({
@@ -66,7 +65,6 @@ describe("rea environment-serve refusals", () => {
       const files = await writeEnvironmentServeFiles(root);
       const result = await cli.run({
         arguments: ["environment-serve", files.manifestPath, "--json"],
-        timeoutMs: 30_000,
       });
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject({
@@ -97,7 +95,6 @@ describe("rea environment-serve refusals", () => {
           flag,
           "--json",
         ],
-        timeoutMs: 30_000,
       });
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject({
@@ -121,7 +118,6 @@ describe("rea environment-serve refusals", () => {
           files.capturePath,
           "--json",
         ],
-        timeoutMs: 30_000,
       });
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject({
@@ -195,7 +191,6 @@ cliTest(
         "0",
         "--json",
       ],
-      timeoutMs: 30000,
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({

@@ -99,6 +99,41 @@ describe.skipIf(process.platform === "win32")(
   },
 );
 
+describe.skipIf(process.platform === "win32")(
+  "desktop entry Unicode values",
+  () => {
+    it.each(["\u2028", "\u2029"])(
+      "retains Unicode separator %j in desktop launch arguments",
+      async (separator) => {
+        const { home, bin, environment } = await fixture();
+        const desktopEntry = join(home, "unicode.desktop");
+        await writeFile(
+          desktopEntry,
+          `[Desktop Entry]\nType=Application\nName=Notes${separator}Editor\nExec=notes-app --title "A${separator}B" %F\n`,
+        );
+        const inspected = await inspectLinuxApplication({
+          desktopEntry,
+          executable: undefined,
+          arguments: ["today.md"],
+          environment,
+          home,
+          callerDirectory: home,
+        });
+        expect(inspected).toMatchObject({
+          ok: true,
+          value: {
+            inventory: {
+              argv: ["notes-app", "--title", `A${separator}B`, "today.md"],
+              desktop_entry: { name: `Notes${separator}Editor` },
+              executable: { path: join(bin, "notes-app") },
+            },
+          },
+        });
+      },
+    );
+  },
+);
+
 describe.skipIf(process.platform === "win32")("inspectLinuxApplication", () => {
   it("resolves a desktop entry id into a launch command and state directories", async () => {
     const { home, bin, environment } = await fixture();

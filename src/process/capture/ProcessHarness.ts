@@ -54,6 +54,7 @@ import {
   observeSettlement,
   prepareProcessCapture,
   resolveProcessResult,
+  processCaptureCleanupFacts,
   settleProcessCaptureJournal,
   type ProcessCaptureCleanupHost,
   type ProcessCaptureObservationBuffer,
@@ -567,13 +568,11 @@ const finishProcessRun = async (options: {
   const cleanupFailure = cleanupReportFailure(cleanup);
   let verifiedCapture: ProcessCapture | undefined;
   if (capture !== undefined && cleanupFailure === undefined) {
-    const settlement: UnverifiedProcessCapture["settlement"] =
-      capture.settlement.state === "quiesced"
-        ? { ...capture.settlement, cleanup_outcome: "not_required" }
-        : { ...capture.settlement, cleanup_outcome: "cleaned" };
     const completedCapture: UnverifiedProcessCapture = {
       ...capture,
-      settlement,
+      ...processCaptureCleanupFacts(capture, {
+        ownedProcessesSignaled: cleanupOutcome.ownedProcessesSignaled,
+      }),
       cleanup: {
         owned_process_group: "verified",
         temporary_root: "removed",
@@ -788,10 +787,10 @@ const captureProgressDisposition = (
 const runProcessScenario = async (
   resourceScope: ProcessCaptureResourceScope,
   scenario: ProcessScenario,
-  signal?: AbortSignal,
-  hostEnvironment: Readonly<Record<string, string | undefined>> = process.env,
-  hostPlatform: NodeJS.Platform = process.platform,
-  captureSnapshot: typeof snapshotRoots = snapshotRoots,
+  signal: AbortSignal | undefined,
+  hostEnvironment: Readonly<Record<string, string | undefined>>,
+  hostPlatform: NodeJS.Platform,
+  captureSnapshot: typeof snapshotRoots,
   cleanupHost?: ProcessCaptureCleanupHost,
   progress?: ProcessCaptureProgress,
   finalizationHost?: FinalizationHost,

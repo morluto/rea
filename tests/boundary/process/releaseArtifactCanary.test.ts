@@ -113,7 +113,7 @@ if (process.argv[2] === "mcp") {
       const result = await processes.run(
         "npm",
         ["pack", "--ignore-scripts", "--json"],
-        { cwd: candidate, timeoutMs: 30_000 },
+        { cwd: candidate },
       );
       expect(result.exitCode, result.stderr).toBe(0);
       return result;

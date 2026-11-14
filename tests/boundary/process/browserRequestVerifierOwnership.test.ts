@@ -93,7 +93,6 @@ for (const { name, module, verify, rootPrefix } of [
 ]) {
   processTest.skipIf(process.platform === "win32")(
     `stops a failed capture's CLI and browser before removing the ${name} lane's root`,
-    { timeout: 40_000 },
     async ({ processes }) => {
       const root = await createTestTempDirectory(`rea-browser-${name}-owner-`);
       const tmp = join(root, "tmp");
@@ -140,7 +139,6 @@ process.stdout.write(JSON.stringify({ pids, live, roots, failure }));
       );
       try {
         const result = await processes.run(process.execPath, [driver], {
-          timeoutMs: 30_000,
           env: {
             ...process.env,
             TMPDIR: tmp,

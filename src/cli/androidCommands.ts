@@ -17,12 +17,12 @@ import {
 } from "./analysisEvidenceDelivery.js";
 import { androidPackageDeliverySchema } from "../domain/android/androidPackageQuery.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { AnalysisInputError } from "../domain/analysisErrorCore.js";
+import { parseCliJsonOption } from "./cliJsonOption.js";
 import { parseAnalysisInput } from "../application/AnalysisInput.js";
 import { androidJniSelectionSchema } from "../domain/android/androidJniBindings.js";
 import { androidJniDeliverySchema } from "../domain/android/androidJniQuery.js";
 import { androidInputSchemas } from "../domain/android/androidAnalysis.js";
-import { cliIntegerArgument } from "./options.js";
+import { cliDecimalField } from "./options.js";
 
 /** Expose the same explicit APK requests through one-shot CLI commands. */
 export const registerAndroidCommands = (
@@ -105,21 +105,14 @@ export const registerAndroidCommands = (
               androidJniDeliverySchema,
             );
             if (!delivery.ok) return projectAnalysisError(delivery.error);
-            let query: unknown = {};
-            try {
-              if (options.query !== undefined)
-                query = JSON.parse(options.query);
-            } catch (cause: unknown) {
-              return projectAnalysisError(
-                new AnalysisInputError(operation, { cause }, [
-                  {
-                    path: ["query"],
-                    reason: "invalid_format",
-                    message: "query must be a JSON selection object.",
-                  },
-                ]),
-              );
-            }
+            const decoded = parseCliJsonOption(
+              operation,
+              "query",
+              options.query,
+              "query must be a JSON selection object.",
+            );
+            if (!decoded.ok) return projectAnalysisError(decoded.error);
+            const query = decoded.value === undefined ? {} : decoded.value;
             const selected = parseAnalysisInput(
               operation,
               query,
@@ -230,11 +223,11 @@ export const registerAndroidCommands = (
         ),
     }),
     options: z.object({
-      overloadIndex: cliIntegerArgument(0)
-        .optional()
-        .describe(
+      overloadIndex: cliDecimalField(
+        androidInputSchemas.inspect_android_method.shape.overload_index.describe(
           "Explicit zero-based index among same-name methods; required when ambiguous",
         ),
+      ),
       mappingPath,
       ...analysisEvidenceDeliveryOptions,
     }),
@@ -262,11 +255,11 @@ export const registerAndroidCommands = (
     options: z.object({
       methodName:
         androidInputSchemas.trace_android_references.shape.method_name,
-      overloadIndex: cliIntegerArgument(0)
-        .optional()
-        .describe(
+      overloadIndex: cliDecimalField(
+        androidInputSchemas.trace_android_references.shape.overload_index.describe(
           "Index among defined methods or observed external prototypes listed by an ambiguous query",
         ),
+      ),
     }),
     run: ({ args, options }) =>
       execute(

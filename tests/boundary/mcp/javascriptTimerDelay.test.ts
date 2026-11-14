@@ -1,18 +1,16 @@
-import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { expect } from "vitest";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
+import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 cliTest(
   "retains unknown timer delays and unrelated facts through public CLI and MCP",
-  { timeout: 60_000 },
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-timer-delay-");
     const source = [
@@ -66,44 +64,31 @@ cliTest(
       });
     }
 
-    const client = new Client({ name: "timer-delay-boundary", version: "1" });
-    const transport = new StdioClientTransport({
-      command: process.execPath,
-      args: [resolve("scripts/rea.mjs"), "mcp"],
-      cwd: process.cwd(),
-      env: { PATH: process.env.PATH ?? "" },
-      stderr: "pipe",
+    const { client } = await connectLocalToolsMcp();
+    const reply = await client.callTool({
+      name: contract.name,
+      arguments: { input_path: root },
     });
-    transport.stderr?.on("data", () => undefined);
-    try {
-      await client.connect(transport);
-      const reply = await client.callTool({
-        name: contract.name,
-        arguments: { input_path: root },
-      });
-      expect(reply.isError).not.toBe(true);
-      const evidence = contract.outputSchema.parse(reply.structuredContent);
-      expect(evidence.evidence_id).toBe(cliEvidence.evidence_id);
-      const text = reply.content.find((item) => item.type === "text");
-      if (text?.type !== "text") throw new Error("Missing inline Evidence");
-      expect(
-        contract.outputSchema.parse(JSON.parse(text.text)).evidence_id,
-      ).toBe(evidence.evidence_id);
-      const retained = javascriptApplicationAnalysisResultSchema.parse(
-        evidence.normalized_result,
-      ).semantic_graph;
-      expect(retained.nodes.filter(({ kind }) => kind === "timer")).toEqual(
-        timers,
-      );
-      expect(
-        retained.nodes.some(
-          ({ kind, label }) => kind === "function" && label === "greet",
-        ),
-      ).toBe(true);
-      await expect(client.ping()).resolves.toEqual({});
-    } finally {
-      await Promise.all([client.close(), transport.close()]);
-    }
+    expect(reply.isError).not.toBe(true);
+    const evidence = contract.outputSchema.parse(reply.structuredContent);
+    expect(evidence.evidence_id).toBe(cliEvidence.evidence_id);
+    const text = reply.content.find((item) => item.type === "text");
+    if (text?.type !== "text") throw new Error("Missing inline Evidence");
+    expect(contract.outputSchema.parse(JSON.parse(text.text)).evidence_id).toBe(
+      evidence.evidence_id,
+    );
+    const retained = javascriptApplicationAnalysisResultSchema.parse(
+      evidence.normalized_result,
+    ).semantic_graph;
+    expect(retained.nodes.filter(({ kind }) => kind === "timer")).toEqual(
+      timers,
+    );
+    expect(
+      retained.nodes.some(
+        ({ kind, label }) => kind === "function" && label === "greet",
+      ),
+    ).toBe(true);
+    await expect(client.ping()).resolves.toEqual({});
     expect(await readFile(path, "utf8")).toBe(source);
   },
 );

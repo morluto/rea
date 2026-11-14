@@ -73,7 +73,6 @@ processTest(
       ["--input-type=module", "--eval", source],
       {
         env: { ...process.env, REA_BROWSER_EXECUTABLE: "fixture-chrome" },
-        timeoutMs: 15_000,
       },
     );
     expect(result.exitCode, result.stderr).toBe(0);

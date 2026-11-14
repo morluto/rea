@@ -120,7 +120,25 @@ unfamiliar prefix. The unavailable fork reported in
 For a client that supports MCP catalog refresh, set
 `REA_MCP_TOOL_CATALOG_PROFILE=hot-cold` in REA's server environment and restart
 the connection. REA then advertises a small initial catalog and loads other
-named tools through `discover_tools`. Setup preserves this explicit setting.
+named tools through `discover_tools`. Setup can record the explicit choice:
+
+```bash
+rea setup --client codex --tool-catalog-profile hot-cold --dry-run
+rea setup --client codex --tool-catalog-profile hot-cold
+```
+
+The plan shows `REA_MCP_TOOL_CATALOG_PROFILE=hot-cold` before approval. This
+selects server catalog loading; enable and verify the client's catalog refresh
+separately. Setup preserves its existing feature flags and tool approval lists.
+To restore upfront advertisement, use `--tool-catalog-profile full`, then
+reconnect. Omitting the option preserves the saved profile and keeps `full` for
+a new registration. Existing explicit environment selections are also retained.
+
+Setup does not infer refresh from a client name or enable experimental client
+features. The verified Codex trial below covers one version with an explicit
+flag; FastMCP was tested with explicit refresh calls. Neither establishes
+automatic refresh for every installed version or other client. Keep `full`
+until refresh is established for the selected client and configuration.
 See the [discovery contract](../reference/mcp-contracts.md#hotcold-catalog-discovery) for
 pagination, identity and family-scope semantics.
 
@@ -497,7 +515,11 @@ Setup installs its selected skill copy there.
 
 Gemini CLI uses `$GEMINI_CLI_HOME/.gemini/settings.json` when that home override
 is nonempty, including its shared personal skills at
-`$GEMINI_CLI_HOME/.agents/skills`. Setup and doctor check MCP allow/exclude
+`$GEMINI_CLI_HOME/.agents/skills`. Automatic detection uses Gemini CLI's own
+settings, trusted-folder records or `.gemini/tmp` session state; the `.gemini`
+directory alone does not identify it, because Antigravity keeps its
+configuration there too. Select `--client gemini_cli` explicitly before those
+files exist. Setup and doctor check MCP allow/exclude
 policies from system defaults, user settings, trusted workspace settings, and
 system overrides. Workspace trust follows `GEMINI_CLI_TRUST_WORKSPACE`,
 `GEMINI_RESTRICTED_MODE`, the effective `security.folderTrust.enabled` setting,

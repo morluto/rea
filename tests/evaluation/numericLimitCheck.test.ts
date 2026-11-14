@@ -265,6 +265,53 @@ it("keeps mutable and shadowed aliases from proving a setting read", () => {
   );
 });
 
+it("reports each mutable alias once while keeping dynamic reads unresolved", () => {
+  const source = `
+    let key = "REA_SAMPLE_MAX_BYTES";
+    consume(key);
+    consume(key);
+    Number(process.env[key]);
+    let other = "REA_OTHER_MAX_BYTES";
+    consume(other);
+  `;
+  const discovered = discoverNumericLimitUses([
+    { path: "src/aliases.ts", source },
+  ]);
+  expect(
+    discovered.unresolved.filter(
+      (issue) => issue.reason === "mutable setting-key or value alias",
+    ),
+  ).toEqual([
+    expect.objectContaining({ offset: source.indexOf("key =") }),
+    expect.objectContaining({ offset: source.indexOf("other =") }),
+  ]);
+  expect(discovered.unresolved).toContainEqual(
+    expect.objectContaining({
+      reason: "dynamic environment key is not statically known",
+    }),
+  );
+});
+
+it("does not attribute an unrelated same-named local to a numeric limit", () => {
+  const discovered = discoverNumericLimitUses([
+    {
+      path: "src/shadowed-paths.ts",
+      source: `
+        const selectedPath = process.env.REA_SAMPLE_MAX_BYTES;
+        Number(selectedPath);
+        function inspect(path: string) {
+          let selectedPath = path;
+          consume(selectedPath);
+        }
+      `,
+    },
+  ]);
+  expect(discovered.get("REA_SAMPLE_MAX_BYTES")?.sites).toEqual(
+    expect.arrayContaining([expect.objectContaining({ evidence: "direct" })]),
+  );
+  expect(discovered.unresolved).toEqual([]);
+});
+
 it("keeps a destructured environment key, including a rename and a default", () => {
   const name = "REA_NEW_MAX_BYTES";
   const discovered = discoverNumericLimitUses([

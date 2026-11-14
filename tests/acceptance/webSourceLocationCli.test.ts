@@ -72,7 +72,6 @@ const expectCliSourceLocationSummary = async (
   const { bundlePath, evidenceId, sha256 } = expected;
   const missingSink = await cli.run({
     arguments: [...arguments_, "--detail", "summary"],
-    timeoutMs: 45000,
   });
   expect(missingSink.exitCode).toBe(1);
   expect(missingSink.json).toMatchObject({
@@ -87,7 +86,6 @@ const expectCliSourceLocationSummary = async (
       "--evidence_output",
       bundlePath,
     ],
-    timeoutMs: 45000,
   });
   expect(summary.exitCode, summary.stderr).toBe(0);
   expect(summary.stdout.length).toBeLessThan(30000);
@@ -176,6 +174,8 @@ const expectColumnOutOfRange = (
 
 cliTest(
   "accepts numeric UTF-16 coordinates and runs the actual owned source-map codec without a browser",
+  // Allow cold CLI and MCP ownership preparation across the full parity sequence.
+  { tags: ["long-running"] },
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-source-map-cli-");
     const fixture = webSourceLocationFixture(
@@ -215,7 +215,6 @@ cliTest(
         REA_BROWSER_EXECUTABLE: "relative-unconfigured-browser",
         CLANG_MODULE_CACHE_PATH: map,
       },
-      timeoutMs: 45000,
     });
     expect(response.exitCode, response.stdout + response.stderr).toBe(0);
     expect(response.json).toMatchObject({
@@ -313,7 +312,6 @@ cliTest(
         "--json",
       ],
       environment: { REA_LOG_LEVEL: "silent" },
-      timeoutMs: 45000,
     });
     expect(invalid.exitCode).toBe(1);
     expectInvalidSourceLocation(
@@ -324,12 +322,11 @@ cliTest(
       fixture.sourceMap.text,
     );
   },
-  // Allow cold CLI and MCP ownership preparation across the full parity sequence.
-  180_000,
 );
 
 cliTest(
   "applies the shared version constraint to nested indexed maps through CLI and stdio MCP",
+  { tags: ["long-running"] },
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-indexed-map-version-");
     const fixture = webSourceLocationFixture();
@@ -371,7 +368,6 @@ cliTest(
           REA_LOG_LEVEL: "silent",
           REA_BROWSER_EXECUTABLE: "relative-unconfigured-browser",
         },
-        timeoutMs: 45_000,
       });
       const response = await call("trace_web_source_location", {
         manifest_path: manifest,
@@ -438,11 +434,11 @@ cliTest(
       }
     }
   },
-  180_000,
 );
 
 cliTest(
   "traces empty equal-offset sections while rejecting decreasing offsets and represented overlaps",
+  { tags: ["long-running"] },
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-empty-indexed-map-");
     const fixture = webSourceLocationFixture();
@@ -490,7 +486,6 @@ cliTest(
           "--json",
         ],
         environment: { REA_LOG_LEVEL: "silent" },
-        timeoutMs: 45_000,
       });
       const response = await call("trace_web_source_location", {
         manifest_path: manifest,
@@ -538,11 +533,11 @@ cliTest(
       }
     }
   },
-  180_000,
 );
 
 cliTest(
   "resolves empty-sourceRoot sources against the map URL through CLI and stdio MCP",
+  { tags: ["long-running"] },
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-empty-source-root-");
     // webpack 5 and tsc emit `"sourceRoot": ""` for map-relative sources.
@@ -577,7 +572,6 @@ cliTest(
         REA_LOG_LEVEL: "silent",
         REA_BROWSER_EXECUTABLE: "relative-unconfigured-browser",
       },
-      timeoutMs: 45_000,
     });
     expect(result.exitCode, result.stdout + result.stderr).toBe(0);
     expect(result.json).toMatchObject({
@@ -613,7 +607,6 @@ cliTest(
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
     expect(response.structuredContent).toEqual(result.json);
   },
-  180_000,
 );
 
 cliTest(
@@ -649,7 +642,6 @@ cliTest(
     ];
     const refused = await cli.run({
       arguments: [...args, "--source-map-bytes", "128"],
-      timeoutMs: 45000,
     });
     expect(refused.exitCode).toBe(1);
     expect((refused.json as { code?: unknown }).code).toBe("truncated");
@@ -665,7 +657,6 @@ cliTest(
         "--source-map-bytes",
         String(Buffer.byteLength(fixture.sourceMap.text)),
       ],
-      timeoutMs: 45000,
     });
     expect(recovered.exitCode, recovered.stderr).toBe(0);
     expect(recovered.json).toMatchObject({
@@ -690,6 +681,7 @@ cliTest(
 
 cliTest(
   "admits a complete map above 4 MiB by default while honoring a smaller caller budget",
+  { tags: ["long-running"] },
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-map-default-admission-");
     const fixture = webSourceLocationFixture(
@@ -720,7 +712,6 @@ cliTest(
     ];
     const refused = await cli.run({
       arguments: [...arguments_, "--source-map-bytes", "4194304"],
-      timeoutMs: 45000,
     });
     expect(refused.exitCode).toBe(1);
     expect(JSON.stringify(refused.json)).toContain(
@@ -728,7 +719,6 @@ cliTest(
     );
     const completed = await cli.run({
       arguments: arguments_,
-      timeoutMs: 45000,
     });
     expect(completed.exitCode, completed.stderr).toBe(0);
     const evidence = completed.json as {
@@ -840,5 +830,4 @@ cliTest(
       },
     });
   },
-  180_000,
 );

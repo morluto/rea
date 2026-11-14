@@ -10,8 +10,6 @@ import {
   MAX_BUILD_STATE_PATHS,
   SEED_CHECKPOINT,
 } from "../domain/desktop/buildCapture.js";
-import { draftNoteSchema } from "../domain/desktop/appTaskDraftNotes.js";
-import { draftValueSchema } from "../domain/desktop/appTaskDraftValues.js";
 import { WITNESS_STAGES } from "../domain/desktop/buildWitness.js";
 import { MEASURE_BUILD_TASK_CONTRACT } from "./desktopBuildMeasureContract.js";
 import {

@@ -388,3 +388,34 @@ cliTest(
     });
   },
 );
+
+cliTest(
+  "rejects malformed APK signature view JSON before opening the selected path",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-apk-view-json-");
+    const result = await cli.run({
+      arguments: [
+        "inspect-apk-signature",
+        join(root, "missing.apk"),
+        "--view",
+        "{",
+        "--json",
+      ],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "invalid_request",
+      details: {
+        operation: "inspect_apk_signature",
+        issues: [
+          {
+            path: ["view"],
+            reason: "invalid_format",
+            message: "view must be a JSON APK signature selection",
+          },
+        ],
+      },
+    });
+    expect(JSON.stringify(result.json)).not.toContain("ENOENT");
+  },
+);

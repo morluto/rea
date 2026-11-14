@@ -325,6 +325,33 @@ describe("libraryClosure unresolved candidates", () => {
 });
 
 describe("libraryClosure search paths", () => {
+  it("expands ORIGIN literally while leaving unsupported source tokens unresolved", async () => {
+    const closure = await libraryClosure(
+      {
+        path: "/opt/$build-$&/bin/app",
+        dependencies: elf(
+          ["liborigin.so", "libunsupported.so"],
+          ["$ORIGIN/../lib", "$ORIGIN/$LIB", "$ORIGIN_SUFFIX", "relative"],
+        ),
+      },
+      [],
+      host({
+        "/opt/$build-$&/lib/liborigin.so": elf([]),
+        "/opt/$build-$&/bin/$LIB/libunsupported.so": elf([]),
+        "/opt/$build-$&/bin_SUFFIX/libunsupported.so": elf([]),
+      }),
+      10,
+    );
+    expect(closure).toEqual({
+      libraries: [
+        { soname: "liborigin.so", path: "/opt/$build-$&/lib/liborigin.so" },
+      ],
+      missing: ["libunsupported.so"],
+      unreadable: [],
+      truncated: false,
+    });
+  });
+
   it("normalizes $ORIGIN/.. before telling the app's own folder from system libraries", async () => {
     const closure = await libraryClosure(
       {

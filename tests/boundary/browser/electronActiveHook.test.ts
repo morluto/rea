@@ -3774,7 +3774,7 @@ const runNode = async (
     const result = await processes.run(
       process.execPath,
       [...nodeArguments, ...(preloadHook ? ["-r", hook] : []), script],
-      { cwd: root, env: process.env, timeoutMs: 10_000 },
+      { cwd: root, env: process.env },
     );
     return {
       code: result.exitCode,

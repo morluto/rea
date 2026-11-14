@@ -1,5 +1,6 @@
 import * as commandOwner from "../process/OwnedCommand.js";
 import { failedInspectionDescriptor } from "../../tests/fixtures/processInspectionCleanup.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import {
   AnalysisError,
   primaryAnalysisError,
@@ -486,6 +487,7 @@ it("cancels a pending filesystem lookup and owns its eventual rejection", async 
   const pendingStat = new Promise((_resolve, reject) => {
     rejectLookup = reject;
   });
+  void pendingStat.catch(() => undefined);
   const observed = new Promise<void>((resolve) => {
     started = resolve;
   });
@@ -502,14 +504,20 @@ it("cancels a pending filesystem lookup and owns its eventual rejection", async 
     "win32",
     controller.signal,
   );
-  await observed;
-  controller.abort();
-  await expect(pending).rejects.toMatchObject({
-    _tag: "AnalysisCancelledError",
-  });
-  rejectLookup(new Error("filesystem completed after cancellation"));
-  await Promise.resolve();
-  expect(lookup.stat).toHaveBeenCalledTimes(1);
+  try {
+    await awaitAcknowledgement(observed, pending, "apktool filesystem lookup");
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({
+      _tag: "AnalysisCancelledError",
+    });
+    rejectLookup(new Error("filesystem completed after cancellation"));
+    await Promise.resolve();
+    expect(lookup.stat).toHaveBeenCalledTimes(1);
+  } finally {
+    controller.abort();
+    rejectLookup(new Error("fixture cleanup"));
+    await pending.catch(() => undefined);
+  }
 });
 
 it("bounds the entire pending PATH lookup by the selection deadline", async () => {

@@ -28,11 +28,7 @@ import {
 } from "../../../src/domain/managed/managedArtifact.js";
 import { buildManagedPeFixture } from "../../../src/dotnet/ManagedPe.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import {
-  cliTest,
-  runFileCli,
-  type TestCli,
-} from "../../support/cli/cliFixture.js";
+import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 
 const memberFixture = (): Buffer =>
   buildManagedPeFixture({
@@ -86,7 +82,7 @@ const verifyCliSelection = async ({
   parent,
   report,
 }: CliMemberViewContext) => {
-  const selected = await runFileCli(cli, {
+  const selected = await cli.run({
     cwd,
     arguments: [
       "inspect-analysis-view",
@@ -154,7 +150,7 @@ const verifyCliFullPages = async (
     expect(reportedCounts[collection]).toBe(rows.length);
     const paged: unknown[] = [];
     for (let offset: number | null = 0; offset !== null;) {
-      const response = await runFileCli(cli, {
+      const response = await cli.run({
         cwd,
         arguments: [
           "inspect-analysis-view",
@@ -243,6 +239,7 @@ cliTest(
 
 cliTest(
   "retains complete member Evidence for exact CLI pages after process exit and target removal",
+  { tags: ["long-running"] },
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-member-summary-cli-");
     const path = join(root, "fixture.dll");
@@ -359,7 +356,6 @@ cliTest(
     await verifyCliSelection(pageContext);
     expect(await readFile(bundlePath, "utf8")).toBe(originalBytes);
   },
-  180_000,
 );
 
 cliTest(

@@ -15,13 +15,13 @@ for (const source of [
       const commonjs = await processes.run(
         process.execPath,
         ["--check", "--input-type=commonjs"],
-        { input: source, timeoutMs: 5_000 },
+        { input: source },
       );
       expect(commonjs.exitCode).toBe(0);
       const module = await processes.run(
         process.execPath,
         ["--check", "--input-type=module"],
-        { input: source, timeoutMs: 5_000 },
+        { input: source },
       );
       expect(module.exitCode).not.toBe(0);
 

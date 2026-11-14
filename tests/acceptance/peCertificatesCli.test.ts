@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { UNSIGNED_ATTRIBUTES_LIMITATION } from "../../src/native/pe/PeCertificateParser.js";
 import { toolContract } from "../../src/contracts/toolContracts.js";
 import {
   peCertificateFixture,
@@ -11,9 +10,9 @@ import {
   pkcs7SignedDataIndefiniteEnvelopeFixture,
 } from "../../src/native/pe/PeCertificates.fixture.js";
 import { repeatedCertificateSignedData } from "../fixtures/peCertificateAllowance.js";
-import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { cliTest, runFileCli } from "../support/cli/cliFixture.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
+import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { cliTest } from "../support/cli/cliFixture.js";
 
 cliTest.for([false, true])(
   "rejects incomplete certificate alignment and recovers through CLI/MCP (PE32+ = %s)",
@@ -28,7 +27,7 @@ cliTest.for([false, true])(
     const truncated = Buffer.from(valid.subarray(0, valid.length - 1));
     truncated.writeUInt32LE(tableSize - 1, directoryAt + 4);
     await writeFile(path, truncated);
-    const invalid = await runFileCli(cli, {
+    const invalid = await cli.run({
       arguments: ["inspect-pe-certificates", path, "--json"],
     });
     const error = {
@@ -55,7 +54,7 @@ cliTest.for([false, true])(
     // The same session and selected path must recover after the source is
     // repaired, preserving the complete source identity and payload facts.
     await writeFile(path, valid);
-    const recovered = await runFileCli(cli, {
+    const recovered = await cli.run({
       arguments: ["inspect-pe-certificates", path, "--json"],
     });
     expect(recovered.exitCode, recovered.stderr).toBe(0);
@@ -71,6 +70,75 @@ cliTest.for([false, true])(
       );
       expect(report.entries[0]?.length).toBe(length);
     }
+  },
+);
+
+cliTest.for([0x00, 0x01, 0x7f, 0xfe, 0xff, null])(
+  "requires canonical extension critical encoding %s through CLI and MCP",
+  async (critical, { cli }) => {
+    const root = await createTestTempDirectory("rea-pe-cert-critical-");
+    const path = join(root, "signed.exe");
+    // Extension ::= SEQUENCE { extnID, critical BOOLEAN DEFAULT FALSE, extnValue }.
+    // The extension OID and opaque value stay identical in every control.
+    const fields = Buffer.concat([
+      Buffer.from([0x06, 0x03, 0x55, 0x1d, 0x0e]),
+      critical === null ? Buffer.alloc(0) : Buffer.from([0x01, 0x01, critical]),
+      Buffer.from([0x04, 0x03, 0x04, 0x01, 0xaa]),
+    ]);
+    const extension = Buffer.concat([
+      Buffer.from([0x30, fields.length]),
+      fields,
+    ]);
+    const extensions = Buffer.concat([
+      Buffer.from([0x30, extension.length]),
+      extension,
+    ]);
+    const bytes = peCertificateFixture(
+      false,
+      pkcs7SignedDataFixture(undefined, undefined, undefined, undefined, {
+        extensions,
+      }),
+    );
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: ["inspect-pe-certificates", path, "--json"],
+    });
+    const call = await cli.sharedMcpCall!();
+    const response = await call("inspect_pe_certificates", { path });
+    const valid = critical === null || critical === 0xff;
+    expect(result.exitCode, result.stdout).toBe(valid ? 0 : 1);
+    if (valid)
+      expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    else expect(response.isError, JSON.stringify(response)).toBe(true);
+    for (const value of [
+      result.json,
+      valid ? response.structuredContent : parseMcpToolError(response).error,
+    ]) {
+      if (valid) {
+        const report = toolContract(
+          "inspect_pe_certificates",
+        ).outputSchema.parse(value).normalized_result;
+        expect(report.coverage.status).toBe("complete");
+        expect(report.entries[0]?.pkcs7?.certificates[0]?.serial_hex).toBe(
+          "11223344",
+        );
+      } else {
+        expect(value).toMatchObject({
+          code: "invalid_request",
+          details: {
+            operation: "inspect_pe_certificates",
+            issues: [
+              expect.objectContaining({
+                path: ["path"],
+                reason: "invalid_format",
+                message: expect.stringContaining("critical"),
+              }),
+            ],
+          },
+        });
+      }
+    }
+    expect((await readFile(path)).equals(bytes)).toBe(true);
   },
 );
 
@@ -95,7 +163,7 @@ cliTest.for(["extra-field", "empty-rdn"] as const)(
     );
     const bytes = peCertificateFixture(false, payload);
     await writeFile(path, bytes);
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: ["inspect-pe-certificates", path, "--json"],
     });
     expect.soft(result.exitCode, result.stdout).toBe(1);
@@ -129,7 +197,7 @@ cliTest.for(["pubkey", "signature"])(
     expect(at).toBeGreaterThanOrEqual(0);
     payload[at + 2] = 1;
     await writeFile(path, peCertificateFixture(false, payload));
-    const invalid = await runFileCli(cli, {
+    const invalid = await cli.run({
       arguments: ["inspect-pe-certificates", path, "--json"],
     });
     expect(invalid.exitCode).toBe(1);
@@ -150,7 +218,7 @@ cliTest.for(["pubkey", "signature"])(
     const last = at + marker.length - 1;
     payload[last] = payload[last]! & 0xfe;
     await writeFile(path, peCertificateFixture(false, payload));
-    const valid = await runFileCli(cli, {
+    const valid = await cli.run({
       arguments: ["inspect-pe-certificates", path, "--json"],
     });
     expect(valid.exitCode, valid.stderr).toBe(0);
@@ -201,7 +269,7 @@ cliTest("reports unsigned attributes through CLI and MCP", async ({ cli }) => {
     [1, 3, 6, 1, 4, 1, 311, 3, 3, 1],
   ]);
   await writeFile(path, peCertificateFixture(true, payload));
-  const result = await runFileCli(cli, {
+  const result = await cli.run({
     arguments: ["inspect-pe-certificates", path, "--json"],
   });
   expect(result.exitCode, result.stderr).toBe(0);
@@ -216,7 +284,9 @@ cliTest("reports unsigned attributes through CLI and MCP", async ({ cli }) => {
     expect(
       report.entries[0]?.pkcs7?.signers[0]?.unsigned_attribute_oids,
     ).toEqual(["1.3.6.1.4.1.311.3.3.1"]);
-    expect(report.limitations).toContain(UNSIGNED_ATTRIBUTES_LIMITATION);
+    expect(report.limitations).toContain(
+      "Signer unsigned attribute contents are not decoded; nested signatures and timestamp token certificates and times may be omitted.",
+    );
   }
 });
 
@@ -228,7 +298,7 @@ cliTest(
     const payload = pkcs7SignedDataIndefiniteEnvelopeFixture();
     await writeFile(path, peCertificateFixture(false, payload));
 
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: ["inspect-pe-certificates", path, "--json"],
     });
 
@@ -286,7 +356,7 @@ cliTest("reports a truncated PE as invalid input", async ({ cli }) => {
   const root = await createTestTempDirectory("rea-pe-cert-cli-bad-");
   const path = join(root, "broken.exe");
   await writeFile(path, Buffer.from("MZ"));
-  const result = await runFileCli(cli, {
+  const result = await cli.run({
     arguments: ["inspect-pe-certificates", path, "--json"],
   });
   expect(result.exitCode).toBe(1);
@@ -307,7 +377,7 @@ cliTest(
     // Replace an equal-length UTF8String with T.61's acute accent plus 'e'.
     Buffer.from([0x14, 0x02, 0xc2, 0x65]).copy(payload, nameAt);
     await writeFile(path, peCertificateFixture(false, payload));
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: ["inspect-pe-certificates", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
@@ -337,7 +407,7 @@ cliTest(
       payload.subarray(4),
     ]);
     await writeFile(path, peCertificateFixture(false, malformed));
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: ["inspect-pe-certificates", path, "--json"],
     });
     expect(result.exitCode).toBe(1);
@@ -361,7 +431,7 @@ cliTest(
     // Equal-size replacement keeps the DER lengths and all unrelated fields intact.
     Buffer.from([0x1e, 0x04, 0xd8, 0, 0xdc, 0]).copy(payload, nameAt);
     await writeFile(path, peCertificateFixture(false, payload));
-    const invalid = await runFileCli(cli, {
+    const invalid = await cli.run({
       arguments: ["inspect-pe-certificates", path, "--json"],
     });
     expect(invalid.exitCode).toBe(1);
@@ -371,7 +441,7 @@ cliTest(
     });
     Buffer.from([0x1e, 0x04, 0xd7, 0xff, 0xe0, 0]).copy(payload, nameAt);
     await writeFile(path, peCertificateFixture(false, payload));
-    const valid = await runFileCli(cli, {
+    const valid = await cli.run({
       arguments: ["inspect-pe-certificates", path, "--json"],
     });
     expect(valid.exitCode, valid.stderr).toBe(0);
@@ -396,7 +466,7 @@ cliTest(
     // 2025 has no 29 February; the equal-length edit keeps every DER length.
     payload.write("250229000000Z", timeAt, "ascii");
     await writeFile(path, peCertificateFixture(false, payload));
-    const invalid = await runFileCli(cli, {
+    const invalid = await cli.run({
       arguments: ["inspect-pe-certificates", path, "--json"],
     });
     expect(invalid.exitCode).toBe(1);
@@ -406,7 +476,7 @@ cliTest(
     });
     payload.write("240229000000Z", timeAt, "ascii");
     await writeFile(path, peCertificateFixture(false, payload));
-    const valid = await runFileCli(cli, {
+    const valid = await cli.run({
       arguments: ["inspect-pe-certificates", path, "--json"],
     });
     expect(valid.exitCode, valid.stderr).toBe(0);
@@ -510,7 +580,7 @@ cliTest.for([
     expect(at).toBeGreaterThanOrEqual(0);
     payload[at] = tag;
     await writeFile(path, peCertificateFixture(false, payload));
-    const invalid = await runFileCli(cli, {
+    const invalid = await cli.run({
       arguments: ["inspect-pe-certificates", path, "--json"],
     });
     expect(invalid.exitCode).toBe(1);
@@ -521,7 +591,7 @@ cliTest.for([
     // Only restore the string tag: the same bytes are valid UTF8String content.
     payload[at] = 0x0c;
     await writeFile(path, peCertificateFixture(false, payload));
-    const valid = await runFileCli(cli, {
+    const valid = await cli.run({
       arguments: ["inspect-pe-certificates", path, "--json"],
     });
     expect(valid.exitCode, valid.stderr).toBe(0);

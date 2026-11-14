@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import { finished } from "node:stream/promises";
 import type {
   OwnedProviderProcessSpawnOptions,
+  ProcessDiagnosticBudget,
   SpawnedOwnedProviderProcess,
 } from "./ProviderProcess.js";
 import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
@@ -58,11 +59,15 @@ export class OwnedMcpStdioTransport implements Transport {
     readonly options: Omit<OwnedProviderProcessSpawnOptions, "runId" | "stdin">,
     readonly settings: {
       readonly provider: string;
+      /** Operation named by cleanup failures; provider sessions keep close_binary. */
+      readonly operation?: string;
       readonly label: string;
       readonly maxFrameBytes: number;
       readonly maxOperationBytes: number;
       readonly gracefulInputCloseMs?: number;
-      readonly maxDiagnosticBytes?: number;
+      readonly maxDiagnosticBytes?: ProcessDiagnosticBudget;
+      /** Observe the owned child's stderr from acquisition onward, including when it closes early. */
+      readonly onStderr?: (chunk: unknown) => void;
       readonly notifyOnExit?: boolean;
     },
     readonly launcher: OwnedMcpLauncher = spawnOwnedProviderProcess,
@@ -113,6 +118,8 @@ export class OwnedMcpStdioTransport implements Transport {
     spawned.process.stdout.on("data", this.#read);
     spawned.process.stdout.on("error", this.#error);
     spawned.process.stderr?.on("data", this.#countStderr);
+    if (this.settings.onStderr !== undefined)
+      spawned.process.stderr?.on("data", this.settings.onStderr);
     spawned.process.on("error", this.#error);
     spawned.process.once("exit", this.#exit);
     spawned.process.once("close", this.#outputClosed);
@@ -215,6 +222,10 @@ export class OwnedMcpStdioTransport implements Transport {
     input?.destroy();
     await inputClosed;
     input?.off("error", this.#error);
+    // Detach the stderr observer only after bounded cleanup and draining have
+    // settled, so shutdown diagnostics still reach the caller's report.
+    if (this.settings.onStderr !== undefined)
+      process?.stderr?.off("data", this.settings.onStderr);
     this.onclose?.();
     if (stopped?.status === "incomplete") {
       const failure = new ProviderCleanupError(
@@ -224,6 +235,9 @@ export class OwnedMcpStdioTransport implements Transport {
           reason: stopped.reason,
           stderr: this.diagnostics()?.stderr ?? "",
         },
+        this.settings.operation === undefined
+          ? undefined
+          : { operation: this.settings.operation },
       );
       new AnalysisCleanupLeaseGroup(failure, [this.#cleanup]);
       throw failure;
