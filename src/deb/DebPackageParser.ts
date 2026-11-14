@@ -1,0 +1,838 @@
+import { constants, zstdDecompressSync } from "node:zlib";
+
+import { gunzip, isGzip } from "../domain/desktop/gzipDocument.js";
+import { deb822Paragraphs } from "../domain/desktop/aptRepositories.js";
+import {
+  DEB_CONTROL_RELATIONSHIP_NAMES,
+  DEB_MAINTAINER_SCRIPTS,
+  DEB_PACKAGE_LIMIT_MAXIMA,
+  DEB_RELATIONSHIP_FIELDS,
+  debArchiveCompressionFromName,
+  debArMemberRole,
+  parseDebianRelationshipField,
+  parseDebianVersion,
+  type DebArMember,
+  type DebControl,
+  type DebPackage,
+  type DebPackageIssue,
+  type DebTarEntry,
+  type InspectDebPackageInput,
+} from "../domain/deb/debPackage.js";
+import {
+  DebPackageCapacityFailure,
+  DebPackageFormatFailure,
+} from "./DebPackage.errors.js";
+import { decodeXz } from "./xzDecoder.js";
+
+const AR_MAGIC = Buffer.from("!<arch>\n", "ascii");
+const AR_HEADER = 60;
+const TAR_BLOCK = 512;
+const XZ_MAGIC = Buffer.from([0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00]);
+const ZSTD_MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
+const BZ2_MAGIC = Buffer.from("BZh", "ascii");
+const ZSTD_WINDOW_LOG_MAX = 27;
+const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+
+/** Limitation wording owned by the parser; tests assert delivery through these. */
+export const DEB_PACKAGE_LIMITATIONS = {
+  readOnly:
+    "This workflow reads the .deb ar container and its control/data tars without installing the package or running maintainer scripts.",
+  noSignatures: "Package signatures (debsig/dpkg-sig) are not verified.",
+  noScriptText:
+    "Maintainer-script text is not returned; only the interpreter line and byte length are observed.",
+  md5NoHash:
+    "md5sums cross-check compares listed paths to the data inventory and does not hash file contents.",
+} as const;
+
+const BASE_LIMITATIONS = [
+  DEB_PACKAGE_LIMITATIONS.readOnly,
+  DEB_PACKAGE_LIMITATIONS.noSignatures,
+  DEB_PACKAGE_LIMITATIONS.noScriptText,
+  DEB_PACKAGE_LIMITATIONS.md5NoHash,
+] as const;
+
+const throwIfAborted = (signal: AbortSignal | undefined): void => {
+  if (signal?.aborted) {
+    const error = new Error("Debian package inspection was cancelled");
+    error.name = "AbortError";
+    throw error;
+  }
+};
+
+const ascii = (bytes: Uint8Array): string =>
+  Buffer.from(bytes).toString("ascii");
+
+const trimField = (value: string): string => value.replace(/\0.*$/u, "").trim();
+
+const nonempty = (value: string | undefined): string | null => {
+  if (value === undefined) return null;
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? null : trimmed;
+};
+
+const decodeUtf8 = (bytes: Uint8Array): string | null => {
+  try {
+    return UTF8.decode(bytes);
+  } catch {
+    return null;
+  }
+};
+
+const looksLike = (bytes: Uint8Array, magic: Uint8Array): boolean => {
+  if (bytes.length < magic.length) return false;
+  for (let i = 0; i < magic.length; i++)
+    if (bytes[i] !== magic[i]) return false;
+  return true;
+};
+
+const parseDecimal = (text: string): number | null => {
+  const trimmed = trimField(text);
+  if (!/^\d+$/u.test(trimmed)) return null;
+  return Number(trimmed);
+};
+
+const parseOctal = (text: string): number | null => {
+  const trimmed = trimField(text).replace(/ /gu, "");
+  if (trimmed.length === 0) return 0;
+  if (!/^[0-7]+$/u.test(trimmed)) return null;
+  return Number.parseInt(trimmed, 8);
+};
+
+const parseTarNumber = (bytes: Uint8Array): number | null => {
+  const first = bytes[0];
+  if (first !== undefined && (first & 0x80) !== 0) {
+    let value = 0;
+    for (let i = 1; i < bytes.length; i++)
+      value = value * 256 + (bytes[i] ?? 0);
+    return value;
+  }
+  return parseOctal(ascii(bytes));
+};
+
+const tarType = (flag: number): DebTarEntry["type"] => {
+  switch (flag) {
+    case 0:
+    case 48:
+      return "file";
+    case 49:
+      return "hardlink";
+    case 50:
+      return "symlink";
+    case 51:
+      return "character";
+    case 52:
+      return "block";
+    case 53:
+      return "directory";
+    case 54:
+      return "fifo";
+    default:
+      return "unknown";
+  }
+};
+
+const pad512 = (size: number): number =>
+  Math.ceil(size / TAR_BLOCK) * TAR_BLOCK;
+
+const logicalTarPath = (name: string): string =>
+  name
+    .replaceAll("\\", "/")
+    .replace(/^(?:\.\/)+/u, "")
+    .replace(/\/+$/u, "");
+
+const tarChecksum = (header: Uint8Array): number => {
+  let sum = 0;
+  for (let i = 0; i < TAR_BLOCK; i++)
+    sum += i >= 148 && i < 156 ? 0x20 : (header[i] ?? 0);
+  return sum;
+};
+
+const isZeroBlock = (block: Uint8Array): boolean => {
+  for (const byte of block) if (byte !== 0) return false;
+  return true;
+};
+
+type ParsedArMember = DebArMember & { readonly bytes: Uint8Array };
+
+type ArParse = {
+  readonly members: ParsedArMember[];
+  readonly error?: DebPackageFormatFailure | DebPackageCapacityFailure;
+};
+
+const parseArMembers = (bytes: Uint8Array, maxMembers: number): ArParse => {
+  if (
+    bytes.length < AR_MAGIC.length ||
+    !bytes.subarray(0, AR_MAGIC.length).every((byte, i) => byte === AR_MAGIC[i])
+  )
+    throw new DebPackageFormatFailure(
+      "malformed",
+      "File does not begin with Debian ar magic !<arch>\\n.",
+    );
+  const members: ParsedArMember[] = [];
+  let offset = AR_MAGIC.length;
+  let stringTable: string | null = null;
+  while (offset < bytes.length) {
+    if (offset + AR_HEADER > bytes.length) {
+      if (isZeroBlock(bytes.subarray(offset))) break;
+      return {
+        members,
+        error: new DebPackageFormatFailure(
+          "truncated",
+          "ar member header extends past the end of the file.",
+        ),
+      };
+    }
+    const header = bytes.subarray(offset, offset + AR_HEADER);
+    if (header[58] !== 0x60 || header[59] !== 0x0a)
+      return {
+        members,
+        error: new DebPackageFormatFailure(
+          "malformed",
+          "ar member header is missing the `\\n terminator.",
+        ),
+      };
+    const rawName = ascii(header.subarray(0, 16));
+    const size = parseDecimal(ascii(header.subarray(48, 58)));
+    if (size === null)
+      return {
+        members,
+        error: new DebPackageFormatFailure(
+          "malformed",
+          "ar member size is not a decimal integer.",
+        ),
+      };
+    let dataStart = offset + AR_HEADER;
+    let name = trimField(rawName);
+    let dataSize = size;
+    if (name.startsWith("#1/")) {
+      const nameLength = Number(name.slice(3));
+      if (!Number.isInteger(nameLength) || nameLength < 0 || nameLength > size)
+        return {
+          members,
+          error: new DebPackageFormatFailure(
+            "malformed",
+            "BSD ar long name length is invalid.",
+          ),
+        };
+      if (dataStart + nameLength > bytes.length)
+        return {
+          members,
+          error: new DebPackageFormatFailure(
+            "truncated",
+            "BSD ar long name extends past the end of the file.",
+          ),
+        };
+      name = trimField(
+        ascii(bytes.subarray(dataStart, dataStart + nameLength)),
+      );
+      dataStart += nameLength;
+      dataSize = size - nameLength;
+    } else if (name === "//") {
+      if (dataStart + size > bytes.length)
+        return {
+          members,
+          error: new DebPackageFormatFailure(
+            "truncated",
+            "GNU ar string table extends past the end of the file.",
+          ),
+        };
+      stringTable = ascii(bytes.subarray(dataStart, dataStart + size));
+      offset = dataStart + size + (size % 2);
+      continue;
+    } else if (/^\/\d+$/u.test(name)) {
+      const index = Number(name.slice(1));
+      if (stringTable === null)
+        return {
+          members,
+          error: new DebPackageFormatFailure(
+            "malformed",
+            "GNU ar long name refers to a missing string table.",
+          ),
+        };
+      const end = stringTable.indexOf("\n", index);
+      name = trimField(
+        stringTable
+          .slice(index, end === -1 ? undefined : end)
+          .replace(/\/$/u, ""),
+      );
+    } else {
+      name = name.replace(/\/$/u, "");
+    }
+    if (dataStart + dataSize > bytes.length)
+      return {
+        members,
+        error: new DebPackageFormatFailure(
+          "truncated",
+          `ar member ${name} declares ${String(dataSize)} bytes past the end of the file.`,
+        ),
+      };
+    if (members.length >= maxMembers)
+      return {
+        members,
+        error: new DebPackageCapacityFailure(
+          "max_ar_members",
+          maxMembers,
+          `ar member count exceeds the selected max_ar_members budget of ${String(maxMembers)}.`,
+        ),
+      };
+    const payload = bytes.subarray(dataStart, dataStart + dataSize);
+    const role = debArMemberRole(name);
+    members.push({
+      name,
+      role,
+      size: dataSize,
+      offset: dataStart,
+      compression:
+        role === "control" || role === "data"
+          ? debArchiveCompressionFromName(name)
+          : null,
+      bytes: payload,
+    });
+    offset = dataStart + dataSize + (dataSize % 2);
+  }
+  return { members };
+};
+
+type TarParse = {
+  readonly entries: DebTarEntry[];
+  readonly files: ReadonlyMap<string, Uint8Array>;
+  readonly error?: DebPackageFormatFailure | DebPackageCapacityFailure;
+};
+
+const parsePax = (bytes: Uint8Array): Readonly<Record<string, string>> => {
+  const text = decodeUtf8(bytes);
+  if (text === null) return {};
+  const fields: Record<string, string> = {};
+  let index = 0;
+  while (index < text.length) {
+    const space = text.indexOf(" ", index);
+    if (space === -1) break;
+    const length = Number(text.slice(index, space));
+    if (!Number.isInteger(length) || length <= 0) break;
+    const record = text.slice(index, index + length);
+    const eq = record.indexOf("=", space - index);
+    if (eq !== -1) {
+      const key = record.slice(space - index + 1, eq);
+      const value = record.slice(eq + 1).replace(/\n$/u, "");
+      fields[key] = value;
+    }
+    index += length;
+  }
+  return fields;
+};
+
+const parseTar = (
+  bytes: Uint8Array,
+  maxEntries: number,
+  memberName: string,
+): TarParse => {
+  const entries: DebTarEntry[] = [];
+  const files = new Map<string, Uint8Array>();
+  let offset = 0;
+  let longname: string | null = null;
+  let longlink: string | null = null;
+  let pax: Readonly<Record<string, string>> = {};
+  while (offset + TAR_BLOCK <= bytes.length) {
+    const header = bytes.subarray(offset, offset + TAR_BLOCK);
+    if (isZeroBlock(header)) break;
+    const stored = parseOctal(ascii(header.subarray(148, 156)));
+    const computed = tarChecksum(header);
+    if (stored === null || stored !== computed)
+      return {
+        entries,
+        files,
+        error: new DebPackageFormatFailure(
+          "malformed",
+          `tar header checksum failed in ${memberName} at offset ${String(offset)}.`,
+        ),
+      };
+    const size = parseTarNumber(header.subarray(124, 136));
+    if (size === null)
+      return {
+        entries,
+        files,
+        error: new DebPackageFormatFailure(
+          "malformed",
+          `tar size field is unreadable in ${memberName} at offset ${String(offset)}.`,
+        ),
+      };
+    const dataStart = offset + TAR_BLOCK;
+    if (dataStart + size > bytes.length)
+      return {
+        entries,
+        files,
+        error: new DebPackageFormatFailure(
+          "truncated",
+          `tar member in ${memberName} extends past the end of the archive.`,
+        ),
+      };
+    const payload = bytes.subarray(dataStart, dataStart + size);
+    const typeFlag = header[156] ?? 0;
+    const prefix = trimField(ascii(header.subarray(345, 500)));
+    const rawName = trimField(ascii(header.subarray(0, 100)));
+    const headerName = prefix.length > 0 ? `${prefix}/${rawName}` : rawName;
+    if (typeFlag === 76) {
+      longname = decodeUtf8(payload)?.replace(/\0+$/u, "") ?? null;
+      offset = dataStart + pad512(size);
+      continue;
+    }
+    if (typeFlag === 75) {
+      longlink = decodeUtf8(payload)?.replace(/\0+$/u, "") ?? null;
+      offset = dataStart + pad512(size);
+      continue;
+    }
+    if (typeFlag === 120 || typeFlag === 103) {
+      pax = { ...pax, ...parsePax(payload) };
+      offset = dataStart + pad512(size);
+      continue;
+    }
+    if (entries.length >= maxEntries)
+      return {
+        entries,
+        files,
+        error: new DebPackageCapacityFailure(
+          memberName.startsWith("control")
+            ? "max_control_entries"
+            : "max_data_entries",
+          maxEntries,
+          `tar entry count in ${memberName} exceeds the selected budget of ${String(maxEntries)}.`,
+        ),
+      };
+    const path = logicalTarPath(pax.path ?? longname ?? headerName);
+    const link = nonempty(
+      pax.linkpath ?? longlink ?? trimField(ascii(header.subarray(157, 257))),
+    );
+    const mode = parseOctal(ascii(header.subarray(100, 108)));
+    const uid = parseTarNumber(header.subarray(108, 116));
+    const gid = parseTarNumber(header.subarray(116, 124));
+    const user = nonempty(trimField(ascii(header.subarray(265, 297))));
+    const group = nonempty(trimField(ascii(header.subarray(297, 329))));
+    const type = tarType(typeFlag);
+    entries.push({
+      path: path.length === 0 ? "." : path,
+      type,
+      mode: (mode ?? 0).toString(8).padStart(4, "0"),
+      size,
+      uid,
+      gid,
+      user,
+      group,
+      link_target: type === "symlink" || type === "hardlink" ? link : null,
+    });
+    if (type === "file") files.set(path.length === 0 ? "." : path, payload);
+    longname = null;
+    longlink = null;
+    pax = {};
+    offset = dataStart + pad512(size);
+  }
+  return { entries, files };
+};
+
+const detectCompression = (
+  name: string,
+  bytes: Uint8Array,
+): DebArMember["compression"] => {
+  const fromName = debArchiveCompressionFromName(name);
+  if (fromName !== "unknown" && fromName !== "none") return fromName;
+  if (isGzip(bytes)) return "gzip";
+  if (looksLike(bytes, ZSTD_MAGIC)) return "zstd";
+  if (looksLike(bytes, XZ_MAGIC)) return "xz";
+  if (looksLike(bytes, BZ2_MAGIC)) return "bzip2";
+  return fromName === "none" ? "none" : "unknown";
+};
+
+const expandArchive = (
+  member: ParsedArMember,
+  limit: number,
+  signal: AbortSignal | undefined,
+): Uint8Array => {
+  throwIfAborted(signal);
+  const compression = detectCompression(member.name, member.bytes);
+  const resource =
+    member.role === "control" ? "max_control_bytes" : "max_data_bytes";
+  const oversize = (expanded: boolean) =>
+    new DebPackageCapacityFailure(
+      resource,
+      limit,
+      `${member.name} ${expanded ? "expands past" : "exceeds"} the selected ${resource} budget of ${String(limit)}.`,
+    );
+  if (compression === "bzip2" || compression === "lzma")
+    throw new DebPackageFormatFailure(
+      "unsupported",
+      `${member.name} is ${compression}-compressed; this reader has no ${compression} decoder.`,
+    );
+  if (compression === "xz") {
+    const decoded = decodeXz(member.bytes, limit);
+    if (!decoded.ok) {
+      if (decoded.error.kind === "too_large") throw oversize(true);
+      if (decoded.error.kind === "unavailable")
+        throw new DebPackageFormatFailure(
+          "unsupported",
+          `${member.name} is xz-compressed; the xz decoder is unavailable on this platform.`,
+        );
+      throw new DebPackageFormatFailure(
+        decoded.error.kind,
+        decoded.error.kind === "truncated"
+          ? `${member.name} is a truncated xz stream.`
+          : `${member.name} is not a readable xz stream.`,
+        undefined,
+        decoded.error.kind === "malformed"
+          ? { cause: decoded.error.cause }
+          : undefined,
+      );
+    }
+    return decoded.value;
+  }
+  if (compression === "gzip") {
+    const result = gunzip(member.bytes, limit);
+    if (!result.ok)
+      throw result.error === "too_large"
+        ? oversize(true)
+        : new DebPackageFormatFailure(
+            "malformed",
+            `${member.name} is not a readable gzip stream.`,
+          );
+    return result.value;
+  }
+  if (compression === "zstd") {
+    try {
+      return zstdDecompressSync(member.bytes, {
+        maxOutputLength: Math.max(1, limit),
+        params: { [constants.ZSTD_d_windowLogMax]: ZSTD_WINDOW_LOG_MAX },
+      });
+    } catch (cause: unknown) {
+      const code = (cause as { readonly code?: unknown }).code;
+      if (code === "ERR_BUFFER_TOO_LARGE") throw oversize(true);
+      throw new DebPackageFormatFailure(
+        "malformed",
+        `${member.name} is not a readable Zstandard stream.`,
+        undefined,
+        { cause },
+      );
+    }
+  }
+  if (member.bytes.length > limit) throw oversize(false);
+  return member.bytes;
+};
+
+const fileName = (path: string): string => {
+  const trimmed = path.replace(/\/$/u, "");
+  const slash = trimmed.lastIndexOf("/");
+  return slash === -1 ? trimmed : trimmed.slice(slash + 1);
+};
+
+const listedFile = (
+  files: ReadonlyMap<string, Uint8Array>,
+  name: string,
+): { present: boolean; count: number | null; text: string | null } => {
+  for (const [path, bytes] of files) {
+    if (fileName(path) !== name) continue;
+    const text = decodeUtf8(bytes);
+    if (text === null) return { present: true, count: null, text: null };
+    const lines = text.split(/\n/u).filter((line) => line.trim().length > 0);
+    return { present: true, count: lines.length, text };
+  }
+  return { present: false, count: null, text: null };
+};
+
+const interpreterLine = (bytes: Uint8Array): string | null => {
+  if (bytes.length < 2 || bytes[0] !== 0x23 || bytes[1] !== 0x21) return null;
+  const text = decodeUtf8(bytes.subarray(0, Math.min(bytes.length, 256)));
+  if (text === null) return null;
+  const line = text.split(/\r?\n/u)[0] ?? "";
+  const interpreter = line.slice(2).trim();
+  return interpreter.length === 0 ? null : interpreter;
+};
+
+const parseControl = (tar: TarParse, issues: DebPackageIssue[]): DebControl => {
+  const listed = listedFile(tar.files, "control");
+  const fields =
+    listed.text === null ? undefined : deb822Paragraphs(listed.text)[0];
+  const textField = (name: string): string | null =>
+    nonempty(fields?.get(name));
+  const versionText = textField("version");
+  const installedText = textField("installed-size");
+  let installed_size: number | null = null;
+  if (installedText !== null) {
+    const parsed = parseDecimal(installedText);
+    if (parsed === null)
+      issues.push({
+        kind: "malformed",
+        member: "control.tar",
+        field: "Installed-Size",
+        detail: "Installed-Size is not a non-negative integer.",
+        offset: null,
+      });
+    else installed_size = parsed;
+  }
+  const essentialText = textField("essential");
+  let essential: boolean | null = null;
+  if (essentialText !== null) {
+    const lowered = essentialText.toLowerCase();
+    if (lowered === "yes") essential = true;
+    else if (lowered === "no") essential = false;
+    else
+      issues.push({
+        kind: "malformed",
+        member: "control.tar",
+        field: "Essential",
+        detail: "Essential is not yes or no.",
+        offset: null,
+      });
+  }
+  const description = textField("description");
+  const description_summary =
+    description === null ? null : (description.split("\n")[0]?.trim() ?? "");
+  const relationships = Object.fromEntries(
+    DEB_RELATIONSHIP_FIELDS.map((field) => {
+      const raw = fields?.get(
+        DEB_CONTROL_RELATIONSHIP_NAMES[field].toLowerCase(),
+      );
+      if (raw === undefined) return [field, null];
+      return [field, parseDebianRelationshipField(raw)];
+    }),
+  ) as DebControl["relationships"];
+  const conffiles = listedFile(tar.files, "conffiles");
+  const md5sums = listedFile(tar.files, "md5sums");
+  const scripts = DEB_MAINTAINER_SCRIPTS.flatMap((name) => {
+    for (const [path, bytes] of tar.files) {
+      if (fileName(path) !== name) continue;
+      return [
+        {
+          name,
+          interpreter: interpreterLine(bytes),
+          bytes: bytes.length,
+        },
+      ];
+    }
+    return [];
+  });
+  if (listed.present && listed.text === null)
+    issues.push({
+      kind: "malformed",
+      member: "control.tar",
+      field: "control",
+      detail: "control is not valid UTF-8.",
+      offset: null,
+    });
+  return {
+    package: textField("package"),
+    version: versionText === null ? null : parseDebianVersion(versionText),
+    architecture: textField("architecture"),
+    maintainer: textField("maintainer"),
+    installed_size,
+    section: textField("section"),
+    priority: textField("priority"),
+    homepage: textField("homepage"),
+    description_summary:
+      description_summary === "" ? null : description_summary,
+    source: textField("source"),
+    multi_arch: textField("multi-arch"),
+    essential,
+    relationships,
+    conffiles: { present: conffiles.present, count: conffiles.count },
+    md5sums: { present: md5sums.present, count: md5sums.count },
+    maintainer_scripts: scripts,
+  };
+};
+
+const md5Paths = (text: string | null): readonly string[] => {
+  if (text === null) return [];
+  const paths: string[] = [];
+  for (const line of text.split(/\n/u)) {
+    const match = /^[0-9a-f]{32}\s+(.*)$/iu.exec(line.trim());
+    if (match?.[1] !== undefined) paths.push(logicalTarPath(match[1]));
+  }
+  return paths;
+};
+
+const attachPartial = (cause: unknown, partial: DebPackage): never => {
+  if (cause instanceof DebPackageFormatFailure && cause.partial === undefined)
+    throw new DebPackageFormatFailure(cause.kind, cause.message, partial, {
+      cause,
+    });
+  if (cause instanceof DebPackageCapacityFailure && cause.partial === undefined)
+    throw new DebPackageCapacityFailure(
+      cause.resource,
+      cause.maximum,
+      cause.message,
+      partial,
+    );
+  throw cause;
+};
+
+const draftReport = (fields: {
+  readonly artifact: DebPackage["artifact"];
+  readonly members: readonly DebArMember[];
+  readonly extra_member_names: readonly string[];
+  readonly format_version: string | null;
+  readonly control: DebControl | null;
+  readonly data_entries: readonly DebTarEntry[];
+  readonly md5sums_cross_check: DebPackage["md5sums_cross_check"];
+  readonly issues: readonly DebPackageIssue[];
+  readonly control_entries: number;
+  readonly examined_control_bytes: number;
+  readonly examined_data_bytes: number;
+  readonly limitations: readonly string[];
+}): DebPackage => ({
+  artifact: fields.artifact,
+  ar: {
+    magic: "!<arch>\n",
+    format_version: fields.format_version,
+    members: [...fields.members],
+    extra_member_names: [...fields.extra_member_names],
+  },
+  control: fields.control,
+  data_entries: [...fields.data_entries],
+  md5sums_cross_check: fields.md5sums_cross_check,
+  issues: [...fields.issues],
+  coverage: {
+    status: "partial",
+    ar_members: fields.members.length,
+    control_entries: fields.control_entries,
+    data_entries: fields.data_entries.length,
+    examined_control_bytes: fields.examined_control_bytes,
+    examined_data_bytes: fields.examined_data_bytes,
+  },
+  limitations: [...fields.limitations],
+});
+
+/** Decode one Debian .deb into typed Evidence facts. */
+export const parseDebPackage = (
+  bytes: Uint8Array,
+  artifact: DebPackage["artifact"],
+  input: InspectDebPackageInput,
+  signal?: AbortSignal,
+): DebPackage => {
+  throwIfAborted(signal);
+  const parsedAr = parseArMembers(bytes, input.max_ar_members);
+  const arMembers = parsedAr.members;
+  const members: DebArMember[] = arMembers.map(
+    ({ bytes: payload, ...member }) => ({
+      ...member,
+      compression: detectCompression(member.name, payload),
+    }),
+  );
+  const extra_member_names = members
+    .filter((member) => member.role === "unknown")
+    .map((member) => member.name);
+  const debianBinary = arMembers.find(
+    (member) => member.role === "debian-binary",
+  );
+  const format_version =
+    debianBinary === undefined
+      ? null
+      : nonempty(decodeUtf8(debianBinary.bytes)?.replace(/\n$/u, "") ?? "");
+  const issues: DebPackageIssue[] = [];
+  let control: DebControl | null = null;
+  let controlTar: TarParse | null = null;
+  let dataTar: TarParse | null = null;
+  let examined_control_bytes = 0;
+  let examined_data_bytes = 0;
+  const controlMember = arMembers.find((member) => member.role === "control");
+  const dataMember = arMembers.find((member) => member.role === "data");
+  const limitations: string[] = [...BASE_LIMITATIONS];
+  const snapshot = (): DebPackage =>
+    draftReport({
+      artifact,
+      members,
+      extra_member_names,
+      format_version,
+      control,
+      data_entries: dataTar?.entries ?? [],
+      md5sums_cross_check: null,
+      issues,
+      control_entries: controlTar?.entries.length ?? 0,
+      examined_control_bytes,
+      examined_data_bytes,
+      limitations,
+    });
+  if (parsedAr.error !== undefined) attachPartial(parsedAr.error, snapshot());
+  try {
+    if (controlMember !== undefined) {
+      const expanded = expandArchive(
+        controlMember,
+        input.max_control_bytes,
+        signal,
+      );
+      examined_control_bytes = expanded.length;
+      controlTar = parseTar(
+        expanded,
+        input.max_control_entries,
+        controlMember.name,
+      );
+      if (controlTar.entries.length > 0 || controlTar.files.size > 0)
+        control = parseControl(controlTar, issues);
+      if (controlTar.error !== undefined)
+        attachPartial(controlTar.error, snapshot());
+    }
+    if (dataMember !== undefined) {
+      const expanded = expandArchive(dataMember, input.max_data_bytes, signal);
+      examined_data_bytes = expanded.length;
+      dataTar = parseTar(expanded, input.max_data_entries, dataMember.name);
+      if (dataTar.error !== undefined) attachPartial(dataTar.error, snapshot());
+    }
+  } catch (cause: unknown) {
+    attachPartial(cause, snapshot());
+  }
+  let md5sums_cross_check: DebPackage["md5sums_cross_check"] = null;
+  if (control !== null && control.md5sums.present && controlTar !== null) {
+    const listed = md5Paths(listedFile(controlTar.files, "md5sums").text);
+    const inventory = new Set(
+      (dataTar?.entries ?? [])
+        .filter((entry) => entry.type === "file")
+        .map((entry) => logicalTarPath(entry.path)),
+    );
+    let present = 0;
+    let missing_from_inventory = 0;
+    for (const path of listed) {
+      if (inventory.has(path)) present += 1;
+      else missing_from_inventory += 1;
+    }
+    let missing_from_md5sums = 0;
+    const listedSet = new Set(listed);
+    for (const path of inventory)
+      if (!listedSet.has(path)) missing_from_md5sums += 1;
+    md5sums_cross_check = {
+      listed: listed.length,
+      present,
+      missing_from_inventory,
+      missing_from_md5sums,
+    };
+  }
+  if (controlMember === undefined)
+    limitations.push("No control.tar member was present.");
+  if (dataMember === undefined)
+    limitations.push("No data.tar member was present.");
+  if (format_version === null)
+    limitations.push("debian-binary format version is unknown.");
+  const status =
+    issues.length === 0 &&
+    extra_member_names.length === 0 &&
+    controlMember !== undefined &&
+    dataMember !== undefined
+      ? "complete"
+      : "partial";
+  return {
+    artifact,
+    ar: {
+      magic: "!<arch>\n",
+      format_version,
+      members,
+      extra_member_names,
+    },
+    control,
+    data_entries: dataTar?.entries ?? [],
+    md5sums_cross_check,
+    issues,
+    coverage: {
+      status,
+      ar_members: members.length,
+      control_entries: controlTar?.entries.length ?? 0,
+      data_entries: dataTar?.entries.length ?? 0,
+      examined_control_bytes,
+      examined_data_bytes,
+    },
+    limitations,
+  };
+};

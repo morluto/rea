@@ -173,6 +173,7 @@ the exact commit messages and references from the release they describe.
 - [APK signature schemes](apk-signature.md)
 - [Apple IPS crash reports](apple-ips.md)
 - [Static analysis in GitHub Actions](ci-analysis.md)
+- [Debian package inspection](deb-package.md)
 - [Desktop installation directories](desktop-applications.md)
 - [Flattened devicetree inspection](devicetree.md)
 - [Electron fuse state](electron-fuses.md)

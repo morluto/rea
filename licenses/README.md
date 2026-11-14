@@ -13,7 +13,7 @@ upstream texts; they do not change [REA's MIT license](../LICENSE).
 | `nativeaot-parser-MIT.txt`                             | Original Washi notice for derived NativeAOT parser code; source revision is recorded in the parser and the root notices.                                                                                                                                                                  |
 | `dotnet-runtime-MIT.txt`                               | Original .NET Foundation MIT text from the NativeAOT reference revision `a3b2d40328be0be3f8dd43f0e5cc925b8827b044`.                                                                                                                                                                       |
 | `ghidra-12.1.4-{LICENSE,NOTICE,DISCLAIMER}.txt`        | Unchanged top-level documents from `Ghidra_12.1.4_build`. Ghidra is not bundled; these reference copies do not replace its component and GPL support-program notices. The US-government-specific disclaimer applies to Ghidra, not to REA.                                                |
-| `cfworker-MIT.txt`, `xterm-MIT.txt`                    | Original notices missing from their published runtime npm archives, recovered from the releases' upstream Git revisions. They are included in the corresponding runtime entries.                                                                                                          |
+| `cfworker-MIT.txt`, `xterm-MIT.txt`, `napi-rs-MIT.txt` | Original notices missing from their published runtime npm archives, recovered from the releases' upstream Git revisions. They are included in the corresponding runtime entries.                                                                                                          |
 | `Apache-2.0.txt`, `MIT-template.txt`                   | Standard license texts for explicitly documented upstream notice gaps. The MIT placeholders are not an attribution to an inferred author or year.                                                                                                                                         |
 | `frida-17.23.2-COPYING.txt`, `LGPL-2.0.txt`            | Unchanged licensing supplements for the optional Frida dependency: tagged Frida wxWindows notice and GNU Library GPL v2 text. The npm archive and tagged Node binding omit a standalone license/copyright document; these texts do not recover binding or prebuild-component attribution. |
 | `MinGW-w64-runtime.txt`                                | Upstream's combined runtime copyright and license notices, snapshot from v12.0.0, for the statically linked Windows addon. This is a notice snapshot, not a pin of the compiler used in release CI.                                                                                       |
@@ -38,8 +38,9 @@ Temporary archives were removed after collection.
 For releases that omit original documents, the collection uses pinned upstream
 texts, embedded source/README license sections, or the same release's parent
 notice for the `@lydell/node-pty` prebuilt family. `evmole@0.9.3` uses the existing
-preserved upstream license. `clean-git-ref@2.0.1` and `minimisted@2.0.1` provide
-only license and author metadata: their missing original copyright documents
+preserved upstream license. `clean-git-ref@2.0.1`, `minimisted@2.0.1`, and
+`@napi-rs/lzma@1.5.3` (including its same-release prebuilt family) provide
+only license metadata: their missing original copyright documents
 remain explicitly identified in the runtime texts. Do not describe those
 entries as complete recovered attribution.
 

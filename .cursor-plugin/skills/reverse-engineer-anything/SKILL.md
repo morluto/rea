@@ -370,6 +370,14 @@ explicit path or endpoint and do not need it.
   not decompiled, and a decoded header does not prove the matching `.py` is
   present. See the
   [CPython pyc guide](https://github.com/morluto/rea/blob/main/docs/python-pyc.md).
+- Debian `.deb` ar container, control identity/relationships, maintainer-script
+  presence, and data.tar inventory: `inspect_deb_package` with the explicit
+  local file. This built-in target-free inspection requires no `dpkg` and never
+  installs the package or runs maintainer scripts. Preserve debian-binary
+  version, parsed relationship operators, script interpreter lines and byte
+  lengths, and md5sums path presence. gzip, zstd, xz, and uncompressed members
+  are decoded; bzip2 and lzma are unsupported. Signatures are not verified. See the
+  [Debian package guide](https://github.com/morluto/rea/blob/main/docs/deb-package.md).
 - Erlang BEAM IFF container: `inspect_erlang_beam` with the explicit local
   `.beam` file. This built-in target-free inspection requires no Erlang
   installation. Preserve chunk names, atom order, export/import/lambda tables,

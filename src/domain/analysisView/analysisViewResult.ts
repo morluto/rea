@@ -77,6 +77,7 @@ import {
   pythonPycViewItemsSchema,
   pythonPycSummarySchema,
 } from "./pythonPycView.js";
+import { debPackageSummarySchema } from "./debPackageView.js";
 import {
   nativeExportsViewRequestSchema,
   nativeExportsViewItemsSchema,
@@ -363,6 +364,7 @@ const viewResultBase = {
   parent_operation: z.enum([
     "trace_web_source_location",
     "inspect_python_pyc",
+    "inspect_deb_package",
     "inspect_erlang_beam",
     "inspect_devicetree",
     "inspect_byte_entropy",
@@ -568,6 +570,12 @@ export const pythonPycSummaryViewResultSchema = z.strictObject({
   ...summaryViewResultBase,
   parent_operation: z.literal("inspect_python_pyc"),
   summary: pythonPycSummarySchema,
+});
+
+export const debPackageSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("inspect_deb_package"),
+  summary: debPackageSummarySchema,
 });
 
 export const pythonPycCodeObjectsViewResultSchema = z.strictObject({
@@ -1370,6 +1378,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     erlangBeamSummaryViewResultSchema,
     devicetreeSummaryViewResultSchema,
     pythonPycSummaryViewResultSchema,
+    debPackageSummaryViewResultSchema,
     nativeExportsSummaryViewResultSchema,
     byteEntropySummaryViewResultSchema,
     gdbCommandSummaryViewResultSchema,

@@ -1,0 +1,59 @@
+import { afterEach, expect, it } from "vitest";
+
+import {
+  compressXz,
+  decodeXz,
+  replaceXzBindingForTests,
+  xzUncompressedSize,
+} from "./xzDecoder.js";
+
+afterEach(() => {
+  replaceXzBindingForTests(undefined);
+});
+
+it("reads the uncompressed size from a completed xz index", () => {
+  const payload = Buffer.alloc(10752, 1);
+  const compressed = compressXz(payload);
+  expect(xzUncompressedSize(compressed)).toBe(payload.length);
+});
+
+it("decodes a valid xz stream within the selected limit", () => {
+  const payload = Buffer.from("control.tar contents\n");
+  const decoded = decodeXz(compressXz(payload), 4096);
+  expect(decoded.ok).toBe(true);
+  if (!decoded.ok) throw new Error("Expected xz decode");
+  expect(Buffer.from(decoded.value).equals(payload)).toBe(true);
+});
+
+it("refuses a truncated xz stream", () => {
+  const compressed = compressXz(Buffer.from("hello"));
+  const decoded = decodeXz(compressed.subarray(0, 8), 4096);
+  expect(decoded).toEqual({ ok: false, error: { kind: "truncated" } });
+});
+
+it("refuses a corrupt xz stream", () => {
+  const compressed = compressXz(Buffer.from("hello"));
+  compressed.writeUInt8(compressed.readUInt8(20) ^ 0xff, 20);
+  const decoded = decodeXz(compressed, 4096);
+  expect(decoded.ok).toBe(false);
+  if (decoded.ok) throw new Error("Expected corrupt xz");
+  expect(decoded.error.kind).toBe("malformed");
+});
+
+it("refuses xz output past the selected limit before expanding", () => {
+  const payload = Buffer.alloc(4096, 2);
+  const decoded = decodeXz(compressXz(payload), 64);
+  expect(decoded).toEqual({ ok: false, error: { kind: "too_large" } });
+});
+
+it("refuses xz when the native binding cannot load", () => {
+  const compressed = compressXz(Buffer.from("x"));
+  replaceXzBindingForTests({
+    status: "unavailable",
+    cause: new Error("missing addon"),
+  });
+  expect(decodeXz(compressed, 64)).toEqual({
+    ok: false,
+    error: { kind: "unavailable" },
+  });
+});

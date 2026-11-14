@@ -7,6 +7,7 @@ import { cliTest } from "../support/cli/cliFixture.js";
 
 for (const command of [
   "inspect-python-pyc",
+  "inspect-deb-package",
   "inspect-erlang-beam",
   "inspect-rust-binary",
   "inspect-go-binary",

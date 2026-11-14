@@ -170,6 +170,7 @@ const TOOL_EFFECT_AUDIT = {
   inspect_rust_binary: evidence,
   inspect_apk_signature: evidence,
   inspect_python_pyc: evidence,
+  inspect_deb_package: evidence,
   inspect_erlang_beam: evidence,
   inspect_sqlite_database: effects({
     mutatesSession: true,
