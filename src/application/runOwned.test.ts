@@ -161,3 +161,106 @@ describe("runOwned precedence", () => {
     expect(result.error._tag).toBe("ProviderAdapterError");
   });
 });
+
+it("classifies producer cancellation even when cleanup also fails", async () => {
+  const controller = new AbortController();
+  const cancellation = new AnalysisCancelledError("fixture_operation", {
+    cause: reason,
+  });
+  const finalized = await runOwned(async () => err(cancellation), {
+    ...options(controller, async () => {
+      throw new Error("still running");
+    }),
+  });
+  expect(finalized.kind).toBe("cancelled");
+  if (finalized.kind !== "cancelled") throw new Error("expected cancellation");
+  expect(finalized.cleanup.kind).toBe("retained");
+  expect(primaryAnalysisError(finalized.error)).toBe(cancellation);
+});
+
+it("keeps producer cleanup retained when close does not resolve it", async () => {
+  const controller = new AbortController();
+  const failure = new ProviderCleanupError("fixture", ["owned-process"], {
+    reason: "pending",
+  });
+  const finalized = await runOwned(
+    async () => err(failure),
+    options(controller, async () => undefined),
+  );
+  expect(finalized).toMatchObject({
+    kind: "failed",
+    error: failure,
+    cleanup: { kind: "retained", failure },
+  });
+});
+
+it("retains completed work when publication fails", async () => {
+  const finalized = await runOwned(completedWork, {
+    ...options(new AbortController(), async () => undefined),
+    commit: async () => {
+      throw new Error("publication failed");
+    },
+  });
+  const result = finalizedResult(finalized);
+  if (result.ok) throw new Error("expected publication failure");
+  expect(result.error.partialObservation).toBe(value);
+});
+
+it("publishes recovered completion after cleanup resolves", async () => {
+  const controller = new AbortController();
+  const failure = new ProviderCleanupError("fixture", ["owned-process"], {
+    reason: "pending",
+  });
+  const published: AnalysisPartialObservation[] = [];
+  const finalized = await runOwned(async () => err(failure), {
+    ...options(controller, async () => {
+      failure.resolveCleanup();
+    }),
+    recoverCompleted: (_error, observed) =>
+      observed.cleanupResolvedByClose ? { value } : undefined,
+    commit: async (completed) => {
+      published.push(completed);
+    },
+  });
+  expect(published).toEqual([value]);
+  expect(finalized).toEqual({ kind: "completed", value });
+});
+
+it("keeps a recovered value when cancellation arrives during its publication", async () => {
+  const controller = new AbortController();
+  const failure = new ProviderCleanupError("fixture", ["owned-process"], {
+    reason: "pending",
+  });
+  const finalized = await runOwned(async () => err(failure), {
+    ...options(controller, async () => {
+      failure.resolveCleanup();
+    }),
+    recoverCompleted: () => ({ value }),
+    commit: async () => {
+      controller.abort(reason);
+    },
+  });
+  expect(finalized).toEqual({
+    kind: "completed",
+    value,
+    lateCancellation: reason,
+  });
+});
+
+it("retains a recovered value when its publication fails", async () => {
+  const failure = new ProviderCleanupError("fixture", ["owned-process"], {
+    reason: "pending",
+  });
+  const finalized = await runOwned(async () => err(failure), {
+    ...options(new AbortController(), async () => {
+      failure.resolveCleanup();
+    }),
+    recoverCompleted: () => ({ value }),
+    commit: async () => {
+      throw new Error("publication failed");
+    },
+  });
+  const result = finalizedResult(finalized);
+  if (result.ok) throw new Error("expected publication failure");
+  expect(result.error.partialObservation).toBe(value);
+});
