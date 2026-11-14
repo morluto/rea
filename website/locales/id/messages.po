@@ -10279,7 +10279,7 @@ msgctxt "runtime"
 msgid "Code selected. Use your keyboard to copy it."
 msgstr "Kode dipilih. Gunakan keyboard Anda untuk menyalinnya."
 
-#: website/public/assets/main.js:158
+#: website/public/assets/main.js:165
 #, python-brace-format
 msgctxt "runtime"
 msgid "REA on GitHub ({count})"
@@ -10484,7 +10484,6 @@ msgid "Solve them together to find the flag."
 msgstr "Selesaikan bersama untuk menemukan flag."
 
 #: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:2
-#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:20
 msgctxt "figure:dx-ball-sound-pan-investigation.svg"
 msgid "DX-Ball sound-pan investigation"
 msgstr "Investigasi panci suara DX-Ball"
@@ -10503,79 +10502,79 @@ msgstr ""
 " diperiksa dalam 3.205 kasus x86 asli dan replay kompiler 63-byte terpisah."
 
 # Reviewed for technical meaning and concise diagram labels.
-#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:39
+#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:38
 msgctxt "figure:dx-ball-sound-pan-investigation.svg"
 msgid "Stack"
 msgstr "Stack"
 
 # Reviewed for technical meaning and concise diagram labels.
-#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:40
+#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:39
 msgctxt "figure:dx-ball-sound-pan-investigation.svg"
 msgid "input x"
 msgstr "input x"
 
 # Reviewed for technical meaning and concise diagram labels.
-#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:44
+#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:43
 msgctxt "figure:dx-ball-sound-pan-investigation.svg"
 msgid "Integer"
 msgstr "Integer"
 
 # Reviewed for technical meaning and concise diagram labels.
-#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:45
+#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:44
 msgctxt "figure:dx-ball-sound-pan-investigation.svg"
 msgid "return"
 msgstr "kembali"
 
 # Reviewed for technical meaning and concise diagram labels.
-#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:46
+#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:45
 msgctxt "figure:dx-ball-sound-pan-investigation.svg"
 msgid "Reconstructed function"
 msgstr "Fungsi hasil rekonstruksi"
 
 # Reviewed for technical meaning and concise diagram labels.
-#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:47
+#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:46
 msgctxt "figure:dx-ball-sound-pan-investigation.svg"
 msgid "Maintained C"
 msgstr "Kode C terawat"
 
 # Reviewed for technical meaning and concise diagram labels.
-#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:48
+#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:47
 msgctxt "figure:dx-ball-sound-pan-investigation.svg"
 msgid "Brick-hit caller"
 msgstr "Saat benturan"
 
-#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:49
+#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:48
 msgctxt "figure:dx-ball-sound-pan-investigation.svg"
 msgid "20 + 30 × tile_x"
 msgstr "20 + 30 × tile_x"
 
 # Reviewed for technical meaning and concise diagram labels.
-#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:50
+#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:49
 msgctxt "figure:dx-ball-sound-pan-investigation.svg"
 msgid "Original code"
 msgstr "Kode asli"
 
 # Reviewed for technical meaning and concise diagram labels.
-#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:51
-#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:54
+#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:50
+#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:53
 msgctxt "figure:dx-ball-sound-pan-investigation.svg"
 msgid "comparison"
 msgstr "bandingkan"
 
 # Reviewed for technical meaning and concise diagram labels.
-#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:52
+#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:51
 msgctxt "figure:dx-ball-sound-pan-investigation.svg"
 msgid "3,205 cases"
 msgstr "3.205 kasus"
 
 # Reviewed for technical meaning and concise diagram labels.
-#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:53
+#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:52
 msgctxt "figure:dx-ball-sound-pan-investigation.svg"
 msgid "VC4.0 build"
 msgstr "Build VC4.0"
 
 # Reviewed for technical meaning and concise diagram labels.
-#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:55
+#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:54
 msgctxt "figure:dx-ball-sound-pan-investigation.svg"
 msgid "63 matching bytes"
 msgstr "63 byte cocok"

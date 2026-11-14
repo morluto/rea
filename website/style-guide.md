@@ -253,7 +253,11 @@ uses the light palette and hides the switch.
 `assets/theme.js` applies the choice before styles load and owns theme changes.
 The stylesheet scopes the dark palette to `data-theme="dark"` on the root,
 using [Catppuccin Mocha](https://github.com/catppuccin/palette) colors (MIT).
-Any new fixed color needs a dark counterpart in that section. Keep selector
+Derived colors are tokens too: `--prose`, `--line-strong`, `--arrow`,
+`--accent-soft`, `--accent-strong`, `--hover-surface`, `--figure-surface`,
+`--node-surface`, `--button-bg`/`--button-hover` and the `--terminal-*` group.
+Use an existing token before adding a color; any new token needs a dark value
+in the `data-theme="dark"` block rather than a per-component override. Keep selector
 specificity unchanged with `:where()` when scoping component rules.
 Embedded SVGs inherit the page's `color-scheme`; canvas demos listen for
 `website-theme-change` to redraw. Check both themes, including a manual choice
@@ -263,12 +267,17 @@ Use the system sans-serif stack for prose and the shared monospace stack for
 code. Korean editions use Noto Sans KR from Google Fonts, with local Korean
 fonts as fallbacks; code retains the shared monospace fonts for Latin glyphs.
 The homepage content container is at most 1200px wide. Other pages use 1080px,
-with article text limited to 760px. The header has its own 1320px container.
+with article text limited to 760px. The header uses the same content width, so
+the brand lines up with the page headings.
 Keep its primary navigation to Get started, Showcases, Blog and Guides, with
 FAQ and Contributors in the footer. Utility controls have quiet borders and
 clear hover and keyboard focus states. At 1100px and below, navigation moves
 to a separate row and the homepage introduction and setup stack. Reuse the
 existing heading sizes, line heights, section spacing and component classes.
+Set component text with the `--text-2xs` to `--text-4xl` scale; 13px
+(`--text-2xs`) is the smallest size for labels and captions. Use `--radius-sm`,
+`--radius` or `--radius-lg` for corners. Disclosures share one chevron marker,
+and listing entries open their main link from anywhere in the entry.
 
 Whitespace separates ideas. Thin rules identify sections. Headings establish
 hierarchy. The blue accent identifies something useful. Keep these elements
