@@ -20,6 +20,32 @@ export type CdpProtocolMethod = Parameters<CDPSession["send"]>[0];
 /** A command whose reply REA does not read beyond its success. */
 const acknowledgement = z.object({});
 
+const coverageOffset = z.int().min(0);
+
+/** Precise coverage keeps every nested producer range; counts are not flattened. */
+const preciseCoverageReply = z.object({
+  timestamp: z.number().min(0),
+  result: z.array(
+    z.object({
+      scriptId: z.string().min(1),
+      url: z.string(),
+      functions: z.array(
+        z.object({
+          functionName: z.string(),
+          isBlockCoverage: z.boolean(),
+          ranges: z.array(
+            z.object({
+              startOffset: coverageOffset,
+              endOffset: coverageOffset,
+              count: coverageOffset,
+            }),
+          ),
+        }),
+      ),
+    }),
+  ),
+});
+
 /**
  * One result schema per command REA sends. Each schema is the only reader of
  * that command's raw reply; consumers receive its parsed output.
@@ -29,6 +55,7 @@ const CDP_COMMAND_REPLIES = {
   "Debugger.evaluateOnCallFrame": z.object({
     exceptionDetails: z.unknown().optional(),
   }),
+  "Debugger.getScriptSource": z.object({ scriptSource: z.string() }),
   "Debugger.resume": acknowledgement,
   "Debugger.setBreakpointByUrl": z.object({ breakpointId: z.string() }),
   "Network.enable": acknowledgement,
@@ -42,7 +69,9 @@ const CDP_COMMAND_REPLIES = {
   "Page.setLifecycleEventsEnabled": acknowledgement,
   "Page.stopLoading": acknowledgement,
   "Performance.enable": acknowledgement,
+  "Profiler.startPreciseCoverage": z.object({ timestamp: z.number().min(0) }),
   "Profiler.stopPreciseCoverage": acknowledgement,
+  "Profiler.takePreciseCoverage": preciseCoverageReply,
   "Runtime.enable": acknowledgement,
   "Runtime.releaseObjectGroup": acknowledgement,
   "Runtime.runIfWaitingForDebugger": acknowledgement,

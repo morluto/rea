@@ -24,15 +24,12 @@ const UNTYPED_CDP_COMMAND_BASELINE: Readonly<Record<string, number>> = {
   "src/browser/CdpPageCapture.ts": 5,
   "src/browser/CdpPageCaptureWorkers.ts": 1,
   "src/browser/CdpScreenshot.ts": 2,
-  "src/browser/CdpScriptSourceCapture.ts": 1,
   "src/browser/CdpWebMcpDiscovery.ts": 1,
   "src/browser/PlaywrightScenarioBrowser.ts": 13,
   "src/browser/PlaywrightScenarioServiceWorkers.ts": 1,
   "src/browser/PlaywrightScenarioStorage.ts": 1,
   "src/browser/execution/CdpEventListeners.ts": 4,
-  "src/browser/execution/CdpExecutionCapture.ts": 2,
   "src/browser/execution/CdpListenerSelector.ts": 2,
-  "src/browser/execution/CdpRuntimeSources.ts": 1,
 };
 
 const protocolCommands = (): ReadonlySet<string> => {
