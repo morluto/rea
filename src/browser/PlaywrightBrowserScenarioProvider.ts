@@ -37,6 +37,8 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
+  isAborted,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import {
   BrowserObservationError,
@@ -60,9 +62,6 @@ import {
 
 const OPERATION = "capture_browser_scenario" as const;
 import { PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY } from "./providerIdentities.js";
-
-const signalIsAborted = (signal: AbortSignal | undefined): boolean =>
-  signal?.aborted === true;
 
 type SnapshotKind = BrowserScenario["capture"]["after_each_step"][number];
 const SNAPSHOT_KINDS = [
@@ -326,9 +325,7 @@ const runScenario = async (
     if (operationOutcome.ok && options.signal?.aborted)
       operationOutcome = {
         ok: false,
-        cause: new AnalysisCancelledError(OPERATION, {
-          cause: options.signal.reason,
-        }),
+        cause: cancelledBy(OPERATION, options.signal),
       };
     const cleanup = browserCleanupObservation(cleanupOutcome.cause);
     const partialObservation: BrowserScenarioPartialObservation = {
@@ -388,9 +385,8 @@ const runScenario = async (
     }),
     completeness,
   });
-  if (signalIsAborted(options.signal))
-    throw new AnalysisCancelledError(OPERATION, {
-      cause: options.signal?.reason,
+  if (isAborted(options.signal))
+    throw cancelledBy(OPERATION, options.signal, {
       partialObservation: {
         kind: "browser-scenario-observation",
         capture: {

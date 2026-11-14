@@ -7,7 +7,7 @@ import type {
   InspectElectronPageInput,
 } from "../domain/javascript/electronObservation.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { cancelledBy } from "../domain/analysisErrorCore.js";
 import type { CdpConnection, CdpEvent } from "./CdpConnection.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
@@ -868,9 +868,7 @@ const selectedMainFrame = (
 
 const throwIfElectronInspectionCancelled = (signal?: AbortSignal): void => {
   if (signal?.aborted === true)
-    throw new AnalysisCancelledError("inspect_electron_page", {
-      cause: signal.reason,
-    });
+    throw cancelledBy("inspect_electron_page", signal);
 };
 
 const report = async (

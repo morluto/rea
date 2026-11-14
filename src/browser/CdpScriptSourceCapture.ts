@@ -1,4 +1,4 @@
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { cancelledBy } from "../domain/analysisErrorCore.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import type { CdpConnection } from "./CdpConnection.js";
 import type { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
@@ -37,9 +37,7 @@ export const capturePassiveCdpScriptSource = async (input: {
   };
   const throwIfCancelled = () => {
     if (input.signal?.aborted === true)
-      throw new AnalysisCancelledError(input.operation, {
-        cause: input.signal.reason,
-      });
+      throw cancelledBy(input.operation, input.signal);
   };
   throwIfCancelled();
   if (input.sourceBudget.timedOut) return omitForBudget();

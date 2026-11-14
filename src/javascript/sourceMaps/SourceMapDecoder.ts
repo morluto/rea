@@ -8,9 +8,9 @@ import type { WebSourceMapPort } from "../../application/WebSourceLocationPorts.
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { err, type Result } from "../../domain/result.js";
@@ -79,16 +79,12 @@ export class SourceMapDecoder implements WebSourceMapPort {
         options?.signal?.aborted
           ? analysisErrorWithCancellation(
               cleanupFailure,
-              new AnalysisCancelledError(OPERATION, {
-                cause: options.signal.reason,
-              }),
+              cancelledBy(OPERATION, options.signal),
             )
           : cleanupFailure,
       );
     if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-      );
+      return err(cancelledBy(OPERATION, options.signal));
     const request = sourceMapCodecInputSchema.safeParse({
       text: input.text,
       url: input.url,
@@ -125,9 +121,7 @@ export class SourceMapDecoder implements WebSourceMapPort {
       encodedBytes += bytes;
     }
     if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-      );
+      return err(cancelledBy(OPERATION, options.signal));
     const serialized = encoded.join("");
     const retainedCleanup: SourceMapCleanupRetention = {};
     const response = await runSourceMapCommand(

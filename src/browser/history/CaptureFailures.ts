@@ -15,11 +15,12 @@ import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
@@ -95,14 +96,16 @@ export const historicalCaptureFailure = (
         : cleanup;
     }
     if (cause.reason === "cancelled")
-      return new AnalysisCancelledError(OPERATION, {
-        cause:
+      return cancelledBy(
+        OPERATION,
+        carriedReason(
           cause.cancellation === undefined
             ? options?.signal?.aborted === true
               ? options.signal.reason
               : undefined
             : cause.cancellation.reason,
-      });
+        ),
+      );
     if (cause.reason === "timeout") {
       const timeoutMs = selectedWebNetworkCaptureTimeoutMs(
         input.capture_timeout_ms,
@@ -160,9 +163,10 @@ export const historicalCaptureFailure = (
     cause instanceof ArtifactReaderFailure &&
     cause.reason === "cancelled"
   )
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
-    });
+    return cancelledBy(
+      OPERATION,
+      carriedReason(artifactFileCancellationCause(cause)),
+    );
   if (
     phase === "decoder" &&
     origin === "owned-or-classified" &&
@@ -256,9 +260,7 @@ export const historicalCaptureFailure = (
         "code" in cause &&
         cause.code === "ABORT_ERR"))
   )
-    return new AnalysisCancelledError(OPERATION, {
-      cause: options.signal.reason,
-    });
+    return cancelledBy(OPERATION, options.signal);
   return new ProviderAdapterError(input.format, OPERATION, {
     cause,
     diagnostics: {

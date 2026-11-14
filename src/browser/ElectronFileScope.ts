@@ -2,7 +2,7 @@ import type { Stats } from "node:fs";
 import { open, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { cancelledBy, carriedReason } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -64,8 +64,7 @@ export class ElectronFileScope {
     } catch (cause: unknown) {
       if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
         throw cause;
-      if (signal?.aborted === true)
-        throw new AnalysisCancelledError(operation, { cause: signal.reason });
+      if (signal?.aborted === true) throw cancelledBy(operation, signal);
       throw cause;
     }
   }
@@ -122,9 +121,7 @@ export const mapElectronFileAuthorizationFailure = (
     (physicalPrimary instanceof ArtifactReaderFailure &&
       physicalPrimary.reason === "cancelled");
   const primary = hasCancellation
-    ? new AnalysisCancelledError(operation, {
-        cause: cancellationReason,
-      })
+    ? cancelledBy(operation, carriedReason(cancellationReason))
     : physicalPrimary instanceof AnalysisError
       ? physicalPrimary
       : physicalPrimary === undefined

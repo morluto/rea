@@ -13,11 +13,12 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -57,9 +58,7 @@ export const electronFuseFailure = (
           ? electronFuseFailure(outcome.cause, path, operation)
           : cancellation === undefined
             ? undefined
-            : new AnalysisCancelledError(operation, {
-                cause: cancellation.reason,
-              });
+            : cancelledBy(operation, carriedReason(cancellation.reason));
       if (primary !== undefined)
         return analysisErrorWithCleanupFailure(
           primary,
@@ -70,14 +69,13 @@ export const electronFuseFailure = (
     return cleanup;
   }
   if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-    return new AnalysisCancelledError(operation, {
-      cause: artifactFileCancellationCause(cause),
-    });
+    return cancelledBy(
+      operation,
+      carriedReason(artifactFileCancellationCause(cause)),
+    );
   const cancellation = regularFileCancellation(cause);
   if (cancellation !== undefined)
-    return new AnalysisCancelledError(operation, {
-      cause: cancellation.reason,
-    });
+    return cancelledBy(operation, carriedReason(cancellation.reason));
   if (cause instanceof ElectronFusePathFailure)
     return new AnalysisInputError(operation, { cause }, [
       { path: ["path"], reason: cause.reason, message: cause.message },

@@ -8,7 +8,10 @@ import {
   CDP_DISCOVERY_RESPONSE_TIMEOUT_MS,
   selectedCdpCommandTimeoutMs,
 } from "../domain/browserDeadline.js";
-import { AnalysisTimeoutError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisTimeoutError,
+  OwnerCancellation,
+} from "../domain/analysisErrorCore.js";
 import { browserObservationEndpointSchema } from "../domain/browserObservation.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { CdpTargetSessionOwner } from "./CdpTargetSessionOwner.js";
@@ -387,7 +390,7 @@ export class PlaywrightScenarioServiceWorkers {
       POLICY_CLEANUP_CONFIRMATION_TIMEOUT_MS,
     );
     // Abort discovery/handshakes and reads, never an already-sent page mutation.
-    this.#setup.abort();
+    this.#setup.abort(OwnerCancellation.ownerClosed);
     const restoration = (this.#restoration ??= this.restore());
     const clearRestoration = (): void => {
       if (this.#restoration === restoration) this.#restoration = undefined;

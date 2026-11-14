@@ -17,7 +17,11 @@ import {
   type ObserveJavaScriptRuntimeInput,
 } from "../domain/javascript/javascriptRuntimeObservation.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
+} from "../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -313,29 +317,32 @@ export class V8InspectorProvider implements JavaScriptRuntimeObservationPort {
           ),
         ];
         return err(
-          new AnalysisCancelledError("list_javascript_runtime_targets", {
-            cause: cause.cause,
-            diagnostics: {
-              completed_target_inventory: {
-                runtime: discovery.runtime,
-                targets: allowed
-                  .sort((left, right) =>
-                    left.id < right.id ? -1 : left.id > right.id ? 1 : 0,
-                  )
-                  .map(projectTarget),
-                excluded: { ...excluded, unconnectable },
-                targets_examined: targetsExamined,
-                targets_discovered: discovery.targets.length,
-                complete,
-                limitations: complete
-                  ? limitations
-                  : [
-                      ...limitations,
-                      "Cancellation stopped target authorization; unexamined targets are unknown, not excluded.",
-                    ],
+          cancelledBy(
+            "list_javascript_runtime_targets",
+            carriedReason(cause.cause),
+            {
+              diagnostics: {
+                completed_target_inventory: {
+                  runtime: discovery.runtime,
+                  targets: allowed
+                    .sort((left, right) =>
+                      left.id < right.id ? -1 : left.id > right.id ? 1 : 0,
+                    )
+                    .map(projectTarget),
+                  excluded: { ...excluded, unconnectable },
+                  targets_examined: targetsExamined,
+                  targets_discovered: discovery.targets.length,
+                  complete,
+                  limitations: complete
+                    ? limitations
+                    : [
+                        ...limitations,
+                        "Cancellation stopped target authorization; unexamined targets are unknown, not excluded.",
+                      ],
+                },
               },
             },
-          }),
+          ),
         );
       }
       return err(providerError(cause, "list_javascript_runtime_targets"));
@@ -476,12 +483,10 @@ export class V8InspectorProvider implements JavaScriptRuntimeObservationPort {
     // waiting for its bounded transport close. Preserve it as the primary
     // result even when cleanup completed normally.
     if (options.signal?.aborted === true && outcome?.ok === true) {
-      const cancellation = new AnalysisCancelledError(
+      const cancellation = cancelledBy(
         "observe_javascript_runtime",
-        {
-          cause: options.signal.reason,
-          partialObservation: outcome.value,
-        },
+        options.signal,
+        { partialObservation: outcome.value },
       );
       outcome = err(cancellation);
     }
