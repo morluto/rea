@@ -4,6 +4,7 @@ import {
   withVerifierArtifactScope,
 } from "../../../scripts/lib/verifier-artifact-scope.mjs";
 import type { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 it("retains the exact scope for retry and preserves the operation failure", async () => {
   const primary = new Error("analysis failed");
@@ -78,9 +79,18 @@ it("finishes every close hook when cancellation arrives during final cleanup", a
     });
     return "finished";
   });
-  await started;
-  controller.abort();
-  release?.();
+  try {
+    await awaitAcknowledgement(
+      started,
+      operation,
+      "verifier artifact close hook",
+    );
+    controller.abort();
+  } finally {
+    // Release and join the parked cleanup even when the boundary is missed.
+    release?.();
+    await operation.catch(() => undefined);
+  }
   let failure: unknown;
   try {
     await operation;

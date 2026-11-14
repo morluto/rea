@@ -2,6 +2,7 @@ import { access } from "node:fs/promises";
 import { expect, it } from "vitest";
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import { HopperDeadlineCleanup } from "../../../scripts/lib/hopper-deadline-cleanup.mjs";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 it("retains the workspace and exact cleanup owner until failed profile cleanup succeeds", async () => {
@@ -60,10 +61,15 @@ it("attempts both owners and retries them after cancellation during cleanup", as
         : { ok: true },
   });
   const first = owner.close();
-  expect(owner.close()).toBe(first);
-  await started;
-  controller.abort();
-  release?.();
+  try {
+    expect(owner.close()).toBe(first);
+    await awaitAcknowledgement(started, first, "Hopper profile close hook");
+    controller.abort();
+  } finally {
+    // Release and join the parked cleanup even when an assertion fails.
+    release?.();
+    await first.catch(() => undefined);
+  }
   await expect(first).rejects.toMatchObject({
     cleanupOwner: owner,
     errors: [clientFailure, profileFailure],
