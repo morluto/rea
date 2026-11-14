@@ -22,8 +22,14 @@ git submodule update --init third_party/jadx-headless-mcp
 
 Normal REA builds and installed npm packages do not require this submodule or a
 Gradle build. Supply a separately obtained JAR with `REA_JADX_MCP_JAR`; REA never
-downloads engines during an analysis operation. The audited release JAR is
-identified by SHA-256. A caller-supplied build reporting the supported protocol
+downloads engines during an analysis operation. Only a JAR from the pinned
+source above — `github.com/1013503897/jadx-headless-mcp`, release `v0.7.1`,
+SHA-256 `6e5eacf500b64292bfb73c49797c1958f6ee44646e43e868039ae7feb573ff75`,
+as recorded in `src/android/JadxRelease.ts` — matches what REA documents;
+do not search npm for a package named `jadx-headless-mcp`: an unrelated,
+independently maintained project shares the name (and obtains an unverified
+platform binary at runtime), so an identically named install is not this JAR.
+The audited release JAR is identified by SHA-256. A caller-supplied build reporting the supported protocol
 version retains its actual digest and an unknown source revision unless its
 bytes match the audited release.
 
