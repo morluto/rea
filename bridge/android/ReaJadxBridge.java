@@ -988,7 +988,7 @@ class ReaJadxBridge {
   }
 
   /** Keep in sync with JADX_BRIDGE_IDENTITY.version in src/android/JadxRelease.ts. */
-  private static final String BRIDGE_VERSION = "10";
+  private static final String BRIDGE_VERSION = "11";
   /** Shared input guidance for the bridge's exact-selection tools. */
   private static final kotlinx.serialization.json.JsonObject CLASS_NAME_PROPERTY =
       property("string", "Exact class name.");
