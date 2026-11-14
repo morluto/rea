@@ -80,6 +80,7 @@ export const collectJavaScriptSemanticChildProcesses = (
       !forkRejectsStdioArray(candidate, context) &&
       !rejectsStdioLiteral(candidate, context) &&
       !rejectsProcessOptionLiteral(candidate, context) &&
+      !rejectsValidatedOption(candidate, context, state) &&
       !rejectsOptionsShape(candidate, context, state) &&
       !rejectsCallback(candidate, context),
   );
@@ -712,6 +713,142 @@ const rejectsCommand = (
     t.isNewExpression(value) ||
     isUnpricedPrimitiveLiteral(value)
   );
+};
+
+type ChildOptionValue =
+  | { readonly kind: "nullish" }
+  | { readonly kind: "null" }
+  | { readonly kind: "primitive"; readonly value: unknown }
+  | { readonly kind: "bigint" | "object" | "unknown" };
+
+/** Classify an option member only as far as source syntax proves it. */
+const childOptionValue = (
+  node: t.Node,
+  context: ChildSpawnContext,
+  state: JavaScriptSemanticAnalysisState,
+): ChildOptionValue => {
+  const value = unwrapJavaScriptExpression(node).node;
+  const literal = readExactJavaScriptLiteral(value);
+  if (literal.found)
+    return literal.value === null
+      ? { kind: "null" }
+      : { kind: "primitive", value: literal.value };
+  if (context.isNullish(value)) return { kind: "nullish" };
+  if (
+    t.isIdentifier(value) &&
+    (value.name === "NaN" || value.name === "Infinity") &&
+    isUnshadowedGlobal(value, state, value.name)
+  )
+    return { kind: "primitive", value: Number(value.name) };
+  // The shared reader refuses a non-finite numeric literal such as `1e400`.
+  if (t.isNumericLiteral(value))
+    return { kind: "primitive", value: value.value };
+  if (t.isBigIntLiteral(value)) return { kind: "bigint" };
+  if (
+    context.isArray(value) ||
+    t.isObjectExpression(value) ||
+    t.isArrowFunctionExpression(value) ||
+    t.isFunctionExpression(value) ||
+    t.isClassExpression(value) ||
+    t.isRegExpLiteral(value) ||
+    t.isNewExpression(value)
+  )
+    return { kind: "object" };
+  return { kind: "unknown" };
+};
+
+/** A value proven to be something other than what `accepts` admits. */
+const provenOtherThan =
+  (accepts: (value: unknown) => boolean) =>
+  (option: ChildOptionValue): boolean =>
+    option.kind === "bigint" ||
+    option.kind === "object" ||
+    (option.kind === "primitive" && !accepts(option.value));
+
+const ALL_SPAWN_METHODS = ["spawn", "execFile", "exec", "fork"] as const;
+const isBoolean = (value: unknown) => typeof value === "boolean";
+
+/**
+ * Options Node validates while normalizing a spawn, before any child exists.
+ * Measured on Node 24.22.1; each rule applies only to the methods that forward
+ * the member to that validation:
+ *
+ *   timeout: -1 / 1.5 / "1" / true / NaN / Infinity / 0n -> THREW ERR_OUT_OF_RANGE
+ *   timeout: 0 / 1e3 / 2 ** 53 / null / undefined       -> child
+ *   spawn and fork: detached, windowsHide or windowsVerbatimArguments that is
+ *   not a boolean, null or undefined                      -> THREW ERR_INVALID_ARG_TYPE
+ *   spawn and fork: serialization other than "json", "advanced" or undefined,
+ *   including null                                        -> THREW ERR_INVALID_ARG_VALUE
+ *   spawn and execFile: shell that is not a boolean, string, null or
+ *   undefined                                             -> THREW ERR_INVALID_ARG_TYPE
+ *   execFile and exec: maxBuffer -1 / NaN / "1" / 0n      -> THREW ERR_OUT_OF_RANGE
+ *   execFile and exec: maxBuffer 0 / 1.5 / Infinity       -> child
+ *
+ * execFile does not forward the boolean flags or serialization to its spawn,
+ * and exec replaces a non-string shell with the default one.
+ */
+const VALIDATED_CHILD_OPTIONS: readonly {
+  readonly member: string;
+  readonly methods: readonly JavaScriptSemanticChildProcessSpawn["method"][];
+  readonly rejects: (option: ChildOptionValue) => boolean;
+}[] = [
+  {
+    member: "timeout",
+    methods: ALL_SPAWN_METHODS,
+    rejects: provenOtherThan(
+      (value) =>
+        typeof value === "number" && Number.isInteger(value) && value >= 0,
+    ),
+  },
+  ...(["detached", "windowsHide", "windowsVerbatimArguments"] as const).map(
+    (member) => ({
+      member,
+      methods: ["spawn", "fork"] as const,
+      rejects: provenOtherThan(isBoolean),
+    }),
+  ),
+  {
+    member: "serialization",
+    methods: ["spawn", "fork"],
+    rejects: (option) =>
+      option.kind === "null" ||
+      provenOtherThan((value) => value === "json" || value === "advanced")(
+        option,
+      ),
+  },
+  {
+    member: "shell",
+    methods: ["spawn", "execFile"],
+    rejects: provenOtherThan(
+      (value) => isBoolean(value) || typeof value === "string",
+    ),
+  },
+  {
+    member: "maxBuffer",
+    methods: ["execFile", "exec"],
+    rejects: provenOtherThan(
+      (value) => typeof value === "number" && value >= 0,
+    ),
+  },
+];
+
+const rejectsValidatedOption = (
+  candidate: SpawnCandidate,
+  context: ChildSpawnContext,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const { options } = spawnArguments(candidate, context);
+  if (options === undefined) return false;
+  const expression = unwrapJavaScriptExpression(options).node;
+  if (context.isNullish(expression)) return false;
+  return VALIDATED_CHILD_OPTIONS.some(({ member, methods, rejects }) => {
+    if (!methods.includes(candidate.method)) return false;
+    const lookup = staticObjectProperty(expression, member, context.isNullish);
+    return (
+      lookup.status === "explicit" &&
+      rejects(childOptionValue(lookup.value, context, state))
+    );
+  });
 };
 
 /** Select only callback slots whose overload is established by source syntax. */
