@@ -214,7 +214,13 @@ export const parseClientRegistrationPolicy = (
     };
   const parsed = registrationSchema.safeParse(value);
   if (!parsed.success) return err(registrationError(parsed.error));
-  const registration = parsed.data;
+  // ggcode treats an empty `type` as stdio; normalize so an explicit empty
+  // marker stays aligned with a stdio registration. Native transport
+  // selection is admitted separately through the client connection profile.
+  const registration =
+    client.format === "ggcode" && parsed.data.type === ""
+      ? { ...parsed.data, type: "stdio" }
+      : parsed.data;
   return ok(registration);
 };
 
