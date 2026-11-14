@@ -144,7 +144,9 @@ describe("CDP connection response correlation", () => {
   });
 
   it("correlates concurrent command responses over a real WebSocket", async () => {
-    const browser = await startFakeCdpBrowser({ hangOnMethod: "Page.enable" });
+    const browser = await startFakeCdpBrowser({
+      hangOnMethod: "Runtime.evaluate",
+    });
     browsers.push(browser);
     const connection = await CdpConnection.connect(
       browser.browserWebSocketUrl,
@@ -159,8 +161,11 @@ describe("CDP connection response correlation", () => {
       expect(frames.root.facts.frameId).toBe("frame-main");
       browser.emitRawMessage(JSON.stringify({ id: 999 }));
       await expect(connection.send("Runtime.enable")).resolves.toEqual({});
-      const first = connection.send("Page.enable", { selected: "first" });
-      const second = connection.send("Page.enable", { selected: "second" });
+      // Runtime.evaluate has no result schema yet, so raw replies return.
+      const first = connection.send("Runtime.evaluate", { selected: "first" });
+      const second = connection.send("Runtime.evaluate", {
+        selected: "second",
+      });
       const replies = Promise.all([first, second]);
       await waitFor(() => expect(browser.commands).toHaveLength(5));
       const firstCommand = browser.commands[3];
@@ -395,14 +400,16 @@ describe("CDP transport failure precedence", () => {
 
 describe("CDP connection command responses", () => {
   it("rejects invalid UTF-8 replies without aliasing a literal replacement character", async () => {
-    const browser = await startFakeCdpBrowser({ hangOnMethod: "Page.enable" });
+    const browser = await startFakeCdpBrowser({
+      hangOnMethod: "Runtime.evaluate",
+    });
     browsers.push(browser);
     const connection = await CdpConnection.connect(
       browser.browserWebSocketUrl,
       "inspect_web_page",
     );
     try {
-      const control = connection.send("Page.enable");
+      const control = connection.send("Runtime.evaluate");
       await waitFor(() => expect(browser.commands).toHaveLength(1));
       browser.emitRawMessage(
         Buffer.from(
@@ -413,7 +420,7 @@ describe("CDP connection command responses", () => {
         ),
       );
       await expect(control).resolves.toEqual({ value: "�" });
-      const pending = connection.send("Page.enable");
+      const pending = connection.send("Runtime.evaluate");
       const rejected = expect(pending).rejects.toMatchObject({
         reason: "protocol_error",
       });
@@ -541,7 +548,7 @@ describe("CDP connection payload budgets", () => {
         undefined,
         { maxPayloadBytes },
       );
-      await expect(connection.send("Runtime.enable")).resolves.toEqual(
+      await expect(connection.send("Runtime.evaluate")).resolves.toEqual(
         exactResult,
       );
       await connection.close();
