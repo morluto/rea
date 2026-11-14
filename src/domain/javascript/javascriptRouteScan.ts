@@ -898,7 +898,8 @@ export class JavaScriptRouteScan {
 
   /** Read a bundled Metro `require.context` map as Expo Router route files. */
   *#expoRouterContextSteps(map: t.ObjectExpression): Generator<void> {
-    const routes: { key: t.StringLiteral; path: string }[] = [];
+    // Establish applicability without retaining derived paths; only admitted
+    // facts below hold route text, each charged before it is kept.
     let conventions = false;
     for (const property of map.properties) {
       yield;
@@ -912,9 +913,7 @@ export class JavaScriptRouteScan {
       const file = classifyExpoRouterContextKey(property.key.value);
       // Any other key makes this a different file or data map.
       if (file === undefined) return;
-      if (file.kind === "route")
-        routes.push({ key: property.key, path: file.path });
-      else conventions = true;
+      if (file.kind !== "route") conventions = true;
     }
     // A layout or `+` file establishes Expo Router file-route applicability.
     if (!conventions) {
@@ -925,11 +924,17 @@ export class JavaScriptRouteScan {
       );
       return;
     }
-    for (const { key, path } of routes) {
+    for (const property of map.properties) {
       yield;
       if (this.#result.capacity !== null) return;
+      // The first pass admitted only string-keyed, non-computed properties.
+      if (!t.isObjectProperty(property) || !t.isStringLiteral(property.key))
+        continue;
+      const { key } = property;
+      const file = classifyExpoRouterContextKey(key.value);
+      if (file?.kind !== "route") continue;
       this.#emit(
-        path,
+        file.path,
         "expo-router-context-key",
         [{ value: key.value, location: range(key), origin: "literal" }],
         key,

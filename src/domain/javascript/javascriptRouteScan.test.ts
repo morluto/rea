@@ -1633,3 +1633,22 @@ it.each([
   expect(facts.candidates).toEqual([]);
   expect(facts.unresolved).toEqual([]);
 });
+
+it("admits Expo Router context keys one at a time within the fact budget", () => {
+  const keys = Array.from(
+    { length: 80 },
+    (_, index) => `./${"section".repeat(8)}/${String(index)}/edit.tsx`,
+  );
+  const facts = analyze(metroContext(["./_layout.tsx", ...keys]), 20_000);
+  expect(facts.capacity).toMatchObject({
+    kind: "route-work-or-facts",
+    limit_bytes: 20_000,
+  });
+  expect(Buffer.byteLength(JSON.stringify(facts))).toBeLessThanOrEqual(20_000);
+  // Admitted routes are a prefix of the map, in key order.
+  expect(facts.candidates.map(({ segments }) => segments[0]!.value)).toEqual(
+    keys.slice(0, facts.candidates.length),
+  );
+  expect(facts.candidates.length).toBeGreaterThan(0);
+  expect(facts.candidates.length).toBeLessThan(keys.length);
+});

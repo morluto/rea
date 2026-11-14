@@ -163,10 +163,12 @@ including `(a,b)` group arrays, contribute no segment; `[id]` maps to `:id` and
 `[...rest]` to `:rest+`; a trailing `index` names its directory; platform
 extensions select the same route; and `+api` files keep their API path.
 Layouts and other `+` files, such as `+not-found` and `+html`, are not URL
-patterns. These occurrences have low confidence and `inferred` derivation, and
-their classification stays `unknown`: a bundled key does not establish which
-platform, navigator or server serves the file. A file map without a layout or
-`+` file keeps an interpretation unknown instead of becoming routes.
+patterns. These occurrences have low confidence and `inferred` derivation. A
+bundled key does not establish which platform, navigator or server serves the
+file, so it adds no classification of its own; the existing path-name
+heuristic still applies, and `./login.tsx` becomes `/login`, classified
+`system` by `path-name-heuristic`. A file map without a layout or `+` file
+keeps an interpretation unknown instead of becoming routes.
 
 Known capture omissions remain inline in `summary.reported_capture_omissions`
 and queryable as `unknowns` of kind `capture-omission`. Each keeps a stable gap ID,
