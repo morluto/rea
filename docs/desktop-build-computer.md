@@ -354,10 +354,13 @@ MCP server closes every computer the same way, and a helper whose REA server
 exits sees its stdin close and tears down.
 
 A timed-out or cancelled export command is stopped by that command's
-supervisor: SIGINT, then SIGTERM, then SIGKILL, with two seconds between each.
-If the leader exits and a process outside that group still holds its stderr,
-the result keeps the leader's exit status and says the stderr is incomplete.
-That result does not mean the outside process is gone. `close_build_computer`
+supervisor. It sends SIGINT, then SIGTERM, then SIGKILL, with two seconds
+between each, to processes that are still in the command's session. A child
+that stays in that session after the leader exits receives the rest of the
+sequence. A process that has left the session is not signaled. If that
+process still holds the command's stderr, the result keeps the leader's exit
+status and says the stderr is incomplete. That result does not mean the
+outside process is gone. `close_build_computer`
 still tears the computer down in that case. The teardown is what clears the
 retained command. A reader that has not confirmed its own stop still keeps
 the computer up so that reader can be retried.
