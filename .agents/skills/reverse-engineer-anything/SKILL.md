@@ -301,6 +301,13 @@ explicit path or endpoint and do not need it.
   linker declarations, not proof of enforcement. A missing directory is observed
   absence of that declaration. See the
   [PE load configuration guide](https://github.com/morluto/rea/blob/main/docs/pe-load-config.md).
+- PE Rich header: `inspect_pe_rich_header` with the explicit local PE32/PE32+
+  file. This built-in target-free inspection requires no Windows SDK. Preserve
+  the record range, key, each product ID, build and use count, and whether the
+  checksum reproduces the key. Product IDs are not tool or Visual Studio names.
+  A missing record is observed absence, not proof of a non-Microsoft toolchain.
+  See the
+  [PE Rich header guide](https://github.com/morluto/rea/blob/main/docs/guides/native/pe-rich-header.md).
 - ELF, PE, and Mach-O hardening: `inspect_binary_hardening` with the explicit
   local file. This built-in target-free inspection requires no pwntools or other
   host tool. One image per Mach-O slice. Each property is `enabled`, `disabled`,

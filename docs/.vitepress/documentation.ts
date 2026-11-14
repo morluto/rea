@@ -64,6 +64,11 @@ export const documentationSections = [
         route: "/recorded-crashes",
       },
       {
+        text: "PE Rich header",
+        source: "guides/native/pe-rich-header.md",
+        route: "/pe-rich-header",
+      },
+      {
         text: "Windows Shell Link shortcuts",
         source: "guides/native/windows-shortcut.md",
         route: "/windows-shortcut",

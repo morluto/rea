@@ -45,6 +45,7 @@ import {
   PE_IMPORTS_PROVIDER,
   PE_LOAD_CONFIG_PROVIDER,
   PE_RESOURCES_PROVIDER,
+  PE_RICH_HEADER_PROVIDER,
   RELEASE_EXPOSURE_PROVIDER,
   WEB_SCRIPT_EXPORT_PROVIDER,
   WINDOWS_SHORTCUT_PROVIDER,
@@ -466,6 +467,11 @@ export const CAPABILITY_DECLARATIONS = {
   peResources: {
     providers: [
       providerBinding(PE_RESOURCES_PROVIDER, ["inspect_pe_resources"]),
+    ],
+  },
+  peRichHeader: {
+    providers: [
+      providerBinding(PE_RICH_HEADER_PROVIDER, ["inspect_pe_rich_header"]),
     ],
   },
   windowsShortcut: {

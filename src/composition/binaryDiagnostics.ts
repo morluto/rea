@@ -14,6 +14,8 @@ import { PeCertificatesService } from "../application/binaryDiagnostics/PeCertif
 import { PeCertificatesProvider } from "../native/pe/PeCertificatesProvider.js";
 import { PeImportsService } from "../application/binaryDiagnostics/PeImportsService.js";
 import { PeImportsProvider } from "../native/pe/PeImportsProvider.js";
+import { PeRichHeaderService } from "../application/binaryDiagnostics/PeRichHeaderService.js";
+import { PeRichHeaderProvider } from "../native/pe/PeRichHeaderProvider.js";
 import { WindowsShortcutService } from "../application/binaryDiagnostics/WindowsShortcutService.js";
 import { WindowsShortcutProvider } from "../native/windows/WindowsShortcutProvider.js";
 import { ElfNotesService } from "../application/binaryDiagnostics/ElfNotesService.js";
@@ -50,6 +52,10 @@ export const createPeCertificatesService = (): PeCertificatesService =>
 /** Portable PE import-table inspection with no engine or catalog verification. */
 export const createPeImportsService = (): PeImportsService =>
   new PeImportsService(new PeImportsProvider());
+
+/** Portable PE Rich header inspection with no engine or Visual Studio installation. */
+export const createPeRichHeaderService = (): PeRichHeaderService =>
+  new PeRichHeaderService(new PeRichHeaderProvider());
 
 /** Portable Shell Link inspection with no COM, engine or target resolution. */
 export const createWindowsShortcutService = (): WindowsShortcutService =>

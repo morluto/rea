@@ -23,6 +23,7 @@ import {
   createPeResourcesService,
   createPeCertificatesService,
   createPeImportsService,
+  createPeRichHeaderService,
   createWindowsShortcutService,
   createNativeExportsService,
 } from "../composition/binaryDiagnostics.js";
@@ -36,6 +37,7 @@ import { inspectRecordedCrashInputSchema } from "../domain/native/recordedCrash.
 import { inspectPeResourcesInputSchema } from "../domain/native/peResources.js";
 import { inspectPeCertificatesInputSchema } from "../domain/native/peCertificates.js";
 import { inspectPeImportsInputSchema } from "../domain/native/peImports.js";
+import { inspectPeRichHeaderInputSchema } from "../domain/native/peRichHeader.js";
 import { inspectWindowsShortcutInputSchema } from "../domain/native/windowsShortcut.js";
 import { inspectNativeExportsInputSchema } from "../domain/native/nativeExports.js";
 import { inspectElfNotesInputSchema } from "../domain/native/elfNotes.js";
@@ -560,6 +562,46 @@ export const registerBinaryDiagnosticsCommands = (
               pe,
               "rea-pe-imports",
               "inspect_pe_imports",
+              signal,
+            ).then(projectCliAnalysisResult),
+        );
+      }),
+  });
+  cli.command(CLI_COMMANDS.inspectPeRichHeader, {
+    description:
+      "Inspect PE Rich header linker records without executing the image",
+    args: z.object({
+      path: localPathStringSchema.describe("Local PE32/PE32+ image"),
+    }),
+    options: z.object({
+      maxFileBytes: cliDecimalField(
+        inspectPeRichHeaderInputSchema.shape.max_file_bytes,
+      ),
+      maxEntries: cliDecimalField(
+        inspectPeRichHeaderInputSchema.shape.max_entries,
+      ),
+    }),
+    run: ({ args, options }) =>
+      withCommandCancellation(async (signal) => {
+        const pe = createPeRichHeaderService();
+        return await logCliCommand(
+          logger,
+          CLI_COMMANDS.inspectPeRichHeader,
+          async () =>
+            finishCliEvidenceCommand(
+              args.path,
+              () =>
+                pe.inspect(
+                  {
+                    path: absoluteCallerPath(args.path),
+                    max_file_bytes: options.maxFileBytes,
+                    max_entries: options.maxEntries,
+                  },
+                  { signal },
+                ),
+              pe,
+              "rea-pe-rich-header",
+              "inspect_pe_rich_header",
               signal,
             ).then(projectCliAnalysisResult),
         );
