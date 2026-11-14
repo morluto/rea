@@ -39,7 +39,13 @@ const CLAUDE_PACKAGE_FAMILY =
 export interface ClaudeDesktopLocation {
   readonly configPath: string;
   readonly markerPath: string;
+  /** The package storage that decides which file the app reads, when it does. */
   readonly msixPackage?: MsixPackageView;
+  /**
+   * Claude Desktop's package as this process sees it, whichever file the app
+   * reads. A redirected view guards writes to every client's files.
+   */
+  readonly processPackage?: MsixPackageView;
 }
 
 /** Unresolved Claude Desktop identity, reported instead of guessing a file. */
@@ -47,6 +53,7 @@ export interface ClaudeDesktopLocationFailure {
   readonly path: string;
   readonly message: string;
   readonly msixPackage?: MsixPackageView;
+  readonly processPackage?: MsixPackageView;
 }
 
 /** Synchronous probes; each throws for failures other than absence. */
@@ -137,23 +144,20 @@ export const resolveWindowsClaudeDesktopLocation = (
         }
       : undefined;
   const family = families[0];
-  if (migrated.ok && migrated.value) {
-    const privateClaudeDirectory =
-      family === undefined
-        ? undefined
-        : join(packagesDirectory, family, "LocalCache", "Roaming", "Claude");
+  if (family === undefined) {
     if (
-      migrationHandedOff(fileSystem, appDataDirectory, privateClaudeDirectory)
+      migrated.ok &&
+      migrated.value &&
+      migrationHandedOff(fileSystem, appDataDirectory, undefined)
     )
       return ok({
         configPath: migratedConfigPath,
         markerPath: migratedDirectory,
       });
-  }
-  if (family === undefined)
     return migrationFailure === undefined
       ? ok({ configPath: appDataConfigPath, markerPath: appDataDirectory })
       : err(migrationFailure);
+  }
   const container = join(packagesDirectory, family);
   const privateRoaming = join(container, "LocalCache", "Roaming");
   const privateDirectory = join(privateRoaming, "Claude");
@@ -171,21 +175,42 @@ export const resolveWindowsClaudeDesktopLocation = (
       privateCopy.ok && privateCopy.value,
     ),
   });
+  // The migrated file lies outside the package's storage, so the package no
+  // longer decides which file the app reads. This process's view still
+  // matters: a redirected view sends AppData writes into the package.
+  if (
+    migrated.ok &&
+    migrated.value &&
+    migrationHandedOff(fileSystem, appDataDirectory, privateDirectory)
+  )
+    return ok({
+      configPath: migratedConfigPath,
+      markerPath: migratedDirectory,
+      processPackage: packageView(),
+    });
   // The current process view matters even when the active Claude config is unknown.
-  if (migrationFailure !== undefined)
-    return err({ ...migrationFailure, msixPackage: packageView() });
+  if (migrationFailure !== undefined) {
+    const view = packageView();
+    return err({
+      ...migrationFailure,
+      msixPackage: view,
+      processPackage: view,
+    });
+  }
   if (!privateCopy.ok) return privateCopy;
   const appDataCopy = privateCopy.value
     ? ok(false)
     : present(fileSystem, appDataConfigPath);
   if (!appDataCopy.ok) return appDataCopy;
+  const view = packageView();
   return ok({
     configPath:
       privateCopy.value || !appDataCopy.value
         ? privateConfigPath
         : appDataConfigPath,
     markerPath: container,
-    msixPackage: packageView(),
+    msixPackage: view,
+    processPackage: view,
   });
 };
 

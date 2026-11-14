@@ -273,7 +273,9 @@ in the file the installed app reads:
   `claude_desktop_config.json` in that directory when the app's migration
   marker `.user-data-left.claude_pzs8sxrjxfjjc` is in `%APPDATA%\Claude` and,
   if the package is installed, in its private `LocalCache\Roaming\Claude`
-  folder too, or that folder has no configuration of its own. Otherwise they
+  folder too, or that folder has no configuration of its own. A terminal that
+  the package started still has its AppData writes redirected, so setup and
+  uninstall refuse to write any client's AppData files from it. Otherwise they
   report an unresolved location; quit Claude Desktop and verify its active
   configuration before registering manually. See
   [#8968](https://github.com/morluto/rea/issues/8968).

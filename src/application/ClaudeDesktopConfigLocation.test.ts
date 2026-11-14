@@ -101,6 +101,9 @@ describe("Claude Desktop MSIX process view", () => {
           ...(hasLegacyStorage
             ? {
                 msixPackage: expect.objectContaining({ processView: "direct" }),
+                processPackage: expect.objectContaining({
+                  processView: "direct",
+                }),
               }
             : {}),
         },
@@ -567,8 +570,20 @@ describe("Claude Desktop migrated storage the app handed off to", () => {
     value: { configPath: migratedConfig, markerPath: migratedDirectory },
   };
 
+  /** The package no longer picks the file, but this process's view of it is kept. */
+  const selectedWithPackage = (
+    location: ReturnType<typeof resolveWindowsClaudeDesktopLocation>,
+  ): void => {
+    expect(location).toMatchObject(selected);
+    expect(location.ok && location.value.msixPackage).toBeUndefined();
+    expect(location.ok && location.value.processPackage).toMatchObject({
+      packageFamilyName: CLAUDE_DESKTOP_PACKAGE_FAMILY,
+      virtualizedRoots: [env.APPDATA, env.LOCALAPPDATA],
+    });
+  };
+
   it("selects the migrated file when every older folder holds the marker", () => {
-    expect(resolveWith([appDataMarker, privateMarker])).toEqual(selected);
+    selectedWithPackage(resolveWith([appDataMarker, privateMarker]));
   });
 
   it("selects the migrated file without package storage", () => {
@@ -576,7 +591,7 @@ describe("Claude Desktop migrated storage the app handed off to", () => {
   });
 
   it("accepts a package folder that has no configuration of its own", () => {
-    expect(resolveWith([appDataMarker])).toEqual(selected);
+    selectedWithPackage(resolveWith([appDataMarker]));
   });
 
   it.each([
