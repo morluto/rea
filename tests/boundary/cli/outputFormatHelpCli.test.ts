@@ -87,6 +87,13 @@ describe("global --format help", () => {
     expect(result.stdout).toContain(FORMAT_LINE);
   });
 
+  it("keeps the unknown-subcommand error reachable under redirected JSON help output", async () => {
+    const result = await serve(["mcp", "bogus", "--help", "--json"]);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain("COMMAND_NOT_FOUND");
+    expect(result.stdout).toContain("'bogus' is not a command for 'rea mcp'");
+  });
+
   it("shows help when a feature flag name is only an argument value", async () => {
     const result = await serve([
       "inspect-analysis-view",
