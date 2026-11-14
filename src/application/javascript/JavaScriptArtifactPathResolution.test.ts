@@ -2044,6 +2044,18 @@ const packageExportPatternCases = [
     status: "resolved",
   },
   {
+    name: "trailing slash with matching wildcard",
+    exports: { "./*": "./*.cjs" },
+    request: "fixture/window/",
+    status: "unavailable",
+  },
+  {
+    name: "trailing slash with non-matching pattern",
+    exports: { "./other/*": "./*.cjs" },
+    request: "fixture/window/",
+    status: "external",
+  },
+  {
     name: "exact null before pattern",
     exports: { "./*": "./*.cjs", "./window": null },
     request: "fixture/window",

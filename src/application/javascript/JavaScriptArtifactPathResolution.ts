@@ -1862,7 +1862,6 @@ const selectPackageExport = (
       };
     declared = keys;
     if (hasSubpaths) {
-      if (subpath.endsWith("/")) return { status: "unmatched", declared };
       if (!subpath.includes("*") && Object.hasOwn(value, subpath))
         target = Reflect.get(value, subpath);
       else {
