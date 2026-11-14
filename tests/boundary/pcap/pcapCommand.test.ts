@@ -235,3 +235,34 @@ it("returns complete stdout while retaining unresolved process cleanup", async (
   mayClean = true;
   expect((await retained.owner.stop()).status).not.toBe("incomplete");
 });
+
+it.each([
+  ["EPERM", "exists but could not be executed"],
+  ["EACCES", "exists but could not be executed"],
+  ["ENOENT", "was not found"],
+])(
+  "reports a %s launch refusal while reading a capture as an unavailable tool",
+  async (code, wording) => {
+    const failure = await runPcapCommand({
+      operation: "inspect_pcap_capture",
+      command: "/selected/tshark",
+      arguments: ["-r", "/authored-capture.pcap"],
+      inputPath: "/authored-capture.pcap",
+      limits: { timeoutMs: 5000, maxOutputBytes: 1024 },
+      environment: {},
+      signal: undefined,
+      launcher: async () => {
+        throw Object.assign(new Error(`spawn /selected/tshark ${code}`), {
+          code,
+        });
+      },
+      retain: () => {
+        throw new Error("No provider resources were acquired");
+      },
+    }).catch((cause: unknown) => cause);
+    expect(failure).toMatchObject({
+      _tag: "AnalysisCapabilityUnavailableError",
+      message: expect.stringContaining(`${wording} (${code})`),
+    });
+  },
+);

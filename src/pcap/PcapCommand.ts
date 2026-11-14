@@ -35,6 +35,7 @@ import {
   windowsBatchCommand,
   WindowsBatchCommandError,
 } from "../process/WindowsBatchCommand.js";
+import { classifyLaunchFailure } from "../process/launchFailure.js";
 import { pcapToolUnavailable } from "./PcapConfiguration.js";
 
 export type PcapCommandLauncher = NonNullable<
@@ -285,15 +286,19 @@ export const runPcapCommand = async (options: {
           ),
         },
       );
-    if (
-      cause instanceof WindowsBatchCommandError ||
-      (cause instanceof Error &&
-        "code" in cause &&
-        (cause.code === "ENOENT" || cause.code === "EACCES"))
-    )
+    if (cause instanceof WindowsBatchCommandError)
       throw pcapToolUnavailable(
         operation,
         `Cannot run selected tool ${command}: ${cause.message}`,
+        details,
+      );
+    const refusal = classifyLaunchFailure(cause);
+    if (refusal !== undefined)
+      throw pcapToolUnavailable(
+        operation,
+        refusal.kind === "missing"
+          ? `Selected tool ${command} was not found (${refusal.code})`
+          : `Selected tool ${command} exists but could not be executed (${refusal.code})`,
         details,
       );
     const diagnostic =
