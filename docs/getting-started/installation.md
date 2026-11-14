@@ -623,7 +623,10 @@ npm ci
 npm run build:cached
 ```
 
-Then run `npm link` once in the checkout to put its `rea` on your `PATH`, or,
+Windows workflows that need the native controls also need the native addon and
+its manifest — see [Windows source checkouts](../../CONTRIBUTING.md#windows-source-checkouts)
+before those workflows run. Then run `npm link` once in the checkout to put its
+`rea` on your `PATH`, or,
 wherever these docs say `rea …`, run
 `node /absolute/path/to/rea/scripts/rea.mjs …`. Setup run this way registers
 the checkout's `scripts/rea.mjs` with your agents.
