@@ -8,14 +8,9 @@ import { major } from "semver";
 import { parseApktoolVersionOutput } from "../../../dist/apktool/ApktoolConfiguration.js";
 import { toolContract } from "../../../dist/contracts/toolContracts.js";
 import { ArtifactResourceScope } from "../../../dist/artifacts/ArtifactResourceScope.js";
-import { OwnedCommandFailure } from "../../../dist/process/OwnedCommand.js";
-import { DarwinProcessOwnershipInspectionError } from "../../../dist/process/DarwinProcessRunTokenReader.js";
-import { projectAnalysisError } from "../../../dist/domain/analysisErrorProjection.js";
-import {
-  ExperimentCommandCleanupFailure,
-  withCommands,
-} from "../command-scope.mjs";
+import { withCommands } from "../command-scope.mjs";
 import { createIdentityRecorder } from "./identities.mjs";
+import { failureRecord } from "./failure-record.mjs";
 
 const { values } = parseArgs({
   options: {
@@ -46,56 +41,6 @@ const receipt = {
   tools: { aapt2: values.aapt2, apktool: values.apktool },
   signing: "not_performed",
   commands,
-};
-const failureRecord = (
-  cause,
-  { diagnostics = true, seen = new Set() } = {},
-) => {
-  if (!(cause instanceof Error)) return { message: String(cause) };
-  const record = { name: cause.name, message: cause.message };
-  if (seen.has(cause)) return { ...record, already_recorded: true };
-  seen.add(cause);
-  if (cause instanceof OwnedCommandFailure) {
-    // The command owner has already bounded and interpreted these facts. Never
-    // serialize its live cleanup owner or ambient child environment.
-    Object.assign(record, {
-      reason: cause.reason,
-      snapshot:
-        diagnostics || cause.snapshot === null
-          ? cause.snapshot
-          : {
-              exitCode: cause.snapshot.exitCode,
-              signal: cause.snapshot.signal,
-            },
-      collection_failure: cause.collectionFailure,
-      cleanup_failure: cause.cleanupFailure,
-      ...(cause.cleanupResult === undefined
-        ? {}
-        : { cleanup_result: cause.cleanupResult }),
-      resources: cause.resources,
-    });
-  }
-  if (cause instanceof ExperimentCommandCleanupFailure)
-    record.cleanup_result = cause.result;
-  if (cause instanceof DarwinProcessOwnershipInspectionError) {
-    record.compiler_outcome = cause.compilerOutcome;
-    record.captured_output = cause.capturedOutput;
-    if (cause.cleanupFailure !== undefined)
-      record.cleanup_failure = projectAnalysisError(cause.cleanupFailure);
-    if (cause.cancellation !== undefined)
-      record.cancellation = {
-        reason: failureRecord(cause.cancellation.reason, { diagnostics, seen }),
-      };
-  }
-  if ("code" in cause && ["string", "number"].includes(typeof cause.code))
-    record.code = cause.code;
-  if (cause instanceof AggregateError)
-    record.errors = cause.errors.map((error) =>
-      failureRecord(error, { diagnostics, seen }),
-    );
-  if (cause.cause !== undefined)
-    record.cause = failureRecord(cause.cause, { diagnostics, seen });
-  return record;
 };
 const env = {
   ...process.env,

@@ -14,6 +14,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { withCommands } from "../command-scope.mjs";
 import { createIdentityRecorder } from "./identities.mjs";
+import { failureRecord } from "./failure-record.mjs";
+import { DarwinProcessOwnershipInspectionError } from "../../../dist/process/DarwinProcessRunTokenReader.js";
 import { ArtifactResourceScope } from "../../../dist/artifacts/ArtifactResourceScope.js";
 import {
   RegularFileCancelled,
@@ -86,6 +88,48 @@ for (const kind of ["cancelled", "cleanup-completed", "cleanup-failed"])
   });
 
 const script = fileURLToPath(new URL("./verify.mjs", import.meta.url));
+for (const nested of [false, true])
+  test(`retains native compiler diagnostics only in the complete receipt (nested: ${nested})`, () => {
+    const compilerOutcome = {
+      outcome: "timed_out",
+      code: null,
+      signal: "SIGTERM",
+      stderr: "COMPILER_EXPANDED_STDERR",
+      stderrBytes: 24,
+      stderrTruncated: true,
+      outputTruncated: true,
+      killed: true,
+      timeoutMs: 71337,
+    };
+    const capturedOutput = {
+      stdout: "COMPILER_EXPANDED_STDOUT",
+      stderr: "COMPILER_CAPTURED_STDERR",
+      truncated: true,
+    };
+    const native = new DarwinProcessOwnershipInspectionError(
+      "Compiler reached its deadline",
+      { compilerOutcome, capturedOutput },
+    );
+    const failure = nested
+      ? new AggregateError([native], "Preparation failed")
+      : native;
+    const full = failureRecord(failure);
+    const compact = failureRecord(failure, { diagnostics: false });
+    const fullNative = nested ? full.errors[0] : full;
+    const compactNative = nested ? compact.errors[0] : compact;
+    assert.deepEqual(fullNative.compiler_outcome, compilerOutcome);
+    assert.deepEqual(fullNative.captured_output, capturedOutput);
+    const { stderr: _stderr, ...facts } = compilerOutcome;
+    assert.deepEqual(compactNative.compiler_outcome, {
+      ...facts,
+      stderr_omitted: true,
+    });
+    assert.equal("captured_output" in compactNative, false);
+    assert.doesNotMatch(
+      JSON.stringify(compact),
+      /COMPILER_(?:EXPANDED|CAPTURED)/u,
+    );
+  });
 test(
   "retains decoded and linked identities in the actual verifier's failed rebuild receipt",
   {
