@@ -6,9 +6,9 @@ import {
 } from "../../domain/native/nativeValueTrace.js";
 import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import { err, ok } from "../../domain/result.js";
 import type { AnalysisOperationPort } from "../AnalysisProvider.js";
@@ -119,12 +119,7 @@ export const traceNativeValues = async (
     return true;
   };
   while (pending.length > 0) {
-    if (signal?.aborted)
-      return err(
-        new AnalysisCancelledError("trace_native_values", {
-          cause: signal.reason,
-        }),
-      );
+    if (signal?.aborted) return err(cancelledBy("trace_native_values", signal));
     const next = pending.shift();
     if (
       next === undefined ||
@@ -536,11 +531,6 @@ export const traceNativeValues = async (
         "Graph output exceeds 33554432 bytes (32 MiB). This release has no runtime override. Lower max_nodes, max_edges, or the page limit.",
       ),
     );
-  if (signal?.aborted)
-    return err(
-      new AnalysisCancelledError("trace_native_values", {
-        cause: signal.reason,
-      }),
-    );
+  if (signal?.aborted) return err(cancelledBy("trace_native_values", signal));
   return ok(result);
 };

@@ -3,9 +3,9 @@ import type { JavaScriptRuntimeObservationPort } from "./JavaScriptRuntimeObserv
 import { createJavaScriptRuntimeObservationEvidence } from "./JavaScriptRuntimeObservationEvidence.js";
 import type { Evidence } from "../../domain/evidence.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type {
@@ -32,11 +32,7 @@ export const listJavaScriptRuntimeTargets = async (
   const ready = requireProvider(provider, "list_javascript_runtime_targets");
   if (!ready.ok) return ready;
   if (options.signal?.aborted)
-    return err(
-      new AnalysisCancelledError("list_javascript_runtime_targets", {
-        cause: options.signal.reason,
-      }),
-    );
+    return err(cancelledBy("list_javascript_runtime_targets", options.signal));
   const result = await ready.value.listTargets(input, options);
   if (!result.ok) return result;
   const report = javascriptRuntimeTargetListSchema.safeParse(result.value);
@@ -66,11 +62,7 @@ export const observeJavaScriptRuntime = async (
   const ready = requireProvider(provider, "observe_javascript_runtime");
   if (!ready.ok) return ready;
   if (options.signal?.aborted)
-    return err(
-      new AnalysisCancelledError("observe_javascript_runtime", {
-        cause: options.signal.reason,
-      }),
-    );
+    return err(cancelledBy("observe_javascript_runtime", options.signal));
   const result = await ready.value.observe(input, options);
   if (!result.ok) {
     const partial = result.error.partialObservation;

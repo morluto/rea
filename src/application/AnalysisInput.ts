@@ -1,6 +1,6 @@
 import type { z } from "zod";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { cancelledBy } from "../domain/analysisErrorCore.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../domain/result.js";
 
@@ -11,8 +11,7 @@ export const parseAnalysisInput = <T>(
   schema: z.ZodType<T>,
   signal?: AbortSignal,
 ): Result<T, AnalysisError> => {
-  if (signal?.aborted)
-    return err(new AnalysisCancelledError(operation, { cause: signal.reason }));
+  if (signal?.aborted) return err(cancelledBy(operation, signal));
   const input = schema.safeParse(rawInput);
   if (!input.success)
     return err(

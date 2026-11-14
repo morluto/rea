@@ -7,7 +7,7 @@ import {
   type HistoricalSourceGraph,
 } from "../../domain/referenceSourceGraph.js";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { cancelledBy, isAborted } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../../domain/result.js";
@@ -29,13 +29,8 @@ export const resolveSourceToBundleReference = async (
   signal?: AbortSignal,
   resources?: ArtifactResourceScope,
 ): Promise<Result<ResolvedSourceToBundleReference, AnalysisError>> => {
-  const cancelled = () => signal?.aborted === true;
-  if (cancelled())
-    return err(
-      new AnalysisCancelledError("compare_source_to_bundle", {
-        cause: signal?.reason,
-      }),
-    );
+  if (isAborted(signal))
+    return err(cancelledBy("compare_source_to_bundle", signal));
   if (!("kind" in reference)) return ok({ reference });
   const read = await readJsonFileWithSource(
     reference.path,
@@ -45,12 +40,8 @@ export const resolveSourceToBundleReference = async (
   );
   if (!read.ok) return read;
   await setImmediate();
-  if (cancelled())
-    return err(
-      new AnalysisCancelledError("compare_source_to_bundle", {
-        cause: signal?.reason,
-      }),
-    );
+  if (isAborted(signal))
+    return err(cancelledBy("compare_source_to_bundle", signal));
   const headroom = requireAuthenticationHeadroom(read.value.data, {
     operation: "compare_source_to_bundle",
     path: read.value.path,
@@ -61,12 +52,8 @@ export const resolveSourceToBundleReference = async (
   const parsed = historicalSourceGraphSchema.safeParse(read.value.data);
   // Dispatch aborts queued while synchronous validation and commitment hashing ran.
   await setImmediate();
-  if (cancelled())
-    return err(
-      new AnalysisCancelledError("compare_source_to_bundle", {
-        cause: signal?.reason,
-      }),
-    );
+  if (isAborted(signal))
+    return err(cancelledBy("compare_source_to_bundle", signal));
   if (!parsed.success)
     return err(
       analysisInputErrorFromIssues(

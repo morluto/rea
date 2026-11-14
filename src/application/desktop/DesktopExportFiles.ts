@@ -1,4 +1,4 @@
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { cancelledBy } from "../../domain/analysisErrorCore.js";
 import {
   DESKTOP_VIEW_DEFAULTS,
   desktopViewFileLimitMessage,
@@ -91,9 +91,7 @@ const retainedBytes = async (
   signal: AbortSignal | undefined,
 ): Promise<Buffer> => {
   if (signal?.aborted === true)
-    throw new AnalysisCancelledError("export_desktop_application", {
-      cause: signal.reason,
-    });
+    throw cancelledBy("export_desktop_application", signal);
   const bytes = await content.read(copy.digest, signal);
   if (!bytes.ok)
     throw refuse(

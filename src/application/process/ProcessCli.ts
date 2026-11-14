@@ -5,6 +5,8 @@ import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancell
 import {
   AnalysisCancelledError,
   AnalysisInputError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import type { AnalysisErrorProjection } from "../../domain/analysisErrorProjection.js";
@@ -322,14 +324,12 @@ const readJson = async (
   signal: AbortSignal | undefined,
   resources: ArtifactResourceScope,
 ): Promise<unknown> => {
-  if (signal?.aborted)
-    throw new AnalysisCancelledError(operation, { cause: signal.reason });
+  if (signal?.aborted) throw cancelledBy(operation, signal);
   const loaded = await readJsonFile(path, signal, resources, operation);
   if (!loaded.ok && loaded.error instanceof AnalysisCancelledError)
-    throw new AnalysisCancelledError(operation, { cause: loaded.error.cause });
+    throw cancelledBy(operation, carriedReason(loaded.error.cause));
   if (loaded.ok) {
-    if (signal?.aborted)
-      throw new AnalysisCancelledError(operation, { cause: signal.reason });
+    if (signal?.aborted) throw cancelledBy(operation, signal);
     return loaded.value;
   }
   if (loaded.error._tag !== "EvidenceFileError") throw loaded.error;
@@ -399,10 +399,7 @@ const projectProcessCliError = (
         });
   return cliAnalysisError(
     signal?.aborted
-      ? analysisErrorWithCancellation(
-          failure,
-          new AnalysisCancelledError(operation, { cause: signal.reason }),
-        )
+      ? analysisErrorWithCancellation(failure, cancelledBy(operation, signal))
       : failure,
   );
 };
@@ -450,10 +447,11 @@ const withProcessInputResources = async (
       resources.cleanupResources,
     );
     const cancellation = signal?.aborted
-      ? new AnalysisCancelledError(operation, {
-          cause: signal.reason,
-          ...(outcome.ok ? { partialObservation: outcome.value } : {}),
-        })
+      ? cancelledBy(
+          operation,
+          signal,
+          outcome.ok ? { partialObservation: outcome.value } : {},
+        )
       : undefined;
     const primary = outcome.ok
       ? cancellation === undefined

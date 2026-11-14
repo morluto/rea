@@ -1,6 +1,9 @@
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import {
+  cancelledBy,
+  OwnerCancellation,
+} from "../../domain/analysisErrorCore.js";
 import { err, type Result } from "../../domain/result.js";
 import type { ProviderProcessSupervisor } from "../../process/ProviderProcess.js";
 
@@ -27,11 +30,7 @@ export class DesktopBuildOwnedWork {
     work: (stopping: AbortSignal) => Promise<Result<Value, AnalysisError>>,
   ): Promise<Result<Value, AnalysisError>> {
     if (this.#closed)
-      return err(
-        new AnalysisCancelledError(operation, {
-          cause: new Error("REA is closing its build computers"),
-        }),
-      );
+      return err(cancelledBy(operation, OwnerCancellation.ownerClosed));
     const stop = new AbortController();
     const settled = work(AbortSignal.any([signal, stop.signal]));
     const pending = { settled, stop };
@@ -52,8 +51,7 @@ export class DesktopBuildOwnedWork {
   async close(): Promise<Error[]> {
     this.#closed = true;
     const pending = [...this.#pending];
-    for (const work of pending)
-      work.stop.abort(new Error("REA is closing its build computers"));
+    for (const work of pending) work.stop.abort(OwnerCancellation.ownerClosed);
     await Promise.allSettled(pending.map((work) => work.settled));
     const failures: Error[] = [];
     try {

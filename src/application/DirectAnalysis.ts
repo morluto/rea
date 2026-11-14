@@ -82,8 +82,8 @@ import {
 import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
 import { resolveXrefsAddress } from "./XrefsAddressResolution.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { deliverAnalysisEvidence } from "./EvidenceBundleCommands.js";
 import type { BinaryTargetError } from "../domain/configurationErrors.js";
@@ -278,8 +278,7 @@ export const runProviderAnalysis = async (
       if (operationSignal.aborted)
         return err(
           cliError(
-            new AnalysisCancelledError(tool, {
-              cause: operationSignal.reason,
+            cancelledBy(tool, operationSignal, {
               partialObservation: evidence,
             }),
           ),
@@ -701,10 +700,7 @@ const retainFinalCancellation = (
   signal: AbortSignal,
 ): AnalysisError =>
   signal.aborted
-    ? analysisErrorWithCancellation(
-        failure,
-        new AnalysisCancelledError(tool, { cause: signal.reason }),
-      )
+    ? analysisErrorWithCancellation(failure, cancelledBy(tool, signal))
     : failure;
 
 const executeAnalysisTool = async (input: {

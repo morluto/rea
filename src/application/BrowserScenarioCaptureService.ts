@@ -2,9 +2,9 @@ import type { ExecutionOptions } from "./AnalysisProvider.js";
 import type { BrowserScenarioCapturePort } from "./BrowserScenarioCapturePort.js";
 import { createBrowserScenarioEvidence } from "./BrowserScenarioEvidence.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Evidence } from "../domain/evidence.js";
@@ -36,9 +36,7 @@ export const captureBrowserScenario = async (
       ),
     );
   if (options.signal?.aborted)
-    return err(
-      new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-    );
+    return err(cancelledBy(OPERATION, options.signal));
   const captured = await provider.captureScenario(scenario, options);
   if (!captured.ok) {
     keepIncompleteObservation(

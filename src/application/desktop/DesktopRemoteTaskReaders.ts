@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+} from "../../domain/analysisErrorCore.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import type { DesktopTaskReader } from "../../domain/desktop/appTask.js";
 import type { TaskFileView } from "../../domain/desktop/appTaskChecks.js";
@@ -269,9 +272,9 @@ export class DesktopRemoteTaskReaders {
     views: ReadonlyMap<string, TaskFileView>,
     absent: readonly string[],
   ) {
-    return new AnalysisCancelledError("check_build_task", {
-      cause: signal.reason,
-    }).retainDiagnostics(this.#facts(views, absent));
+    return cancelledBy("check_build_task", signal).retainDiagnostics(
+      this.#facts(views, absent),
+    );
   }
 
   #failure(

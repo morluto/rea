@@ -1,7 +1,8 @@
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
 import {
@@ -85,7 +86,7 @@ export const readDownloadInstall = async (
     text = await readRegularFileText(path, {
       signal,
       cancellationFailure: (reason) =>
-        new AnalysisCancelledError(OPERATION, { cause: reason }),
+        cancelledBy(OPERATION, carriedReason(reason)),
       admit: (state) => {
         if (state.size > MAX_DOWNLOAD_INSTALL_BYTES) throw unreadable();
       },

@@ -1,5 +1,5 @@
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { cancelledBy } from "../../domain/analysisErrorCore.js";
 import {
   desktopApplicationCaptureSchema,
   desktopCaptureProgressSchema,
@@ -178,10 +178,7 @@ export const endedCapture = async (
     );
   } catch (cause: unknown) {
     if (cause instanceof AnalysisError) return cause;
-    if (signal.aborted)
-      return new AnalysisCancelledError(step.operation, {
-        cause: signal.reason,
-      });
+    if (signal.aborted) return cancelledBy(step.operation, signal);
     return notAnswered(step.operation, answer, redact);
   }
 };

@@ -14,6 +14,8 @@ import {
   AnalysisCancelledError,
   AnalysisOutputError,
   AnalysisUnsupportedTargetError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { desktopApplicationSchema } from "../../domain/desktopApplication.js";
@@ -98,11 +100,7 @@ export class ReleaseExposureService {
     );
     if (!input.ok) return input;
     if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(RELEASE_EXPOSURE_OPERATION, {
-          cause: options.signal.reason,
-        }),
-      );
+      return err(cancelledBy(RELEASE_EXPOSURE_OPERATION, options.signal));
     const markerHits: CredentialMarkerHit[] = [];
     let omittedMarkerHits = 0;
     const interrupted: { scan?: ReleaseExposureScan } = {};
@@ -417,11 +415,7 @@ export class ReleaseExposureService {
     present: (value: Evidence) => MetadataImageFact,
   ): Promise<Result<MetadataImageFact, AnalysisError>> {
     if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(RELEASE_EXPOSURE_OPERATION, {
-          cause: options.signal.reason,
-        }),
-      );
+      return err(cancelledBy(RELEASE_EXPOSURE_OPERATION, options.signal));
     try {
       const result = await run();
       if (!result.ok) {
@@ -557,8 +551,7 @@ const withAuditPartial = (
   report: Evidence,
 ): AnalysisError => {
   if (error.partialObservation !== undefined && !error.cleanupIncomplete)
-    return new AnalysisCancelledError(RELEASE_EXPOSURE_OPERATION, {
-      cause: error.cause,
+    return cancelledBy(RELEASE_EXPOSURE_OPERATION, carriedReason(error.cause), {
       partialObservation: report,
     });
   error.partialObservation = report;
