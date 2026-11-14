@@ -1,6 +1,6 @@
 import {
-  decodeAsarHeaderText,
   parseAsarHeaderExtents,
+  parseAsarHeaderJson,
 } from "../artifacts/AsarHeader.js";
 import {
   readAsarListing,
@@ -47,12 +47,13 @@ export const looksLikeAsar = (bytes: Buffer): boolean => {
 
 const parseHeader = (bytes: Buffer, jsonBytes: number): unknown => {
   const end = Math.min(JSON_START + jsonBytes, bytes.length);
-  // Reuse the owning reader's strict UTF-8 decoder so this path cannot accept
-  // header bytes the real reader would reject or decode them differently.
-  const text = decodeAsarHeaderText(bytes.subarray(JSON_START, end));
+  // Interpret the header through the owning reader's one parser, so this path
+  // cannot accept bytes the real reader would reject (bad UTF-8, duplicate
+  // members) or decode them differently.
   try {
-    return JSON.parse(text);
+    return parseAsarHeaderJson(bytes.subarray(JSON_START, end));
   } catch (cause: unknown) {
+    if (cause instanceof ArtifactReaderFailure) throw cause;
     throw new ArtifactReaderFailure(
       "format",
       "ASAR JSON header is not valid JSON",
