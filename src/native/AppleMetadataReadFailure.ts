@@ -6,7 +6,7 @@ import { parseFailureFromCause } from "../domain/parseFailure.js";
 export const expectedAppleMetadataReadFailure = (
   cause: unknown,
 ): string | null => {
-  const failure = parseFailureFromCause(cause, "macho");
+  const failure = parseFailureFromCause(cause);
   if (failure !== undefined) return failure.message;
   if (
     cause instanceof TypeError &&

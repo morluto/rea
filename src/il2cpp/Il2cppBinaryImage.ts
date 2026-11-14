@@ -173,7 +173,7 @@ export function* openImageSteps(
           "unsupported-container",
           cause.message,
         );
-      const failure = parseFailureFromCause(cause, "macho");
+      const failure = parseFailureFromCause(cause);
       if (failure !== undefined)
         throw new Il2cppBinaryFormatFailure(
           failure.kind === "unsupported"

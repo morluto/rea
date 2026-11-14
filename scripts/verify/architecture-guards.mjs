@@ -291,8 +291,8 @@ checkCounted(
 );
 
 // A RangeError can mean a stack overflow, a host string or buffer limit, a
-// raw read past the end of a buffer, or whatever its thrower intended. Only
-// hostRangeErrorKind tells them apart; parsers throw a ParseFailureError.
+// raw read or write past a buffer, or whatever its thrower intended. Only
+// known host limits are classified; parsers throw a ParseFailureError.
 checkCounted(
   "direct RangeError interpretation (use hostRangeErrorKind or parseFailureFromCause from src/domain/parseFailure)",
   "range-error-interpretation",

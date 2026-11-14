@@ -297,8 +297,9 @@ ladder; a `limit` stays with its producer, which knows the budget to name.
 Do not use `RangeError` as a failure channel: a stack overflow, a host string
 or buffer limit, and an unchecked read past the end of a buffer are all
 `RangeError`s. `hostRangeErrorKind` is the one interpreter of a host
-`RangeError`, and `parseFailureFromCause` admits only a parse failure or a raw
-out-of-bounds read as evidence about the input.
+`RangeError`, and `parseFailureFromCause` admits only a reported parse failure
+as evidence about the input. Readers report bounds failures at the read site;
+host error codes alone cannot distinguish a read from a write or allocation.
 `scripts/verify/architecture-guards.mjs` counts the remaining raw `Buffer` and
 `DataView` reads, plain `Error` throws in parser folders, plain `JSON.parse`
 of parser input, and direct `instanceof RangeError` checks against

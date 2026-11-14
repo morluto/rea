@@ -134,7 +134,7 @@ const readChainedImportNames = async (
       ),
     );
   } catch (cause) {
-    const failure = parseFailureFromCause(cause, "macho");
+    const failure = parseFailureFromCause(cause);
     if (failure !== undefined) return err(failure.message);
     throw cause;
   }

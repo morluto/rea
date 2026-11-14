@@ -37,8 +37,19 @@ it.each([
     new RangeError("Invalid string length"),
     "host-capacity",
   ],
-  ["a Buffer read past its end", bufferPastEnd, "out-of-bounds"],
-  ["a DataView read past its end", dataViewPastEnd, "out-of-bounds"],
+  ["a Buffer read past its end", bufferPastEnd, undefined],
+  ["a DataView read past its end", dataViewPastEnd, undefined],
+  ["an invalid allocation", thrown(() => Buffer.alloc(-1)), undefined],
+  [
+    "an invalid write value",
+    thrown(() => Buffer.alloc(1).writeUInt8(256)),
+    undefined,
+  ],
+  [
+    "a write past its end",
+    thrown(() => Buffer.alloc(4).writeUInt32LE(1, 2)),
+    undefined,
+  ],
   [
     "a RangeError REA threw itself",
     new RangeError("Truncated header"),
@@ -47,25 +58,20 @@ it.each([
   ["an unrelated error", new TypeError("not a range"), undefined],
 ] as const)("classifies %s", (_label, cause, kind) => {
   expect(hostRangeErrorKind(cause)).toBe(kind);
+  expect(parseFailureFromCause(cause)).toBeUndefined();
   expect(isHostLimitFailure(cause)).toBe(
     kind === "stack-overflow" || kind === "host-capacity",
   );
 });
 
-it("reads a raw out-of-bounds read as a malformed format failure, keeping its cause", () => {
-  const failure = parseFailureFromCause(bufferPastEnd, "macho");
-  expect(failure?.failure).toMatchObject({
-    kind: "malformed",
-    format: "macho",
-  });
-  expect(failure?.cause).toBe(bufferPastEnd);
+it("preserves an explicitly reported format failure", () => {
   const reported = malformedInput("macho", "load command leaves the header");
-  expect(parseFailureFromCause(reported, "elf")).toBe(reported);
+  expect(parseFailureFromCause(reported)).toBe(reported);
 });
 
 it.each([stackOverflow, inflatePastBound, new RangeError("Truncated header")])(
   "leaves a host failure or an unclassified RangeError to the caller (%s)",
   (cause) => {
-    expect(parseFailureFromCause(cause, "macho")).toBeUndefined();
+    expect(parseFailureFromCause(cause)).toBeUndefined();
   },
 );

@@ -562,7 +562,7 @@ export const decodeSwiftDispatchFacets = (input: {
                 ),
               );
           } catch (cause) {
-            const failure = parseFailureFromCause(cause, "macho");
+            const failure = parseFailureFromCause(cause);
             if (failure === undefined) throw cause;
             issues.push(
               issue(

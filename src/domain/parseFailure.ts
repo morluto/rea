@@ -42,7 +42,9 @@ export type ParseFailure = ParseFailureFacts &
   );
 
 /** The one throwable carrier for a {@link ParseFailure}. */
-export class ParseFailureError<Kind extends ParseFailureKind = ParseFailureKind> extends Error {
+export class ParseFailureError<
+  Kind extends ParseFailureKind = ParseFailureKind,
+> extends Error {
   readonly _tag = "ParseFailureError";
 
   constructor(
@@ -116,15 +118,11 @@ export const decodeLimit = (
  *   never evidence about the input bytes.
  * - `host-capacity`: a string, array or buffer exceeded what the runtime can
  *   represent or allocate.
- * - `out-of-bounds`: an unchecked Buffer or DataView read left its bytes.
  *
  * Any other `RangeError` (including one REA code threw itself) returns
  * `undefined`: its meaning belongs to whoever threw it.
  */
-export type HostRangeErrorKind =
-  | "stack-overflow"
-  | "host-capacity"
-  | "out-of-bounds";
+export type HostRangeErrorKind = "stack-overflow" | "host-capacity";
 
 const HOST_CAPACITY_MESSAGES = new Set([
   "Invalid string length",
@@ -134,10 +132,6 @@ const HOST_CAPACITY_MESSAGES = new Set([
 const HOST_CAPACITY_CODES = new Set([
   "ERR_STRING_TOO_LONG",
   "ERR_BUFFER_TOO_LARGE",
-]);
-const OUT_OF_BOUNDS_CODES = new Set([
-  "ERR_OUT_OF_RANGE",
-  "ERR_BUFFER_OUT_OF_BOUNDS",
 ]);
 
 /** Classify a host `RangeError`; the one place that interprets one. */
@@ -157,11 +151,6 @@ export const hostRangeErrorKind = (
     cause.message.startsWith("Invalid typed array length")
   )
     return "host-capacity";
-  if (
-    (code !== undefined && OUT_OF_BOUNDS_CODES.has(code)) ||
-    cause.message === "Offset is outside the bounds of the DataView"
-  )
-    return "out-of-bounds";
   return undefined;
 };
 
@@ -173,16 +162,13 @@ export const isHostLimitFailure = (cause: unknown): boolean => {
 
 /**
  * The format failure a parse step established, or `undefined` when the cause
- * says nothing about the input. A raw Buffer or DataView read past its bytes
- * becomes a malformed `format` failure; a stack overflow, a host capacity
- * failure and any other error stay with the caller to rethrow.
+ * says nothing about the input. Host errors do not identify the operation
+ * that failed: buffer reads, writes and allocations can share error codes.
+ * Readers must report their own bounds failures at the read boundary.
  */
 export const parseFailureFromCause = (
   cause: unknown,
-  format: string,
 ): ParseFailureError | undefined => {
   if (cause instanceof ParseFailureError) return cause;
-  if (hostRangeErrorKind(cause) === "out-of-bounds")
-    return malformedInput(format, (cause as Error).message, { cause });
   return undefined;
 };

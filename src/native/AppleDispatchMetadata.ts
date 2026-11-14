@@ -120,7 +120,7 @@ export function* decodeAppleDispatchMetadataSteps(
     try {
       fileOffset = offset(address);
     } catch (cause) {
-      if (parseFailureFromCause(cause, "macho") === undefined) throw cause;
+      if (parseFailureFromCause(cause) === undefined) throw cause;
       fileOffset = null;
     }
     return { address: `0x${address.toString(16)}`, file_offset: fileOffset };

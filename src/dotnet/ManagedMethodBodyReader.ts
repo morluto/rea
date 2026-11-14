@@ -355,7 +355,7 @@ export const methodBody = (
       throw cause;
     if (
       !(cause instanceof ManagedReaderFailure) &&
-      parseFailureFromCause(cause, "cil-method-body") === undefined
+      parseFailureFromCause(cause) === undefined
     )
       throw cause;
     return {
