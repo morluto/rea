@@ -681,6 +681,9 @@ const requireJavaHomeExecutable = async (
   }
 };
 
+/** `-XX:ActiveProcessorCount` is a Java `int`; this is a count, not a duration. */
+const JAVA_INT_MAX = 2_147_483_647;
+
 const resolveJvmArguments = (
   environment: Readonly<Record<string, string | undefined>>,
 ): readonly string[] => {
@@ -700,7 +703,7 @@ const resolveJvmArguments = (
       );
     if (
       name === "REA_JADX_ACTIVE_PROCESSOR_COUNT" &&
-      Number(value) > MAX_NODE_TIMER_DELAY_MS
+      Number(value) > JAVA_INT_MAX
     )
       throw configurationFailure(
         "open_options_invalid",

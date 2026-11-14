@@ -173,6 +173,8 @@ check(
     "src/domain/analysisResourceLimits.ts",
     // JADX MCP `limit` argument: a Java int, not a duration.
     "src/android/JadxAnalysis.ts",
+    // JVM `-XX:ActiveProcessorCount`: a Java int processor count.
+    "src/android/JadxConfiguration.ts",
     // DEX static `int` value range.
     "src/domain/android/androidAnalysis.ts",
     // Signed 32-bit bitmask operand range.

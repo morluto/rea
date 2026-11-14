@@ -1,7 +1,4 @@
-import {
-  MAX_NODE_TIMER_DELAY_MS,
-  timerDurationMsSchema,
-} from "../analysisResourceLimits.js";
+import { timerDurationMsSchema } from "../analysisResourceLimits.js";
 import { z } from "zod";
 import { digestSchema } from "../digests.js";
 import { jsonValueSchema, type JsonValue } from "../jsonValue.js";

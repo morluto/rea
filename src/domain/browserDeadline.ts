@@ -2,7 +2,6 @@ import {
   MAX_NODE_TIMER_DELAY_MS,
   timerDurationMsSchema,
 } from "./analysisResourceLimits.js";
-import { z } from "zod";
 
 import type { BrowserObservationOperation } from "./browserObservationErrors.js";
 
