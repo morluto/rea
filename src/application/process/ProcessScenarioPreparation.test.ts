@@ -13,29 +13,40 @@ import { prepareProcessScenarioPlan } from "./ProcessScenarioPreparation.js";
 
 afterEach(() => vi.restoreAllMocks());
 
-it("rejects observation roots that capture admission rejects", async () => {
-  const root = await createTestTempDirectory("rea-process-plan-");
-  const file = join(root, "selected");
-  await writeFile(file, "not a directory");
-  const scenario = processScenarioSchema.parse({
-    executable: process.execPath,
-    working_directory: root,
-    filesystem_observation_paths: [join(file, "child")],
-  });
+/**
+ * Windows refuses capture before root admission runs. The cancellation cases
+ * replace admission, so they plan for a platform that reaches it on any host.
+ */
+const capturePlatform = "linux";
 
-  const prepared = await prepareProcessScenarioPlan(
-    scenario,
-    {},
-    process.platform,
-  );
+// A path below a regular file is ENOTDIR on POSIX. Windows reports ENOENT,
+// which admission accepts as a root the scenario may create.
+it.skipIf(process.platform === "win32")(
+  "rejects observation roots that capture admission rejects",
+  async () => {
+    const root = await createTestTempDirectory("rea-process-plan-");
+    const file = join(root, "selected");
+    await writeFile(file, "not a directory");
+    const scenario = processScenarioSchema.parse({
+      executable: process.execPath,
+      working_directory: root,
+      filesystem_observation_paths: [join(file, "child")],
+    });
 
-  expect(prepared.ok).toBe(false);
-  if (prepared.ok) return;
-  expect(prepared.error).toMatchObject({
-    _tag: "ProcessCaptureError",
-    userMessage: "filesystem observation admission failed",
-  });
-});
+    const prepared = await prepareProcessScenarioPlan(
+      scenario,
+      {},
+      process.platform,
+    );
+
+    expect(prepared.ok).toBe(false);
+    if (prepared.ok) return;
+    expect(prepared.error).toMatchObject({
+      _tag: "ProcessCaptureError",
+      userMessage: "filesystem observation admission failed",
+    });
+  },
+);
 
 it("reports cancellation normalized inside admission as planning cancellation", async () => {
   const scenario = processScenarioSchema.parse({
@@ -59,7 +70,7 @@ it("reports cancellation normalized inside admission as planning cancellation", 
   const prepared = await prepareProcessScenarioPlan(
     scenario,
     {},
-    process.platform,
+    capturePlatform,
     controller.signal,
   );
 
@@ -100,7 +111,7 @@ it("reports cancellation after the last awaited admission step", async () => {
   const planning = prepareProcessScenarioPlan(
     scenario,
     {},
-    process.platform,
+    capturePlatform,
     controller.signal,
   );
 

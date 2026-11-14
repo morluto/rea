@@ -660,7 +660,7 @@ export class ReverseEngineeringService {
     let stderrInvalidUtf8 = false;
     let cleanupIncomplete = false;
     let cleanupOnlyFailure = false;
-    let completionStatus: "complete" | "unknown" = "complete";
+    let completionStatus: "complete" | "rejected" | "unknown" = "complete";
     let outputLimitReached = false;
     let failure: AnalysisError | undefined;
     let cleanupOwner: RetainedCleanupOwner | undefined;
@@ -1097,6 +1097,15 @@ export class ReverseEngineeringService {
           : digestAfter !== digest;
     const outputBudgetSource =
       parameters.max_output_bytes === undefined ? "default" : "request";
+    // Only a completed process's diagnostics can establish a refusal; partial
+    // or failed captures keep their unknown completion.
+    const rejection =
+      completionStatus === "complete" &&
+      (failure === undefined ||
+        (failure instanceof AnalysisOutputError && failure.cleanupOnly))
+        ? profile.rejection?.(stderr)
+        : undefined;
+    if (rejection !== undefined) completionStatus = "rejected";
     const result = {
       stdout,
       stderr,
@@ -1135,6 +1144,7 @@ export class ReverseEngineeringService {
           ]
         : []),
       ...(profile.limitations ?? []),
+      ...(rejection === undefined ? [] : [rejection]),
       ...(stdoutInvalidUtf8 || stderrInvalidUtf8
         ? [
             `Captured ${[

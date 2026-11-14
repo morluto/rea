@@ -68,7 +68,15 @@ const REQUIRED_NUMERIC_FIELDS = [
   "inspect-web-page options.observationMs",
   "observe-web-execution options.observationMs",
   "extract-firmware options.maxDepth",
+  "trace-web-source-location args.line",
+  "cutter-command args.expectedGeneration",
+  "observe-native-ui options.maxNodes",
+  "inspect-web-network-capture options.record",
+  "environment-serve options.port",
 ] as const;
+
+/** Decimal argv tokens the parser admits as numbers, for fields advertised as strings. */
+const PROBE_TOKENS = ["0", "1"] as const;
 
 describe("decimal integer CLI admission", () => {
   it("rejects 0x10 and 1e3 for every numeric input and keeps an in-range decimal", () => {
@@ -83,7 +91,6 @@ describe("decimal integer CLI admission", () => {
         const advertised = Schema.toJsonSchema(parser);
         if (!isRecord(advertised) || !isRecord(advertised.properties)) continue;
         for (const [name, property] of Object.entries(advertised.properties)) {
-          if (!numericBranches(property)) continue;
           const field = parser.shape[name];
           if (field === undefined) {
             failures.push(
@@ -92,11 +99,31 @@ describe("decimal integer CLI admission", () => {
             continue;
           }
           const label = `${path} ${group}.${name}`;
+          // A repeated option parses each argv token as one array item.
+          const repeated = isRecord(property) && property.type === "array";
+          const item = repeated ? property.items : property;
+          const isolated = z.object({ [name]: field });
+          const read = (token: string): unknown => {
+            const parsed =
+              group === "options"
+                ? Parser.parse([flagName(name), token], { options: isolated })
+                    .options[name]
+                : Parser.parse([token], { args: isolated }).args[name];
+            return repeated && Array.isArray(parsed) ? parsed[0] : parsed;
+          };
+          const readsNumber = (token: string): boolean => {
+            try {
+              return typeof read(token) === "number";
+            } catch {
+              return false;
+            }
+          };
+          // String-advertised token grammars (for example --port) still count.
+          const probed = PROBE_TOKENS.find(readsNumber);
+          if (!numericBranches(item) && probed === undefined) continue;
           let validate: ((value: unknown) => boolean) | undefined;
           try {
-            validate = ajv.compile(
-              property as Parameters<Ajv2020["compile"]>[0],
-            );
+            validate = ajv.compile(item as Parameters<Ajv2020["compile"]>[0]);
           } catch (error) {
             failures.push(
               `${label}: Ajv could not compile the advertised schema (${error instanceof Error ? error.message : String(error)})`,
@@ -107,15 +134,6 @@ describe("decimal integer CLI admission", () => {
             if (validate(token))
               failures.push(`${label}: advertised schema accepts ${token}`);
           }
-          const isolated = z.object({ [name]: field });
-          const read = (token: string): unknown => {
-            if (group === "options") {
-              return Parser.parse([flagName(name), token], {
-                options: isolated,
-              }).options[name];
-            }
-            return Parser.parse([token], { args: isolated }).args[name];
-          };
           for (const token of NON_DECIMAL) {
             try {
               read(token);
@@ -124,7 +142,9 @@ describe("decimal integer CLI admission", () => {
               // Decimal tokens are the only numeric spelling.
             }
           }
-          const candidate = bounds(property)[0]?.min;
+          const candidate =
+            bounds(item)[0]?.min ??
+            (probed === undefined ? undefined : Number(probed));
           if (candidate === undefined) {
             failures.push(`${label}: no in-range decimal candidate`);
             continue;
@@ -138,8 +158,7 @@ describe("decimal integer CLI admission", () => {
             );
             continue;
           }
-          const admitsLeadingZeros =
-            JSON.stringify(property).includes("^[0-9]+$");
+          const admitsLeadingZeros = JSON.stringify(item).includes("^[0-9]+$");
           try {
             const parsed = read(`0${decimal}`);
             if (parsed !== candidate)
@@ -152,9 +171,10 @@ describe("decimal integer CLI admission", () => {
                 `${label}: leading-zero decimal was rejected (${error instanceof Error ? error.message : String(error)})`,
               );
           }
-          if (!(validate(decimal) || validate(candidate)))
+          // Argv supplies text, so the advertisement must admit the token itself.
+          if (!validate(decimal))
             failures.push(
-              `${label}: advertised schema rejects in-range ${decimal}`,
+              `${label}: advertised schema rejects in-range token "${decimal}"`,
             );
           checked.push(label);
         }
@@ -166,5 +186,62 @@ describe("decimal integer CLI admission", () => {
     expect(checked.length).toBeGreaterThan(REQUIRED_NUMERIC_FIELDS.length);
     expect(new Set(checked).size).toBe(checked.length);
     expect(failures).toEqual([]);
+  });
+});
+
+describe("decimal integer CLI advertisement", () => {
+  const schemaOf = async (command: string): Promise<unknown> => {
+    let stdout = "";
+    let exitCode = 0;
+    await createCli({}).serve([command, "--schema", "--json"], {
+      env: {},
+      exit: (code) => {
+        exitCode = code;
+      },
+      stdout: (text) => {
+        stdout += text;
+      },
+    });
+    expect(exitCode, command).toBe(0);
+    return JSON.parse(stdout) as unknown;
+  };
+
+  it("publishes the token grammar in --schema for arguments and options", async () => {
+    const location = await schemaOf("trace-web-source-location");
+    expect(location).toMatchObject({
+      args: {
+        properties: {
+          line: {
+            description: "One-based generated line",
+            anyOf: [
+              { type: "integer", minimum: 1 },
+              { type: "string", pattern: "^[0-9]+$" },
+            ],
+          },
+        },
+      },
+    });
+    expect(await schemaOf("inspect-web-network-capture")).toMatchObject({
+      options: {
+        properties: {
+          record: {
+            type: "array",
+            items: {
+              anyOf: [
+                { type: "integer", minimum: 0 },
+                { type: "string", pattern: "^[0-9]+$" },
+              ],
+            },
+          },
+        },
+      },
+    });
+    expect(await schemaOf("environment-serve")).toMatchObject({
+      options: {
+        properties: {
+          port: { type: "string", pattern: "^(?:0|[1-9]\\d*)$" },
+        },
+      },
+    });
   });
 });
