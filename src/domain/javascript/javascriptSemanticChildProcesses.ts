@@ -76,6 +76,7 @@ export const collectJavaScriptSemanticChildProcesses = (
   const context = createSemanticExpressionShapeResolver(state);
   const candidates = collectSpawns(program, state, callables).filter(
     (candidate) =>
+      !rejectsCommand(candidate, context) &&
       !forkRejectsStdioArray(candidate, context) &&
       !rejectsStdioLiteral(candidate, context) &&
       !rejectsProcessOptionLiteral(candidate, context) &&
@@ -668,6 +669,49 @@ const rejectsOptionsShape = (
   )
     return true;
   return isUnpricedPrimitiveLiteral(value);
+};
+
+/**
+ * Node validates the command before it normalizes anything else, so a command it
+ * refuses throws synchronously and no child process exists.
+ *
+ * Measured on Node 24.22.1 for spawn, execFile, exec and fork:
+ *
+ *   a missing command, null, undefined, a number, a boolean,
+ *   an object or an array                  -> THREW ERR_INVALID_ARG_TYPE
+ *   a string holding a NUL byte            -> THREW ERR_INVALID_ARG_VALUE
+ *   ""                                     -> THREW ERR_INVALID_ARG_VALUE, except fork("")
+ *                                             which starts a child
+ *   " " or any other non-empty string      -> child
+ *
+ * Only a command proven by source syntax counts; a spread or computed value stays.
+ */
+const rejectsCommand = (
+  candidate: SpawnCandidate,
+  context: ChildSpawnContext,
+): boolean => {
+  const [first] = candidate.node.arguments;
+  if (first === undefined) return true;
+  if (t.isSpreadElement(first)) return false;
+  const value = unwrapJavaScriptExpression(first).node;
+  if (context.isNullish(value)) return true;
+  const literal = readExactJavaScriptLiteral(value);
+  if (literal.found) {
+    if (typeof literal.value !== "string") return true;
+    if (literal.value.includes("\u0000")) return true;
+    return literal.value === "" && candidate.method !== "fork";
+  }
+  // `new` always yields an object, which Node's string check refuses.
+  return (
+    context.isArray(value) ||
+    t.isObjectExpression(value) ||
+    t.isArrowFunctionExpression(value) ||
+    t.isFunctionExpression(value) ||
+    t.isClassExpression(value) ||
+    t.isRegExpLiteral(value) ||
+    t.isNewExpression(value) ||
+    isUnpricedPrimitiveLiteral(value)
+  );
 };
 
 /** Select only callback slots whose overload is established by source syntax. */
