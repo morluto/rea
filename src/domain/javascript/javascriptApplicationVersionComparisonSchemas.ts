@@ -8,10 +8,10 @@ import {
 } from "./javascriptApplicationGraph.js";
 import { JAVASCRIPT_APPLICATION_NODE_KINDS } from "./javascriptApplicationGraphSchemas.js";
 import { prefixedDigestSchema } from "../digests.js";
+import { nonEmptyTextSchema } from "../textSchemas.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const nodeIdSchema = prefixedDigestSchema("jag_node");
-const textSchema = z.string().min(1);
 
 /** Check paired version identities and per-side native identity uniqueness. */
 const validateApplicationVersionIdentities = (
@@ -128,7 +128,7 @@ const comparisonItemContextShape = {
     ]),
   ),
   evidence_links: z.array(evidenceIdSchema).min(2),
-  limitations: z.array(textSchema),
+  limitations: z.array(nonEmptyTextSchema),
 };
 
 const comparisonItemSchema = z.union([
@@ -212,7 +212,7 @@ export const applicationVersionComparisonResultSchema = z
     graph: javascriptApplicationGraphSchema,
     coverage: comparisonCoverageSchema,
     evidence_links: z.array(evidenceIdSchema).min(2),
-    limitations: z.array(textSchema),
+    limitations: z.array(nonEmptyTextSchema),
   })
   .superRefine((result, context) => {
     const sourceGraphsComplete =

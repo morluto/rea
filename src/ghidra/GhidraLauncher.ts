@@ -41,7 +41,7 @@ import {
   execFileOutputFailure,
   execFileFailureCapturedOutput,
 } from "../process/ExecFileOutput.js";
-import { boundedUtf8Text } from "../process/boundedUtf8Text.js";
+import { utf8HeadExcerpt } from "../domain/utf8HeadExcerpt.js";
 import { redactCapturedTransportCredential } from "../process/ProviderDiagnosticRedaction.js";
 import {
   cleanupOwnedProcessGroup,
@@ -522,7 +522,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
             session.token,
             "[REDACTED]",
           );
-          const bounded = boundedUtf8Text(
+          const bounded = utf8HeadExcerpt(
             redacted,
             GHIDRA_LAUNCH_COMMAND_OUTPUT_BYTES,
           );

@@ -62,6 +62,7 @@ import {
 } from "../process/ownedDebuggerSession.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
+import { utf8HeadExcerpt } from "../domain/utf8HeadExcerpt.js";
 
 const CLEANUP_COMMAND_TIMEOUT_MS = 1_000;
 const STARTUP_TIMEOUT_MS = 30_000;
@@ -1287,7 +1288,7 @@ export class RizinDebugSessionManager {
     const protocolOutput = [...session.history, partialFrame]
       .filter((frame) => frame.length > 0)
       .join("\n");
-    const stdout = truncateUtf8(protocolOutput, MAX_DIAGNOSTIC_BYTES);
+    const stdout = utf8HeadExcerpt(protocolOutput, MAX_DIAGNOSTIC_BYTES).text;
     return {
       stdout,
       stderr: output.stderr.text,
@@ -1317,7 +1318,10 @@ export class RizinDebugSessionManager {
         synchronization.resolve();
       return;
     }
-    const historyPrefix = truncateUtf8(frame.text, MAX_RECENT_FRAME_BYTES);
+    const historyPrefix = utf8HeadExcerpt(
+      frame.text,
+      MAX_RECENT_FRAME_BYTES,
+    ).text;
     const historyTruncated =
       historyPrefix.length < frame.text.length || frame.truncated;
     if (historyTruncated) session.historyTruncated = true;
@@ -1906,7 +1910,7 @@ const waitForCommandFrames = async (
     const bytes = Buffer.byteLength(text, "utf8");
     if (bytes > remaining) {
       noteLimit("command_output_bytes");
-      const retained = truncateUtf8(text, remaining);
+      const retained = utf8HeadExcerpt(text, remaining).text;
       if (retained.length > 0) output.push(retained);
       outputBytes = maxCommandOutputBytes;
     } else {
@@ -2010,15 +2014,6 @@ const waitForCommandFrames = async (
     }
     if (markerSeen) return ok(snapshot());
   }
-};
-
-const truncateUtf8 = (value: string, maximumBytes: number): string => {
-  if (maximumBytes <= 0) return "";
-  // A UTF-16 code unit needs at most three UTF-8 bytes. Buffer.write stops
-  // before a partial character; only decode bytes it actually initialized.
-  const bytes = Buffer.allocUnsafe(Math.min(value.length * 3, maximumBytes));
-  const written = bytes.write(value, "utf8");
-  return bytes.toString("utf8", 0, written);
 };
 
 const waitForFrame = (

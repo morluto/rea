@@ -7,9 +7,9 @@ import {
   managedNativeImportSchema,
 } from "./managedArtifact.js";
 import { digestSchema, prefixedDigestSchema } from "../digests.js";
+import { nonEmptyTextSchema } from "../textSchemas.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
-const textSchema = z.string().min(1);
 
 const nativeSymbolSchema = z.strictObject({
   evidence_id: evidenceIdSchema,
@@ -43,7 +43,7 @@ const pinvokeVerificationContextShape = {
   item_id: prefixedDigestSchema("mnv_pinvoke"),
   managed: verifiedManagedDeclarationSchema,
   evidence_links: z.array(evidenceIdSchema).min(1),
-  limitations: z.array(textSchema),
+  limitations: z.array(nonEmptyTextSchema),
 };
 
 const observedCandidatesSchema = z
@@ -182,11 +182,11 @@ export const managedNativeVerificationResultSchema = z
     native_implementations: z.strictObject({
       runtime_provided: z.int().nonnegative().nullable().default(null),
       unresolved: z.int().min(0),
-      reason: textSchema,
+      reason: nonEmptyTextSchema,
     }),
     coverage: verificationCoverageSchema,
     evidence_links: z.array(evidenceIdSchema).min(2),
-    limitations: z.array(textSchema),
+    limitations: z.array(nonEmptyTextSchema),
   })
   .superRefine((result, context) => {
     const observedNativeCount =

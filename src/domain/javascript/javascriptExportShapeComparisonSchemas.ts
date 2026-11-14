@@ -4,11 +4,11 @@ import { javascriptSourceRangeSchema } from "./javascriptSourceCoordinates.js";
 
 import { evidenceSchema } from "../evidence.js";
 import { prefixedDigestSchema } from "../digests.js";
+import { nonEmptyTextSchema } from "../textSchemas.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const graphIdSchema = prefixedDigestSchema("jag");
 const nodeIdSchema = prefixedDigestSchema("jag_node");
-const textSchema = z.string().min(1);
 const exportNameSchema = z.string();
 const semanticPrimitiveSchema = z.union([
   z.string(),
@@ -64,9 +64,9 @@ export const compareJavaScriptExportShapesInputSchema = z
   .strictObject({
     left: evidenceSchema,
     right: evidenceSchema,
-    left_module_path: textSchema,
+    left_module_path: nonEmptyTextSchema,
     left_export_name: exportNameSchema,
-    right_module_path: textSchema,
+    right_module_path: nonEmptyTextSchema,
     right_export_name: exportNameSchema,
   })
   .superRefine(validateJavaScriptExportShapeIdentities);
@@ -92,7 +92,7 @@ const projectedReturnFieldSchema = z.discriminatedUnion("state", [
     ...projectedReturnFieldShape,
     state: z.literal("unknown"),
     value: z.null(),
-    reason: textSchema,
+    reason: nonEmptyTextSchema,
   }),
 ]);
 export type ProjectedReturnField = z.infer<typeof projectedReturnFieldSchema>;
@@ -149,9 +149,9 @@ const projectedReturnShapeSchema = z
 export const projectedExportReturnShapesSchema = z
   .strictObject({
     semantic_role: z.literal("export-return-shapes"),
-    module_path: textSchema,
+    module_path: nonEmptyTextSchema,
     exported_name: exportNameSchema,
-    callable_id: textSchema,
+    callable_id: nonEmptyTextSchema,
     callable_kind: z.enum(["function", "class", "method"]),
     static_return_shapes: z.array(projectedReturnShapeSchema),
     return_shape_coverage: z.strictObject({
@@ -177,7 +177,7 @@ export const projectedExportReturnShapesSchema = z
 
 const exportCandidateSchema = z.strictObject({
   node_id: nodeIdSchema,
-  module_path: textSchema,
+  module_path: nonEmptyTextSchema,
   export_name: exportNameSchema,
   matches_requested_module: z.boolean(),
   matches_requested_export: z.boolean(),
@@ -186,7 +186,7 @@ const exportCandidateSchema = z.strictObject({
 const selectorResultShape = {
   evidence_id: evidenceIdSchema,
   graph_id: graphIdSchema,
-  requested_module_path: textSchema,
+  requested_module_path: nonEmptyTextSchema,
   requested_export_name: exportNameSchema,
   candidates: z.array(exportCandidateSchema),
   omitted_candidates: z.int().min(0),
@@ -221,7 +221,7 @@ const valueAvailabilitySchema = z.discriminatedUnion("availability", [
   }),
   z.strictObject({
     availability: z.literal("unknown"),
-    reason: textSchema,
+    reason: nonEmptyTextSchema,
   }),
 ]);
 
@@ -251,7 +251,7 @@ export const javaScriptExportShapeComparisonChangeSchema = z.strictObject({
   left_source_range: javascriptSourceRangeSchema.nullable(),
   right_source_range: javascriptSourceRangeSchema.nullable(),
   evidence_links: z.array(evidenceIdSchema).length(2),
-  limitations: z.array(textSchema),
+  limitations: z.array(nonEmptyTextSchema),
 });
 
 const inventoryPropertyCoverageSchema = z.strictObject({
@@ -311,7 +311,7 @@ export const javaScriptExportShapeComparisonResultSchema = z.strictObject({
     omitted_changes: z.int().min(0),
   }),
   evidence_links: z.array(evidenceIdSchema).length(2),
-  limitations: z.array(textSchema),
+  limitations: z.array(nonEmptyTextSchema),
 });
 
 export type ProjectedExportReturnShapes = z.output<

@@ -17,13 +17,13 @@ import { readManagedInspectionEvidence } from "./managedInspectionEvidence.js";
 import { AnalysisInputError } from "../analysisErrorCore.js";
 import { EvidenceIntegrityError } from "../evidenceErrors.js";
 import { err, ok, type Result } from "../result.js";
+import { nonEmptyTextSchema } from "../textSchemas.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
-const textSchema = z.string().min(1);
 
 const decompilerSchema = z.strictObject({
-  name: textSchema,
-  version: textSchema.nullable().default(null),
+  name: nonEmptyTextSchema,
+  version: nonEmptyTextSchema.nullable().default(null),
   family: z.enum(["ilspy", "dnspy", "dnlib", "mono-cecil", "other"]),
   executable_sha256: digestSchema.nullable().default(null),
   options: z.array(z.string()).default([]),
@@ -36,9 +36,9 @@ const managedReconstructionMethodInputSchema = z.strictObject({
   reconstruction: z.strictObject({
     kind: z.enum(["decompiled-csharp", "decompiled-il", "semantic-pseudocode"]),
     language: z.enum(["csharp", "il", "pseudocode"]),
-    text: textSchema,
+    text: nonEmptyTextSchema,
     text_sha256: digestSchema.optional(),
-    source_path: textSchema.nullable().optional(),
+    source_path: nonEmptyTextSchema.nullable().optional(),
     start_line: z.int().min(1).nullable().optional(),
     end_line: z.int().min(1).nullable().optional(),
   }),
@@ -51,7 +51,7 @@ type ManagedReconstructionMethodInput = z.infer<
 const managedReconstructionImportRequestShape = {
   decompiler: decompilerSchema,
   methods: z.array(managedReconstructionMethodInputSchema).min(1),
-  notes: z.array(textSchema).default([]),
+  notes: z.array(nonEmptyTextSchema).default([]),
 };
 
 const reconstructionInput = <Source extends z.ZodType>(source: Source) =>
@@ -79,11 +79,11 @@ const importedMethodSchema = z.strictObject({
   reconstruction: z.strictObject({
     kind: z.enum(["decompiled-csharp", "decompiled-il", "semantic-pseudocode"]),
     language: z.enum(["csharp", "il", "pseudocode"]),
-    text: textSchema,
+    text: nonEmptyTextSchema,
     text_sha256: digestSchema,
     text_length: z.int().min(1),
     line_count: z.int().min(1),
-    source_path: textSchema.nullable(),
+    source_path: nonEmptyTextSchema.nullable(),
     start_line: z.int().min(1).nullable(),
     end_line: z.int().min(1).nullable(),
   }),
@@ -119,9 +119,9 @@ export const managedReconstructionImportResultSchema = z.strictObject({
     total_text_bytes: z.int().min(1),
   }),
   methods: z.array(importedMethodSchema).min(1),
-  notes: z.array(textSchema),
+  notes: z.array(nonEmptyTextSchema),
   evidence_links: z.array(evidenceIdSchema).length(1),
-  limitations: z.array(textSchema),
+  limitations: z.array(nonEmptyTextSchema),
 });
 
 export type ManagedReconstructionImportInput = z.infer<
