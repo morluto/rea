@@ -61,3 +61,101 @@ it.each([
 ] as const)("keeps the spawn for %s", (_name, call, method) => {
   expect(spawnsFor(call)).toEqual([method]);
 });
+
+/**
+ * Options Node validates while normalizing the spawn, measured on Node 24.22.1.
+ * Each member is checked only by the methods that forward it: execFile drops the
+ * boolean flags and serialization, and exec replaces a non-string shell.
+ */
+it.each([
+  ["a negative timeout", 'spawn("node", [], { timeout: -1 })'],
+  ["a fractional timeout", 'execFile("node", [], { timeout: 1.5 }, () => {})'],
+  ["a string timeout", 'exec("node", { timeout: "1" }, () => {})'],
+  ["a boolean timeout", 'fork("worker.js", [], { timeout: true })'],
+  ["a NaN timeout", 'spawn("node", [], { timeout: NaN })'],
+  ["an Infinity timeout", 'spawn("node", [], { timeout: Infinity })'],
+  ["an overflowing timeout", 'spawn("node", [], { timeout: 1e400 })'],
+  ["a BigInt timeout", 'spawn("node", [], { timeout: 0n })'],
+  ["a timeout after argv is omitted", 'fork("worker.js", { timeout: -1 })'],
+  ["a numeric detached flag", 'spawn("node", [], { detached: 1 })'],
+  [
+    "a string windowsHide flag",
+    'fork("worker.js", [], { windowsHide: "true" })',
+  ],
+  [
+    "a numeric windowsVerbatimArguments flag",
+    'spawn("node", [], { windowsVerbatimArguments: 1 })',
+  ],
+  ["a null serialization", 'fork("worker.js", [], { serialization: null })'],
+  ["an unknown serialization", 'spawn("node", [], { serialization: "JSON" })'],
+  ["a numeric shell", 'spawn("node", [], { shell: 0 })'],
+  ["an array shell", 'execFile("node", [], { shell: [] }, () => {})'],
+  ["a negative maxBuffer", 'execFile("node", [], { maxBuffer: -1 }, () => {})'],
+  ["a NaN maxBuffer", 'exec("node", { maxBuffer: NaN }, () => {})'],
+  ["a string maxBuffer", 'exec("node", { maxBuffer: "1" }, () => {})'],
+] as const)("emits no spawn for %s", (_name, call) => {
+  expect(spawnsFor(call)).toEqual([]);
+});
+
+it.each([
+  ["a zero timeout", 'spawn("node", [], { timeout: 0 })', "spawn"],
+  [
+    "a large integer timeout",
+    'spawn("node", [], { timeout: 2 ** 53 })',
+    "spawn",
+  ],
+  ["a null timeout", 'spawn("node", [], { timeout: null })', "spawn"],
+  ["a computed timeout", 'spawn("node", [], { timeout: args })', "spawn"],
+  ["a boolean detached flag", 'spawn("node", [], { detached: true })', "spawn"],
+  [
+    "a null windowsHide flag",
+    'fork("worker.js", [], { windowsHide: null })',
+    "fork",
+  ],
+  [
+    "an execFile numeric detached flag",
+    'execFile("node", [], { detached: 1 }, () => {})',
+    "execFile",
+  ],
+  [
+    "an exec string windowsHide flag",
+    'exec("node", { windowsHide: "true" }, () => {})',
+    "exec",
+  ],
+  [
+    "an advanced serialization",
+    'fork("worker.js", [], { serialization: "advanced" })',
+    "fork",
+  ],
+  [
+    "an undefined serialization",
+    'spawn("node", [], { serialization: undefined })',
+    "spawn",
+  ],
+  [
+    "an execFile null serialization",
+    'execFile("node", [], { serialization: null }, () => {})',
+    "execFile",
+  ],
+  ["a string shell", 'spawn("node", [], { shell: "cmd.exe" })', "spawn"],
+  ["an empty shell", 'spawn("node", [], { shell: "" })', "spawn"],
+  ["an exec numeric shell", 'exec("node", { shell: 0 }, () => {})', "exec"],
+  ["a fork numeric shell", 'fork("worker.js", [], { shell: 0 })', "fork"],
+  [
+    "a fractional maxBuffer",
+    'execFile("node", [], { maxBuffer: 1.5 }, () => {})',
+    "execFile",
+  ],
+  [
+    "an Infinity maxBuffer",
+    'exec("node", { maxBuffer: Infinity }, () => {})',
+    "exec",
+  ],
+  [
+    "a spawn negative maxBuffer",
+    'spawn("node", [], { maxBuffer: -1 })',
+    "spawn",
+  ],
+] as const)("keeps the spawn for %s", (_name, call, method) => {
+  expect(spawnsFor(call)).toEqual([method]);
+});
