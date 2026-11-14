@@ -658,7 +658,7 @@ const JOURNAL_FLAGS = {
   a: constants.O_WRONLY | constants.O_APPEND | NO_FOLLOW,
 } as const;
 
-/** The journal is never opened through a symlink: repair truncates it. */
+/** The journal is never opened through a symlink: resume appends to it. */
 const openJournal = async (
   root: string,
   flag: "wx" | "a",
