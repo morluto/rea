@@ -561,8 +561,8 @@ unchanged source `FileBytes`, and unchanged read/write/execute permissions. The
 lane never executes the fixture and does not inject a relocation or reference.
 The native decompiler is required to compare baseline and protected pseudocode;
 Ghidra/JDK with that decompiler and a Linux C compiler are required.
-The change-selected [Ghidra bridge CI lane](../.github/workflows/ghidra-bridge-sources.yml)
-runs this verifier with its checksum-verified Ghidra distribution. Read-only
+The change-selected Ghidra bridge CI lane
+(`.github/workflows/ghidra-bridge-sources.yml`) runs this verifier with its checksum-verified Ghidra distribution. Read-only
 sessions (Windows P0 and caller-owned existing projects) record the same
 limitation but do not mark blocks volatile; no real-provider lane covers them.
 

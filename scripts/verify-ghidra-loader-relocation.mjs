@@ -58,7 +58,7 @@ if (process.env.GHIDRA_INSTALL_DIR === undefined)
     "Set GHIDRA_INSTALL_DIR to a bring-your-own Ghidra installation.",
   );
 
-const installation = inspectGhidraInstallation({
+const installation = await inspectGhidraInstallation({
   environment: process.env,
   installDir: process.env.GHIDRA_INSTALL_DIR,
   ...(process.env.JAVA_HOME === undefined
@@ -130,6 +130,10 @@ try {
   assert.ok(
     await supervisor.waitForExit(180_000),
     "Ghidra loader-relocation probe exceeded its 180-second deadline",
+  );
+  assert.ok(
+    await supervisor.waitForOutputClose(1000),
+    "Ghidra loader-relocation probe output did not close",
   );
   const snapshot = supervisor.snapshot();
   const output = `${snapshot.stdout.text}\n${snapshot.stderr.text}`;
