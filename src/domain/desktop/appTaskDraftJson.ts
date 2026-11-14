@@ -1,3 +1,8 @@
+import {
+  escapeJsonPointerToken,
+  jsonPointerTokens,
+  unescapeJsonPointerToken,
+} from "../jsonPointer.js";
 import type { JsonValue } from "../jsonValue.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
 import type { FileNote } from "./appTaskDraftFileNotes.js";
@@ -17,7 +22,6 @@ import {
 import { pairMembers } from "./memberPairing.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
 import {
-  escapeToken,
   locatePointer as locateView,
   resolvePointer as resolveView,
 } from "./viewPointer.js";
@@ -46,9 +50,9 @@ export const generatedRecordId = (
   return (pointer: string): boolean => {
     const segments = pointer.split("/");
     if (segments.length < 3) return false;
-    const field = segments.at(-1)?.replaceAll("~1", "/").replaceAll("~0", "~");
-    if (field === undefined || !isRecordIdField(field)) return false;
-    const member = segments.at(-2)?.replaceAll("~1", "/").replaceAll("~0", "~");
+    const field = unescapeJsonPointerToken(segments.at(-1)!);
+    if (!isRecordIdField(field)) return false;
+    const member = unescapeJsonPointerToken(segments.at(-2)!);
     const list = segments.slice(0, -2).join("/");
     if (!lists.has(list)) {
       const after = resolveView(ends.final, list, format);
@@ -104,14 +108,14 @@ export const generatedIdsInAdditions = (
       const { keys } = pairMembers(value, [], undefined, "json").newer;
       value.forEach((child, index) =>
         pending.push({
-          pointer: `${pointer}/${escapeToken(keys[index] ?? String(index))}`,
+          pointer: `${pointer}/${escapeJsonPointerToken(keys[index] ?? String(index))}`,
           value: child,
         }),
       );
     } else if (value !== null && typeof value === "object") {
       for (const [key, child] of Object.entries(value))
         pending.push({
-          pointer: `${pointer}/${escapeToken(key)}`,
+          pointer: `${pointer}/${escapeJsonPointerToken(key)}`,
           value: child,
         });
     }
@@ -133,9 +137,7 @@ const MAX_LISTED = 5;
  */
 const ownNameRecord = (pointer: string): string | undefined => {
   const spelled = pointer.split("/");
-  const segments = spelled.map((segment) =>
-    segment.replaceAll("~1", "/").replaceAll("~0", "~"),
-  );
+  const segments = spelled.map(unescapeJsonPointerToken);
   const at = segments.findIndex((segment, index) => {
     const conditions = selectorOf(segment) ?? [];
     const rest = segments.slice(index + 1).join("/");
@@ -396,11 +398,7 @@ export const isLikeDefault = (
 
 /** Whether a member's selector reads a field, as `[format=BOOK][>data~1Title=SPQR]` reads `/data/Title`: a guard of it proves only that such a member exists. */
 const selectsBy = (member: string, field: string) => {
-  const path = field
-    .slice(1)
-    .split("/")
-    .map((segment) => segment.replaceAll("~1", "/").replaceAll("~0", "~"))
-    .join("/");
+  const path = jsonPointerTokens(field).join("/");
   return (selectorOf(member) ?? []).some(
     ({ prefix, key }) => prefix !== "@" && key === path,
   );
@@ -493,7 +491,7 @@ export const recordGuards = (
           pairing.older.keys[partner] !== key ||
           selectsBy(key, record.field)
           ? []
-          : [`${record.list}/${escapeToken(key)}`];
+          : [`${record.list}/${escapeJsonPointerToken(key)}`];
       })
       .slice(0, MAX_SIBLINGS_READ);
     let found = 0;

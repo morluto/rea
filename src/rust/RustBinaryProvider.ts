@@ -1,10 +1,10 @@
 import { RUST_BINARY_PROVIDER_IDENTITY } from "./RustBinaryProviderIdentity.js";
 import {
+  projectSelectedArtifactFileFailure,
   projectStableArtifactFailure,
-  stableArtifactInputRecovery,
+  stableArtifactInputFailure,
   projectArtifactCloseFailure,
 } from "../artifacts/StableArtifactFailure.js";
-import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
 import {
   type StableArtifactSnapshot,
   readStableArtifact,
@@ -21,7 +21,6 @@ import type { ExecutionOptions } from "../application/AnalysisProvider.js";
 import type { RustBinaryPort } from "../application/rust/RustBinaryPort.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
   AnalysisInputError,
@@ -137,6 +136,7 @@ export class RustBinaryProvider implements RustBinaryPort {
           limitations: [
             ...limitationsFor(image),
             `Selected producer_limits.input_bytes=${String(limits.input_bytes)} and output_bytes=${String(limits.output_bytes)} bytes; compressed/inflated dependency parser limits remain independent.`,
+            ...selected.limitations,
           ],
         };
         retainCompilerPathsWithinReport(report, limits.output_bytes);
@@ -395,20 +395,13 @@ const artifactFailure = (
     cause instanceof ArtifactReaderFailure
   )
     return artifactReaderFailure(cause, path, limits);
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(OPERATION, path, cause.code, {
-        cause,
-      });
-    if (isSelectedRegularFileError(cause))
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_value",
-          message: `Selected artifact could not be read (${String(cause.code)}): ${path}.`,
-        },
-      ]);
-  }
+  const fileFailure = projectSelectedArtifactFileFailure(
+    cause,
+    OPERATION,
+    path,
+    "artifact",
+  );
+  if (fileFailure !== undefined) return fileFailure;
   return new ProviderAdapterError(RUST_BINARY_PROVIDER_IDENTITY.id, OPERATION, {
     cause,
     diagnostics: {
@@ -444,11 +437,7 @@ const artifactReaderFailure = (
       },
     );
   if (cause.reason === "path")
-    return new AnalysisInputError(
-      OPERATION,
-      { cause, ...stableArtifactInputRecovery(cause) },
-      [{ path: ["path"], reason: "invalid_format", message: cause.message }],
-    );
+    return stableArtifactInputFailure(cause, OPERATION);
   return new ProviderAdapterError(RUST_BINARY_PROVIDER_IDENTITY.id, OPERATION, {
     cause,
     diagnostics: { path, reason: cause.message },

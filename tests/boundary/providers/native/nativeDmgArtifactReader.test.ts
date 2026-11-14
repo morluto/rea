@@ -1506,7 +1506,6 @@ describe("native DMG localized verification diagnostics", () => {
       ).rejects.toMatchObject({ reason: "unavailable" });
       expect(run).toHaveBeenCalledTimes(3);
     },
-    10_000,
   );
 
   it("keeps a localized failure without an untranslated status line unavailable", async () => {
@@ -1758,7 +1757,6 @@ describe("native DMG real verification diagnostics", () => {
       expect(Reflect.get(failure.cause, "code")).toBe(1);
       expect(Reflect.get(failure.cause, "stderr")).toContain("is INVALID");
     },
-    60_000,
   );
 });
 

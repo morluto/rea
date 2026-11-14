@@ -41,16 +41,21 @@ export class BinaryResourceFailure extends Error {
 }
 
 /** A bounded read could not establish termination; it does not prove invalid text. */
-export class BinaryStringReadLimitFailure extends BinaryFormatFailure {
+export class BinaryStringReadLimitFailure extends Error {
   constructor(readonly maximumBytes: number) {
-    // Preserve the existing broad failure contract for legacy callers while
-    // allowing coverage-aware consumers to distinguish a limit from corruption.
     super(
-      "malformed",
       `String termination was not established within its ${String(maximumBytes)}-byte read allowance`,
     );
+    this.name = "BinaryStringReadLimitFailure";
   }
 }
+
+/** Recognized format failures and bounded string-read failures. */
+export const isBinaryFormatOrStringLimitFailure = (
+  cause: unknown,
+): cause is BinaryFormatFailure | BinaryStringReadLimitFailure =>
+  cause instanceof BinaryFormatFailure ||
+  cause instanceof BinaryStringReadLimitFailure;
 
 /** Native loader region facts; language-specific fallback selection belongs to consumers. */
 export interface LoadRegion {

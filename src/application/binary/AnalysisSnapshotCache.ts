@@ -87,7 +87,7 @@ const DOCUMENT_SCOPED_OPERATIONS: ReadonlySet<string> = new Set(
 );
 
 /** Maximum duplicated result bindings retained across direct and workflow queries. */
-export const SNAPSHOT_CACHE_ENTRY_CEILING = 10_000;
+const SNAPSHOT_CACHE_ENTRY_CEILING = 10_000;
 
 const replayDocumentSelected = (
   operation: AnalysisOperation,

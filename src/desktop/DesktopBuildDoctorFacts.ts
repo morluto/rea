@@ -21,12 +21,12 @@ import { execFileOutputFailure } from "../process/ExecFileOutput.js";
 import { agentEnvInterpreter } from "./AgentEnvComputerHelper.js";
 import {
   agentEnvReportedVersion,
-  BUILD_COMPUTER_SETTINGS,
   defaultBuildComputerArchive,
   programOnPath,
   resolveBuildComputerProgram,
   type BuildComputerSetting,
 } from "./BuildComputerEnvironment.js";
+import { BUILD_COMPUTER_SETTINGS } from "../domain/desktop/buildComputerSettings.js";
 
 const DEFAULT_DOCKER_ROOT = "/var/lib/docker";
 const CONFIG_BYTES = 1024 * 1024;

@@ -27,10 +27,15 @@ const VOLUME_UNICODE_LABEL_SELECTOR = 0x14;
 /** ECMAScript Date range: 8.64e15 ms either side of the Unix epoch. */
 const MAX_DATE_MS = 8_640_000_000_000_000n;
 
-const isoFromUnixMs = (unixMs: bigint): string | null =>
-  unixMs < -MAX_DATE_MS || unixMs > MAX_DATE_MS
+const isoFromUnsigned100ns = (ticks: bigint, epoch: bigint): string | null => {
+  // Both stored clocks are unsigned and their epochs are millisecond-aligned.
+  // Truncate before epoch subtraction so pre-1970 fractions stay in their
+  // containing millisecond rather than rounding toward the Unix epoch.
+  const unixMs = ticks / 10000n - epoch / 10000n;
+  return unixMs < -MAX_DATE_MS || unixMs > MAX_DATE_MS
     ? null
     : new Date(Number(unixMs)).toISOString();
+};
 
 const LINK_FLAG_NAMES: ReadonlyArray<readonly [number, string]> = [
   [0x00000001, "HasLinkTargetIDList"],
@@ -156,7 +161,7 @@ const fileTime = (raw: bigint): WindowsShortcut["header"]["creation_time"] => {
   if (raw === 0n) return { raw: "0", iso8601: null };
   return {
     raw: raw.toString(10),
-    iso8601: isoFromUnixMs((raw - FILETIME_UNIX_EPOCH) / 10000n),
+    iso8601: isoFromUnsigned100ns(raw, FILETIME_UNIX_EPOCH),
   };
 };
 
@@ -229,7 +234,7 @@ const uuidV1 = (
     mac: [...bytes.subarray(offset + 10, offset + 16)]
       .map((byte) => byte.toString(16).padStart(2, "0"))
       .join(":"),
-    timestamp_iso8601: isoFromUnixMs((timestamp - UUID_UNIX_EPOCH) / 10000n),
+    timestamp_iso8601: isoFromUnsigned100ns(timestamp, UUID_UNIX_EPOCH),
     timestamp_100ns: timestamp.toString(10),
   };
 };

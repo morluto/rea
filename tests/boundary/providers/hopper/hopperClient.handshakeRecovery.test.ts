@@ -3,7 +3,7 @@ import { access, rm } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 
-import { expect, it, onTestFinished, vi } from "vitest";
+import { expect, it, onTestFinished } from "vitest";
 
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { ok } from "../../../../src/domain/result.js";
@@ -13,6 +13,7 @@ import type {
 } from "../../../../src/hopper/BridgeLauncher.js";
 import { HopperClient } from "../../../../src/hopper/HopperClient.js";
 import { HopperFixtureLauncher } from "./hopperClient.fixture.js";
+import { waitFor } from "../../../support/testWait.js";
 
 const stop = async (child: ChildProcess): Promise<void> => {
   if (child.exitCode !== null || child.signalCode !== null) return;
@@ -82,7 +83,7 @@ const setup = (
         rm(directory, { recursive: true, force: true }),
       ),
     );
-  }, 45_000);
+  });
   return { client, launcher };
 };
 
@@ -145,7 +146,7 @@ it.each(["missing", "not-listening"] as const)(
       "health",
       "shutdown_document",
     ]);
-    await vi.waitFor(() => expect(fixture.processes[0]?.exitCode).toBe(0));
+    await waitFor(() => expect(fixture.processes[0]?.exitCode).toBe(0));
     await expect(access(session.directory)).rejects.toMatchObject({
       code: "ENOENT",
     });
@@ -202,9 +203,7 @@ it("reconnects for authenticated cleanup after a previously valid bridge transpo
     "health",
     "shutdown_document",
   ]);
-  await vi.waitFor(() =>
-    expect(launcher.fixture.processes[0]?.exitCode).toBe(0),
-  );
+  await waitFor(() => expect(launcher.fixture.processes[0]?.exitCode).toBe(0));
   const session = launcher.sessions[0];
   if (session === undefined) throw new Error("Fixture did not launch");
   await expect(access(session.directory)).rejects.toMatchObject({
@@ -235,7 +234,7 @@ it("preserves launcher diagnostics after a health deadline and reauthenticates f
   });
   expect(client.requestActivity()).toBeNull();
   const closing = client.close();
-  const next = await vi.waitFor(() => {
+  const next = await waitFor(() => {
     const request = launcher.fixture.requests.find(
       ({ method, id }) => method === "health" && id !== first.id,
     );
@@ -277,7 +276,7 @@ it("recovers an application exit after the first valid handshake occurs during c
   });
 
   const closing = client.close();
-  const next = await vi.waitFor(() => {
+  const next = await waitFor(() => {
     const request = launcher.fixture.requests.find(
       ({ method, id }) => method === "health" && id !== first.id,
     );
@@ -299,7 +298,7 @@ it("recovers an application exit after the first valid handshake occurs during c
     code: "ENOENT",
   });
   const restarted = client.start();
-  const health = await vi.waitFor(() => {
+  const health = await waitFor(() => {
     const request = launcher.fixture.requests.find(
       ({ method, id }) => method === "health" && id > next.id,
     );

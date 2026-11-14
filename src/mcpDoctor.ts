@@ -1,5 +1,4 @@
 import { Client, SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { Help } from "incur";
 import { performance } from "node:perf_hooks";
 import { resolve } from "node:path";
@@ -27,6 +26,7 @@ import {
 import { contractsForToolFamilies } from "./contracts/toolFamilies.js";
 import { promptsForToolFamilies } from "./contracts/promptToolFamilyScope.js";
 import { err, ok } from "./domain/result.js";
+import { AnalysisError } from "./domain/analysisErrorBase.js";
 import { PRODUCT_IDENTITY } from "./identity.js";
 import {
   parseMcpStartupBudgets,
@@ -37,6 +37,7 @@ import {
   mcpDoctorDeadlineRecovery,
 } from "./mcpStartupPolicy.js";
 import { MCP_DOCTOR_ALIAS, MCP_DOCTOR_OPTIONS } from "./mcpDoctorOptions.js";
+import { OwnedMcpStdioTransport } from "./process/OwnedMcpStdioTransport.js";
 
 const OUTPUT_FORMATS = CLI_DOCUMENT_OUTPUT_FORMATS;
 type OutputFormat = (typeof OUTPUT_FORMATS)[number];
@@ -120,14 +121,20 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
     Math.max(1, Math.ceil(deadline - performance.now())),
   );
   const stderr = captureStderr();
-  const transport = new OwnedStdioClientTransport({
-    command: options.command,
-    args: [...options.args],
-    cwd: options.cwd,
-    env: targetFreeEnvironment(options.environment),
-    stderr: "pipe",
-  });
-  transport.stderr?.on("data", stderr.append);
+  const transport = new DoctorStdioTransport(
+    {
+      command: options.command,
+      arguments: [...options.args],
+      ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+      // The caller's environment is the child's complete base. The launcher
+      // would otherwise merge the ambient process environment, including the
+      // target selection the doctor removes.
+      hostEnvironment: targetFreeEnvironment(options.environment),
+      // A server can start its own providers in separate process groups.
+      sweepTokenOwnedProcesses: true,
+    },
+    stderr.append,
+  );
   const client = new Client({ name: "rea-mcp-doctor", version: "1" });
   let result: ProductionMcpDoctorResult;
   let cleanupFailure: { readonly cause: unknown } | undefined;
@@ -161,25 +168,13 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
     };
   } finally {
     clearTimeout(timer);
+    // The owned transport is the only cleanup owner; Client.close would only
+    // delegate to it. An interrupted connect can also clear the client's
+    // transport reference before its startup child is closed.
     try {
-      await client.close();
-    } catch (cause: unknown) {
-      cleanupFailure = { cause };
-    }
-    try {
-      // An interrupted connect can clear the client's transport reference
-      // before its startup child is closed. The transport retains that child.
       await transport.close();
     } catch (cause: unknown) {
-      cleanupFailure = {
-        cause:
-          cleanupFailure === undefined || cleanupFailure.cause === cause
-            ? cause
-            : new AggregateError(
-                [cleanupFailure.cause, cause],
-                `MCP client and transport cleanup failed: ${errorMessage(cleanupFailure.cause)}; ${errorMessage(cause)}`,
-              ),
-      };
+      cleanupFailure = { cause };
     }
   }
   if (cleanupFailure !== undefined)
@@ -191,10 +186,12 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
         {
           name: "cleanup",
           ok: false,
-          detail: `MCP stdio cleanup failed: ${errorMessage(cleanupFailure.cause)}`,
+          detail: cleanupFailureDetail(cleanupFailure.cause),
         },
       ],
     };
+  // This reporter keeps the documented stderr prefix, including a withheld
+  // partial character; the transport's own retention serves cleanup errors.
   return { ...result, diagnostics: stderr.value() };
 };
 
@@ -213,13 +210,25 @@ type ProductionMcpDoctorResult =
       readonly checks: readonly McpDoctorCheck[];
     };
 
-/** Join SDK-triggered and caller-triggered close calls for the same child. */
-class OwnedStdioClientTransport extends StdioClientTransport {
-  #closePromise: Promise<void> | undefined;
-
-  override close(): Promise<void> {
-    this.#closePromise ??= super.close();
-    return this.#closePromise;
+/** The doctor's bounded stdio session, owning the process family it starts. */
+class DoctorStdioTransport extends OwnedMcpStdioTransport {
+  constructor(
+    options: ConstructorParameters<typeof OwnedMcpStdioTransport>[0],
+    onStderr: (chunk: unknown) => void,
+  ) {
+    super(options, {
+      provider: "mcp-doctor",
+      operation: "mcp_doctor",
+      label: "MCP doctor",
+      maxFrameBytes: 8 * 1024 * 1024,
+      maxOperationBytes: 32 * 1024 * 1024,
+      // Retain only stderr, with the byte budget the report promises.
+      maxDiagnosticBytes: {
+        stdout: 0,
+        stderr: MCP_STARTUP_POLICY.doctorStderrBytes,
+      },
+      onStderr,
+    });
   }
 }
 
@@ -315,7 +324,10 @@ const inspectProductionMcpSession = async (
       ok:
         observedIdentity.packageVersion === PRODUCT_IDENTITY.packageVersion &&
         observedIdentity.catalogDigest === catalog.digests.combined_sha256,
-      detail: `package=${observedIdentity.packageVersion ?? "missing"}; catalog=${observedIdentity.catalogDigest ?? "missing"}`,
+      // Identity is carried by the request-flow reply; without one it is unobserved, not missing.
+      detail: requestFlow.ok
+        ? `package=${observedIdentity.packageVersion ?? "missing"}; catalog=${observedIdentity.catalogDigest ?? "missing"}`
+        : `identity not observed: ${requestFlow.error.detail}`,
     },
     {
       name: "request-flow",
@@ -664,6 +676,20 @@ const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
 
 const errorMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
+
+/** Report the transport's typed cleanup reason and the resources it retains. */
+const cleanupFailureDetail = (cause: unknown): string => {
+  const detail = `MCP stdio cleanup failed: ${errorMessage(cause)}`;
+  if (!(cause instanceof AnalysisError) || !cause.cleanupIncomplete)
+    return detail;
+  const reason = cause.diagnostics?.reason;
+  return [
+    typeof reason === "string" ? `${detail} (${reason})` : detail,
+    ...(cause.cleanupResources.length === 0
+      ? []
+      : [`retained resources: ${cause.cleanupResources.join(", ")}`]),
+  ].join("; ");
+};
 
 /**
  * Name the applied doctor deadline when an owned abort or SDK request timeout

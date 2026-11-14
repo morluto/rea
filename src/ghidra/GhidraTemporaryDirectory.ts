@@ -34,37 +34,26 @@ export type GhidraTemporaryDirectoryProbe =
       readonly retainedPath?: string;
     };
 
-/** Filesystem seam so classification is testable without a restricted host. */
-export interface GhidraTemporaryDirectoryHost {
-  readonly sessionRoot: () => string;
-  readonly writeProbe: (
-    path: string,
-    resourceOwner: RetainedResourceScope,
-  ) => Promise<void>;
-  readonly removeProbe: (path: string) => Promise<void>;
-}
-
-const systemHost: GhidraTemporaryDirectoryHost = {
-  sessionRoot: () => ghidraSessionRoot(),
-  writeProbe: async (path, resourceOwner) => {
-    const resources = new ArtifactResourceScope();
-    try {
-      await withArtifactFileHandle(
+const writeProbe = async (
+  path: string,
+  resourceOwner: RetainedResourceScope,
+) => {
+  const resources = new ArtifactResourceScope();
+  try {
+    await withArtifactFileHandle(
+      path,
+      await open(path, "wx", 0o600),
+      resources,
+      undefined,
+      (handle) => handle.writeFile("rea doctor probe\n"),
+    );
+  } finally {
+    if (resources.hasPending)
+      resourceOwner.retain(
+        { close: () => resources.close(), cleanupResources: [path] },
         path,
-        await open(path, "wx", 0o600),
-        resources,
-        undefined,
-        (handle) => handle.writeFile("rea doctor probe\n"),
       );
-    } finally {
-      if (resources.hasPending)
-        resourceOwner.retain(
-          { close: () => resources.close(), cleanupResources: [path] },
-          path,
-        );
-    }
-  },
-  removeProbe: unlink,
+  }
 };
 
 const errorCode = (cause: unknown): string | undefined =>
@@ -84,19 +73,17 @@ const errorMessage = (cause: unknown): string =>
  */
 export const probeGhidraTemporaryDirectory = async (
   resourceOwner: RetainedResourceScope,
-  overrides: Partial<GhidraTemporaryDirectoryHost> = {},
 ): Promise<GhidraTemporaryDirectoryProbe> => {
-  const host = { ...systemHost, ...overrides };
-  const directory = host.sessionRoot();
+  const directory = ghidraSessionRoot();
   const path = join(directory, `rea-doctor-probe-${randomUUID()}`);
   const remove = () =>
-    host.removeProbe(path).catch((cause: unknown) => {
+    unlink(path).catch((cause: unknown) => {
       if (errorCode(cause) !== "ENOENT") throw cause;
     });
   const retain = () =>
     resourceOwner.retain({ close: remove, cleanupResources: [path] }, path);
   try {
-    await host.writeProbe(path, resourceOwner);
+    await writeProbe(path, resourceOwner);
   } catch (cause: unknown) {
     const cleanupOnly =
       cause instanceof ArtifactFileCleanupFailure &&
@@ -121,7 +108,7 @@ export const probeGhidraTemporaryDirectory = async (
     };
   }
   try {
-    await host.removeProbe(path);
+    await unlink(path);
   } catch (cause: unknown) {
     retain();
     return {

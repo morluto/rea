@@ -1,3 +1,4 @@
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { expect, it } from "vitest";
 import { createWebPageInspection } from "../../tests/support/browser/webPageInspection.js";
 
@@ -233,10 +234,19 @@ it("carries the exact caller cancellation reason and completed prefix facts", as
     input,
     controller.signal,
   );
-  await started.promise;
-  controller.abort(exactReason);
-  const result = await pending;
-  analyzer.releaseReservation();
+  let result: Awaited<typeof pending>;
+  try {
+    await awaitAcknowledgement(started.promise, pending, "script analysis");
+    controller.abort(exactReason);
+    result = await pending;
+  } finally {
+    controller.abort(exactReason);
+    try {
+      await pending;
+    } finally {
+      analyzer.releaseReservation();
+    }
+  }
 
   if (result.ok) throw new Error("Expected cancellation");
   expect(result.error._tag).toBe("AnalysisCancelledError");

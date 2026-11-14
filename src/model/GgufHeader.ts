@@ -104,7 +104,7 @@ export class GgufHeader {
   async #value(
     type: number,
     retain: boolean,
-    depth = 0,
+    enclosingFrames = 0,
   ): Promise<{
     value: JsonValue;
     element_type: string | null;
@@ -113,12 +113,6 @@ export class GgufHeader {
   }> {
     if (NAMES[type] === undefined)
       rejectModel(`Unknown GGUF metadata type ${String(type)}`);
-    if (depth > MODEL_METADATA_NESTING)
-      throw new ModelFormatFailure(
-        "capacity",
-        `GGUF metadata nesting exceeds ${String(MODEL_METADATA_NESTING)} array frames`,
-        "metadata-nesting",
-      );
     if (type === 8)
       return {
         value: await this.#text(retain),
@@ -127,6 +121,15 @@ export class GgufHeader {
         complete: true,
       };
     if (type === 9) {
+      // The frame is the counted unit and an empty innermost array still
+      // occupies one, so charge it on entry instead of on a child visit.
+      const frames = enclosingFrames + 1;
+      if (frames > MODEL_METADATA_NESTING)
+        throw new ModelFormatFailure(
+          "capacity",
+          `GGUF metadata nesting exceeds ${String(MODEL_METADATA_NESTING)} array frames`,
+          "metadata-nesting",
+        );
       const element = Number(await this.#unsigned(4));
       const rawCount = await this.#unsigned(8);
       const minimum = WIDTHS[element];
@@ -157,7 +160,7 @@ export class GgufHeader {
           break;
         }
         const keep = retain && index < MODEL_ARRAY_PREVIEW;
-        const value = await this.#value(element, keep, depth + 1);
+        const value = await this.#value(element, keep, frames);
         if (keep)
           preview.push(
             element === 9

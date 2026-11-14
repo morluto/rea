@@ -2,12 +2,12 @@ import { expect, it } from "vitest";
 import { createEvidence } from "../evidence.js";
 import { projectAnalysisError } from "../analysisErrorProjection.js";
 import type { JsonValue } from "../jsonValue.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   androidComponentsViewResultSchema,
   androidComponentSummaryViewResultSchema,
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "./analysisView.js";
+} from "./analysisViewResult.js";
 import { analysisViewRequestSchema } from "./analysisViewRequest.js";
 
 const component = (name: string, extra: Record<string, JsonValue> = {}) => ({

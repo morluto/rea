@@ -1,3 +1,4 @@
+import { javaScriptWorkerMemoryLimitBytes } from "../../process/JavaScriptWorkerMemoryLimit.js";
 import { captureBudgets, withCaptureBudgets } from "./CaptureBudgets.js";
 import type { FileSnapshotPartialObservation } from "../../domain/fileSnapshotObservation.js";
 import {
@@ -16,10 +17,7 @@ import {
   resolveCaptureDecoderHeap,
   type CaptureDecoderHeap,
 } from "../../config/captureDecoderHeap.js";
-import {
-  NODE_CAPTURE_HEAP_ENFORCED,
-  captureDecoderProcessMemoryLimitBytes,
-} from "./CaptureRelease.js";
+import { NODE_CAPTURE_HEAP_ENFORCED } from "./CaptureRelease.js";
 import type { HistoricalCaptureFormatAdapter } from "./HistoricalCaptureFormatAdapter.js";
 import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
@@ -613,9 +611,7 @@ const nodeMemoryLimitation = (heap: CaptureDecoderHeap): string => {
   const recovery = captureDecoderHeapRecovery(heap);
   if (NODE_CAPTURE_HEAP_ENFORCED)
     return `HAR/SAZ/qlog use a ${String(heap.oldGenerationMiB)} MiB Node old-generation heap (source ${heap.source}). ${recovery}`;
-  const commitLimit = captureDecoderProcessMemoryLimitBytes(
-    heap.oldGenerationMiB,
-  );
+  const commitLimit = javaScriptWorkerMemoryLimitBytes(heap.oldGenerationMiB);
   return commitLimit === null
     ? `HAR/SAZ/qlog run on Bun, which does not enforce REA's V8 heap flags. ${recovery}`
     : `HAR/SAZ/qlog run on Bun, which does not enforce REA's V8 heap flags, under a ${String(commitLimit)}-byte Windows Job Object commit limit. ${recovery}`;

@@ -1,7 +1,7 @@
 import { vi } from "vitest";
 
 /** Environment variables that redirect where supported clients keep config. */
-export const CLIENT_LOCATION_ENVIRONMENT = [
+const CLIENT_LOCATION_ENVIRONMENT = [
   "HOME",
   "USERPROFILE",
   "HOMEDRIVE",

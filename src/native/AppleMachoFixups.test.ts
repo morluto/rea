@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { decodeChainedPointer } from "./AppleMachoFixups.js";
+import {
+  chainedImportNames,
+  decodeChainedPointer,
+} from "./AppleMachoFixups.js";
 import { parsePointerFixups } from "./AppleMachoFixups.fixture.js";
 import type { Segment } from "./AppleMachoSelection.js";
 
@@ -146,6 +149,26 @@ const chainedData = (format: 1 | 2 | 3): Buffer => {
   data.writeBigUInt64LE(1n | field(1n, 63), 0x4008);
   return data;
 };
+
+describe("chained import names", () => {
+  it.each([1, 2, 3] as const)(
+    "reads format %i import-table names without resolving libraries",
+    (format) => {
+      // Ordinals 1 and 2 name dependencies that this reader does not need.
+      expect(chainedImportNames(chainedData(format))).toEqual([
+        "_OBJC_CLASS_$_NSObject",
+        "_free",
+      ]);
+    },
+  );
+
+  it("rejects a malformed import table", () => {
+    const data = chainedData(1);
+    data.writeUInt32LE(4, 20);
+    expect(() => chainedImportNames(data)).toThrow(RangeError);
+    expect(() => chainedImportNames(Buffer.alloc(0))).toThrow(RangeError);
+  });
+});
 
 const SEGMENTS: Segment[] = [
   { address: BASE, size: 0x4000n, offset: 0, executable: true },

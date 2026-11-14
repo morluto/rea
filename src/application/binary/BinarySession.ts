@@ -7,7 +7,10 @@ import {
 } from "../EvidenceBundleFiles.js";
 import type { ResetInvestigationReceipt } from "../../domain/investigationLifecycle.js";
 
-import { retainSavedAnalysisSnapshot } from "../../domain/savedAnalysisSnapshot.js";
+import {
+  retainSavedAnalysisSnapshot,
+  type SavedAnalysisSnapshot,
+} from "../../domain/savedAnalysisSnapshot.js";
 
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import {
@@ -39,7 +42,6 @@ import type {
   BinarySessionPort,
   BinaryOpenResult,
   OpenSelectionReceipt,
-  SavedAnalysisSnapshot,
 } from "./BinarySessionPort.js";
 import { binaryTargetSummary } from "./BinaryTargetSummary.js";
 import {
@@ -1754,22 +1756,16 @@ export class BinarySession
     this.#transitionPending += 1;
     // Later calls wait for this transition and must not be included in its drain.
     const admittedThrough = this.#transitionGeneration++;
-    const result = this.#transition.then(
-      () => operation(admittedThrough),
-      () => operation(admittedThrough),
-    );
+    const perform = (): Promise<T> => operation(admittedThrough);
+    const result = this.#transition.then(perform, perform);
     this.#transition = result.then(
       () => undefined,
       () => undefined,
     );
-    void result.then(
-      () => {
-        this.#transitionPending -= 1;
-      },
-      () => {
-        this.#transitionPending -= 1;
-      },
-    );
+    const finish = (): void => {
+      this.#transitionPending -= 1;
+    };
+    void result.then(finish, finish);
     return result;
   }
 
@@ -1864,32 +1860,19 @@ export class BinarySession
         );
       };
       signal.addEventListener("abort", onAbort, { once: true });
-      transition.then(
-        () => {
-          signal.removeEventListener("abort", onAbort);
-          resolve(
-            signal.aborted
-              ? err(
-                  new AnalysisCancelledError(operation, {
-                    cause: signal.reason,
-                  }),
-                )
-              : ok(undefined),
-          );
-        },
-        () => {
-          signal.removeEventListener("abort", onAbort);
-          resolve(
-            signal.aborted
-              ? err(
-                  new AnalysisCancelledError(operation, {
-                    cause: signal.reason,
-                  }),
-                )
-              : ok(undefined),
-          );
-        },
-      );
+      const finish = (): void => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(
+          signal.aborted
+            ? err(
+                new AnalysisCancelledError(operation, {
+                  cause: signal.reason,
+                }),
+              )
+            : ok(undefined),
+        );
+      };
+      transition.then(finish, finish);
     });
   }
 }

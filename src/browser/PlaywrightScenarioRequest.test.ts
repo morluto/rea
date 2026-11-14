@@ -6,6 +6,7 @@ import type { BrowserScenarioAction } from "../domain/browserScenarioValues.js";
 import { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
 import { responsePointerValue } from "./BrowserScenarioResponseValues.js";
 import { performPlaywrightScenarioAction } from "./PlaywrightScenarioActions.js";
+import { waitFor } from "../../tests/support/testWait.js";
 
 const ORIGIN = "https://app.example.test";
 
@@ -1076,6 +1077,12 @@ describe("saved response JSON pointers", () => {
     vi.unstubAllGlobals();
   });
 
+  it("selects the root and decodes escaped response keys once", () => {
+    const value = { "a/b": { "~1": "literal", "/": "slash" } };
+    expect(responsePointerValue(value, "")).toBe(value);
+    expect(responsePointerValue(value, "/a~1b/~01")).toBe("literal");
+  });
+
   it("does not coerce a terminal newline in an array index", () => {
     expect(responsePointerValue({ items: ["record-7"] }, "/items/0\n")).toBe(
       undefined,
@@ -1608,7 +1615,7 @@ describe("ambiguous saved response observations", () => {
     ]);
     const running = perform(page, parsed.actions[0]!, secrets);
     const rejected = expect(running).rejects.toThrow("ambiguous");
-    await vi.waitFor(() => expect(reads.count).toBe(1));
+    await waitFor(() => expect(reads.count).toBe(1));
     for (const listener of listeners)
       listener({ method: () => "POST", url: () => `${ORIGIN}/api/items` });
     release('{"id":"wrong-object"}');

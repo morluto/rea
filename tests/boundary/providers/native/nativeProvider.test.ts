@@ -493,7 +493,7 @@ describe("native command failure capture and limits", () => {
       { signal: controller.signal },
     );
     const result = await withVerifierCleanup(async () => {
-      await awaitAcknowledgement(ready, pending, "command output", 10_000);
+      await awaitAcknowledgement(ready, pending, "command output");
       controller.abort();
       return await pending;
     }, [
@@ -951,8 +951,12 @@ describe("native late cancellation with cleanup", () => {
         {},
         { signal: controller.signal },
       );
-      await started;
-      await cleanupAttempt;
+      await awaitAcknowledgement(started, pending, "native command start");
+      await awaitAcknowledgement(
+        cleanupAttempt,
+        pending,
+        "native cleanup start",
+      );
       controller.abort(cancellationReason);
       releaseFirstCleanup();
 
@@ -1143,51 +1147,59 @@ describe("native command cleanup lifecycle", () => {
     );
 
     const execution = client.execute("list_architectures", {});
-    await started;
-    const closing = client.close();
-    await Promise.resolve();
-    expect(cleanupRetries).toBe(0);
-    finishCommand(
-      err(
-        new NativeCommandFailure("lipo", "timeout", null, undefined, {
-          stdout: "partial architecture output",
-          stderr: "partial diagnostic",
-          stdoutBytes: 27,
-          stderrBytes: 19,
-          exitCode: null,
-          signal: null,
-          truncated: false,
-        }),
-      ),
+    const commandResult = err(
+      new NativeCommandFailure("lipo", "timeout", null, undefined, {
+        stdout: "partial architecture output",
+        stderr: "partial diagnostic",
+        stdoutBytes: 27,
+        stderrBytes: 19,
+        exitCode: null,
+        signal: null,
+        truncated: false,
+      }),
     );
+    try {
+      await awaitAcknowledgement(started, execution, "native command start");
+      const closing = client.close();
+      await Promise.resolve();
+      expect(cleanupRetries).toBe(0);
+      finishCommand(commandResult);
 
-    const [observed, closed] = await Promise.all([execution, closing]);
-    expect(observed.ok).toBe(false);
-    expect(closed.ok).toBe(false);
-    expect(cleanupRetries).toBe(1);
-    if (!closed.ok) {
-      expect(closed.error.cleanupResources).toEqual([
-        "run:first",
-        "process-group:1234",
-        "run:second",
-        "process-group:5678",
-      ]);
-      expect(closed.error).toHaveProperty("diagnostics", {
-        reason: "Native command process cleanup remains incomplete",
-        failures: [
-          {
-            reason: "first process group remains live",
-            resources: ["run:first", "process-group:1234"],
-          },
-          {
-            reason: "second process group remains live",
-            resources: ["run:second", "process-group:5678"],
-          },
-        ],
-      });
+      const [observed, closed] = await Promise.all([execution, closing]);
+      expect(observed.ok).toBe(false);
+      expect(closed.ok).toBe(false);
+      expect(cleanupRetries).toBe(1);
+      if (!closed.ok) {
+        expect(closed.error.cleanupResources).toEqual([
+          "run:first",
+          "process-group:1234",
+          "run:second",
+          "process-group:5678",
+        ]);
+        expect(closed.error).toHaveProperty("diagnostics", {
+          reason: "Native command process cleanup remains incomplete",
+          failures: [
+            {
+              reason: "first process group remains live",
+              resources: ["run:first", "process-group:1234"],
+            },
+            {
+              reason: "second process group remains live",
+              resources: ["run:second", "process-group:5678"],
+            },
+          ],
+        });
+      }
+      await expect(client.close()).resolves.toMatchObject({ ok: true });
+      expect(cleanupRetries).toBe(2);
+    } finally {
+      finishCommand(commandResult);
+      try {
+        await execution;
+      } finally {
+        await client.close();
+      }
     }
-    await expect(client.close()).resolves.toMatchObject({ ok: true });
-    expect(cleanupRetries).toBe(2);
   });
 });
 
@@ -2042,6 +2054,58 @@ it("reports the selected command deadline when preparation times out", async () 
     );
     marker.resolveCleanup();
     expect(result.error.cleanupIncomplete).toBe(false);
+  } finally {
+    await client.close();
+  }
+});
+
+it("projects an ownership-helper compile timeout independently from the command deadline", async () => {
+  const inspection = new DarwinProcessOwnershipInspectionError(
+    "ownership-helper compilation timed out",
+    {
+      compilerOutcome: {
+        outcome: "timed_out",
+        code: "ETIMEDOUT",
+        signal: "SIGINT",
+        stderr: "",
+        stderrTruncated: false,
+        outputTruncated: false,
+        killed: true,
+        timeoutMs: 1,
+      },
+    },
+  );
+  const failure = new NativeCommandFailure("swift-demangle", "io", null, {
+    cause: inspection,
+  });
+  const runner: NativeCommandRunner = { run: async () => err(failure) };
+  const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
+    machoTarget("/fixture"),
+  );
+  try {
+    const result = await client.execute("demangle_swift", {
+      symbols: ["fixture"],
+      native_command_timeout_ms: 60_000,
+    });
+    if (result.ok) throw new Error("Expected ownership-helper timeout");
+    expect(result.error).toMatchObject({ _tag: "AnalysisTimeoutError" });
+    expect(result.error.diagnostics).toMatchObject({
+      compiler_outcome: { outcome: "timed_out", timeout_ms: 1 },
+    });
+
+    const projected = projectAnalysisError(result.error);
+    expect(projected).toMatchObject({
+      code: "provider_timeout",
+      category: "timeout",
+      retryable: true,
+    });
+    expect(projected.message).toContain("of 1 ms");
+    expect(projected.remediation.action).toContain(
+      "REA_SWIFTC_COMPILE_TIMEOUT_MS",
+    );
+    expect(projected.remediation.action).not.toContain(
+      "native_command_timeout_ms",
+    );
   } finally {
     await client.close();
   }

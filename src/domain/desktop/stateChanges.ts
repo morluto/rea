@@ -1,3 +1,4 @@
+import { escapeJsonPointerToken } from "../jsonPointer.js";
 import type { JsonValue } from "../jsonValue.js";
 import type { DesktopStateFormat } from "./stateFormats.js";
 import { holdsTagOnly, pairMembers } from "./memberPairing.js";
@@ -23,9 +24,6 @@ const isRecord = (
   value: JsonValue | undefined,
 ): value is Record<string, JsonValue> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
-
-const escapePointer = (segment: string) =>
-  segment.replaceAll("~", "~0").replaceAll("/", "~1");
 
 /** Longest JSON pointer listed; a longer one is only counted, so deep paths never fill the lists. */
 const MAX_LISTED_POINTER = 4096;
@@ -137,7 +135,7 @@ const walk = (
   } else if (into.changed !== undefined && ownEntry(from) !== ownEntry(other))
     note(into.changed, path);
   const visit = (key: string, item: JsonValue, counterpart?: JsonValue) => {
-    const segment = escapePointer(key);
+    const segment = escapeJsonPointerToken(key);
     path.segments.push(segment);
     path.length += segment.length + 1;
     walk(item, counterpart, path, into);
@@ -283,7 +281,10 @@ const keyEntries = (view: JsonValue): Map<string, string> => {
   for (const [group, keys] of Object.entries(groups))
     if (isRecord(keys))
       for (const [key, value] of Object.entries(keys))
-        entries.set(`${group}/${escapePointer(key)}`, JSON.stringify(value));
+        entries.set(
+          `${group}/${escapeJsonPointerToken(key)}`,
+          JSON.stringify(value),
+        );
   return entries;
 };
 

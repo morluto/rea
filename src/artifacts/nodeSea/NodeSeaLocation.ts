@@ -257,7 +257,12 @@ const locateFatMachO = async (
   const found: BlobRange[] = [];
   for (const [index, slice] of header.slices.entries()) {
     if (slice === undefined || header.rangeIssues[index] != null) continue;
-    found.push(...(await locateThinMachO(carrier, slice.offset, slice.size)));
+    for (const range of await locateThinMachO(
+      carrier,
+      slice.offset,
+      slice.size,
+    ))
+      found.push(range);
   }
   return found;
 };
@@ -442,7 +447,7 @@ const locateElfNotes = async (
         found.length > 0,
       );
       if (scanned === undefined) opaque = true;
-      else found.push(...scanned);
+      else for (const range of scanned) found.push(range);
     }
   // The runtime locates the blob through PT_NOTE segments. Injectors can
   // leave stale or misaligned SHT_NOTE entries, so section notes are only a
@@ -490,7 +495,7 @@ const locateElfNotes = async (
         found.length > 0,
       );
       if (scanned === undefined) opaque = true;
-      else found.push(...scanned);
+      else for (const range of scanned) found.push(range);
     }
   if (found.length > 0 && opaque)
     throw formatFailure(NODE_SEA_ELF_TABLE_TRUNCATED);

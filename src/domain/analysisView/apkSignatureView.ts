@@ -194,7 +194,7 @@ const read = (parent: AnalysisViewParent): Result<Checked, AnalysisError> => {
 function* records(
   report: ApkSignatureResult,
   selection: Selection,
-): Generator<Record<string, JsonValue>> {
+): Generator<Record<string, JsonValue> & { id: string; signer_id?: string }> {
   const wanted =
     selection.schemes === undefined ? undefined : new Set(selection.schemes);
   for (const scheme of schemes) {
@@ -317,8 +317,8 @@ export const projectApkSignatureView = (
   const rows =
     ids?.size === 0 || signers?.size === 0 ? [] : records(report, view);
   for (const row of rows) {
-    if (ids !== undefined && !ids.has(String(row.id))) continue;
-    if (signers !== undefined && !signers.has(String(row.signer_id ?? row.id)))
+    if (ids !== undefined && !ids.has(row.id)) continue;
+    if (signers !== undefined && !signers.has(row.signer_id ?? row.id))
       continue;
     if (total++ < view.offset || items.length >= view.limit) continue;
     const item: Record<string, JsonValue> = {};

@@ -7,7 +7,6 @@ import {
   READER_RUNNER_SLACK_S,
   readerTimeout,
 } from "../../domain/desktop/appTaskReaders.js";
-import { BUILD_REA_TIMEOUT_S } from "../../desktop/BuildComputerController.js";
 import { BuildComputerLongRuns } from "../../desktop/BuildComputerLongRuns.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
@@ -32,6 +31,7 @@ import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
 import {
+  BUILD_REA_TIMEOUT_S,
   fetchHomeFolder,
   type ControlledComputer,
 } from "../../desktop/BuildComputerController.js";

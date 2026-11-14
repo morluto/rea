@@ -90,7 +90,6 @@ it.each(["", "h:"])(
       await browser.close();
     }
   },
-  30_000,
 );
 
 it.each(["progress", "enable", "terminal", "complete"] as const)(

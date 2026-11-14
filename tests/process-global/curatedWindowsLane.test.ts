@@ -69,7 +69,7 @@ describe("curated Windows test lane", () => {
       paths.map(async (path) => ((await exists(path)) ? undefined : path)),
     );
     expect(missing.filter((path) => path !== undefined)).toEqual([]);
-  }, 10_000);
+  });
 
   it("keeps the native multi-megabyte output regression in the lane", async () => {
     expect(await explicitPaths("windows")).toContain(
@@ -188,7 +188,7 @@ it("keeps every explicit focused CI test path executable after file moves", asyn
     paths.map(async (path) => ((await exists(path)) ? undefined : path)),
   );
   expect(missing.filter((path) => path !== undefined)).toEqual([]);
-}, 10_000);
+});
 
 it("checks the complete source with the fallback compiler before Windows build reuse", async () => {
   const workflow = workflowSchema.parse(

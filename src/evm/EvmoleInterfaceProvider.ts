@@ -468,7 +468,6 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
     let root: Pick<PrivateRuntimeRoot, "path" | "close"> | undefined;
     let rootLease: AnalysisCleanupLease | undefined;
     let processOwner: ProviderProcessSupervisor | undefined;
-    let processLease: AnalysisCleanupLease | undefined;
     let processCleanup:
       | {
           readonly reason: string;
@@ -643,7 +642,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
           ...(this.launcher === undefined ? {} : { launcher: this.launcher }),
           retainCleanup: (owner, cleanup) => {
             processOwner = owner;
-            processLease = processLeaseFor(owner);
+            processLeaseFor(owner);
             processCleanup = {
               reason: cleanup.reason,
               resources:
@@ -830,7 +829,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
         cause.cleanupOwner !== undefined
       ) {
         processOwner = cause.cleanupOwner;
-        processLease = processLeaseFor(cause.cleanupOwner);
+        processLeaseFor(cause.cleanupOwner);
       }
       let fileFailure: EvmFileSizeFailureEvidence | undefined;
       let markerCleanupFailure: ArtifactReaderFailure | undefined;

@@ -246,14 +246,10 @@ export const createStreamableHttpJebMcpConnection: JebMcpConnectionFactory = (
       }
     }, owner.signal.signal);
     owner.acquisition = acquisition;
-    void acquisition.promise.then(
-      () => {
-        if (owner.acquisition === acquisition) owner.acquisition = undefined;
-      },
-      () => {
-        if (owner.acquisition === acquisition) owner.acquisition = undefined;
-      },
-    );
+    const clearAcquisition = (): void => {
+      if (owner.acquisition === acquisition) owner.acquisition = undefined;
+    };
+    void acquisition.promise.then(clearAcquisition, clearAcquisition);
     return waitForAcquisition(owner, acquisition, signal);
   };
 

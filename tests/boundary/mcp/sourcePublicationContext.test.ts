@@ -164,7 +164,6 @@ it.each(
       await session.close();
     }
   },
-  120000,
 );
 
 it.each([false, true])(
@@ -276,7 +275,6 @@ it.each([false, true])(
       await session.close();
     }
   },
-  120000,
 );
 
 it("keeps a smaller sibling recovery when a later completed observation exceeds delivery", async () => {
@@ -382,4 +380,4 @@ it("keeps a smaller sibling recovery when a later completed observation exceeds 
     await server.close();
     await session.close();
   }
-}, 120000);
+});

@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
-import { readdir } from "node:fs/promises";
 
 import { z } from "zod";
 
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { planOutputTree } from "./DesktopOutputTree.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import {
   parseDesktopTask,
@@ -114,14 +114,6 @@ const recordDirectoryRefusal = (
         "Ask again without directory or with the original folder; another witness needs a fresh computer.",
       )
     : undefined;
-
-/** Whether a folder can take the record: absent, or empty. */
-const usableFolder = async (directory: string): Promise<boolean> =>
-  readdir(directory).then(
-    (entries) => entries.length === 0,
-    (cause: unknown) =>
-      (cause as NodeJS.ErrnoException | undefined)?.code === "ENOENT",
-  );
 
 /**
  * A witness from its seed on: `open` while stages are checked, `saving`
@@ -543,13 +535,15 @@ export class DesktopBuildWitness {
           "Give directory, a new or empty folder on this host for the record and recording.",
         ),
       );
-    if (!(await usableFolder(directory)))
-      return err(
-        refused(
-          `${directory} exists and is not empty.`,
-          "Give a new or empty folder.",
-        ),
-      );
+    // Admit the folder by the same rule the record is saved under, so the
+    // seed cannot accept a folder (a symlink, a file, a denied path) that the
+    // save would refuse.
+    try {
+      await planOutputTree(directory, { operation: CHECK, field: "directory" });
+    } catch (cause: unknown) {
+      if (cause instanceof AnalysisError) return err(cause);
+      throw cause;
+    }
     let differs: string | undefined;
     if (this.#bundle !== undefined) {
       try {

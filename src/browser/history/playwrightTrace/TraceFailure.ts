@@ -11,7 +11,7 @@ import { PLAYWRIGHT_TRACE_OPERATION as operation } from "../../../domain/playwri
 import { ArtifactReaderFailure } from "../../../artifacts/ArtifactReader.js";
 import { artifactFileCancellationCause } from "../../../artifacts/ArtifactFileOperation.js";
 import { isSelectedRegularFileError } from "../../../filesystem/RegularFile.js";
-import { stableArtifactInputRecovery } from "../../../artifacts/StableArtifactFailure.js";
+import { stableArtifactInputFailure } from "../../../artifacts/StableArtifactFailure.js";
 
 /** Classify the archive owner's facts without interpreting opaque cancellation reasons. */
 export const traceFailure = (cause: unknown, path: string): AnalysisError => {
@@ -38,11 +38,7 @@ export const traceFailure = (cause: unknown, path: string): AnalysisError => {
         },
       );
     if (cause.reason === "format" || cause.reason === "path")
-      return new AnalysisInputError(
-        operation,
-        { cause, ...stableArtifactInputRecovery(cause) },
-        [{ path: ["path"], reason: "invalid_format", message: cause.message }],
-      );
+      return stableArtifactInputFailure(cause, operation);
     return new ArtifactOperationError(
       operation,
       cause.reason,

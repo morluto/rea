@@ -517,15 +517,11 @@ describe("Windows Ghidra temporary directory check", () => {
     );
   });
 
-  it("does not probe when no Windows installation was selected", async () => {
-    const probe = vi.fn(() => Promise.reject(new Error("unexpected probe")));
+  it("omits the temporary directory check when no Windows installation was selected", async () => {
     const projected = await inspectSystemGhidraProvider(
       {},
       inspectionResources.owner,
-      undefined,
-      probe,
     );
-    expect(probe).not.toHaveBeenCalled();
     expect(projected.checks.map(({ name }) => name)).not.toContain(
       "temp_directory",
     );

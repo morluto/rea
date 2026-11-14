@@ -5,6 +5,17 @@ import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
 import { constants as bufferConstants } from "node:buffer";
+import { imageFileSizeRemediation } from "./StableArtifactFailure.js";
+
+// The provider ceiling test uses a sparse file and is skipped on Windows.
+it.skipIf(process.platform !== "win32")(
+  "names the fixed image ceiling when the selected budget is already maximal",
+  () => {
+    expect(imageFileSizeRemediation(1024, 1024)).toContain(
+      "no runtime override",
+    );
+  },
+);
 
 it.each([
   { effective: 1, required: bufferConstants.MAX_STRING_LENGTH + 1 },
@@ -93,6 +104,18 @@ it.each(["capacity", "file-size", "memory"] as const)(
       retryable: false,
       message: failure.message,
       details: { boundary, detail: failure.message },
+    });
+    const wrapped = ArtifactReaderFailure.withCleanup(failure, {
+      reason: "close failed",
+      resources: ["handle"],
+    });
+    expect(
+      projectAnalysisError(
+        translateArtifactFailure("inventory_artifact", wrapped),
+      ),
+    ).toMatchObject({
+      code: "cleanup_incomplete",
+      details: { boundary, cleanup: "incomplete", resources: ["handle"] },
     });
   },
 );
