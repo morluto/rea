@@ -180,6 +180,7 @@ registerHooks({ load(url, context, nextLoad) {
           REA_AGENT_EVAL_ROOT: parent,
           REA_AGENT_EVAL_KEEP_FIXTURES: "false",
         },
+        timeoutMs: 10_000,
       },
     );
     expect(result.exitCode).toBe(1);
@@ -281,6 +282,7 @@ registerHooks({ load(url, context, nextLoad) {
           REA_AGENT_EVAL_ROOT: parent,
           REA_AGENT_EVAL_KEEP_FIXTURES: "false",
         },
+        timeoutMs: 10_000,
       },
     );
     expect(result.exitCode).toBe(1);
