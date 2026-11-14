@@ -1,4 +1,5 @@
 import { Cli } from "incur";
+import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it, vi } from "vitest";
 import { registerArtifactCommands } from "../../../src/cli/artifactCommands.js";
 import { registerCoreBinaryCommands } from "../../../src/cli/coreBinaryCommands.js";
@@ -132,6 +133,32 @@ it.each([
   },
 );
 
+it.each([
+  {
+    command: "inspect-plist",
+    field: "relativePath",
+    valid: "Contents/Info.plist",
+    invalid: ["", "Contents/a\x00b"],
+  },
+  {
+    command: "trace-dylib-resolution",
+    field: "root",
+    valid: ["Contents/MacOS/app"],
+    invalid: [[""], ["Contents/a\x00b"], ["../outside"]],
+  },
+])(
+  "advertises the $field option constraints",
+  async ({ command, field, valid, invalid }) => {
+    const { serve } = registry();
+    const schema = (await serve([command, "--schema"])) as { options: object };
+    const validate = new Ajv2020({ strict: false }).compile(schema.options);
+    expect(validate({})).toBe(true);
+    expect(validate({ [field]: valid })).toBe(true);
+    for (const value of invalid)
+      expect(validate({ [field]: value })).toBe(false);
+  },
+);
+
 it("rejects an empty or NUL --snapshot option before analysis", async () => {
   const { serve, runs } = registry();
   expect(await serve(["inspect", ".", "--snapshot", ""])).toMatchObject({
@@ -150,3 +177,24 @@ it("rejects an empty or NUL --snapshot option before analysis", async () => {
   });
   for (const run of runs) expect(run).not.toHaveBeenCalled();
 });
+
+it.each([
+  { argv: ["inspect-plist", ".", "--relative-path"], field: "relativePath" },
+  { argv: ["trace-dylib-resolution", ".", "--root"], field: "root" },
+])(
+  "rejects an empty or NUL $field option on the CLI and names that option",
+  async ({ argv, field }) => {
+    const { serve, runs } = registry();
+    for (const value of ["", "Contents/a\x00b"]) {
+      const result = (await serve([...argv, value])) as {
+        code: string;
+        fieldErrors: readonly { path: string }[];
+      };
+      expect(result.code).toBe("VALIDATION_ERROR");
+      expect(
+        new Set(result.fieldErrors.map(({ path }) => path.split(".")[0])),
+      ).toEqual(new Set([field]));
+    }
+    for (const run of runs) expect(run).not.toHaveBeenCalled();
+  },
+);

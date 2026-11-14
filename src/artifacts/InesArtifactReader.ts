@@ -20,6 +20,7 @@ import {
   sameArtifactEntry,
   type ArtifactEntry,
   type ArtifactReader,
+  type ArtifactTraversalOptions,
 } from "./ArtifactReader.js";
 import { abortIfNeeded } from "./ArtifactHash.js";
 import { streamChunkToBuffer } from "./StreamBytes.js";
@@ -43,7 +44,10 @@ export class InesArtifactReader implements ArtifactReader {
     private readonly ownedSource?: OwnedFileHandle,
   ) {}
 
-  async *entries(signal?: AbortSignal): AsyncIterable<ArtifactEntry> {
+  async *entries(
+    signal?: AbortSignal,
+    options?: ArtifactTraversalOptions,
+  ): AsyncIterable<ArtifactEntry> {
     abortIfNeeded(signal);
     await this.#verifySource(signal);
     const prefix = await readFileHandlePrefix(this.source.handle, 16, () =>
@@ -75,6 +79,8 @@ export class InesArtifactReader implements ArtifactReader {
       yield entry;
     }
     this.#assertOpen(signal);
+    // The regions tile the file: header, trainer, units and any trailing bytes.
+    options?.onCoverage?.({ status: "complete", limitations: [] });
   }
 
   async open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {
