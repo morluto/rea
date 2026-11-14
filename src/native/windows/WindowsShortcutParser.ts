@@ -867,10 +867,19 @@ const parseStringField = (
   return field;
 };
 
+// MS-SHLLINK 2.5 defines exact sizes for these decoded blocks.
+const FIXED_EXTRA_PAYLOAD_BYTES: Readonly<Partial<Record<number, number>>> = {
+  0xa0000001: 780,
+  0xa0000003: 88,
+  0xa0000004: 4,
+  0xa0000005: 8,
+  0xa0000007: 780,
+  0xa000000b: 20,
+};
+
 const environmentTargets = (
   payload: Buffer,
-): { target_ansi: string; target_unicode: string } | null => {
-  if (payload.length < 780) return null;
+): { target_ansi: string; target_unicode: string } => {
   return {
     target_ansi: latin1Z(payload.subarray(0, 260)),
     target_unicode: utf16Z(payload.subarray(260, 780)),
@@ -883,17 +892,23 @@ const decodeExtra = (
   walk: Walk,
   offset: number,
 ): WindowsShortcutExtraDataBlock["decoded"] => {
+  const expectedBytes = FIXED_EXTRA_PAYLOAD_BYTES[signature];
+  if (expectedBytes !== undefined && payload.length !== expectedBytes) {
+    note(
+      walk,
+      payload.length < expectedBytes ? "truncated" : "malformed_structure",
+      offset,
+      EXTRA_SIGNATURE_NAMES[signature] +
+        " requires a " +
+        String(expectedBytes + 8) +
+        "-byte block, got " +
+        String(payload.length + 8) +
+        " bytes",
+    );
+    return { kind: "raw", bytes: payload.length, sha256: sha256(payload) };
+  }
   if (signature === 0xa0000001 || signature === 0xa0000007) {
     const targets = environmentTargets(payload);
-    if (targets === null) {
-      note(
-        walk,
-        "truncated",
-        offset,
-        "Environment ExtraData payload is shorter than 780 bytes",
-      );
-      return { kind: "raw", bytes: payload.length, sha256: sha256(payload) };
-    }
     charge(
       walk,
       targets.target_ansi.length + targets.target_unicode.length * 2,
@@ -905,15 +920,6 @@ const decodeExtra = (
     };
   }
   if (signature === 0xa0000003) {
-    if (payload.length < 88) {
-      note(
-        walk,
-        "truncated",
-        offset,
-        "TrackerDataBlock payload is shorter than 0x58 bytes",
-      );
-      return { kind: "raw", bytes: payload.length, sha256: sha256(payload) };
-    }
     const length = payload.readUInt32LE(0);
     const version = payload.readUInt32LE(4);
     if (length !== 0x58 || version !== 0) {
@@ -941,17 +947,9 @@ const decodeExtra = (
     };
   }
   if (signature === 0xa0000004) {
-    if (payload.length < 4) {
-      note(walk, "truncated", offset, "ConsoleFEDataBlock is truncated");
-      return { kind: "raw", bytes: payload.length, sha256: sha256(payload) };
-    }
     return { kind: "console_fe", code_page: payload.readUInt32LE(0) };
   }
   if (signature === 0xa0000005) {
-    if (payload.length < 8) {
-      note(walk, "truncated", offset, "SpecialFolderDataBlock is truncated");
-      return { kind: "raw", bytes: payload.length, sha256: sha256(payload) };
-    }
     return {
       kind: "special_folder",
       folder_id: payload.readUInt32LE(0),
@@ -959,10 +957,6 @@ const decodeExtra = (
     };
   }
   if (signature === 0xa000000b) {
-    if (payload.length < 20) {
-      note(walk, "truncated", offset, "KnownFolderDataBlock is truncated");
-      return { kind: "raw", bytes: payload.length, sha256: sha256(payload) };
-    }
     return {
       kind: "known_folder",
       folder_id: formatGuid(payload, 0),

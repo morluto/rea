@@ -610,6 +610,59 @@ it("reports a VolumeID that selects a Unicode label it cannot hold", async () =>
   );
 });
 
+it.each([
+  { kind: "environment" },
+  { kind: "icon_environment" },
+  { kind: "tracker" },
+  { kind: "console_fe" },
+  { kind: "special_folder" },
+  { kind: "known_folder" },
+] as const)(
+  "keeps oversized $kind ExtraData raw and reads the next block",
+  async (entry) => {
+    const valid = windowsShortcutBytes({
+      extraData: [entry, { kind: "unknown", signature: 0xa00000fe }],
+    });
+    const control = await parse(valid);
+    expect(control.coverage.status).toBe("complete");
+    const [first, next] = control.extra_data.blocks;
+    if (first === undefined || next === undefined)
+      throw new Error("Expected two blocks");
+    const tail = Buffer.from([0xab, 0xcd]);
+    const bytes = Buffer.concat([
+      valid.subarray(0, next.offset),
+      tail,
+      valid.subarray(next.offset),
+    ]);
+    bytes.writeUInt32LE(first.size + tail.length, first.offset);
+
+    const report = await parse(bytes);
+    expect(report.coverage).toMatchObject({
+      status: "partial",
+      failing_offset: first.offset,
+    });
+    expect(report.issues).toEqual([
+      expect.objectContaining({
+        code: "malformed_structure",
+        offset: first.offset,
+      }),
+    ]);
+    const payload = bytes.subarray(first.offset + 8, next.offset + tail.length);
+    expect(report.extra_data.blocks).toEqual([
+      {
+        ...first,
+        size: first.size + tail.length,
+        decoded: {
+          kind: "raw",
+          bytes: payload.length,
+          sha256: createHash("sha256").update(payload).digest("hex"),
+        },
+      },
+      { ...next, offset: next.offset + tail.length },
+    ]);
+  },
+);
+
 it("keeps readable dates for FILETIME values before 1970", async () => {
   // 1950-01-01T00:00:00Z in 100 ns intervals since 1601.
   const report = await parse(

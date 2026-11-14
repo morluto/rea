@@ -55,7 +55,9 @@ birth-droid GUIDs. Version-1 UUID MAC and timestamp values are labelled
 `evidence_kind: "derived"`. `KnownFolderDataBlock` and `SpecialFolderDataBlock`
 keep their folder identifiers. `ConsoleFEDataBlock` keeps the code page.
 `PropertyStoreDataBlock` and unrecognized signatures stay raw with SHA-256.
-Unknown signatures are listed and are not dropped.
+Unknown signatures are listed and are not dropped. Decoded fixed-size blocks
+with a mismatched length are retained as raw payload hashes and reported as
+partial. Later blocks remain readable at their declared offsets.
 
 `observations` are derived only from those documented fields: whether
 arguments are present, argument character length, target extension, whether
