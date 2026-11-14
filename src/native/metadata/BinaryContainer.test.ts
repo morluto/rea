@@ -7,12 +7,34 @@ import { expect, it } from "vitest";
 import {
   BinaryFormatFailure,
   BinaryMappingFailure,
+  BinaryReader,
   BinaryStringReadLimitFailure,
   createFileMappingIndex,
   mappedFileOffset,
   readMappedCString,
   type BinaryContainer,
 } from "./BinaryContainer.js";
+
+it("preserves representable offsets for invalid file ranges", () => {
+  const reader = new BinaryReader(Buffer.alloc(120), true, "elf");
+  for (const read of [
+    () => reader.range(128, 1, "segment"),
+    () => reader.fileRange(128n, 1n, "segment"),
+  ]) {
+    try {
+      read();
+      throw new Error("Expected malformed range");
+    } catch (error) {
+      expect(error).toBeInstanceOf(BinaryFormatFailure);
+      expect(error).toMatchObject({
+        failure: { kind: "malformed", offset: 128, field: "segment" },
+      });
+    }
+  }
+  expect(() => reader.fileRange(2n ** 60n, 1n, "segment")).toThrow(
+    BinaryFormatFailure,
+  );
+});
 
 it("distinguishes a mapped string read allowance from malformed bytes", () => {
   const bytes = Buffer.from("long-name\0");

@@ -2,6 +2,7 @@ import type {
   ClientRegistrationConnectionProfile,
   ClientRegistrationProfile,
 } from "./ClientRegistrationProfile.js";
+import type { ClientConfigurationFormat } from "./ClientConfigurationDocument.js";
 import { dirname, isAbsolute, join, posix, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync, lstatSync, readFileSync } from "node:fs";
@@ -12,6 +13,10 @@ import {
 } from "./HermesClientHome.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { appendCallerPath } from "../filesystem/callerPath.js";
+import {
+  vscodeUserDirectory,
+  xdgConfigHomeOrDefault,
+} from "./ClientConfigRoots.js";
 import { resolveWindowsClaudeDesktopLocation } from "./ClaudeDesktopConfigLocation.js";
 import { resolveClineCliSettingsPath } from "./ClineCliLocation.js";
 import {
@@ -113,10 +118,25 @@ type ClientDefinitionLocation =
       readonly markerPath?: undefined;
     };
 
+/**
+ * How `rea mcp add` selects this client beyond its user-scope registration.
+ * The registration itself uses this row's location, format, profile and
+ * read-scope facts, so both commands share one definition.
+ */
+interface McpAddExposure {
+  /** add-mcp agent aliases that select this client. */
+  readonly aliases?: readonly string[];
+  /** Project documents in native precedence; absent means global-only. */
+  readonly projectPaths?: readonly [string, ...string[]];
+  /** Dialect of the project document when it differs from the user one. */
+  readonly projectFormat?: ClientConfigurationFormat;
+}
+
 interface ClientDefinitionBase {
   readonly name: string;
   readonly registrationProfile: ClientRegistrationProfile;
   readonly displayName: string;
+  readonly mcpAdd?: McpAddExposure;
   readonly discoveryPaths?: (context: ClientPathContext) => readonly string[];
   readonly sharedRegistration?: true;
   readonly format: NonNullable<SetupClient["format"]>;
@@ -129,37 +149,6 @@ interface ClientDefinitionBase {
   ) => NonNullable<SetupClient["geminiSettings"]>;
 }
 
-/** XDG treats an empty config-home value as unset. */
-const xdgConfigHome = ({ home, env }: ClientPathContext): string =>
-  env.XDG_CONFIG_HOME || join(home, ".config");
-
-const vscodeUserDirectory = ({
-  home,
-  platform,
-  env,
-}: ClientPathContext): string => {
-  // Match VS Code's user-data selection before appending the User scope.
-  // Empty overrides are unset; portable storage takes precedence over appdata.
-  const userData = env.VSCODE_PORTABLE
-    ? join(env.VSCODE_PORTABLE, "user-data")
-    : env.VSCODE_APPDATA
-      ? join(env.VSCODE_APPDATA, "Code")
-      : platform === "win32"
-        ? join(windowsAppDataRoots(home, env).roaming, "Code")
-        : platform === "darwin"
-          ? join(home, "Library", "Application Support", "Code")
-          : join(xdgConfigHome({ home, platform, env }), "Code");
-  // The catalog can describe Windows clients on another host; retain its
-  // drive-absolute paths instead of resolving them against that host cwd.
-  const absoluteUserData =
-    platform === "win32" && win32.isAbsolute(userData) && !isAbsolute(userData)
-      ? userData
-      : isAbsolute(userData)
-        ? resolve(userData)
-        : resolve(env.VSCODE_CWD || process.cwd(), userData);
-  return join(absoluteUserData, "User");
-};
-
 const traeUserDirectory = ({
   home,
   platform,
@@ -169,7 +158,7 @@ const traeUserDirectory = ({
     return join(windowsAppDataRoots(home, env).roaming, "Trae", "User");
   if (platform === "darwin")
     return join(home, "Library", "Application Support", "Trae", "User");
-  return join(xdgConfigHome({ home, platform, env }), "Trae", "User");
+  return join(xdgConfigHomeOrDefault({ home, env }), "Trae", "User");
 };
 
 /** Windows packaging decides which file Claude Desktop reads; see its resolver. */
@@ -180,7 +169,7 @@ const claudeDesktopLocation = (
     return resolveWindowsClaudeDesktopLocation(context.home, context.env);
   const directory =
     context.platform === "linux"
-      ? join(xdgConfigHome(context), "Claude")
+      ? join(xdgConfigHomeOrDefault(context), "Claude")
       : join(context.home, "Library", "Application Support", "Claude");
   return ok({
     configPath: join(directory, "claude_desktop_config.json"),
@@ -347,16 +336,16 @@ export const registrationPersistenceDetail = (
  */
 export const registrationWriteBlocker = (
   client: SetupClient,
-  operation: "setup" | "uninstall",
+  operation: "setup" | "uninstall" | "mcp add",
 ): string | undefined => {
   const msix = client.msixPackage;
   if (msix === undefined || msix.processView === "direct") return undefined;
   const name = client.displayName ?? client.name;
   if (msix.processView === "redirected")
     return `This process was started from ${name}'s MSIX package ${msix.packageFamilyName}: its AppData is redirected into that package, so ${name} is running and would overwrite ${msix.privateConfigPath} from memory. Quit ${name} fully, then rerun ${operation} from a terminal that ${name} did not start.`;
-  // Setup would write the configuration the app reads; uninstall cleans both files.
+  // Registration writes the configuration the app reads; uninstall cleans both files.
   const manualEdit =
-    operation === "setup"
+    operation !== "uninstall"
       ? `Add REA's entry to ${client.configPath} by hand`
       : `Remove REA's entry by hand from each of ${msix.privateConfigPath} and ${msix.appDataConfigPath} that has one`;
   return `REA cannot tell whether ${name}'s MSIX package ${msix.packageFamilyName} started this process, because no private file under ${dirname(dirname(msix.privateConfigPath))} could be compared with ${dirname(dirname(msix.appDataConfigPath))}, and a ${name} that started it would overwrite the change from memory. ${manualEdit} while ${name} is fully quit, or rerun ${operation} from a terminal that ${name} did not start once REA can compare a private file there.`;
@@ -452,13 +441,13 @@ const openCodeOverrideDirectory = (
 
 const opencodeDirectory = (context: ClientPathContext): string =>
   openCodeOverrideDirectory(context.env) ??
-  join(xdgConfigHome(context), "opencode");
+  join(xdgConfigHomeOrDefault(context), "opencode");
 
 /** OpenCode loads global JSON before JSONC, then explicit file and directory overrides. */
 const openCodeConfigurationPaths = (
   context: ClientPathContext,
 ): readonly string[] => {
-  const directory = join(xdgConfigHome(context), "opencode");
+  const directory = join(xdgConfigHomeOrDefault(context), "opencode");
   const overrideDirectory = openCodeOverrideDirectory(context.env);
   const paths = [
     join(directory, "config.json"),
@@ -549,7 +538,7 @@ const geminiSettings = ({
 const devinDirectory = ({ home, platform, env }: ClientPathContext): string =>
   platform === "win32"
     ? join(windowsAppDataRoots(home, env).roaming, "devin")
-    : join(env.XDG_CONFIG_HOME || join(home, ".config"), "devin");
+    : join(xdgConfigHomeOrDefault({ home, env }), "devin");
 
 /**
  * FreeBuff's own profile directory (its `state.json` root, fixed under
@@ -583,6 +572,7 @@ const defineClient = <const Definition extends ClientDefinitionInput>(
 export const SUPPORTED_CLIENT_DEFINITIONS = [
   defineClient({
     name: "claude_code",
+    mcpAdd: { projectPaths: [".mcp.json"] },
     registrationConnection: {
       kind: "flat",
       fields: ["type", "url"],
@@ -601,6 +591,7 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
   }),
   defineClient({
     name: "claude_desktop",
+    mcpAdd: {},
     registrationConnection: {
       kind: "flat",
       fields: ["type"],
@@ -613,6 +604,7 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
   }),
   defineClient({
     name: "codex",
+    mcpAdd: { projectPaths: [".codex/config.toml"] },
     registrationConnection: {
       kind: "flat",
       fields: ["url"],
@@ -626,6 +618,7 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
   }),
   defineClient({
     name: "cursor",
+    mcpAdd: { projectPaths: [".cursor/mcp.json"] },
     registrationConnection: {
       kind: "flat",
       fields: ["type", "url"],
@@ -655,6 +648,7 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     // Cline discovers the shared ~/.agents/skills directory. Keep REA's
     // existing shared destination instead of managing another skill copy.
     name: "cline",
+    mcpAdd: {},
     registrationConnection: { kind: "cline" },
     displayName: "Cline CLI",
     location: ({ home, env, platform }: ClientPathContext) => {
@@ -675,6 +669,7 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
   }),
   defineClient({
     name: "gemini_cli",
+    mcpAdd: { aliases: ["gemini"], projectPaths: [".gemini/settings.json"] },
     registrationConnection: {
       kind: "flat",
       fields: ["type", "url", "httpUrl"],
@@ -706,6 +701,7 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
   }),
   defineClient({
     name: "windsurf",
+    mcpAdd: { aliases: ["codeium", "cascade"] },
     registrationConnection: {
       kind: "flat",
       fields: ["serverUrl", "url"],
@@ -737,6 +733,14 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
   }),
   defineClient({
     name: "opencode",
+    mcpAdd: {
+      projectPaths: [
+        "opencode.jsonc",
+        "opencode.json",
+        ".opencode/opencode.jsonc",
+        ".opencode/opencode.json",
+      ],
+    },
     registrationConnection: {
       kind: "flat",
       fields: ["url"],
@@ -750,6 +754,7 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
   }),
   defineClient({
     name: "antigravity",
+    mcpAdd: {},
     registrationConnection: {
       kind: "flat",
       fields: ["serverUrl", "url"],
@@ -766,6 +771,10 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
   }),
   defineClient({
     name: "copilot_cli",
+    mcpAdd: {
+      projectPaths: [".mcp.json", ".github/mcp.json"],
+      projectFormat: "copilot_cli_project",
+    },
     registrationConnection: {
       kind: "flat",
       fields: ["url"],
@@ -808,6 +817,7 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
   }),
   defineClient({
     name: "kimi",
+    mcpAdd: { aliases: ["kimi"], projectPaths: [".kimi-code/mcp.json"] },
     registrationConnection: {
       kind: "flat",
       fields: ["type", "url", "transport"],
@@ -825,6 +835,7 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
   }),
   defineClient({
     name: "vscode",
+    mcpAdd: { aliases: ["github-copilot"], projectPaths: [".vscode/mcp.json"] },
     registrationConnection: {
       kind: "flat",
       fields: ["url", "transport"],
@@ -876,6 +887,7 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
   }),
   defineClient({
     name: "grok_build",
+    mcpAdd: { aliases: ["grok"], projectPaths: [".grok/config.toml"] },
     registrationConnection: {
       kind: "flat",
       fields: ["url"],
@@ -904,6 +916,7 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
   }),
   defineClient({
     name: "pi",
+    mcpAdd: { aliases: ["pi-agent"], projectPaths: [".pi/mcp.json"] },
     registrationConnection: {
       kind: "flat",
       fields: ["url"],
@@ -929,6 +942,7 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
   }),
   defineClient({
     name: "hermes",
+    mcpAdd: { aliases: ["hermes-agent"] },
     registrationConnection: {
       kind: "flat",
       fields: ["url", "transport"],
@@ -967,6 +981,10 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
   }),
   defineClient({
     name: "droid",
+    mcpAdd: {
+      aliases: ["droid", "factory"],
+      projectPaths: [".factory/mcp.json"],
+    },
     registrationConnection: {
       kind: "flat",
       fields: ["type", "url"],
@@ -1062,17 +1080,25 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
 export type SupportedClientName =
   (typeof SUPPORTED_CLIENT_DEFINITIONS)[number]["name"];
 
+/** One client's row, for selection surfaces such as `rea mcp add` that project it. */
+export const supportedClientDefinition = (
+  name: SupportedClientName,
+): Pick<
+  ClientDefinition,
+  "name" | "displayName" | "format" | "registrationProfile" | "mcpAdd"
+> => {
+  const definitions: readonly ClientDefinition[] = SUPPORTED_CLIENT_DEFINITIONS;
+  const definition = definitions.find((candidate) => candidate.name === name);
+  if (definition === undefined)
+    throw new Error(`No supported client definition for ${name}`);
+  return definition;
+};
+
 /** Setup and registration consume the same already-bound native profile object. */
 export const supportedClientRegistrationProfile = (
   name: SupportedClientName,
-): ClientRegistrationProfile => {
-  const definition = SUPPORTED_CLIENT_DEFINITIONS.find(
-    (candidate) => candidate.name === name,
-  );
-  if (definition === undefined)
-    throw new Error(`No supported client definition for ${name}`);
-  return definition.registrationProfile;
-};
+): ClientRegistrationProfile =>
+  supportedClientDefinition(name).registrationProfile;
 
 /**
  * Paths whose presence means the product itself is applicable, so doctor and

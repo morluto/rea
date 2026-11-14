@@ -4,10 +4,7 @@ import {
   type ZeroFillMapping,
 } from "../../domain/virtualFileMapping.js";
 import type { PeDataDirectory } from "../../domain/peOptionalHeader.js";
-import {
-  ParseFailureError,
-  type ParseFailure,
-} from "../../domain/parseFailure.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 
 /** Native container facts a format failure can name. */
 interface BinaryFormatFailureFacts {
@@ -20,9 +17,9 @@ interface BinaryFormatFailureFacts {
 }
 
 /** Distinguish corrupt recognized binaries from containers outside parser coverage. */
-export class BinaryFormatFailure extends ParseFailureError {
-  declare readonly failure: Exclude<ParseFailure, { readonly kind: "limit" }>;
-
+export class BinaryFormatFailure extends ParseFailureError<
+  "malformed" | "truncated" | "unsupported"
+> {
   constructor(
     kind: "malformed" | "truncated" | "unsupported",
     message: string,
@@ -35,10 +32,6 @@ export class BinaryFormatFailure extends ParseFailureError {
         : { kind, format, detail: message, ...at },
     );
     this.name = "BinaryFormatFailure";
-  }
-
-  override get kind(): "malformed" | "truncated" | "unsupported" {
-    return this.failure.kind;
   }
 
   /** The image holds the metadata, in a form this reader cannot decode. */
@@ -58,9 +51,7 @@ export class BinaryMappingFailure extends BinaryFormatFailure {
 }
 
 /** Resource boundary exceeded while decoding metadata or native container structure. */
-export class BinaryResourceFailure extends ParseFailureError {
-  declare readonly failure: Extract<ParseFailure, { readonly kind: "limit" }>;
-
+export class BinaryResourceFailure extends ParseFailureError<"limit"> {
   constructor(
     readonly boundary: "build-info" | "structure" | "search",
     readonly maximum_bytes: number,
@@ -228,7 +219,11 @@ export class BinaryReader {
       throw new BinaryFormatFailure(
         "malformed",
         `${label} range is truncated or outside the file`,
-        { format: this.format, field: label },
+        {
+          format: this.format,
+          field: label,
+          ...(Number.isSafeInteger(offset) ? { offset } : {}),
+        },
       );
     if (size > this.bytes.length - offset)
       throw new BinaryFormatFailure(
@@ -261,7 +256,14 @@ export class BinaryReader {
       throw new BinaryFormatFailure(
         "malformed",
         `${label} range is outside the file`,
-        { format: this.format, field: label },
+        {
+          format: this.format,
+          field: label,
+          ...(offset >= BigInt(Number.MIN_SAFE_INTEGER) &&
+          offset <= BigInt(Number.MAX_SAFE_INTEGER)
+            ? { offset: Number(offset) }
+            : {}),
+        },
       );
     if (size > length - offset)
       throw new BinaryFormatFailure(

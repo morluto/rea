@@ -60,18 +60,6 @@
     "src/native/pwntools/PwntoolsDecoder.ts": 2,
     "src/native/pwntools/PwntoolsResourceLimits.ts": 1
   },
-  "range-error-interpretation": {
-    "src/application/JsonInputFile.ts": 1,
-    "src/artifacts/apple/InterfaceBuilderAnalysis.ts": 1,
-    "src/artifacts/apple/KeyedArchiveReader.ts": 1,
-    "src/artifacts/nodeSea/NodeSeaBlob.ts": 1,
-    "src/browser/WebBundleAnalysisWorkerServer.ts": 1,
-    "src/cli/cliResultOutput.ts": 1,
-    "src/domain/apiContract/GraphqlDocuments.ts": 1,
-    "src/domain/apiContract/parseGraphqlContract.ts": 1,
-    "src/javascript/analysis/JavaScriptAnalysisWorkerServer.ts": 2,
-    "src/wasm/WabtFailures.ts": 1
-  },
   "raw-buffer-read": {
     "src/application/BinaryTargetResolver.ts": 1,
     "src/application/MipsElfMetadata.ts": 10,
@@ -207,5 +195,17 @@
     "src/pcap/PcapDnsWire.ts": 5,
     "src/python/PythonPycParser.ts": 9,
     "src/v8/V8CodeCacheParser.ts": 1
+  },
+  "range-error-interpretation": {
+    "src/application/JsonInputFile.ts": 1,
+    "src/artifacts/apple/InterfaceBuilderAnalysis.ts": 1,
+    "src/artifacts/apple/KeyedArchiveReader.ts": 1,
+    "src/artifacts/nodeSea/NodeSeaBlob.ts": 1,
+    "src/browser/WebBundleAnalysisWorkerServer.ts": 1,
+    "src/cli/cliResultOutput.ts": 1,
+    "src/domain/apiContract/GraphqlDocuments.ts": 1,
+    "src/domain/apiContract/parseGraphqlContract.ts": 1,
+    "src/javascript/analysis/JavaScriptAnalysisWorkerServer.ts": 2,
+    "src/wasm/WabtFailures.ts": 1
   }
 }

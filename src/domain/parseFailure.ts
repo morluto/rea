@@ -42,19 +42,19 @@ export type ParseFailure = ParseFailureFacts &
   );
 
 /** The one throwable carrier for a {@link ParseFailure}. */
-export class ParseFailureError extends Error {
+export class ParseFailureError<Kind extends ParseFailureKind = ParseFailureKind> extends Error {
   readonly _tag = "ParseFailureError";
 
   constructor(
-    readonly failure: ParseFailure,
+    readonly failure: Extract<ParseFailure, { readonly kind: Kind }>,
     options?: ErrorOptions,
   ) {
     super(failure.detail, options);
     this.name = "ParseFailureError";
   }
 
-  get kind(): ParseFailureKind {
-    return this.failure.kind;
+  get kind(): Kind {
+    return this.failure.kind as Kind;
   }
 }
 
