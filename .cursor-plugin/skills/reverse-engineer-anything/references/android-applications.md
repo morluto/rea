@@ -34,7 +34,7 @@ selecting by observed names; the separate `mapping` block reports each symbol
 as `mapped`, `ambiguous` or `unmapped` after checking DEX types and prototypes.
 REA does not verify that the mapping belongs to the APK build.
 
-The provider requires a separately supplied headless JADX MCP JAR 0.7.1 and
+The provider requires a separately supplied headless JADX MCP JAR 0.8.0 and
 Java 17 or newer. `REA_JADX_MCP_JAR` selects the absolute JAR path; `JAVA_HOME`
 can select Java. Use `rea doctor --provider jadx --json` to check the JADX
 configuration and obtain remediation for missing prerequisites. Java and the

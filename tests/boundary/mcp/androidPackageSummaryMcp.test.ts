@@ -8,6 +8,7 @@ import {
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { AndroidAnalysisService } from "../../../src/application/android/AndroidAnalysisService.js";
+import { JADX_RELEASE } from "../../../src/android/JadxRelease.js";
 import type { AndroidAnalysisPort } from "../../../src/application/android/AndroidAnalysisPort.js";
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
 import { inspectAndroidPackage } from "../../../src/application/android/AndroidPackageInspection.js";
@@ -437,7 +438,7 @@ it("preserves partial/unknown declarations and Unicode text while rejecting miss
       hasSubject
         ? { path: "/original.apk", sha256: "a".repeat(64), format: "apk" }
         : undefined,
-      { id: "jadx", name: "JADX", version: "0.7.1" },
+      { id: "jadx", name: "JADX", version: JADX_RELEASE.version },
       {
         operation: "inspect_android_package",
         parameters: {},
@@ -570,7 +571,7 @@ it("rejects unavailable retention, invalid selectors and cancellation before pro
 it("delivers the selected retained page in one analysis and reads it later without a provider or source APK", async () => {
   const parent = createEvidence(
     { path: "/never-reopened.apk", sha256: "a".repeat(64), format: "apk" },
-    { id: "jadx", name: "JADX", version: "0.7.1" },
+    { id: "jadx", name: "JADX", version: JADX_RELEASE.version },
     {
       operation: "inspect_android_package",
       parameters: { path: "/never-reopened.apk" },
