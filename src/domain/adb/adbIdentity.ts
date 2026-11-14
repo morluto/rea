@@ -5,10 +5,11 @@ export const adbSerialSchema = z
   .string()
   .min(1)
   .max(256)
-  .regex(
-    /^[^\x00\s"']+$/u,
-    "Device serial cannot contain whitespace or quotes",
-  );
+  .regex(/^[^\x00\s"']+$/u, "Device serial cannot contain whitespace or quotes")
+  .describe("Exact ADB device serial; whitespace, NUL and quotes are rejected.")
+  // The portable wire pattern excludes ASCII whitespace. The canonical parser
+  // above also rejects Unicode whitespace; the advertisement only widens it.
+  .meta({ pattern: "^[^\\x00\\t\\n\\r\\f\\v \"']+$" });
 
 /** System package names can be a single segment, such as android. */
 export const adbPackageNameSchema = z

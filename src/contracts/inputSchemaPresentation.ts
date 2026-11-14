@@ -3,6 +3,7 @@ import {
   type JsonSchemaScope,
 } from "./jsonSchemaReferences.js";
 import { isDeepStrictEqual } from "node:util";
+import { PORTABLE_SCHEMA_BOUND_EXCLUSIVE_LIMIT } from "./advertisedDialect.js";
 
 import {
   schemaArrays,
@@ -270,7 +271,14 @@ const preserveSharedDefault = (
     schema.default = defaults[0];
 };
 
-const hasNormalizedLiteral = (schema: Readonly<Record<string, unknown>>) =>
+const hasNormalizedConstraint = (
+  schema: Readonly<Record<string, unknown>>,
+  portable: boolean,
+) =>
+  (portable &&
+    (typeof schema.format === "string" ||
+      (typeof schema.maxLength === "number" &&
+        schema.maxLength >= PORTABLE_SCHEMA_BOUND_EXCLUSIVE_LIMIT))) ||
   typeof schema.const === "boolean" ||
   schema.const === "" ||
   (Array.isArray(schema.enum) &&
@@ -279,7 +287,10 @@ const hasNormalizedLiteral = (schema: Readonly<Record<string, unknown>>) =>
       schema.enum.includes("")));
 
 /** One projection owns actual rewrite sites and their scoped validation dependencies. */
-const normalizationContext = (root: Readonly<Record<string, unknown>>) => {
+const normalizationContext = (
+  root: Readonly<Record<string, unknown>>,
+  portable = false,
+) => {
   const references = new JsonSchemaReferences(root);
   type Fact = {
     changed: boolean;
@@ -346,7 +357,7 @@ const normalizationContext = (root: Readonly<Record<string, unknown>>) => {
     if (
       !ignoresSiblings &&
       sites.get(scope)?.has(schema) &&
-      hasNormalizedLiteral(schema)
+      hasNormalizedConstraint(schema, portable)
     ) {
       fact.changed = true;
       changed.push(fact);
@@ -415,6 +426,7 @@ const normalizationContext = (root: Readonly<Record<string, unknown>>) => {
         lost.push(dependent);
       }
   return {
+    portable,
     references,
     changed: (schema: object, scope: JsonSchemaScope | undefined) =>
       indexed.get(scope)?.get(schema)?.changed === true,
@@ -439,6 +451,16 @@ const normalizeAdvertisedSchema = (
   const normalize = (child: unknown) =>
     normalizeAdvertisedSchema(child, owner, scope);
   const node: Record<string, unknown> = { ...value };
+  // Gateways reject format annotations and grammar compilers reject large
+  // length bounds. Canonical parsers still enforce both; dependency tracking
+  // below keeps this widening safe under negation, conditionals and references.
+  if (owner.portable && typeof node.format === "string") delete node.format;
+  if (
+    owner.portable &&
+    typeof node.maxLength === "number" &&
+    node.maxLength >= PORTABLE_SCHEMA_BOUND_EXCLUSIVE_LIMIT
+  )
+    delete node.maxLength;
   const changed = owner.changed(value, scope);
   const normalizeMap = (map: Readonly<Record<string, unknown>>) =>
     Object.fromEntries(
@@ -841,10 +863,39 @@ const presentDiscriminatedRoot = (
   };
 };
 
+const normalizeInputRoot = (
+  root: Record<string, unknown>,
+  portable: boolean,
+): Record<string, unknown> => {
+  const prepared = portable
+    ? (omitNestedDefaults(root, referencedDefaultPaths(root)) as Record<
+        string,
+        unknown
+      >)
+    : root;
+  const owner = normalizationContext(prepared, portable);
+  const normalized = normalizeAdvertisedSchema(
+    prepared,
+    owner,
+    owner.references.rootScope,
+  ).schema as Record<string, unknown>;
+  // MCP supplies the 2020-12 dialect. Its redundant root annotation is not
+  // accepted by every model gateway. Keep other declared dialects intact.
+  if (
+    portable &&
+    normalized.$schema === "https://json-schema.org/draft/2020-12/schema"
+  ) {
+    const { $schema: _dialect, ...body } = normalized;
+    return body;
+  }
+  return normalized;
+};
+
 /** Describe canonical input fields and present the root as one object. */
 export const presentInputJsonSchema = (
   root: Record<string, unknown>,
   describeProperty: (property: string) => string | undefined,
+  { portableDialect = false }: { readonly portableDialect?: boolean } = {},
 ): Record<string, unknown> => {
   const flattened = presentDiscriminatedRoot(root);
   const references = new JsonSchemaReferences(flattened);
@@ -855,10 +906,7 @@ export const presentInputJsonSchema = (
     describeProperty,
   );
   if (!isObject(described))
-    return normalizeAdvertisedSchema(flattened).schema as Record<
-      string,
-      unknown
-    >;
+    return normalizeInputRoot(flattened, portableDialect);
   const {
     dependencies: _dependencies,
     dependentRequired: _dependentRequired,
@@ -881,18 +929,18 @@ export const presentInputJsonSchema = (
             : [],
         );
   if (dependencyGuidance.length === 0)
-    return normalizeAdvertisedSchema(presentation).schema as Record<
-      string,
-      unknown
-    >;
+    return normalizeInputRoot(presentation, portableDialect);
   const description = [
     typeof presentation.description === "string"
       ? presentation.description
       : undefined,
     ...dependencyGuidance,
   ].filter((text) => text !== undefined);
-  return normalizeAdvertisedSchema({
-    ...presentation,
-    description: description.join(" "),
-  }).schema as Record<string, unknown>;
+  return normalizeInputRoot(
+    {
+      ...presentation,
+      description: description.join(" "),
+    },
+    portableDialect,
+  );
 };

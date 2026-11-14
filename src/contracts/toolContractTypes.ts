@@ -54,6 +54,8 @@ export interface ToolContract<
     readonly evidenceParameters: "omit-detail" | "preserve-detail";
   };
   readonly inputSchema: InputSchema;
+  /** Portable wire declaration; canonical parsing and authored examples stay unchanged. */
+  readonly advertisedInputDialect?: "portable";
   readonly outputSchema: OutputSchema;
   readonly effects: ToolEffects;
   readonly annotations: DerivedToolAnnotations;

@@ -101,6 +101,7 @@ export const toolInputSchemaWithMetadata = <Contract extends ToolContract>(
         const presented = presentInputJsonSchema(
           inline,
           fallbackPropertyDescription,
+          { portableDialect: contract.advertisedInputDialect === "portable" },
         );
         const sourceGuidance = getEvidenceInputContract(contract.inputSchema)
           .hasEvidence

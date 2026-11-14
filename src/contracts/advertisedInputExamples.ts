@@ -59,8 +59,14 @@ const referenceEmbeddedEvidence = (value: JsonValue): RetainedProjection => {
  * advertisement. Every advertised example is a distinct valid canonical input.
  */
 export const advertisedInputExamples = (
-  contract: Pick<ToolContract, "inputSchema" | "examples">,
+  contract: Pick<
+    ToolContract,
+    "inputSchema" | "examples" | "advertisedInputDialect"
+  >,
 ): readonly JsonValue[] => {
+  // The portable dialect has no examples keyword. Keep examples in the named
+  // canonical contract and executable tests, not in a gateway-rejected field.
+  if (contract.advertisedInputDialect === "portable") return [];
   const advertised = new Map<string, JsonValue>();
   for (const { input } of contract.examples) {
     const projection = referenceEmbeddedEvidence(input);

@@ -91,7 +91,7 @@ const TOOL_NAME = /^[a-z][a-z0-9_]{0,53}$/u;
 const PROPERTY_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/u;
 const TOOL_DESCRIPTION_LIMIT = 4096;
 const DESCRIPTION_LIMIT = 1024;
-const BOUND_LIMIT = 1999;
+export const PORTABLE_SCHEMA_BOUND_EXCLUSIVE_LIMIT = 1999;
 // Moonshot's function-calling API rejects requests while any single tool
 // parameters schema exceeds its literal serialized size cap. Community
 // measurements bound the cap between ~13.7 KB (accepted) and ~15 KB
@@ -453,7 +453,10 @@ const nodeViolations = (
   )
     add("description-length");
   for (const bound of ["minLength", "maxLength", "minItems", "maxItems"])
-    if (typeof node[bound] === "number" && node[bound] >= BOUND_LIMIT)
+    if (
+      typeof node[bound] === "number" &&
+      node[bound] >= PORTABLE_SCHEMA_BOUND_EXCLUSIVE_LIMIT
+    )
       add("bound", bound);
   if (isRecord(node.properties))
     for (const name of Object.keys(node.properties))

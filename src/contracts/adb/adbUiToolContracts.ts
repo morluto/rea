@@ -14,6 +14,7 @@ const scope = { serial: "emulator-5554", package: "com.example.app" };
 export const ADB_UI_TOOL_CONTRACTS = [
   {
     name: "inspect_adb_ui",
+    advertisedInputDialect: "portable",
     ...toolContractMetadata("inspect_adb_ui"),
     kind: "adb-provider",
     description:
@@ -24,6 +25,7 @@ export const ADB_UI_TOOL_CONTRACTS = [
   },
   {
     name: "find_adb_ui_elements",
+    advertisedInputDialect: "portable",
     ...toolContractMetadata("find_adb_ui_elements"),
     kind: "adb-provider",
     description:
@@ -49,6 +51,7 @@ export const ADB_UI_TOOL_CONTRACTS = [
   },
   {
     name: "wait_for_adb_ui",
+    advertisedInputDialect: "portable",
     ...toolContractMetadata("wait_for_adb_ui"),
     kind: "adb-provider",
     description:
