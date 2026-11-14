@@ -47,19 +47,32 @@ it("reports the fixed adb version-probe deadline", async () => {
 });
 
 it("reports the fixed adb version-output cap", async () => {
-  vi.mocked(execFileOutput).mockRejectedValueOnce(
-    Object.assign(new Error("too much"), {
-      code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
-      stdout: "",
-      stderr: "",
-      signal: null,
-      killed: false,
-      outputTruncated: true,
-    }),
-  );
-  const failure = await inspectAdbClient(selection).catch(
-    (cause: unknown) => cause,
-  );
+  let selected: string = selection.binary;
+  if (process.platform === "win32") {
+    vi.mocked(execFileOutput).mockRejectedValueOnce(
+      Object.assign(new Error("too much"), {
+        code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
+        stdout: "",
+        stderr: "",
+        signal: null,
+        killed: false,
+        outputTruncated: true,
+      }),
+    );
+  } else {
+    const root = await mkdtemp(join(tmpdir(), "rea-adb-version-cap-"));
+    onTestFinished(() => rm(root, { recursive: true, force: true }));
+    selected = join(root, "adb");
+    await writeFile(
+      selected,
+      `#!${process.execPath}\nprocess.stdout.write("x".repeat(100_000));\n`,
+      { mode: 0o755 },
+    );
+  }
+  const failure = await inspectAdbClient({
+    ...selection,
+    binary: selected,
+  }).catch((cause: unknown) => cause);
   const projected = projectAnalysisError(
     failure as Parameters<typeof projectAnalysisError>[0],
   );
@@ -74,25 +87,28 @@ it("reports the fixed adb version-output cap", async () => {
   expect(projected.details?.limit).toBeUndefined();
 });
 
-it("distinguishes execute denial from missing or unreadable version output", async () => {
-  vi.mocked(execFileOutput).mockRejectedValueOnce(
-    Object.assign(new Error("denied"), {
-      code: "EACCES",
-      spawnFailed: true,
-      stdout: "",
-      stderr: "",
-      signal: null,
-      killed: false,
-    }),
-  );
-  await expect(inspectAdbClient(selection)).rejects.toMatchObject({
-    code: "binary_not_executable",
-    diagnostics: {
-      selected_binary: selection.binary,
-      filesystem_error: "EACCES",
-    },
-  });
-});
+it.skipIf(process.platform !== "win32")(
+  "classifies an EACCES execute refusal on Windows",
+  async () => {
+    vi.mocked(execFileOutput).mockRejectedValueOnce(
+      Object.assign(new Error("denied"), {
+        code: "EACCES",
+        spawnFailed: true,
+        stdout: "",
+        stderr: "",
+        signal: null,
+        killed: false,
+      }),
+    );
+    await expect(inspectAdbClient(selection)).rejects.toMatchObject({
+      code: "binary_not_executable",
+      diagnostics: {
+        selected_binary: selection.binary,
+        filesystem_error: "EACCES",
+      },
+    });
+  },
+);
 
 it("names an EPERM execute refusal separately from missing permission", async () => {
   vi.mocked(execFileOutput).mockRejectedValueOnce(

@@ -64,7 +64,7 @@ const ELF_NOTE_TYPE = 0x53554901;
 const PE_HEADER_PROBE_BYTES = 64 * 1024;
 const INTEL_CHUNK_BYTES = 1024 * 1024;
 /** Trailer candidates examined before the search stops. */
-export const MAX_DENO_INTEL_TRAILER_SENTINELS = 64;
+const MAX_DENO_INTEL_TRAILER_SENTINELS = 64;
 const INTEL_SENTINEL = Buffer.concat([
   Buffer.from("<~sui-data~>", "latin1"),
   Buffer.from([0xef, 0xbe, 0xad, 0xde]),

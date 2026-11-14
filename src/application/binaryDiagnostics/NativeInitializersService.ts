@@ -1,3 +1,4 @@
+import { insideArtifact } from "./artifactRange.js";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { NativeInitializersPort } from "./NativeInitializersPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -106,8 +107,7 @@ const validReport = (
         report.architecture !== input.architecture
   )
     return false;
-  const insideArtifact = (offset: number, bytes: number): boolean =>
-    offset <= report.artifact.bytes - bytes;
+  const inside = insideArtifact(report.artifact.bytes);
   // Entry file offsets name the selected image, not another slice in the container.
   const imageStart = slice?.file_offset ?? 0;
   const imageEnd =
@@ -115,7 +115,8 @@ const validReport = (
   const insideImage = (offset: number | null, bytes: number): boolean =>
     offset === null || (offset >= imageStart && bytes <= imageEnd - offset);
   if (
-    (slice !== null && !insideArtifact(slice.file_offset, slice.size)) ||
+    (slice !== null &&
+      !inside({ offset: slice.file_offset, bytes: slice.size })) ||
     report.artifact.bytes > input.max_file_bytes ||
     coverage.offset !== input.offset ||
     coverage.limit !== input.limit ||

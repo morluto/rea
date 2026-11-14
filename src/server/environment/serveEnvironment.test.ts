@@ -18,7 +18,6 @@ import {
   ENVIRONMENT_CARD_PATH,
   ENVIRONMENT_RPC_PATH,
   environmentRoutes,
-  MAX_RPC_BATCH_MESSAGES,
   serveEnvironment as startEnvironment,
   type ServedEnvironment,
 } from "./serveEnvironment.js";
@@ -335,13 +334,11 @@ describe("environment data plane validation", () => {
       ).json(),
     ).resolves.toMatchObject({ id: null, error: { code: -32601 } });
     // A batch is bounded before any reply is built for it.
-    const oversized = await post(
-      Array.from({ length: MAX_RPC_BATCH_MESSAGES + 1 }, () => 0),
-    );
+    const oversized = await post(Array.from({ length: 101 }, () => 0));
     expect(oversized.status).toBe(400);
     await expect(oversized.json()).resolves.toMatchObject({
       id: null,
-      error: { code: -32600 },
+      error: { code: -32600, message: "batch exceeds 100 messages" },
     });
   });
 });

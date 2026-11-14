@@ -1248,7 +1248,7 @@ it("rejects old executable identity representations without migration", () => {
   ).toThrow("legacy_executable_sha256");
 });
 
-it("requires compatible contracts and enforces capture age through a clock seam", () => {
+it("requires compatible contracts and enforces capture age", () => {
   const capture = emptyCapture();
   expect(() =>
     compareProcessCaptures(capture, {
@@ -1274,11 +1274,17 @@ it("requires compatible contracts and enforces capture age through a clock seam"
       ],
     }),
   );
+  const completedAt = new Date(Date.now() - 86_400_000).toISOString();
+  const stale = {
+    ...capture,
+    manifest: {
+      ...capture.manifest,
+      started_at: completedAt,
+      completed_at: completedAt,
+    },
+  };
   expect(() =>
-    compareProcessCaptures(capture, capture, {
-      maxCaptureAgeMs: 1,
-      now: () => Date.parse("2026-01-01T00:00:01.000Z"),
-    }),
+    compareProcessCaptures(stale, stale, { maxCaptureAgeMs: 1_000 }),
   ).toThrow(
     expect.objectContaining({
       issues: [

@@ -43,7 +43,7 @@ export const macHopperCanonicalLauncherCandidates = (
 ];
 
 /** Build deterministic candidates from the discovered app bundle names. */
-export const macHopperRenamedLauncherCandidates = (
+const macHopperRenamedLauncherCandidates = (
   homeDirectory: string,
   bundleNamesByRoot: ReadonlyMap<string, readonly string[]>,
 ): readonly string[] =>

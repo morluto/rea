@@ -309,7 +309,6 @@ cliTest(
       ).toMatchObject({ code: "invalid_request" });
     }
   },
-  60000,
 );
 
 cliTest(
@@ -451,5 +450,4 @@ cliTest(
     }
     expect((await readFile(path)).length).toBeGreaterThan(0);
   },
-  30000,
 );

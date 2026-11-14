@@ -51,7 +51,6 @@ const buildHost = async (launcher = "/opt/rea/scripts/rea.mjs") => {
 
 cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
   "doctor checks the selected client's runner even when it is not on PATH",
-  { timeout: 60_000 },
   async ({ cli }) => {
     const { environment, home } = await buildHost();
     const bin = join(home, "..", "bin");
@@ -116,7 +115,6 @@ cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
 
 cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
   "doctor accepts client paths matching resolved build defaults",
-  { timeout: 60_000 },
   async ({ cli }) => {
     const { environment, home } = await buildHost();
     const bin = join(home, "..", "bin");
@@ -169,7 +167,6 @@ cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
 
 cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
   "doctor checks a desktop build host and names settings without their values",
-  { timeout: 60_000 },
   async ({ cli }) => {
     const { environment } = await buildHost();
 
@@ -231,7 +228,6 @@ cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
 
 cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
   "setup plans the runtime archive and the build settings for a client",
-  { timeout: 60_000 },
   async ({ cli }) => {
     const { environment } = await buildHost(resolve("scripts/rea.mjs"));
 

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
+import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
 
 const fault = vi.hoisted(() => ({
   path: "",
@@ -100,16 +101,19 @@ it("serializes reads across providers, preserves queued aborts and drains admitt
     resume: resume.promise,
   };
   const reading = first.inspect({ path });
-  await started.promise;
-  const queued = second.inspect({ path });
   const controller = new AbortController();
   const reason = new Error("cancel while queued");
-  const cancelled = second.inspect({ path }, { signal: controller.signal });
+  let queued: ReturnType<typeof second.inspect> | undefined;
+  let cancelled: ReturnType<typeof second.inspect> | undefined;
+  let closing: Promise<void> | undefined;
   let closed = false;
-  const closing = second.close().then(() => {
-    closed = true;
-  });
   try {
+    await awaitAcknowledgement(started.promise, reading, "APK signature read");
+    queued = second.inspect({ path });
+    cancelled = second.inspect({ path }, { signal: controller.signal });
+    closing = second.close().then(() => {
+      closed = true;
+    });
     controller.abort(reason);
     expect(await cancelled).toMatchObject({
       ok: false,
@@ -123,7 +127,12 @@ it("serializes reads across providers, preserves queued aborts and drains admitt
     expect(closed).toBe(true);
   } finally {
     resume.resolve();
-    await Promise.all([reading, queued, cancelled, closing]);
+    await Promise.allSettled([
+      reading,
+      ...(queued ? [queued] : []),
+      ...(cancelled ? [cancelled] : []),
+      ...(closing ? [closing] : []),
+    ]);
     await first.close();
     await second.close();
   }

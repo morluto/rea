@@ -1,5 +1,6 @@
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 
 import type {
   Device,
@@ -1774,12 +1775,18 @@ it("serializes script loading against concurrent close and unloads the loaded sc
   void closing.then(() => {
     closed = true;
   });
-  expect(manager.closeSession(started.value.sessionId)).toBe(closing);
+  const secondClose = manager.closeSession(started.value.sessionId);
+  let secondClosed = false;
+  void secondClose.then(() => {
+    secondClosed = true;
+  });
   await Promise.resolve();
   expect(closed).toBe(false);
+  expect(secondClosed).toBe(false);
   finishScriptLoad?.();
   expect((await loading).ok).toBe(true);
   expect((await closing).ok).toBe(true);
+  expect((await secondClose).ok).toBe(true);
   expect(bindings.device.session.scripts[0]?.isDestroyed).toBe(true);
   expect(bindings.device.session.isDetached()).toBe(true);
 });
@@ -1863,7 +1870,11 @@ it.each([false, true])(
       { sourceKind: "inline", source: "send('marker')" },
       controller.signal,
     );
-    await entered.promise;
+    await awaitAcknowledgement(
+      entered.promise,
+      loading,
+      "provider lifecycle boundary",
+    );
     const script = session.scripts[0];
     if (script === undefined) throw new Error("Missing admitted script");
     const unload = script.unload.bind(script);
@@ -1927,7 +1938,11 @@ it("preserves a native rejection observed before cancellation during script clea
     { sourceKind: "inline", source: "void 0" },
     controller.signal,
   );
-  await entered.promise;
+  await awaitAcknowledgement(
+    entered.promise,
+    loading,
+    "provider lifecycle boundary",
+  );
   controller.abort(new Error("late abort during cleanup"));
   held.resolve();
   const result = await loading;

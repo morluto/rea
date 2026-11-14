@@ -1,6 +1,7 @@
 import type { FileHandle } from "node:fs/promises";
 import { expect, it, vi } from "vitest";
 import { withPyInstallerReader } from "../../../tests/fixtures/pyinstallerReader.js";
+import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import type { ArtifactEntry } from "../ArtifactReader.js";
 import { PyInstallerPyzStore } from "./PyInstallerPyzStore.js";
@@ -114,7 +115,11 @@ it.each([false, true])(
         const opening = reader.open(selected, signal.signal);
         void opening.catch(() => undefined);
         try {
-          await started;
+          await awaitAcknowledgement(
+            started,
+            opening,
+            "PyInstaller image admission",
+          );
           signal.abort(cancelled);
           release();
           await expect(opening).rejects.toMatchObject({
