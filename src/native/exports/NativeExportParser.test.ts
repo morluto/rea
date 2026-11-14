@@ -1159,8 +1159,11 @@ const writeNullSymbolName = (
   else bytes.writeUInt32BE(nameOffset, NULL_SYMBOL_OFFSET);
 };
 
-const nullSymbolNameNote = (nameOffset: number): string =>
-  `ELF dynamic symbol 0 at file offset 0x100 has nonzero st_name 0x${nameOffset.toString(16)}. st_info, st_other, st_shndx, st_value and st_size are zero, so the entry was skipped and was not reported as an export.`;
+// One added note naming the skipped entry's facts; its wording is free.
+const nullSymbolNameNote = (nameOffset: number) =>
+  expect.stringMatching(
+    new RegExp(`symbol 0\\b.*0x100\\b.*0x${nameOffset.toString(16)}\\b`, "su"),
+  );
 
 describe("ELF dynamic symbol null entry", () => {
   it.each([32, 64] as const)(
