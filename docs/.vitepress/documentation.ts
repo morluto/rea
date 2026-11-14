@@ -184,6 +184,11 @@ export const documentationSections = [
         route: "/adb-device-analysis",
       },
       {
+        text: "Android UI discovery and actions",
+        source: "guides/android/adb-ui-automation.md",
+        route: "/adb-ui-automation",
+      },
+      {
         text: "Flutter build identification",
         source: "guides/android/flutter-analysis.md",
         route: "/flutter-analysis",
