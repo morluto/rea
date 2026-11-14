@@ -65,7 +65,7 @@ cliTest(
           );
       }
       // MCP adds open-session facts; the snapshot reason must match exactly.
-      expect(mcpError.details).toMatchObject(cliError.details);
+      expect(mcpError.details).toMatchObject(cliError.details ?? {});
       expect(await readFile(snapshot, "utf8")).toBe(encoded);
     }
     expect(
