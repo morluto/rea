@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
 import { parseEvidence } from "../../src/domain/evidence.js";
+import { boundedDecimalTokenPattern } from "../../src/cli/options.js";
 import { webEventListenersSchema } from "../../src/domain/webEventListeners.js";
 import { startRuntimeBrowser } from "../fixtures/webRuntime.js";
 
@@ -75,7 +76,10 @@ it("advertises the canonical observation duration bounds through the compiled CL
               minimum: 1,
               maximum: 2_147_483_647,
             },
-            { type: "string", pattern: "^[0-9]+$" },
+            {
+              type: "string",
+              pattern: boundedDecimalTokenPattern(1, 2_147_483_647),
+            },
           ],
         },
       },

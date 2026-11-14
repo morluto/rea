@@ -3,6 +3,7 @@ import { Parser, Schema, z } from "incur";
 import { describe, expect, it } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
+import { boundedDecimalTokenPattern } from "../../../src/cli/options.js";
 import { visitRegisteredCommands } from "../../../src/cli/visitRegisteredCommands.js";
 
 const NON_DECIMAL = ["0x10", "1e3"] as const;
@@ -47,6 +48,35 @@ const bounds = (schema: unknown): Array<{ min: number; max: number }> => {
   return Number.isSafeInteger(preferred) && preferred >= min && preferred <= max
     ? [...nested, { min: preferred, max }]
     : nested;
+};
+
+/** Bounds the advertised integer branch declares, if any. */
+const declaredBounds = (
+  schema: unknown,
+): { min?: number; max?: number } | undefined => {
+  if (!isRecord(schema) || !Array.isArray(schema.anyOf)) return undefined;
+  for (const branch of schema.anyOf) {
+    if (!isRecord(branch)) continue;
+    if (branch.type !== "integer" && branch.type !== "number") continue;
+    const min =
+      typeof branch.minimum === "number"
+        ? branch.minimum
+        : typeof branch.exclusiveMinimum === "number"
+          ? branch.exclusiveMinimum + 1
+          : undefined;
+    const max =
+      typeof branch.maximum === "number"
+        ? branch.maximum
+        : typeof branch.exclusiveMaximum === "number"
+          ? branch.exclusiveMaximum - 1
+          : undefined;
+    if (min === undefined && max === undefined) return undefined;
+    return {
+      ...(min === undefined ? {} : { min }),
+      ...(max === undefined ? {} : { max }),
+    };
+  }
+  return undefined;
 };
 
 const flagName = (name: string): string =>
@@ -189,6 +219,109 @@ describe("decimal integer CLI admission", () => {
   });
 });
 
+describe("decimal integer CLI out-of-range advertisement", () => {
+  it("rejects out-of-range decimal tokens in the advertised schema and keeps leading-zero spellings", () => {
+    const cli = createCli({});
+    const ajv = new Ajv2020({ strict: false, allErrors: true });
+    const failures: string[] = [];
+    const checked: string[] = [];
+    visitRegisteredCommands(cli, (command, path) => {
+      for (const group of ["args", "options"] as const) {
+        const parser = command[group];
+        if (!(parser instanceof z.ZodObject)) continue;
+        const advertised = Schema.toJsonSchema(parser);
+        if (!isRecord(advertised) || !isRecord(advertised.properties)) continue;
+        for (const [name, property] of Object.entries(advertised.properties)) {
+          const field = parser.shape[name];
+          if (field === undefined) continue;
+          const label = `${path} ${group}.${name}`;
+          const repeated = isRecord(property) && property.type === "array";
+          const item = repeated ? property.items : property;
+          const isolated = z.object({ [name]: field });
+          const read = (token: string): unknown => {
+            const parsed =
+              group === "options"
+                ? Parser.parse([flagName(name), token], { options: isolated })
+                    .options[name]
+                : Parser.parse([token], { args: isolated }).args[name];
+            return repeated && Array.isArray(parsed) ? parsed[0] : parsed;
+          };
+          const readsNumber = (token: string): boolean => {
+            try {
+              return typeof read(token) === "number";
+            } catch {
+              return false;
+            }
+          };
+          const probed = PROBE_TOKENS.find(readsNumber);
+          if (!numericBranches(item) && probed === undefined) continue;
+          const declared = declaredBounds(item);
+          if (declared === undefined) continue;
+          let validate: ((value: unknown) => boolean) | undefined;
+          try {
+            validate = ajv.compile(item as Parameters<Ajv2020["compile"]>[0]);
+          } catch (error) {
+            failures.push(
+              `${label}: Ajv could not compile the advertised schema (${error instanceof Error ? error.message : String(error)})`,
+            );
+            continue;
+          }
+          const outOfRange: string[] = [];
+          if (declared.min !== undefined && declared.min > 0)
+            outOfRange.push(String(declared.min - 1));
+          if (
+            declared.max !== undefined &&
+            Number.isSafeInteger(declared.max)
+          )
+            outOfRange.push(String(declared.max + 1));
+          for (const token of outOfRange) {
+            if (validate(token))
+              failures.push(
+                `${label}: advertised schema accepts out-of-range ${token}`,
+              );
+            try {
+              read(token);
+              failures.push(
+                `${label}: Parser.parse accepts out-of-range ${token}`,
+              );
+            } catch {
+              // Out-of-range tokens are refused by the domain.
+            }
+          }
+          const candidate = bounds(item)[0]?.min;
+          if (candidate !== undefined) {
+            const leadingZero = `0${candidate}`;
+            if (!validate(leadingZero))
+              failures.push(
+                `${label}: advertised schema rejects leading-zero ${leadingZero}`,
+              );
+            try {
+              expect(read(leadingZero)).toBe(candidate);
+            } catch (error) {
+              failures.push(
+                `${label}: leading-zero ${leadingZero} did not parse (${error instanceof Error ? error.message : String(error)})`,
+              );
+            }
+          }
+          checked.push(label);
+        }
+      }
+    });
+    // Not every numeric field declares bounds (e.g. environment-serve
+    // --port is string-advertised), so this test asserts coverage of the
+    // bounded fields that carry the #9348 fix, not the whole catalog.
+    expect(checked).toEqual(
+      expect.arrayContaining([
+        "inspect-sqlite-database options.rowLimit",
+        "inspect-byte-entropy options.blockSize",
+      ]),
+    );
+    expect(checked.length).toBeGreaterThan(10);
+    expect(new Set(checked).size).toBe(checked.length);
+    expect(failures).toEqual([]);
+  });
+});
+
 describe("decimal integer CLI advertisement", () => {
   const schemaOf = async (command: string): Promise<unknown> => {
     let stdout = "";
@@ -215,7 +348,7 @@ describe("decimal integer CLI advertisement", () => {
             description: "One-based generated line",
             anyOf: [
               { type: "integer", minimum: 1 },
-              { type: "string", pattern: "^[0-9]+$" },
+              { type: "string", pattern: boundedDecimalTokenPattern(1, Number.MAX_SAFE_INTEGER) },
             ],
           },
         },
@@ -229,7 +362,7 @@ describe("decimal integer CLI advertisement", () => {
             items: {
               anyOf: [
                 { type: "integer", minimum: 0 },
-                { type: "string", pattern: "^[0-9]+$" },
+                { type: "string", pattern: boundedDecimalTokenPattern(0, Number.MAX_SAFE_INTEGER) },
               ],
             },
           },

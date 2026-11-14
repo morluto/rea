@@ -1,4 +1,5 @@
 import { expect } from "vitest";
+import { boundedDecimalTokenPattern } from "../../../src/cli/options.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -69,7 +70,10 @@ cliTest(
             default: 500,
             anyOf: [
               { type: "integer", minimum: 0 },
-              { type: "string", pattern: "^[0-9]+$" },
+              {
+                type: "string",
+                pattern: boundedDecimalTokenPattern(0, Number.MAX_SAFE_INTEGER),
+              },
             ],
           },
         },

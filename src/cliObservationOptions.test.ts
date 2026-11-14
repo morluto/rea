@@ -1,6 +1,7 @@
 import { Parser, Schema, z } from "incur";
 import { expect, it } from "vitest";
 import { observationDuration } from "./cliObservationOptions.js";
+import { boundedDecimalTokenPattern } from "./cli/options.js";
 
 const options = z.object({ observationMs: observationDuration(500) });
 
@@ -40,7 +41,10 @@ it("advertises the decimal token guard and the domain numeric bounds", () => {
         default: 500,
         anyOf: [
           { type: "integer", minimum: 0 },
-          { type: "string", pattern: "^[0-9]+$" },
+          {
+            type: "string",
+            pattern: boundedDecimalTokenPattern(0, Number.MAX_SAFE_INTEGER),
+          },
         ],
       },
     },
