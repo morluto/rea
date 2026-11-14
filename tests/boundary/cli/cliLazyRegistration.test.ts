@@ -154,4 +154,60 @@ registerHooks({ resolve(specifier, context, next) {
       expect(complete.stderr).toContain(marker);
     },
   );
+
+  processTest(
+    "rejects each registrar's command the same way in a fresh lazy process",
+    async ({ processes }) => {
+      // In-process comparisons share every module the complete CLI imported.
+      // A fresh process loads only the selected registrar, so it exposes one
+      // that relies on another module's import-time setup.
+      const recorded = await recordedRegistrations();
+      const firstNames = new Map<string, string>();
+      for (const [name, id] of Object.entries(recorded))
+        if (!firstNames.has(id)) firstNames.set(id, name);
+      expect([...firstNames.keys()].sort()).toEqual(
+        [...CLI_REGISTRATION_ORDER].sort(),
+      );
+      const home = await createTestTempDirectory("rea-cli-lazy-fresh-");
+      const complete = createCli(ENVIRONMENT);
+      // An unknown option is rejected before any command handler runs.
+      const invocation = (name: string) => [
+        name,
+        "--rea-test-unknown-option",
+        "--json",
+      ];
+      const names = [...firstNames.values()];
+      // The one-shot host writes compact JSON; compare the documents.
+      const document = (stdout: string): unknown => {
+        try {
+          return JSON.parse(stdout);
+        } catch {
+          return stdout;
+        }
+      };
+      const lazy = new Map<string, { document: unknown; exitCode: number }>();
+      const LAUNCHES = 4;
+      for (let start = 0; start < names.length; start += LAUNCHES)
+        await Promise.all(
+          names.slice(start, start + LAUNCHES).map(async (name) => {
+            const result = await processes.run(
+              process.execPath,
+              [join("scripts", "rea.mjs"), ...invocation(name)],
+              { env: { ...ENVIRONMENT, HOME: home } },
+            );
+            lazy.set(name, {
+              document: document(result.stdout),
+              exitCode: result.exitCode ?? -1,
+            });
+          }),
+        );
+      for (const name of names) {
+        const expected = await serveInProcessCli(complete, invocation(name));
+        expect(lazy.get(name), name).toEqual({
+          document: document(expected.stdout),
+          exitCode: expected.exitCode,
+        });
+      }
+    },
+  );
 });
