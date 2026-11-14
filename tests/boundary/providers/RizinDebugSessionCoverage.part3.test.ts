@@ -401,10 +401,9 @@ it
   },
 );
 
-it.skipIf(process.platform === "win32").each([false, true])(
-  "recovers output-limit cleanup only after a fresh marker and inferior readback (retry=%s)",
-  async (retry) => {
-    let synchronizationAllowed = !retry;
+it.skipIf(process.platform === "win32")(
+  "carries output-limit cleanup through a fresh marker and inferior readback",
+  async () => {
     const writes: string[] = [];
     const injected = createInjectedProcess({
       onWrite: (text, control) => {
@@ -413,10 +412,9 @@ it.skipIf(process.platform === "win32").each([false, true])(
         if (marker === undefined) return;
         if (text.startsWith("noisy\n"))
           control.output(`too much output\0${marker}\0`);
-        else if (text.startsWith("!echo __REA_CLEANUP_SYNC_")) {
-          if (synchronizationAllowed)
-            control.output(`stale frame\0${marker}\0`);
-        } else if (text.startsWith("olj\n")) control.output(`[]\0${marker}\0`);
+        else if (text.startsWith("!echo __REA_CLEANUP_SYNC_"))
+          control.output(`stale frame\0${marker}\0`);
+        else if (text.startsWith("olj\n")) control.output(`[]\0${marker}\0`);
         else throw new Error(`Unexpected cleanup command: ${text}`);
       },
     });
@@ -440,22 +438,43 @@ it.skipIf(process.platform === "win32").each([false, true])(
     );
     if (!started.ok) throw started.error;
     const result = await manager.execute(started.value.session_id, "noisy");
-    expect(result.ok).toBe(!retry);
-    expect(writes.some((text) => text.startsWith("olj\n"))).toBe(!retry);
-    if (retry) {
-      if (result.ok) throw new Error("Expected retained cleanup");
-      expect(result.error.cleanupIncomplete).toBe(true);
-      expect(manager.status(started.value.session_id)).toBeDefined();
-      expect(
-        (await manager.execute(started.value.session_id, "later")).ok,
-      ).toBe(false);
-      synchronizationAllowed = true;
-      expect((await manager.close(started.value.session_id)).ok).toBe(true);
-      expect(result.error.cleanupIncomplete).toBe(false);
-    }
+    expect(result.ok).toBe(true);
     expect(writes.some((text) => text.startsWith("olj\n"))).toBe(true);
-    if (!retry)
-      expect((await manager.close(started.value.session_id)).ok).toBe(true);
+    expect((await manager.close(started.value.session_id)).ok).toBe(true);
+    expect(manager.status(started.value.session_id)).toBeUndefined();
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "terminates output-limit cleanup when the transport cannot resynchronize",
+  async () => {
+    const writes: string[] = [];
+    const injected = createInjectedProcess({
+      onWrite: (text, control) => {
+        writes.push(text);
+        const marker = /!echo (.+)\n/u.exec(text)?.[1];
+        if (marker === undefined) return;
+        if (text.startsWith("noisy\n"))
+          control.output(`too much output\0${marker}\0`);
+        else if (text.startsWith("olj\n")) control.output(`[]\0${marker}\0`);
+      },
+    });
+    const { manager, started } = await startInjected(
+      injected.spawnProcess,
+      { stopProcess: stopOwnedDebuggerProcess },
+      { REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES: "8" },
+    );
+    if (!started.ok) throw started.error;
+    const result = await manager.execute(started.value.session_id, "noisy");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.result.output_truncated).toBe(true);
+    expect(result.value.evidence.limitations).toContainEqual(
+      expect.stringMatching(/terminated without a verified inferior detach/iu),
+    );
+    expect(writes.some((text) => text.startsWith("olj\n"))).toBe(false);
+    expect(manager.status(started.value.session_id)?.state).toBe("closed");
+    expect((await manager.close(started.value.session_id)).ok).toBe(true);
     expect(manager.status(started.value.session_id)).toBeUndefined();
   },
 );

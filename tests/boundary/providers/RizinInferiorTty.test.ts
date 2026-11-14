@@ -359,7 +359,7 @@ it.skipIf(process.platform !== "linux")(
 );
 
 it.skipIf(process.platform !== "linux")(
-  "retains a verified active inferior after public command output truncation makes protocol state ambiguous",
+  "terminates the owned debugger and leaves the target running when output truncation blocks resynchronization",
   async () => {
     const sessionId = await startFakeInferiorSession({
       overflowPxCommand: true,
@@ -375,38 +375,49 @@ it.skipIf(process.platform !== "linux")(
           3_000,
         );
       }),
-    ])
-      .catch(async (error: unknown) => {
-        if (providerPid !== undefined) {
-          try {
-            process.kill(providerPid, "SIGKILL");
-          } catch {
-            // The watchdog may race with provider exit.
-          }
-        }
-        // The mutated path can leave commandTail permanently held. Prevent cleanup
-        // from awaiting that same tail; afterEach still kills both child processes.
-        manager = undefined;
-        throw error;
-      })
-      .finally(() => {
-        if (watchdog !== undefined) clearTimeout(watchdog);
-      });
+    ]).finally(() => {
+      if (watchdog !== undefined) clearTimeout(watchdog);
+    });
 
-    expect(completed.ok).toBe(false);
-    if (completed.ok) return;
-    expect(completed.error.cleanupIncomplete).toBe(true);
-    expect(completed.error.cleanupResources).toEqual([sessionId]);
-    const evidence = evidenceSchema.parse(completed.error.partialObservation);
+    expect(completed.ok).toBe(true);
+    if (!completed.ok) return;
+    expect(completed.value.result).toMatchObject({
+      output_truncated: true,
+      completion_status: "unknown",
+    });
+    const evidence = evidenceSchema.parse(completed.value.evidence);
     expect(evidence.normalized_result).toMatchObject({
       output_truncated: true,
     });
     expect(evidence.limitations).toContainEqual(
       expect.stringMatching(
-        /debugger session.*retained.*cleanup could not be verified/iu,
+        /terminated without a verified inferior detach.*resynchroniz/iu,
       ),
     );
     expect(manager!.status(sessionId)?.state).toBe("closed");
+    expect(providerPid).toBeDefined();
+    await expect
+      .poll(
+        () => {
+          try {
+            process.kill(providerPid!, 0);
+            return "alive";
+          } catch {
+            return "exited";
+          }
+        },
+        { timeout: 2_000 },
+      )
+      .toBe("exited");
+    // The target was never signalled: it keeps running after owned cleanup.
+    expect(inferiorPid).toBeDefined();
+    expect(() => process.kill(inferiorPid!, 0)).not.toThrow();
+    const stat = await readFile(`/proc/${inferiorPid!}/stat`, "utf8");
+    const commandEnd = stat.lastIndexOf(") ");
+    expect(commandEnd).toBeGreaterThan(0);
+    expect(stat.slice(commandEnd + 2).trimStart()[0]).not.toBe("Z");
+    expect((await manager!.close(sessionId)).ok).toBe(true);
+    expect(manager!.status(sessionId)).toBeUndefined();
   },
 );
 

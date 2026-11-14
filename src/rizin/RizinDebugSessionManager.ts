@@ -64,6 +64,12 @@ import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
 
 const CLEANUP_COMMAND_TIMEOUT_MS = 1_000;
+/**
+ * A responsive Rizin echoes its own cleanup marker immediately. The shared
+ * detach verification budget is 1000 ms, so an unresponsive transport must
+ * settle inside half of it to leave termination its own bounded sequence.
+ */
+const CLEANUP_SYNCHRONIZATION_PROBE_TIMEOUT_MS = 500;
 const STARTUP_TIMEOUT_MS = 30_000;
 const MAX_FRAME_BYTES = 16 * 1024 * 1024;
 const MAX_QUEUED_FRAME_BYTES = 4 * 1024 * 1024;
@@ -80,6 +86,9 @@ interface RizinLaunchProvenance {
 
 const RIZIN_LAUNCH_PROVENANCE_LIMITATION =
   "Launch provenance records the original and resolved startup paths; it does not establish the current target after unrestricted debugger commands.";
+
+const RIZIN_TERMINATED_WITHOUT_VERIFIED_DETACH_LIMITATION =
+  "The owned Rizin process was terminated without a verified inferior detach because its command transport could not be resynchronized; the target may continue running and its state and output route are unknown.";
 
 interface RizinCommandEvidenceInput {
   readonly sessionId: string;
@@ -153,6 +162,7 @@ interface RizinCommandTimeoutEvidenceInput {
   readonly result: RizinDebugCommandResult;
   readonly inferiorTty: string;
   readonly cleanupFailure: string | undefined;
+  readonly inferiorDetachUnverified: boolean;
   readonly launchProvenance: RizinLaunchProvenance;
   readonly deadline: DebuggerAdmissionLimit;
 }
@@ -168,6 +178,7 @@ const createRizinCommandTimeoutEvidence = ({
   result,
   inferiorTty,
   cleanupFailure,
+  inferiorDetachUnverified,
   launchProvenance,
   deadline,
 }: RizinCommandTimeoutEvidenceInput): Evidence =>
@@ -184,13 +195,15 @@ const createRizinCommandTimeoutEvidence = ({
             "Collected command frame bytes did not form valid UTF-8; displayed output contains replacement characters.",
           ]
         : []),
-      ...(cleanupFailure === undefined
+      ...(cleanupFailure !== undefined
         ? [
-            "The owned debugger session was stopped because output correlation could no longer be guaranteed.",
-          ]
-        : [
             `The owned debugger session remains retained because cleanup could not be verified: ${cleanupFailure}`,
-          ]),
+          ]
+        : inferiorDetachUnverified
+          ? [RIZIN_TERMINATED_WITHOUT_VERIFIED_DETACH_LIMITATION]
+          : [
+              "The owned debugger session was stopped because output correlation could no longer be guaranteed.",
+            ]),
       "The command is unrestricted and may access local files, the shell, network, or mutate the target.",
     ],
   });
@@ -905,6 +918,7 @@ export class RizinDebugSessionManager {
                   captured.outputLimit,
                   acceptedOutput,
                   cleanupFailure,
+                  stopped.status === "stopped_inferior_unknown",
                 ),
               ]
             : []),
@@ -948,13 +962,16 @@ export class RizinDebugSessionManager {
       if (signal?.aborted || cause instanceof AnalysisCancelledError) {
         if (!commandSent)
           return err(rizinCancellation("rizin_debug_command", signal, cause));
-        const evidence = partialEvidence([
-          "The Rizin command was cancelled; collected frame output is partial and command completion is unknown.",
-          "The owned debugger session was stopped because command output can no longer be correlated safely.",
-          "The command is unrestricted and may access local files, the shell, network, or mutate the target.",
-        ]);
         session.protocolError =
           "A Rizin command was cancelled; the owned session was stopped because command output can no longer be correlated safely.";
+        const stopped = await this.#stopDebuggerOnly(session, true);
+        const evidence = partialEvidence([
+          "The Rizin command was cancelled; collected frame output is partial and command completion is unknown.",
+          stopped.status === "stopped_inferior_unknown"
+            ? RIZIN_TERMINATED_WITHOUT_VERIFIED_DETACH_LIMITATION
+            : "The owned debugger session was stopped because command output can no longer be correlated safely.",
+          "The command is unrestricted and may access local files, the shell, network, or mutate the target.",
+        ]);
         const primary = rizinCancellation(
           "rizin_debug_command",
           signal,
@@ -964,7 +981,6 @@ export class RizinDebugSessionManager {
             ...(evidence === undefined ? {} : { partialObservation: evidence }),
           },
         );
-        const stopped = await this.#stopDebuggerOnly(session, true);
         return err(
           this.#finalizeFailure(
             session,
@@ -1011,6 +1027,8 @@ export class RizinDebugSessionManager {
           deadline: acceptedDeadline,
           cleanupFailure:
             stopped.status === "incomplete" ? stopped.reason : undefined,
+          inferiorDetachUnverified:
+            stopped.status === "stopped_inferior_unknown",
           launchProvenance: session.launchProvenance,
         });
         return this.#finalizeCommandObservation(
@@ -1415,8 +1433,23 @@ export class RizinDebugSessionManager {
   ): Promise<OwnedDebuggerDetachResult> {
     if (session.exited)
       throw new Error("Rizin exited before inferior detach could be verified.");
-    if (session.protocolError !== undefined)
-      await this.#synchronizeCleanup(session);
+    if (session.protocolError !== undefined) {
+      try {
+        await this.#synchronizeCleanup(
+          session,
+          CLEANUP_SYNCHRONIZATION_PROBE_TIMEOUT_MS,
+        );
+      } catch (cause) {
+        // A debugger blocked in a running command never reads the marker.
+        // Distinguish this unavailable transport from an observed marker
+        // followed by a refused detach: only this declaration lets owned
+        // cleanup terminate the process, and it leaves inferior state unknown.
+        return {
+          status: "unavailable",
+          reason: `Rizin did not resynchronize cleanup within ${String(CLEANUP_SYNCHRONIZATION_PROBE_TIMEOUT_MS)} ms: ${cause instanceof Error ? cause.message : String(cause)}`,
+        };
+      }
+    }
     session.inferiorInventoryComplete = false;
     session.knownInferiorIdentities.clear();
     const inferior = parseRizinPtraceRows(
@@ -1539,7 +1572,10 @@ export class RizinDebugSessionManager {
       );
   }
 
-  async #synchronizeCleanup(session: RizinDebugSession): Promise<void> {
+  async #synchronizeCleanup(
+    session: RizinDebugSession,
+    timeoutMs: number,
+  ): Promise<void> {
     const stdin = session.launched.process.stdin;
     if (
       stdin === null ||
@@ -1575,7 +1611,7 @@ export class RizinDebugSessionManager {
           finish(
             new Error("Rizin cleanup synchronization marker was not observed."),
           ),
-        CLEANUP_COMMAND_TIMEOUT_MS,
+        timeoutMs,
       );
       session.cleanupSynchronization = {
         marker,
@@ -1754,7 +1790,9 @@ export class RizinDebugSessionManager {
     const primary = new AnalysisCapabilityUnavailableError(
       "rizin",
       "rizin_debug_command",
-      protocolFailure,
+      stopped.status === "stopped_inferior_unknown"
+        ? `${protocolFailure} ${RIZIN_TERMINATED_WITHOUT_VERIFIED_DETACH_LIMITATION}`
+        : protocolFailure,
       errorOptions,
     );
     return this.#finalizeFailure(
@@ -1843,6 +1881,7 @@ const rizinCaptureStoppedSentence = (
   limit: RizinOutputLimit | undefined,
   output: DebuggerAdmissionLimit,
   cleanupFailure: string | undefined,
+  inferiorDetachUnverified: boolean,
 ): string => {
   const cap =
     limit === "command_frames"
@@ -1855,9 +1894,11 @@ const rizinCaptureStoppedSentence = (
             ? `the ${String(output.value)} byte output limit`
             : "a capture limit";
   const cleanup =
-    cleanupFailure === undefined
-      ? " The owned debugger session was stopped."
-      : ` The owned debugger session remains retained because cleanup could not be verified: ${cleanupFailure}`;
+    cleanupFailure !== undefined
+      ? ` The owned debugger session remains retained because cleanup could not be verified: ${cleanupFailure}`
+      : inferiorDetachUnverified
+        ? ` ${RIZIN_TERMINATED_WITHOUT_VERIFIED_DETACH_LIMITATION}`
+        : " The owned debugger session was stopped.";
   const recovery =
     limit === "command_output_bytes"
       ? ` ${debuggerAdmissionRecovery(output)}`

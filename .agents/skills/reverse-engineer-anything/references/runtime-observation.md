@@ -20,11 +20,13 @@ Close each persistent session with its matching tool. `close_frida_session`
 unloads scripts and detaches; it does not kill the target. A still-paused spawn
 is resumed only after instrumentation cleanup is confirmed. GDB and Rizin close
 can detach a live inferior and let it continue only after verifying its durable
-output terminal. When disposition or cleanup is unresolved, preserve the owned
-session and reported recovery; do not assume that closing the debugger terminated
-the target. Process capture and LLDB call observation instead own their launched
-processes and report their termination/cleanup outcome. Cancellation is not proof
-that cleanup completed.
+output terminal. When a Rizin command transport cannot resynchronize, close
+instead terminates the owned debugger and reports the target's state and output
+route as unknown; the target may still be running. When disposition or cleanup
+is unresolved, preserve the owned session and reported recovery; do not assume
+that closing the debugger terminated the target. Process capture and LLDB call
+observation instead own their launched processes and report their
+termination/cleanup outcome. Cancellation is not proof that cleanup completed.
 
 Unrestricted GDB/Rizin commands and relevant start/close operations retire an
 active binary-analysis session in the same MCP server. Close an active Ghidra

@@ -229,7 +229,7 @@ control-reply budget stays separate from
 | Producer command allowances                      | fixed command deadline and retained output where the text says there is no runtime override                  | Distinct from per-call `producer_limits`.                                                   |
 | Hopper caller-scan retention and page allowances | `HOPPER_CALLER_SCAN_RETENTION_BYTES`, `HOPPER_CALLER_PAGE_ALLOWANCE_BYTES`                                   | Explicitly not raised by the scan time budget.                                              |
 | Rizin frame protocol                             | `MAX_FRAME_BYTES`, queued frames                                                                             | Protocol bounds, not caller budgets.                                                        |
-| Debugger detach and control replies              | `DETACH_TIMEOUT_MS`, `DEBUGGER_CONTROL_REPLY_BYTES`                                                          | Ownership deadlines, not the shared command deadline.                                       |
+| Debugger detach and control replies              | `DETACH_TIMEOUT_MS`, `CLEANUP_SYNCHRONIZATION_PROBE_TIMEOUT_MS`, `DEBUGGER_CONTROL_REPLY_BYTES`              | Ownership deadlines, not the shared command deadline.                                       |
 | Web network capture nesting                      | `max_nesting_depth` already has a per-call parameter                                                         | The fixed depth maximum is the follow-up, not the parameter.                                |
 
 ## Static check
