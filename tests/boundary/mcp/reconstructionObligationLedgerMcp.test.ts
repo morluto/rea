@@ -288,7 +288,7 @@ describe("reconstruction obligation ledger MCP parity", () => {
       });
       expect(result.isError).toBe(true);
       expect(parseMcpToolError(result)).toMatchObject(
-        integrityError("Evidence bundle manifests are not canonical"),
+        integrityError("Evidence bundle sections are not canonical: records"),
       );
     } finally {
       await client.close();
