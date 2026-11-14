@@ -192,3 +192,41 @@ export const buildUnityFs = (
   dataArea.copy(file, dataStart);
   return file;
 };
+
+/**
+ * Fixture for a raw LZ4 block whose match reaches back 513 bytes:
+ * 513 literal bytes, a 513-byte match at distance 513, and five final
+ * literal bytes. The uncompressed ~1 KiB artifact exercises decoded-byte
+ * identity at a long-distance match the shared decoder has to grow from the
+ * source of the match into its own output.
+ */
+const lz4LongDistanceBlock = (plain: Buffer): Buffer => {
+  if (plain.length !== 1031)
+    throw new Error("unityFsLz4LongDistance fixture expects 1031 bytes");
+  const prefix = plain.subarray(0, 513);
+  const tail = plain.subarray(513 * 2);
+  const literalExtension = Buffer.from([0xff, 255, 243]); // 15 + 255 + 243 = 513
+  const distance = Buffer.from([0x01, 0x02]); // distance 513, little-endian
+  const matchExtension = Buffer.from([255, 239]); // 15 + 255 + 239 = 509 (+4 = 513)
+  const tailToken = Buffer.from([0x50]); // literal-length 5, match 0
+  return Buffer.concat([
+    literalExtension,
+    prefix,
+    distance,
+    matchExtension,
+    tailToken,
+    tail,
+  ]);
+};
+
+export const UNITY_FS_LZ4_LONG_DISTANCE_PLAIN = (() => {
+  const prefix = Buffer.alloc(513);
+  for (let index = 0; index < 513; index += 1)
+    prefix[index] = (index * 37 + 7) & 0xff;
+  const tail = Buffer.from([0xde, 0xad, 0xbe, 0xef, 0x5a]);
+  return Buffer.concat([prefix, prefix, tail]);
+})();
+
+export const UNITY_FS_LZ4_LONG_DISTANCE_BLOCK = lz4LongDistanceBlock(
+  UNITY_FS_LZ4_LONG_DISTANCE_PLAIN,
+);
