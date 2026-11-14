@@ -12,6 +12,7 @@ const WINDOWS_RESERVED_PART = "con|prn|aux|nul|com[1-9]|lpt[1-9]";
 const WINDOWS_RESERVED_NAME = new RegExp(`^(?:${WINDOWS_RESERVED_PART})$`, "u");
 // A single label ending in a number is parsed as an IPv4 address by URL.
 // With this module's ASCII label grammar those are decimal and hexadecimal forms.
+const NUMERIC_HOSTNAME_NAME = /^(?:[0-9]+|0x[0-9a-f]*)$/u;
 
 export type PortableBundleNameFailure = "format" | "reserved" | "hostname";
 
@@ -38,4 +39,11 @@ export const portableBundleNameSchema = z
   .string()
   .regex(PORTABLE_BUNDLE_NAME_PATTERN)
   .max(PORTABLE_BUNDLE_NAME_MAX_LENGTH)
-  .refine(isPortableBundleName, `Expected ${PORTABLE_BUNDLE_NAME_CONSTRAINT}`);
+  .refine(isPortableBundleName, `Expected ${PORTABLE_BUNDLE_NAME_CONSTRAINT}`)
+  // Advertise both reservations without look-around, which strict clients reject.
+  .meta({
+    allOf: [
+      { not: { pattern: WINDOWS_RESERVED_NAME.source } },
+      { not: { pattern: NUMERIC_HOSTNAME_NAME.source } },
+    ],
+  });
