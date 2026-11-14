@@ -5,7 +5,7 @@ import {
 } from "../../process/capture/ProcessSamplingObservation.js";
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { readFileSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import {
   chmod,
   mkdir,
@@ -131,6 +131,22 @@ const fixture = async () => {
  * Replace the fake application with one that also starts a child in its
  * process group and a child in a new session; each records SIGTERM.
  */
+const sleepSync = (milliseconds: number): void => {
+  const buffer = new SharedArrayBuffer(4);
+  const view = new Int32Array(buffer);
+  Atomics.wait(view, 0, 0, milliseconds);
+};
+const waitForChildrenReadySync = (root: string): boolean =>
+  existsSync(join(root, "group-ready")) &&
+  existsSync(join(root, "setsid-ready"));
+
+/**
+ * Process family used by the release-cleanup tests: a session-leader
+ * application with a same-group child and a `setsid`-detached child, both
+ * waiting for SIGTERM traps to record a marker. Each child writes its own
+ * readiness marker immediately after installing its TERM trap so the tests
+ * can wait for explicit child readiness instead of racing SIGKILL delivery.
+ */
 const installProcessFamily = async (root: string, path: string) => {
   const windowFile = join(root, "window-open");
   const loop = "while :; do sleep 0.1; done";
@@ -140,8 +156,8 @@ const installProcessFamily = async (root: string, path: string) => {
       "#!/bin/sh",
       `trap 'rm -f "${windowFile}"; exit 0' TERM`,
       `touch "${windowFile}"`,
-      `( trap 'touch "${join(root, "group-term")}"; exit 0' TERM; ${loop} ) &`,
-      `setsid sh -c 'trap "touch ${join(root, "setsid-term")}; exit 0" TERM; ${loop}' &`,
+      `( trap 'touch "${join(root, "group-term")}"; exit 0' TERM; touch "${join(root, "group-ready")}"; ${loop} ) &`,
+      `setsid sh -c 'trap "touch "${join(root, "setsid-term")}"; exit 0" TERM; touch "${join(root, "setsid-ready")}"; ${loop}' &`,
       'printf "count=1\\n" > "$HOME/.config/fakeapp/state.ini"',
       loop,
     ].join("\n"),
@@ -656,6 +672,10 @@ describe.skipIf(process.platform !== "linux")(
       const statePath = join(home, ".config/fakeapp/state.ini");
       let writtenAt: number | undefined;
       const nextRequest = (): SessionRequest | undefined => {
+        if (!waitForChildrenReadySync(root)) {
+          sleepSync(25);
+          return undefined;
+        }
         if (readFileSyncSafe(statePath) !== "count=1\n") return undefined;
         writtenAt ??= performance.now();
         return performance.now() - writtenAt > 1500
@@ -683,10 +703,15 @@ describe.skipIf(process.platform !== "linux")(
       await installProcessFamily(root, environment.PATH);
       const statePath = join(home, ".config/fakeapp/state.ini");
       const output = join(root, "out");
-      const nextRequest = (): SessionRequest | undefined =>
-        readFileSyncSafe(statePath) === "count=1\n"
+      const nextRequest = (): SessionRequest | undefined => {
+        if (!waitForChildrenReadySync(root)) {
+          sleepSync(25);
+          return undefined;
+        }
+        return readFileSyncSafe(statePath) === "count=1\n"
           ? { kind: "checkpoint", name: "written" }
           : undefined;
+      };
 
       const failed = await captureDesktopApplication(request(output), {
         ...host(environment, nextRequest),
