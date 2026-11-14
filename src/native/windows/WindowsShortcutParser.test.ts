@@ -612,7 +612,9 @@ it("reports a VolumeID that selects a Unicode label it cannot hold", async () =>
 
 it.each([
   { field: 16, key: "local_base_path" },
+  { field: 24, key: "common_path_suffix" },
   { field: 28, key: "local_base_path_unicode" },
+  { field: 32, key: "common_path_suffix_unicode" },
 ] as const)(
   "reports LinkInfo strings that point into their header ($key)",
   async ({ field, key }) => {
