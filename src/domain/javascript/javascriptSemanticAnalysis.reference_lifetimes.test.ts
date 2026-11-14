@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
 import { onlyCallable } from "./javascriptSemanticAnalysis.fixture.js";
+import { SemanticPropertyPathCoverage } from "./javascriptSemanticPropertyPaths.js";
 
 const resultValue = (body: string) =>
   onlyCallable(
@@ -9,10 +10,41 @@ const resultValue = (body: string) =>
     "result",
   ).returnSites[0]?.value;
 
+/**
+ * Run an analysis whose member-path coverage checks take at most `limit`
+ * steps: one per check and one per path key. The mutation collector checks
+ * each alias path it visits, so more or longer paths take more steps. Vitest
+ * cannot time out a synchronous loop; failing at the limit also ends a path
+ * cycle that never closes.
+ */
+const withinPathSteps = <Value>(limit: number, analyze: () => Value) => {
+  const retain = SemanticPropertyPathCoverage.prototype.retain;
+  let steps = 0;
+  const spy = vi
+    .spyOn(SemanticPropertyPathCoverage.prototype, "retain")
+    .mockImplementation(function (
+      this: SemanticPropertyPathCoverage,
+      path,
+      contexts,
+    ) {
+      steps += 1 + path.length;
+      if (steps > limit)
+        throw new Error(`More than ${String(limit)} member path steps`);
+      return retain.call(this, path, contexts);
+    });
+  try {
+    return analyze();
+  } finally {
+    spy.mockRestore();
+  }
+};
+
 describe("bounded paths through dynamic selectors and class origins", () => {
   it("bounds linked-list walks through class instances", () => {
-    const start = performance.now();
-    const analysis = analyzeJavaScriptSemantics(`
+    // `tail` starts null, so no path below the walk is observable. Seeding
+    // class instances as opaque origins checks 9 paths instead.
+    const analysis = withinPathSteps(0, () =>
+      analyzeJavaScriptSemantics(`
       class List { tail = null; }
       export function walk() {
         const list = new List();
@@ -20,12 +52,12 @@ describe("bounded paths through dynamic selectors and class origins", () => {
         while (node) { use(node.value.parent); node = node.previous; }
         return 42;
       }
-    `);
+    `),
+    );
     expect(onlyCallable(analysis, "walk").returnSites[0]?.value).toEqual({
       status: "literal",
       value: 42,
     });
-    expect(performance.now() - start).toBeLessThan(2000);
   });
 
   it("retains effects through class getter aliases while bounding loop paths", () => {
@@ -41,8 +73,9 @@ describe("bounded paths through dynamic selectors and class origins", () => {
   });
 
   it("bounds dynamic-key setter loops that also create literal containers", () => {
-    const start = performance.now();
-    const analysis = analyzeJavaScriptSemantics(`
+    // The dynamic-key cycle closes after 103 steps.
+    const analysis = withinPathSteps(210, () =>
+      analyzeJavaScriptSemantics(`
       export function set(root, keys, value) {
         let node = root;
         for (const [index, key] of keys.entries()) {
@@ -56,7 +89,8 @@ describe("bounded paths through dynamic selectors and class origins", () => {
         return root;
       }
       export function unaffected() { return 42; }
-    `);
+    `),
+    );
     expect(onlyCallable(analysis, "unaffected").returnSites[0]?.value).toEqual({
       status: "literal",
       value: 42,
@@ -64,7 +98,6 @@ describe("bounded paths through dynamic selectors and class origins", () => {
     expect(onlyCallable(analysis, "set").returnSites[0]?.value.status).toBe(
       "unknown",
     );
-    expect(performance.now() - start).toBeLessThan(2000);
   });
 
   it("retains shared-child mutations reached by dynamic-key alias loops", () => {
@@ -94,15 +127,17 @@ describe("bounded member path propagation", () => {
       { length: 16 },
       (_, index) => `if (flag === ${index}) node = node.m${index};`,
     ).join(" else ");
-    const start = performance.now();
+    // Visiting shorter alias paths first checks 6,474 paths of at most four
+    // keys (26,933 steps). Depth-first order checks 46,182, some of 19 keys.
     const callable = onlyCallable(
-      analyzeJavaScriptSemantics(
-        `export function result(seed) { let node=seed; while(node) { ${branches} use(node.state); } return seed.keep; }`,
+      withinPathSteps(54_000, () =>
+        analyzeJavaScriptSemantics(
+          `export function result(seed) { let node=seed; while(node) { ${branches} use(node.state); } return seed.keep; }`,
+        ),
       ),
       "result",
     );
     expect(callable.returnSites[0]?.value.status).toBe("unknown");
-    expect(performance.now() - start).toBeLessThan(2000);
   });
 
   it("preserves Array prototype effects through an otherwise unknown alias", () => {
@@ -118,13 +153,14 @@ describe("bounded member path propagation", () => {
       { length: 16 },
       (_, index) => `if (flag === ${index}) node = node.m${index};`,
     ).join(" else ");
-    const start = performance.now();
+    // `source.child` is a number, so no path below it is observable.
     expect(
-      resultValue(
-        `const source={child:1,keep:{value:3}}; let node=source.child; while(node) { ${branches} use(node.state); } return source.keep.value;`,
+      withinPathSteps(0, () =>
+        resultValue(
+          `const source={child:1,keep:{value:3}}; let node=source.child; while(node) { ${branches} use(node.state); } return source.keep.value;`,
+        ),
       ),
     ).toEqual({ status: "literal", value: 3 });
-    expect(performance.now() - start).toBeLessThan(2000);
   });
 
   // A dynamic self alias escapes its repeated prefix, which conservatively
@@ -137,11 +173,12 @@ describe("bounded member path propagation", () => {
   ])(
     "bounds a self alias below an observed container: %s; %s",
     (alias, effect, status) => {
-      const start = performance.now();
-      const value = resultValue(
-        `class Item {} const seed = { child: { value: 1 } }; let node = flag ? seed : new Item(); while ((${alias})) ${effect} return seed.child.value;`,
+      // Each case settles within 27 steps.
+      const value = withinPathSteps(60, () =>
+        resultValue(
+          `class Item {} const seed = { child: { value: 1 } }; let node = flag ? seed : new Item(); while ((${alias})) ${effect} return seed.child.value;`,
+        ),
       );
-      expect(performance.now() - start).toBeLessThan(2000);
       expect(value?.status).toBe(status);
     },
   );
@@ -188,11 +225,12 @@ describe("bounded member path propagation", () => {
         { length: 9 },
         (_, index) => `if (flag === ${index}) node = node.m${index};`,
       ).join(" else ");
-      const start = performance.now();
-      const value = resultValue(
-        `const seed = { mode: "initial", m0: { value: 1 } }; let node = seed; while (node) { ${branches} ${effect} } return seed.${read};`,
+      // Each case settles within 1,130 steps.
+      const value = withinPathSteps(2300, () =>
+        resultValue(
+          `const seed = { mode: "initial", m0: { value: 1 } }; let node = seed; while (node) { ${branches} ${effect} } return seed.${read};`,
+        ),
       );
-      expect(performance.now() - start).toBeLessThan(2000);
       expect(value?.status).toBe(status);
     },
   );
@@ -275,11 +313,12 @@ describe("reference lifetimes across calls and shallow copies", () => {
         `const alias${index + 1} = { left: alias${index}, right: alias${index} };`,
     ).join("\n");
     const pattern = "{ [key]: ".repeat(9) + "[copy]" + " }".repeat(9);
-    const start = performance.now();
-    resultValue(
-      `const alias0 = [1]; ${declarations} const ${pattern} = alias9; return alias0[0];`,
+    // The 2^9 branch paths through shared aliases settle in 101 steps.
+    withinPathSteps(210, () =>
+      resultValue(
+        `const alias0 = [1]; ${declarations} const ${pattern} = alias9; return alias0[0];`,
+      ),
     );
-    expect(performance.now() - start).toBeLessThan(2000);
   });
 
   it("bounds conditional shallow-copy traversal while retaining shared children", () => {
@@ -288,13 +327,17 @@ describe("reference lifetimes across calls and shallow copies", () => {
       (_, i) =>
         `const alias${i + 1} = flag ? {...alias${i}, a${i}:{}} : {...alias${i}, b${i}:{}};`,
     ).join("\n");
-    const start = performance.now();
-    expect(
-      resultValue(
-        `const alias0 = { value: { token: 1 } }; ${declarations} consume(alias20); return alias0.value.token;`,
-      )?.status,
-    ).toBe("unknown");
-    expect(performance.now() - start).toBeLessThan(2000);
+    const source = `export function result() { const alias0 = { value: { token: 1 } }; ${declarations} consume(alias20); return alias0.value.token; }`;
+    // With each copy's exclusions unioned, the chain fits an allowance of 742
+    // additional selector states. Keeping every combination of the 20 two-way
+    // copies apart exceeds this allowance and widens the selected paths.
+    const analysis = analyzeJavaScriptSemantics(source, {
+      alias_selections: 1024,
+    });
+    expect(analysis.coverage.resourceLimits).toBeUndefined();
+    expect(onlyCallable(analysis, "result").returnSites[0]?.value.status).toBe(
+      "unknown",
+    );
   });
 
   it.each([
