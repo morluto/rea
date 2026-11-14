@@ -10,7 +10,7 @@ export const verifyCompleteToolCatalog = async (client, options) => {
     { requireMcpLifecycleResult, sortVerifierNames },
     { TOOL_CONTRACTS },
     dialect,
-    { ADVERTISED_INPUT_DIALECT_BASELINE, ADVERTISED_OUTPUT_DIALECT_BASELINE },
+    { ADVERTISED_INPUT_DIALECT_BASELINE },
     { resolveMcpInputSchemaProfile },
   ] = await Promise.all([
     import("./mcp-verifier-results.mjs"),
@@ -59,7 +59,7 @@ export const verifyCompleteToolCatalog = async (client, options) => {
       dialect.countAdvertisedDialectViolations(
         listed.tools.flatMap(dialect.advertisedOutputPatternViolations),
       ),
-      ADVERTISED_OUTPUT_DIALECT_BASELINE.full,
+      {},
     ),
   ];
   if (regressions.length > 0)

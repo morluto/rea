@@ -4,6 +4,8 @@ import {
 } from "./jsonSchemaReferences.js";
 import { isDeepStrictEqual } from "node:util";
 
+import { advertisedSchemaPatterns } from "./advertisedDialect.js";
+import { projectPortablePattern } from "./portablePattern.js";
 import {
   schemaArrays,
   schemaChildren,
@@ -278,8 +280,26 @@ const hasNormalizedLiteral = (schema: Readonly<Record<string, unknown>>) =>
       schema.enum.every((item) => typeof item === "boolean")) ||
       schema.enum.includes("")));
 
+/**
+ * A pattern the portable projection cannot reproduce exactly widens its site.
+ * Exact re-emission keeps the site's meaning, so its dependents stay intact.
+ */
+const hasWidenedPattern = (schema: Readonly<Record<string, unknown>>) =>
+  typeof schema.pattern === "string" &&
+  projectPortablePattern(schema.pattern).kind !== "exact";
+
+interface NormalizationOptions {
+  /** Rewrite boolean and empty-string literals some gateways refuse. */
+  readonly literals: boolean;
+}
+const INPUT_NORMALIZATION: NormalizationOptions = { literals: true };
+const OUTPUT_NORMALIZATION: NormalizationOptions = { literals: false };
+
 /** One projection owns actual rewrite sites and their scoped validation dependencies. */
-const normalizationContext = (root: Readonly<Record<string, unknown>>) => {
+const normalizationContext = (
+  root: Readonly<Record<string, unknown>>,
+  options: NormalizationOptions,
+) => {
   const references = new JsonSchemaReferences(root);
   type Fact = {
     changed: boolean;
@@ -346,7 +366,8 @@ const normalizationContext = (root: Readonly<Record<string, unknown>>) => {
     if (
       !ignoresSiblings &&
       sites.get(scope)?.has(schema) &&
-      hasNormalizedLiteral(schema)
+      ((options.literals && hasNormalizedLiteral(schema)) ||
+        hasWidenedPattern(schema))
     ) {
       fact.changed = true;
       changed.push(fact);
@@ -416,6 +437,7 @@ const normalizationContext = (root: Readonly<Record<string, unknown>>) => {
       }
   return {
     references,
+    options,
     changed: (schema: object, scope: JsonSchemaScope | undefined) =>
       indexed.get(scope)?.get(schema)?.changed === true,
     lostEvaluation: (schema: object, scope: JsonSchemaScope | undefined) =>
@@ -425,19 +447,51 @@ const normalizationContext = (root: Readonly<Record<string, unknown>>) => {
   };
 };
 
+/** Drop boolean and empty-string literals, keeping the node's type. */
+const widenGatewayLiterals = (node: Record<string, unknown>): void => {
+  if (typeof node.const === "boolean") {
+    delete node.const;
+    if (node.type === undefined) node.type = "boolean";
+  }
+  if (node.const === "") {
+    delete node.const;
+    if (node.type === undefined) node.type = "string";
+  }
+  if (
+    Array.isArray(node.enum) &&
+    node.enum.length > 0 &&
+    node.enum.every((item) => typeof item === "boolean")
+  ) {
+    delete node.enum;
+    if (node.type === undefined) node.type = "boolean";
+  }
+  if (Array.isArray(node.enum) && node.enum.includes("")) {
+    // Removing only the empty member would reject a canonical-valid input.
+    // Gemini transports turn const into enum and refuse empty enum members.
+    const values = node.enum;
+    delete node.enum;
+    if (
+      node.type === undefined &&
+      values.every((item) => typeof item === "string")
+    )
+      node.type = "string";
+  }
+};
+
 const normalizeAdvertisedSchema = (
   value: unknown,
+  options: NormalizationOptions,
   context?: ReturnType<typeof normalizationContext>,
   inherited?: JsonSchemaScope,
 ): SchemaNormalization => {
   if (!isObject(value)) return { schema: value, changed: false };
-  const owner = context ?? normalizationContext(value);
+  const owner = context ?? normalizationContext(value, options);
   const scope = owner.references.enter(
     value,
     context === undefined ? owner.references.rootScope : inherited,
   );
   const normalize = (child: unknown) =>
-    normalizeAdvertisedSchema(child, owner, scope);
+    normalizeAdvertisedSchema(child, options, owner, scope);
   const node: Record<string, unknown> = { ...value };
   const changed = owner.changed(value, scope);
   const normalizeMap = (map: Readonly<Record<string, unknown>>) =>
@@ -484,33 +538,15 @@ const normalizeAdvertisedSchema = (
     }
   }
 
-  if (typeof node.const === "boolean") {
-    delete node.const;
-    if (node.type === undefined) node.type = "boolean";
+  if (typeof node.pattern === "string") {
+    // Clients refuse the complete tools request over one pattern their regex
+    // engine cannot compile. A widened or omitted pattern marks this site
+    // changed, so enclosing `not`, `if` and `oneOf` keep only widening.
+    const projected = projectPortablePattern(node.pattern);
+    if (projected.kind === "unexpressible") delete node.pattern;
+    else node.pattern = projected.pattern;
   }
-  if (node.const === "") {
-    delete node.const;
-    if (node.type === undefined) node.type = "string";
-  }
-  if (
-    Array.isArray(node.enum) &&
-    node.enum.length > 0 &&
-    node.enum.every((item) => typeof item === "boolean")
-  ) {
-    delete node.enum;
-    if (node.type === undefined) node.type = "boolean";
-  }
-  if (Array.isArray(node.enum) && node.enum.includes("")) {
-    // Removing only the empty member would reject a canonical-valid input.
-    // Gemini transports turn const into enum and refuse empty enum members.
-    const values = node.enum;
-    delete node.enum;
-    if (
-      node.type === undefined &&
-      values.every((item) => typeof item === "string")
-    )
-      node.type = "string";
-  }
+  if (options.literals) widenGatewayLiterals(node);
 
   const negated = Object.hasOwn(value, "not")
     ? normalize(value.not)
@@ -855,10 +891,8 @@ export const presentInputJsonSchema = (
     describeProperty,
   );
   if (!isObject(described))
-    return normalizeAdvertisedSchema(flattened).schema as Record<
-      string,
-      unknown
-    >;
+    return normalizeAdvertisedSchema(flattened, INPUT_NORMALIZATION)
+      .schema as Record<string, unknown>;
   const {
     dependencies: _dependencies,
     dependentRequired: _dependentRequired,
@@ -881,18 +915,72 @@ export const presentInputJsonSchema = (
             : [],
         );
   if (dependencyGuidance.length === 0)
-    return normalizeAdvertisedSchema(presentation).schema as Record<
-      string,
-      unknown
-    >;
+    return normalizeAdvertisedSchema(presentation, INPUT_NORMALIZATION)
+      .schema as Record<string, unknown>;
   const description = [
     typeof presentation.description === "string"
       ? presentation.description
       : undefined,
     ...dependencyGuidance,
   ].filter((text) => text !== undefined);
-  return normalizeAdvertisedSchema({
-    ...presentation,
-    description: description.join(" "),
-  }).schema as Record<string, unknown>;
+  return normalizeAdvertisedSchema(
+    { ...presentation, description: description.join(" ") },
+    INPUT_NORMALIZATION,
+  ).schema as Record<string, unknown>;
+};
+
+/**
+ * Present an output schema with portable patterns. SDK clients compile every
+ * listed output schema; literals stay, since no model reads them.
+ */
+export const presentOutputJsonSchema = (
+  root: Record<string, unknown>,
+): Record<string, unknown> => {
+  const patterns = advertisedSchemaPatterns(root).map(({ pattern }) => ({
+    pattern,
+    projection: projectPortablePattern(pattern),
+  }));
+  // Output schemas reach several megabytes. Exact re-emission changes no
+  // dependent, so only a widened pattern needs the dependency analysis.
+  if (patterns.some(({ projection }) => projection.kind !== "exact"))
+    return normalizeAdvertisedSchema(root, OUTPUT_NORMALIZATION)
+      .schema as Record<string, unknown>;
+  if (
+    patterns.every(
+      ({ pattern, projection }) =>
+        projection.kind === "exact" && projection.pattern === pattern,
+    )
+  )
+    return root;
+  return replaceExactPatterns(root) as Record<string, unknown>;
+};
+
+/** Copy schema positions, replacing each pattern with its exact portable form. */
+const replaceExactPatterns = (schema: unknown): unknown => {
+  if (!isObject(schema)) return schema;
+  return Object.fromEntries(
+    Object.entries(schema).map(([key, value]) => {
+      if (key === "pattern" && typeof value === "string") {
+        const projection = projectPortablePattern(value);
+        return [key, projection.kind === "exact" ? projection.pattern : value];
+      }
+      if (schemaMaps.has(key) && isObject(value))
+        return [
+          key,
+          Object.fromEntries(
+            Object.entries(value).map(([name, child]) => [
+              name,
+              replaceExactPatterns(child),
+            ]),
+          ),
+        ];
+      if (
+        (schemaArrays.has(key) || schemaChildren.has(key)) &&
+        Array.isArray(value)
+      )
+        return [key, value.map(replaceExactPatterns)];
+      if (schemaChildren.has(key)) return [key, replaceExactPatterns(value)];
+      return [key, value];
+    }),
+  );
 };
