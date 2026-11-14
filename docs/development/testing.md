@@ -1091,32 +1091,11 @@ existing four-minute timing collection plus the bounded diagnostic stages.
 
 Fast built shards target under ten minutes of uncontended shard-job execution.
 That figure is the `test-shard` job. The job waits for classification and the
-build, and the portable-test merge runs after the slowest shard. On 2026-10-20,
-run `39451548945` measured those surrounding jobs with runner queue excluded:
-classification 15 seconds, build 49 seconds, and the portable-test merge 29
-seconds. Shard 1/5 of that run spent 22 seconds before built Vitest and 3
-seconds after it, including `npm ci` at 9 seconds. `node_modules` is about 674
-MiB, so publishing it as a shared artifact would transfer more data than that
-install saves. The npm download cache stays the setup cache.
-
-File timings from that run put the built suite at 7944 seconds of module time.
-The sequencer keeps each file's full duration on one worker. Extra workers
-overlap other files in the same sequence group, and `process-boundary` runs
-after that group. Scheduling the unsplit inventory onto five shards peaks at
-820 seconds of tests. That run's slowest built shard job lasted 925 seconds
-(shard 4/5), and shard 1/5 spent 874 seconds in built Vitest, so hosted job
-time sits above the file schedule. Six shards of the same inventory peak at
-684 seconds of tests. Eight shards, after the 578-second loader file is split
-by case count (54 cases stay in that file and 46 move into each of three
-files), peak at 513 seconds of tests. With the measured 25-second shard setup,
-that shard job is about 538 seconds. Adding the measured classification, build,
-and merge makes an uncontended portable critical path of about 631 seconds,
-still before the gap between this file schedule and hosted Vitest. Runner queue
-is separate and grows when more shard jobs compete for runners.
+build, and the portable-test merge runs after the slowest shard. Runner queue is
+separate and grows when more shard jobs compete for runners. The npm download
+cache stays the setup cache rather than a shared `node_modules` artifact.
 `process-boundary` stays serial because process-tree sampling shares the host.
-Raising the worker cap from two to four on this four-core host cut a six-file
-acceptance sample from 96–101 seconds to 71 seconds and did not remove the
-single-file floor. Hosted CI jobs use four workers; other hosts stay at two
+Hosted CI jobs use four workers; other hosts stay at two
 because they are shared with other checks. Full qualification keeps six covered
 shards; its longer instrumentation is outside this fast budget.
 
