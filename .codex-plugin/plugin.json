@@ -29,6 +29,9 @@
       "Write"
     ],
     "websiteURL": "https://rea.tools/",
+    "supportURL": "https://github.com/morluto/rea/issues",
+    "brandColor": "#20252B",
+    "brandColorDark": "#89B4FA",
     "defaultPrompt": [
       "Use REA to explain how this binary implements a feature.",
       "Use REA to compare two versions of this application.",

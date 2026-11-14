@@ -1,8 +1,5 @@
-# Keep text checkouts consistent with the repository formatter on every platform.
-* text=auto eol=lf
-
-# Windows command fixtures retain their native line endings.
-*.cmd text eol=crlf
+# Claude's directory rejects content-rewriting attributes above a plugin root.
+# Keep checkout line-ending preferences in local Git configuration instead.
 
 # Preserve whitespace in original upstream licensing texts.
 licenses/npm-runtime-notices.txt whitespace=-blank-at-eol
