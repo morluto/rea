@@ -11,6 +11,7 @@ import {
   javaScriptExpressionWrapperTarget,
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
+  staticObjectProperty,
   semanticStaticPropertyName,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
@@ -244,6 +245,73 @@ const collectDefaults = (
   return output;
 };
 
+/**
+ * RFC 9110 `token` characters, the class `checkIsHttpToken` enforces.
+ *
+ * An empty string passes: Node accepts `method: ""` and falls back to a GET.
+ */
+const HTTP_TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]*$/u;
+
+/**
+ * Whether an options literal carries a `method` Node refuses at the call site.
+ *
+ * `http`/`https` validate `options.method` before the request exists, so a literal outside the
+ * token class throws `ERR_INVALID_HTTP_TOKEN` and no request is created. Measured on Node
+ * 24.22.1: `{method: "BAD METHOD"}` throws, while `{method: "GET"}` and `{method: ""}`
+ * construct a request.
+ *
+ * Only the options-only overload is decided here. Every other shape is left to the caller's
+ * default of keeping the request, because each can put something else in slot 0:
+ *
+ * - A callable is the callback, and slot 1 is then unread:
+ *   `http.request(() => {}, {method: "BAD METHOD"})` builds a GET.
+ * - A falsy `https` head keeps the default options:
+ *   `https.request(null, {method: "BAD METHOD"})` builds a GET.
+ * - The `(url, options)` overload validates a later object, which this reader does not select.
+ *
+ * A literal with a getter or a spread is skipped too, because `Object.assign` may not copy the
+ * syntactic value: `{get x() { this.method = "GET"; }, method: "BAD METHOD"}` builds a request.
+ */
+const rejectsHttpMethodLiteral = (
+  node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
+  method: JavaScriptSemanticRequestOperation["method"],
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  // `fetch` and `WebSocket` are host globals that do not validate a token.
+  if (method !== "get" && method !== "request") return false;
+  const first = node.arguments[0];
+  if (first === undefined || t.isSpreadElement(first)) return false;
+  const firstValue = unwrapJavaScriptExpression(first).node;
+  // The `(url, options)` overload validates the second argument. A string, a template or a
+  // \`new URL\` proves that overload; anything else leaves slot 1 unselected.
+  const urlTarget =
+    t.isStringLiteral(firstValue) ||
+    t.isTemplateLiteral(firstValue) ||
+    (t.isNewExpression(firstValue) &&
+      isUnmodifiedGlobalReference(firstValue.callee, state, "URL"));
+  const second = node.arguments[1];
+  const options = t.isObjectExpression(firstValue)
+    ? firstValue
+    : urlTarget && second !== undefined && !t.isSpreadElement(second)
+      ? unwrapJavaScriptExpression(second).node
+      : undefined;
+  if (options === undefined || !t.isObjectExpression(options)) return false;
+  // A getter or a spread can replace the member before Node reads it.
+  if (
+    options.properties.some(
+      (property) =>
+        t.isSpreadElement(property) ||
+        (t.isObjectMethod(property) && property.kind !== "method"),
+    )
+  )
+    return false;
+  const lookup = staticObjectProperty(options, "method");
+  if (lookup.status !== "explicit") return false;
+  const literal = readExactJavaScriptLiteral(lookup.value);
+  if (!literal.found || typeof literal.value !== "string") return false;
+  return !HTTP_TOKEN.test(literal.value);
+};
+
 const collectRequests = (
   program: t.Program,
   context: TraversalContext,
@@ -271,6 +339,9 @@ const collectRequests = (
       !URL.canParse(endpoint)
     )
       return;
+    // `http`/`https` validate `options.method` before the request exists, so a literal
+    // outside the token class throws from the call itself.
+    if (rejectsHttpMethodLiteral(node, method, context.state)) return;
     output.push({
       node,
       operation: {
