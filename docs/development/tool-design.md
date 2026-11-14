@@ -568,9 +568,10 @@ short, overlong, and malformed values in both input and output projections.
 A CLI command for a tool contract registers through `registerContractCommand`
 in [`contractCommand.ts`](https://github.com/morluto/rea/blob/main/src/cli/contractCommand.ts).
 Its projection names only what the CLI spells differently: positionals,
-caller-relative path fields, option renames, CLI help wording and omitted
-optional fields with a reason. Field schemas, decimal argv tokens and the
-contract's cross-field rules are derived, and
+caller-relative path fields, option renames, CLI help wording, omitted
+optional fields with a reason, Evidence delivery options, and whether the
+contract's cross-field rules refuse at argv parsing or at the service's
+contract parse. Field schemas and decimal argv tokens are derived, and
 `tests/boundary/cli/cliContractCommandParity.test.ts` checks that each projected
 command admits what its contract admits.
 

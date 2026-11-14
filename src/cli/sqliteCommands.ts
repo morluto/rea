@@ -27,6 +27,7 @@ export const registerSqliteCommands = (
         "Inspect SQLite schema and optional ordinary-table rows from a local snapshot",
       positionals: ["path"],
       callerPaths: ["path"],
+      crossFieldRules: "argv",
       fields: {
         path: { description: "Local SQLite database snapshot" },
         table: { description: "Exact ordinary table name to read" },

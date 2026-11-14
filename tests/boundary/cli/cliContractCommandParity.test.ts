@@ -1,4 +1,4 @@
-import { z } from "incur";
+import { Parser, z } from "incur";
 import { describe, expect, it } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
@@ -78,8 +78,11 @@ const isNumeric = (field: z.ZodType): boolean => {
   return json.type === "integer" || json.type === "number";
 };
 
+/** Argv omission is an absent key, never an explicit undefined. */
 const admits = (field: z.ZodType, value: unknown): boolean =>
-  field.safeParse(value).success;
+  value === undefined
+    ? z.object({ value: field }).safeParse({}).success
+    : field.safeParse(value).success;
 
 /** What the contract admits for one value the caller typed on the CLI. */
 const expectedAdmission = (
@@ -105,6 +108,9 @@ describe("CLI commands projected from tool contracts", () => {
         "inspect-sqlite-database",
         "inspect-elf-notes",
         "inspect-pe-resources",
+        "inspect-devicetree",
+        "inspect-go-binary",
+        "inspect-v8-code-cache",
       ]),
     );
   });
@@ -129,10 +135,12 @@ describe("CLI commands projected from tool contracts", () => {
         binding.fields.filter((field) => field.positional).map((f) => f.key),
       );
       expect(optionKeys.toSorted()).toEqual(
-        binding.fields
-          .filter((field) => !field.positional)
-          .map((field) => field.key)
-          .toSorted(),
+        [
+          ...binding.fields
+            .filter((field) => !field.positional)
+            .map((field) => field.key),
+          ...binding.cliOnly,
+        ].toSorted(),
       );
     },
   );
@@ -152,6 +160,8 @@ describe("CLI commands projected from tool contracts", () => {
         ) as z.ZodObject;
         const cliField = group.shape[field.key] as z.ZodType;
         const contractField = contractShape[field.field]!;
+        // Incur's help reads flag and choice types only through `optional`.
+        expect(cliField, field.key).not.toBeInstanceOf(z.ZodExactOptional);
         if (field.callerPath) {
           // Only the absolute-path rule is relaxed, and only by resolution.
           expect(admits(contractField, "rel/x"), field.field).toBe(false);
@@ -166,6 +176,31 @@ describe("CLI commands projected from tool contracts", () => {
         }
       }
       expect(mismatches).toEqual([]);
+    },
+  );
+
+  it.each(bindings.map((binding) => [binding.command, binding] as const))(
+    "%s takes each boolean contract field as a bare flag",
+    (_command, binding) => {
+      const command = registered.get(binding.command)!;
+      const contractShape = binding.contract.inputSchema.shape as Record<
+        string,
+        z.ZodType
+      >;
+      for (const field of binding.fields) {
+        if (
+          field.positional ||
+          inputJsonSchema(contractShape[field.field]!).type !== "boolean"
+        )
+          continue;
+        const options = z.object({
+          [field.key]: (command.options as z.ZodObject).shape[field.key]!,
+        });
+        const flag = `--${field.key.replaceAll(/[A-Z]/gu, (c) => `-${c.toLowerCase()}`)}`;
+        expect(Parser.parse([flag], { options }).options, flag).toEqual({
+          [field.key]: true,
+        });
+      }
     },
   );
 
