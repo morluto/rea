@@ -128,7 +128,14 @@ export const pyInstallerMemberStream = (
   output.on("error", () => undefined);
   const onAbort = (): void => {
     // Verification and private-file cleanup own their accepted native I/O.
-    if (completing) return;
+    if (completing || output.destroyed) return;
+    // A producer can already own an error before its error event forwards it.
+    // Do not replace that established failure with a downstream cancellation.
+    if (
+      source.errored !== null ||
+      (inflate !== undefined && inflate.errored !== null)
+    )
+      return;
     // The descriptor source owns cancellation until its native read settles.
     // Retiring it downstream earlier would hide a native I/O rejection.
     if (!source.readableEnded && !source.destroyed) return;
@@ -141,6 +148,12 @@ export const pyInstallerMemberStream = (
     );
   };
   options.signal.addEventListener("abort", onAbort, { once: true });
+  const retired = new Promise<void>((resolve) => {
+    output.once("close", () => {
+      options.signal.removeEventListener("abort", onAbort);
+      resolve();
+    });
+  });
   const onSourceFailure = (cause: unknown): void => {
     failure ??=
       cause instanceof ArtifactReaderFailure
@@ -165,7 +178,7 @@ export const pyInstallerMemberStream = (
           );
     output.destroy(failure);
   });
-  const completion = (
+  const production = (
     inflate === undefined
       ? pipeline(source, output)
       : pipeline(source, inflate, output)
@@ -176,9 +189,17 @@ export const pyInstallerMemberStream = (
       throw failure ?? cause;
     })
     .finally(() => {
-      options.signal.removeEventListener("abort", onAbort);
       source.removeListener("error", onSourceFailure);
     });
+  // Production can finish with unread output. Both its cancellation listener
+  // and its owning reader operation survive until that readable side retires.
+  // Await both settlements even on failure before the reader operation settles.
+  const completion = Promise.allSettled([production, retired]).then(
+    ([produced]) => {
+      if (produced.status === "rejected") throw produced.reason;
+      if (output.errored !== null) throw output.errored;
+    },
+  );
   // Preserve rejection for the owning scope without an early unhandled promise.
   void completion.catch(() => undefined);
   if (options.signal.aborted) onAbort();

@@ -1945,8 +1945,8 @@ const noteScriptTarget = (state: ScanState, location: string): void => {
   const target = memberLocationKey(state, location);
   const spellings = state.scriptTargets.get(target);
   const spelling = anchoredLocation(state, location);
-  if (spellings?.has(spelling)) return;
   retractLinkerMapGuesses(state, location);
+  if (spellings?.has(spelling)) return;
   state.scriptTargetBytes += Buffer.byteLength(spelling);
   if (state.scriptTargetBytes > MAX_RELEASE_EXPOSURE_SCRIPT_TARGET_BYTES) {
     state.skippedMaps += 1;
@@ -2060,7 +2060,6 @@ const noteMapTarget = (state: ScanState, location: string): void => {
   const target = memberLocationKey(state, location);
   const spellings = state.mapTargets.get(target);
   const spelling = anchoredLocation(state, location);
-  if (spellings?.has(spelling)) return;
   // A late declaration can identify an exact occurrence already examined as
   // a linker-map candidate. Claim that identity before final target coverage
   // considers other spellings in the normalized bucket.
@@ -2069,6 +2068,7 @@ const noteMapTarget = (state: ScanState, location: string): void => {
   // Retract once per exact declaration; repeating it must not consume peers
   // that only share its normalized lookup key.
   state.skippedMaps += retractLinkerMapGuesses(state, location);
+  if (spellings?.has(spelling)) return;
   state.mapTargetBytes += Buffer.byteLength(spelling);
   if (state.mapTargetBytes > MAX_RELEASE_EXPOSURE_MAP_TARGET_BYTES) {
     state.skippedMaps += 1;
@@ -2124,6 +2124,15 @@ const retractLinkerMapGuesses = (
     if (paths.size === 0) state.linkerMapGuesses.delete(key);
     return 1;
   }
+  // Reads can add an exact guess after an early declaration. Retract it first;
+  // only a known exact source lets a repeated declaration leave peers alone.
+  // Admission of an absent spelling is not proof of which source it names.
+  if (
+    state.examinedMembers.get(key)?.has(spelling) === true &&
+    (state.mapTargets.get(key)?.has(spelling) === true ||
+      state.scriptTargets.get(key)?.has(spelling) === true)
+  )
+    return 0;
   // Without an exact source spelling, normalization cannot prove which
   // occurrence the declaration means. Keep companion coverage unresolved.
   state.skippedCompanions += paths.size;
