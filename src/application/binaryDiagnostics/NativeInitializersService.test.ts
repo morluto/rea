@@ -242,6 +242,30 @@ it("refuses a slice architecture label that disagrees with the selected image", 
   });
 });
 
+it("accepts an arm64e request only for a report of an arm64e slice", async () => {
+  const selected = await selectedArm64Report();
+  const inspect = (cpuSubtype: number) =>
+    serviceFor({
+      ...selected,
+      slice: { ...selected.slice, cpu_subtype: cpuSubtype },
+    }).inspect({ path: report.artifact.path, architecture: "arm64e" });
+  // arm64 (0x0) and arm64v8 (0x1) are not what arm64e names.
+  for (const cpuSubtype of [0, 1])
+    expect(await inspect(cpuSubtype)).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisOutputError" },
+    });
+  // arm64e with capability bits, and arm64e.x1.
+  for (const cpuSubtype of [0x80000002, 12])
+    expect((await inspect(cpuSubtype)).ok).toBe(true);
+  // A family name may read the family's only slice, such as /bin/ls's arm64e.
+  const lone = await serviceFor({
+    ...selected,
+    slice: { ...selected.slice, cpu_subtype: 0x80000002 },
+  }).inspect({ path: report.artifact.path, architecture: "arm64" });
+  expect(lone.ok).toBe(true);
+});
+
 it.each([
   { field: "slot_file_offset" as const },
   { field: "value_file_offset" as const },

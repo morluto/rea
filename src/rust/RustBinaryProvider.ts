@@ -136,6 +136,7 @@ export class RustBinaryProvider implements RustBinaryPort {
           limitations: [
             ...limitationsFor(image),
             `Selected producer_limits.input_bytes=${String(limits.input_bytes)} and output_bytes=${String(limits.output_bytes)} bytes; compressed/inflated dependency parser limits remain independent.`,
+            ...selected.limitations,
           ],
         };
         retainCompilerPathsWithinReport(report, limits.output_bytes);
