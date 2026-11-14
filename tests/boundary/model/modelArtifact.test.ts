@@ -403,6 +403,27 @@ it("separates impossible string lengths from nesting capacity", async () => {
   }
 });
 
+it("accepts a 32-frame nested custom.nested array with a scalar leaf", async () => {
+  const base = ggufFixture({ tensors: [] });
+  let nested = Buffer.from([7]);
+  for (let frame = 0; frame < 32; frame += 1)
+    nested = Buffer.concat([
+      base.u32(frame === 0 ? 0 : 9),
+      base.u64(1n),
+      nested,
+    ]);
+  const deep = ggufFixture({
+    metadata: [{ key: "custom.nested", type: 9, value: nested }],
+    tensors: [],
+  });
+  const { path, provider } = await providerAt(deep.bytes);
+  const result = await provider.inspect({ path, hash: "header" });
+  if (!result.ok) throw result.error;
+  expect(result.value).toMatchObject({
+    tensors: [],
+  });
+});
+
 it("preserves safetensors scalar, empty and packed tensor declarations and raw string metadata", async () => {
   const fixture = safetensorsFixture();
   const { provider, path } = await providerAt(fixture.bytes);
