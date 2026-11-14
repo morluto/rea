@@ -20,6 +20,54 @@ const safeResponseMetadata = (
 
 const origin = "https://app.example.test";
 
+describe("Permissions-Policy member boundaries", () => {
+  it.each([
+    ['camera=();note="one, microphone=(), tail"', ["camera"]],
+    [String.raw`camera=();note="escaped \", microphone=(), tail"`, ["camera"]],
+    ['camera=(self;note="one, microphone=(), tail")', ["camera"]],
+    [
+      'camera=();note="one, microphone=(), tail", geolocation=(self)',
+      ["camera", "geolocation"],
+    ],
+    [
+      'camera=();note="one, microphone=(), tail"\ngeolocation=(self)',
+      ["camera", "geolocation"],
+    ],
+    [
+      String.raw`camera=();note="tail\\", microphone=()`,
+      ["camera", "microphone"],
+    ],
+    ['camera=();note=%"one, microphone=(), tail"', ["camera"]],
+    [
+      String.raw`camera=();note=%"tail\", microphone=()`,
+      ["camera", "microphone"],
+    ],
+    ["geolocation=(self), camera=(), camera=(self)", ["camera", "geolocation"]],
+  ] as const)(
+    "reads member names without interpreting strings: %s",
+    (policy, expected) => {
+      const captured = safeResponseMetadata(
+        "policy",
+        `${origin}/page`,
+        {
+          headers: {
+            "Permissions-Policy": policy,
+            Link: '</asset,part.js>;rel="preload";title="a,b", </next.js>;rel=mcp',
+          },
+        },
+        new Set([origin]),
+      );
+      expect(captured.response.policies.permissions_policy_features).toEqual(
+        expected,
+      );
+      expect(captured.response.links.map(({ href }) => href)).toEqual([
+        `${origin}/asset,part.js`,
+        `${origin}/next.js`,
+      ]);
+    },
+  );
+});
+
 describe("structured COOP and COEP declarations", () => {
   it.each([
     ["same-origin", "same-origin"],

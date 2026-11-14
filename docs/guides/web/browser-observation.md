@@ -455,6 +455,10 @@ the `rel`, `anchor`, and `type` parameters use their first occurrence, and
 quoted-pair escapes are decoded as specified by [RFC 9110 §5.6.4](https://www.rfc-editor.org/rfc/rfc9110.html#section-5.6.4).
 The context fields are optional when reading older saved captures. Commas
 inside URI targets or quoted parameters remain part of those values.
+`permissions_policy_features` lists dictionary member names from the declared
+Permissions-Policy field. Commas inside structured strings or display strings
+do not start members; ignored parameter values cannot introduce feature names.
+This is declaration metadata, not the browser's effective permission state.
 Well-known-resource hints require an exact supported pathname; path case is
 preserved because a case variant may identify a different HTTP resource.
 COOP and COEP projections retain the exact declared token after validating the
