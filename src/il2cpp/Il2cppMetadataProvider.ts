@@ -32,7 +32,10 @@ import type { Il2cppMetadataPort } from "../application/il2cpp/Il2cppMetadataPor
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { createEvidence } from "../domain/evidence.js";
 import { createIl2cppMetadataAdmission } from "./Il2cppMetadataAdmission.js";
-import { hexAddress as hex } from "./Il2cppBinaryImage.js";
+import {
+  hexAddress as hex,
+  requireIl2cppBinaryImage,
+} from "./Il2cppBinaryImage.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import {
   AnalysisCapabilityUnavailableError,
@@ -508,6 +511,7 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
         const decoded = "metadata" in value ? value.metadata : value;
         const link = "metadata" in value ? value.link : undefined;
         const binaryPath = input.binary_path;
+        let sliceLimitations: readonly string[] = [];
         let linked: Pick<
           Il2cppMetadata,
           | "binary"
@@ -540,11 +544,17 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
               },
             );
             assertArtifactReadActive(options?.signal);
-            const linking = linkIl2cppBinarySteps(
+            const selected = requireIl2cppBinaryImage(
+              OPERATION,
+              binaryPath,
               binary.bytes,
+              input.binary_architecture,
+            );
+            sliceLimitations = selected.limitations;
+            const linking = linkIl2cppBinarySteps(
+              selected.bytes,
               decoded,
               link,
-              input.binary_architecture,
               {
                 ...admission,
                 genericInstances: input.generic_instances === true,
@@ -613,6 +623,7 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
               : [
                   "The binary/metadata pair is caller-selected. Module name/count/token agreement is structural evidence, not a cryptographic proof that both files come from the same build.",
                 ]),
+            ...sliceLimitations,
             "declaring_type for types is derived from the nestedTypes section, and member and parameter owners from the owners' index ranges; row positions are the metadata indices.",
           ],
         };
