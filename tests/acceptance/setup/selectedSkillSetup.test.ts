@@ -301,6 +301,53 @@ cliTest(
 );
 
 cliTest(
+  "setup installs and repairs the VB6 guide and uninstall removes it without touching user files",
+  async ({ cli }) => {
+    const directory = await createTestTempDirectory("rea-vb6-skill-");
+    const selected = join(
+      directory,
+      ".claude/skills/reverse-engineer-anything",
+    );
+    const reference = "references/vb6-native-ocx.md";
+    const guide = join(selected, reference);
+    const expected = await readFile(
+      resolve("skills/reverse-engineer-anything", reference),
+    );
+    const run = (args: readonly string[]) =>
+      cli.run({
+        arguments: [...args, "--json"],
+        cwd: directory,
+        environment: { HOME: directory, USERPROFILE: directory },
+      });
+    const setup = ["setup", "--skill-client", "claude_code", "--yes"];
+
+    const installed = await run(setup);
+    expect(installed.exitCode, installed.stdout).toBe(0);
+    expect(await readFile(guide)).toEqual(expected);
+    const repeated = await run(setup);
+    expect(repeated.exitCode, repeated.stdout).toBe(0);
+    expect(repeated.json).toMatchObject({ appliedActions: [] });
+
+    await writeFile(guide, "damaged guide\n");
+    const repaired = await run(setup);
+    expect(repaired.exitCode, repaired.stdout).toBe(0);
+    expect(await readFile(guide)).toEqual(expected);
+    expect(await readFile(`${guide}.rea.backup`, "utf8")).toBe(
+      "damaged guide\n",
+    );
+    const notes = join(selected, "notes.md");
+    await writeFile(notes, "user notes\n");
+    const uninstalled = await run(["uninstall"]);
+    expect(uninstalled.exitCode, uninstalled.stdout).toBe(0);
+    await expect(access(guide)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(notes, "utf8")).toBe("user notes\n");
+    expect(await readFile(`${guide}.rea.backup`, "utf8")).toBe(
+      "damaged guide\n",
+    );
+  },
+);
+
+cliTest(
   "setup keeps registration and skill readiness selections independent",
   async ({ cli }) => {
     const directory = await createTestTempDirectory("rea-independent-skill-");
