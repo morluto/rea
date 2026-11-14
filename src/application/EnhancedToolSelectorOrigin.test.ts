@@ -226,38 +226,41 @@ describe("trace path completion and cancellation", () => {
     },
   );
 
-  it("stops after cancellation races with a successful relationship response", async () => {
-    const controller = new AbortController();
-    const calls: string[] = [];
-    const tools = new EnhancedTools({
-      execute: async (operation, parameters) => {
-        calls.push(operation);
-        if (operation === "procedure_address")
-          return ok(createAnalysisExecution(parameters.procedure, provider));
-        if (operation === "procedure_callees") {
-          controller.abort();
-          return ok(createAnalysisExecution(["0x2000"], provider));
-        }
-        throw new Error(`Unexpected operation: ${operation}`);
-      },
-    });
+  it.each([{ goal: "0x3000" }, { goals: ["0x3000"] }])(
+    "stops after cancellation races with a successful relationship response: %j",
+    async (selection) => {
+      const controller = new AbortController();
+      const calls: string[] = [];
+      const tools = new EnhancedTools({
+        execute: async (operation, parameters) => {
+          calls.push(operation);
+          if (operation === "procedure_address")
+            return ok(createAnalysisExecution(parameters.procedure, provider));
+          if (operation === "procedure_callees") {
+            controller.abort();
+            return ok(createAnalysisExecution(["0x2000"], provider));
+          }
+          throw new Error(`Unexpected operation: ${operation}`);
+        },
+      });
 
-    const result = await tools.execute(
-      "trace_call_path",
-      { start: "0x1000", goal: "0x3000" },
-      controller.signal,
-    );
+      const result = await tools.execute(
+        "trace_call_path",
+        { start: "0x1000", ...selection },
+        controller.signal,
+      );
 
-    expect(calls).toEqual([
-      "procedure_address",
-      "procedure_address",
-      "procedure_callees",
-    ]);
-    expect(result).toMatchObject({
-      ok: false,
-      error: { _tag: "AnalysisCancelledError" },
-    });
-  });
+      expect(calls).toEqual([
+        "procedure_address",
+        "procedure_address",
+        "procedure_callees",
+      ]);
+      expect(result).toMatchObject({
+        ok: false,
+        error: { _tag: "AnalysisCancelledError" },
+      });
+    },
+  );
 });
 
 it.each([null, "", "0x1000"] as const)(
