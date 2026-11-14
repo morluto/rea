@@ -200,6 +200,17 @@ const addPositionBytes = (counters: FormCounters, item: unknown): void => {
 };
 
 /**
+ * Decoder diagnostics (`unknown.reason`, float `note`, prefix `note`) are
+ * published text too. The producer only emits short constants, but a provider
+ * can send arbitrary strings, so charge their projection before Evidence
+ * creation instead of hashing an unbounded value.
+ */
+const addDiagnostic = (counters: FormCounters, item: unknown): void => {
+  if (typeof item !== "string") return;
+  chargeText(counters, Buffer.byteLength(item, "utf8"));
+};
+
+/**
  * Zod follows the lazy form schema before the producer invariants run, so a
  * cyclic or over-deep provider tree would exhaust the call stack instead of
  * returning an output error. Walk the decoder's recursive edges first with an
@@ -221,6 +232,8 @@ const formTreeWithinDepth = (report: unknown): boolean => {
       },
     ];
     let objects = 0;
+    // Object frames pushed but not popped yet. The initial frame is the root.
+    let queuedObjects = 1;
     let sentinels = 0;
     let valueSentinels = 0;
     const counters: FormCounters = {
@@ -229,12 +242,16 @@ const formTreeWithinDepth = (report: unknown): boolean => {
       text: 0,
       bytes: 0,
     };
+    const formPrefix = (form as Record<string, unknown>).prefix;
+    if (typeof formPrefix === "object" && formPrefix !== null)
+      addDiagnostic(counters, (formPrefix as Record<string, unknown>).note);
     while (stack.length > 0) {
       const frame = stack.pop()!;
       if (frame.kind === "leave") {
         ancestors.delete(frame.value);
         continue;
       }
+      if (frame.kind === "object") queuedObjects -= 1;
       const node = frame.value;
       if (typeof node !== "object" || node === null) continue;
       if (frame.kind === "object") {
@@ -265,16 +282,30 @@ const formTreeWithinDepth = (report: unknown): boolean => {
         addText(counters, object.class_name);
         addText(counters, object.component_name);
         addPositionBytes(counters, object.child_position);
+        const unknown = object.unknown;
+        if (typeof unknown === "object" && unknown !== null)
+          addDiagnostic(counters, (unknown as Record<string, unknown>).reason);
         if (
           counters.properties > MAX_DELPHI_FORM_PROPERTIES ||
           counters.bytes > MAX_DELPHI_FORM_RETAINED_BYTES ||
           counters.text > MAX_DELPHI_FORM_TEXT_BYTES
         )
           return false;
+        const children = arrayItems(node, "children");
+        // Count every scheduled child before pushing: a malformed provider
+        // could otherwise stack millions of frames before the object limit is
+        // checked when they are popped.
+        if (
+          objects + queuedObjects + children.length >
+          MAX_DELPHI_FORM_OBJECTS + 1
+        )
+          return false;
         // Nested components recurse one level deeper; property values share
         // the object's depth, exactly as readObject passes it to readValue.
-        for (const child of arrayItems(node, "children"))
+        for (const child of children) {
           stack.push({ kind: "object", value: child, depth: frame.depth + 1 });
+          queuedObjects += 1;
+        }
         for (const property of arrayItems(node, "properties"))
           stack.push({ kind: "property", value: property, depth: frame.depth });
         continue;
@@ -323,11 +354,28 @@ const formTreeWithinDepth = (report: unknown): boolean => {
       const location = value.location as Record<string, unknown> | undefined;
       const locationBytes =
         typeof location?.bytes === "number" ? location.bytes : 0;
+      if (value.kind === "unknown") addDiagnostic(counters, value.reason);
+      else if (value.kind === "float") addDiagnostic(counters, value.note);
       if (value.kind === "string") {
         // spendText uses the available body bytes, one prefix byte for
         // vaString and four for the sized string types.
-        const prefix = frame.valueType === "vaString" ? 1 : 4;
-        chargeText(counters, Math.max(0, locationBytes - prefix));
+        const bodyPrefix = frame.valueType === "vaString" ? 1 : 4;
+        const available = Math.max(0, locationBytes - bodyPrefix);
+        const declared =
+          typeof value.declared_bytes === "number" &&
+          Number.isFinite(value.declared_bytes)
+            ? value.declared_bytes
+            : available;
+        // The short-string reader charges its declared length before taking
+        // any body bytes, so a retained body only fits under the same charge.
+        // The zero-body budget stop retains just the length byte and keeps
+        // its reduced charge.
+        chargeText(
+          counters,
+          frame.valueType === "vaString" && available > 0
+            ? declared
+            : available,
+        );
       } else if (value.kind === "identifier") {
         addText(counters, value);
       } else if (value.kind === "binary") {
@@ -338,6 +386,9 @@ const formTreeWithinDepth = (report: unknown): boolean => {
         const names = arrayItems(value, "names");
         // The closing zero-length name is read through the same value charge.
         counters.values += names.length + (value.terminated === true ? 1 : 0);
+        // Reject before walking: a malformed provider can supply an unbounded
+        // name array even though the decoder could never retain it.
+        if (counters.values > MAX_DELPHI_FORM_VALUES + 1) return false;
         for (const name of names) addText(counters, name);
         if (value.terminated === true) chargeText(counters, 0);
       } else if (value.kind === "collection")
@@ -721,13 +772,21 @@ const objectSectionsFollowSource = (
   )
     return false;
   if (object.class_name !== null) {
+    const classOffset = object.class_name.location.offset;
     if (
-      object.class_name.location.offset !== headerEnd &&
-      object.class_name.location.offset !== headerEnd + optionalFlagByte
+      classOffset !== headerEnd &&
+      classOffset !== headerEnd + optionalFlagByte
     )
       return false;
-    cursor =
-      object.class_name.location.offset + object.class_name.location.bytes;
+    // A class name starting where the header ended begins with its length
+    // byte. The decoder treats byte 0 as the parent's child-list terminator
+    // and 0xF0-0xFF as a filer prefix, so it can only emit 1-239 there for a
+    // child and 0-239 for the root. After an explicit prefix byte every
+    // short-string length is reachable.
+    const prefixed = flagged || classOffset === headerEnd + optionalFlagByte;
+    const length = object.class_name.location.bytes - 1;
+    if (!prefixed && (length > 0xef || (!isRoot && length === 0))) return false;
+    cursor = classOffset + object.class_name.location.bytes;
   } else if (object.component_name !== null) return false;
   if (object.component_name !== null) {
     if (object.component_name.location.offset !== cursor) return false;
@@ -765,8 +824,11 @@ const objectSectionsFollowSource = (
     // child read; only EOF may end the object at the last child.
     if (objectEnd === lastEnd) return object.unknown.location.bytes === 0;
     // A root may have consumed the object terminator before keeping the
-    // remaining payload bytes as an unknown suffix.
-    return isRoot && objectEnd === lastEnd + 1;
+    // remaining payload bytes as an unknown suffix. At EOF the decoder would
+    // have reported a complete root instead, so the suffix cannot be empty.
+    return (
+      isRoot && objectEnd === lastEnd + 1 && object.unknown.location.bytes > 0
+    );
   }
   if (object.properties.length > 0) {
     if (object.component_name === null) return false;
@@ -776,7 +838,9 @@ const objectSectionsFollowSource = (
     return (
       objectEnd === propertiesEnd ||
       objectEnd === propertiesEnd + 1 ||
-      (isRoot && objectEnd === propertiesEnd + 2)
+      (isRoot &&
+        objectEnd === propertiesEnd + 2 &&
+        object.unknown.location.bytes > 0)
     );
   }
   if (object.class_name === null)
@@ -788,7 +852,7 @@ const objectSectionsFollowSource = (
   return (
     objectEnd === namesEnd ||
     objectEnd === namesEnd + 1 ||
-    (isRoot && objectEnd === namesEnd + 2)
+    (isRoot && objectEnd === namesEnd + 2 && object.unknown.location.bytes > 0)
   );
 };
 

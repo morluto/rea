@@ -212,6 +212,13 @@ describe("delphi form filer flags", () => {
         .success,
     ).toBe(false);
   });
+
+  it("rejects filer flags out of the producer's bit order", () => {
+    expect(
+      delphiFormResourceSchema.safeParse(resource(["ffInline", "ffInherited"]))
+        .success,
+    ).toBe(false);
+  });
 });
 
 describe("delphi form advertised byte projections", () => {

@@ -383,13 +383,20 @@ const uint = z.number().int().min(0).max(0xffffffff);
 const declaredStringBytes = z.number().int().min(0).max(0x1fffffffe);
 const hexSchema = z.string().regex(/^(?:[0-9a-f]{2})*$/u);
 const rangeSchema = z.strictObject({ offset: uint, bytes: uint });
-// The producer emits each declared filer flag at most once; an invented or
-// duplicated flag is not a value the decoder can observe.
+// The producer emits each declared filer flag once, in `TFilerFlag` bit order;
+// an invented, duplicated or reordered flag is not a value it can observe.
 const filerFlagsSchema = z
   .array(z.enum(DELPHI_FORM_FILER_FLAGS))
-  .refine((flags) => new Set(flags).size === flags.length, {
-    message: "Duplicate filer flag.",
-  });
+  .refine(
+    (flags) =>
+      flags.every(
+        (flag, index) =>
+          index === 0 ||
+          DELPHI_FORM_FILER_FLAGS.indexOf(flags[index - 1]!) <
+            DELPHI_FORM_FILER_FLAGS.indexOf(flag),
+      ),
+    { message: "Filer flags must follow the producer's bit order." },
+  );
 const textSchema = z.strictObject({
   text: z.string(),
   bytes_hex: hexSchema,
