@@ -1,4 +1,5 @@
 import type { ProcessInspectionFailure } from "../process/ProcessInspectionCleanup.js";
+import { classifyLaunchFailureCode } from "../process/launchFailure.js";
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import {
   retainOwnedCommandCleanup,
@@ -294,7 +295,10 @@ const observeGhidraJava = async (
             : systemCode(commandFailure?.processError ?? cause);
       const failed: GhidraJavaProbeFailure = {
         _tag: "GhidraJavaProbeFailure",
-        code: code === "ENOENT" ? "runtime_missing" : "runtime_unavailable",
+        code:
+          classifyLaunchFailureCode(code)?.kind === "missing"
+            ? "runtime_missing"
+            : "runtime_unavailable",
         detail: `${command}: ${cause instanceof Error ? cause.message : String(cause)}`,
         ...(code === undefined ? {} : { processErrorCode: code }),
         ...(output === undefined ? {} : { output }),

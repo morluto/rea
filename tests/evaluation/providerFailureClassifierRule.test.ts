@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { RuleTester } from "oxlint/plugins-dev";
 import rule from "../../scripts/lint/rules/provider-failure-classifier.mjs";
 
 RuleTester.describe = describe;
 RuleTester.it = it;
+const baselineFile = resolve("src/adb/AdbProvider.ts");
 
 new RuleTester({ languageOptions: { parserOptions: { lang: "ts" } } }).run(
   "provider-failure-classifier",
@@ -15,6 +17,10 @@ new RuleTester({ languageOptions: { parserOptions: { lang: "ts" } } }).run(
       "const message = (cause: unknown): string => String(cause);",
       "const recover = (cause: unknown): Result<number, AnalysisError> => ok(1);",
       "function dialect(outcome: ProviderDialectOutcome, details: AnalysisErrorOptions): AnalysisError { return error; }",
+      {
+        filename: baselineFile,
+        code: "const failure = (cause: unknown): AnalysisError => error;",
+      },
     ],
     invalid: [
       {
@@ -28,6 +34,16 @@ new RuleTester({ languageOptions: { parserOptions: { lang: "ts" } } }).run(
       {
         code: "class Provider { failure(cause: unknown, phase = 'read'): AnalysisError { return error; } }",
         errors: [{ messageId: "classifier" }],
+      },
+      {
+        filename: baselineFile,
+        code: "const message = (cause: unknown): string => String(cause);",
+        errors: [{ messageId: "stale", data: { allowed: "1", actual: "0" } }],
+      },
+      {
+        filename: baselineFile,
+        code: "const a = (cause: unknown): AnalysisError => error; const b = (cause: unknown): AnalysisError => error;",
+        errors: [{ messageId: "classifier" }, { messageId: "classifier" }],
       },
     ],
   },
