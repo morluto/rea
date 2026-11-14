@@ -247,8 +247,10 @@ observation's own `limitations`, so a reason the provider reported for that
 entry, such as a Kuna export failure or a missing body, stays with the item.
 Null pseudocode is `capability_unavailable`; empty or non-text pseudocode is
 `unreadable_output`. Provider failures keep their typed error. Successful items
-do not repeat limitations; the batch Evidence aggregates every observation's
-limitations by provider and operation.
+also keep their own observation's limitations, so repeated selectors that the
+provider answered differently stay distinguishable, and an unavailable item
+keeps the provider's `pseudocode_absence` reason. The batch Evidence still
+aggregates every observation's limitations by provider and operation.
 Resolved entries also appear in the composed Evidence locations. New batch
 Evidence commits the revised workflow profile; retained historical Evidence
 remains valid. This tool
