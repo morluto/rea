@@ -199,6 +199,7 @@ the exact commit messages and references from the release they describe.
 - [Reconstruction coverage](reconstruction-coverage.md)
 - [Release exposure](release-exposure.md)
 - [Reverse-engineering tool integrations](reverse-engineering-tools.md)
+- [RPM package headers](guides/native/rpm-package.md)
 - [Rust binary dependency metadata](rust-binaries.md)
 - [U-Boot legacy uImage containers](uimage.md)
 - [UnityFS AssetBundle archives](unityfs.md)

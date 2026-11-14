@@ -531,6 +531,17 @@ is inflated and searched; other payload codecs are unsupported and name
 `external_decompression` as the next probe. See
 [Linux kernel build config](../guides/native/kernel-build-config.md).
 
+Inspect an RPM package lead, signature header, and main header without
+installing the package, running scriptlets, or unpacking the payload:
+
+```bash
+rea inspect-rpm-package /absolute/path/to/demo-1.0.0-1.noarch.rpm --json
+```
+
+The workflow reports NEVRA, dependency flags, scriptlet presence, and the
+header file inventory. Payload listing comes from header tags. See
+[RPM package headers](../guides/native/rpm-package.md).
+
 Inspect a CPython 3.7–3.15 `.pyc` header and nested marshal code objects
 without executing bytecode or installing Python:
 

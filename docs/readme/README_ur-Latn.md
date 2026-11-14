@@ -231,6 +231,7 @@ Mazeed tools aur host support target par depend karte hain:
 | Process behavior        | Terminal output, interactions, exit aur filesystem observations aur runs ka comparison            | Native PTY ke saath Linux/macOS; [process capture](../guides/runtime/process-capture.md)                                                                         |
 | PyInstaller executables | CArchive members, Python version, entry scripts aur extracted bytecode                            | Koi additional tool nahi (sirf static analysis); [Python packaged applications](../python-packaged-applications.md)                                              |
 | Deno compile binaries   | Virtual files, entry point, recorded options, npm snapshot length                                 | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                             |
+| RPM packages            | Lead, signature and header metadata, dependencies, scriptlets and file inventory                  | None (static only); [RPM packages](../guides/native/rpm-package.md)                                                                                              |
 
 Static JavaScript aur .NET inspection di hui files ko application chalaye baghair
 parhti hai. Runtime capture aapki user permissions se selected target ko chalata

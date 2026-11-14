@@ -294,6 +294,18 @@ payloads are unsupported and name `external_decompression`: decompress with an
 external utility, then call `inspect_kernel_build_config` on the result. See
 [Linux kernel build config](https://github.com/morluto/rea/blob/main/docs/guides/native/kernel-build-config.md).
 
+## RPM packages
+
+Use `inspect_rpm_package` for an explicit local `.rpm` or `.src.rpm` when the
+question concerns lead identity, signature-header digests, NEVRA, dependency
+flags, scriptlets, or the header file inventory. No `open_binary`, `rpm`/`dnf`
+install, or payload unpack is required. The CLI equivalent is
+`inspect-rpm-package PATH`. Preserve artifact SHA-256, lead magic/type, present
+signature digests and blob algorithm/key-id when trivially decodable, missing
+optional tags as null, and `payload.listing_source: "header"`. Signatures are
+not verified. Scriptlet text is omitted unless `include_script_text` is true.
+See [RPM package headers](https://github.com/morluto/rea/blob/main/docs/guides/native/rpm-package.md).
+
 ## CPython pyc files
 
 Use `inspect_python_pyc` for an explicit local CPython 3.7–3.15 `.pyc` when the

@@ -59,6 +59,11 @@ export const documentationSections = [
         route: "/kernel-build-config",
       },
       {
+        text: "RPM package headers",
+        source: "guides/native/rpm-package.md",
+        route: "/rpm-package",
+      },
+      {
         text: "Recorded crash evidence",
         source: "guides/native/recorded-crashes.md",
         route: "/recorded-crashes",

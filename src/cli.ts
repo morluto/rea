@@ -27,6 +27,7 @@ import * as modelModule from "./cli/modelCommands.js";
 import * as gpuModule from "./cli/gpuCommands.js";
 import * as rustModule from "./cli/rustCommands.js";
 import * as pythonPycModule from "./cli/pythonPycCommands.js";
+import * as rpmPackageModule from "./cli/rpmPackageCommands.js";
 import * as erlangModule from "./cli/erlangCommands.js";
 import * as v8CodeCacheModule from "./cli/v8CodeCacheCommands.js";
 import * as sqliteModule from "./cli/sqliteCommands.js";
@@ -83,6 +84,7 @@ const CLI_COMMAND_MODULES: CliCommandModules = {
   gpu: gpuModule,
   rust: rustModule,
   pythonPyc: pythonPycModule,
+  rpmPackage: rpmPackageModule,
   erlang: erlangModule,
   v8CodeCache: v8CodeCacheModule,
   sqlite: sqliteModule,

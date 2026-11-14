@@ -150,6 +150,11 @@ export const CLI_COMMAND_REGISTRATIONS = {
     (module, context) =>
       module.registerPythonPycCommands(context.cli, context.logger),
   ),
+  rpmPackage: plain(
+    () => import("./rpmPackageCommands.js"),
+    (module, context) =>
+      module.registerRpmPackageCommands(context.cli, context.logger),
+  ),
   erlang: plain(
     () => import("./erlangCommands.js"),
     (module, context) =>
@@ -438,6 +443,7 @@ const CLI_FAMILY_REGISTRATIONS: {
     "gpu",
     "rust",
     "pythonPyc",
+    "rpmPackage",
     "erlang",
     "v8CodeCache",
     "sqlite",

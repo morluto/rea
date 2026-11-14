@@ -95,6 +95,7 @@ import { PWNTOOLS_PROVIDER_IDENTITY } from "../native/pwntools/PwntoolsProviderI
 import { OBJDUMP_PROVIDER_IDENTITY } from "../objdump/ObjdumpProviderIdentity.js";
 import { PCAP_PROVIDER_IDENTITY } from "../pcap/PcapProviderIdentity.js";
 import { PYTHON_PYC_PROVIDER_IDENTITY } from "../python/PythonPycProviderIdentity.js";
+import { RPM_PACKAGE_PROVIDER_IDENTITY } from "../rpm/RpmPackageProviderIdentity.js";
 import { RIZIN_DEBUGGER_PROVIDER_IDENTITY } from "../rizin/RizinDebuggerProviderIdentity.js";
 import { RIZIN_PROVIDER_IDENTITY } from "../rizin/RizinProviderIdentity.js";
 import { RUST_BINARY_PROVIDER_IDENTITY } from "../rust/RustBinaryProviderIdentity.js";
@@ -479,6 +480,13 @@ export const CAPABILITY_DECLARATIONS = {
     providers: [
       providerBinding(PYTHON_PYC_PROVIDER_IDENTITY, {
         group: "PYTHON_PYC_TOOL_CONTRACTS",
+      }),
+    ],
+  },
+  rpmPackage: {
+    providers: [
+      providerBinding(RPM_PACKAGE_PROVIDER_IDENTITY, {
+        group: "RPM_PACKAGE_TOOL_CONTRACTS",
       }),
     ],
   },

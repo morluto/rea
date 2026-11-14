@@ -363,6 +363,14 @@ explicit path or endpoint and do not need it.
   `CONFIG_IKCONFIG`. Non-gzip payloads are unsupported; decompress externally,
   then inspect the result. See the
   [kernel build config guide](https://github.com/morluto/rea/blob/main/docs/guides/native/kernel-build-config.md).
+- RPM package lead, signature header, NEVRA, dependencies, scriptlets and
+  header file inventory: `inspect_rpm_package` with the explicit local file.
+  This built-in target-free inspection requires no `rpm`/`dnf` install. Preserve
+  lead identity, present signature digests and blob presence (not trust),
+  missing optional tags as null, and payload offset/compressor without
+  unpacking cpio. Scriptlet text is omitted unless `include_script_text` is
+  true and is never executed. See the
+  [RPM package guide](https://github.com/morluto/rea/blob/main/docs/guides/native/rpm-package.md).
 - CPython 3.7–3.15 `.pyc` header, nested marshal code objects and bytecode
   identity: `inspect_python_pyc` with the explicit local file. This built-in
   target-free inspection requires no Python installation. Preserve magic,

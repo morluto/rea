@@ -231,6 +231,7 @@ Uneltele suplimentare și platformele acceptate depind de ținta analizată:
 | Comportamentul proceselor           | Ieșirea în terminal, interacțiuni, observații despre terminarea proceselor și sistemul de fișiere și comparații între rulări  | Linux/macOS cu un PTY nativ; [capturarea proceselor](../guides/runtime/process-capture.md)                                                                        |
 | Executabile PyInstaller             | Membri CArchive, versiunea Python, scripturi de intrare și bytecode extras                                                    | Fără cerințe suplimentare (doar analiză statică); [aplicații Python împachetate](../python-packaged-applications.md)                                              |
 | Deno compile binaries               | Virtual files, entry point, recorded options, npm snapshot length                                                             | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                              |
+| RPM packages                        | Lead, signature and header metadata, dependencies, scriptlets and file inventory                                              | None (static only); [RPM packages](../guides/native/rpm-package.md)                                                                                               |
 
 Inspectarea statică JavaScript și .NET citește fișierele furnizate fără a rula
 aplicația. Capturarea în timpul execuției rulează ținta selectată sau interacționează

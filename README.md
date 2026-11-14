@@ -233,6 +233,7 @@ Additional tools and host support depend on the target:
 | Process behavior        | Terminal output, interactions, exit and filesystem observations, and run comparisons              | Linux/macOS with a native PTY; [process capture](docs/guides/runtime/process-capture.md)                                                                             |
 | PyInstaller executables | CArchive members, Python version, entry scripts and extracted bytecode                            | None (static only); [Python packaged applications](docs/python-packaged-applications.md)                                                                             |
 | Deno compile binaries   | Virtual files, entry point, recorded options, npm snapshot length                                 | None (static only); [Deno compile executables](docs/deno-standalone.md)                                                                                              |
+| RPM packages            | Lead, signature and header metadata, dependencies, scriptlets and file inventory                  | None (static only); [RPM packages](docs/guides/native/rpm-package.md)                                                                                                |
 
 Static JavaScript and .NET inspection read the supplied files without running
 the application. Runtime capture runs or interacts with the selected target
