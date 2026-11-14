@@ -23,6 +23,7 @@ import {
  *   object spread/rest. Projections belong to `semanticPropertyReadSources`.
  * - `iteration`: the iterator protocol (for-of, array spread, spread
  *   arguments, array patterns, `yield*`).
+ * - `enumeration`: for-in enumeration may invoke Proxy traps.
  * - `thenable`: `await` reads and calls `then` on its operand.
  * - `suspension`: `yield` hands its operand to whoever resumes the generator.
  * - `coercion`: user-defined primitive conversion and operator hooks
@@ -48,6 +49,7 @@ export type JavaScriptExecutionKind =
   | "destructuring"
   | "property-copy"
   | "iteration"
+  | "enumeration"
   | "thenable"
   | "suspension"
   | "coercion"
@@ -344,7 +346,8 @@ const classifiers: {
   SwitchCase: none,
   ThrowStatement: none,
   TryStatement: none,
-  CatchClause: none,
+  CatchClause: (node) =>
+    node.param == null ? [] : patternSource(node, node.param, undefined),
   WhileStatement: none,
   VariableDeclaration: none,
   StaticBlock: none,
@@ -436,7 +439,10 @@ const classifiers: {
   ClassMethod: computedMember,
   ClassProperty: computedMember,
   ClassAccessorProperty: computedMember,
-  ForInStatement: writeSite,
+  ForInStatement: (node) => [
+    ...writeSite(node),
+    execution("enumeration", node, [node.right]),
+  ],
   ForOfStatement: (node) => [
     ...writeSite(node),
     execution(node.await ? "thenable" : "iteration", node, [node.right]),

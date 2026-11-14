@@ -471,6 +471,7 @@ const accessorEffectOperands = (
         // Not applied yet: these may run code with their operands, but this
         // collector has never modelled them. Listed so the gap is explicit.
         case "iteration":
+        case "enumeration":
         case "suspension":
         case "decorator":
         case "dynamic-import":
@@ -1912,6 +1913,7 @@ export function* collectSemanticMemberMutationsSteps(
           // Not applied yet: these may run code with their operands, but this
           // collector has never modelled them. Listed so the gap is explicit.
           case "suspension":
+          case "enumeration":
           case "decorator":
           case "dynamic-import":
           case "dynamic-scope":

@@ -88,6 +88,12 @@ it.each([
   ["const copy = [...value];", { SpreadElement: ["iteration"] }],
   ["const copy = { ...value };", { SpreadElement: ["property-copy"] }],
   ["for (const item of value);", { ForOfStatement: ["iteration"] }],
+  ["for (const key in value);", { ForInStatement: ["enumeration"] }],
+  [
+    "try { throw source; } catch ({ value }) {}",
+    { CatchClause: ["destructuring"] },
+  ],
+  ["try { throw source; } catch ([value]) {}", { CatchClause: ["iteration"] }],
   ["async function f() { await value; }", { AwaitExpression: ["thenable"] }],
   ["function* f() { yield value; }", { YieldExpression: ["suspension"] }],
   ["function* f() { yield* value; }", { YieldExpression: ["iteration"] }],
@@ -105,4 +111,12 @@ it.each([
   ["call(value);", { CallExpression: ["call"] }],
 ])("classifies %s", (source, expected) => {
   expect(Object.fromEntries(kindsByType(source))).toEqual(expected);
+});
+
+it("exposes the enumerated object", () => {
+  const node = parsed("for (const key in value);").body[0];
+  if (!t.isForInStatement(node)) throw new Error("Expected for-in statement");
+  expect(javaScriptExecutions(node, null)).toContainEqual(
+    expect.objectContaining({ kind: "enumeration", operands: [node.right] }),
+  );
 });
