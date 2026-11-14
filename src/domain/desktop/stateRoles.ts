@@ -139,9 +139,9 @@ export interface DesktopRoleFacts {
  * selections of their own. An explicitly selected path is not one of those
  * logs, even when its name ends in `-wal` or `-journal`.
  */
-export const sqliteSidecarRoots = (
+const sqliteSidecarRoots = (
   roots: readonly string[],
-  selected: ReadonlySet<string> = new Set(),
+  selected: ReadonlySet<string>,
 ): ReadonlySet<string> => {
   const present = new Set(roots);
   return new Set(

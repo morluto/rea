@@ -922,66 +922,63 @@ it.each<[string, string, boolean]>([
   expect(prefixRelated(right, left)).toBe(related);
 });
 
-it(
-  "explains many copied and slugged fields of a wide body without searching it again for each",
-  { timeout: 5_000 },
-  () => {
-    const n = 8_000;
-    const value = (index: number) => `value-${String(index).padStart(6, "0")}`;
-    const nested = Object.fromEntries(
-      Array.from({ length: n }, (_, index) => [
-        `g${String(index)}`,
-        { s: value(index) },
-      ]),
-    );
-    const copies = Object.fromEntries(
-      Array.from({ length: n }, (_, index) => [
-        `c${String(index)}`,
-        value(index),
-      ]),
-    );
-    const copied = explainCreate(created({ id: 1, ...copies }, nested));
-    expect(ruleFor(copied.rules, `c${String(n - 1)}`)).toEqual({
-      field: `c${String(n - 1)}`,
-      rule: "copy",
-      from: `/g${String(n - 1)}/s`,
-    });
-    // Strings no member slugs to, in a body of many members, each tried as a slug.
-    const flat = Object.fromEntries(
-      Array.from({ length: n }, (_, index) => [
-        `m${String(index)}`,
-        `Member ${String(index)}`,
-      ]),
-    );
-    const others = Object.fromEntries(
-      Array.from({ length: n }, (_, index) => [
-        `o${String(index)}`,
-        `x${String(index)}`,
-      ]),
-    );
-    const slugged = explainCreate(
-      created({ id: 1, ...others, s: "member-7" }, flat),
-    );
-    expect(ruleFor(slugged.rules, "s")).toEqual({
-      field: "s",
-      rule: "slug",
-      from: "m7",
-    });
-  },
-);
+it("explains many copied and slugged fields of a wide body without searching it again for each", () => {
+  const n = 8_000;
+  const value = (index: number) => `value-${String(index).padStart(6, "0")}`;
+  const nested = Object.fromEntries(
+    Array.from({ length: n }, (_, index) => [
+      `g${String(index)}`,
+      { s: value(index) },
+    ]),
+  );
+  const copies = Object.fromEntries(
+    Array.from({ length: n }, (_, index) => [
+      `c${String(index)}`,
+      value(index),
+    ]),
+  );
+  const started = performance.now();
+  const copied = explainCreate(created({ id: 1, ...copies }, nested));
+  expect(ruleFor(copied.rules, `c${String(n - 1)}`)).toEqual({
+    field: `c${String(n - 1)}`,
+    rule: "copy",
+    from: `/g${String(n - 1)}/s`,
+  });
+  // Strings no member slugs to, in a body of many members, each tried as a slug.
+  const flat = Object.fromEntries(
+    Array.from({ length: n }, (_, index) => [
+      `m${String(index)}`,
+      `Member ${String(index)}`,
+    ]),
+  );
+  const others = Object.fromEntries(
+    Array.from({ length: n }, (_, index) => [
+      `o${String(index)}`,
+      `x${String(index)}`,
+    ]),
+  );
+  const slugged = explainCreate(
+    created({ id: 1, ...others, s: "member-7" }, flat),
+  );
+  expect(ruleFor(slugged.rules, "s")).toEqual({
+    field: "s",
+    rule: "slug",
+    from: "m7",
+  });
+  // Searching the body again for each field is quadratic in its members.
+  expect(performance.now() - started).toBeLessThan(5_000);
+});
 
-it(
-  "searches a wide request body for a copied value in linear time",
-  { timeout: 5_000 },
-  () => {
-    // Shifting each value off the queue made one fruitless search over 500,000 zeros take about a minute.
-    const wide = Array.from({ length: 500_000 }, () => 0);
-    const result = explainCreate(
-      created({ id: 1, note: "not anywhere in the body" }, { items: wide }),
-    );
-    expect(ruleFor(result.rules, "note")).toBeUndefined();
-  },
-);
+it("searches a wide request body for a copied value in linear time", () => {
+  // Shifting each value off the queue made one fruitless search over 500,000 zeros take about a minute.
+  const wide = Array.from({ length: 500_000 }, () => 0);
+  const started = performance.now();
+  const result = explainCreate(
+    created({ id: 1, note: "not anywhere in the body" }, { items: wide }),
+  );
+  expect(performance.now() - started).toBeLessThan(5_000);
+  expect(ruleFor(result.rules, "note")).toBeUndefined();
+});
 
 const ID = (n: number): string =>
   `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;

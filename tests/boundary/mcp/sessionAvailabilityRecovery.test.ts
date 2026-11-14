@@ -17,10 +17,6 @@ import {
   AnalysisTimeoutError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
-import {
-  inferredUnavailabilityReason,
-  runtimeFailureReason,
-} from "../../../src/application/binary/SessionRuntimeAvailability.js";
 import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { err, ok, type Result } from "../../../src/domain/result.js";
@@ -122,7 +118,7 @@ it("restores MCP tool availability after cancelling a target switch", async () =
       { signal: controller.signal },
     );
     const cancelled = expect(switching).rejects.toThrow();
-    await closing.promise;
+    await awaitAcknowledgement(closing.promise, switching, "provider close");
     controller.abort();
     await cancellationObserved.promise;
     release.resolve();
@@ -368,22 +364,17 @@ const liveCapability = (
 
 const adapterFailure = (provider: ProviderIdentity, operation: string) =>
   Promise.resolve(err(new ProviderAdapterError(provider.id, operation)));
-const recordedReason = (failure: AnalysisError): string => {
-  const reason = runtimeFailureReason(failure);
-  if (reason === undefined) throw new Error(`${failure._tag} is not recorded`);
-  return reason;
-};
-// Compare remediation with its owning formatters; the facts are their inputs.
 const observedFailure = (operation: string, provider: string = FIXTURE.id) =>
-  recordedReason(new ProviderAdapterError(provider, operation));
+  expect.stringContaining(
+    `Provider ${provider} adapter failed during ${operation}`,
+  );
 const inferredFailure = (operation: string, provider: string = FIXTURE.id) =>
-  inferredUnavailabilityReason(provider, {
-    operation,
-    reason: observedFailure(operation, provider),
-  });
+  expect.stringContaining(
+    `Inferred from the ${operation} failure (ProviderAdapterError: Provider ${provider} adapter failed during ${operation}). Retry after repairing the provider; a later successful ${provider} request clears this.`,
+  );
 const refusal = (operation: string, reason: string) =>
-  recordedReason(
-    new AnalysisCapabilityUnavailableError(FIXTURE.id, operation, reason),
+  expect.stringContaining(
+    `Provider ${FIXTURE.id} cannot execute ${operation}: ${reason}`,
   );
 
 /** Hold provider replies; release and join every launched call. */

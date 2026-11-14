@@ -1,9 +1,6 @@
 import { expect, it } from "vitest";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../contracts/artifactComparisonExample.js";
-import {
-  compareArtifacts,
-  FORMAT_DECLARATION_UNKNOWN_LIMITATION,
-} from "./artifactComparison.js";
+import { compareArtifacts } from "./artifactComparison.js";
 import {
   artifactInventoryResultSchema,
   type ArtifactInventoryResult,
@@ -684,7 +681,11 @@ it.each([
     status: "unknown",
     changes: [{ classification: "unknown", dimensions: ["availability"] }],
   });
-  expect(result.limitations).toEqual([FORMAT_DECLARATION_UNKNOWN_LIMITATION]);
+  expect(result.limitations).toEqual([
+    expect.stringMatching(
+      /metadata declarations are missing.*complete declaration unavailable/u,
+    ),
+  ]);
 });
 
 it("does not compare ESP signature block metadata", () => {
@@ -815,7 +816,11 @@ it("compares a node-less record's occurrence fields but not its limitations", ()
       dimensions: ["metadata", "availability"],
     }),
   ]);
-  expect(result.limitations).toEqual([FORMAT_DECLARATION_UNKNOWN_LIMITATION]);
+  expect(result.limitations).toEqual([
+    expect.stringMatching(
+      /metadata declarations are missing.*complete declaration unavailable/u,
+    ),
+  ]);
   // A record's `executable` marking is a declared field like `encrypted`.
   expect(
     compareArtifacts(

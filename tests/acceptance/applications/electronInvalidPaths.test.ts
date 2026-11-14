@@ -176,6 +176,7 @@ cliTest.skipIf(isWindows)(
 
 cliTest.skipIf(isWindows)(
   "returns a typed failure when an executable exits before Electron starts and keeps the MCP server and its Evidence",
+  { tags: ["long-running"] },
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-electron-early-exit-");
     const application = await createElectronApplication(root);
@@ -229,7 +230,6 @@ cliTest.skipIf(isWindows)(
     expect(session.isError, JSON.stringify(session)).not.toBe(true);
     expect(await retained()).toEqual(before);
   },
-  180_000,
 );
 
 cliTest(

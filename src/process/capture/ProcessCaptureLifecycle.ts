@@ -1371,12 +1371,6 @@ class ProcessCaptureResourceOwner {
 const cleanupFailureMessage = (cause: unknown, fallback: string): string =>
   cause instanceof Error ? cause.message || cause.name || fallback : fallback;
 
-/** Release one capture's resources, retaining the exact owner for scoped retry. */
-export const releaseProcessResources = async (
-  options: ProcessCaptureResourceCleanupOptions,
-): Promise<ProcessCaptureCleanupOutcome> =>
-  new ProcessCaptureResourceOwner(options).release();
-
 /** Run-local owner collection for resources whose first cleanup did not finish. */
 export class ProcessCaptureResourceScope {
   readonly #pending = new Set<AnalysisCleanupLease>();

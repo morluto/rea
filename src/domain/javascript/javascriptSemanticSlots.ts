@@ -1,3 +1,4 @@
+import { escapeJsonPointerToken } from "../jsonPointer.js";
 import type {
   JavaScriptSemanticProperty,
   JavaScriptSemanticValue,
@@ -100,6 +101,4 @@ export const semanticSlotAtPath = (
 
 /** Encode path segments as an unambiguous JSON Pointer, preserving empty keys. */
 export const semanticPropertyPointer = (path: readonly string[]): string =>
-  path
-    .map((key) => `/${key.replaceAll("~", "~0").replaceAll("/", "~1")}`)
-    .join("");
+  path.map((key) => `/${escapeJsonPointerToken(key)}`).join("");

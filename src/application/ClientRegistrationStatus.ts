@@ -649,7 +649,7 @@ const packageVersionRemediation = (
 const unavailableStatus = (
   client: SetupClient,
   state: "missing" | "invalid",
-  configPath: string = client.configPath,
+  configPath: string,
 ): ClientRegistrationStatus => ({
   client: client.name,
   config_path: configPath,

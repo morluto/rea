@@ -7,11 +7,13 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { describe, expect, it } from "vitest";
 
 import { fakeAgentEnvSolves } from "../../tests/fixtures/fakeAgentEnvSolves.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import { spawnOwnedProviderProcess } from "../process/ProviderProcess.js";
@@ -22,7 +24,7 @@ import {
 
 const SOLVE = { outcome: "passed" as const, checks: {}, turns: 3, usd: 0.1 };
 
-const until = async (path: string) => {
+const until = async (path: string, signal: AbortSignal) => {
   for (;;) {
     if (
       await access(path).then(
@@ -31,7 +33,7 @@ const until = async (path: string) => {
       )
     )
       return;
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await delay(50, undefined, { signal });
   }
 };
 
@@ -49,10 +51,13 @@ describe("runSolveHelper", () => {
     const runner = await fakeAgentEnvSolves([SOLVE]);
     const environment = { ...runner.environment, FAKE_SOLVE_HANGS: "1" };
     const stop = new AbortController();
+    const polling = new AbortController();
     const retained: SolveCleanupOwner[] = [];
     const started = until(
       join(runner.environment.FAKE_STATE ?? "", "solves.jsonl"),
-    ).then(() => stop.abort(new Error("cancelled by the test")));
+      polling.signal,
+    );
+    void started.catch(() => undefined);
     const begun = Date.now();
 
     const solved = runSolveHelper({
@@ -64,17 +69,24 @@ describe("runSolveHelper", () => {
 
     // agentenv keeps a sandbox's folder until its teardown is confirmed, so the
     // emptied private root shows nothing is left up: only the cancellation remains.
-    const failure: unknown = await solved.then(
-      () => undefined,
-      (error: unknown) => error,
-    );
-    expect(failure).toBeInstanceOf(Error);
-    expect((failure as Error).message).toBe("cancelled by the test");
-    expect(failure).not.toHaveProperty("cleanupIncomplete", true);
-    await started;
-    expect(retained).toHaveLength(0);
-    expect(Date.now() - begun).toBeLessThan(15_000);
-  }, 30_000);
+    try {
+      await awaitAcknowledgement(started, solved, "solve helper start", 10_000);
+      stop.abort(new Error("cancelled by the test"));
+      const failure: unknown = await solved.then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      expect(failure).toBeInstanceOf(Error);
+      expect((failure as Error).message).toBe("cancelled by the test");
+      expect(failure).not.toHaveProperty("cleanupIncomplete", true);
+      expect(retained).toHaveLength(0);
+      expect(Date.now() - begun).toBeLessThan(15_000);
+    } finally {
+      polling.abort();
+      stop.abort();
+      await Promise.allSettled([started, solved]);
+    }
+  });
 
   it("records a helper stopped at its deadline without a report as a failed solve of unknown cost, its cleanup known", async () => {
     const runner = await fakeAgentEnvSolves([SOLVE]);
@@ -97,7 +109,7 @@ describe("runSolveHelper", () => {
     });
     expect(report.error).toMatch(/stopped \(SIG[A-Z]+\) without a report/u);
     expect(retained).toHaveLength(0);
-  }, 30_000);
+  });
 
   it("keeps a helper whose cleanup failed, so closing can retry it, and reports what is left", async () => {
     const runner = await fakeAgentEnvSolves([SOLVE]);
@@ -134,7 +146,7 @@ describe("runSolveHelper", () => {
       status: "verified-cleanup",
     });
     retained[0]?.dispose();
-  }, 30_000);
+  });
 });
 
 it("retains a reported sandbox on failed removal, then retries that exact sandbox", async () => {
@@ -172,7 +184,7 @@ it("retains a reported sandbox on failed removal, then retries that exact sandbo
   expect(failure.cleanupIncomplete).toBe(false);
   expect(failure.cleanupResources).toEqual([]);
   retained[0]?.dispose();
-}, 30_000);
+});
 
 it("retains a completed report if cancellation arrives during final cleanup", async () => {
   const runner = await fakeAgentEnvSolves([SOLVE]);
@@ -199,7 +211,7 @@ it("retains a completed report if cancellation arrives during final cleanup", as
     cause: reason,
     report: { outcome: "passed", turns: 3, usd: 0.1 },
   });
-}, 30_000);
+});
 
 it("retains an unrecognized sandbox root entry and retries after it is repaired", async () => {
   const runner = await fakeAgentEnvSolves([SOLVE]);
@@ -228,7 +240,7 @@ it("retains an unrecognized sandbox root entry and retries after it is repaired"
   if (!(failure instanceof ProviderCleanupError)) throw failure;
   expect(failure.cleanupIncomplete).toBe(false);
   retained[0]?.dispose();
-}, 30_000);
+});
 
 it("retains root cleanup and the spawn failure when admission fails", async () => {
   const runner = await fakeAgentEnvSolves([SOLVE]);
@@ -262,4 +274,4 @@ it("retains root cleanup and the spawn failure when admission fails", async () =
   expect(failure.cleanupIncomplete).toBe(false);
   expect(failure.cleanupResources).toEqual([]);
   retained[0]?.dispose();
-}, 30_000);
+});

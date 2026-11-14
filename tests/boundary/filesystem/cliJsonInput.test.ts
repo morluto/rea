@@ -420,10 +420,9 @@ describe("CLI JSON standard input", () => {
   });
 
   it("rejects oversized stdin with too-large", async () => {
-    const stream = Readable.from(['{"a":"' + "x".repeat(100) + '"}']);
+    const stream = Readable.from([Buffer.alloc(8 * 1024 * 1024 + 1, 0x78)]);
     const result = await parseCliJsonInput("-", "test-input", undefined, {
       stdin: stream,
-      maxStdinBytes: 50,
     });
     expect(result).toMatchObject({
       ok: false,
@@ -491,7 +490,6 @@ describe("CLI JSON stdin cancellation and encoding", () => {
       expect(stream.destroyed).toBe(true);
       expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
     },
-    1_000,
   );
 
   it.each([
@@ -522,13 +520,24 @@ describe("CLI JSON stdin cancellation and encoding", () => {
   );
 
   it("reads UTF-8 split between chunks and accepts the exact byte limit", async () => {
-    const bytes = Buffer.from('{"label":"中文🦀"}');
-    expect(
-      await parseCliJsonInput("-", "test-input", undefined, {
-        stdin: Readable.from([...bytes].map((byte) => Buffer.from([byte]))),
-        maxStdinBytes: bytes.length,
-      }),
-    ).toEqual({ ok: true, value: { label: "中文🦀" } });
+    const prefix = Buffer.from('{"label":"');
+    const suffix = Buffer.from('中文🦀"}');
+    const padding = Buffer.alloc(
+      8 * 1024 * 1024 - prefix.length - suffix.length,
+      0x61,
+    );
+    const result = await parseCliJsonInput("-", "test-input", undefined, {
+      stdin: Readable.from([
+        prefix,
+        padding,
+        ...[...suffix].map((byte) => Buffer.from([byte])),
+      ]),
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("Expected valid JSON at the stdin limit");
+    expect(result.value).toEqual({
+      label: `${"a".repeat(padding.length)}中文🦀`,
+    });
   });
 
   it("projects cancellation during stdin snapshot sealing", async () => {

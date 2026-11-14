@@ -1275,7 +1275,9 @@ describe("conditional loads", () => {
     ])
       expect(
         trace.findings.find((finding) => finding.kind === kind)?.explanation,
-      ).toContain(`${VENDOR} loads only conditionally; if it loads,`);
+      ).toContain(
+        `The dependency-expansion chain for ${VENDOR} is conditional; if that chain is used,`,
+      );
   });
 });
 

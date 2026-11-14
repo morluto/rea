@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import * as t from "@babel/types";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 import { inspectCall } from "./javascriptStaticAnalysisCalls.js";
 import { createJavaScriptAnalysisAccumulator } from "./javascriptStaticAnalysisState.js";
 import { indexJavaScriptBindingsWithReceiversSteps } from "./javascriptSemanticAnalysis.js";
