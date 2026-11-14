@@ -52,6 +52,21 @@ cliTest(
     });
     expect(json.stdout).not.toContain(marker);
 
+    for (const timing of [
+      "--timings=true",
+      "--timings=false",
+      "--no-timings",
+    ]) {
+      const timed = await cli.run({
+        arguments: ["--version", "--json", timing],
+        cwd,
+        environment,
+      });
+      expect(timed.exitCode, timed.stderr).toBe(0);
+      expect(versionReportSchema.parse(timed.json)).toEqual(report);
+      expect(timed.stderr).toBe(json.stderr);
+    }
+
     const jsonl = await cli.run({
       arguments: ["--version", "--format", "jsonl"],
       cwd,
