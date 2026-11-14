@@ -89,6 +89,7 @@ unsupported and returns an unsupported-target outcome rather than invalid-input
 recovery.
 
 Zstandard section-name tables also use a 128 MiB decoder window limit.
+A zlib stream must occupy the full compressed payload declared by its section.
 
 `SHF_COMPRESSED` note sections return `unsupported_target` before their payload
 is interpreted or decompressed. Their compression header is storage metadata,

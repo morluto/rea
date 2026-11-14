@@ -1,8 +1,12 @@
+import { deflateSync } from "node:zlib";
 import { expect, it } from "vitest";
 import { pe } from "../../domain/binaryTarget.fixture.js";
 import { elfHardeningFixture } from "../hardening/BinaryHardening.fixture.js";
 import { elfUnwindSectionlessFixture } from "../elf/ElfUnwindTables.fixture.js";
-import { compressedElfNoteSectionFixture } from "../elf/ElfNotes.fixture.js";
+import {
+  compressedElfNoteFixture,
+  compressedElfNoteSectionFixture,
+} from "../elf/ElfNotes.fixture.js";
 import {
   ELF_PT_GNU_EH_FRAME,
   ELF_PT_GNU_RELRO,
@@ -95,6 +99,30 @@ it("retains a confirmed overlapping PE when the COFF record extends past EOF", (
     }),
   );
 });
+
+it.each([
+  ["nonzero bytes", Buffer.from([0xa5, 0x3c])],
+  ["zero bytes", Buffer.alloc(2)],
+  ["another zlib stream", deflateSync("unmatched section names")],
+] as const)(
+  "rejects %s inside the declared zlib section-name table",
+  (_, suffix) => {
+    const bytes = compressedElfNoteFixture();
+    const names = readElfDirectoryFromBuffer(bytes).sections[2]!;
+    expect(names.offset + names.size).toBe(BigInt(bytes.length));
+    const withSuffix = Buffer.concat([bytes, suffix]);
+    expect(readElfDirectoryFromBuffer(withSuffix).sections[1]?.name).toBe(
+      ".note.gnu.build-id",
+    );
+    withSuffix.writeBigUInt64LE(
+      names.size + BigInt(suffix.length),
+      names.header_offset + 32,
+    );
+    expect(() => readElfDirectoryFromBuffer(withSuffix)).toThrow(
+      expect.objectContaining({ kind: "malformed" }),
+    );
+  },
+);
 
 it.each([
   [32, true],
