@@ -23,6 +23,9 @@ const captureNodeAdmission = (maximumNodes: number | undefined) => {
       throw new CaptureFormatError(
         "input-limit",
         "JSON exceeds its parser node representation allowance.",
+        "",
+        undefined,
+        { kind: "parser-nodes", limit: maximumNodes, unit: "parser nodes" },
       );
   };
 };
@@ -71,6 +74,12 @@ export const parseCaptureJson = (
         "input-limit",
         `${format} exceeds max_nesting_depth (${String(captureBudgets().depth)} levels).`,
         valuePointer(),
+        undefined,
+        {
+          kind: "nesting-depth",
+          limit: captureBudgets().depth,
+          unit: "nesting levels",
+        },
       );
   };
   const append = (value: unknown): void => {

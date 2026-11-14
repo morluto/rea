@@ -143,24 +143,34 @@ class TraceStreamRead {
       raw = readRecord(line.bytes);
     } catch (cause) {
       if (!(cause instanceof CaptureFormatError)) throw cause;
-      if (cause.reason === "input-limit")
+      if (cause.reason === "input-limit") {
+        // The parser names the allowance it exhausted: node count or depth.
+        const allowance = cause.allowance;
         throw new AnalysisResourceConstraintError(
           PLAYWRIGHT_TRACE_OPERATION,
           "memory",
           cause.message,
-          { parser_nodes: PLAYWRIGHT_TRACE_LIMITS.factsBytes / 256 },
+          allowance === undefined
+            ? null
+            : {
+                [allowance.kind === "parser-nodes"
+                  ? "parser_nodes"
+                  : "nesting_levels"]: allowance.limit,
+              },
           {
             cause,
             ...fixedAllowanceOptions(
-              "The Playwright trace record parser allowance",
+              allowance?.kind === "nesting-depth"
+                ? "The Playwright trace record nesting allowance"
+                : "The Playwright trace record parser allowance",
               "parser",
-              {
-                limit: PLAYWRIGHT_TRACE_LIMITS.factsBytes / 256,
-                unit: "parser nodes",
-              },
+              allowance === undefined
+                ? {}
+                : { limit: allowance.limit, unit: allowance.unit },
             ),
           },
         );
+      }
       this.diagnostic(line.line, "malformed-record", cause.message);
       this.#headerSeen = true;
       return;
