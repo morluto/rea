@@ -5,7 +5,7 @@ import type { DoctorScope } from "../application/Doctor.js";
 import {
   DESKTOP_BUILD_PROVIDER_ID,
   DOCTOR_PROVIDER_IDS,
-} from "../application/DoctorProviderIds.js";
+} from "../domain/doctorProviderIds.js";
 import {
   isSetupFailure,
   type SetupOptions,

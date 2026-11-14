@@ -290,6 +290,25 @@ const emptyReferenceCaveat = (
   return [];
 };
 
+const GHIDRA_PROFILE_CONFLICT_REMEDIATION =
+  "Reopen the target with open_binary, or rerun the CLI command, so REA resolves a fresh Ghidra analysis profile from the current configuration and target. Repeating the request against the committed profile is not expected to succeed.";
+
+/**
+ * The committed analysis profile no longer matches the configuration,
+ * installation or target this session would open; only a fresh profile
+ * resolution can reconcile them.
+ */
+const ghidraProfileConflict = (
+  operation: string,
+  reason: string,
+  diagnostics: Readonly<Record<string, JsonValue>> = {},
+): ProviderAdapterError =>
+  new ProviderAdapterError("ghidra", operation, {
+    userMessage: `The committed Ghidra analysis profile does not match the current configuration or target. ${reason}`,
+    remediationAction: GHIDRA_PROFILE_CONFLICT_REMEDIATION,
+    diagnostics: { reason, ...diagnostics },
+  });
+
 /** Build one AnalysisClient for an admitted Ghidra target and profile. */
 export const createGhidraProviderClient = (input: {
   readonly config: AppConfig;
@@ -315,12 +334,10 @@ export const createGhidraProviderClient = (input: {
       (checkpoint.data !== undefined)
   )
     return err(
-      new ProviderAdapterError("ghidra", "open_binary", {
-        diagnostics: {
-          reason:
-            "Resolve REA_GHIDRA_CHECKPOINT_DIR into the analysis profile before opening the session.",
-        },
-      }),
+      ghidraProfileConflict(
+        "open_binary",
+        "Resolve REA_GHIDRA_CHECKPOINT_DIR into the analysis profile before opening the session.",
+      ),
     );
   const psp = isGhidraPspTarget(target);
   const pspExtension = psp
@@ -335,12 +352,10 @@ export const createGhidraProviderClient = (input: {
       committedProfile.parameters.loader !== "PspElfLoader")
   )
     return err(
-      new ProviderAdapterError("ghidra", "open_binary", {
-        diagnostics: {
-          reason:
-            "Resolve the supported PSP profile and installed Allegrex extension before opening the session.",
-        },
-      }),
+      ghidraProfileConflict(
+        "open_binary",
+        "Resolve the supported PSP profile and installed Allegrex extension before opening the session.",
+      ),
     );
   const softFloat = isGhidraMipsSoftFloatTarget(target);
   if (
@@ -349,12 +364,10 @@ export const createGhidraProviderClient = (input: {
       GHIDRA_MIPS_SOFT_FLOAT_STORAGE)
   )
     return err(
-      new ProviderAdapterError("ghidra", "open_binary", {
-        diagnostics: {
-          reason:
-            "Resolve the soft-float MIPS storage policy into the analysis profile before opening the session.",
-        },
-      }),
+      ghidraProfileConflict(
+        "open_binary",
+        "Resolve the soft-float MIPS storage policy into the analysis profile before opening the session.",
+      ),
     );
   const riscvCallingConvention = ghidraRiscvCallingConvention(target);
   if (
@@ -362,12 +375,10 @@ export const createGhidraProviderClient = (input: {
     committedProfile.parameters.riscv_calling_convention
   )
     return err(
-      new ProviderAdapterError("ghidra", "open_binary", {
-        diagnostics: {
-          reason:
-            "Resolve the RISC-V calling-convention policy into the analysis profile before opening the session.",
-        },
-      }),
+      ghidraProfileConflict(
+        "open_binary",
+        "Resolve the RISC-V calling-convention policy into the analysis profile before opening the session.",
+      ),
     );
   const extensionProfile = ghidraExtensionSchema
     .array()
@@ -378,12 +389,10 @@ export const createGhidraProviderClient = (input: {
       extensionProfile.data.length === 0)
   )
     return err(
-      new ProviderAdapterError("ghidra", "open_binary", {
-        diagnostics: {
-          reason:
-            "Resolve the configured Ghidra extensions into an analysis profile before opening the session.",
-        },
-      }),
+      ghidraProfileConflict(
+        "open_binary",
+        "Resolve the configured Ghidra extensions into an analysis profile before opening the session.",
+      ),
     );
   const extensions = extensionProfile.data;
   const projectProfile = ghidraProjectCommitmentSchema
@@ -401,12 +410,10 @@ export const createGhidraProviderClient = (input: {
             projectProfile.data.program_name)))
   )
     return err(
-      new ProviderAdapterError("ghidra", "open_binary", {
-        diagnostics: {
-          reason:
-            "Resolve the selected Ghidra project into a fresh analysis profile before opening the session.",
-        },
-      }),
+      ghidraProfileConflict(
+        "open_binary",
+        "Resolve the selected Ghidra project into a fresh analysis profile before opening the session.",
+      ),
     );
   const project = projectProfile.data;
   const projection: GhidraProjection = {
@@ -427,12 +434,10 @@ export const createGhidraProviderClient = (input: {
     (config.ghidraSeedFile === undefined) !== (seedProfile.data === undefined)
   )
     return err(
-      new ProviderAdapterError("ghidra", "open_binary", {
-        diagnostics: {
-          reason:
-            "Resolve REA_GHIDRA_SEED_FILE into an analysis profile before opening the session.",
-        },
-      }),
+      ghidraProfileConflict(
+        "open_binary",
+        "Resolve REA_GHIDRA_SEED_FILE into an analysis profile before opening the session.",
+      ),
     );
   const seeds = seedProfile.data;
   const parameterLanguage = ghidraProfileLanguageOverride(
@@ -444,11 +449,10 @@ export const createGhidraProviderClient = (input: {
   const targetLanguage = ghidraPinnedLanguage(target);
   if (pinnedLanguage !== undefined && targetLanguage === undefined)
     return err(
-      new ProviderAdapterError("ghidra", "open_binary", {
-        diagnostics: {
-          reason: `The committed profile pins the ${pinnedLanguage.languageId} language, which the current target does not establish; reopen an admitted target to resolve a new profile.`,
-        },
-      }),
+      ghidraProfileConflict(
+        "open_binary",
+        `The committed profile pins the ${pinnedLanguage.languageId} language, which the current target does not establish; reopen an admitted target to resolve a new profile.`,
+      ),
     );
   // Provider-pinned profiles declare their language through the same
   // parameter slot caller-configured profiles use, so only an environment
@@ -458,11 +462,10 @@ export const createGhidraProviderClient = (input: {
     config.ghidraLanguageOverride !== undefined
   )
     return err(
-      new ProviderAdapterError("ghidra", "open_binary", {
-        diagnostics: {
-          reason: `The committed profile pins its import language, ${pinnedLanguage.languageId}; REA_GHIDRA_LANGUAGE_ID/REA_GHIDRA_COMPILER_SPEC_ID cannot be combined with it. Reopen the target without the override.`,
-        },
-      }),
+      ghidraProfileConflict(
+        "open_binary",
+        `The committed profile pins its import language, ${pinnedLanguage.languageId}; REA_GHIDRA_LANGUAGE_ID/REA_GHIDRA_COMPILER_SPEC_ID cannot be combined with it. Reopen the target without the override.`,
+      ),
     );
   if (
     !sameGhidraLanguageOverride(
@@ -471,12 +474,10 @@ export const createGhidraProviderClient = (input: {
     )
   )
     return err(
-      new ProviderAdapterError("ghidra", "open_binary", {
-        diagnostics: {
-          reason:
-            "The committed analysis profile and REA_GHIDRA_LANGUAGE_ID/REA_GHIDRA_COMPILER_SPEC_ID differ; reopen the target to resolve a new profile.",
-        },
-      }),
+      ghidraProfileConflict(
+        "open_binary",
+        "The committed analysis profile and REA_GHIDRA_LANGUAGE_ID/REA_GHIDRA_COMPILER_SPEC_ID differ; reopen the target to resolve a new profile.",
+      ),
     );
   // Both caller-selected and provider-pinned languages use the validated
   // committed slot; the profile cannot supply its own applicability proof.
@@ -488,11 +489,7 @@ export const createGhidraProviderClient = (input: {
         "existing-project-private-copy-v1",
   );
   if (mipsProfileMismatch !== null)
-    return err(
-      new ProviderAdapterError("ghidra", "open_binary", {
-        diagnostics: { reason: mipsProfileMismatch },
-      }),
-    );
+    return err(ghidraProfileConflict("open_binary", mipsProfileMismatch));
   const importLanguage = parameterLanguage;
   const disabledAnalyzers = ghidraProfileDisabledAnalyzers(
     committedProfile.parameters,
@@ -504,12 +501,10 @@ export const createGhidraProviderClient = (input: {
     )
   )
     return err(
-      new ProviderAdapterError("ghidra", "open_binary", {
-        diagnostics: {
-          reason:
-            "The committed analysis profile and REA_GHIDRA_DISABLED_ANALYZERS differ; reopen the target to resolve a new profile.",
-        },
-      }),
+      ghidraProfileConflict(
+        "open_binary",
+        "The committed analysis profile and REA_GHIDRA_DISABLED_ANALYZERS differ; reopen the target to resolve a new profile.",
+      ),
     );
 
   const invalidProfile = validateGhidraExtensionProfile(
@@ -519,11 +514,7 @@ export const createGhidraProviderClient = (input: {
     installation.platform,
   );
   if (invalidProfile !== null)
-    return err(
-      new ProviderAdapterError("ghidra", "open_binary", {
-        diagnostics: { reason: invalidProfile },
-      }),
-    );
+    return err(ghidraProfileConflict("open_binary", invalidProfile));
   let extensionFailure: AnalysisError | undefined;
   // Replaced by the reported outcome once the session handshake is checked.
   const seedLimitations: string[] = [...ghidraSeedLimitations(seeds)];
@@ -1260,14 +1251,14 @@ const ghidraClientPrerequisites = (
     );
   if (profile.provider.version !== installation.providerVersion)
     return err(
-      new ProviderAdapterError("ghidra", "health", {
-        diagnostics: {
-          reason:
-            "The current installation version differs from the selected analysis profile; resolve the profile again.",
+      ghidraProfileConflict(
+        "health",
+        "The current installation version differs from the selected analysis profile; resolve the profile again.",
+        {
           selected_provider_version: profile.provider.version,
           current_installation: ghidraInstallationDiagnostics(installation),
         },
-      }),
+      ),
     );
   return ok({
     analyzeHeadlessPath: installation.analyzeHeadlessPath,

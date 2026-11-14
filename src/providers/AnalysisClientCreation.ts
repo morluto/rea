@@ -11,7 +11,10 @@ import type {
 } from "../application/AnalysisProvider.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
-import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import {
+  closedAnalysisClientError,
+  ProviderAdapterError,
+} from "../domain/providerAdapterError.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
@@ -74,11 +77,7 @@ export class AnalysisClientCreation {
         new AnalysisCancelledError(operation, { cause: signal.reason }),
       );
     if (this.#closed)
-      return err(
-        new ProviderAdapterError(this.providerId, operation, {
-          diagnostics: { reason: "client_closed" },
-        }),
-      );
+      return err(closedAnalysisClientError(this.providerId, operation));
     if (this.#failure?.cleanupIncomplete)
       return err(
         analysisClientFailureForOperation(
