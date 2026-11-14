@@ -3,7 +3,6 @@ import * as t from "@babel/types";
 import {
   readExactJavaScriptLiteral,
   staticObjectProperty,
-  staticObjectPropertyNames,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 
@@ -29,10 +28,43 @@ const literalString = (node: t.Node | undefined): string | undefined => {
  * path: on an http page, "http:user@host/x" names no user.
  */
 const carriesCredentials = (url: string): boolean => {
-  if (!/^[A-Za-z][A-Za-z0-9+.-]*:\/\//u.test(url) || !URL.canParse(url))
+  // The URL parser first trims leading and trailing C0 controls and spaces,
+  // then drops every tab and newline, so judge the string it actually reads.
+  const parsedText = url
+    .replace(/^[\u0000- ]+|[\u0000- ]+$/gu, "")
+    .replace(/[\t\n\r]/gu, "");
+  if (
+    !/^[A-Za-z][A-Za-z0-9+.-]*:\/\//u.test(parsedText) ||
+    !URL.canParse(parsedText)
+  )
     return false;
-  const parsed = new URL(url);
+  const parsed = new URL(parsedText);
   return parsed.username !== "" || parsed.password !== "";
+};
+
+/**
+ * Own header names of an object literal, when they are all that a host reads.
+ * Headers init uses an object's `@@iterator` when it has one, so a computed
+ * key, a spread or a `__proto__` setter leaves the names unknown.
+ */
+const recordHeaderNames = (
+  record: t.ObjectExpression,
+): readonly string[] | undefined => {
+  const names: string[] = [];
+  for (const property of record.properties) {
+    if (t.isSpreadElement(property) || property.computed) return undefined;
+    const { key } = property;
+    const name = t.isIdentifier(key)
+      ? key.name
+      : t.isStringLiteral(key)
+        ? key.value
+        : t.isNumericLiteral(key)
+          ? String(key.value)
+          : undefined;
+    if (name === undefined || name === "__proto__") return undefined;
+    names.push(name);
+  }
+  return names;
 };
 
 /** A body member proven present and not null or undefined. */
@@ -99,11 +131,8 @@ const fetchRefused = (node: t.Node): boolean => {
   if (headers.status !== "explicit") return false;
   const record = unwrapJavaScriptExpression(headers.value).node;
   if (!t.isObjectExpression(record)) return false;
-  const names = staticObjectPropertyNames(record);
-  return (
-    (names.status === "partial" || names.status === "complete") &&
-    names.names.some((name) => !TOKEN.test(name))
-  );
+  const names = recordHeaderNames(record);
+  return names !== undefined && names.some((name) => !TOKEN.test(name));
 };
 
 /**
