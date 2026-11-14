@@ -1,6 +1,6 @@
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -241,6 +241,46 @@ describe("server and catalog identity", () => {
       state: "unknown",
       reasons: [],
       remediation: expect.stringContaining("entrypoint path is unavailable"),
+    });
+  });
+});
+
+describe("server and catalog identity path comparisons", () => {
+  it("recognizes the same entrypoint through symlink spelling", async () => {
+    const directory = await createTestTempDirectory("rea-identity-symlink-");
+    const script = join(directory, "bonafide.mjs");
+    await writeFile(script, "/* fixture */");
+    const linked = join(directory, "linked.mjs");
+    await symlink(script, linked);
+    const identity = createServerIdentity({
+      catalog: DEFAULT_CATALOG_IDENTITY,
+      startedAt: "2026-07-13T00:00:00.000Z",
+      commandPath: normalizeEntrypointPath(linked),
+      expected: { server_path: script },
+    });
+    expect(identity.alignment).toMatchObject({
+      state: "aligned",
+      reasons: [],
+    });
+  });
+
+  it("still reports mismatch when the paths differ by file identity, not spelling", async () => {
+    const directory = await createTestTempDirectory("rea-identity-mismatch-");
+    const scriptA = join(directory, "bonafide.mjs");
+    const scriptB = join(directory, "other.mjs");
+    await writeFile(scriptA, "/* A */");
+    await writeFile(scriptB, "/* B */");
+    const linked = join(directory, "linked.mjs");
+    await symlink(scriptB, linked);
+    const identity = createServerIdentity({
+      catalog: DEFAULT_CATALOG_IDENTITY,
+      startedAt: "2026-07-13T00:00:00.000Z",
+      commandPath: normalizeEntrypointPath(linked),
+      expected: { server_path: scriptA },
+    });
+    expect(identity.alignment).toMatchObject({
+      state: "mcp_server_restart_required",
+      reasons: ["registration_path_mismatch"],
     });
   });
 });

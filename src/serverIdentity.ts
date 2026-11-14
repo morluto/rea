@@ -1,4 +1,5 @@
 import { dirname, basename, resolve } from "node:path";
+import { statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import type { createCatalogIdentity } from "./catalogIdentity.js";
@@ -15,6 +16,17 @@ export interface ConnectedClientIdentity {
   readonly name: string;
   readonly version: string;
 }
+
+/** Device/inode equality, the only reliable same-entrypoint test across symlink/.. spellings. */
+const sameFileIdentity = (left: string, right: string): boolean => {
+  try {
+    const leftStat = statSync(left, { bigint: true });
+    const rightStat = statSync(right, { bigint: true });
+    return leftStat.dev === rightStat.dev && leftStat.ino === rightStat.ino;
+  } catch {
+    return false;
+  }
+};
 
 const packageRoot = (): string => {
   const moduleDirectory = dirname(fileURLToPath(import.meta.url));
@@ -49,7 +61,8 @@ export const createServerIdentity = (input: {
   if (
     input.expected?.server_path !== undefined &&
     serverPath !== undefined &&
-    resolve(input.expected.server_path) !== serverPath
+    resolve(input.expected.server_path) !== serverPath &&
+    !sameFileIdentity(input.expected.server_path, serverPath)
   )
     reasons.push("registration_path_mismatch");
   const observedExpectation =
