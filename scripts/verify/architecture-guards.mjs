@@ -283,6 +283,17 @@ checkCounted(
   [],
 );
 
+// A per-format failure class restates the ParseFailure algebra under its own
+// spelling and needs its own catch-site translation; parsers throw a
+// ParseFailureError (or a subclass of it) instead.
+checkCounted(
+  "per-format failure class extending Error (throw a ParseFailureError from src/domain/parseFailure)",
+  "parser-format-failure-class",
+  files,
+  /class \w*(?:Format|Parse)(?:Failure|Error) extends Error\b/gu,
+  ["src/domain/parseFailure.ts"],
+);
+
 // JSON.parse keeps the last of repeated member names without saying so; a
 // parser of artifact content must state its duplicate-member policy
 // (src/domain/jsonDuplicateMember.ts finds a repeated name).

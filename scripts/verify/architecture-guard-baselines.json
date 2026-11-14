@@ -205,6 +205,19 @@
     "src/wasm/WabtArtifactProvider.ts": 2,
     "src/wasm/WabtFailures.ts": 2
   },
+  "parser-format-failure-class": {
+    "src/browser/assets/WebArtifactReads.ts": 1,
+    "src/browser/history/CaptureFormatError.ts": 1,
+    "src/domain/xmlDocument.ts": 1,
+    "src/il2cpp/Il2cppBinaryFormat.ts": 1,
+    "src/il2cpp/Il2cppMetadataFormat.ts": 1,
+    "src/javascript/sourceMaps/SourceMapFormat.ts": 1,
+    "src/model/ModelFormat.ts": 1,
+    "src/native/AppleMachoSelection.ts": 1,
+    "src/native/MachoCommandNames.ts": 1,
+    "src/native/apple/AppleIps.errors.ts": 1,
+    "src/python/PythonPyc.errors.ts": 1
+  },
   "parser-json-parse": {
     "src/android/JadxProtocol.ts": 2,
     "src/android/JadxWorkspaceRoot.ts": 1,
