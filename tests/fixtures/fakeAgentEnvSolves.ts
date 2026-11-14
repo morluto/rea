@@ -76,7 +76,7 @@ def run_bundle(root, *, tasks=(), model=None, agent=None, sandbox=None, emulate=
     return types.SimpleNamespace(runs=(run,))
 `;
 
-export interface FakeAgentEnvSolves {
+interface FakeAgentEnvSolves {
   readonly environment: Readonly<Record<string, string>>;
   notes(name: string): Promise<unknown[]>;
 }

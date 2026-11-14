@@ -14,7 +14,7 @@ import {
 } from "../domain/analysisErrorProjection.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { NoBinaryOpenError } from "../domain/configurationErrors.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
 import { estimateJsonStorage } from "../application/JsonAuthenticationHeadroom.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";

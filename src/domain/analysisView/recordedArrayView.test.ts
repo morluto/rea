@@ -3,10 +3,8 @@ import { createEvidence } from "../evidence.js";
 import { MAX_JSON_DEPTH, type JsonValue } from "../jsonValue.js";
 import { projectAnalysisError } from "../analysisErrorProjection.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
-import {
-  analysisViewRequestSchema,
-  projectAnalysisView,
-} from "./analysisView.js";
+import { projectAnalysisView } from "./analysisView.js";
+import { analysisViewRequestSchema } from "./analysisViewRequest.js";
 
 const nested = (levels: number): JsonValue => {
   let value: JsonValue = "leaf";

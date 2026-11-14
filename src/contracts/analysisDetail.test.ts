@@ -6,8 +6,8 @@ import {
   binaryLayoutSummaryViewResultSchema,
   javascriptApplicationSummaryViewResultSchema,
   projectAnalysisView,
-  analysisViewRequestSchema,
 } from "../domain/analysisView/analysisView.js";
+import { analysisViewRequestSchema } from "../domain/analysisView/analysisViewRequest.js";
 import {
   analysisViewCaptureEvidence,
   analysisViewJavaScriptEvidence,

@@ -174,7 +174,7 @@ print(json.dumps({"view": result["view"], "peak": peak}))
   ) as { view: unknown; peak: number };
   expect(measured.view).toEqual({ value: "done" });
   expect(measured.peak).toBeLessThan(8 * 1024 * 1024);
-}, 40000);
+});
 
 it("bounds a wide container already beyond the retained view depth", async () => {
   const root = await createTestTempDirectory("desktop-json-wide-depth-");
@@ -203,4 +203,4 @@ print(json.dumps({"error": result.get("error"), "peak": peak}))
     "nested deeper than the 500 levels a JSON view keeps",
   );
   expect(measured.peak).toBeLessThan(8 * 1024 * 1024);
-}, 40000);
+});

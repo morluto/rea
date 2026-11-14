@@ -607,7 +607,7 @@ export const renderInstallScript = (file: ExportPackageFile): string =>
   ].join("\n");
 
 /** How the class and README say where the seed came from: made for the task, or the user's own data, kept local. */
-export const seedWording = ({
+const seedWording = ({
   name,
   seedCheckpoint,
   syntheticSeed,
@@ -678,7 +678,7 @@ window and dialogs; the result is read from those files.
 }`;
 
 /** The start of the limitation of a launch that opens no document; its reason follows. */
-export const NO_LAUNCH_DOCUMENT = "The app opens no document at launch";
+const NO_LAUNCH_DOCUMENT = "The app opens no document at launch";
 
 /** The limitation of a launch that opens no document; none when it opens one. */
 export const launchDocumentLimitation = (
@@ -689,7 +689,7 @@ export const launchDocumentLimitation = (
     : undefined;
 
 /** The README line on what the launch opens; none when the captured command names its own file. */
-export const launchDocumentNote = ({
+const launchDocumentNote = ({
   opens,
 }: Pick<DesktopAppExportPlan, "opens">): string =>
   opens.kind === "seed"

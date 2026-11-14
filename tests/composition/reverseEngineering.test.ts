@@ -411,7 +411,11 @@ it("marks signal-terminated provider commands as unknown completion", async () =
           /files.*network.*outside the selected artifact.*not bound to Evidence/iu,
         ),
       );
-      expect(ordinaryExit.value.limitations).toHaveLength(5);
+      expect(ordinaryExit.value.limitations).toEqual(
+        expect.arrayContaining([
+          ...rizinCommandLimitations({ path, command: "iI" }),
+        ]),
+      );
     }
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -483,7 +487,11 @@ describe("Rizin command service", () => {
           /files.*network.*outside the selected artifact.*not bound to Evidence/iu,
         ),
       );
-      expect(result.value.limitations).toHaveLength(5);
+      expect(result.value.limitations).toEqual(
+        expect.arrayContaining([
+          ...rizinCommandLimitations({ path: callerPath, command }),
+        ]),
+      );
       expect(result.value.parameters).toMatchObject({
         path: callerPath,
         command,
@@ -618,15 +626,15 @@ it("passes decoder and map inputs to Rizin before the path and records them", as
     expect(result.value.limitations).toEqual(
       expect.arrayContaining([...rizinCommandLimitations(input)]),
     );
-    // One statement for the decoder inputs and one for the raw map.
-    expect(rizinCommandLimitations(input)).toHaveLength(2);
+    // Command validity stays unverified independently of decoder/map inputs.
+    expect(rizinCommandLimitations(input)).toHaveLength(3);
     expect(
       rizinCommandLimitations({ path, command: "pi 1", asm_bits: 16 }),
-    ).toHaveLength(1);
+    ).toHaveLength(2);
     expect(
       rizinCommandLimitations({ path, command: "pi 1", base_address: "0x0" }),
-    ).toHaveLength(1);
-    expect(rizinCommandLimitations({ path, command: "pi 1" })).toEqual([]);
+    ).toHaveLength(2);
+    expect(rizinCommandLimitations({ path, command: "pi 1" })).toHaveLength(1);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

@@ -1,3 +1,8 @@
+import {
+  captureInspectionFailures,
+  normalizeCaptureFailure,
+  ProcessCaptureSamplingFailure,
+} from "./ProcessCaptureError.js";
 import { writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
@@ -7,7 +12,6 @@ import { ProcessCaptureResourceScope } from "./ProcessCaptureLifecycle.js";
 import {
   SamplingReadBatchFailure,
   readSamplingSource,
-  samplingInspectionFailures,
   settleSamplingReads,
 } from "./ProcessSamplingObservation.js";
 
@@ -110,22 +114,27 @@ it("settles every admitted actual descriptor, retaining completed sibling values
     status: "fulfilled",
     value: completed,
   });
-  expect(failure.userCategory).toBeUndefined();
-  const leaves = samplingInspectionFailures(failure);
+  expect(failure.otherFailures).toEqual([]);
+  const capture = normalizeCaptureFailure(failure);
+  if (!(capture instanceof ProcessCaptureSamplingFailure))
+    throw new Error("Expected capture-owned sampling presentation");
+  expect(capture.reason).toBe("capture_failed");
+  const leaves = captureInspectionFailures(capture);
   expect(leaves).toHaveLength(2);
   for (const leaf of leaves) scope.retainInspectionFailure(leaf);
-  expect(failure.cleanupIncomplete).toBe(true);
+  expect(capture.cleanupIncomplete).toBe(true);
   await expect(scope.retryCleanup()).rejects.toBeDefined();
   first.allow = true;
   await expect(scope.retryCleanup()).rejects.toBeDefined();
   expect(first.handle?.fd).toBe(-1);
   expect(second.handle?.fd).toBeGreaterThanOrEqual(0);
-  expect(failure.cleanupIncomplete).toBe(true);
+  expect(capture.cleanupIncomplete).toBe(true);
   second.allow = true;
   await scope.retryCleanup();
   expect(second.handle?.fd).toBe(-1);
-  expect(failure.cleanupIncomplete).toBe(false);
-  expect(failure.inspectionFailures).toEqual(leaves);
+  expect(capture.cleanupIncomplete).toBe(false);
+  expect(capture.inspectionFailures).toEqual(leaves);
+  expect(capture.samplingFailure).toBe(failure);
   expect(failure.outcomes[1]).toEqual({
     status: "fulfilled",
     value: completed,

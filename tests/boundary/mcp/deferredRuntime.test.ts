@@ -25,6 +25,10 @@ import { HOT_TOOL_NAMES } from "../../../src/catalogDiscovery.js";
 import { DatabaseSync } from "node:sqlite";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchemaObject } from "ajv";
+import {
+  searchGuidanceOutputSchema,
+  readGuidanceSectionOutputSchema,
+} from "../../../src/contracts/guidanceContracts.js";
 
 const connect = async (
   mode: "legacy" | "auto",
@@ -278,7 +282,35 @@ it.each([
       REA_MCP_INPUT_SCHEMA_PROFILE: profile,
     });
     const before = await client.listTools();
-    expect(before.tools).toEqual(recorded.tools);
+    // Compare independently composed canonical SDK registrations as well as
+    // recorded artifacts. Listing every explicit family selects eager startup
+    // with the same inventory, without target analysis or provider acquisition.
+    const eager = await connect(mode, {
+      REA_MCP_INPUT_SCHEMA_PROFILE: profile,
+      REA_MCP_TOOL_FAMILIES: TOOL_FAMILY_DEFINITIONS.map(({ id }) => id).join(
+        ",",
+      ),
+    });
+    expect(before).toEqual(await eager.client.listTools());
+    const withoutOutput = ({
+      outputSchema: _output,
+      ...tool
+    }: {
+      outputSchema?: unknown;
+    }) => tool;
+    expect(before.tools.map(withoutOutput)).toEqual(
+      recorded.tools.map(withoutOutput),
+    );
+    const outputs = new Map(
+      (mode === "auto" ? recorded.tools : GENERATED_MCP_TOOL_CATALOG).map(
+        (tool: { name: string; outputSchema?: unknown }) => [
+          tool.name,
+          tool.outputSchema,
+        ],
+      ),
+    );
+    for (const tool of before.tools)
+      expect(tool.outputSchema, tool.name).toEqual(outputs.get(tool.name));
     const contractProjection = (tool: {
       name: string;
       title?: string | undefined;
@@ -294,7 +326,7 @@ it.each([
       outputSchema: tool.outputSchema,
       annotations: tool.annotations,
     });
-    if (profile === "full")
+    if (profile === "full" && mode === "legacy")
       expect(
         new Map(
           before.tools.map((tool) => [tool.name, contractProjection(tool)]),
@@ -355,6 +387,38 @@ it.each([
       expect(invalid._meta?.["io.modelcontextprotocol/serverInfo"]).toEqual(
         recorded.info,
       );
+    expect(stderr()).toBe("");
+  },
+);
+
+it.each(["legacy", "auto"] as const)(
+  "validates non-object-root guidance results from deferred startup over %s",
+  async (mode) => {
+    const { client, stderr } = await connect(mode);
+    const before = await client.listTools();
+    const unwrap = (value: unknown) =>
+      typeof value === "object" && value !== null && "result" in value
+        ? value.result
+        : value;
+    const found = await client.callTool({
+      name: "search_guidance",
+      arguments: { query: "exact JavaScript module", limit: 1 },
+    });
+    expect(found.isError).not.toBe(true);
+    const matches = searchGuidanceOutputSchema.parse(
+      unwrap(found.structuredContent),
+    );
+    if (matches.status !== "matches") throw new Error("Expected guide matches");
+    const read = await client.callTool({
+      name: "read_guidance_section",
+      arguments: { locator: matches.matches[0]?.locator },
+    });
+    expect(read.isError).not.toBe(true);
+    expect(
+      readGuidanceSectionOutputSchema.parse(unwrap(read.structuredContent))
+        .status,
+    ).toBe("section");
+    expect(await client.listTools()).toEqual(before);
     expect(stderr()).toBe("");
   },
 );
@@ -730,7 +794,12 @@ it.each([{}, { REA_MCP_OUTPUT_SCHEMA_PROFILE: "off" }])(
             ({ outputSchema: _output, ...tool }: Record<string, unknown>) =>
               tool,
           )
-        : catalog.tools;
+        : catalog.tools.map((tool: { name: string }) => ({
+            ...tool,
+            outputSchema: GENERATED_MCP_TOOL_CATALOG.find(
+              ({ name }) => name === tool.name,
+            )?.outputSchema,
+          }));
     expect(before.tools).toEqual(expected);
     const toolDefinition = before.tools.find(
       ({ name }) => name === "list_unknowns",
@@ -811,6 +880,7 @@ const RECORDER_RUNTIME_MODULES = [
   "contracts/promptContracts.js",
   "contracts/toolContracts.js",
   "domain/evidenceInputContract.js",
+  "contracts/toolSchemaMetadata.js",
 ] as const;
 
 // Recorder cleanup tests replace every runtime import through their loader
@@ -923,6 +993,8 @@ it.each([
       "/dist/contracts/toolContracts.js": "export const TOOL_CONTRACTS = [];",
       "/dist/domain/evidenceInputContract.js":
         "export const getEvidenceInputContract = () => ({ hasEvidenceReferenceAlternative: false });",
+      "/dist/contracts/toolSchemaMetadata.js":
+        "export const toolOutputSchemaWithMetadata = () => { throw new Error('No fixture tools'); };",
     };
     const clientModule = `data:text/javascript,${encodeURIComponent(`
 export class Client {

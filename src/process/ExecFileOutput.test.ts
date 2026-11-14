@@ -194,7 +194,6 @@ describe("execFileOutput", () => {
         await execution;
       }
     },
-    10_000,
   );
 
   it.skipIf(process.platform === "win32")(
@@ -549,7 +548,7 @@ describe.skipIf(process.platform === "win32")(
         killFailure = await stopOwnedDescendant(pid, finished);
       }
       if (killFailure !== undefined) throw killFailure;
-    }, 15_000);
+    });
 
     it("keeps scratch files until an inherited-pipe descendant closes them", async () => {
       const directory = await createTestTempDirectory("rea-exec-inherited-");

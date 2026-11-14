@@ -1,9 +1,9 @@
-import { normalizeCaptureFailure } from "./ProcessCaptureError.js";
 import {
-  samplingInspectionFailures,
-  settleSamplingReads,
-  SamplingReadBatchFailure,
-} from "./ProcessSamplingObservation.js";
+  normalizeCaptureFailure,
+  captureInspectionFailures,
+  ProcessCaptureSamplingFailure,
+} from "./ProcessCaptureError.js";
+import { settleSamplingReads } from "./ProcessSamplingObservation.js";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { writeFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -54,7 +54,7 @@ vi.mock("./ProcessSampling.js", () => ({
   startProcessSampler: (options: {
     resourceScope: ProcessCaptureResourceScope;
   }) => {
-    for (const leaf of samplingInspectionFailures(control.inspection))
+    for (const leaf of captureInspectionFailures(control.inspection))
       options.resourceScope.retainInspectionFailure(leaf);
     return async () => {
       throw control.inspection;
@@ -70,11 +70,13 @@ it.each([false, true])(
     control.inspection =
       second === undefined
         ? normalizeCaptureFailure(file.failure)
-        : await settleSamplingReads([
-            Promise.reject(normalizeCaptureFailure(file.failure)),
-            Promise.resolve("completed sampling sibling"),
-            Promise.reject(normalizeCaptureFailure(second.failure)),
-          ]).catch((cause: unknown) => cause);
+        : normalizeCaptureFailure(
+            await settleSamplingReads([
+              Promise.reject(file.failure),
+              Promise.resolve("completed sampling sibling"),
+              Promise.reject(second.failure),
+            ]).catch((cause: unknown) => cause),
+          );
     const root = await createTestTempDirectory("rea-capture-stop-failure-");
     const path = join(root, "selected");
     await writeFile(path, "inert selected executable bytes", { mode: 0o755 });
@@ -144,7 +146,7 @@ it.each([false, true])(
       expect(second.handle.fd).not.toBe(-1);
       expect(query).not.toHaveBeenCalled();
       expect(removed).toEqual([]);
-      if (!(control.inspection instanceof SamplingReadBatchFailure))
+      if (!(control.inspection instanceof ProcessCaptureSamplingFailure))
         throw new Error("Expected actual settled sampling batch");
       expect(control.inspection.inspectionFailures[0]?.inspectionFailure).toBe(
         file.failure,
@@ -152,7 +154,7 @@ it.each([false, true])(
       expect(control.inspection.inspectionFailures[1]?.inspectionFailure).toBe(
         second.failure,
       );
-      expect(control.inspection.outcomes[1]).toEqual({
+      expect(control.inspection.samplingFailure.outcomes[1]).toEqual({
         status: "fulfilled",
         value: "completed sampling sibling",
       });

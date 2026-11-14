@@ -87,7 +87,7 @@ it("does not request native-addon members from erased TypeScript names", async (
     value.graph.nodes.filter((node) => node.kind === "native-export")[0]
       ?.observations[0]?.properties.requested_members,
   ).toEqual(["load"]);
-}, 30_000);
+});
 
 it.each(["node", "NODE", "Node"])(
   "keeps path spelling while classifying .%s native requests",
@@ -141,5 +141,4 @@ it.each(["node", "NODE", "Node"])(
       }),
     );
   },
-  30_000,
 );

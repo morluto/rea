@@ -104,6 +104,26 @@ it("rejects duplicate frame identities even when protocol stacks are empty", asy
   ).rejects.toMatchObject({ _tag: "AnalysisProtocolError" });
 });
 
+it("marks a TC response partial without losing its observed DNS answer", async () => {
+  const layers = dnsResponseLayers("api.example", "203.0.113.5");
+  const bytes = Buffer.from(layers.dns_raw[0] as string, "hex");
+  bytes.writeUInt16BE(0x8380, 2);
+  layers.dns_raw[0] = bytes.toString("hex");
+  const result = await parseTsharkJsonOutput(capture([layers]));
+  expect(result.dnsQueries).toEqual([
+    {
+      query: "api.example",
+      query_labels_hex: ["617069", "6578616d706c65"],
+      response_addresses: ["203.0.113.5"],
+      response_address_count: 1,
+    },
+  ]);
+  expect(result.partial).toBe(true);
+  expect(result.dnsLimitations).toContain(
+    "DNS message declares truncation (TC); captured records are incomplete",
+  );
+});
+
 it("binds interleaved DNS answers to each response packet", async () => {
   const result = await parseTsharkJsonOutput(
     capture([

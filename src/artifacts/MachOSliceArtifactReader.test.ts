@@ -1,5 +1,6 @@
 import { EventEmitter, once } from "node:events";
 import { PassThrough } from "node:stream";
+import { buffer } from "node:stream/consumers";
 import { truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -14,6 +15,7 @@ import { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import type { NativeCommandRunner } from "../native/CommandRunner.js";
 import { NativeCommandFailure } from "../native/CommandRunner.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import type { ArtifactEntry } from "./ArtifactReader.js";
 
@@ -157,56 +159,60 @@ describe("Mach-O command cleanup lifecycle", () => {
     const reader = new MachOSliceArtifactReader(binary, {}, runner);
     const iteration = reader.entries();
     const firstEntry = iteration[Symbol.asyncIterator]().next();
-    await started;
-    const closing = reader.close();
-    await Promise.resolve();
-    expect(cleanupRetries).toBe(0);
-    finishCommand(
-      err(
-        new NativeCommandFailure(
-          "lipo",
-          "timeout",
-          null,
-          undefined,
-          {
-            stdout: "partial lipo output",
-            stderr: "partial lipo diagnostic",
-            stdoutBytes: 19,
-            stderrBytes: 23,
-            exitCode: null,
-            signal: null,
-            truncated: false,
-          },
-          "capture process group remains unverified",
-          ["capture-group:9999"],
-        ),
+    const commandResult = err(
+      new NativeCommandFailure(
+        "lipo",
+        "timeout",
+        null,
+        undefined,
+        {
+          stdout: "partial lipo output",
+          stderr: "partial lipo diagnostic",
+          stdoutBytes: 19,
+          stderrBytes: 23,
+          exitCode: null,
+          signal: null,
+          truncated: false,
+        },
+        "capture process group remains unverified",
+        ["capture-group:9999"],
       ),
     );
-
-    await expect(firstEntry).rejects.toMatchObject({
-      reason: "unavailable",
-      cause: expect.objectContaining({
-        cleanupFailure: "capture process group remains unverified",
-      }),
-      cleanup: {
-        reason: "capture process group remains unverified",
-        resources: ["capture-group:9999"],
-      },
-    });
-    await expect(closing).rejects.toMatchObject({
-      cleanup: {
-        reason:
-          "run:first, process-group:1234: first process group remains live; run:second, process-group:5678: second process group remains live",
-        resources: [
-          "run:first",
-          "process-group:1234",
-          "run:second",
-          "process-group:5678",
-        ],
-      },
-    });
-    await reader.close();
-    expect(cleanupRetries).toBe(2);
+    try {
+      await awaitAcknowledgement(started, firstEntry, "lipo capture start");
+      const closing = reader.close();
+      await Promise.resolve();
+      expect(cleanupRetries).toBe(0);
+      finishCommand(commandResult);
+      await expect(firstEntry).rejects.toMatchObject({
+        reason: "unavailable",
+        cause: expect.objectContaining({
+          cleanupFailure: "capture process group remains unverified",
+        }),
+        cleanup: {
+          reason: "capture process group remains unverified",
+          resources: ["capture-group:9999"],
+        },
+      });
+      await expect(closing).rejects.toMatchObject({
+        cleanup: {
+          reason:
+            "run:first, process-group:1234: first process group remains live; run:second, process-group:5678: second process group remains live",
+          resources: [
+            "run:first",
+            "process-group:1234",
+            "run:second",
+            "process-group:5678",
+          ],
+        },
+      });
+      await reader.close();
+      expect(cleanupRetries).toBe(2);
+    } finally {
+      finishCommand(commandResult);
+      await firstEntry.catch(() => undefined);
+      await reader.close().catch(() => undefined);
+    }
   });
 });
 
@@ -633,6 +639,7 @@ describe("Mach-O slice stream ownership", () => {
     const release = createDeferred<void>();
     const nativeRead = source.handle.read.bind(source.handle);
     let reads: { mockRestore(): void } | undefined;
+    let consumed: Promise<Buffer> | undefined;
     try {
       const [entry] = await sliceEntries(reader);
       reads = vi.spyOn(source.handle, "read").mockImplementation((async (
@@ -643,8 +650,9 @@ describe("Mach-O slice stream ownership", () => {
         return Reflect.apply(nativeRead, source.handle, args);
       }) as typeof source.handle.read);
       const stream = await reader.open(entry!);
-      stream.read(0);
-      await reached.promise;
+      consumed = buffer(stream);
+      void consumed.catch(() => undefined);
+      await awaitAcknowledgement(reached.promise, consumed, "slice read");
       let closed = false;
       const closing = reader.close().then(() => {
         closed = true;
@@ -656,9 +664,13 @@ describe("Mach-O slice stream ownership", () => {
       expect(stream.closed).toBe(true);
     } finally {
       release.resolve();
-      await reader.close();
-      reads?.mockRestore();
-      await source.handle.close();
+      try {
+        await reader.close();
+      } finally {
+        await consumed?.catch(() => undefined);
+        reads?.mockRestore();
+        await source.handle.close();
+      }
     }
   });
 
@@ -729,7 +741,7 @@ it("joins Mach-O structural enumeration reads admitted before close", async () =
   const traversal = reader.entries()[Symbol.asyncIterator]();
   const next = traversal.next();
   try {
-    await reached.promise;
+    await awaitAcknowledgement(reached.promise, next, "slice enumeration read");
     let closed = false;
     const closing = reader.close().then(() => {
       closed = true;

@@ -1,4 +1,8 @@
-import { isProcessOwnershipInspectionCancellation } from "../../../src/process/ProcessInspectionCancellation.js";
+import {
+  isProcessOwnershipInspectionCancellation,
+  rethrowProcessOwnershipInspectionFailure,
+} from "../../../src/process/ProcessInspectionCancellation.js";
+import { primaryAnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import {
@@ -1120,7 +1124,7 @@ it.skipIf(process.platform === "win32")(
       if (outcome.state !== "result") throw outcome.cause;
       expect(outcome.value).toMatchObject({
         ok: false,
-        error: { reason: "cancelled", userCategory: "cancelled" },
+        error: { _tag: "AnalysisCancelledError" },
       });
       expect(launchSpy).not.toHaveBeenCalled();
       await expect(access(compileState.root)).rejects.toThrow();
@@ -1214,7 +1218,10 @@ it.skipIf(process.platform === "win32")(
             command: process.execPath,
           },
         ];
-        await reader.identities(processes, signal);
+        await reader.identities(processes, signal).catch((cause: unknown) => {
+          rethrowProcessOwnershipInspectionFailure(cause);
+          throw cause;
+        });
         return [];
       });
     const launchSpy = vi.spyOn(electron, "launch");
@@ -1241,10 +1248,11 @@ it.skipIf(process.platform === "win32")(
 
       expect(outcome.state).toBe("result");
       if (outcome.state !== "result") throw outcome.cause;
-      expect(outcome.value).toMatchObject({
-        ok: false,
-        error: { reason: "cancelled", userCategory: "cancelled" },
-      });
+      expect(outcome.value.ok).toBe(false);
+      if (outcome.value.ok) throw new Error("Expected baseline cancellation");
+      expect(primaryAnalysisError(outcome.value.error)._tag).toBe(
+        "AnalysisCancelledError",
+      );
       expect(launchSpy).not.toHaveBeenCalled();
       await expect(access(helper.root)).resolves.toBeUndefined();
     } finally {
@@ -1261,6 +1269,7 @@ it.skipIf(process.platform === "win32")(
 
 it.skipIf(!onDarwin)(
   "parses exact NUL-delimited token records and rejects truncated argv",
+  { tags: ["long-running"] },
   async () => {
     const root = await mkdtemp(
       join(tmpdir(), "rea-process-token-parser-test-"),
@@ -1389,11 +1398,11 @@ it.skipIf(!onDarwin)(
       await rm(root, { recursive: true, force: true });
     }
   },
-  150_000,
 );
 
 it.skipIf(!onDarwin)(
   "retries a growing process table after ENOMEM and preserves other sysctl errors",
+  { tags: ["long-running"] },
   async () => {
     const root = await mkdtemp(
       join(tmpdir(), "rea-process-snapshot-retry-test-"),
@@ -1436,7 +1445,6 @@ it.skipIf(!onDarwin)(
       await rm(root, { recursive: true, force: true });
     }
   },
-  150_000,
 );
 
 it.skipIf(!onDarwin)(
@@ -1504,6 +1512,7 @@ it.skipIf(!onDarwin)(
 
 it.skipIf(!onDarwin)(
   "keeps a long title overwrite unknown when it hides the child's token",
+  { tags: ["long-running"] },
   async () => {
     const host = createSystemProcessOwnershipHost("darwin");
     const children: ChildProcess[] = [];
@@ -1572,7 +1581,6 @@ it.skipIf(!onDarwin)(
       }
     }
   },
-  150_000,
 );
 
 it.skipIf(!onDarwin)(

@@ -118,7 +118,7 @@ const earliest = (groups: readonly ToolGroup[]): ToolGroup =>
 /** Merge groups around `shape`; literal siblings of its templated positions become observed values. */
 const mergeGroups = (
   groups: readonly ToolGroup[],
-  shape = earliest(groups),
+  shape: ToolGroup,
 ): ToolGroup => {
   if (groups.length === 1) return groups[0]!;
   const primary = earliest(groups);

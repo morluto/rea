@@ -7,6 +7,7 @@ import {
   nativeMachoTargetForFile,
 } from "../../../fixtures/nativeCommands.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
 import { AnalysisOutputError } from "../../../../src/domain/analysisErrorCore.js";
 import { resolvedAnalysisError } from "../../../../src/domain/analysisErrorBase.js";
 import { err, ok } from "../../../../src/domain/result.js";
@@ -131,12 +132,15 @@ it("joins admitted preflight before closing the tracer", async () => {
   ).createClient(target);
   onTestFinished(async () => {
     resume();
-    await observing;
-    read.mockRestore();
-    await client.close();
+    try {
+      await observing;
+    } finally {
+      read.mockRestore();
+      await client.close();
+    }
   });
   const observing = client.execute("observe_native_calls", parameters);
-  await entered;
+  await awaitAcknowledgement(entered, observing, "native target read");
   let closed = false;
   const closing = client.close().then((result) => {
     closed = true;

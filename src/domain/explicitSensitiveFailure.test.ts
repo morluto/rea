@@ -292,6 +292,25 @@ it("preserves a retryable capability failure through explicit-value redaction", 
   expect(JSON.stringify(projectAnalysisError(result))).not.toContain("private");
 });
 
+it.each([
+  ["file-size", false],
+  ["memory", undefined],
+] as const)(
+  "preserves %s resource refusal retryability through redaction",
+  (resource, retryable) => {
+    const source = new AnalysisResourceConstraintError(
+      "inspect_pe_resources",
+      resource,
+      "Selected artifact exceeds 64 bytes",
+      { max_file_bytes: 64 },
+      retryable === undefined ? {} : { retryable },
+    );
+    expect(redactExplicitFailure(source, ["secret"])).toMatchObject({
+      retryable,
+    });
+  },
+);
+
 it("coarsens format issue pointers without creating replacement coordinates", () => {
   const error = new AnalysisInputError(
     "inspect_web_network_capture",
