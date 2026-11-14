@@ -35,6 +35,7 @@ const timingsSchema = {
 // AppleWebKit version from its user agent.
 const BRACKETED_IPV6_PRODUCERS = [
   { name: "Playwright", version: "1.58.2", label: "Playwright 1.58.2" },
+  { name: "Playwright", version: "1.64.1", label: "Playwright 1.64.1" },
   {
     name: "WebInspector",
     version: "537.36",

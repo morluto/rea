@@ -97,6 +97,7 @@ it does not invent an empty string or body bytes.
 The observed Playwright 1.58.2 profile can report a bracketed IPv6
 `serverIPAddress`, forwarded from Chromium's `remoteIPAddress` through
 [Playwright's HAR tracer](https://github.com/microsoft/playwright/blob/v1.58.2/packages/playwright-core/src/server/har/harTracer.ts).
+Playwright 1.64.1 reports the same bracketed form with Chromium and WebKit.
 Chromium DevTools exports (declared as `WebInspector` `537.36`, the frozen
 AppleWebKit version in Chromium's user agent) report the same bracketed form:
 [its HAR writer](https://github.com/ChromeDevTools/devtools-frontend/blob/63739e8ec45ca01b9e4be9b8b05946acdadd8f1f/front_end/models/har/Log.ts)
