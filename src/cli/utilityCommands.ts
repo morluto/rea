@@ -229,8 +229,7 @@ const registerNativeCommands = (
       path: localPathStringSchema.describe("App or Mach-O path"),
     }),
     options: z.object({
-      relativePath: z
-        .string()
+      relativePath: localPathStringSchema
         .optional()
         .describe(
           "Plist path relative to the app root, or an absolute path (default: the bundle's Info.plist)",

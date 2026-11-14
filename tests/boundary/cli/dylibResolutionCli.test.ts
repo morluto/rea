@@ -66,6 +66,33 @@ const expectRootInputError = async (
   });
 };
 
+/** The CLI option shares the contract's root format, so it refuses an escaping root itself and names the option. */
+const expectEscapingRootRefusedByCli = async (
+  cli: TestCli,
+  app: string,
+): Promise<void> => {
+  const escaping = await cli.run({
+    arguments: [
+      "trace-dylib-resolution",
+      app,
+      "--root",
+      "../outside",
+      "--json",
+    ],
+    environment: ENVIRONMENT,
+  });
+  expect(escaping.exitCode).toBe(1);
+  expect(escaping.json).toMatchObject({
+    code: "VALIDATION_ERROR",
+    fieldErrors: [
+      expect.objectContaining({
+        path: expect.stringMatching(/^root/u),
+        message: expect.stringContaining("Use a normalized path"),
+      }),
+    ],
+  });
+};
+
 const fixtureApp = async (): Promise<string> => {
   const app = join(
     await createTestTempDirectory("rea-dylib-cli-"),
@@ -534,8 +561,8 @@ describe("trace-dylib-resolution CLI", () => {
       const outside = await createTestTempDirectory("rea-dylib-outside-");
       await writeFiles(outside, { Tool: machoImage({}) });
       await symlink(outside, join(app, "Contents/Linked"), "dir");
+      await expectEscapingRootRefusedByCli(cli, app);
       for (const [root, reason, message] of [
-        ["../outside", "invalid_format", "Use a normalized path"],
         ["Contents/Info.plist", "invalid_value", "is not a Mach-O image"],
         [
           "Contents/Linked/Tool",
