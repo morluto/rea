@@ -24,6 +24,15 @@ export const JADX_JAVA_RUNTIME_REMEDIATION =
 export const JADX_JVM_OPTIONS_REMEDIATION =
   "Set REA_JADX_HEAP_MIB to a positive integer (heap size in MiB) and REA_JADX_ACTIVE_PROCESSOR_COUNT to a positive integer within the JVM's signed 32-bit range.";
 
+/**
+ * Remediation for a JADX worker heap shortage, whether the bridge reported it or
+ * the launcher stopped before answering. REA passes REA_JADX_HEAP_MIB as an
+ * explicit command-line -Xmx, which outranks JAVA_TOOL_OPTIONS and
+ * JDK_JAVA_OPTIONS, while _JAVA_OPTIONS outranks the command line.
+ */
+export const JADX_HEAP_REMEDIATION =
+  "Increase REA_JADX_HEAP_MIB (MiB) in the environment that starts REA, within the host or container memory budget. REA passes it as an explicit -Xmx, so JAVA_TOOL_OPTIONS and JDK_JAVA_OPTIONS set the heap only while it is unset, and _JAVA_OPTIONS overrides it. An observed heap is this run's limit, not the heap the APK requires.";
+
 /** Remediation when the host cannot run the Android JADX subprocess. */
 export const JADX_UNSUPPORTED_HOST_REMEDIATION =
   "Use Linux, macOS, or Windows x64 with its bundled native controls for Android JADX analysis.";
