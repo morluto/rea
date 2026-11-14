@@ -5,7 +5,6 @@ import { investigationStatisticsSchema } from "../domain/investigationLifecycle.
 import { utcDateTimeSchema } from "../domain/offsetDateTime.js";
 import { analysisCleanupRetrySchema } from "../domain/analysisErrorRecovery.js";
 
-import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import { analysisProfileSchema } from "../domain/analysisProfile.js";
 import {
   evidenceSchema,
@@ -467,6 +466,12 @@ const toolAvailabilityFacts = {
   }),
 };
 
+/**
+ * Advertised operations the current provider offers for part of an
+ * unavailable operation's question. They do not replace that operation.
+ */
+const toolAvailabilityAlternatives = z.array(z.string().min(1)).min(1);
+
 export const toolUnavailabilityReason = z.enum([
   "client_capability_missing",
   "target_required",
@@ -488,6 +493,7 @@ export const toolAvailability = z.discriminatedUnion("available", [
     available: z.literal(false),
     reason: toolUnavailabilityReason,
     remediation: z.string().nullable(),
+    alternatives: toolAvailabilityAlternatives.optional(),
   }),
 ]);
 export type ToolAvailability = z.output<typeof toolAvailability>;
@@ -535,6 +541,7 @@ const toolAvailabilityGroupOf = <Facts extends z.ZodRawShape>(facts: Facts) =>
       available: z.literal(false),
       reason: toolUnavailabilityReason,
       remediation: z.string().nullable(),
+      alternatives: toolAvailabilityAlternatives.optional(),
     }),
   ]);
 
@@ -775,5 +782,3 @@ export const objcClassDiscoveryOutput = evidenceResultOf(
     identity_coverage: objcClassDiscoveryCoverageSchema,
   }),
 );
-
-export const functionDossierOutput = evidenceResultOf(functionDossierSchema);

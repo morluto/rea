@@ -1,3 +1,4 @@
+import { unescapeJsonPointerToken } from "../jsonPointer.js";
 import type { JsonValue } from "../jsonValue.js";
 import { isTimestamp } from "./appTask.js";
 import {
@@ -362,7 +363,7 @@ export interface ListPlace {
 /** A list's place, read from its pointer, as `/root/children/[name=gnm:Sheets]/children` sits in `gnm:Sheets`. */
 export const holdsTagOnly = (list: string): ListPlace => {
   const owner = selectorOf(
-    (list.split("/").at(-2) ?? "").replaceAll("~1", "/").replaceAll("~0", "~"),
+    unescapeJsonPointerToken(list.split("/").at(-2) ?? ""),
   )?.find(({ prefix, key }) => prefix === "" && key === "name")?.value;
   return {
     root: /(?:^|\/)root\/children$/u.test(list),

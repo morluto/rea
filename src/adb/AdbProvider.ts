@@ -65,6 +65,8 @@ import {
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
   AnalysisUnsupportedTargetError,
+  cancelledBy,
+  OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -86,6 +88,7 @@ import { RegularFileOperationCancelled } from "../filesystem/RegularFile.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { createEvidence } from "../domain/evidence.js";
 import type { Evidence } from "../domain/evidence.js";
+import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import {
   PrivateRuntimeRoot,
   type PrivateRuntimeRootOptions,
@@ -844,7 +847,9 @@ const reservePackageDestinations = async (
  * positional arguments, escaped when adb forwards them to the device shell. The provider never
  * starts an emulator or installs platform tools. Explicit UI operations use
  * the caller-started UI Automator runner; package/file mutations remain
- * separately selected operations.
+ * separately selected operations. A caller-requested file
+ * push requires an explicit overwrite choice and verifies its transfer digest
+ * when the device provides `sha256sum`.
  */
 export class AdbProvider {
   private readonly environment: Readonly<Record<string, string | undefined>>;
@@ -862,7 +867,7 @@ export class AdbProvider {
     new Set<PendingOutputDirectoryCleanup>();
   /** All accepted device work, including discovery and finalization, has one owner. */
   #tail: Promise<void> = Promise.resolve();
-  readonly #activeOperations = new Set<Promise<void>>();
+  readonly #availabilityProbes = new Set<Promise<void>>();
   #closing = false;
   #closePromise: Promise<void> | undefined;
   #outputCleanupPromise: Promise<void> | undefined;
@@ -894,7 +899,7 @@ export class AdbProvider {
       throw new AnalysisCancelledError("inspect_adb_client", {
         cause: signal?.reason,
       });
-    const release = this.#beginOperation();
+    const release = this.#beginAvailabilityProbe();
     try {
       const selection = await this.selection(signal);
       await inspectAdbClient(selection, signal);
@@ -916,15 +921,15 @@ export class AdbProvider {
     }
   }
 
-  /** Keep admitted probes and requests owned until their final cleanup settles. */
-  #beginOperation(): () => void {
+  /** Local version probes need no device turn, but shutdown must join their cleanup. */
+  #beginAvailabilityProbe(): () => void {
     let release!: () => void;
     const active = new Promise<void>((resolve) => {
       release = resolve;
     });
-    this.#activeOperations.add(active);
+    this.#availabilityProbes.add(active);
     return () => {
-      this.#activeOperations.delete(active);
+      this.#availabilityProbes.delete(active);
       release();
     };
   }
@@ -935,7 +940,7 @@ export class AdbProvider {
     if (this.#closePromise !== undefined) return this.#closePromise;
     const closing = (async () => {
       await this.#tail;
-      await Promise.all(this.#activeOperations);
+      await Promise.all(this.#availabilityProbes);
       const failures: unknown[] = [];
       const failedLeases = new Set<AnalysisCleanupLease>();
       let allFailuresHaveExactLeaseOwners = true;
@@ -1031,15 +1036,12 @@ export class AdbProvider {
     const partialObservation =
       execution === undefined
         ? undefined
-        : createEvidence(execution.subject ?? undefined, execution.provider, {
+        : createAnalysisExecutionEvidence(
             operation,
             parameters,
-            result: execution.result,
-            rawResult: execution.rawResult,
-            limitations: execution.limitations,
-            locations: execution.locations,
-            confidence: "observed",
-          });
+            execution,
+            "observed",
+          );
     return new ProviderCleanupError(
       ADB_PROVIDER_IDENTITY.id,
       resources,
@@ -1312,7 +1314,7 @@ export class AdbProvider {
     options?: ExecutionOptions,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     if (this.#closing)
-      return err(new AnalysisCancelledError(request.operation));
+      return err(cancelledBy(request.operation, OwnerCancellation.ownerClosed));
     const predecessor = this.#tail;
     let release!: () => void;
     const completed = new Promise<void>((resolve) => {

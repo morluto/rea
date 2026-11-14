@@ -23,6 +23,7 @@ import {
   createTestBinarySession,
 } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 const CLOSE_RETRY = { operation: "close_binary" } as const;
 
@@ -512,7 +513,7 @@ it("does not start a replacement cancelled while pending cleanup completes", asy
   allowed = true;
   const controller = new AbortController();
   const opening = session.open(second, { signal: controller.signal });
-  await entered.promise;
+  await awaitAcknowledgement(entered.promise, opening, "session cleanup retry");
   controller.abort();
   release.resolve();
   expect(await opening).toMatchObject({

@@ -1183,11 +1183,8 @@ export const createSystemProcessOwnershipHost = (
     readonly darwinModuleCachePath?: string;
     /** Deadline for Darwin ownership-helper compilation. */
     readonly compileTimeoutMs?: number;
-    /** Subprocess output execution seam for testing process listing failures. */
-    readonly execFileOutput?: typeof execFileOutput;
   } = {},
 ): ProcessOwnershipHost => {
-  const runExecFileOutput = options.execFileOutput ?? execFileOutput;
   const darwinModuleCachePath =
     options.darwinModuleCachePath ??
     hostEnvironment.REA_DARWIN_MODULE_CACHE_PATH;
@@ -1226,7 +1223,7 @@ export const createSystemProcessOwnershipHost = (
     if (platform === "win32") return [];
     let stdout: string;
     try {
-      ({ stdout } = await runExecFileOutput(
+      ({ stdout } = await execFileOutput(
         "ps",
         ["-axo", "pid=,ppid=,pgid=,uid=,stat=,command="],
         {
@@ -1307,6 +1304,9 @@ export const createSystemProcessOwnershipHost = (
               state: "readable" as const,
               identity: `linux-starttime:${facts.startTime}`,
               ...(facts.name === "" ? {} : { name: facts.name }),
+              ...(facts.kernelThread === true
+                ? { kernelThread: true as const }
+                : {}),
               ...(effectiveUid === undefined ? {} : { effectiveUid }),
               ...(environmentRestriction === undefined
                 ? {}
@@ -1634,7 +1634,7 @@ export const createSystemProcessOwnershipHost = (
           environment.REA_PROCESS_RUN_ID = observation.runId;
         return environment;
       }
-      const { stdout } = await runExecFileOutput(
+      const { stdout } = await execFileOutput(
         "ps",
         ["eww", "-p", String(pid)],
         {
@@ -1741,17 +1741,22 @@ export const observeProcessStartIdentity = async (
       };
 };
 
-/** Confirm whether the process that held an authenticated bridge has exited. */
+/**
+ * Confirm whether the process that held an authenticated bridge has exited.
+ * `exiting` is a positively observed native exit in progress (Linux
+ * PF_EXITING before state Z); like `present`, it does not confirm exit.
+ */
 export const observeProcessStartIdentityExit = async (
   pid: number,
   expectedIdentity: string,
   host: ProcessOwnershipHost = systemProcessOwnershipHost,
-): Promise<"exited" | "present" | "unverified"> => {
+): Promise<"exited" | "exiting" | "present" | "unverified"> => {
   try {
     const observed = await observeProcessStartIdentity(pid, host);
     if (observed === undefined) return "exited";
     if (observed.state !== "readable") return "unverified";
-    return observed.identity === expectedIdentity ? "present" : "exited";
+    if (observed.identity !== expectedIdentity) return "exited";
+    return processIdentityIsExiting(observed) ? "exiting" : "present";
   } catch (cause: unknown) {
     rethrowInspectionFailure(cause);
     return "unverified";

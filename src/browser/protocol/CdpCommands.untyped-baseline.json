@@ -1,0 +1,127 @@
+{
+  "src/browser/CdpCaptureStorage.ts": {
+    "Storage.getUsageAndQuota": 1,
+    "IndexedDB.requestDatabaseNames": 1,
+    "CacheStorage.requestCacheNames": 1,
+    "DOMStorage.getDOMStorageItems": 1
+  },
+  "src/browser/CdpCaptureStorageFingerprints.ts": {
+    "Network.getCookies": 1,
+    "IndexedDB.requestDatabase": 1,
+    "IndexedDB.requestData": 1,
+    "CacheStorage.requestEntries": 1,
+    "CacheStorage.requestCachedResponse": 1
+  },
+  "src/browser/CdpElectronInspection.ts": {
+    "Page.enable": 1,
+    "Runtime.enable": 1,
+    "Debugger.enable": 1,
+    "DOMSnapshot.captureSnapshot": 1
+  },
+  "src/browser/CdpElectronWorkers.ts": {
+    "Target.getTargets": 1
+  },
+  "src/browser/CdpEndpoint.ts": {
+    "Browser.getVersion": 1,
+    "Target.getTargets": 1
+  },
+  "src/browser/CdpObservationSession.ts": {
+    "Page.enable": 1,
+    "Network.enable": 1,
+    "Performance.enable": 1,
+    "Performance.getMetrics": 1,
+    "Page.setLifecycleEventsEnabled": 1
+  },
+  "src/browser/CdpPageCapture.ts": {
+    "Network.getResponseBody": 2,
+    "Page.enable": 1,
+    "DOMSnapshot.captureSnapshot": 1,
+    "DOM.describeNode": 1,
+    "Runtime.enable": 1,
+    "Debugger.enable": 1,
+    "Network.enable": 1,
+    "Accessibility.getFullAXTree": 1
+  },
+  "src/browser/CdpPageCaptureWorkers.ts": {
+    "Target.getTargets": 1
+  },
+  "src/browser/CdpScreenshot.ts": {
+    "Page.enable": 1,
+    "Page.getLayoutMetrics": 1,
+    "Page.captureScreenshot": 1
+  },
+  "src/browser/CdpScriptSourceCapture.ts": {
+    "Debugger.getScriptSource": 1
+  },
+  "src/browser/CdpTargetSession.ts": {
+    "Target.attachToTarget": 1,
+    "Target.detachFromTarget": 1
+  },
+  "src/browser/CdpWebMcpDiscovery.ts": {
+    "Page.enable": 1,
+    "WebMCP.enable": 1
+  },
+  "src/browser/PlaywrightScenarioBrowser.ts": {
+    "Target.attachToTarget": 2,
+    "Target.getTargetInfo": 2,
+    "Target.detachFromTarget": 1,
+    "Emulation.setEmulatedMedia": 1,
+    "Emulation.setDeviceMetricsOverride": 2,
+    "Emulation.setLocaleOverride": 3,
+    "Emulation.setTimezoneOverride": 3,
+    "Emulation.setFocusEmulationEnabled": 3,
+    "Emulation.clearDeviceMetricsOverride": 1
+  },
+  "src/browser/PlaywrightScenarioServiceWorkers.ts": {
+    "Page.enable": 1,
+    "Page.addScriptToEvaluateOnNewDocument": 1,
+    "Target.setAutoAttach": 1,
+    "Runtime.runIfWaitingForDebugger": 1,
+    "Runtime.evaluate": 1,
+    "Page.stopLoading": 1,
+    "Page.removeScriptToEvaluateOnNewDocument": 1,
+    "Target.detachFromTarget": 1
+  },
+  "src/browser/PlaywrightScenarioStorage.ts": {
+    "Target.attachToTarget": 1,
+    "Target.getTargetInfo": 2,
+    "Page.enable": 1,
+    "Runtime.enable": 1,
+    "Debugger.enable": 1,
+    "Debugger.setBreakpointByUrl": 1,
+    "Page.addScriptToEvaluateOnNewDocument": 1,
+    "Target.setAutoAttach": 1,
+    "Storage.getStorageKey": 1,
+    "Debugger.evaluateOnCallFrame": 1,
+    "Debugger.resume": 1,
+    "Target.sendMessageToTarget": 1,
+    "Runtime.runIfWaitingForDebugger": 1,
+    "Page.stopLoading": 1
+  },
+  "src/browser/execution/CdpEventListeners.ts": {
+    "DOM.getDocument": 1,
+    "DOM.describeNode": 1,
+    "DOM.resolveNode": 1,
+    "DOMDebugger.getEventListeners": 1
+  },
+  "src/browser/execution/CdpExecutionCapture.ts": {
+    "Profiler.startPreciseCoverage": 1,
+    "Profiler.takePreciseCoverage": 1,
+    "Profiler.stopPreciseCoverage": 1
+  },
+  "src/browser/execution/CdpListenerSelector.ts": {
+    "DOM.querySelector": 2
+  },
+  "src/browser/execution/CdpRuntimeSession.ts": {
+    "Profiler.stopPreciseCoverage": 1,
+    "Runtime.releaseObjectGroup": 1,
+    "Target.detachFromTarget": 1
+  },
+  "src/browser/execution/CdpRuntimeSources.ts": {
+    "Debugger.getScriptSource": 1
+  },
+  "src/inspector/V8InspectorProvider.ts": {
+    "Runtime.enable": 1,
+    "Debugger.enable": 1
+  }
+}

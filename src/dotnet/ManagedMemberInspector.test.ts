@@ -18,11 +18,11 @@ import { edges } from "./ManagedMemberRows.js";
 import { parseUserStrings } from "./ManagedUserStrings.js";
 import {
   readCompressed,
-  signature,
   isParsedTokenInstruction,
   type DecodedMethod,
   type ManagedMethod,
 } from "./ManagedMemberInspectorCore.js";
+import { signature } from "../../tests/fixtures/managedSignature.js";
 import { decodeInstructions } from "./ManagedMemberInstructionDecoder.js";
 import { ManagedReaderFailure } from "./ManagedReaderFailure.js";
 import { managedTypeReferences } from "./ManagedTypeReferences.js";
@@ -2637,6 +2637,8 @@ it("decodes generic instantiation member signatures as complete coverage", () =>
 });
 
 it.each([
+  ["null TypeDef row", Buffer.from([0x06, 0x12, 0x00])],
+  ["out-of-range TypeRef row", Buffer.from([0x06, 0x12, 0x25])],
   ["reserved TypeDefOrRef tag", Buffer.from([0x06, 0x12, 0x07])],
   ["missing TypeSpec row", Buffer.from([0x06, 0x12, 0x06])],
 ])(

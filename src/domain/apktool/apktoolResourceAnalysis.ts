@@ -28,7 +28,7 @@ const ANDROID_NON_LOCALE_QUALIFIERS = new Set([
 const MAX_ANDROID_LOCALE_SUFFIX = 2 + 3 + (1 + 4) + (1 + 3) + (1 + 8);
 
 /** Locale language tags admitted by Android resource table selection. */
-export const androidLocaleQualifierSchema = z
+const androidLocaleQualifierSchema = z
   .string()
   .min(2)
   .max(MAX_ANDROID_LOCALE_SUFFIX)

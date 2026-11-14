@@ -8,7 +8,7 @@ import type {
   JavaScriptArtifactFile,
   JavaScriptArtifactFileSet,
 } from "../../../src/domain/javascript/javascriptArtifactFiles.js";
-import { analyzeParsedJavaScriptStaticSource } from "../../../src/domain/javascript/javascriptStaticAnalysis.js";
+import { analyzeParsedJavaScriptStaticSource } from "../../fixtures/javascriptStaticAnalysis.js";
 import { parseJavaScriptSource } from "../../../src/domain/javascript/javascriptSourceParser.js";
 import { ok, err } from "../../../src/domain/result.js";
 import { discoverJavaScriptPreloadPaths } from "../../../src/application/javascript/JavaScriptPreloadDiscovery.js";

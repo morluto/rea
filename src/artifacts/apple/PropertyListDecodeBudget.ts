@@ -74,13 +74,10 @@ const XML_REFERENCE_BYTES = 64;
 const estimateXmlPlistExpansion = (
   bytes: Buffer,
   maxBytes: number,
-  xmlText?: string,
-  numberProjection = false,
-  budget = "the property list decode budget",
-  fail: (
-    kind: BinaryPlistExpansionFailure,
-    message: string,
-  ) => Error = propertyListDecodeBudgetFailure,
+  xmlText: string | undefined,
+  numberProjection: boolean,
+  budget: string,
+  fail: (kind: BinaryPlistExpansionFailure, message: string) => Error,
 ): number => {
   const xml = xmlText ?? decodeXmlPlistText(bytes);
   // The decoded text and the DOM's copies of its character data.
@@ -106,6 +103,21 @@ const estimateXmlPlistExpansion = (
     if (estimate > maxBytes) return maxBytes + 1;
   }
   return estimate;
+};
+
+/**
+ * Index of the "]" closing an empty DOCTYPE internal subset opened at
+ * `open`, allowing only XML whitespace between the brackets. An empty subset
+ * declares nothing, so nothing in it can expand.
+ */
+const emptyInternalSubsetEnd = (
+  xml: string,
+  open: number,
+): number | undefined => {
+  let close = open + 1;
+  while (close < xml.length && " \t\r\n".includes(xml[close] ?? "x"))
+    close += 1;
+  return xml[close] === "]" ? close : undefined;
 };
 
 /**
@@ -186,7 +198,11 @@ function* xmlPreflightTokens(xml: string): Generator<{
       } else if (character === '"' || character === "'") quote = character;
       else if (character === ">") break;
       else if (character === "=") attributes += 1;
-      else if (doctype && character === "[") internalSubset = true;
+      else if (doctype && character === "[") {
+        const emptySubsetEnd = emptyInternalSubsetEnd(xml, end);
+        if (emptySubsetEnd === undefined) internalSubset = true;
+        else end = emptySubsetEnd;
+      }
     }
     if (end === xml.length) return;
     cursor = end + 1;

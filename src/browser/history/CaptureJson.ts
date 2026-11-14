@@ -1,3 +1,4 @@
+import { escapeJsonPointerToken } from "../../domain/jsonPointer.js";
 import { captureBudgets } from "./CaptureBudgets.js";
 import { visit } from "jsonc-parser";
 import { LosslessNumber } from "lossless-json";
@@ -58,7 +59,7 @@ export const parseCaptureJson = (
       return `${parent.pointer}/${parent.items.length}`;
     return parent.pendingKey === undefined
       ? parent.pointer
-      : `${parent.pointer}/${parent.pendingKey.replaceAll("~", "~0").replaceAll("/", "~1")}`;
+      : `${parent.pointer}/${escapeJsonPointerToken(parent.pendingKey)}`;
   };
   // The document root is container level 1. Admit a container only while
   // its own level stays within the budget; values inside an admitted

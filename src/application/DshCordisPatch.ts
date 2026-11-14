@@ -1,18 +1,11 @@
-import { inspectAnalysisSettingSeeds } from "../config/analysisSettings.js";
+import { validateRegistrationEnvironment } from "./RegistrationEnvironmentValidation.js";
 import { isMap, isSeq, type Node, type YAMLMap } from "yaml";
-import {
-  parseEnvironment,
-  parseEnvironmentValues,
-  type Environment,
-} from "../config/environment.js";
+import type { Environment } from "../config/environment.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { ClientConfigurationDocument } from "./ClientConfigurationDocument.js";
 import { CordisExpression, DshCordisYaml } from "./DshCordisYaml.js";
-import {
-  mergeEnvironmentOverrides,
-  snapshotEnvironment,
-} from "../process/snapshotEnvironment.js";
+import { mergeEnvironmentOverrides } from "../process/snapshotEnvironment.js";
 
 export const DSH_ENTRY_ID = "rea-mcp";
 export const DSH_CLIENT_PACKAGE = "@deepseek-ai/dsh-mcp-client";
@@ -255,35 +248,15 @@ export class DshCordisDocument {
         );
       literals[key] = value;
     }
-    const runtimeEnvironment = snapshotEnvironment(literals, platform);
-    const unresolved = new Set(
-      Object.keys(
-        snapshotEnvironment(
-          Object.fromEntries([...unresolvedSettings].map((key) => [key, ""])),
-          platform,
-        ),
-      ),
+    const validated = validateRegistrationEnvironment(
+      literals,
+      unresolvedSettings,
+      validation,
+      platform,
     );
-    const validated =
-      validation === "fragment"
-        ? parseEnvironmentValues(runtimeEnvironment, unresolved)
-        : parseEnvironment(runtimeEnvironment, unresolved);
-    if (!validated.ok) return validated;
-    const seedIssues = inspectAnalysisSettingSeeds(
-      runtimeEnvironment,
-      unresolved,
-    );
-    if (seedIssues.length > 0)
-      return err(
-        new ConfigurationError("Invalid REA environment configuration", {
-          settings: seedIssues,
-        }),
-      );
-    return ok({
-      values: literals,
-      configuration: validated.value,
-      unresolvedSettings: unresolved,
-    });
+    return validated.ok
+      ? ok({ values: literals, ...validated.value })
+      : validated;
   }
 
   desired(

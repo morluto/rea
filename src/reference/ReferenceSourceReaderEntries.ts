@@ -252,8 +252,7 @@ const scheduleObservedDirectories = (
   state: TraversalState,
   directories: PendingDirectory[],
 ): void => {
-  directories.reverse();
-  state.pending.push(...directories);
+  for (const directory of directories.reverse()) state.pending.push(directory);
 };
 
 const directoryReadFailure = (cause: unknown): FilesystemFailureDetail => {

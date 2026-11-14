@@ -329,7 +329,7 @@ const dependencySourcePath = (path: string): boolean =>
  * preloads, and Electron windows are examined. Offer application JavaScript
  * first and dependency JavaScript last; metadata files keep their position.
  */
-export const javaScriptAnalysisOrder = (
+const javaScriptAnalysisOrder = (
   files: readonly JavaScriptArtifactFile[],
 ): JavaScriptArtifactFile[] => {
   const application: JavaScriptArtifactFile[] = [];

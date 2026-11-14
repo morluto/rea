@@ -3,25 +3,12 @@ import { z } from "zod";
 
 import {
   addOffsetDateTimeMilliseconds,
-  inspectRecordedDateTime,
   offsetDateTimeSchema,
   readRecordedDateTime,
   readRecordedStart,
   offsetDateTimeInstantFromEpochMilliseconds,
   utcDateTimeSchema,
 } from "./offsetDateTime.js";
-
-it.each([
-  ["2026-02-30T09:00:00Z", "invalid"],
-  ["1900-02-29 09:00:00", "invalid"],
-  ["2026-10-20T24:00:00Z", "invalid"],
-  ["2026-10-20T09:00:00+24:00", "invalid"],
-  ["2026-10-20 09:00:00.0000000001", "valid"],
-  ["Tue, 20 Oct 2026 09:00:00 GMT", "unrecognized"],
-  ["2026-10-20", "unrecognized"],
-])("classifies recorded spelling %s as %s", (text, kind) => {
-  expect(inspectRecordedDateTime(text).kind).toBe(kind);
-});
 
 it.each([
   ["000001", 0, 10, "000001"],
@@ -280,6 +267,7 @@ it.each([
   "Tue, 20 Oct 2026 09:00:00 GMT",
   "Tue, 20 Oct 2026 14:30:00 GMT+0530",
   "October 20, 2026 09:00:00",
+  "2026-10-20",
 ])("preserves native start interpretation for %s", (value) => {
   const milliseconds = Date.parse(value);
   expect(Number.isFinite(milliseconds)).toBe(true);
@@ -293,6 +281,7 @@ it.each([
   "2026-02-30T09:00:00Z",
   "1900-02-29 09:00:00",
   "2026-10-20T24:00:00Z",
+  "2026-10-20T09:00:00+24:00",
   "not a recorded start",
 ])("keeps invalid start %s unknown without native rollover", (value) => {
   expect(readRecordedStart(value)).toBeUndefined();

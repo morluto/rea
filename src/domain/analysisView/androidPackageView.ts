@@ -32,13 +32,6 @@ import {
   analysisTextPageItemSchema,
 } from "./analysisViewText.js";
 
-export {
-  androidViewRequestSchema,
-  androidManifestViewRequestSchema,
-  androidComponentsViewRequestSchema,
-  androidComponentSummaryViewRequestSchema,
-} from "../android/androidPackageQuery.js";
-
 const packageSchema = androidResultSchemas.inspect_android_package;
 const readReport = createAnalysisViewResultReader(packageSchema);
 const PAGE_BYTES = 1024 * 1024;

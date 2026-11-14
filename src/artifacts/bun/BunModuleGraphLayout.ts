@@ -17,10 +17,10 @@ import { abortIfNeeded } from "../ArtifactHash.js";
 import { ArtifactReaderFailure } from "../ArtifactReader.js";
 
 /** Exact trailer written by Bun's standalone module graph serializer. */
-export const BUN_TRAILER = Buffer.from("\n---- Bun! ----\n");
-export const BUN_TRAILER_BYTES = BUN_TRAILER.length;
-export const BUN_OFFSETS_BYTES = 32;
-export const BUN_GRAPH_SUFFIX_BYTES = BUN_OFFSETS_BYTES + BUN_TRAILER_BYTES;
+const BUN_TRAILER = Buffer.from("\n---- Bun! ----\n");
+const BUN_TRAILER_BYTES = BUN_TRAILER.length;
+const BUN_OFFSETS_BYTES = 32;
+const BUN_GRAPH_SUFFIX_BYTES = BUN_OFFSETS_BYTES + BUN_TRAILER_BYTES;
 /** Current compilers prefix a section with this little-endian payload length. */
 export const BUN_LENGTH_PREFIX_BYTES = 8;
 /** Bun 1.3.3 through 1.3.8 module records. */
@@ -513,15 +513,14 @@ const machOClaims = async (
     if (!read.ok) break;
     const { command: cmd, offset, size } = read.value;
     if (cmd === LC_SEGMENT_64 || cmd === LC_SEGMENT)
-      claims.push(
-        ...segmentClaims(
-          commands.subarray(offset, offset + size),
-          littleEndian,
-          cmd === LC_SEGMENT_64,
-          imageOffset,
-          Math.min(fileSize, imageOffset + imageLimit),
-        ),
-      );
+      for (const claim of segmentClaims(
+        commands.subarray(offset, offset + size),
+        littleEndian,
+        cmd === LC_SEGMENT_64,
+        imageOffset,
+        Math.min(fileSize, imageOffset + imageLimit),
+      ))
+        claims.push(claim);
   }
   return claims;
 };
@@ -587,7 +586,8 @@ const fatClaims = async (
   for (const slice of parsed.slices) {
     abortIfNeeded(signal);
     if (parsed.rangeIssues[slice.index] !== null) continue;
-    claims.push(...(await machOClaims(source, slice.offset, slice.size)));
+    for (const claim of await machOClaims(source, slice.offset, slice.size))
+      claims.push(claim);
   }
   return claims;
 };

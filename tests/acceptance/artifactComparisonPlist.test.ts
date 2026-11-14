@@ -25,7 +25,6 @@ cliTest(
     const cliResult = await driver.run({
       arguments: ["inspect-artifact", leftPath, "--json"],
       environment: process.env,
-      timeoutMs: 15_000,
     });
     expect(cliResult.exitCode, cliResult.stderr).toBe(0);
     const cliEvidence = parseEvidence(JSON.parse(cliResult.stdout));

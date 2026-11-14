@@ -1,3 +1,4 @@
+import { escapeJsonPointerToken } from "../jsonPointer.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
@@ -44,8 +45,6 @@ const record = (value: unknown): Record<string, unknown> | undefined =>
   typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
-const pointerPart = (value: string): string =>
-  value.replaceAll("~", "~0").replaceAll("/", "~1");
 const identity = (prefix: string, facts: unknown) =>
   `${prefix}_${digestCanonicalValue(facts)}`;
 
@@ -240,7 +239,7 @@ function* additionalOperations(
     if (examined++ % 128 === 0) yield;
     const admitted = inventory.reserve(512 + method.length * 24);
     if (!admitted.ok) return admitted;
-    const source = `${pointer}/${pointerPart(method)}`;
+    const source = `${pointer}/${escapeJsonPointerToken(method)}`;
     const reserved = reservedAdditionalMethods.has(method);
     const added =
       !httpToken.test(method) || reserved
@@ -308,7 +307,7 @@ function* pathItem(
       if (!admitted.ok) return admitted;
       const diagnosed = inventory.diagnostic(
         "unknown-path-item-field",
-        `${pointer}/${pointerPart(key)}`,
+        `${pointer}/${escapeJsonPointerToken(key)}`,
         "This field is not an operation or a recognized Path Item field in the selected OpenAPI minor version.",
       );
       if (!diagnosed.ok) return diagnosed;
@@ -391,7 +390,7 @@ function* collectPaths(
     // Reserve expanded pointer/path strings before escaping or building a row.
     const admitted = inventory.reserve(512 + path.length * 16);
     if (!admitted.ok) return admitted;
-    const pointer = `/paths/${pointerPart(path)}`;
+    const pointer = `/paths/${escapeJsonPointerToken(path)}`;
     const read = path.startsWith("/")
       ? yield* pathItem(sourcePaths[path], { inventory, path, pointer, modern })
       : inventory.diagnostic(

@@ -95,7 +95,7 @@ import {
 } from "./protocol.js";
 
 /** Aggregate in-memory retention budget for this provider's launcher output. */
-export const HOPPER_PROCESS_DIAGNOSTIC_BYTES = 8 * 1024 * 1024;
+const HOPPER_PROCESS_DIAGNOSTIC_BYTES = 8 * 1024 * 1024;
 
 const SESSION_ROOT = process.platform === "darwin" ? "/tmp" : tmpdir();
 
@@ -1055,8 +1055,10 @@ export class HopperClient {
     ) {
       this.#resources.shutdownConfirmed = true;
       return new HopperStartError({
-        userMessage:
-          "macOS denied permission to send Apple Events to Hopper. Allow the application that starts REA under System Settings > Privacy & Security > Automation, then retry opening the target.",
+        launchRejection: {
+          boundary: "apple_events_authorization",
+          reason: "not_authorized",
+        },
         launcherFailure,
       });
     }

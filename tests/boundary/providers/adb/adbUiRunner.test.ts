@@ -995,11 +995,9 @@ it("cancels only the owned remote request after host command settlement", async 
     { ...scope, selector: {}, timeout_ms: 30000 },
     { signal: controller.signal },
   );
-  // The fake adb is a real child process; its first write can land after the
-  // default poll budget when the runner is saturated.
+  // Observe the real child acquisition before interrupting its request.
   await expect
     .poll(() => readFile(workspace.path("active"), "utf8"), {
-      timeout: 15_000,
       interval: 50,
     })
     .toMatch(/^[a-f0-9-]{36}$/u);
@@ -1117,11 +1115,9 @@ it("retains failed remote cleanup for a later close retry", async () => {
     { ...scope, selector: {} },
     { signal: controller.signal },
   );
-  // The fake adb is a real child process; its first write can land after the
-  // default poll budget when the runner is saturated.
+  // Observe the real child acquisition before interrupting its request.
   await expect
     .poll(() => readFile(workspace.path("active"), "utf8"), {
-      timeout: 15_000,
       interval: 50,
     })
     .toMatch(/^[a-f0-9-]{36}$/u);
@@ -1393,9 +1389,7 @@ it("keeps UI discovery behind an earlier non-UI mutation even when that mutation
   onTestFinished(() => discovery.mockRestore());
   const stop = service.execute("stop_adb_app", scope);
   await expect
-    .poll(() => readFile(workspace.path("stop-entered"), "utf8"), {
-      timeout: 15_000,
-    })
+    .poll(() => readFile(workspace.path("stop-entered"), "utf8"))
     .toBe("held");
   const ui = service.execute("inspect_adb_ui", scope);
   try {
@@ -1427,9 +1421,7 @@ it("holds admission and shutdown through cancellation during final UI acknowledg
     signal: controller.signal,
   });
   await expect
-    .poll(() => readFile(workspace.path("forget-entered"), "utf8"), {
-      timeout: 15_000,
-    })
+    .poll(() => readFile(workspace.path("forget-entered"), "utf8"))
     .toMatch(/^[a-f0-9-]{36}$/u);
   const stop = service.execute("stop_adb_app", scope);
   let closed = false;
@@ -1447,7 +1439,6 @@ it("holds admission and shutdown through cancellation during final UI acknowledg
             .trim()
             .split("\n")
             .filter((line) => JSON.parse(line).operation === "forget").length,
-        { timeout: 15_000 },
       )
       .toBe(2);
     expect(closed).toBe(false);
@@ -1554,9 +1545,7 @@ it("cancels a non-UI admission wait without cancelling the active UI caller", as
   );
   try {
     await expect
-      .poll(() => readFile(workspace.path("active"), "utf8"), {
-        timeout: 15_000,
-      })
+      .poll(() => readFile(workspace.path("active"), "utf8"))
       .toMatch(/^[a-f0-9-]{36}$/u);
     const controller = new AbortController();
     const reason = new Error("cancel only the non-UI caller");

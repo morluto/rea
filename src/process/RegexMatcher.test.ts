@@ -1,18 +1,6 @@
 import { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { parseConfig } from "../config/parseConfig.js";
 import { runtimeAnalysisConfig } from "../config/runtimeAnalysisSettings.js";
-import {
-  matchRegexValues,
-  execArgvFromCommandLine,
-  readLaunchExecArgv,
-  readLaunchNodeOptions,
-  regexMatchingDeadlineError,
-  regexMatchingLimitation,
-  regexWorkerHeapError,
-  resolveLaunchRegexWorkerHeap,
-  resolveRegexWorkerHeap,
-  type RegexWorkerHeapLimit,
-} from "./RegexMatcher.js";
 import { expect, it } from "vitest";
 
 import {
@@ -25,6 +13,17 @@ import {
   DEFAULT_REGEX_WORKER_HEAP_REQUEST,
 } from "../config/regexWorkerHeapRequest.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import {
+  matchRegexValues,
+  execArgvFromCommandLine,
+  readLaunchExecArgv,
+  readLaunchNodeOptions,
+  regexMatchingLimitation,
+  regexWorkerHeapError,
+  resolveLaunchRegexWorkerHeap,
+  resolveRegexWorkerHeap,
+  type RegexWorkerHeapLimit,
+} from "./RegexMatcher.js";
 
 const effective = (mib: number, overridden: boolean): RegexWorkerHeapLimit => ({
   kind: "effective",

@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { access } from "node:fs/promises";
-import { createServer, type Server } from "node:net";
+import { createServer } from "node:net";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -129,9 +129,6 @@ class LateSilentLauncher implements BridgeLauncher {
  * auth/preamble request added before it would hit the -32601 branch.
  */
 class BadHealthLauncher implements BridgeLauncher {
-  #server: Server | undefined;
-  #process: ChildProcess | undefined;
-
   async launch(session: BridgeSession) {
     const server = createServer((socket) => {
       let buffer = "";
@@ -173,7 +170,6 @@ class BadHealthLauncher implements BridgeLauncher {
         resolve();
       });
     });
-    this.#server = server;
     const child = spawn(
       process.execPath,
       ["-e", "setInterval(() => {}, 1000)"],
@@ -181,7 +177,6 @@ class BadHealthLauncher implements BridgeLauncher {
         stdio: "ignore",
       },
     );
-    this.#process = child;
     return ok({
       process: child,
       ownsProcessLifetime: true as const,
@@ -200,7 +195,7 @@ const clients: HopperClient[] = [];
 
 afterEach(async () => {
   await Promise.all(clients.splice(0).map((client) => client.close()));
-}, 45_000);
+});
 
 describe("HopperClient startup deadline", () => {
   it("applies one deadline to launcher, socket, and health startup phases", async () => {

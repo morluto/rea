@@ -151,6 +151,55 @@ it.each([
   },
 );
 
+it.each([4096, 4097])(
+  "reports a %i-byte DLL name at the fixed read boundary",
+  async (length) => {
+    const name = "n".repeat(length);
+    const report = await parse(
+      peImportImage({
+        sectionBytes: 8192,
+        dlls: [{ name, functions: [] }],
+      }),
+    );
+    if (length === 4096) {
+      expect(report.imports[0]?.name).toBe(name);
+      expect(report.coverage.status).toBe("complete");
+    } else {
+      expect(report.imports[0]?.name).toBeNull();
+      expect(report.coverage.status).toBe("partial");
+      expect(report.issues).toContainEqual(
+        expect.objectContaining({
+          code: "name_unreadable",
+          message: expect.stringContaining("4096-byte read allowance"),
+        }),
+      );
+    }
+  },
+);
+
+it("retains later imports when a function name exceeds the read allowance", async () => {
+  const report = await parse(
+    peImportImage({
+      sectionBytes: 8192,
+      dlls: [
+        {
+          name: "example.dll",
+          functions: [{ name: "n".repeat(4097) }, { name: "kept" }],
+        },
+      ],
+    }),
+  );
+  expect(report.imports[0]?.functions).toMatchObject([{ name: "kept" }]);
+  expect(report.coverage.status).toBe("partial");
+  expect(report.issues).toContainEqual(
+    expect.objectContaining({
+      code: "name_unreadable",
+      message: expect.stringContaining("4096-byte read allowance"),
+    }),
+  );
+  expect(report.imphash.md5).toBeNull();
+});
+
 it("does not consume a DLL name past the uint32 RVA end", async () => {
   const report = await parse(peImportNameAtRva(0xfffffff8));
   expect(report.imports[0]?.name).toBeNull();

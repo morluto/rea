@@ -44,7 +44,7 @@ import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 
 /** Bound retained result rows before constructing the Evidence representation. */
-export const MAX_BYTE_ENTROPY_BLOCKS = 32_768;
+const MAX_BYTE_ENTROPY_BLOCKS = 32_768;
 
 /** Generated files such as Linux /proc entries report size 0 but still hold bytes. */
 const ZERO_SIZE_LIMITATION =

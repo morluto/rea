@@ -963,6 +963,16 @@ it.each(["section-names", "symbols"] as const)(
     );
   },
 );
+it("preserves non-UTF-8 CUBIN symbol bytes in the kernel name", async () => {
+  const bytes = cubinFixture();
+  const symbolName = bytes.indexOf(Buffer.from("\0add_one\0"));
+  expect(symbolName).toBeGreaterThanOrEqual(0);
+  bytes[symbolName + 1] = 0xff;
+  const result = await inspect(bytes);
+  if (!result.ok) throw result.error;
+  expect(result.value.kernels[0]?.name).toBe("ÿdd_one");
+});
+
 it.each([9, 10])(
   "preserves parameters and register coverage for text count %d",
   async (textRegisters) => {

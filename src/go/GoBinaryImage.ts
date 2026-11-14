@@ -122,14 +122,18 @@ export const readGoBinaryImage = (
       );
   };
   verifyMapping(32);
-  const reader = new BinaryReader(bytes, byte_order === "little");
+  const reader = new BinaryReader(
+    bytes,
+    byte_order === "little",
+    container.format,
+  );
   const ptrSize = bytes[header + 14];
   const flags = bytes[header + 15] ?? 0;
   if ((flags & ~3) !== 0)
     throw new BinaryFormatFailure(
       "unsupported",
       "Go build-info flags contain an unsupported format bit",
-      true,
+      { undecodedContent: true },
     );
   if ((flags & 2) === 0 && (flags & 1) !== (byte_order === "big" ? 1 : 0))
     throw new BinaryFormatFailure(
@@ -360,6 +364,11 @@ const readInlineExtent = (
       );
     length |= BigInt(byte & 127) << BigInt(index * 7);
     if ((byte & 128) === 0) {
+      if (length > BigInt(remaining - index - 1))
+        throw new BinaryFormatFailure(
+          "malformed",
+          "Go build-info string range is truncated",
+        );
       if (length > BigInt(maximumBytes))
         throw new BinaryResourceFailure(
           "build-info",
@@ -367,11 +376,6 @@ const readInlineExtent = (
           `Go build-info string length exceeds max_build_info_bytes=${String(maximumBytes)}`,
         );
       const size = Number(length);
-      if (size > remaining - index - 1)
-        throw new BinaryFormatFailure(
-          "malformed",
-          "Go build-info string range is truncated",
-        );
       const start = offset + index + 1;
       return {
         location: { offset: start, bytes: size },
@@ -401,11 +405,10 @@ const readPointerString = (
   const header = mappedFileOffset(mappings, address, width * 2, zeroFills);
   const valueAddress = reader.word(header, pointerBits);
   const length = reader.word(header + width, pointerBits);
-  if (length > BigInt(maximumBytes))
-    throw new BinaryResourceFailure(
-      "build-info",
-      maximumBytes,
-      `Go build-info pointer string length exceeds max_build_info_bytes=${String(maximumBytes)}`,
+  if (length > BigInt(reader.bytes.length))
+    throw new BinaryFormatFailure(
+      "malformed",
+      "Go build-info pointer string length exceeds the file extent",
     );
   const size = Number(length);
   // Zero-length Go strings may carry a zero data pointer.
@@ -413,6 +416,12 @@ const readPointerString = (
     size === 0 && valueAddress === 0n
       ? header
       : mappedFileOffset(mappings, valueAddress, size, zeroFills);
+  if (length > BigInt(maximumBytes))
+    throw new BinaryResourceFailure(
+      "build-info",
+      maximumBytes,
+      `Go build-info pointer string length exceeds max_build_info_bytes=${String(maximumBytes)}`,
+    );
   return {
     bytes: reader.range(offset, size, "Go build-info pointer string"),
     location: { offset, bytes: size },

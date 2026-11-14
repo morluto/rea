@@ -34,6 +34,7 @@ import {
 import { jsonObjectSchema } from "../domain/jsonValue.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import {
   OwnedCommandFailure,
   runOwnedCommand,
@@ -54,6 +55,26 @@ const RESPONSE_BYTES = 256 * 1024;
 const CAPTURE_BYTES = 1024 * 1024;
 const CLEANUP_MS = 5000;
 const PROTOCOL = 2;
+const REQUEST_ALLOWANCE = fixedAllowanceOptions(
+  "UI private request protocol",
+  "bytes",
+  {
+    limit: REQUEST_BYTES,
+    unit: "bytes",
+    narrowing:
+      "Select a smaller complete UI request without truncating text required by the intended action.",
+  },
+);
+const RESPONSE_ALLOWANCE = fixedAllowanceOptions(
+  "UI Binder response protocol",
+  "live",
+  {
+    limit: RESPONSE_BYTES,
+    unit: "bytes",
+    narrowing:
+      "Reduce the node limit or narrow the selector; inspect current UI state before deciding whether to replay an action.",
+  },
+);
 /** Stated for every UI execution, whether it completed or was recovered. */
 const UI_LIMITATIONS = [
   "UI Automator observes accessibility-exposed nodes; off-screen, custom-drawn and inaccessible content can be missing.",
@@ -300,6 +321,7 @@ export class AdbUiRunner {
         "transport",
         "UI request exceeds the 16 KiB retained-request protocol budget",
         { max_request_bytes: REQUEST_BYTES },
+        REQUEST_ALLOWANCE,
       );
     if (socketPath === undefined && "input" in payload)
       throw new AnalysisProtocolError(
@@ -438,7 +460,15 @@ export class AdbUiRunner {
           "transport",
           "ADB UI output exceeded its complete-capture budget",
           { max_output_bytes: CAPTURE_BYTES },
-          options,
+          {
+            ...options,
+            ...fixedAllowanceOptions("ADB UI complete-output capture", "live", {
+              limit: CAPTURE_BYTES,
+              unit: "bytes",
+              narrowing:
+                "Narrow the UI observation and inspect current state before deciding whether to replay an action.",
+            }),
+          },
         );
       throw new AnalysisProtocolError("ADB UI transport failed", options);
     }
@@ -479,7 +509,7 @@ export class AdbUiRunner {
             "transport",
             parsed.error.reason,
             { max_response_bytes: RESPONSE_BYTES },
-            options,
+            { ...options, ...RESPONSE_ALLOWANCE },
           ),
         );
       return err(new AnalysisProtocolError(parsed.error.reason, options));
@@ -843,6 +873,7 @@ export class AdbUiRunner {
           "transport",
           "UI request exceeds the 16 KiB protocol budget",
           { max_request_bytes: REQUEST_BYTES },
+          REQUEST_ALLOWANCE,
         );
       const preparing = owned;
       let reply = await this.#send(
@@ -956,6 +987,7 @@ export class AdbUiRunner {
                 "transport",
                 status.error.reason,
                 { max_response_bytes: RESPONSE_BYTES },
+                RESPONSE_ALLOWANCE,
               );
             if (status.instance_id !== owned.runner.instance_id || !status.ok)
               throw new AnalysisProtocolError(
@@ -1351,6 +1383,10 @@ export class AdbUiRunner {
         "capacity",
         failure.reason,
         null,
+        {
+          remediationAction:
+            "Review the runner's capacity reason. Let occupied admission settle, or narrow output that exceeds its fixed transport budget. Inspect current UI state before deciding whether to replay an action.",
+        },
       );
     if (
       failure.kind === "unsupported" ||

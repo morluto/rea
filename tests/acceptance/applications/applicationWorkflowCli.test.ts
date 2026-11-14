@@ -534,7 +534,7 @@ it("preserves complete line-comment source-map URLs through CLI and MCP", async 
     );
   }
   expect((await analyzeThroughStdioMcp(root)).graph).toEqual(graph);
-}, 20_000);
+});
 
 it("resolves source-map URL paths once without changing their declarations", async () => {
   const root = await createTestTempDirectory("rea-source-map-encoding-cli-");
@@ -654,7 +654,7 @@ it("resolves source-map URL paths once without changing their declarations", asy
     ),
   ).toBe(false);
   expect((await analyzeThroughStdioMcp(root)).graph).toEqual(graph);
-}, 20_000);
+});
 
 describe("JavaScript application path CLI", () => {
   it("retains the admitted relative CLI selection and canonical artifact identity", async () => {
@@ -683,7 +683,7 @@ describe("JavaScript application path CLI", () => {
       },
       subject: { local_path: absolute.value.subject?.local_path },
     });
-  }, 20_000);
+  });
 
   it("returns the self-import graph consistently through CLI and stdio MCP", async () => {
     const root = await createTestTempDirectory(
@@ -706,7 +706,7 @@ describe("JavaScript application path CLI", () => {
     expect(mcpResult.semantic_graph).toEqual(
       result.normalized_result.semantic_graph,
     );
-  }, 20_000);
+  });
 
   it("preserves canonical Electron API aliases through CLI and stdio MCP", async () => {
     const root = await createTestTempDirectory("rea-electron-api-alias-");
@@ -758,7 +758,7 @@ describe("JavaScript application path CLI", () => {
     expect(mcpResult.summary).toEqual(cliResult.summary);
     expect(mcpResult.graph).toEqual(cliResult.graph);
     expect(mcpResult.semantic_graph).toEqual(cliResult.semantic_graph);
-  }, 20_000);
+  });
 });
 
 describe("application workflow CLI parity", () => {
@@ -857,7 +857,7 @@ describe("application workflow CLI parity", () => {
         },
       },
     });
-  }, 20_000);
+  });
 
   it("traces the same authenticated semantic graph through the CLI", async () => {
     const root = await createTestTempDirectory("rea-semantic-cli-");
@@ -897,7 +897,7 @@ describe("application workflow CLI parity", () => {
         source_graph_id: result.semantic_graph.graph_id,
       },
     });
-  }, 20_000);
+  });
 });
 
 it("traces all endpoint carriers and their response consumers through CLI and MCP", async () => {
@@ -1018,7 +1018,7 @@ it("traces all endpoint carriers and their response consumers through CLI and MC
     coverage: { status: "partial" },
   });
   expect(await readFile(sourcePath, "utf8")).toBe(source);
-}, 20_000);
+});
 
 describe("rest parameter semantic trace CLI", () => {
   it("traces each ordinary rest argument to its parameter through public application Evidence", async () => {
@@ -1068,7 +1068,7 @@ describe("rest parameter semantic trace CLI", () => {
         },
       });
     }
-  }, 20_000);
+  });
 });
 
 describe("empty property key application CLI", () => {
@@ -1100,7 +1100,6 @@ describe("empty property key application CLI", () => {
         },
       });
     },
-    20_000,
   );
 });
 
@@ -1251,7 +1250,7 @@ describe("Webpack factory CommonJS export keys", () => {
       expectBundleExports(evidence, "5", []);
       expectBundleExports(evidence, "6", ["__proto__"]);
     }
-  }, 20_000);
+  });
 });
 
 describe("application workflow CLI input", () => {
@@ -1411,7 +1410,7 @@ describe("application workflow CLI copy boundaries", () => {
         ),
       },
     });
-  }, 20_000);
+  });
 });
 
 describe("application workflow CLI and MCP capture lifetimes", () => {
@@ -1521,7 +1520,7 @@ describe("application workflow CLI and MCP capture lifetimes", () => {
       await runCli(["compare-javascript-export-shapes", inputPath, "--json"]),
     ).toMatchObject(expected);
     expect(await compareThroughStdioMcp(input)).toMatchObject(expected);
-  }, 20_000);
+  });
 });
 
 describe("application workflow CLI export Evidence", () => {
@@ -1568,7 +1567,7 @@ describe("application workflow CLI export Evidence", () => {
       ),
     ).toMatchObject(expected);
     expect(await compareThroughStdioMcp(input)).toMatchObject(expected);
-  }, 20_000);
+  });
 
   it("preserves uncertainty after a helper can mutate an awaited return object", async () => {
     const root = await createTestTempDirectory("rea-awaited-export-shape-cli-");
@@ -1604,7 +1603,7 @@ describe("application workflow CLI export Evidence", () => {
         ]),
       },
     });
-  }, 20_000);
+  });
 
   it("compares exact export shapes from file-backed Evidence", async () => {
     const root = await createTestTempDirectory("rea-export-shape-cli-");
@@ -1663,7 +1662,7 @@ describe("application workflow CLI export Evidence", () => {
         ]),
       },
     });
-  }, 20_000);
+  });
 });
 
 describe("application workflow CLI export property presence", () => {
@@ -1759,7 +1758,7 @@ describe("application workflow CLI export property presence", () => {
         ]),
       },
     });
-  }, 20_000);
+  });
 });
 
 describe("application workflow CLI validation", () => {
@@ -1794,7 +1793,7 @@ describe("application workflow CLI validation", () => {
         ]),
       },
     });
-  }, 20_000);
+  });
 });
 
 const compareThroughStdioMcp = async (

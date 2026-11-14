@@ -166,6 +166,14 @@ export const documentationFactIssues = async (root, catalog) => {
   for (const client of catalog.setup_clients)
     requireText(issues, installationPath, installation, client.display_name);
 
+  // Setup accepts every catalog client ID, so the skill's registration repair
+  // list must name each one for an agent choosing a `--client` value.
+  const repairPath =
+    ".agents/skills/reverse-engineer-anything/references/connection-and-recovery.md";
+  const repair = await readFile(join(root, repairPath), "utf8");
+  for (const client of catalog.setup_clients)
+    requireText(issues, repairPath, repair, `\`${client.id}\``);
+
   const agents = await readFile(join(root, "AGENTS.md"), "utf8");
   requireText(issues, "AGENTS.md", agents, "docs/public/product-catalog.json");
 

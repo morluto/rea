@@ -46,7 +46,6 @@ describe.skipIf(process.platform === "win32")(
             );
           }
       },
-      30_000,
     );
 
     cliTest(
@@ -84,7 +83,6 @@ describe.skipIf(process.platform === "win32")(
           expect(evidence.subject?.digest.sha256, path).toBe(selectedDigest);
         }
       },
-      30_000,
     );
   },
 );

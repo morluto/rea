@@ -1,7 +1,6 @@
 import { positiveDecimalIntegerSchema } from "./positiveDecimalInteger.js";
 
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
-import { currentAnalysisSettingOverride } from "../domain/analysisOperationSnapshot.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -13,12 +12,6 @@ import {
 } from "../domain/analysisResourceLimits.js";
 
 export const BRIDGE_MAX_REQUEST_BYTES_SETTING = "REA_BRIDGE_MAX_REQUEST_BYTES";
-
-export {
-  DEFAULT_BRIDGE_MAX_REQUEST_BYTES,
-  MAXIMUM_BRIDGE_MAX_REQUEST_BYTES,
-  MINIMUM_BRIDGE_MAX_REQUEST_BYTES,
-};
 
 /**
  * Smallest ceiling that still admits the largest bounded bridge request.
@@ -93,24 +86,6 @@ export const parseBridgeMaxRequestBytes = (
           ],
         }),
       );
-};
-
-/**
- * Resolve the ceiling from a composition root's selected environment. An
- * invalid setting is refused, not ignored. Callers that already resolved it
- * at startup pass that value through instead of reading the environment again.
- */
-export const resolveBridgeMaxRequestBytes = (
-  environment: Readonly<Record<string, string | undefined>>,
-): BridgeMaxRequestBytes => {
-  const override = currentAnalysisSettingOverride("bridge.max_request_bytes");
-  if (override !== undefined)
-    return { maximumBytes: override, source: "runtime" };
-  const parsed = parseBridgeMaxRequestBytes(
-    environment[BRIDGE_MAX_REQUEST_BYTES_SETTING],
-  );
-  if (!parsed.ok) throw parsed.error;
-  return parsed.value;
 };
 
 /** How to read and change the effective bridge request ceiling. */

@@ -26,7 +26,7 @@ describe("bounded paths through dynamic selectors and class origins", () => {
       value: 42,
     });
     expect(performance.now() - start).toBeLessThan(2000);
-  }, 30000);
+  });
 
   it("retains effects through class getter aliases while bounding loop paths", () => {
     expect(
@@ -65,7 +65,7 @@ describe("bounded paths through dynamic selectors and class origins", () => {
       "unknown",
     );
     expect(performance.now() - start).toBeLessThan(2000);
-  }, 30000);
+  });
 
   it("retains shared-child mutations reached by dynamic-key alias loops", () => {
     expect(
@@ -132,7 +132,7 @@ describe("bounded member path propagation", () => {
       ),
     ).toEqual({ status: "literal", value: 3 });
     expect(performance.now() - start).toBeLessThan(2000);
-  }, 30000);
+  });
 
   // A dynamic self alias escapes its repeated prefix, which conservatively
   // covers every child; a static key without that slot keeps the literal.
@@ -151,7 +151,6 @@ describe("bounded member path propagation", () => {
       expect(performance.now() - start).toBeLessThan(2000);
       expect(value?.status).toBe(status);
     },
-    30000,
   );
 
   it.each([
@@ -203,7 +202,6 @@ describe("bounded member path propagation", () => {
       expect(performance.now() - start).toBeLessThan(2000);
       expect(value?.status).toBe(status);
     },
-    30000,
   );
 
   it.each([
@@ -289,7 +287,7 @@ describe("reference lifetimes across calls and shallow copies", () => {
       `const alias0 = [1]; ${declarations} const ${pattern} = alias9; return alias0[0];`,
     );
     expect(performance.now() - start).toBeLessThan(2000);
-  }, 30000);
+  });
 
   it("bounds conditional shallow-copy traversal while retaining shared children", () => {
     const declarations = Array.from(
@@ -304,7 +302,7 @@ describe("reference lifetimes across calls and shallow copies", () => {
       )?.status,
     ).toBe("unknown");
     expect(performance.now() - start).toBeLessThan(2000);
-  }, 30000);
+  });
 
   it.each([
     ["child: {}", "child: {}", "literal"],

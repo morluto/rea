@@ -11,10 +11,9 @@ import {
   selectedCdpCommandTimeoutMs,
 } from "../../domain/browserDeadline.js";
 import { CdpTargetSessionOwner } from "../CdpTargetSessionOwner.js";
-import {
-  classifyCdpFrameUrl,
-  observeMainFrameUrl,
-} from "../CdpCaptureDocuments.js";
+import { classifyCdpFrameUrl } from "../CdpCaptureDocuments.js";
+import type { CdpFrameTree } from "../protocol/CdpFrameTree.js";
+import type { CdpSendParams, CdpSendResult } from "../protocol/CdpCommands.js";
 import {
   WEB_RUNTIME_LIMITS,
   type webRuntimeTargetSchema,
@@ -31,7 +30,6 @@ import {
   openCdpTargetSession,
   type CdpTargetSession,
 } from "../CdpTargetSession.js";
-import { runtimeFrameTreeSchema } from "./CdpRuntimeProtocol.js";
 
 type Scope = {
   readonly cdp_endpoint: string;
@@ -108,6 +106,7 @@ export class CdpRuntimeSession {
           "Page.getFrameTree",
         ),
         allowedOrigins,
+        operation,
       );
       const url = runtimeFrameUrl(frame, operation);
       return new CdpRuntimeSession(
@@ -146,10 +145,10 @@ export class CdpRuntimeSession {
   }
 
   /** Bound each command separately from the caller-selected observation duration. */
-  async command(
-    method: string,
-    params: Readonly<Record<string, unknown>> = {},
-  ): Promise<unknown> {
+  async command<M extends string>(
+    method: M,
+    params?: CdpSendParams<M>,
+  ): Promise<CdpSendResult<M>> {
     const signals = [this.options.signal, this.#completion?.signal].filter(
       (signal): signal is AbortSignal => signal !== undefined,
     );
@@ -205,6 +204,7 @@ export class CdpRuntimeSession {
     const frame = runtimeMainFrame(
       await this.command("Page.getFrameTree"),
       this.allowedOrigins,
+      this.operation,
     );
     if (
       frame.id !== this.target.frame_id ||
@@ -325,14 +325,24 @@ export class CdpRuntimeSession {
   }
 }
 
-/** Runtime validates document IDs; CDP owns URL and scope interpretation. */
+/** Runtime requires document IDs; the frame tree owner parsed them and the URL. */
 const runtimeMainFrame = (
-  result: unknown,
+  tree: CdpFrameTree,
   allowedOrigins: ReadonlySet<string>,
-) => ({
-  ...runtimeFrameTreeSchema.parse(result).frameTree.frame,
-  ...classifyCdpFrameUrl(observeMainFrameUrl(result), allowedOrigins),
-});
+  operation: BrowserObservationOperation,
+) => {
+  const { frameId, loaderId, loaderIssue } = tree.root.facts;
+  if (frameId === null || loaderIssue !== null)
+    throw new BrowserObservationError(operation, "protocol_error", {
+      detail:
+        "CDP Page.getFrameTree did not identify the selected main frame's document.",
+    });
+  return {
+    id: frameId,
+    loaderId,
+    ...classifyCdpFrameUrl(tree.root.url, allowedOrigins),
+  };
+};
 
 const runtimeFrameUrl = (
   frame: ReturnType<typeof runtimeMainFrame>,

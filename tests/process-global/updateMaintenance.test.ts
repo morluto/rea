@@ -1,7 +1,4 @@
-import {
-  UpdateCommandRunner,
-  UPDATE_COMMAND_OUTPUT_BYTES,
-} from "../../src/application/UpdateCommandRunner.js";
+import { UpdateCommandRunner } from "../../src/application/UpdateCommandRunner.js";
 import { mkdir, readFile, rm, writeFile, access } from "node:fs/promises";
 import { delimiter, dirname, join, relative, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -19,6 +16,7 @@ import { systemUpdateHost } from "../../src/application/UpdateRuntime.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
+const UPDATE_COMMAND_OUTPUT_BYTES = 4 * 1024 * 1024;
 const entryPoint = resolve("scripts/rea.mjs");
 let home: string;
 
@@ -575,19 +573,15 @@ describe("updated executable maintenance planning", () => {
 });
 
 describe("update subprocess boundaries", () => {
-  cliTest(
-    "exposes update in CLI help",
-    async ({ cli }) => {
-      const help = await cli.run({
-        arguments: ["--help"],
-        environment: process.env,
-      });
-      expect(help.exitCode, help.stderr).toBe(0);
-      expect(help.stdout).toMatch(/^\s{2}update\s/mu);
-      expect(help.stdout).not.toMatch(/^\s{2}upgrade\s/mu);
-    },
-    60_000,
-  );
+  cliTest("exposes update in CLI help", async ({ cli }) => {
+    const help = await cli.run({
+      arguments: ["--help"],
+      environment: process.env,
+    });
+    expect(help.exitCode, help.stderr).toBe(0);
+    expect(help.stdout).toMatch(/^\s{2}update\s/mu);
+    expect(help.stdout).not.toMatch(/^\s{2}upgrade\s/mu);
+  });
 
   cliTest("rejects the removed upgrade CLI command", async ({ cli }) => {
     const removed = await cli.run({

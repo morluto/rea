@@ -180,6 +180,7 @@ export class PyInstallerArtifactReader implements ArtifactReader {
       this.#members.clear();
       return value;
     });
+    this.#signal(signal);
     options?.onCoverage?.(loaded.traversal);
     for (const member of loaded.members) {
       abortIfNeeded(active);
@@ -187,6 +188,7 @@ export class PyInstallerArtifactReader implements ArtifactReader {
       this.#members.set(sealed.entry.adapterKey, sealed);
       yield sealed.entry;
     }
+    this.#signal(signal);
   }
 
   async open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {

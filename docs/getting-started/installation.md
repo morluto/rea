@@ -51,7 +51,10 @@ installation or connection and requires its own explicit approval. It can also
 save verified paths for an existing Ghidra installation.
 
 After selection, review the plan's exact paths and changes and approve before
-REA writes files or installs Hopper. You can cancel at any prompt.
+REA writes files or installs Hopper. The approval view also shows known manual
+completion steps for selected clients, such as Grok Bot's hosted connector.
+Approving the local changes does not complete those manual steps. You can cancel
+at any prompt.
 
 Before applying changes, REA checks your current configuration. The plan lists:
 
@@ -975,8 +978,16 @@ reports `busy` at stage `launch`; `analysis_activity` describes bridge requests
 and can remain idle until the socket is ready. Cleanup work reports `busy` at
 stage `connection`.
 
-If macOS denies Apple Events, allow the application that starts REA under
-**System Settings → Privacy & Security → Automation**, then retry. REA releases
+If macOS denies Apple Events, REA reports
+`details.launch_rejection.boundary: "apple_events_authorization"` with
+`reason: "not_authorized"`, category `unavailable`, and `retryable: false`.
+Allow the application that starts REA under
+**System Settings → Privacy & Security → Automation** when that client can be
+authorized. A hardened-runtime application requires the
+`com.apple.security.automation.apple-events` entitlement before macOS will
+prompt; without it, ask the client developer to add the entitlement or start
+REA from a client macOS can authorize, such as Terminal. Retrying from the same
+unauthorized client will not succeed until authorization changes. REA releases
 the target reservation when the native helper reports its complete authorization
 rejection after literal argument admission. Before application handoff, REA refuses
 double quotes, backslashes, or line breaks in the final launcher path or arguments,
@@ -1261,6 +1272,14 @@ repeat keeps the file and creates no new backup. The result reports exact
 `command` and `args`, each selected client's effective scope, and configured,
 unchanged, failed or not-started outcomes. A partial failure returns a nonzero
 status while retaining successful client outcomes and recovery paths.
+
+User-level registration for a client that `rea setup` also supports uses that
+client's setup definition, so the same native read rules apply. Gemini CLI
+registration fails without writing when Gemini's system, defaults or trusted
+workspace settings exclude `rea`, leave it off a nonempty allowlist, or define
+a different `rea` entry with higher precedence. On Windows, registration refuses
+to write a Claude Desktop MSIX configuration the running app could overwrite,
+or any file this process's MSIX AppData redirection would divert.
 
 `--no-global` writes only project-level settings. A selection containing Amp or
 another client without project storage fails before any writes; select those
@@ -1704,6 +1723,8 @@ export REA_GHIDRA_SEED_FILE=/absolute/path/to/seeds.tsv
 Each line is `address<TAB>kind[<TAB>name]`, where kind is `function`, `code` or `label` (a label needs a name). Addresses are `0x` hex in the default space; `#` lines are comments. A pre-script applies seeds before auto-analysis: functions from the highest address down, then code, then labels. The seed digest is part of the analysis profile, and the session fails if the applied seeds differ. Result limitations report the outcome counts; a seed fails when it overlaps an instruction Ghidra already decoded.
 
 Label seeds can name mapped uninitialized storage such as `.bss`; function and code seeds require initialized bytes.
+
+When Ghidra has no function for a requested procedure, the error's remediation names this seed recovery. A `resolve_containing_procedure` result of `not_in_procedure` carries it as a limitation. Neither establishes that the address holds code. Seeds apply only to a fresh import, so a session with `REA_GHIDRA_PROJECT_PATH` or `REA_GHIDRA_CHECKPOINT_DIR` names the setting to unset first.
 
 To skip a named Ghidra auto-analyzer (for example, when default auto-analysis
 stalls in one analyzer on a Swift/Objective-C arm64 Mach-O):

@@ -5,8 +5,7 @@ import type { CallToolResult } from "@modelcontextprotocol/server";
 import { afterAll, expect, it, onTestFinished, vi } from "vitest";
 import { z } from "zod";
 import { ANALYSIS_VIEW_TOOL_CONTRACTS } from "../../../src/contracts/analysisViewToolContracts.js";
-import { batchUnknowns } from "../../../src/domain/analysisView/batchDecompileView.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { AnalysisOutputError } from "../../../src/domain/analysisErrorCore.js";
 import {
   createEvidence,
@@ -130,28 +129,28 @@ const connect = async (
   );
   onTestFinished(() => harness.close());
   const { tools } = await harness.mcp.listTools();
-  const outputSchemas = new Map(
+  const advertisedTools = new Map(
     ADVERTISED_OUTPUTS.map((name) => {
-      const advertised = tools.find((tool) => tool.name === name)?.outputSchema;
-      if (advertised === undefined)
+      const advertised = tools.find((tool) => tool.name === name);
+      if (advertised?.outputSchema === undefined)
         throw new Error(`${name} advertises no output schema`);
-      const schema: Record<string, unknown> = advertised;
-      return [name, schema] as const;
+      return [name, advertised] as const;
     }),
   );
-  const reply = async (name: string, args: Record<string, unknown>) =>
-    z
+  const reply = async (name: string, args: Record<string, unknown>) => {
+    const toolDefinition = advertisedTools.get(name);
+    return z
       .custom<CallToolResult>()
-      .parse(await harness.mcp.callTool({ name, arguments: args }));
+      .parse(
+        await harness.mcp.callTool(
+          { name, arguments: args },
+          toolDefinition === undefined ? {} : { toolDefinition },
+        ),
+      );
+  };
   const call = async (name: string, args: Record<string, unknown>) => {
     const result = await reply(name, args);
     expect(result.isError, JSON.stringify(result)).not.toBe(true);
-    const schema = outputSchemas.get(name);
-    if (schema !== undefined)
-      expect(
-        schemaValidation.assertions.validate(schema, result.structuredContent),
-        JSON.stringify(schemaValidation.assertions.errors),
-      ).toBe(true);
     return { evidence: parseEvidence(result.structuredContent), result };
   };
   return { ...harness, calls, reply, call };
@@ -266,11 +265,10 @@ it.each(["full", "compact"] as const)(
         },
       },
     });
-    expect(summary.unknowns).toEqual(
-      batchUnknowns(
-        batchDecompileResultSchema.parse(parent.normalized_result).items,
-      ),
-    );
+    expect(summary.unknowns).toEqual([
+      expect.stringContaining("1 items have unknown procedure identity"),
+      expect.stringContaining("Evidence limitations aggregate"),
+    ]);
     const callsAfterBatch = harness.calls.count;
 
     // The same summary is reachable later through the retained parent.

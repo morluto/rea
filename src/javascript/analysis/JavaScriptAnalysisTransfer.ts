@@ -26,7 +26,6 @@ import {
 } from "./JavaScriptAnalysisWorkerSchemas.js";
 
 // Budgets bound transfer representation, independently of source length.
-export { JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES } from "../../domain/javascript/javascriptAnalysisResourceControls.js";
 const FRAME_BYTES = JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES;
 const TRANSFER_BYTES = 512 * 1024 * 1024;
 const MAX_TRANSFER_BYTES = 2 * 1024 * 1024 * 1024;
@@ -133,7 +132,7 @@ const assertTransferByteBudget = (transferBytes: number): void => {
 const encodeTransferRecord = (
   input: unknown,
   previousBytes: number,
-  transferBytes = TRANSFER_BYTES,
+  transferBytes: number,
 ) => {
   const record = recordSchema.parse(input);
   const line = `${JSON.stringify(record)}\n`;

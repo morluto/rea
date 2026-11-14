@@ -77,8 +77,8 @@ export const traceNativeUiAction = async (
     (uiExecution.error._tag === "AnalysisCancelledError" ||
       uiExecution.error.cleanupIncomplete)
   )
-    return err(uiExecution.error);
-  if (!metadataExecution.ok) return err(metadataExecution.error);
+    return uiExecution;
+  if (!metadataExecution.ok) return metadataExecution;
   const metadata = nativeDispatchMetadataResultSchema.parse(
     metadataExecution.value,
   );

@@ -16,6 +16,7 @@ import {
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { waitFor } from "../../support/testWait.js";
 
 it.each(["connect", "acquireBrowserSocket"] as const)(
   "refuses %s after clean shutdown without inventing retained cleanup",
@@ -109,7 +110,7 @@ it("joins a late owned handshake and waits for its active operation", async () =
   expect(closed).toBe(false);
   await owner.finish(connection);
   await closing;
-  await vi.waitFor(() => expect(webSockets.clients.size).toBe(0));
+  await waitFor(() => expect(webSockets.clients.size).toBe(0));
 });
 
 it("retries only the failed transport and does not repeat successful child cleanup", async () => {
@@ -157,13 +158,13 @@ it("retries only the failed transport and does not repeat successful child clean
   }
 
   await owner.retryPending();
-  await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(1));
+  await waitFor(() => expect(browser.activeConnectionCount()).toBe(1));
   const cleanup = vi.fn(async () => undefined);
   await owner.finish(active, cleanup);
   await owner.retryPending();
   await owner.close();
   expect(cleanup).toHaveBeenCalledTimes(1);
-  await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+  await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
   expect(browser.commands.map(({ method }) => method)).not.toContain(
     "Target.closeTarget",
   );
@@ -201,7 +202,7 @@ it("accepts asynchronous terminate success only after the close event", async ()
     terminate.mockRestore();
   }
   await owner.close();
-  await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+  await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
 });
 
 it("clears returned inspection and shutdown cleanup status only after socket release", async () => {
@@ -241,7 +242,7 @@ it("clears returned inspection and shutdown cleanup status only after socket rel
   expect(browser.activeConnectionCount()).toBe(1);
   denied = false;
   await provider.close();
-  await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+  await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
   expect(result.error.cleanupIncomplete).toBe(false);
   expect(retry.cleanupIncomplete).toBe(false);
   expect(result.error.partialObservation).toBe(observation);
@@ -308,7 +309,7 @@ it("keeps retry aggregates incomplete until every reported socket is released", 
   expect(errors.map((error) => error.cleanupIncomplete)).toEqual([false, true]);
   expect(aggregate.cleanupIncomplete).toBe(true);
   expect(mixed.cleanupResources).toEqual(["second-socket"]);
-  await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(2));
+  await waitFor(() => expect(browser.activeConnectionCount()).toBe(2));
   denied.clear();
   await owner.retryPending();
   expect(errors.map((error) => error.cleanupIncomplete)).toEqual([
@@ -317,7 +318,7 @@ it("keeps retry aggregates incomplete until every reported socket is released", 
   ]);
   expect(aggregate.cleanupIncomplete).toBe(false);
   expect(mixed.cleanupIncomplete).toBe(false);
-  await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(1));
+  await waitFor(() => expect(browser.activeConnectionCount()).toBe(1));
   await owner.finish(active);
 });
 

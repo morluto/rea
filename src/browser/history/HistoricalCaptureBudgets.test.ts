@@ -10,9 +10,9 @@ import { historicalHar } from "../../../tests/fixtures/historicalHar.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { jsonValueValidationIssue } from "../../domain/jsonValue.js";
-import { MAX_WEB_NETWORK_CAPTURE_NESTING_DEPTH } from "../../domain/webNetworkCapture.js";
 
 const require = createRequire(import.meta.url);
+const MAX_WEB_NETWORK_CAPTURE_NESTING_DEPTH = 996;
 
 /** Exercise the real private decoder protocol and parsers from the source checkout. */
 const service = () =>

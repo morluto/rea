@@ -270,15 +270,6 @@ export const debuggerConstructionLimits = (
   return again.value;
 };
 
-/** Refuse an invalid launch cap instead of falling back to the default. */
-export const resolveDebuggerSessionLimits = (
-  environment: Readonly<Record<string, string | undefined>>,
-): DebuggerSessionLimits => {
-  const parsed = parseDebuggerSessionLimits(environment);
-  if (!parsed.ok) throw parsed.error;
-  return parsed.value;
-};
-
 /**
  * Fixed budget for Rizin cleanup readback and GDB startup or detach MI.
  * This is not `REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES`. A caller cap below

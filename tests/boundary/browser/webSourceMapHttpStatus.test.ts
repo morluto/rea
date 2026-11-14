@@ -9,7 +9,7 @@ import {
   analyzeWebBundleInputSchema,
   webSourceMapsSchema,
 } from "../../../src/domain/webBundleAnalysis.js";
-import { WEB_SOURCE_MAP_LIMITS } from "../../../src/domain/webSourceLocation.js";
+import { WEB_SOURCE_MAP_LIMITS } from "../../../src/domain/sourceMapLimits.js";
 
 it.each([
   { status: 300, followsRedirect: false },
@@ -147,10 +147,12 @@ it.each(["invalid JSON", "invalid UTF-8", "HTTP failure", "response limit"])(
         target_id: "page",
         allowed_origins: [origin],
         fetch_source_maps: true,
+        ...(failure === "response limit"
+          ? { source_map_limits: { fetch_bytes: 1 } }
+          : {}),
       }),
       undefined,
       {
-        ...(failure === "response limit" ? { maxResponseBytes: 1 } : {}),
         fetch: (url) =>
           Promise.resolve(
             String(url) === declaredUrl

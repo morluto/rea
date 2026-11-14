@@ -1,6 +1,6 @@
 import { once } from "node:events";
 
-import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 
 import { HopperProcessError } from "../../../../src/domain/hopperErrors.js";
 import { HOPPER_OPERATIONS } from "../../../../src/hopper/HopperProviderMetadata.js";
@@ -13,6 +13,7 @@ import {
   HopperFixtureLauncher as FixtureLauncher,
   startHopperFixtureClient as startClient,
 } from "./hopperClient.fixture.js";
+import { waitFor } from "../../../support/testWait.js";
 
 describe("HopperClient protocol", () => {
   it("does not start cold and preserves normal dispatch once ready", async () => {
@@ -82,7 +83,7 @@ describe("HopperClient protocol", () => {
     void fast.then(() => {
       fastSettled = true;
     });
-    await vi.waitFor(() =>
+    await waitFor(() =>
       expect(client.requestActivity()).toMatchObject({
         operation: "echo",
         queuedRequests: 1,
@@ -264,7 +265,7 @@ it("preserves caller cancellation while a late valid UTF-8 reply drains", async 
   expect(result.error.cause).toBe(reason);
   expect(client.requestActivity()).toMatchObject({ callerState: "cancelled" });
   await launcher.release(request);
-  await vi.waitFor(() => expect(client.requestActivity()).toBeNull());
+  await waitFor(() => expect(client.requestActivity()).toBeNull());
   await expect(
     client.callTool("echo", { label: "next �雪🦊" }),
   ).resolves.toEqual({

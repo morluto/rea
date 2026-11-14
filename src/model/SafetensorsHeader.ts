@@ -1,3 +1,4 @@
+import { escapeJsonPointerToken } from "../domain/jsonPointer.js";
 import { setImmediate } from "node:timers/promises";
 import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
 import { TextDecoder } from "node:util";
@@ -196,8 +197,6 @@ const exactOffset = (value: bigint): number => {
     );
   return Number(value);
 };
-const pointer = (value: string): string =>
-  value.replaceAll("~", "~0").replaceAll("/", "~1");
 
 export const readSafetensorsHeader = async (
   reader: ModelHeaderReader,
@@ -271,7 +270,7 @@ export const readSafetensorsHeader = async (
         element_count: null,
         preview_complete: true,
         ...source,
-        json_pointer: `/__metadata__/${pointer(key)}`,
+        json_pointer: `/__metadata__/${escapeJsonPointerToken(key)}`,
       });
     }
   }
@@ -336,7 +335,7 @@ export const readSafetensorsHeader = async (
       byte_length_state: "declared",
       storage_validation: bits === undefined ? "unknown" : "consistent",
       ...source,
-      json_pointer: `/${pointer(name)}`,
+      json_pointer: `/${escapeJsonPointerToken(name)}`,
     });
   }
   const ordered = [...tensors].sort(

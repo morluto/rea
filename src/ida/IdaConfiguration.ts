@@ -4,7 +4,11 @@ import { jsonRecordSchema } from "../domain/jsonRecord.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
+} from "../domain/analysisErrorCore.js";
 import type { AnalysisInputIssue } from "../domain/analysisErrorCore.js";
 import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -229,22 +233,26 @@ export const readIdaConfiguration = (
       const cancellation = regularFileCancellation(cause);
       if (cancellation !== undefined) {
         if (cause instanceof RegularFileCleanupFailure) {
-          const error = new AnalysisCancelledError("ida:registration", {
-            cause: cancellation.reason,
-            cleanup: {
-              reason:
-                cause.cleanupCause instanceof Error
-                  ? cause.cleanupCause.message
-                  : String(cause.cleanupCause),
-              resources: [path],
+          const error = cancelledBy(
+            "ida:registration",
+            carriedReason(cancellation.reason),
+            {
+              cleanup: {
+                reason:
+                  cause.cleanupCause instanceof Error
+                    ? cause.cleanupCause.message
+                    : String(cause.cleanupCause),
+                resources: [path],
+              },
             },
-          });
+          );
           closeLease?.bindCleanupError(error);
           throw error;
         }
-        throw new AnalysisCancelledError("ida:registration", {
-          cause: cancellation.reason,
-        });
+        throw cancelledBy(
+          "ida:registration",
+          carriedReason(cancellation.reason),
+        );
       }
       if (cause instanceof RegularFileCleanupFailure) {
         const primary =

@@ -8,6 +8,12 @@ import { jsonValueSchema } from "../../domain/jsonValue.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { err, ok } from "../../domain/result.js";
 
+/** Expected user-facing unknown reasons, independent of the trace producer. */
+export const EXPECTED_CLEANUP_STOPPED_TRACE =
+  "Trace stopped because the provider did not confirm cleanup of resources it owns";
+export const EXPECTED_UNRECORDED_VALUE_FLOW =
+  "Native def-use was not recorded for this procedure.";
+
 /** Simulated provider seam for value traces; not a real decompiler observation. */
 export const valueTraceSubject = {
   path: "/fixture",

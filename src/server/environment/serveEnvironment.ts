@@ -85,7 +85,7 @@ const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** At most this many messages in one data-plane batch; a larger batch is refused whole. */
-export const MAX_RPC_BATCH_MESSAGES = 100;
+const MAX_RPC_BATCH_MESSAGES = 100;
 
 /** A JSON-RPC 2.0 request or notification: an id, when present, is a string, number or null; params are structured. */
 const isRpcMessage = (

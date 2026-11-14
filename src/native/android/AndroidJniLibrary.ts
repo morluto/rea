@@ -32,9 +32,7 @@ const MAXIMUM_TABLE_ENTRIES = 65_536;
 const hex = (value: bigint): string => `0x${value.toString(16)}`;
 
 /** Strict Modified UTF-8: no four-byte UTF-8, overlong forms or replacements. */
-export const decodeJniModifiedUtf8 = (
-  bytes: Uint8Array,
-): string | undefined => {
+const decodeJniModifiedUtf8 = (bytes: Uint8Array): string | undefined => {
   const chunks: string[] = [];
   let units: number[] = [];
   for (let at = 0; at < bytes.length;) {
@@ -508,7 +506,10 @@ export const inspectAndroidJniLibrary = async (
     )
       return err({ kind: "capacity", message: cause.message });
     if (cause instanceof BinaryFormatFailure)
-      return err({ kind: cause.kind, message: cause.message });
+      return err({
+        kind: cause.kind === "unsupported" ? "unsupported" : "malformed",
+        message: cause.message,
+      });
     if (cause instanceof ElfPointerRelocationFailure)
       return err({
         kind:

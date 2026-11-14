@@ -34,7 +34,7 @@ export const readMachoImage = (bytes: Buffer): BinaryContainer => {
   const table = parsed.value;
   const { headerSize, commandBytes, littleEndian: little } = table;
   const bits = table.wide ? 64 : 32;
-  const reader = new BinaryReader(bytes, little);
+  const reader = new BinaryReader(bytes, little, "macho");
   const commandStart = reader.table(
     BigInt(headerSize),
     commandBytes,

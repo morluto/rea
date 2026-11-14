@@ -50,11 +50,14 @@ folder to build the environment; this step builds nothing.
   `flatpak run` launch), otherwise
   the dpkg owner of the launched desktop entry, or else of the executable,
   with its version, architecture, the apt sources listing the
-  installed version and the `o=` origin apt reports for each source. The
-  entry's package is the one that installs the application: LibreOffice
-  Writer's entry belongs to `libreoffice-writer`, while the `libreoffice` it
-  runs belongs to `libreoffice-common`, which does not depend on Writer. When
-  the two differ, `executable_package` names the executable's, with
+  installed version and the `o=` origin apt reports for each source. An XDG
+  base folder variable names a folder only when its value is an absolute
+  path, as the XDG Base Directory Specification requires, so a relative value
+  leaves the home default in use instead of naming a folder under the working
+  directory. The entry's package is the one that installs the application:
+  LibreOffice Writer's entry belongs to `libreoffice-writer`, while the
+  `libreoffice` it runs belongs to `libreoffice-common`, which does not
+  depend on Writer. When the two differ, `executable_package` names the executable's, with
   `executable_package_reason` when neither the Ubuntu 24.04 archive nor a
   declared vendor repository offers it or apt could not say; each vendor
   repository records in `supplies` the library packages and executable's

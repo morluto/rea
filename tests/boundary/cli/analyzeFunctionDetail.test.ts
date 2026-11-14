@@ -9,7 +9,7 @@ import { inspectAnalysisView } from "../../../src/application/analysisView/Analy
 import { registerCoreBinaryCommands } from "../../../src/cli/coreBinaryCommands.js";
 import { CLI_COMMANDS } from "../../../src/cliCommandNames.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 import { ghidraFunctionDossier } from "../../../src/domain/ghidraValues.fixture.js";
 import { ok } from "../../../src/domain/result.js";

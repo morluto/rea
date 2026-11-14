@@ -13,10 +13,12 @@ import {
   AnalysisOutputError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { WEB_RUNTIME_LIMITS } from "../../../src/domain/webRuntime.js";
+import { CdpMalformedReply } from "../../../src/browser/protocol/CdpCommands.js";
 import {
   startFakeCdpBrowser,
   type FakeCdpBrowser,
 } from "../../fixtures/fakeCdpBrowser.js";
+import { waitFor } from "../../support/testWait.js";
 
 const INVALID_REPLIES = [
   ["missing result and error", (id: number) => ({ id })],
@@ -106,6 +108,41 @@ describe("CDP connection admission cancellation", () => {
 });
 
 describe("CDP connection response correlation", () => {
+  it("rejects one malformed registered reply without poisoning the connection", async () => {
+    const browser = await startFakeCdpBrowser({
+      commandResult: (command) =>
+        command.method === "Page.getFrameTree"
+          ? { frameTree: "not a tree" }
+          : undefined,
+    });
+    browsers.push(browser);
+    const connection = await CdpConnection.connect(
+      browser.browserWebSocketUrl,
+      "inspect_web_page",
+    );
+    const protocolFailures: unknown[] = [];
+    connection.onProtocolFailure((error) => protocolFailures.push(error));
+    try {
+      const rejection = await connection
+        .send("Page.getFrameTree")
+        .catch((cause: unknown) => cause);
+      expect(rejection).toBeInstanceOf(CdpMalformedReply);
+      expect(rejection).toMatchObject({
+        reason: "protocol_error",
+        command: "Page.getFrameTree",
+        pointer: "/frameTree",
+      });
+      expect(String((rejection as CdpMalformedReply).detail)).not.toContain(
+        "not a tree",
+      );
+      await expect(connection.send("Runtime.enable")).resolves.toEqual({});
+      expect(connection.isReusable()).toBe(true);
+      expect(protocolFailures).toEqual([]);
+    } finally {
+      await connection.close();
+    }
+  });
+
   it("correlates concurrent command responses over a real WebSocket", async () => {
     const browser = await startFakeCdpBrowser({ hangOnMethod: "Page.enable" });
     browsers.push(browser);
@@ -119,15 +156,13 @@ describe("CDP connection response correlation", () => {
         connection.send("Page.getFrameTree"),
       ]);
       expect(attached).toMatchObject({ sessionId: "session-1" });
-      expect(frames).toMatchObject({
-        frameTree: { frame: { id: "frame-main" } },
-      });
+      expect(frames.root.facts.frameId).toBe("frame-main");
       browser.emitRawMessage(JSON.stringify({ id: 999 }));
       await expect(connection.send("Runtime.enable")).resolves.toEqual({});
       const first = connection.send("Page.enable", { selected: "first" });
       const second = connection.send("Page.enable", { selected: "second" });
       const replies = Promise.all([first, second]);
-      await vi.waitFor(() => expect(browser.commands).toHaveLength(5));
+      await waitFor(() => expect(browser.commands).toHaveLength(5));
       const firstCommand = browser.commands[3];
       const secondCommand = browser.commands[4];
       if (firstCommand === undefined || secondCommand === undefined)
@@ -231,7 +266,7 @@ describe("CDP command cancellation causes", () => {
         undefined,
         controller.signal,
       );
-      await vi.waitFor(() => expect(browser.commands).toHaveLength(1));
+      await waitFor(() => expect(browser.commands).toHaveLength(1));
       const reason = new Error("cancel the pending CDP command");
       controller.abort(reason);
       const failure = await pending.then(
@@ -263,7 +298,7 @@ describe("CDP command cancellation causes", () => {
         undefined,
         controller.signal,
       );
-      await vi.waitFor(() => expect(browser.commands).toHaveLength(1));
+      await waitFor(() => expect(browser.commands).toHaveLength(1));
       controller.abort();
       const failure = await pending.then(
         () => undefined,
@@ -303,7 +338,7 @@ describe("CDP handshake cancellation", () => {
       controller.signal,
     );
     try {
-      await vi.waitFor(() => expect(sockets.size).toBe(1));
+      await waitFor(() => expect(sockets.size).toBe(1));
       controller.abort(reason);
       const failure = await connecting.then(
         () => undefined,
@@ -313,7 +348,7 @@ describe("CDP handshake cancellation", () => {
       if (!(failure instanceof AnalysisCancelledError))
         throw new Error("Expected handshake cancellation");
       expect(failure.cause).toBe(reason);
-      await vi.waitFor(() => expect(sockets.size).toBe(0));
+      await waitFor(() => expect(sockets.size).toBe(0));
     } finally {
       if (sockets.size > 0) for (const socket of sockets) socket.destroy();
       await new Promise<void>((resolve, reject) =>
@@ -341,7 +376,7 @@ describe("CDP transport failure precedence", () => {
           () => undefined,
           (cause: unknown) => cause,
         );
-      await vi.waitFor(() => expect(browser.commands).toHaveLength(1));
+      await waitFor(() => expect(browser.commands).toHaveLength(1));
       const failure = await pending;
       expect(failure).toMatchObject({
         _tag: "BrowserObservationError",
@@ -368,7 +403,7 @@ describe("CDP connection command responses", () => {
     );
     try {
       const control = connection.send("Page.enable");
-      await vi.waitFor(() => expect(browser.commands).toHaveLength(1));
+      await waitFor(() => expect(browser.commands).toHaveLength(1));
       browser.emitRawMessage(
         Buffer.from(
           JSON.stringify({
@@ -382,7 +417,7 @@ describe("CDP connection command responses", () => {
       const rejected = expect(pending).rejects.toMatchObject({
         reason: "protocol_error",
       });
-      await vi.waitFor(() => expect(browser.commands).toHaveLength(2));
+      await waitFor(() => expect(browser.commands).toHaveLength(2));
       browser.emitRawMessage(
         Buffer.concat([
           Buffer.from(
@@ -437,7 +472,7 @@ describe("CDP connection command responses", () => {
           _tag: "BrowserObservationError",
           reason: "protocol_error",
         });
-        await vi.waitFor(() => expect(browser.commands).toHaveLength(1));
+        await waitFor(() => expect(browser.commands).toHaveLength(1));
         const command = browser.commands[0];
         if (command === undefined)
           throw new Error("Fake browser received no command");
@@ -466,7 +501,7 @@ describe("CDP connection command responses", () => {
         code: -32_001,
         reportedMessage: "Session with given id not found.",
       });
-      await vi.waitFor(() => expect(browser.commands).toHaveLength(1));
+      await waitFor(() => expect(browser.commands).toHaveLength(1));
       const command = browser.commands[0];
       if (command === undefined)
         throw new Error("Fake browser received no command");

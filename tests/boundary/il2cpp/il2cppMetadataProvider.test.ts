@@ -43,6 +43,35 @@ const inspectMetadata = async (path: string, limit?: number) => {
   }
 };
 
+it("identifies which selected IL2CPP file is missing", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-missing-");
+  const path = join(root, "global-metadata.dat");
+  const binaryPath = join(root, "missing-binary");
+  const provider = new Il2cppMetadataProvider();
+  try {
+    const missingMetadata = await provider.inspect({ path });
+    if (missingMetadata.ok)
+      throw new Error("Expected missing metadata failure");
+    expect(missingMetadata.error).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [{ path: ["path"], reason: "invalid_value" }],
+    });
+
+    await writeFile(path, createIl2cppMetadataFixture({ version: 31 }).bytes);
+    const missingBinary = await provider.inspect({
+      path,
+      binary_path: binaryPath,
+    });
+    if (missingBinary.ok) throw new Error("Expected missing binary failure");
+    expect(missingBinary.error).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [{ path: ["binary_path"], reason: "invalid_value" }],
+    });
+  } finally {
+    await provider.close();
+  }
+});
+
 /** Synthetic v108 header: checks bounded observations, not record-layout compatibility. */
 const version108Header = (stringBytes: Buffer) => {
   const header = Buffer.alloc(500);

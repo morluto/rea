@@ -3,11 +3,13 @@ import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createNativeExportsService } from "../../../src/composition/binaryDiagnostics.js";
+import { analysisErrorRemediationAction } from "../../../src/domain/analysisErrorPresentation.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { nativeExportsSchema } from "../../../src/domain/native/nativeExports.js";
 import {
   elfExportImage,
   peExportImage,
+  peStoredExportTableImage,
   peRepeatedExportNamesImage,
 } from "../../fixtures/binaryDiagnostics/nativeExports.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -71,10 +73,28 @@ describe("native export stable filesystem boundary", () => {
             coverage: { status: "complete", examined_entries: 1, exports: 0 },
           });
         } else {
-          expect(result).toMatchObject({
-            ok: false,
-            error: { _tag: "AnalysisResourceConstraintError" },
+          // 4100 aliases of one 4096-byte name exceed the 16 MiB retained-text
+          // byte budget while staying far below the 262144-entry ceiling, so
+          // recovery must name the byte allowance, not the entry count.
+          if (result.ok) throw new Error("Expected retained-text refusal");
+          expect(result.error).toMatchObject({
+            _tag: "AnalysisResourceConstraintError",
+            resource: "capacity",
+            reportedLimits: { boundary: "structure", maximum: 16777216 },
+            retryable: false,
+            fixedAllowance: {
+              name: expect.stringContaining(
+                "16777216-byte native export retained-text allowance",
+              ),
+              kind: "bytes",
+            },
           });
+          expect(result.error.message).toContain(
+            "16777216-byte retained-text allowance",
+          );
+          const action = analysisErrorRemediationAction(result.error);
+          expect(action).toContain("fixed byte allowance");
+          expect(action).not.toContain("fixed count");
         }
       }
     } finally {
@@ -126,6 +146,38 @@ describe("native export stable filesystem boundary", () => {
 });
 
 describe("native export text capacity", () => {
+  it("retains valid exports and partial Evidence when a symbol name exceeds the read allowance", async () => {
+    const root = await createTestTempDirectory("rea-native-export-name-limit-");
+    const path = join(root, "libfixture.so");
+    const bytes = elfExportImage({
+      symbols: [{ name: "n".repeat(65_536) }, { name: "kept" }],
+    });
+    await writeFile(path, bytes);
+    const service = createNativeExportsService();
+    try {
+      const result = await service.inspect({ path });
+      if (!result.ok) throw result.error;
+      const evidence = parseEvidence(result.value);
+      const report = nativeExportsSchema.parse(evidence.normalized_result);
+      expect(evidence.subject).toMatchObject({
+        local_path: path,
+        digest: { sha256: createHash("sha256").update(bytes).digest("hex") },
+      });
+      expect(report).toMatchObject({
+        exports: [expect.objectContaining({ name: "kept" })],
+        coverage: { status: "partial" },
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            code: "name_unreadable",
+            message: expect.stringContaining("65536-byte read allowance"),
+          }),
+        ]),
+      });
+    } finally {
+      await service.close();
+    }
+  });
+
   it.each(["symbol", "version"] as const)(
     "bounds UTF-8 bytes of retained ELF %s text and its exact-byte spelling",
     async (kind) => {
@@ -221,6 +273,45 @@ describe("native export text capacity", () => {
       await service.close();
     }
   });
+});
+
+describe("native export entry allowance", () => {
+  it.each([
+    ["stored", () => peStoredExportTableImage(0x40001)],
+    [
+      "truncated",
+      () => peExportImage({ functions: [], declaredFunctions: 0x40001 }),
+    ],
+  ])(
+    "keeps count recovery for a %s export table above the entry allowance",
+    async (_case, image) => {
+      const root = await createTestTempDirectory("rea-native-export-rows-");
+      const path = join(root, "rows.dll");
+      await writeFile(path, image());
+      const service = createNativeExportsService();
+      try {
+        const result = await service.inspect({ path });
+        if (result.ok) throw new Error("Expected entry allowance refusal");
+        expect(result.error).toMatchObject({
+          _tag: "AnalysisResourceConstraintError",
+          resource: "capacity",
+          reportedLimits: { boundary: "structure", maximum: 262144 },
+          retryable: false,
+          fixedAllowance: {
+            name: expect.stringContaining(
+              "262144-entry native export inventory allowance",
+            ),
+            kind: "count",
+          },
+        });
+        const action = analysisErrorRemediationAction(result.error);
+        expect(action).toContain("fixed count");
+        expect(action).not.toContain("fixed byte allowance");
+      } finally {
+        await service.close();
+      }
+    },
+  );
 });
 
 describe("native export encoding and failures", () => {

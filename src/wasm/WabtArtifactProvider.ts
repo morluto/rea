@@ -239,10 +239,12 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         throw new AnalysisCancelledError(OPERATION, {
           cause: options.signal.reason,
         });
-      const directory = environment.REA_WABT_BIN_DIRECTORY ?? "";
-      if (!isAbsolute(directory))
+      const directory = environment.REA_WABT_BIN_DIRECTORY;
+      if (directory === undefined || !isAbsolute(directory))
         throw new WabtAdmissionError("directory_not_absolute", {
           setting: "REA_WABT_BIN_DIRECTORY",
+          // Keep the caller's rejected selection; unset stays distinct.
+          ...(directory === undefined ? {} : { configured: directory }),
         });
       const commands: {
         tool: "wasm-validate" | "wasm-objdump" | "wasm2wat";
@@ -392,8 +394,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
           version.exitCode === 0 && version.stderr.text === ""
             ? admitWabtVersion(version.stdout.text)
             : undefined;
-        if (admission === undefined || admission.status === "unsupported") {
-          const reason = `${admission?.message ?? `Unsupported ${command.tool} version banner`}; expected stdout from ${wabtReleaseLine()} with empty stderr.`;
+        function rejectVersion(reason: string): never {
           throw new AnalysisCapabilityUnavailableError(
             WABT_PROVIDER_IDENTITY.id,
             OPERATION,
@@ -410,25 +411,15 @@ export class WabtArtifactProvider implements WasmArtifactPort {
             },
           );
         }
+        if (admission === undefined || admission.status === "unsupported") {
+          const reason = `${admission?.message ?? `Unsupported ${command.tool} version banner`}; expected stdout from ${wabtReleaseLine()} with empty stderr.`;
+          rejectVersion(reason);
+        }
         // All three tools come from one directory, so admit only banners that agree.
         if (observedRelease === undefined) observedRelease = admission.version;
         if (observedRelease !== admission.version) {
           const reason = `Configured WABT tools report different releases (${observedRelease} and ${admission.version}); select one complete ${wabtReleaseLine()} installation.`;
-          throw new AnalysisCapabilityUnavailableError(
-            WABT_PROVIDER_IDENTITY.id,
-            OPERATION,
-            reason,
-            {
-              userMessage: reason,
-              diagnostics: versionProbe,
-              capturedOutput: {
-                stdout: version.stdout.text,
-                stderr: version.stderr.text,
-                truncated: version.diagnosticTruncated === true,
-              },
-              remediationAction: wabtConfigurationRecoveryAction(),
-            },
-          );
+          rejectVersion(reason);
         }
         if (admission.status === "compatible")
           compatibleLimitation = admission.limitation;
