@@ -1668,6 +1668,47 @@ it("hashes shallow TYPE_REF code chains without using the JavaScript stack", () 
   });
 });
 
+it("hashes slice-wrapped TYPE_REF code chains without using the JavaScript stack", () => {
+  const links = 3000;
+  const none = Buffer.from([0x4e]);
+  const codes = Array.from({ length: links }, (_, index) =>
+    marshalCode("py311", {
+      flagged: true,
+      name: "f",
+      consts:
+        index === 0
+          ? [none]
+          : [
+              Buffer.concat([
+                Buffer.from([0x3a]),
+                marshalRef(index - 1),
+                none,
+                none,
+              ]),
+            ],
+    }),
+  );
+  const bytes = Buffer.concat([
+    pythonPycHeader(3627),
+    marshalCode("py311", {
+      constsObject: Buffer.concat([
+        Buffer.from([0x28]),
+        u32(links + 1),
+        ...codes,
+        Buffer.from([0x3c]),
+        u32(1),
+        marshalRef(links - 1),
+      ]),
+    }),
+  ]);
+  const report = parseWith(bytes, { max_objects: 65_536 });
+  expect(root(report).consts.at(-1)).toEqual({ kind: "set", length: 1 });
+  expect(report.coverage).toMatchObject({
+    status: "complete",
+    code_objects: links + 1,
+  });
+});
+
 it("rejects code CPython treats as corrupt instead of complete coverage", () => {
   const file = (
     layout: "py37" | "py38" | "py311",

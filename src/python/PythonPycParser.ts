@@ -1413,7 +1413,9 @@ class MarshalReader {
                 malformed("Code object is missing equality material.")
               ).constsTuple,
             ]
-          : value.kind === "tuple" || value.kind === "frozenset"
+          : value.kind === "tuple" ||
+              value.kind === "frozenset" ||
+              value.kind === "slice"
             ? value.items
             : [];
       gray.add(identity);
