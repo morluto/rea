@@ -6,7 +6,11 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { artifactInspectionResultSchema } from "../../../src/domain/artifactInspection.js";
 import { artifactExtractionResultSchema } from "../../../src/domain/artifactGraph.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { buildUnityFs } from "../../fixtures/unityfs.js";
+import {
+  UNITY_FS_LZ4_LONG_DISTANCE_BLOCK,
+  UNITY_FS_LZ4_LONG_DISTANCE_PLAIN,
+  buildUnityFs,
+} from "../../fixtures/unityfs.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 cliTest.for([
@@ -200,5 +204,55 @@ cliTest(
         }),
       ]),
     });
+  },
+);
+
+cliTest(
+  "verifies an LZ4 block whose match spans 513 bytes back into the same block",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-unity-lz4-distance-");
+    const path = join(root, "bundle");
+    const data = UNITY_FS_LZ4_LONG_DISTANCE_PLAIN;
+    expect(data).toHaveLength(1031);
+    expect(UNITY_FS_LZ4_LONG_DISTANCE_BLOCK).toHaveLength(526);
+    const bytes = buildUnityFs([{ path: "payload.bin", data }], {
+      blockCompression: 2,
+      blocksInfoCompression: 0,
+      encodeBlock: (chunk) => {
+        expect(chunk).toEqual(data);
+        return UNITY_FS_LZ4_LONG_DISTANCE_BLOCK;
+      },
+    });
+    await writeFile(path, bytes);
+
+    const inspected = await cli.run({
+      arguments: ["inspect-artifact", path, "--json"],
+    });
+    expect(inspected.exitCode, inspected.stderr).toBe(0);
+    const inventory = artifactInspectionResultSchema.parse(
+      parseEvidence(inspected.json).normalized_result,
+    ).substeps[0]!.evidence.normalized_result;
+    const member = inventory.occurrences.find(
+      (entry) => entry.logical_path === "payload.bin",
+    );
+    expect(member).toMatchObject({
+      declared_size: data.length,
+      hash_status: "verified",
+    });
+
+    const outputRoot = join(root, "extracted");
+    const extracted = await cli.run({
+      arguments: [
+        "extract-artifact",
+        path,
+        "--output-root",
+        outputRoot,
+        "--json",
+      ],
+    });
+    expect(extracted.exitCode, extracted.stderr).toBe(0);
+    expect((await readFile(join(outputRoot, "payload.bin"))).equals(data)).toBe(
+      true,
+    );
   },
 );
