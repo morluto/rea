@@ -10,9 +10,6 @@ import type { GhidraTransportKind } from "./GhidraTransport.js";
 /** Aggregate in-memory retention budget for this provider's launcher output. */
 export const GHIDRA_PROCESS_DIAGNOSTIC_BYTES = 8 * 1024 * 1024;
 
-/** JVM error class located in all launcher output, beyond the retention budget. */
-export const GHIDRA_JVM_OOME_MARKER = "java.lang.OutOfMemoryError";
-
 /** A rejected caller input owns request output, not the launcher's history. */
 export type GhidraDiagnosticsScope = "session" | "request";
 

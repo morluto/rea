@@ -12,6 +12,20 @@ import {
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { ProviderOutcome } from "./ProviderOutcome.js";
 import type { ProviderProcessSnapshot } from "./ProviderProcess.js";
+import type { RuntimeExhaustion } from "./RuntimeExhaustion.js";
+
+const RUNTIME_NAMES = {
+  jvm: "The provider's Java virtual machine",
+  v8: "The provider's JavaScript runtime",
+} as const satisfies Record<RuntimeExhaustion["runtime"], string>;
+
+const AREA_NAMES = {
+  heap: "heap",
+  "gc-overhead": "garbage-collection overhead limit",
+  metaspace: "metaspace",
+  "array-size": "array size beyond the VM limit",
+  "native-thread": "unable to create a native thread",
+} as const satisfies Record<NonNullable<RuntimeExhaustion["area"]>, string>;
 
 /** Outcomes whose meaning depends on the provider's own dialect. */
 export type ProviderDialectOutcome = Extract<
@@ -45,6 +59,14 @@ export interface ProviderOutcomeContext {
   readonly memoryLimitBytes?: number | undefined;
   /** Reported limits and recovery for an inherited CPU or file-size signal. */
   readonly resourceSignal?: (signal: "SIGXCPU" | "SIGXFSZ") => {
+    readonly limits: ReportedLimits;
+    readonly recovery: ResourceConstraintRecovery;
+  };
+  /**
+   * The provider's memory setting for a runtime exhaustion report, such as
+   * the JVM heap it starts. Without it, recovery follows the resource kind.
+   */
+  readonly runtimeExhaustion?: (exhaustion: RuntimeExhaustion) => {
     readonly limits: ReportedLimits;
     readonly recovery: ResourceConstraintRecovery;
   };
@@ -112,6 +134,26 @@ export const classifyProviderOutcome = (
         `Producer terminated with ${outcome.signal}; the signal's exact cause is not independently established.`,
         reported?.limits ?? null,
         { ...details, ...reported?.recovery },
+      );
+    }
+    case "runtime-exhausted": {
+      const reported = context.runtimeExhaustion?.(outcome.exhaustion);
+      const { area, runtime } = outcome.exhaustion;
+      return new AnalysisResourceConstraintError(
+        operation,
+        area === "native-thread" ? "capacity" : "memory",
+        `${RUNTIME_NAMES[runtime]} reported running out of memory${area === undefined ? "" : ` (${AREA_NAMES[area]})`} before the process ended. This is reported evidence and does not prove the exact allocation failure.`,
+        reported?.limits ?? null,
+        {
+          ...details,
+          ...(area === "native-thread"
+            ? {
+                retryable: true,
+                remediationAction:
+                  "Reduce concurrent analysis processes or review the host's available thread and process capacity, then retry.",
+              }
+            : reported?.recovery),
+        },
       );
     }
     case "launch-refused":

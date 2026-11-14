@@ -183,3 +183,42 @@ it("classifies a caller cancellation through the shared owner", async () => {
   expect(failure).toBeInstanceOf(AnalysisCancelledError);
   expect((failure as AnalysisCancelledError).cause).toBe(reason);
 });
+
+it("observes a JVM out-of-memory report past the retained output budget", async () => {
+  const report =
+    'Exception in thread "main" java.lang.OutOfMemoryError: Java heap space';
+  const script = `process.stderr.write("x".repeat(4096) + "\\n" + ${JSON.stringify(report)} + "\\n"); process.exitCode = 1`;
+  const failure = await runOwnedCommand(node(script), {
+    timeoutMs: 10_000,
+    diagnosticBytes: 64,
+    runtime: "jvm",
+  }).catch((cause: unknown) => cause);
+  expect(providerOutcomeOf(failure)).toMatchObject({
+    kind: "runtime-exhausted",
+    exhaustion: { runtime: "jvm", area: "heap", stream: "stderr" },
+  });
+  // Without the runtime opt-in the same output is only an overflow.
+  const unscanned = await runOwnedCommand(node(script), {
+    timeoutMs: 10_000,
+    diagnosticBytes: 64,
+  }).catch((cause: unknown) => cause);
+  expect(providerOutcomeOf(unscanned)).toMatchObject({ kind: "output-limit" });
+});
+
+it("observes a real V8 heap exhaustion report", async () => {
+  const failure = await runOwnedCommand(
+    {
+      ...node(""),
+      arguments: [
+        "--max-old-space-size=16",
+        "-e",
+        "const a = []; for (;;) a.push({ value: a.length });",
+      ],
+    },
+    { timeoutMs: 60_000, diagnosticBytes: 64 * 1024, runtime: "v8" },
+  ).catch((cause: unknown) => cause);
+  expect(providerOutcomeOf(failure)).toMatchObject({
+    kind: "runtime-exhausted",
+    exhaustion: { runtime: "v8", area: "heap" },
+  });
+});

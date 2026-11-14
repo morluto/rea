@@ -32,6 +32,7 @@ import {
   type ProcessCleanupFailure,
 } from "./ProcessOwnership.js";
 import { ABORTED, waitForAbortable } from "./AbortablePromise.js";
+import type { ManagedRuntime } from "./RuntimeExhaustion.js";
 import {
   ProviderStartupDeadline,
   waitForAbortableDelay,
@@ -102,6 +103,8 @@ export const ownedCommandResources = (
 interface OwnedCommandLimits {
   /** Retained output budget; stdout is excluded when a sink consumes it. */
   readonly diagnosticBytes: ProcessDiagnosticBudget;
+  /** The managed runtime the command hosts, so its memory exhaustion report is observed while output streams. */
+  readonly runtime?: ManagedRuntime;
   /** Acquire a pipe; closed-pipe sends EOF after supervision starts. */
   readonly stdin?: "pipe" | "closed-pipe";
   /** Accept an ordinary nonzero exit after output closes without other process errors. */
@@ -287,6 +290,7 @@ const collectOwnedCommand = async (
     {
       captureStdout: limits.stdout === undefined,
       maxDiagnosticBytes: limits.diagnosticBytes,
+      ...(limits.runtime === undefined ? {} : { runtime: limits.runtime }),
       onDiagnostic: (event) => {
         if (event.type === "output" && event.truncated === true) {
           exceeded = true;

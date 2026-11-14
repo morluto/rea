@@ -14,9 +14,17 @@ import {
   artifactFileCancellationCause,
 } from "../artifacts/ArtifactFileOperation.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
-import { capturedApktoolFailureOutput } from "./ApktoolCommandOutput.js";
+import {
+  capturedApktoolCommandOutput,
+  capturedApktoolFailureOutput,
+} from "./ApktoolCommandOutput.js";
+import { providerOutcomeOf } from "../process/ProviderOutcome.js";
+import { classifyProviderOutcome } from "../process/classifyProviderOutcome.js";
 import { ApktoolCommandCleanup } from "./ApktoolCommandCleanup.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  AnalysisError,
+  type AnalysisErrorOptions,
+} from "../domain/analysisErrorBase.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
@@ -43,8 +51,6 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisCancelledError,
   AnalysisProtocolError,
-  AnalysisResourceConstraintError,
-  AnalysisTimeoutError,
   AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -147,6 +153,8 @@ const runApktool = async (
       {
         timeoutMs: limits.timeoutMs,
         diagnosticBytes: limits.maxOutputBytes,
+        // Apktool is a Java program; its heap exhaustion is not a target refusal.
+        runtime: "jvm",
       },
       signal === undefined ? {} : { signal },
     );
@@ -164,90 +172,85 @@ const runApktool = async (
 };
 
 const apktoolCommandFailure = (
-  cause: unknown,
+  failure: unknown,
   operation: string,
   targetPath: string,
   selection: ApktoolCommandSelection,
   limits: DecodeLimits,
 ): AnalysisError => {
-  const capturedOutput = capturedApktoolFailureOutput(cause);
+  const capturedOutput = capturedApktoolFailureOutput(failure);
   const inspectionCancellation =
-    !(cause instanceof OwnedCommandFailure) ||
-    cause.preparationFailure !== undefined
-      ? processInspectionCancellationError(cause, operation)
+    !(failure instanceof OwnedCommandFailure) ||
+    failure.preparationFailure !== undefined
+      ? processInspectionCancellationError(failure, operation)
       : undefined;
   if (inspectionCancellation !== undefined) return inspectionCancellation;
-  if (!(cause instanceof OwnedCommandFailure))
-    return new ProviderAdapterError("apktool", operation, {
-      cause,
+  const commandFailure = (details: AnalysisErrorOptions): AnalysisError =>
+    new ProviderAdapterError("apktool", operation, {
+      ...details,
+      ...(failure instanceof OwnedCommandFailure
+        ? {
+            userMessage: `The selected Apktool command failed while decoding ${targetPath}`,
+          }
+        : {}),
       diagnostics: {
         selected_command: selection.command,
         target_path: targetPath,
       },
+    });
+  if (!(failure instanceof OwnedCommandFailure))
+    return commandFailure({
+      cause: failure,
       ...(capturedOutput === undefined ? {} : { capturedOutput }),
     });
-
-  const output = cause.snapshot;
-  if (cause.reason === "cancelled" && cause.cancellation !== undefined)
-    return new AnalysisCancelledError(operation, {
-      cause: cause.cancellation.reason,
-      ...(capturedOutput === undefined ? {} : { capturedOutput }),
-    });
-  if (cause.reason === "timeout")
-    return new AnalysisTimeoutError(operation, limits.timeoutMs, {
-      cause,
-      ...(capturedOutput === undefined ? {} : { capturedOutput }),
-      ...apktoolDecodeTimeoutGuidance(limits.timeoutMs),
-    });
-  if (cause.reason === "output-limit") {
-    return new AnalysisResourceConstraintError(
-      operation,
-      "memory",
-      `apktool output exceeded the ${String(limits.maxOutputBytes)}-byte capture budget`,
-      { max_output_bytes: limits.maxOutputBytes },
-      {
-        cause,
-        ...(capturedOutput === undefined ? {} : { capturedOutput }),
-        ...fixedAllowanceOptions(
-          `The apktool output capture allowance of ${String(limits.maxOutputBytes)} bytes (this release has no runtime override; decode_timeout_ms does not raise it)`,
-          "capture",
-        ),
-      },
-    );
-  }
-  // A physical launcher/capture failure does not establish target refusal.
-  // Only a fully collected ordinary nonzero decode exit carries that meaning.
-  if (
-    cause.processError !== undefined ||
-    cause.collectionFailure ||
-    cause.preparationFailure !== undefined ||
-    output === null ||
-    output.exitCode === null ||
-    output.exitCode === undefined ||
-    output.exitCode === 0 ||
-    output.signal !== null ||
-    output.outputIncomplete === true ||
-    output.diagnosticTruncated === true
-  )
-    return new ProviderAdapterError("apktool", operation, {
-      cause,
-      userMessage: `The selected Apktool command failed while decoding ${targetPath}`,
-      diagnostics: {
-        selected_command: selection.command,
-        target_path: targetPath,
-      },
-      ...(capturedOutput === undefined ? {} : { capturedOutput }),
-    });
-  return new AnalysisUnsupportedTargetError(
+  return classifyProviderOutcome(providerOutcomeOf(failure), {
     operation,
-    targetPath,
-    output?.stderr.text.trim().slice(0, STDERR_EXCERPT_BYTES) ||
-      `apktool exited with code ${String(output?.exitCode ?? "unknown")} for ${operation}`,
-    {
-      cause,
-      ...(capturedOutput === undefined ? {} : { capturedOutput }),
+    capturedOutput: capturedApktoolCommandOutput,
+    // Ownership preparation can retain output before any process exists.
+    details: capturedOutput === undefined ? {} : { capturedOutput },
+    timeout: {
+      ms: limits.timeoutMs,
+      ...apktoolDecodeTimeoutGuidance(limits.timeoutMs),
     },
-  );
+    outputLimit: {
+      limits: { max_output_bytes: limits.maxOutputBytes },
+      recovery: fixedAllowanceOptions(
+        `The apktool output capture allowance of ${String(limits.maxOutputBytes)} bytes (this release has no runtime override; decode_timeout_ms does not raise it)`,
+        "capture",
+      ),
+    },
+    runtimeExhaustion: () => ({
+      limits: null,
+      recovery: {
+        retryable: false,
+        remediationAction:
+          "REA does not set Apktool's Java heap. Raise the maximum heap (-Xmx) of the selected Apktool launcher's JVM, or decode a smaller APK. Repeating the unchanged request is expected to fail the same way.",
+      },
+    }),
+    dialect: (exit, details) => {
+      // A physical launcher/capture failure does not establish target refusal.
+      // Only a fully collected ordinary nonzero decode exit carries that meaning.
+      if (
+        exit.kind !== "exited" ||
+        failure.processError !== undefined ||
+        failure.preparationFailure !== undefined ||
+        exit.exitCode === null ||
+        exit.exitCode === 0 ||
+        exit.signal !== null ||
+        exit.output?.truncated !== false
+      )
+        return commandFailure(details);
+      return new AnalysisUnsupportedTargetError(
+        operation,
+        targetPath,
+        exit.output.snapshot.stderr.text
+          .trim()
+          .slice(0, STDERR_EXCERPT_BYTES) ||
+          `apktool exited with code ${String(exit.exitCode)} for ${operation}`,
+        details,
+      );
+    },
+  });
 };
 
 export interface ApktoolProviderOptions {

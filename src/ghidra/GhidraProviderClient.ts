@@ -155,6 +155,10 @@ import {
   ghidraExtensionLimitations,
 } from "./extensions/GhidraExtensions.js";
 import { inspectWindowsNativeReadiness } from "../process/WindowsAuthority.js";
+import {
+  JVM_EXHAUSTION_DETAILS,
+  jvmExhaustionArea,
+} from "../process/RuntimeExhaustion.js";
 import { ghidraRawBinaryLanguage } from "./GhidraRawBinaryLanguage.js";
 import { ghidraDolLanguage, ghidraDolSectionFile } from "./GhidraDolProfile.js";
 
@@ -1801,17 +1805,12 @@ const projectObservedJvmMemoryFailure = (
 ): AnalysisResourceConstraintError | undefined => {
   const output = scoped?.oomText;
   if (output === undefined) return undefined;
-  const threadCapacity = /unable to create native thread/iu.test(output);
-  const heapExhaustion = /Java heap space|GC overhead limit exceeded/iu.test(
-    output,
-  );
-  const detail = [
-    "Java heap space",
-    "GC overhead limit exceeded",
-    "Metaspace",
-    "Requested array size exceeds VM limit",
-    "unable to create native thread",
-  ].find((candidate) => output.includes(candidate));
+  const areas = new Set(output.split("\n").map(jvmExhaustionArea));
+  const threadCapacity = areas.has("native-thread");
+  const heapExhaustion = areas.has("heap") || areas.has("gc-overhead");
+  const detail = JVM_EXHAUSTION_DETAILS.find(([, area]) =>
+    areas.has(area),
+  )?.[0];
   if (threadCapacity)
     return new AnalysisResourceConstraintError(
       operation,
