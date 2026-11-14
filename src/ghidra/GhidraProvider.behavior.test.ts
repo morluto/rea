@@ -4766,96 +4766,96 @@ describe("Ghidra startup deadline for a finished invocation", () => {
   });
 });
 
-describe("Ghidra missing project program", () => {
-  const startFailure = async (
-    stdout: string,
-    environment: Readonly<Record<string, string>> = {},
-    stderr = "",
-  ) => {
-    const root = await mkdtemp(join(tmpdir(), "rea-missing-program-"));
-    onTestFinished(async () => {
-      await rm(root, { recursive: true, force: true });
-    });
-    await mkdir(join(root, "selected.rep"));
-    await writeFile(join(root, "selected.gpr"), "marker");
-    const failure = new GhidraSessionError(
-      "start",
-      "Ghidra exited before the bridge was ready",
-      {
-        failure_kind: "start",
-        exit_code: 1,
-        failure_output: ghidraFailureOutput(
-          {
-            snapshot: {
-              stdout: {
-                text: stdout,
-                bytes: Buffer.byteLength(stdout),
-                observedBytes: Buffer.byteLength(stdout),
-              },
-              stderr: {
-                text: stderr,
-                bytes: Buffer.byteLength(stderr),
-                observedBytes: Buffer.byteLength(stderr),
-              },
-              exitCode: 1,
-              signal: null,
+const startFailure = async (
+  stdout: string,
+  environment: Readonly<Record<string, string>> = {},
+  stderr = "",
+) => {
+  const root = await mkdtemp(join(tmpdir(), "rea-missing-program-"));
+  onTestFinished(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+  await mkdir(join(root, "selected.rep"));
+  await writeFile(join(root, "selected.gpr"), "marker");
+  const failure = new GhidraSessionError(
+    "start",
+    "Ghidra exited before the bridge was ready",
+    {
+      failure_kind: "start",
+      exit_code: 1,
+      failure_output: ghidraFailureOutput(
+        {
+          snapshot: {
+            stdout: {
+              text: stdout,
+              bytes: Buffer.byteLength(stdout),
+              observedBytes: Buffer.byteLength(stdout),
             },
-            complete: true,
+            stderr: {
+              text: stderr,
+              bytes: Buffer.byteLength(stderr),
+              observedBytes: Buffer.byteLength(stderr),
+            },
+            exitCode: 1,
+            signal: null,
           },
-          undefined,
-          false,
-        ),
-      },
-    );
-    const ghidra = provider(
-      installationHost(),
-      () => ({
-        start: async () => err(failure),
-        callTool: async () => err(failure),
-        close: async () => ok(null),
-      }),
-      {
-        REA_GHIDRA_PROJECT_PATH: join(root, "selected.gpr"),
-        ...environment,
-      },
-    );
-    onTestFinished(async () => {
-      await ghidra.closeOwnedResources();
-    });
-    const target = executableTarget("elf", "x86_64");
-    const profile = await ghidra.resolveAnalysisProfile(target);
-    if (!profile.ok || profile.value.profile === null)
-      throw new Error("Expected Ghidra analysis profile");
-    const result = await ghidra
-      .createClient(target, profile.value.profile)
-      .execute("list_documents", {});
-    if (result.ok) throw new Error("Expected a Ghidra start failure");
-    return projectAnalysisError(result.error);
-  };
-  const abort = (name: string) =>
-    `ERROR Abort due to Headless analyzer error: Requested project program file(s) not found: ${name} (HeadlessAnalyzer) java.io.IOException: Requested project program file(s) not found: ${name}`;
+          complete: true,
+        },
+        undefined,
+        false,
+      ),
+    },
+  );
+  const ghidra = provider(
+    installationHost(),
+    () => ({
+      start: async () => err(failure),
+      callTool: async () => err(failure),
+      close: async () => ok(null),
+    }),
+    {
+      REA_GHIDRA_PROJECT_PATH: join(root, "selected.gpr"),
+      ...environment,
+    },
+  );
+  onTestFinished(async () => {
+    await ghidra.closeOwnedResources();
+  });
+  const target = executableTarget("elf", "x86_64");
+  const profile = await ghidra.resolveAnalysisProfile(target);
+  if (!profile.ok || profile.value.profile === null)
+    throw new Error("Expected Ghidra analysis profile");
+  const result = await ghidra
+    .createClient(target, profile.value.profile)
+    .execute("list_documents", {});
+  if (result.ok) throw new Error("Expected a Ghidra start failure");
+  return projectAnalysisError(result.error);
+};
+const abort = (name: string) =>
+  `ERROR Abort due to Headless analyzer error: Requested project program file(s) not found: ${name} (HeadlessAnalyzer) java.io.IOException: Requested project program file(s) not found: ${name}`;
 
-  const expectMissingProgram = (
-    projected: Awaited<ReturnType<typeof startFailure>>,
-    programName: string,
-    configured: boolean,
-  ) => {
-    const guidance = ghidraMissingProgramGuidance(programName, configured);
-    expect(projected).toMatchObject({
-      code: "configuration_invalid",
-      details: {
-        settings: [
-          {
-            setting: "REA_GHIDRA_PROGRAM_NAME",
-            constraint: guidance.constraint,
-          },
-        ],
-      },
-    });
-    expect(projected.remediation.action).toBe(guidance.remediationAction);
-    expect(projected.message).toContain(JSON.stringify(programName));
-  };
+const expectMissingProgram = (
+  projected: Awaited<ReturnType<typeof startFailure>>,
+  programName: string,
+  configured: boolean,
+) => {
+  const guidance = ghidraMissingProgramGuidance(programName, configured);
+  expect(projected).toMatchObject({
+    code: "configuration_invalid",
+    details: {
+      settings: [
+        {
+          setting: "REA_GHIDRA_PROGRAM_NAME",
+          constraint: guidance.constraint,
+        },
+      ],
+    },
+  });
+  expect(projected.remediation.action).toBe(guidance.remediationAction);
+  expect(projected.message).toContain(JSON.stringify(programName));
+};
 
+describe("Ghidra missing project program", () => {
   it("reports the program name defaulted from the target as REA_GHIDRA_PROGRAM_NAME", async () => {
     expectMissingProgram(
       await startFailure(abort("fixture")),
