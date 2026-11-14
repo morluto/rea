@@ -5,6 +5,7 @@ import { expect } from "vitest";
 import { toolContract } from "../../src/contracts/toolContracts.js";
 import {
   elfRelocatableCtors,
+  elf32RelInitializersAddendWrap,
   elf64AliasedInitializers,
   elfUnmappedInitializerTargets,
   machoArm64Initializers,
@@ -13,6 +14,46 @@ import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
 const contract = toolContract("inspect_native_initializers");
+
+cliTest(
+  "resolves R_386_32 constructor addends that wrap past the 2^32 boundary",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-native-init-elf32-rel-wrap-",
+    );
+    const path = join(root, "obj");
+    const bytes = elf32RelInitializersAddendWrap();
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: ["inspect-native-initializers", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const report = contract.outputSchema.parse(result.json).normalized_result;
+    expect(report.status).toBe("parsed");
+    expect(report.entries.map((entry) => entry.kind)).toEqual([
+      "init_array",
+      "init_array",
+      "init_array",
+    ]);
+    expect(
+      report.entries.map(({ slot_file_offset, value_va, resolution }) => [
+        slot_file_offset,
+        value_va,
+        resolution,
+      ]),
+    ).toEqual([
+      [272, "0x0", "symbol_addend"],
+      [276, "0x2", "symbol_addend"],
+      [280, "0x1", "symbol_addend"],
+    ]);
+    expect(report.entries.map((entry) => entry.symbol?.name ?? null)).toEqual([
+      null,
+      null,
+      "marker",
+    ]);
+    expect((await readFile(path)).equals(bytes)).toBe(true);
+  },
+);
 
 cliTest(
   "keeps an unrelocated ELF alias's value and source identity through the CLI",
