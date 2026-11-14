@@ -98,7 +98,10 @@ it("rejects a CUDA LZ4 entry whose declared decoded length disagrees", async () 
     ]),
     entry = 16;
   // Grow only the declared output length; the encoded literals cannot reach it.
-  bytes.writeBigUInt64LE(BigInt(Buffer.byteLength(ptxFixture) + 16), entry + 56);
+  bytes.writeBigUInt64LE(
+    BigInt(Buffer.byteLength(ptxFixture) + 16),
+    entry + 56,
+  );
   const result = await inspect(bytes);
   if (!result.ok) throw result.error;
   expect(result.value.objects[0]).toMatchObject({
