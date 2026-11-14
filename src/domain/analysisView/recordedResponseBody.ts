@@ -81,6 +81,19 @@ export const decodeRetainedBase64 = (
   }
 };
 
+/** Compare HAR's source spelling without decoding or copying another whole body. */
+const sameHarBase64 = (reported: string, retained: string): boolean => {
+  if (reported === retained) return true;
+  let at = 0;
+  for (let index = 0; index < reported.length; index++) {
+    const code = reported.charCodeAt(index);
+    // These are the four whitespace characters admitted by the HAR producer.
+    if (code === 9 || code === 10 || code === 13 || code === 32) continue;
+    if (code !== retained.charCodeAt(at++)) return false;
+  }
+  return at === retained.length;
+};
+
 /** Read producer-decoded text or supported HAR base64; unknown encoding declarations stay opaque. Base64 beyond `limitBytes` is decoded only that far. */
 export const readRecordedResponseBody = (
   record: WebNetworkCaptureRecord,
@@ -129,7 +142,12 @@ export const readRecordedResponseBody = (
     (field) =>
       field.pointer === "/response/content/text" && field.state === "retained",
   );
-  if (binary === undefined || binary.content_base64 === null)
+  if (
+    binary === undefined ||
+    binary.representation !== "har-base64-content" ||
+    binary.content_base64 === null ||
+    !sameHarBase64(text, binary.content_base64)
+  )
     return { bodyText: null };
   return decodeRetainedBase64(binary.content_base64, limitBytes);
 };
