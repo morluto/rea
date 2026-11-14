@@ -27,7 +27,8 @@ const PYTHON_BYTECODE_IDENTITIES: ReadonlyMap<number, PythonBytecodeIdentity> =
     ...identities(range(3550, 3571), "3.13"),
     ...identities([3627], "3.14"),
     // Reported against Python 3.15, the default `python3` on current Homebrew.
-    ...identities([3666], "3.15"),
+    // 3663 is the 3.15.0a8 magic, read back from a real interpreter.
+    ...identities([3663, 3666], "3.15"),
   ]);
 
 export const pythonBytecodeIdentity = (

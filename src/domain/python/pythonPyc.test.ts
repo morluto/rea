@@ -76,17 +76,30 @@ it("keeps pinned CPython identity separate from standalone marshal coverage", ()
     code_layout: "py311",
     negative_code_fields: "rejected",
   });
-  // Recognizing a newer CPython identity does not authorize its code layout.
   expect(pythonBytecodeIdentity(3627)).toEqual({
     pythonVersion: "3.14",
     headerBytes: 16,
+  });
+  expect(pythonPycMarshalProfile(3627)).toEqual({
+    code_layout: "py311",
+    negative_code_fields: "rejected",
   });
   expect(pythonBytecodeIdentity(3666)).toEqual({
     pythonVersion: "3.15",
     headerBytes: 16,
   });
-  expect(pythonPycMarshalProfile(3627)).toBeNull();
-  expect(pythonPycMarshalProfile(3666)).toBeNull();
+  expect(pythonBytecodeIdentity(3663)).toEqual({
+    pythonVersion: "3.15",
+    headerBytes: 16,
+  });
+  expect(pythonPycMarshalProfile(3663)?.code_layout).toBe("py311");
+  expect(pythonPycMarshalProfile(3666)?.code_layout).toBe("py311");
+  // Only magics checked against real CPython are pinned: the neighbouring
+  // 3.14 and 3.15 pre-release magics and the 3.16 magics stay unknown.
+  for (const magic of [3600, 3626, 3650, 3662, 3664, 3665, 3706]) {
+    expect(pythonBytecodeIdentity(magic), String(magic)).toBeNull();
+    expect(pythonPycMarshalProfile(magic), String(magic)).toBeNull();
+  }
   expect(pythonPycMarshalProfile(3450)).toBeNull();
   expect(pythonPycMarshalProfile(62171)).toBeNull();
   expect(PYTHON_PYC_MARSHAL_PROFILES.size).toBeGreaterThan(80);
