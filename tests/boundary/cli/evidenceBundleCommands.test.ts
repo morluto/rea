@@ -267,6 +267,33 @@ cliTest.for([
   },
 );
 
+cliTest(
+  "refuses a hand-reordered bundle in evidence-export without advising another export of the same file",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-bundle-noncanonical-cli-");
+    const path = join(root, "reordered.json");
+    const output = join(root, "exported.json");
+    const bundle = revisionBundle();
+    const reordered = { ...bundle, records: [...bundle.records].reverse() };
+    const encoded = JSON.stringify(reordered);
+    await writeFile(path, encoded);
+    const result = await runFileCli(cli, {
+      arguments: ["evidence-export", path, output, "--json"],
+      environment: { REA_LOG_LEVEL: "silent" },
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "evidence_integrity_mismatch",
+      message: expect.stringMatching(
+        /manifests are not canonical.*reordered, merged or edited by hand are refused, including by evidence-export/u,
+      ),
+    });
+    expect(JSON.stringify(result.json)).not.toMatch(/re-export the bundle/iu);
+    expect(await readFile(path, "utf8")).toBe(encoded);
+    await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
 cliTest.for([
   "export_evidence_bundle",
   "compare_bundles",
