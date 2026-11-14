@@ -11,6 +11,8 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Evidence } from "../domain/evidence.js";
 import {
   AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
@@ -445,10 +447,11 @@ export class AdbUiRunner {
         (signal?.aborted && cause === signal.reason) ||
         (cause instanceof OwnedCommandFailure && cause.reason === "cancelled")
       )
-        throw new AnalysisCancelledError(operation, {
-          ...options,
-          cause: signal?.aborted ? signal.reason : cause,
-        });
+        throw cancelledBy(
+          operation,
+          signal?.aborted ? signal : carriedReason(cause),
+          capturedOutput === undefined ? undefined : { capturedOutput },
+        );
       if (cause instanceof OwnedCommandFailure && cause.reason === "timeout")
         throw new AnalysisTimeoutError(operation, timeoutMs, options);
       if (
@@ -532,8 +535,7 @@ export class AdbUiRunner {
     signal?: AbortSignal,
   ): Promise<AnalysisOutputError | undefined> {
     const recovered = await this.#retryCleanup();
-    if (signal?.aborted)
-      throw new AnalysisCancelledError(operation, { cause: signal.reason });
+    if (signal?.aborted) throw cancelledBy(operation, signal);
     const action =
       operation === "perform_adb_ui_action"
         ? (this.#unknownActionOutcome ??
@@ -791,10 +793,7 @@ export class AdbUiRunner {
     let returned: AnalysisError | undefined;
     let interruptedBeforeActionSubmission: AnalysisCancelledError | undefined;
     try {
-      if (signal?.aborted)
-        throw new AnalysisCancelledError(request.operation, {
-          cause: signal.reason,
-        });
+      if (signal?.aborted) throw cancelledBy(request.operation, signal);
       const selected = this.environment[PACKAGE_ENV];
       const parsedPackage = adbPackageNameSchema.safeParse(
         selected === undefined || selected === "" ? DEFAULT_PACKAGE : selected,
@@ -1037,10 +1036,7 @@ export class AdbUiRunner {
         }
       }
       observed ??= this.#validateObservation(request, owned, reply, signal);
-      if (signal?.aborted)
-        throw new AnalysisCancelledError(request.operation, {
-          cause: signal.reason,
-        });
+      if (signal?.aborted) throw cancelledBy(request.operation, signal);
       const execution = this.#execution(
         request,
         client,
@@ -1066,9 +1062,7 @@ export class AdbUiRunner {
         signal?.aborted &&
         (cause === signal.reason ||
           (cause instanceof Error && cause.name === "AbortError"))
-          ? new AnalysisCancelledError(request.operation, {
-              cause: signal.reason,
-            })
+          ? cancelledBy(request.operation, signal)
           : cause instanceof AnalysisError
             ? cause
             : new AnalysisOutputError(
@@ -1374,9 +1368,10 @@ export class AdbUiRunner {
         request.input.timeout_ms,
       );
     if (failure.kind === "cancelled")
-      return new AnalysisCancelledError(request.operation, {
-        cause: signal?.aborted ? signal.reason : failure.reason,
-      });
+      return cancelledBy(
+        request.operation,
+        signal?.aborted ? signal : carriedReason(failure.reason),
+      );
     if (failure.kind === "busy" || failure.kind === "capacity")
       return new AnalysisResourceConstraintError(
         request.operation,

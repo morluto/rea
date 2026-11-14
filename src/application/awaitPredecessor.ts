@@ -1,4 +1,4 @@
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { cancelledBy } from "../domain/analysisErrorCore.js";
 
 /**
  * Wait for a predecessor operation to finish, or reject when the caller
@@ -11,12 +11,11 @@ export const awaitPredecessor = (
   signal?: AbortSignal,
 ): Promise<void> =>
   new Promise((resolve, reject) => {
-    const abort = () =>
-      reject(
-        new AnalysisCancelledError(operation, {
-          cause: signal?.reason,
-        }),
-      );
+    const abort = () => {
+      if (!signal?.aborted) return;
+      signal.removeEventListener("abort", abort);
+      reject(cancelledBy(operation, signal));
+    };
     signal?.addEventListener("abort", abort, { once: true });
     if (signal?.aborted === true) abort();
     void predecessor.then(() => {
