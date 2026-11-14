@@ -1,3 +1,4 @@
+import { isPortableBundleName } from "../../domain/portableBundleName.js";
 import { describe, expect, it } from "vitest";
 
 import { timedCaptureEvidence } from "../../../tests/fixtures/analysisView.js";
@@ -13,15 +14,13 @@ import {
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { PACKAGE_METADATA } from "../../generatedPackageMetadata.js";
 import {
-  BUNDLE_BASE_IMAGE,
-  bundleDockerfile,
   ENVIRONMENT_EXPORT_OPERATION,
   planEnvironmentBundle,
   registryPackageSource,
   type EnvironmentBundleOptions,
 } from "./environmentBundle.js";
 import type { EnvironmentSource } from "./environmentSource.js";
-import { prepareServedState } from "./environmentState.js";
+import { prepareServedState, servedCatalog } from "./environmentState.js";
 import { environmentToolAnswer } from "./environmentToolAnswer.js";
 import { EnvironmentStateStore } from "./environmentStateStore.js";
 
@@ -114,9 +113,12 @@ describe("planEnvironmentBundle", () => {
   it("pins the registry package to this build's exact version in the Dockerfile", () => {
     const dockerfile = file(plan(), "envs/grafana-example/Dockerfile");
     const lines = dockerfile.trimEnd().split("\n");
-    expect(lines[0]).toBe(`FROM ${BUNDLE_BASE_IMAGE}`);
+    expect(lines[0]).toMatch(/^FROM node:\d+\.\d+\.\d+-bookworm-slim$/u);
     expect(lines).toContain("ENV MCP_HOST=0.0.0.0");
     expect(lines).toContain("ENV MCP_PORT=18765");
+    expect(lines).toContain(
+      `ENV MCP_ALLOWED_HOSTS=127.0.0.1,localhost,grafana-example`,
+    );
     expect(lines).toContain(
       "RUN apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*",
     );
@@ -145,7 +147,9 @@ describe("planEnvironmentBundle", () => {
       "RUN npm install -g --ignore-scripts --no-fund --no-audit /tmp/rea-agents.tgz && rm /tmp/rea-agents.tgz\n",
     );
     expect(dockerfile).not.toContain(`rea-agents@${PACKAGE_METADATA.version}`);
-    expect(bundleDockerfile(registryPackageSource())).not.toBe(dockerfile);
+    expect(file(plan(), "envs/grafana-example/Dockerfile")).not.toBe(
+      dockerfile,
+    );
   });
 
   it("writes a verifier that checks the served tool count and the status the server answers the first parameterless GET tool with", () => {
@@ -235,6 +239,36 @@ describe("planEnvironmentBundle", () => {
 });
 
 describe("planEnvironmentBundle portable names", () => {
+  it.each(["4294967296", "123", "0xffffffff"])(
+    "refuses bundle name %s when HTTP cannot preserve its host identity",
+    (name) => {
+      expect(nameRefusal(name)).toMatchObject({
+        code: "invalid_request",
+        details: {
+          operation: "environment-export",
+          issues: [{ path: ["name"], reason: "invalid_value" }],
+        },
+      });
+    },
+  );
+
+  it("keeps addressable numeric prefixes and admits the DNS label boundary", () => {
+    for (const name of ["123-replay", "0xffffffff-replay", "a".repeat(63)]) {
+      expect(isPortableBundleName(name)).toBe(true);
+      const planned = plan({ name });
+      expect(planned.name).toBe(name);
+      expect(file(planned, `envs/${name}/Dockerfile`)).toContain(
+        `ENV MCP_ALLOWED_HOSTS=127.0.0.1,localhost,${name}`,
+      );
+    }
+    expect(isPortableBundleName("a".repeat(64))).toBe(false);
+    expect(nameRefusal("a".repeat(64))).toMatchObject({
+      code: "invalid_request",
+    });
+    for (const name of ["123", "4294967296", "0xffffffff"])
+      expect(isPortableBundleName(name)).toBe(false);
+  });
+
   it("accepts a kebab-case name override and refuses any other name as invalid input", () => {
     const renamed = plan({ name: "replay-2" });
     expect(renamed.files.map((entry) => entry.path)).toContain(
@@ -388,21 +422,51 @@ describe("planEnvironmentBundle without a state", () => {
   });
 
   it("serves and predicts replay when the state's catalog exceeds the discovery budget that replay's fits", () => {
-    // Read tools only, so leaving out write tools saves nothing while each state description is longer.
-    // 300 sits between the two catalogs on this fixture: replay still fits and the state catalog does not.
+    // Locate the state admission boundary instead of pinning a count to description sizes.
     const reads = servedSource.manifest.tools.filter(
       ({ method }) => method === "GET",
     );
-    const tools = Array.from({ length: 300 }, (_, index) => {
-      const tool = reads[index % reads.length]!;
-      return index < reads.length
-        ? tool
-        : { ...tool, name: `${tool.name}_${String(index)}` };
-    });
-    const source = {
+    expect(reads.length).toBeGreaterThan(0);
+    const sourceAt = (count: number): EnvironmentSource => ({
       ...servedSource,
-      manifest: { ...servedSource.manifest, tools },
-    };
+      manifest: {
+        ...servedSource.manifest,
+        tools: Array.from({ length: count }, (_, index) => {
+          const tool = reads[index % reads.length]!;
+          return index < reads.length
+            ? tool
+            : { ...tool, name: `${tool.name}_${String(index)}` };
+        }),
+      },
+    });
+    const stateFits = (count: number): boolean =>
+      servedCatalog(
+        sourceAt(count),
+        { writes: new Map() },
+        servedSource.manifest.name,
+      ).ok;
+    let fitting = 0;
+    let exceeding = reads.length;
+    // This fixture ceiling bounds setup if catalog admission stops refusing.
+    const fixtureToolLimit = 4096;
+    while (exceeding < fixtureToolLimit && stateFits(exceeding)) {
+      fitting = exceeding;
+      exceeding = Math.min(exceeding * 2, fixtureToolLimit);
+    }
+    expect(
+      stateFits(exceeding),
+      "State discovery must exceed its budget within the fixture safety ceiling",
+    ).toBe(false);
+    while (exceeding - fitting > 1) {
+      const middle = Math.floor((fitting + exceeding) / 2);
+      if (stateFits(middle)) fitting = middle;
+      else exceeding = middle;
+    }
+    const source = sourceAt(exceeding);
+    expect(
+      servedCatalog(source, undefined, source.manifest.name).ok,
+      "The fixture must fit replay discovery while exceeding state discovery",
+    ).toBe(true);
     const prepared = prepareServedState(source, fixture.capture);
     expect(prepared.state).toBeUndefined();
     expect(prepared.report).toMatchObject({
@@ -419,7 +483,7 @@ describe("planEnvironmentBundle without a state", () => {
       served: false,
       code: "resource_constraint",
     });
-    expect(planned.value.toolCount).toBe(300);
+    expect(planned.value.toolCount).toBe(source.manifest.tools.length);
     expect(planned.value.check).toEqual({
       tool: "get_annotations",
       recordOrdinal: 25,

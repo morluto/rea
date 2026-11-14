@@ -23,6 +23,20 @@ export function* jsonParts(value: unknown, pretty = false): Generator<string> {
   yield* encodeValue(value, pretty, false);
 }
 
+/** Exact UTF-8 bytes of ordinary JSON without allocating the whole document. */
+export const jsonByteLength = (value: unknown): number => {
+  let bytes = 0;
+  for (const part of jsonParts(value)) bytes += Buffer.byteLength(part, "utf8");
+  return bytes;
+};
+
+/** Exact UTF-16 code units of ordinary JSON without allocating the whole document. */
+export const jsonTextCodeUnits = (value: unknown): number => {
+  let length = 0;
+  for (const part of jsonParts(value)) length += part.length;
+  return length;
+};
+
 /** Encode validated JSON with canonical key ordering without allocating the whole document. */
 export function* canonicalJsonParts(value: unknown): Generator<string> {
   yield* encodeValue(value, false, true);

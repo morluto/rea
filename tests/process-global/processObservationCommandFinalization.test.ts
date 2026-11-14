@@ -1,3 +1,4 @@
+import { createTestProcessCaptureResourceScope } from "../fixtures/processCaptureResourceScope.js";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +8,7 @@ import { expect, it, onTestFinished } from "vitest";
 import { createDarwinProcessRunTokenReader } from "../../src/process/DarwinProcessRunTokenReader.js";
 import { createSystemProcessOwnershipHost } from "../../src/process/ProcessOwnershipObservation.js";
 import { startProcessSampler } from "../../src/process/capture/ProcessSampling.js";
+import { ProcessOwnershipInspectionCancelled } from "../../src/process/ProcessInspectionCancellation.js";
 
 const waitForFile = async (path: string, timeoutMs = 4_000): Promise<void> => {
   const deadline = Date.now() + timeoutMs;
@@ -29,18 +31,28 @@ const waitForFile = async (path: string, timeoutMs = 4_000): Promise<void> => {
 };
 
 const waitForCommandOrFailure = async (
-  readyPath: string,
+  ready: Promise<void>,
   pending: Promise<unknown>,
 ): Promise<void> => {
   const outcome = await Promise.race([
-    waitForFile(readyPath).then(() => undefined),
+    ready.then(() => ({ ready: true as const })),
     pending.then(
-      () => new Error("The command completed before its ready marker"),
-      (cause: unknown) => cause,
+      () => ({ ready: false as const, cause: undefined }),
+      (cause: unknown) => ({ ready: false as const, cause }),
     ),
   ]);
-  if (outcome !== undefined) throw outcome;
+  if (!outcome.ready)
+    throw new Error("The command completed before its ready marker", {
+      cause: outcome.cause,
+    });
 };
+
+it("rejects an early command failure even when its reason is undefined", async () => {
+  const ready = new Promise<void>(() => {});
+  await expect(
+    waitForCommandOrFailure(ready, Promise.reject(undefined)),
+  ).rejects.toBeInstanceOf(Error);
+});
 
 const delayedCommandSource = (
   readyPath: string,
@@ -92,7 +104,7 @@ const expectOwnedCommandToFinishOnAbort = async (
 
   pending = run(controller.signal, directory);
   void pending.catch(() => {});
-  await waitForCommandOrFailure(command.readyPath, pending);
+  await waitForCommandOrFailure(waitForFile(command.readyPath), pending);
   controller.abort(reason);
   const failure = await pending.then(
     () => undefined,
@@ -101,7 +113,9 @@ const expectOwnedCommandToFinishOnAbort = async (
 
   if (!(failure instanceof Error))
     throw new Error("The cancelled process command did not return an error");
-  expect(failure.cause).toBe(reason);
+  expect(ProcessOwnershipInspectionCancelled.from(failure)?.reason).toBe(
+    reason,
+  );
   await expect(readFile(command.donePath, "utf8")).resolves.toBe("done");
 };
 
@@ -189,6 +203,7 @@ it.skipIf(process.platform === "win32")(
     };
 
     stopSampler = startProcessSampler({
+      resourceScope: createTestProcessCaptureResourceScope(),
       rootPid: 100,
       runId: "fixture-run-token",
       started: 0,
@@ -251,7 +266,7 @@ const expectDarwinReaderCommandToFinishOnAbort = async (
       ? reader.read([processEntry], controller.signal)
       : reader.identities([processEntry], controller.signal);
   void pending.catch(() => {});
-  await waitForCommandOrFailure(command.readyPath, pending);
+  await waitForCommandOrFailure(waitForFile(command.readyPath), pending);
   controller.abort(reason);
   const failure = await pending.then(
     () => undefined,

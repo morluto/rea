@@ -1,12 +1,16 @@
 import { accessSync, constants, statSync } from "node:fs";
-import { delimiter, isAbsolute, join } from "node:path";
+import { delimiter, isAbsolute } from "node:path";
+
+import { appendCallerPath } from "../filesystem/callerPath.js";
 
 import type { ProviderAvailability } from "../application/AnalysisProvider.js";
-import type { ProviderRejectionCode } from "../contracts/providerSelection.js";
+import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import type { AnalysisErrorOptions } from "../domain/analysisErrorBase.js";
-import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCapabilityUnavailableError,
+  AnalysisArtifactChangedError,
+} from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { AnalysisArtifactChangedError } from "../domain/analysisErrorCore.js";
 
 export interface WiresharkExecutableIdentity {
   readonly bytes: number;
@@ -43,7 +47,8 @@ export const assertWiresharkExecutableIdentity = (
 export const TSHARK_COMMAND_ENV = "REA_TSHARK_COMMAND";
 export const CAPINFOS_COMMAND_ENV = "REA_CAPINFOS_COMMAND";
 
-const TOOL_REMEDIATION = `Supply Wireshark 4.x tshark and capinfos on PATH or through absolute ${TSHARK_COMMAND_ENV} and ${CAPINFOS_COMMAND_ENV}; REA does not install them.`;
+/** Repair for any unusable caller-selected Wireshark tool; shared by readiness and execution. */
+export const PCAP_TOOL_REMEDIATION = `Supply Wireshark 4.x tshark and capinfos on PATH or through absolute ${TSHARK_COMMAND_ENV} and ${CAPINFOS_COMMAND_ENV}; REA does not install them.`;
 
 /**
  * Host-tool refusals concern the caller's Wireshark installation, not the
@@ -57,7 +62,7 @@ export const pcapToolUnavailable = (
 ): AnalysisCapabilityUnavailableError =>
   new AnalysisCapabilityUnavailableError("pcap", operation, reason, {
     ...options,
-    userMessage: `${/[.!?]$/u.test(reason) ? reason : `${reason}.`} ${TOOL_REMEDIATION}`,
+    userMessage: `${/[.!?]$/u.test(reason) ? reason : `${reason}.`} ${PCAP_TOOL_REMEDIATION}`,
   });
 
 /** How one caller-supplied Wireshark tool was selected. */
@@ -144,7 +149,7 @@ export const locateWiresharkTool = (
     return selection.command;
   for (const directory of (environment.PATH ?? "").split(delimiter)) {
     if (!isAbsolute(directory)) continue;
-    const candidate = join(directory, selection.command);
+    const candidate = appendCallerPath(directory, selection.command);
     try {
       accessSync(candidate, constants.X_OK);
       if (statSync(candidate).isFile()) return candidate;
@@ -242,5 +247,6 @@ export const pcapConfigurationAvailability = (
   status: "unavailable",
   code: rejectionCodeOf(cause.code),
   reason: cause.message,
+  remediation: PCAP_TOOL_REMEDIATION,
   diagnostics: { ...cause.diagnostics },
 });

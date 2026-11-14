@@ -13,8 +13,18 @@ import { readPngHeaderDimensions } from "../pngHeader.js";
 const scope = {
   pid: z.int().positive(),
   window_id: z.int().positive(),
-  screenshot: z.boolean().default(true),
-  accessibility: z.boolean().default(true),
+  screenshot: z
+    .boolean()
+    .default(true)
+    .describe(
+      "Capture the selected window; screenshot or accessibility must be enabled.",
+    ),
+  accessibility: z
+    .boolean()
+    .default(true)
+    .describe(
+      "Read the selected window accessibility tree; screenshot or accessibility must be enabled.",
+    ),
   max_nodes: z
     .int()
     .positive()
@@ -129,7 +139,7 @@ export const nativeUiSnapshotSchema = z.strictObject({
       path: z.array(z.int().nonnegative()),
       role: z.string().nullable(),
       title: z.string().nullable(),
-      value: z.string().nullable(),
+      value: z.union([z.string(), z.number(), z.boolean()]).nullable(),
       actions: z.array(z.string()),
       children_count: z.int().nonnegative().nullable(),
     }),

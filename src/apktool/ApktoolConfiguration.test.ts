@@ -1,3 +1,15 @@
+import * as commandOwner from "../process/OwnedCommand.js";
+import { failedInspectionDescriptor } from "../../tests/fixtures/processInspectionCleanup.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import {
+  AnalysisError,
+  primaryAnalysisError,
+} from "../domain/analysisErrorBase.js";
+import {
+  ProcessOwnershipIdentityBatchFailure,
+  ProcessOwnershipInspectionCancelled,
+} from "../process/ProcessInspectionCancellation.js";
+import { systemProcessOwnershipHost } from "../process/ProcessOwnershipObservation.js";
 import { ApktoolCommandCleanup } from "./ApktoolCommandCleanup.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -271,9 +283,9 @@ describe("apktoolInvocation", () => {
     expect(apktoolConfigurationAvailability(failure)).toMatchObject({
       status: "unavailable",
       code: "not_configured",
+      remediation: expect.stringContaining(APKTOOL_COMMAND_ENV),
       diagnostics: {
         selected_command: "C:\\tools & more\\apktool.cmd",
-        remediation: expect.stringContaining(APKTOOL_COMMAND_ENV),
       },
     });
   });
@@ -475,6 +487,7 @@ it("cancels a pending filesystem lookup and owns its eventual rejection", async 
   const pendingStat = new Promise((_resolve, reject) => {
     rejectLookup = reject;
   });
+  void pendingStat.catch(() => undefined);
   const observed = new Promise<void>((resolve) => {
     started = resolve;
   });
@@ -491,14 +504,20 @@ it("cancels a pending filesystem lookup and owns its eventual rejection", async 
     "win32",
     controller.signal,
   );
-  await observed;
-  controller.abort();
-  await expect(pending).rejects.toMatchObject({
-    _tag: "AnalysisCancelledError",
-  });
-  rejectLookup(new Error("filesystem completed after cancellation"));
-  await Promise.resolve();
-  expect(lookup.stat).toHaveBeenCalledTimes(1);
+  try {
+    await awaitAcknowledgement(observed, pending, "apktool filesystem lookup");
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({
+      _tag: "AnalysisCancelledError",
+    });
+    rejectLookup(new Error("filesystem completed after cancellation"));
+    await Promise.resolve();
+    expect(lookup.stat).toHaveBeenCalledTimes(1);
+  } finally {
+    controller.abort();
+    rejectLookup(new Error("fixture cleanup"));
+    await pending.catch(() => undefined);
+  }
 });
 
 it("bounds the entire pending PATH lookup by the selection deadline", async () => {
@@ -530,4 +549,115 @@ let commands = new ApktoolCommandCleanup();
 afterEach(async () => {
   await commands.close();
   commands = new ApktoolCommandCleanup();
+});
+
+it("does not implicitly search CWD when no opt-out flag is present", async () => {
+  await expect(
+    resolveApktoolCommand(
+      { Path: "C:\\Selected Tools;D:\\Other Tools", PathExt: ".EXE" },
+      "win32",
+    ),
+  ).rejects.toMatchObject({ code: "command_missing" });
+  expect(lookup.stat.mock.calls.map(([path]) => path)).toEqual([
+    "C:\\Selected Tools\\apktool.EXE",
+    "D:\\Other Tools\\apktool.EXE",
+  ]);
+});
+
+it.each([false, true])(
+  "keeps preparation failure distinct from selected launcher availability (batch: %s)",
+  async (batch) => {
+    const descriptor = await failedInspectionDescriptor();
+    const reason = { source: "inspection caller" };
+    const cause = batch
+      ? new ProcessOwnershipIdentityBatchFailure(
+          [
+            { pid: 41, requestIndex: 0, cause: descriptor.failure },
+            {
+              pid: 42,
+              requestIndex: 1,
+              cause: new ProcessOwnershipInspectionCancelled(reason),
+            },
+          ],
+          new Map(),
+        )
+      : descriptor.failure;
+    const prepare = vi
+      .spyOn(systemProcessOwnershipHost, "prepare")
+      .mockRejectedValue(cause);
+    try {
+      const result: unknown = await inspectApktoolClient(
+        { command: "/selected/apktool", commandSource: "environment" },
+        commands,
+      ).catch((cause: unknown) => cause);
+      expect(result).toBeInstanceOf(AnalysisError);
+      if (!(result instanceof AnalysisError)) throw result;
+      const primary = primaryAnalysisError(result);
+      expect(primary).toMatchObject({
+        _tag: "ProviderAdapterError",
+        diagnostics: { stage: "ownership_preparation" },
+      });
+      expect(primary.cause).toBe(cause);
+      expect(primary.capturedOutput).toBeUndefined();
+      expect(primary.diagnostics).not.toHaveProperty("compiler_outcome");
+      if (batch)
+        expect(primary.secondaryFailures).toContainEqual(
+          expect.objectContaining({
+            _tag: "AnalysisCancelledError",
+            cause: reason,
+          }),
+        );
+      expect(result.cleanupResources).toEqual([descriptor.failure.path]);
+      descriptor.allow();
+      await commands.close();
+      expect(result.cleanupIncomplete).toBe(false);
+      expect(descriptor.failure.owner.handle.fd).toBe(-1);
+    } finally {
+      prepare.mockRestore();
+      descriptor.allow();
+      await commands.close();
+      await descriptor.failure.owner.close();
+    }
+  },
+);
+
+it("keeps a recorded command timeout primary with its actual inspection stop fact", async () => {
+  const reason = new Error("recorded command deadline");
+  const inspection = new ProcessOwnershipInspectionCancelled(reason);
+  const failure = new commandOwner.OwnedCommandFailure(
+    "timeout",
+    "Command deadline elapsed during ownership preparation.",
+    null,
+    null,
+    { preparationFailure: inspection },
+  );
+  const prepare = vi
+    .spyOn(systemProcessOwnershipHost, "prepare")
+    .mockResolvedValue(undefined);
+  const command = vi
+    .spyOn(commandOwner, "runOwnedCommand")
+    .mockRejectedValue(failure);
+  try {
+    const result: unknown = await inspectApktoolClient(
+      { command: "/selected/apktool", commandSource: "environment" },
+      commands,
+    ).catch((cause: unknown) => cause);
+    expect(result).toMatchObject({
+      _tag: "AnalysisTimeoutError",
+      timeoutMs: 20_000,
+    });
+    if (!(result instanceof AnalysisError)) throw result;
+    expect(result.cause).toBe(failure);
+    expect(failure.cancellation).toBeUndefined();
+    expect(result.secondaryFailures).toHaveLength(1);
+    const stopped = result.secondaryFailures[0];
+    if (stopped === undefined)
+      throw new Error("Expected the recorded inspection stop fact");
+    expect(stopped.cause).toBe(reason);
+    expect(Reflect.get(stopped, "inspectionFailure")).toBe(inspection);
+    expect(result.cleanupResources).toEqual([]);
+  } finally {
+    command.mockRestore();
+    prepare.mockRestore();
+  }
 });

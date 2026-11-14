@@ -1,4 +1,8 @@
+import { javaScriptSemanticPrecisionSchema } from "./javascript/javascriptSemanticPrecision.js";
+import { fetchedSourceMapLimitsSchema } from "./sourceMapLimits.js";
 import { z } from "zod";
+import { browserExclusionSchema } from "./browserCompleteness.js";
+import { webPageInspectionSchema } from "./browserObservationSchemas.js";
 import { javaScriptRouteInventorySchema } from "./javascript/javascriptRouteInventory.js";
 
 import {
@@ -39,6 +43,16 @@ const webBundleTotalTimeoutDescription = `Total analysis deadline phase: maximum
 export const analyzeWebBundleInputSchema = inspectWebPageWithSourceInputSchema
   .safeExtend({
     fetch_source_maps: z.boolean().default(false),
+    semantic_precision: javaScriptSemanticPrecisionSchema
+      .exactOptional()
+      .describe(
+        "Per-script semantic evaluator budgets; omitted fields preserve defaults. Independent of worker memory, deadlines and reply budgets.",
+      ),
+    source_map_limits: fetchedSourceMapLimitsSchema
+      .exactOptional()
+      .describe(
+        "Source-map fetch/representation and decoder admission for this call. Omitted fields keep existing defaults; no restart required.",
+      ),
     max_heap_mb: z
       .number()
       .int()
@@ -53,10 +67,17 @@ export const analyzeWebBundleInputSchema = inspectWebPageWithSourceInputSchema
       webBundleTotalTimeoutDescription,
     ),
     source_map_fetch_timeout_ms: optionalBrowserDeadlineMs(
-      `Source-map fetch deadline in milliseconds (default ${String(DEFAULT_SOURCE_MAP_FETCH_TIMEOUT_MS)}). Omitted means ${String(DEFAULT_SOURCE_MAP_FETCH_TIMEOUT_MS)} and applies on the next fetch. A fetch overrun is an item limitation (fetch_failed), not a thrown analysis timeout. Does not raise the fixed 64 MiB response budget or the source-map decode deadline. The response budget has no runtime override.`,
+      `Source-map fetch deadline in milliseconds (default ${String(DEFAULT_SOURCE_MAP_FETCH_TIMEOUT_MS)}). Omitted means ${String(DEFAULT_SOURCE_MAP_FETCH_TIMEOUT_MS)} and applies on the next fetch. After response cleanup completes, a fetch overrun is an item limitation (fetch_failed), not a thrown analysis timeout. Pending or failed response cleanup is reported as an error with its retained owner. Response/representation and decoder budgets are independent source_map_limits fields.`,
     ),
   })
   .superRefine((input, context) => {
+    if (input.source_map_limits !== undefined && !input.fetch_source_maps)
+      context.addIssue({
+        code: "custom",
+        path: ["source_map_limits"],
+        message:
+          "source_map_limits requires fetch_source_maps: true; inspection does not fetch maps unless explicitly selected.",
+      });
     const perScript =
       input.analysis_timeout_ms ?? DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS;
     const total =
@@ -252,6 +273,8 @@ const originalSourceSchema = z.object({
   artifact: webTextArtifactSchema.nullable(),
 });
 const originalModuleEdgeSchema = z.object({
+  // Historical observations omit this link to original_sources declarations.
+  declaration_index: z.int().min(0).optional(),
   from_source: z.string(),
   kind: z.enum(["static_import", "dynamic_import", "require"]),
   specifier: z.string(),
@@ -279,6 +302,11 @@ const parsedSourceMapShape = {
   original_module_edges: z.array(originalModuleEdgeSchema),
   mappings: z.array(sourceMapMappingSchema),
 };
+const responseIdentitySchema = z.object({
+  sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  bytes: z.int().min(0),
+  representation: z.literal("fetch-response-body-bytes"),
+});
 
 const sourceMapSchema = z.union([
   z.object({
@@ -296,7 +324,18 @@ const sourceMapSchema = z.union([
   z.object({
     ...sourceMapContextShape,
     ...parsedSourceMapShape,
-    status: z.enum(["fetch_failed", "invalid", "policy_filtered"]),
+    status: z.enum(["fetch_failed", "invalid"]),
+    artifact: z.null(),
+    /** Older observations omit this; completed bytes need it only when text is absent. */
+    response_identity: responseIdentitySchema.exactOptional(),
+    original_sources: emptyArraySchema,
+    original_module_edges: emptyArraySchema,
+    mappings: emptyArraySchema,
+    limitation: z.string(),
+  }),
+  z.object({
+    ...sourceMapContextShape,
+    status: z.literal("policy_filtered"),
     artifact: z.null(),
     original_sources: emptyArraySchema,
     original_module_edges: emptyArraySchema,
@@ -315,6 +354,12 @@ export const webSourceMapsSchema = z
     requested: z.int().min(0),
     processed: z.int().min(0),
     items: z.array(sourceMapSchema),
+    /** Capture exclusions retain counts/reasons without disallowed URL details. */
+    excluded: z
+      .array(
+        browserExclusionSchema.extend({ section: z.literal("source_maps") }),
+      )
+      .optional(),
     limitation: z.string().min(1).optional(),
   })
   .superRefine((sourceMaps, context) => {
@@ -341,7 +386,9 @@ export const webSourceMapsSchema = z
       (status) => status === "included" || status === "partial",
     ).length;
     const allowedStatuses =
-      sourceMaps.processed < sourceMaps.requested
+      sourceMaps.processed < sourceMaps.requested ||
+      sourceMaps.excluded?.some(({ count }) => count === null || count > 0) ===
+        true
         ? retained === 0
           ? ["unavailable"]
           : ["partial"]
@@ -363,6 +410,26 @@ export const webSourceMapsSchema = z
 
 export type WebSourceMapItem = z.infer<typeof sourceMapSchema>;
 export type WebSourceMaps = z.infer<typeof webSourceMapsSchema>;
+
+/** Completed fetch facts retained when source-map acquisition stops early. */
+export const webSourceMapFetchPartialObservationSchema = z.object({
+  kind: z.literal("web-source-map-fetch"),
+  source_maps: webSourceMapsSchema,
+});
+export type WebSourceMapFetchPartialObservation = z.infer<
+  typeof webSourceMapFetchPartialObservationSchema
+>;
+
+/** Captured page and completed maps before bundle analysis has begun. */
+export const webBundleAcquisitionPartialObservationSchema = z.object({
+  kind: z.literal("web-bundle-acquisition"),
+  inspection: webPageInspectionSchema,
+  source_maps: webSourceMapsSchema,
+  analysis_status: z.literal("not_performed"),
+});
+export type WebBundleAcquisitionPartialObservation = z.infer<
+  typeof webBundleAcquisitionPartialObservationSchema
+>;
 
 /** Provider-neutral result of JavaScript bundle reverse engineering. */
 export const webBundleAnalysisSchema = z.object({

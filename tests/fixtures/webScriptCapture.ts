@@ -5,7 +5,6 @@ import { browserScenarioCaptureSchema } from "../../src/domain/browserScenarioCa
 import { DEFAULT_BROWSER_SCENARIO_CAPTURE_LIMITS } from "../../src/domain/browserScenarioCaptureLimits.js";
 import { browserScenarioEventSchema } from "../../src/domain/browserScenarioCaptureValues.js";
 import { createEvidence } from "../../src/domain/evidence.js";
-import { jsonValueSchema } from "../../src/domain/jsonValue.js";
 
 /** Source-owned script capture with independently authored bytes. */
 export const scriptScenarioFixture = (
@@ -134,7 +133,7 @@ export const scriptCaptureEvidenceFixture = () =>
     { id: "source-fixture", name: "Source fixture", version: "1" },
     {
       operation: "capture_browser_scenario",
-      result: jsonValueSchema.parse(scriptScenarioFixture()),
+      result: scriptScenarioFixture(),
       parameters: {},
       confidence: "observed",
       authority: "controlled-replay",

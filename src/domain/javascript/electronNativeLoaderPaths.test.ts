@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeCommonJsStaticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 
 describe("native addon type-only TypeScript imports", () => {
   it("ignores declaration-wide import type and export type from .node modules", () => {
@@ -63,9 +64,50 @@ describe("native addon type-only re-exports", () => {
   });
 });
 
+it("does not claim a native re-export from a candidate wrapper with a proven factory loader", () => {
+  const analysis = analyzeJavaScriptStaticSource(`
+    globalThis.webpackChunkApp.push([[1], {
+      "factory": function (m, e, load) {
+        const known = load("./known.node");
+        module.exports = load("./addon.node");
+      }
+    }]);
+  `);
+  expect(analysis.electron.native_addon_bindings).toContainEqual(
+    expect.objectContaining({
+      binding_kind: "require",
+      specifier: "./known.node",
+    }),
+  );
+  expect(analysis.electron.native_addon_bindings).not.toContainEqual(
+    expect.objectContaining({
+      binding_kind: "re-export",
+      specifier: "./addon.node",
+    }),
+  );
+  expect(
+    analysis.analysis_coverage?.semantics.unknown_findings,
+  ).toBeGreaterThan(0);
+});
+
 describe("native addon loader provenance", () => {
-  it("distinguishes CommonJS and ESM re-exports", () => {
+  it("does not give ESM fixtures an ambient CommonJS loader", () => {
     const analysis = analyzeJavaScriptStaticSource(`
+      import imported from "./addon.node";
+      const required = require("./other.node");
+      module.exports = require("./exported.node");
+    `);
+    expect(analysis.electron.native_addon_bindings).toEqual([
+      expect.objectContaining({
+        specifier: "./addon.node",
+        binding_kind: "import",
+        module_kind: "import",
+      }),
+    ]);
+  });
+
+  it("distinguishes CommonJS and ESM re-exports", () => {
+    const analysis = analyzeCommonJsStaticFixture(`
       const required = require("./addon.node#literal.node");
       module.exports = require("./addon.node#literal.node");
       import imported from "./addon.node#literal.node";
@@ -97,7 +139,7 @@ describe("native addon loader provenance", () => {
   it.each(["#", "?"])(
     "classifies require filenames literally for %s",
     (punctuation) => {
-      const analysis = analyzeJavaScriptStaticSource(`
+      const analysis = analyzeCommonJsStaticFixture(`
       const script = require("./addon.node${punctuation}helper.js");
       import native from "./addon.node${punctuation}helper.js";
     `);
@@ -110,3 +152,58 @@ describe("native addon loader provenance", () => {
     },
   );
 });
+
+it.each(["call", "apply"])(
+  "does not prove native bindings through a replaced require.%s",
+  (method) => {
+    const argument =
+      method === "call" ? 'null,"./addon.node"' : 'null,["./addon.node"]';
+    const replaced = analyzeCommonJsStaticFixture(
+      `require.${method}=custom;const addon=require.${method}(${argument});`,
+    );
+    expect(replaced.electron.native_addon_bindings).toEqual([]);
+    const intact = analyzeCommonJsStaticFixture(
+      `require.other=custom;const addon=require.${method}(${argument});`,
+    );
+    expect(intact.electron.native_addon_bindings).toMatchObject([
+      { specifier: "./addon.node", binding_kind: "require" },
+    ]);
+  },
+);
+
+it("does not prove native bindings through a replaced aliased loader member", () => {
+  const analysis = analyzeCommonJsStaticFixture(
+    'const load=require;load.call=custom;const addon=load.call(null,"./addon.node");',
+  );
+  expect(analysis.electron.native_addon_bindings).toEqual([]);
+});
+
+it.each(
+  ["node", "NODE", "Node"].flatMap((extension) =>
+    ["require", "import", "commonjs-export", "esm-export"].map((kind) => ({
+      extension,
+      kind,
+    })),
+  ),
+)(
+  "preserves native extension dispatch for $kind with .$extension",
+  ({ extension, kind }) => {
+    const specifier = `./AddOn-É.${extension}`;
+    const source =
+      kind === "require"
+        ? `const addon = require(${JSON.stringify(specifier)});`
+        : kind === "import"
+          ? `import addon from ${JSON.stringify(specifier)};`
+          : kind === "commonjs-export"
+            ? `module.exports = require(${JSON.stringify(specifier)});`
+            : `export { default } from ${JSON.stringify(specifier)};`;
+    const analysis =
+      kind === "require" || kind === "commonjs-export"
+        ? analyzeCommonJsStaticFixture(source)
+        : analyzeJavaScriptStaticSource(source);
+    expect(analysis.parse_error_count).toBe(0);
+    expect(analysis.electron.native_addon_bindings).toEqual(
+      extension === "node" ? [expect.objectContaining({ specifier })] : [],
+    );
+  },
+);

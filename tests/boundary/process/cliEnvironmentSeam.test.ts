@@ -4,10 +4,8 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import {
-  captureProcessScenarioFile,
-  isProcessCliFailure,
-} from "../../../src/application/process/ProcessCli.js";
+import { captureProcessScenarioFile } from "../../../src/application/process/ProcessCli.js";
+import { isCliOperationFailure } from "../../../src/cliLogging.js";
 import { createDirectAnalysis } from "../../../src/composition/directAnalysis.js";
 import { probeProcessCaptureCapability } from "../../../src/process/capture/ProcessCaptureCapability.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
@@ -51,7 +49,7 @@ describe("the CLI takes its environment as an input", () => {
         REA_CAPTURE_INJECTED_MARKER: "injected-value",
         REA_CAPTURE_SCENARIO_OVERRIDE: "host-value",
       });
-      if (isProcessCliFailure(result))
+      if (isCliOperationFailure(result))
         throw new Error(
           `Process capture returned an error: ${JSON.stringify(result)}`,
         );

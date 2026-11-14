@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../src/cli/projectCliAnalysisResult.js";
 import { afterEach, expect, it, vi } from "vitest";
 
 const statFailures = vi.hoisted(() => new Map<string, unknown>());
@@ -69,7 +70,7 @@ it.each([
       path,
       "inspect_keyed_archive",
       { path: "Resources/Archive.plist" },
-    );
+    ).then(projectCliAnalysisResult);
 
     expect(output).toMatchObject({
       code: projectedCode,
@@ -108,7 +109,7 @@ it("rethrows an unclassified stat failure instead of treating it as a file", asy
   await expect(
     runProviderAnalysis(dependencies, path, "inspect_keyed_archive", {
       path: "Resources/Archive.plist",
-    }),
+    }).then(projectCliAnalysisResult),
   ).rejects.toBe(cause);
   expect(session.open).not.toHaveBeenCalled();
   expect(session.openBundleResources).not.toHaveBeenCalled();

@@ -1,3 +1,4 @@
+import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { Cli, z } from "incur";
 import pino from "pino";
 import { readFile, readdir, writeFile } from "node:fs/promises";
@@ -76,10 +77,9 @@ const fixture = async (kind: (typeof kinds)[number]) => {
     createManager,
     () => service,
   );
-  onTestFinished(async () => {
-    await service.close();
-    await manager.closeAll();
-  });
+  onTestFinished(() =>
+    closeVerifierResources([() => service.close(), () => manager.closeAll()]),
+  );
   const commandName =
     kind === "gdb"
       ? CLI_COMMANDS.debugWithGdb
@@ -199,7 +199,7 @@ it.each(kinds)(
       detail: "summary",
       evidence_output: destination,
     });
-    expect(await readFile(destination)).toEqual(original);
+    expect(Buffer.compare(await readFile(destination), original)).toBe(0);
     expect(output).toHaveProperty("code");
     expect(output).not.toHaveProperty("summary");
     expect(output).toHaveProperty("details.partial_observation.evidence_id");

@@ -70,8 +70,10 @@ if (args.length === 1 && args[0] === 'version') {
           serial: input.serial,
           package_name: input.package,
         });
-        expect(evidence.limitations).toContain(
-          "Uninstall explicitly requests user 0 without data retention (-k); device enforcement is not independently verified",
+        expect(evidence.limitations).toContainEqual(
+          expect.stringMatching(
+            /uninstall.*user 0.*without data retention.*-k.*device enforcement.*not independently verified/iu,
+          ),
         );
         expect(response.isError).not.toBe(true);
         expect(

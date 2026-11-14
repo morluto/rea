@@ -1,7 +1,9 @@
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { parseMcpEvidenceBundle } from "../../fixtures/mcpEvidenceBundle.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { afterEach, expect, it } from "vitest";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
 import { HopperRemoteError } from "../../../src/domain/hopperErrors.js";
@@ -109,8 +111,8 @@ it.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
         normalized_result: { rows: { columns: ["id"], returned_rows: 3 } },
       });
       expect(await closing).toMatchObject({ ok: true });
-      // Closing a binding clears its ledger after the admitted recording succeeds.
-      expect(session.evidenceById(evidenceId)).toBeUndefined();
+      // Engine cleanup waits for admission but preserves the completed fact.
+      expect(session.evidenceById(evidenceId)?.evidence_id).toBe(evidenceId);
       expect(closed).toBe(true);
     } finally {
       release.resolve();
@@ -208,9 +210,7 @@ it.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
         arguments: {},
       });
       expect(bundle.isError).not.toBe(true);
-      expect(JSON.stringify(bundle.structuredContent)).toContain(
-        error.details.partial_observation.evidence_id,
-      );
+      expect(parseMcpEvidenceBundle(bundle).records).toContainEqual(retained);
     } finally {
       removalAllowed = true;
       await client.close();
@@ -495,7 +495,7 @@ it("closes the Inspector owner with peers and retries its retained cleanup", asy
 
   await server.close();
   expect(inspectorCloseAttempts).toBe(2);
-  expect(peerCloseAttempts).toBe(2);
+  expect(peerCloseAttempts).toBe(1);
 });
 
 it("does not close a caller-owned Inspector observation provider", async () => {
@@ -616,6 +616,7 @@ it("preserves distinct results across concurrent tool calls", async () => {
     ["list_names", [{ address: "0x3000", value: "fixture_global" }]],
   ]);
   const pending = new Map<string, () => void>();
+  let releaseRemaining = false;
   let allStarted: () => void = () => {
     throw new Error("start gate missing");
   };
@@ -630,6 +631,7 @@ it("preserves distinct results across concurrent tool calls", async () => {
       await new Promise<void>((resolve) => {
         pending.set(name, resolve);
         if (pending.size === payloads.size) allStarted();
+        if (releaseRemaining) resolve();
       });
       return ok(payload);
     },
@@ -638,18 +640,28 @@ it("preserves distinct results across concurrent tool calls", async () => {
   const requests = names.map((name) =>
     client.callTool({ name, arguments: {} }),
   );
-  await started;
-  for (const name of [...names].reverse()) {
-    const release = pending.get(name);
-    if (release === undefined)
-      throw new Error("request did not reach provider");
-    release();
-  }
-  const results = await Promise.all(requests);
-  results.forEach((result, index) => {
-    expect(result.isError).not.toBe(true);
-    expect(structured(result)).toMatchObject({
-      normalized_result: payloads.get(names[index] ?? ""),
+  try {
+    await awaitAcknowledgement(
+      started,
+      Promise.all(requests),
+      "MCP tool calls",
+    );
+    for (const name of [...names].reverse()) {
+      const release = pending.get(name);
+      if (release === undefined)
+        throw new Error("request did not reach provider");
+      release();
+    }
+    const results = await Promise.all(requests);
+    results.forEach((result, index) => {
+      expect(result.isError).not.toBe(true);
+      expect(structured(result)).toMatchObject({
+        normalized_result: payloads.get(names[index] ?? ""),
+      });
     });
-  });
+  } finally {
+    releaseRemaining = true;
+    for (const release of pending.values()) release();
+    await Promise.allSettled(requests);
+  }
 });

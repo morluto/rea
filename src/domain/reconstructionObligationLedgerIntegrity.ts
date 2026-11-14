@@ -74,7 +74,8 @@ export const reconstructionObligationLedgerStatus = (
     requiredOpen.some(
       ({ status, diagnostics }) =>
         status === "contradicted" ||
-        hasReconstructionObligationDiagnostic(diagnostics, "verifier-failed"),
+        hasReconstructionObligationDiagnostic(diagnostics, "verifier-failed") ||
+        hasReconstructionObligationDiagnostic(diagnostics, "fixture-failed"),
     )
   )
     return "failed";

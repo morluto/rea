@@ -1,3 +1,4 @@
+import { EvmAdmissionError } from "./EvmAdmissionError.js";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { z } from "zod";
@@ -5,32 +6,37 @@ import {
   decodeEvmBytecodeCarrier,
   EvmCarrierFailure,
 } from "./EvmBytecodeCarrier.js";
-import { projectEvmoleInterface } from "./EvmoleInterfaceAdapter.js";
+import { evmoleInterfaceReplySchema } from "./EvmoleInterfaceAdapter.js";
 import { inspectSolidityMetadata } from "./SolidityMetadata.js";
+import { EVM_FILE_SIZE_FAILURE_EXIT } from "./EvmoleRelease.js";
 import {
-  EVM_INTERFACE_LIMITS,
-  EVM_FILE_SIZE_FAILURE_EXIT,
-} from "./EvmoleRelease.js";
+  evmProducerLimitsSchema,
+  selectedEvmProducerLimits,
+} from "../domain/evm/evmInterface.js";
+import { readStableArtifact } from "../artifacts/readStableArtifact.js";
 
 const requestSchema = z.strictObject({
   snapshot_path: z.string(),
   reply_path: z.string(),
   failure_marker_path: z.string(),
   encoding: z.enum(["raw", "hex"]),
+  producer_limits: evmProducerLimitsSchema,
 });
 class UnsupportedContainer extends Error {}
 
 const main = async (): Promise<void> => {
   const requestPath = process.argv[2];
   if (requestPath === undefined)
-    throw new Error("Owned worker request path missing.");
+    throw new EvmAdmissionError("request_path_missing");
   const request = requestSchema.parse(
     JSON.parse(await readFile(requestPath, "utf8")),
   );
+  const limits = selectedEvmProducerLimits(request.producer_limits);
   let reply: unknown;
   try {
     const bytes = decodeEvmBytecodeCarrier(
-      await readFile(request.snapshot_path),
+      (await readStableArtifact(request.snapshot_path, limits.input_bytes))
+        .bytes,
       request.encoding,
     );
     if (bytes[0] === 0xef && bytes[1] === 0x00)
@@ -51,7 +57,7 @@ const main = async (): Promise<void> => {
         new URL(import.meta.resolve("evmole/evmole_bg.wasm")),
       ),
     });
-    const inferred = projectEvmoleInterface(
+    const raw = evmoleInterfaceReplySchema.parse(
       engine.contractInfo(Buffer.from(bytes).toString("hex"), {
         selectors: true,
         arguments: true,
@@ -67,7 +73,7 @@ const main = async (): Promise<void> => {
         hex: Buffer.from(bytes).toString("hex"),
         metadata: inspectSolidityMetadata(bytes),
       },
-      raw: inferred.raw,
+      raw,
     };
   } catch (cause: unknown) {
     reply = {
@@ -82,11 +88,11 @@ const main = async (): Promise<void> => {
     };
   }
   let encoded = JSON.stringify(reply);
-  if (Buffer.byteLength(encoded) > EVM_INTERFACE_LIMITS.outputBytes)
+  if (Buffer.byteLength(encoded) > limits.output_bytes)
     encoded = JSON.stringify({
       ok: false,
       reason: "output-limit",
-      message: "Complete interface evidence exceeds the 16 MiB reply budget.",
+      message: `Complete interface evidence exceeds producer_limits.output_bytes (${String(limits.output_bytes)} bytes).`,
     });
   try {
     await writeFile(request.reply_path, encoded, { flag: "wx", mode: 0o600 });

@@ -9,7 +9,10 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../dist/domain/evidence.js";
-import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
+import {
+  requireMcpOperationResult,
+  requireMcpOutput,
+} from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 
 if (process.argv.length !== 2 || process.platform !== "linux")
@@ -158,6 +161,38 @@ try {
     fromNumericOffset.normalized_result,
     fromOffset.normalized_result,
   );
+  const missingProcedure = "rea_missing_procedure_fixture";
+  const missingName = await client.callTool(
+    {
+      name: "procedure_pseudo_code",
+      arguments: { procedure: missingProcedure },
+    },
+    { timeout: 240000 },
+  );
+  assert.equal(missingName.isError, true);
+  const missingNameError = JSON.parse(
+    missingName.content.find((item) => item.type === "text").text,
+  ).error;
+  assert.equal(missingNameError.code, "invalid_request");
+  assert.match(missingNameError.message, /rea_missing_procedure_fixture/u);
+  assert.match(missingNameError.remediation.action, /list_procedures/u);
+  assert.match(missingNameError.remediation.action, /does not prove/u);
+  assert.equal(missingNameError.recovery, undefined);
+  const unmappedOffset = await client.callTool(
+    {
+      name: "procedure_pseudo_code",
+      arguments: { procedure: "file-offset:0x1fffffffffffff" },
+    },
+    { timeout: 240000 },
+  );
+  assert.equal(unmappedOffset.isError, true);
+  const unmappedError = JSON.parse(
+    unmappedOffset.content.find((item) => item.type === "text").text,
+  ).error;
+  assert.equal(unmappedError.code, "invalid_request");
+  assert.match(unmappedError.message, /no loaded source mapping/u);
+  assert.match(unmappedError.remediation.action, /inspect_native_load_image/u);
+  assert.equal(unmappedError.recovery, undefined);
   const missingAddress = "ram:0xffffffff";
   const rejected = await client.callTool(
     { name: "procedure_pseudo_code", arguments: { procedure: missingAddress } },
@@ -320,8 +355,7 @@ async function call(name, args = {}) {
     { name, arguments: args },
     { timeout: 240000 },
   );
-  assert.notEqual(result.isError, true, JSON.stringify(result));
   return ["open_binary", "binary_session", "close_binary"].includes(name)
     ? requireMcpOperationResult(result, name)
-    : result.structuredContent;
+    : requireMcpOutput(result, name);
 }

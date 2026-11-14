@@ -46,7 +46,9 @@ change.
   transactions with a usable request line retained no response body (tools
   citing them replay only the recorded status and content type, either of
   which may be absent) and how many retained response bodies carry redaction
-  markers. A body that redaction emptied, because a declared secret could not
+  markers. Both counts use the same request-line admission as manifest grouping,
+  so unredacted URLs without a usable transport origin and recorded path contribute
+  to neither numerator nor denominator. A body that redaction emptied, because a declared secret could not
   be cut out, is treated as not retained rather than replayed as an empty
   reply.
 - `environment-serve` and `environment-export` authenticate either parent
@@ -59,7 +61,8 @@ change.
 
 - No new browser action: scenarios still cover what the UI requests plus GET
   reads through `goto`. A fetch or script action would be a new effect and
-  needs its own scope decision.
+  needs its own scope decision. (The `request` action was later scoped and
+  added by [environment-prompt](../environment-prompt/spec.md).)
 - No change to what the scenario redacts. Values the application returns in
   response bodies are retained, as they are in HAR captures.
 - The api-surface view keeps HAR parents only.

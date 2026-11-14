@@ -9,7 +9,7 @@ import {
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
 import type { Evidence } from "../../domain/evidence.js";
-import { createModelArtifactEvidence } from "./ModelArtifactEvidence.js";
+import { createModelArtifactEvidence } from "../../domain/model/modelArtifactEvidence.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
   requireAnalysisViewRetention,

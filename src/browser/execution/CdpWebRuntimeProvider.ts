@@ -14,12 +14,12 @@ import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
-  webExecutionSchema,
+  webExecutionObservationSchema,
   type ObserveWebExecutionInput,
   type WebExecution,
 } from "../../domain/webExecution.js";
 import {
-  webEventListenersSchema,
+  webEventListenersObservationSchema,
   type InspectWebEventListenersInput,
   type WebEventListeners,
 } from "../../domain/webEventListeners.js";
@@ -55,8 +55,15 @@ export class CdpWebRuntimeProvider implements WebRuntimePort {
       input,
       "observe_web_execution",
       options,
-      webExecutionSchema,
+      webExecutionObservationSchema,
       (sources) => captureWebExecution(input, sources),
+      (observation) => ({
+        ...observation,
+        instrumentation: {
+          ...observation.instrumentation,
+          cleanup: "confirmed" as const,
+        },
+      }),
     );
   }
   /** Inspect one selected node's registered callback locations. */
@@ -69,20 +76,22 @@ export class CdpWebRuntimeProvider implements WebRuntimePort {
       input,
       "inspect_web_event_listeners",
       options,
-      webEventListenersSchema,
+      webEventListenersObservationSchema,
       (sources) => captureWebEventListeners(input, sources, group),
+      (observation) => ({ ...observation, cleanup: "confirmed" as const }),
       group,
     );
   }
 
-  private async run<T extends AnalysisPartialObservation>(
+  private async run<T extends AnalysisPartialObservation, Completed extends T>(
     input: ObserveWebExecutionInput | InspectWebEventListenersInput,
     operation: BrowserObservationOperation,
     options: ExecutionOptions,
     schema: z.ZodType<T>,
     capture: (sources: CdpRuntimeSources) => Promise<T>,
+    confirmCleanup: (observation: T) => Completed,
     group?: string,
-  ): Promise<Result<T, AnalysisError>> {
+  ): Promise<Result<Completed, AnalysisError>> {
     let session: CdpRuntimeSession | undefined;
     let result: Result<T, AnalysisError>;
     try {
@@ -125,13 +134,14 @@ export class CdpWebRuntimeProvider implements WebRuntimePort {
             : analysisErrorWithCleanupFailure(result.error, failure, operation),
         );
     }
-    if (result.ok && options.signal?.aborted === true)
+    const completed = result.ok ? ok(confirmCleanup(result.value)) : result;
+    if (completed.ok && options.signal?.aborted === true)
       return err(
         new AnalysisCancelledError(operation, {
           cause: options.signal.reason,
-          partialObservation: result.value,
+          partialObservation: completed.value,
         }),
       );
-    return result;
+    return completed;
   }
 }

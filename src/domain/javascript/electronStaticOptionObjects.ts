@@ -32,7 +32,7 @@ const optionObjectCandidate = (
       !binding.declarationKinds.has("const") ||
       initializer === undefined ||
       initializer.projection.length !== 0 ||
-      !semanticBindingAtRead(binding, node, index.bindings.parentsByNode)
+      !semanticBindingAtRead(binding, node, index.bindings)
         .hasDefiniteInitializer
     )
       return undefined;

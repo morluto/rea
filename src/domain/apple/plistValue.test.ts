@@ -236,5 +236,5 @@ it.each([
   expect(projected.nonFiniteRealCount).toBe(4);
   expect(projected.negativeZeroRealCount).toBe(1);
   expect(observed).toHaveLength(5);
-  expect(bytes).toEqual(original);
+  expect(Buffer.compare(bytes, original)).toBe(0);
 });

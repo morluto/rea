@@ -1,25 +1,44 @@
+type NibFixtureValue =
+  | number
+  | string
+  | boolean
+  | null
+  | { ref: number }
+  | { data: Uint8Array }
+  | { float32: number }
+  | { float64: number };
+type NibFixtureFields =
+  | Readonly<Record<string, NibFixtureValue>>
+  | readonly (readonly [string, NibFixtureValue])[];
+const fieldEntries = (
+  values: NibFixtureFields,
+): readonly (readonly [string, NibFixtureValue])[] =>
+  Array.isArray(values) ? values : Object.entries(values);
+
 /** Encode a minimal NIBArchive object table for decoder and projection tests. */
 export const encodeNibArchiveFixture = (input: {
   readonly classes: readonly string[];
   readonly objects: readonly {
     readonly classIndex: number;
-    readonly values: Readonly<
-      Record<string, number | string | boolean | null | { ref: number }>
-    >;
+    readonly values: NibFixtureFields;
   }[];
 }): Buffer => {
   const keys = [
-    ...new Set(input.objects.flatMap(({ values }) => Object.keys(values))),
+    ...new Set(
+      input.objects.flatMap(({ values }) =>
+        fieldEntries(values).map(([key]) => key),
+      ),
+    ),
   ];
   const keyIndex = new Map(keys.map((key, index) => [key, index]));
   const valueRecords = input.objects.flatMap(({ values }) =>
-    Object.entries(values).map(([key, value]) =>
+    fieldEntries(values).map(([key, value]) =>
       Buffer.concat([varint(keyIndex.get(key) ?? 0), encodeValue(value)]),
     ),
   );
   let valueStart = 0;
   const records = input.objects.map(({ classIndex, values }) => {
-    const count = Object.keys(values).length;
+    const count = fieldEntries(values).length;
     const result = Buffer.concat([
       varint(classIndex),
       varint(valueStart),
@@ -73,7 +92,15 @@ const varint = (value: number): Buffer => {
 };
 
 const encodeValue = (
-  value: number | string | boolean | null | { ref: number },
+  value:
+    | number
+    | string
+    | boolean
+    | null
+    | { ref: number }
+    | { data: Uint8Array }
+    | { float32: number }
+    | { float64: number },
 ): Buffer => {
   // Tags as written by ibtool and read by AppKit: 4 is NO, 5 is YES.
   if (typeof value === "boolean") return Buffer.from([value ? 5 : 4]);
@@ -85,6 +112,24 @@ const encodeValue = (
     return bytes;
   }
   if (typeof value === "object") {
+    if ("data" in value)
+      return Buffer.concat([
+        Buffer.from([8]),
+        varint(value.data.length),
+        value.data,
+      ]);
+    if ("float32" in value) {
+      const bytes = Buffer.alloc(5);
+      bytes[0] = 6;
+      bytes.writeFloatLE(value.float32, 1);
+      return bytes;
+    }
+    if ("float64" in value) {
+      const bytes = Buffer.alloc(9);
+      bytes[0] = 7;
+      bytes.writeDoubleLE(value.float64, 1);
+      return bytes;
+    }
     const bytes = Buffer.alloc(5);
     bytes[0] = 10;
     bytes.writeUInt32LE(value.ref, 1);

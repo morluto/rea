@@ -1,3 +1,5 @@
+import type { PYTHON_PYC_LIMIT_MAXIMA } from "../domain/python/pythonPyc.js";
+
 /** Distinguish corrupt recognized pycs from magics outside parser coverage. */
 export class PythonPycFormatFailure extends Error {
   constructor(
@@ -13,7 +15,9 @@ export class PythonPycFormatFailure extends Error {
 export class PythonPycResourceFailure extends Error {
   constructor(
     readonly boundary: "objects" | "depth" | "string",
-    readonly reported_limits: Readonly<Record<string, number>>,
+    readonly reported_limits: Readonly<
+      Partial<Record<keyof typeof PYTHON_PYC_LIMIT_MAXIMA, number>>
+    >,
     message: string,
   ) {
     super(message);

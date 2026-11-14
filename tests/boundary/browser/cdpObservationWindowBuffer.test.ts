@@ -69,8 +69,19 @@ const clockResponseEvents: NonNullable<FakeOptions["commandEvents"]> = (
           timestamp: 21,
           type: "Document",
           frameId: "frame-main",
-          redirectResponse: { url: `${origin}/prior-hop-context` },
+          redirectResponse: { url: `${origin}/prior-hop-context`, status: 302 },
           request: { url: `${origin}/after-cutoff` },
+        },
+      },
+      {
+        method: "Network.requestWillBeSent",
+        sessionId: command.sessionId,
+        params: {
+          requestId: "failure-before-window",
+          type: "Document",
+          frameId: "frame-main",
+          timestamp: 18,
+          request: { url: `${origin}/document`, method: "GET" },
         },
       },
       {
@@ -79,8 +90,19 @@ const clockResponseEvents: NonNullable<FakeOptions["commandEvents"]> = (
         params: {
           requestId: "failure-before-window",
           timestamp: 19,
-          frameId: "frame-main",
+          type: "Document",
           errorText: "net::ERR_CONNECTION_REFUSED",
+        },
+      },
+      {
+        method: "Network.requestWillBeSent",
+        sessionId: command.sessionId,
+        params: {
+          requestId: "failure-window",
+          type: "Document",
+          frameId: "frame-main",
+          timestamp: 21,
+          request: { url: `${origin}/document`, method: "GET" },
         },
       },
       {
@@ -89,7 +111,7 @@ const clockResponseEvents: NonNullable<FakeOptions["commandEvents"]> = (
         params: {
           requestId: "failure-window",
           timestamp: 22,
-          frameId: "frame-main",
+          type: "Document",
           errorText: "net::ERR_CONNECTION_REFUSED",
         },
       },
@@ -177,6 +199,11 @@ it("buffers clock-response events while dropping lifecycle history before the cl
       request_id: "request-window-redirect",
       timestamp: 21,
       url: `${browser.allowedOrigin}/after-cutoff`,
+      redirect_response: {
+        url: `${browser.allowedOrigin}/prior-hop-context`,
+        status: 302,
+        scope: "approved",
+      },
     }),
   );
   expect(result.value.timeline).not.toContainEqual(
@@ -189,8 +216,10 @@ it("buffers clock-response events while dropping lifecycle history before the cl
       timestamp: 22,
     }),
   );
-  expect(result.value.limitations).toContain(
-    "Timeline rows without a comparable producer timestamp have a null timestamp. Buffered events with unknown timing are retained as context only; they do not establish activity inside the selected observation window.",
+  expect(result.value.limitations).toContainEqual(
+    expect.stringMatching(
+      /unknown timing.*context only.*do not establish.*observation window/iu,
+    ),
   );
 });
 

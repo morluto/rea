@@ -9,6 +9,7 @@ import {
   startRuntimeBrowser,
 } from "../../fixtures/webRuntime.js";
 import type { FakeOptions } from "../../fixtures/fakeCdpBrowser.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 
 const fixture = async (options: FakeOptions = {}) => {
   const browser = await startRuntimeBrowser(options);
@@ -566,6 +567,42 @@ describe("runtime document identity and authorization failures", () => {
             ? "observe_web_execution"
             : "inspect_web_event_listeners",
       });
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "target_unavailable",
+        message: expect.stringContaining("permitted HTTP(S) origin scope"),
+        remediation: { action: expect.stringContaining("allowed_origins") },
+      });
     },
   );
+
+  it("keeps runtime document-scope recovery when the producer retains the same document identity", async () => {
+    const { provider, listeners } = await fixture({
+      commandResult: ({ method }, origin, frameReads) =>
+        method === "Page.getFrameTree"
+          ? {
+              frameTree: {
+                frame: {
+                  id: "runtime-main",
+                  loaderId: "document-1",
+                  url:
+                    frameReads === 1
+                      ? origin + "/app"
+                      : "https://outside.example/page",
+                },
+              },
+            }
+          : undefined,
+    });
+    const result = await provider.inspectEventListeners(listeners);
+    if (result.ok) throw new Error("Expected runtime document-scope refusal");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "target_unavailable",
+      message: expect.stringContaining("moved to an unselected origin"),
+      remediation: { action: expect.stringContaining("allowed_origins") },
+      details: {
+        operation: "inspect_web_event_listeners",
+        reason: "target_not_allowed",
+      },
+    });
+  });
 });

@@ -1,15 +1,15 @@
-import {
-  createAnalysisExecutionEvidence,
-  type AnalysisExecution,
-  type AnalysisOperationPort,
+import { permitsCapabilityFallback } from "./CapabilityFallback.js";
+import type {
+  AnalysisExecution,
+  AnalysisOperationPort,
 } from "./AnalysisProvider.js";
+import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import {
   AnalysisCancelledError,
-  AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { parseDocuments } from "../domain/hopperValues.js";
+import { parseDocuments } from "../domain/native/nativeDocument.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 const executionOptions = (signal: AbortSignal | undefined) =>
@@ -32,11 +32,7 @@ export const resolveAnalysisDocument = async (
     executionOptions(signal),
   );
   if (!current.ok) {
-    if (
-      !(current.error instanceof AnalysisCapabilityUnavailableError) ||
-      current.error.cleanupIncomplete
-    )
-      return current;
+    if (!permitsCapabilityFallback(current.error)) return current;
     if (signal?.aborted)
       return err(
         new AnalysisCancelledError("current_document", {

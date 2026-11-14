@@ -1,3 +1,4 @@
+import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -19,13 +20,17 @@ import type {
   JavaScriptRuntimeObservation,
   ObserveJavaScriptRuntimeInput,
 } from "../../../src/domain/javascript/javascriptRuntimeObservation.js";
-import { observeJavaScriptRuntimeInputSchema } from "../../../src/domain/javascript/javascriptRuntimeObservation.js";
+import {
+  javascriptRuntimeObservationSchema,
+  observeJavaScriptRuntimeInputSchema,
+} from "../../../src/domain/javascript/javascriptRuntimeObservation.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { javascriptRuntimeReconciliationResultSchema } from "../../../src/domain/javascript/javascriptRuntimeReconciliationSchemas.js";
+import { parseRuntimeCapture } from "../../../src/domain/javascript/javascriptRuntimeReconciliationCaptureParsing.js";
 import { startFakeV8Inspector } from "../../fixtures/inspector/fakeV8Inspector.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
-import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createNodeDiscoveryTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 test("reports static-layer Evidence digest failure at its caller path", () => {
   const layer = JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE.static_layers[0];
@@ -58,7 +63,7 @@ test("reports static-layer Evidence digest failure at its caller path", () => {
         {
           path: ["static_layers", 0, "analysis", "evidence_id"],
           reason: "invalid_value",
-          message: "Evidence semantic identifier does not match its record",
+          message: expect.stringMatching(/semantic identifier.*not match/iu),
         },
       ],
     },
@@ -80,7 +85,7 @@ test("reports browser origin scope mismatch at the caller parameter path", async
     const evidence = createBrowserEvidence(
       "inspect_web_page",
       input,
-      observed.value,
+      { source: jsonValueSchema.parse(observed.value), facts: observed.value },
       provider.identity(),
     );
     const invalidEvidence = createEvidence(undefined, evidence.provider, {
@@ -105,8 +110,9 @@ test("reports browser origin scope mismatch at the caller parameter path", async
           {
             path: ["runtime_observations", 0, "parameters", "allowed_origins"],
             reason: "invalid_value",
-            message:
-              "Browser Evidence target is outside its recorded origin scope",
+            message: expect.stringMatching(
+              /target.*outside.*recorded origin scope/i,
+            ),
           },
         ],
       },
@@ -151,7 +157,8 @@ describe("Inspector execution-context lifecycle metadata", () => {
         if (!result.ok) throw result.error;
         expect(result.value.execution_contexts).toEqual([
           {
-            context_key: "1",
+            context_key: "context_0",
+            execution_context_id: 1,
             state,
             name: "worker#one",
             origin: "https://context.example",
@@ -163,7 +170,7 @@ describe("Inspector execution-context lifecycle metadata", () => {
     },
   );
 
-  test("replaces context metadata only when a new context creation is observed", async () => {
+  test("retains each context lifetime after an ID is reused", async () => {
     const fixture = await runtimeFixture();
     const fake = await startFakeV8Inspector({
       targetUrl: pathToFileURL(fixture.entry).href,
@@ -198,14 +205,35 @@ describe("Inspector execution-context lifecycle metadata", () => {
       );
       if (!result.ok) throw result.error;
       expect(result.value.execution_contexts).toEqual([
-        { context_key: "1", state: "created", name: "", origin: "" },
-        { context_key: "2", state: "destroyed", name: null, origin: null },
+        {
+          context_key: "context_0",
+          execution_context_id: 1,
+          state: "destroyed",
+          name: "old context",
+          origin: "https://old.example",
+        },
+        {
+          context_key: "context_1",
+          execution_context_id: 1,
+          state: "created",
+          name: "",
+          origin: "",
+        },
+        {
+          context_key: "context_2",
+          execution_context_id: 2,
+          state: "destroyed",
+          name: null,
+          origin: null,
+        },
       ]);
     } finally {
       await fake.close();
     }
   });
+});
 
+describe("Inspector execution-context ID validation", () => {
   test.each([
     ["malformed", "2", "1"],
     ["valid", 2, 1],
@@ -247,7 +275,13 @@ describe("Inspector execution-context lifecycle metadata", () => {
         });
         if (mode === "malformed") {
           expect(result.value.execution_contexts).toEqual([
-            { context_key: "1", state: "created", name: "main", origin: "" },
+            {
+              context_key: "context_0",
+              execution_context_id: 1,
+              state: "created",
+              name: "main",
+              origin: "",
+            },
           ]);
           expect(invalidContextUnknowns).toEqual([
             "2 execution-context lifecycle events with a missing or malformed execution-context ID were excluded; the affected contexts' lifecycle state is unknown.",
@@ -255,8 +289,20 @@ describe("Inspector execution-context lifecycle metadata", () => {
           return;
         }
         expect(result.value.execution_contexts).toEqual([
-          { context_key: "1", state: "destroyed", name: "main", origin: "" },
-          { context_key: "2", state: "created", name: "worker", origin: "" },
+          {
+            context_key: "context_0",
+            execution_context_id: 1,
+            state: "destroyed",
+            name: "main",
+            origin: "",
+          },
+          {
+            context_key: "context_1",
+            execution_context_id: 2,
+            state: "created",
+            name: "worker",
+            origin: "",
+          },
         ]);
         expect(invalidContextUnknowns).toEqual([]);
       } finally {
@@ -397,7 +443,8 @@ test("captures complete metadata with two enable commands", async () => {
     expect(result.value.scripts.excluded.unsupported_location).toBe(0);
     expect(result.value.execution_contexts).toEqual([
       {
-        context_key: "1",
+        context_key: "context_0",
+        execution_context_id: 1,
         state: "created",
         name: "node[fixture]",
         origin: "",
@@ -406,7 +453,11 @@ test("captures complete metadata with two enable commands", async () => {
     expect(new Set(fake.commands.map(({ method }) => method))).toEqual(
       new Set(["Runtime.enable", "Debugger.enable"]),
     );
-    expect(JSON.stringify(result.value)).toContain(outside);
+    expect(result.value.scripts.items).toContainEqual(
+      expect.objectContaining({
+        location: expect.objectContaining({ file_path: outside }),
+      }),
+    );
     expect(result.value.unavailable_without_instrumentation).toContain(
       "Electron IPC messages and handlers",
     );
@@ -684,7 +735,7 @@ describe("passive V8 Inspector evidence", () => {
     });
     if (!reconciled.ok) throw reconciled.error;
     const result = javascriptRuntimeReconciliationResultSchema.parse(
-      reconciled.value.normalized_result,
+      reconciled.value.evidence.normalized_result,
     );
     expect(result.runtime_captures[0]?.kind).toBe("v8-inspector");
     expect(result.summary.runtime_scripts).toBe(1);
@@ -745,7 +796,7 @@ describe("passive V8 Inspector evidence", () => {
     });
     if (!reconciled.ok) throw reconciled.error;
     const result = javascriptRuntimeReconciliationResultSchema.parse(
-      reconciled.value.normalized_result,
+      reconciled.value.evidence.normalized_result,
     );
     expect(result.summary.runtime_scripts).toBe(2);
     expect(result.reconciliations).toContainEqual(
@@ -755,21 +806,169 @@ describe("passive V8 Inspector evidence", () => {
         reason: "runtime-location-unresolved",
       }),
     );
-    expect(JSON.stringify(result.graph)).toContain(rawUrl);
-    expect(JSON.stringify(result.graph)).toContain("v8-hash");
-    expect(JSON.stringify(result.graph)).toContain('"reported_url":""');
+    const runtimeProperties = result.graph.nodes
+      .filter(({ kind }) => kind === "runtime-script-instance")
+      .flatMap(({ observations }) =>
+        observations.map(({ properties }) => properties),
+      );
+    expect(runtimeProperties).toContainEqual(
+      expect.objectContaining({ reported_url: rawUrl, cdp_hash: "v8-hash" }),
+    );
+    expect(runtimeProperties).toContainEqual(
+      expect.objectContaining({ reported_url: "", cdp_hash: null }),
+    );
   });
 });
 
+test("keeps Inspector parse failures separate and preserves file URL script identity through reconciliation", async () => {
+  const fixture = await runtimeFixture();
+  const firstUrl = `${pathToFileURL(fixture.entry).href}?instance=1#first`;
+  const secondUrl = `${pathToFileURL(fixture.entry).href}?instance=2#second`;
+  const fake = await startFakeV8Inspector({
+    targetUrl: pathToFileURL(fixture.entry).href,
+    scriptEvents: [
+      ...[firstUrl, secondUrl].map((url, index) => ({
+        method: "Debugger.scriptParsed",
+        params: {
+          scriptId: String(index + 1),
+          url,
+          executionContextId: 1,
+          hash: "same-source-hash",
+          length: 42,
+          isModule: true,
+        },
+      })),
+      {
+        method: "Debugger.scriptFailedToParse",
+        params: { scriptId: "failed", url: firstUrl },
+      },
+    ],
+  });
+  try {
+    const observed = await new V8InspectorProvider().observe(
+      observeInput(fake.endpoint, fake.targetId, "node"),
+    );
+    if (!observed.ok) throw observed.error;
+    expect(observed.value.scripts.items).toHaveLength(2);
+    expect(observed.value.scripts.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          location: { kind: "file", file_path: fixture.entry },
+          reported_url: firstUrl,
+        }),
+        expect.objectContaining({
+          location: { kind: "file", file_path: fixture.entry },
+          reported_url: secondUrl,
+        }),
+      ]),
+    );
+    expect(
+      new Set(observed.value.scripts.items.map(({ script_key }) => script_key))
+        .size,
+    ).toBe(2);
+    expect(observed.value.scripts).toMatchObject({
+      parse_failed_total: 1,
+      excluded: {
+        unsupported_location: 0,
+        invalid_protocol_value: 0,
+      },
+    });
+
+    const evidence = createJavaScriptRuntimeObservationEvidence(
+      "observe_javascript_runtime",
+      {
+        inspector_endpoint: fake.endpoint,
+        target_id: fake.targetId,
+        runtime_kind: "node",
+        observation_ms: 100,
+      },
+      observed.value,
+      V8_INSPECTOR_PROVIDER_IDENTITY,
+    );
+    const reconciled = reconcileJavaScriptRuntimeEvidence({
+      static_layers: JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE.static_layers,
+      runtime_observations: [evidence],
+    });
+    if (!reconciled.ok) throw reconciled.error;
+    const result = javascriptRuntimeReconciliationResultSchema.parse(
+      reconciled.value.evidence.normalized_result,
+    );
+    const runtimeScripts = result.graph.nodes.filter(
+      (node) => node.kind === "runtime-script-instance",
+    );
+    const reportedUrls = runtimeScripts.flatMap((node) =>
+      node.observations
+        .map(({ properties }) => properties.reported_url)
+        .filter((url): url is string => typeof url === "string"),
+    );
+    expect(reportedUrls).toEqual(expect.arrayContaining([firstUrl, secondUrl]));
+    expect(new Set(reportedUrls).size).toBe(2);
+    const scriptKeys = runtimeScripts.flatMap((node) =>
+      node.identity.strategy === "runtime-instance"
+        ? [node.identity.runtime_key]
+        : [],
+    );
+    expect(new Set(scriptKeys).size).toBe(2);
+
+    const parsedCapture = parseRuntimeCapture(evidence, [
+      "runtime_observations",
+      0,
+    ]);
+    if (parsedCapture?.kind !== "v8-inspector")
+      throw new Error("Expected the Inspector Evidence to parse as V8 capture");
+    expect(
+      parsedCapture.inspection.completeness.unavailable_sections,
+    ).not.toContain("scripts");
+
+    const legacySnapshot = {
+      ...observed.value,
+      scripts: {
+        ...observed.value.scripts,
+      },
+    };
+    delete legacySnapshot.scripts.parse_failed_total;
+    const parsedLegacySnapshot =
+      javascriptRuntimeObservationSchema.parse(legacySnapshot);
+    expect("parse_failed_total" in parsedLegacySnapshot.scripts).toBe(false);
+  } finally {
+    await fake.close();
+  }
+});
+
+test("keeps malformed scriptFailedToParse protocol values in the invalid count", async () => {
+  const fixture = await runtimeFixture();
+  const fake = await startFakeV8Inspector({
+    targetUrl: pathToFileURL(fixture.entry).href,
+    scriptEvents: [
+      {
+        method: "Debugger.scriptFailedToParse",
+        params: { url: pathToFileURL(fixture.entry).href },
+      },
+    ],
+  });
+  try {
+    const observed = await new V8InspectorProvider().observe(
+      observeInput(fake.endpoint, fake.targetId, "node"),
+    );
+    if (!observed.ok) throw observed.error;
+    expect(observed.value.scripts.excluded).toMatchObject({
+      invalid_protocol_value: 1,
+    });
+    expect(observed.value.scripts.parse_failed_total).toBe(0);
+  } finally {
+    await fake.close();
+  }
+});
+
 const runtimeFixture = async () => {
-  const root = await createTestTempDirectory("rea-v8-runtime-");
+  const root = await createNodeDiscoveryTempDirectory("rea-v8-runtime-");
   const entry = join(root, "entry.js");
   await writeFile(entry, "export const value = 1;\n");
   return { root, entry };
 };
 
 const temporaryFile = async (name: string): Promise<string> => {
-  const root = await createTestTempDirectory("rea-v8-outside-");
+  const root = await createNodeDiscoveryTempDirectory("rea-v8-outside-");
   const path = join(root, name);
   await writeFile(path, "export {};\n");
   return path;
@@ -818,6 +1017,7 @@ const runtimeObservation = (
         script_key: `v8_script_${"4".repeat(64)}`,
         location: { kind: "file", file_path: scriptPath },
         execution_context_key: "1",
+        execution_context_id: 1,
         cdp_hash: "v8-hash",
         length: 29,
         is_module: true,

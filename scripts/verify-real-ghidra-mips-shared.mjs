@@ -243,11 +243,13 @@ try {
         );
         const dossier = await call("analyze_function", {
           procedure: compressed,
+          detail: "complete",
         });
         assert.match(dossier.pseudocode, /\^\s*0x5a/u);
         assert.match(dossier.pseudocode, /\+\s*(?:7|0x7)\b/u);
         const standardDossier = await call("analyze_function", {
           procedure: standard,
+          detail: "complete",
         });
         assert.match(standardDossier.pseudocode, /\+\s*(?:3|0x3)\b/u);
         const snapshotPath = join(

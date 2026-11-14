@@ -1,0 +1,219 @@
+import { randomUUID } from "node:crypto";
+import { rm } from "node:fs/promises";
+
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
+import {
+  retainProcessInspectionCleanup,
+  processInspectionCancellationError,
+} from "../providers/OwnedCommandCleanup.js";
+import {
+  OwnedCommandFailure,
+  runOwnedCommand,
+} from "../process/OwnedCommand.js";
+import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
+import { artifactCommandOutput } from "../process/ArtifactAnalysisResources.js";
+import {
+  AnalysisCancelledError,
+  AnalysisOutputError,
+} from "../domain/analysisErrorCore.js";
+
+/** Run a setup command with ownership of its entire process family and partial output. */
+export const runDesktopBuildOwnedCommand = async (input: {
+  readonly command: string;
+  readonly arguments: readonly string[];
+  readonly environment: Readonly<NodeJS.ProcessEnv>;
+  readonly timeoutMs: number;
+  readonly maxOutputBytes: number;
+  readonly resources: ArtifactResourceScope;
+  readonly partialPath?: string;
+  readonly workspace?: string;
+  readonly signal?: AbortSignal;
+}): Promise<void> => {
+  let retained = false;
+  let cleanupReason: string | undefined;
+  const paths = [input.partialPath, input.workspace].filter(
+    (path): path is string => path !== undefined,
+  );
+  const remainingPaths = new Set(paths);
+  const removeOwnedPaths = async () => {
+    const attempted = [...remainingPaths];
+    const outcomes = await Promise.allSettled(
+      attempted.map((path) =>
+        rm(path, { recursive: path === input.workspace, force: true }),
+      ),
+    );
+    outcomes.forEach((outcome, index) => {
+      if (outcome.status === "fulfilled")
+        remainingPaths.delete(attempted[index]!);
+    });
+    const failures = outcomes.flatMap((outcome) =>
+      outcome.status === "rejected" ? [outcome.reason] : [],
+    );
+    if (failures.length > 0)
+      throw new AggregateError(
+        failures,
+        "Could not remove setup command outputs",
+      );
+  };
+  try {
+    await runOwnedCommand(
+      {
+        command: input.command,
+        arguments: input.arguments,
+        runId: randomUUID(),
+        expectedCommand: null,
+        hostEnvironment: input.environment,
+        sweepTokenOwnedProcesses: true,
+      },
+      { timeoutMs: input.timeoutMs, diagnosticBytes: input.maxOutputBytes },
+      {
+        signal: input.signal,
+        retainCleanup: (owner, result) => {
+          retained = true;
+          cleanupReason = result.reason;
+          const process = `setup process ${owner.launch.ownership?.runId ?? "unknown"}`;
+          let processPending = true;
+          input.resources.retain({
+            kind: "lease",
+            resource:
+              input.partialPath ??
+              `setup process ${owner.launch.ownership?.runId ?? "unknown"}`,
+            lease: new AnalysisCleanupLease(
+              async () => {
+                if (processPending) {
+                  const stopped = await owner.stop();
+                  if (stopped.status === "incomplete")
+                    throw new Error(stopped.reason);
+                  processPending = false;
+                }
+                await removeOwnedPaths();
+              },
+              {
+                get cleanupResources() {
+                  return [
+                    ...remainingPaths,
+                    ...(processPending ? [process] : []),
+                  ];
+                },
+              },
+            ),
+          });
+        },
+      },
+    );
+    if (retained)
+      throw new Error(
+        `Setup command cleanup incomplete: ${cleanupReason ?? "unknown reason"}`,
+      );
+  } catch (cause: unknown) {
+    let failure: unknown = cause;
+    if (!retained && paths.length > 0) {
+      try {
+        await removeOwnedPaths();
+      } catch (cleanup: unknown) {
+        input.resources.retain({
+          kind: "lease",
+          resource: paths[0]!,
+          lease: new AnalysisCleanupLease(removeOwnedPaths, {
+            get cleanupResources() {
+              return [...remainingPaths];
+            },
+          }),
+        });
+        failure = new AggregateError(
+          [cause, cleanup],
+          "Setup command failed and its partial output could not be removed",
+        );
+      }
+    }
+    if (retained)
+      failure = new Error(
+        `${desktopBuildOwnedCommandReason(cause)}; cleanup is incomplete: ${cleanupReason ?? "unknown reason"}`,
+        { cause },
+      );
+    const command = cause instanceof OwnedCommandFailure ? cause : undefined;
+    const preparation = command?.preparationFailure ?? cause;
+    const output =
+      command?.snapshot == null
+        ? preparation instanceof DarwinProcessOwnershipInspectionError
+          ? preparation.capturedOutput
+          : undefined
+        : artifactCommandOutput(command.snapshot);
+    const reason = desktopBuildOwnedCommandReason(failure);
+    const physical =
+      failure instanceof AnalysisError
+        ? failure
+        : new AnalysisOutputError("setup", reason, {
+            cause: failure,
+            ...(command === undefined
+              ? {}
+              : { diagnostics: { command_failure: command.reason } }),
+            ...(output === undefined ? {} : { capturedOutput: output }),
+          });
+    const inspectionCancellation =
+      command === undefined || command.preparationFailure !== undefined
+        ? processInspectionCancellationError(cause, "setup")
+        : undefined;
+    let primary: AnalysisError = physical;
+    if (command?.reason === "cancelled" && command.cancellation !== undefined) {
+      primary =
+        inspectionCancellation ??
+        new AnalysisCancelledError("setup", {
+          cause: command.cancellation.reason,
+          diagnostics: {
+            setup_failure: reason,
+            command_failure: command.reason,
+          },
+          ...(output === undefined ? {} : { capturedOutput: output }),
+        });
+      if (failure !== cause) primary.retainSecondaryFailure(physical);
+    } else if (inspectionCancellation !== undefined) {
+      primary = inspectionCancellation;
+    }
+    // Executed command cleanup is already retained with its partial outputs
+    // by retainCleanup above. Only preparation owners transfer here.
+    primary =
+      command === undefined || command.preparationFailure !== undefined
+        ? retainProcessInspectionCleanup(
+            command?.preparationFailure ?? cause,
+            primary,
+            input.resources,
+            "setup",
+          )
+        : command.cancellation === undefined
+          ? primary
+          : analysisErrorWithCancellation(
+              primary,
+              new AnalysisCancelledError("setup", {
+                cause: command.cancellation.reason,
+              }),
+            );
+    // This finalization checkpoint records a later caller cancellation without
+    // reclassifying the established physical command or cleanup outcome.
+    if (input.signal?.aborted)
+      primary = analysisErrorWithCancellation(
+        primary,
+        new AnalysisCancelledError("setup", {
+          cause: input.signal.reason,
+        }),
+      );
+    throw primary;
+  }
+};
+
+/** Keep the bounded command's stderr with its failure reason. */
+export const desktopBuildOwnedCommandReason = (cause: unknown): string => {
+  const command = cause instanceof OwnedCommandFailure ? cause : undefined;
+  const preparation = command?.preparationFailure ?? cause;
+  const stderr =
+    command?.snapshot?.stderr.text.trim() ??
+    (preparation instanceof DarwinProcessOwnershipInspectionError
+      ? preparation.capturedOutput?.stderr.trim()
+      : undefined) ??
+    "";
+  const message = cause instanceof Error ? cause.message : String(cause);
+  return stderr === "" ? message : `${message}: ${stderr.slice(-2000)}`;
+};

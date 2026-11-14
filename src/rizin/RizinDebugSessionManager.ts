@@ -1,65 +1,79 @@
+import { RIZIN_DEBUGGER_PROVIDER_IDENTITY } from "./RizinDebuggerProviderIdentity.js";
+import { persistentDebuggerHostSupported } from "../process/PersistentDebuggerHost.js";
 import { randomUUID } from "node:crypto";
 import { isUtf8 } from "node:buffer";
 import { open, readlink, realpath, stat } from "node:fs/promises";
-import { constants as fsConstants } from "node:fs";
+import { constants as fsConstants, type Stats } from "node:fs";
 import { isatty } from "node:tty";
+import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import {
+  RegularFileCleanupFailure,
+  regularFileCancellation,
+  withOwnedFileHandle,
+} from "../filesystem/OwnedRegularFile.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
-  AnalysisResourceConstraintError,
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
+import {
+  RIZIN_DEBUG_SESSION_TOOLS,
+  stoppedDebuggerSessionError,
+  unknownDebuggerSessionError,
+} from "../domain/debuggerSessionErrors.js";
 import type {
   AnalysisError,
   AnalysisErrorOptions,
 } from "../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
+import { currentAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
   type SpawnedOwnedProviderProcess,
 } from "../process/ProviderProcess.js";
 import {
+  debuggerControlReplyOutput,
+  debuggerConstructionLimits,
+  parseDebuggerCommandDeadline,
+  parseDebuggerCommandOutput,
+  type DebuggerAdmissionLimit,
+} from "../config/debuggerSessionLimits.js";
+import {
   closeOwnedDebuggerSessions,
+  configurableDeadlineGuidance,
+  debuggerAdmissionRecovery,
+  debuggerResourceConstraintError,
+  fixedDeadlineGuidance,
   stopOwnedDebuggerProcess,
   readLinuxProcessStartTime,
+  retainedDebuggerCleanupFailure,
   verifyOwnedInferiorsEnded,
   type OwnedInferiorIdentity,
   type OwnedDebuggerDetachResult,
 } from "../process/ownedDebuggerSession.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
+import { utf8HeadExcerpt } from "../domain/utf8HeadExcerpt.js";
 
-const MAX_SESSIONS = 8;
-const MAX_PENDING_COMMANDS = 16;
-const FRAME_TIMEOUT_MS = 120_000;
 const CLEANUP_COMMAND_TIMEOUT_MS = 1_000;
 const STARTUP_TIMEOUT_MS = 30_000;
-
-/** Fixed debugger deadline. Callers cannot raise it in this release. */
-const fixedDeadlineGuidance = (
-  what: string,
-  timeoutMs: number,
-): { readonly userMessage: string; readonly remediationAction: string } => ({
-  userMessage: `${what} reached its ${String(timeoutMs)} ms deadline (deadlineExpired). This release has no runtime override.`,
-  remediationAction: `This ${String(timeoutMs)} ms deadline has no runtime override. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
-});
 const MAX_FRAME_BYTES = 16 * 1024 * 1024;
-const MAX_COMMAND_OUTPUT_BYTES = 16 * 1024 * 1024;
 const MAX_QUEUED_FRAME_BYTES = 4 * 1024 * 1024;
 const MAX_QUEUED_FRAMES = 4096;
 const MIN_QUEUED_FRAME_CHARGE_BYTES = 64;
 const MAX_COMMAND_FRAMES = 4096;
 const MAX_RECENT_FRAME_BYTES = 16 * 1024;
 const MAX_DIAGNOSTIC_BYTES = 64 * 1024;
-
-export const RIZIN_DEBUGGER_PROVIDER_IDENTITY = {
-  id: "rizin.debugger",
-  name: "Rizin debugger",
-  version: null,
-} as const;
 
 interface RizinLaunchProvenance {
   readonly caller_selected_path: string;
@@ -135,9 +149,6 @@ interface RizinCommandInterruption {
   readonly capture: RizinCommandCapture;
 }
 
-export const isRizinCommandDeadlineExpired = (remainingMs: number): boolean =>
-  remainingMs <= 0;
-
 interface RizinCommandTimeoutEvidenceInput {
   readonly sessionId: string;
   readonly command: string;
@@ -145,17 +156,22 @@ interface RizinCommandTimeoutEvidenceInput {
   readonly inferiorTty: string;
   readonly cleanupFailure: string | undefined;
   readonly launchProvenance: RizinLaunchProvenance;
-  readonly timeoutMs?: number;
+  readonly deadline: DebuggerAdmissionLimit;
 }
 
-export const createRizinCommandTimeoutEvidence = ({
+const rizinCommandTimeoutLimitation = (
+  deadline: DebuggerAdmissionLimit,
+): string =>
+  `The command timed out before its completion marker at ${String(deadline.value)} ms (deadlineExpired). ${debuggerAdmissionRecovery(deadline)} Retained output is partial and completion is unknown.`;
+
+const createRizinCommandTimeoutEvidence = ({
   sessionId,
   command,
   result,
   inferiorTty,
   cleanupFailure,
   launchProvenance,
-  timeoutMs = FRAME_TIMEOUT_MS,
+  deadline,
 }: RizinCommandTimeoutEvidenceInput): Evidence =>
   createRizinCommandEvidence({
     sessionId,
@@ -164,7 +180,7 @@ export const createRizinCommandTimeoutEvidence = ({
     inferiorTty,
     launchProvenance,
     limitations: [
-      `The command timed out before its completion marker at ${String(timeoutMs)} ms (deadlineExpired). This release has no runtime override. Retained output is partial and completion is unknown.`,
+      rizinCommandTimeoutLimitation(deadline),
       ...(result.output_invalid_utf8
         ? [
             "Collected command frame bytes did not form valid UTF-8; displayed output contains replacement characters.",
@@ -215,9 +231,25 @@ interface RizinDebugSession {
   frameChunks: Buffer[];
   bufferedFrameBytes: number;
   ready: boolean;
+  /** start returned this session's ID, so the caller must close it. */
+  published: boolean;
+  closeRequested: boolean;
   exited: boolean;
   commandTail: Promise<void>;
   protocolError: string | undefined;
+  /**
+   * Why the session stopped accepting commands. Cleanup synchronization
+   * clears protocolError once the transport is correlated again, but the
+   * session stays stopped, so the diagnosis is retained here.
+   */
+  stopReason: string | undefined;
+  cleanupSynchronization:
+    | {
+        readonly marker: string;
+        readonly resolve: () => void;
+        readonly reject: (cause: Error) => void;
+      }
+    | undefined;
   commandCaptureActive: boolean;
   commandOutputDropped: boolean;
   discardingOversizedFrame: boolean;
@@ -244,15 +276,18 @@ class RizinFrameTimeoutError extends Error {
 /** Owns persistent Rizin debugger processes independently from BinarySession. */
 export class RizinDebugSessionManager {
   readonly #sessions = new Map<string, RizinDebugSession>();
+  readonly #ttyResources = new ArtifactResourceScope();
   #activeStarts = 0;
   #sessionReservations = 0;
   readonly #environment: Readonly<NodeJS.ProcessEnv>;
   #closingAll = false;
   readonly #startDrainWaiters: Array<() => void> = [];
   readonly #command: string;
-  readonly #frameTimeoutMs: number;
+  readonly #launchCommandDeadline: DebuggerAdmissionLimit;
   readonly #startupTimeoutMs: number;
-  readonly #maxCommandOutputBytes: number;
+  readonly #maxSessions: DebuggerAdmissionLimit;
+  readonly #maxPendingCommands: DebuggerAdmissionLimit;
+  readonly #launchCommandOutput: DebuggerAdmissionLimit;
   readonly #platform: NodeJS.Platform;
   readonly #stopProcess: typeof stopOwnedDebuggerProcess;
   readonly #spawnProcess: typeof spawnOwnedProviderProcess;
@@ -260,11 +295,8 @@ export class RizinDebugSessionManager {
   constructor(
     environment: Readonly<NodeJS.ProcessEnv> = process.env,
     options: {
-      readonly frameTimeoutMs?: number;
       /** @internal Test seam; production callers should use the 30 s default. */
       readonly startupTimeoutMs?: number;
-      /** @internal Test seam; production callers should use the 16 MiB default. */
-      readonly maxCommandOutputBytes?: number;
       readonly platform?: NodeJS.Platform;
       readonly stopProcess?: typeof stopOwnedDebuggerProcess;
       readonly spawnProcess?: typeof spawnOwnedProviderProcess;
@@ -272,13 +304,49 @@ export class RizinDebugSessionManager {
   ) {
     this.#environment = { ...environment };
     this.#command = environment.REA_RIZIN_COMMAND ?? "rizin";
-    this.#frameTimeoutMs = options.frameTimeoutMs ?? FRAME_TIMEOUT_MS;
+    const limits = debuggerConstructionLimits(this.#environment);
+    this.#launchCommandDeadline = limits.commandDeadline;
     this.#startupTimeoutMs = options.startupTimeoutMs ?? STARTUP_TIMEOUT_MS;
-    this.#maxCommandOutputBytes =
-      options.maxCommandOutputBytes ?? MAX_COMMAND_OUTPUT_BYTES;
+    this.#maxSessions = limits.maxSessions;
+    this.#maxPendingCommands = limits.maxPendingCommands;
+    this.#launchCommandOutput = limits.maxCommandOutputBytes;
     this.#platform = options.platform ?? process.platform;
     this.#stopProcess = options.stopProcess ?? stopOwnedDebuggerProcess;
     this.#spawnProcess = options.spawnProcess ?? spawnOwnedProviderProcess;
+  }
+
+  get #commandDeadline(): DebuggerAdmissionLimit {
+    const override =
+      currentAnalysisOperationSnapshot()?.overrides[
+        "debugger.command_deadline_ms"
+      ];
+    if (override !== undefined)
+      return {
+        ...this.#launchCommandDeadline,
+        value: override,
+        source: "runtime",
+      };
+    const parsed = parseDebuggerCommandDeadline(this.#environment);
+    if (!parsed.ok) throw parsed.error;
+    return parsed.value;
+  }
+  get #frameTimeoutMs(): number {
+    return this.#commandDeadline.value;
+  }
+  get #commandOutput(): DebuggerAdmissionLimit {
+    const override =
+      currentAnalysisOperationSnapshot()?.overrides[
+        "debugger.max_command_output_bytes"
+      ];
+    if (override !== undefined)
+      return {
+        ...this.#launchCommandOutput,
+        value: override,
+        source: "runtime",
+      };
+    const parsed = parseDebuggerCommandOutput(this.#environment);
+    if (!parsed.ok) throw parsed.error;
+    return parsed.value;
   }
 
   async start(
@@ -295,17 +363,28 @@ export class RizinDebugSessionManager {
     >
   > {
     if (this.#closingAll)
-      return err(new AnalysisInputError("start_rizin_debug_session"));
-    const occupied = this.#sessions.size + this.#sessionReservations;
-    if (occupied >= MAX_SESSIONS)
       return err(
-        new AnalysisResourceConstraintError(
+        new AnalysisInputError("start_rizin_debug_session", undefined, [
+          {
+            path: ["inferior_tty"],
+            reason: "missing_argument",
+            message:
+              "Select a persistent readable and writable Linux terminal for inferior input and output.",
+          },
+        ]),
+      );
+    const occupied = this.#sessions.size + this.#sessionReservations;
+    if (occupied >= this.#maxSessions.value)
+      return err(
+        debuggerResourceConstraintError(
           "start_rizin_debug_session",
           "memory",
-          `Rizin session capacity reached (${String(MAX_SESSIONS)} sessions). This release has no runtime override.`,
-          { max_sessions: MAX_SESSIONS, active_or_reserved_sessions: occupied },
+          `Rizin session capacity reached (${String(this.#maxSessions.value)} sessions).`,
+          "Close a Rizin debug session before starting another; a stopped session that rizin_debug_session_status reports closed still holds its slot until close_rizin_debug_session releases it.",
+          this.#maxSessions,
           {
-            remediationAction: `Close a Rizin debug session before starting another. This capacity of ${String(MAX_SESSIONS)} sessions has no runtime override.`,
+            max_sessions: this.#maxSessions.value,
+            active_or_reserved_sessions: occupied,
           },
         ),
       );
@@ -342,8 +421,8 @@ export class RizinDebugSessionManager {
     >
   > {
     if (signal?.aborted)
-      return err(new AnalysisCancelledError("start_rizin_debug_session"));
-    if (this.#platform !== "linux")
+      return err(rizinCancellation("start_rizin_debug_session", signal));
+    if (!persistentDebuggerHostSupported(this.#platform))
       return err(
         new AnalysisCapabilityUnavailableError(
           "rizin",
@@ -356,33 +435,104 @@ export class RizinDebugSessionManager {
     let ttyPath: string;
     let ttyDevice: number;
     let ttyInode: number;
+    let ttyLease: AnalysisCleanupLease | undefined;
+    try {
+      await this.#ttyResources.retryCleanup();
+    } catch (cause: unknown) {
+      const cleanup = new ProviderCleanupError(
+        "rizin",
+        this.#ttyResources.cleanupResources,
+        {},
+        { operation: "start_rizin_debug_session", cause },
+      );
+      bindArtifactFileCleanup(cause, cleanup);
+      return err(cleanup);
+    }
     try {
       ttyPath = await realpath(input.inferior_tty);
       const ttyHandle = await open(
         ttyPath,
         fsConstants.O_RDWR | fsConstants.O_NOCTTY | fsConstants.O_NONBLOCK,
       );
-      try {
-        const ttyStat = await ttyHandle.stat();
-        if (
-          !isatty(ttyHandle.fd) ||
-          (ttyStat.mode & fsConstants.S_IFMT) !== fsConstants.S_IFCHR
-        )
-          throw new Error("The selected inferior_tty is not a character TTY.");
-        ttyDevice = ttyStat.dev;
-        ttyInode = ttyStat.ino;
-      } finally {
-        await ttyHandle.close();
-      }
-    } catch (cause) {
-      return err(
-        new AnalysisInputError("start_rizin_debug_session", { cause }),
+      const tty = await withOwnedFileHandle(
+        ttyPath,
+        new OwnedFileHandle(ttyHandle),
+        {
+          ...(signal === undefined ? {} : { signal }),
+          retainFailedClose: (owner) => {
+            ttyLease = new AnalysisCleanupLease(() => owner.close(), [ttyPath]);
+            this.#ttyResources.retain({
+              kind: "lease",
+              resource: ttyPath,
+              lease: ttyLease,
+            });
+          },
+        },
+        async (handle) => {
+          const ttyStat = await handle.stat();
+          if (
+            !isatty(handle.fd) ||
+            (ttyStat.mode & fsConstants.S_IFMT) !== fsConstants.S_IFCHR
+          )
+            throw new Error(
+              "The selected inferior_tty is not a character TTY.",
+            );
+          return { device: ttyStat.dev, inode: ttyStat.ino };
+        },
       );
+      ttyDevice = tty.device;
+      ttyInode = tty.inode;
+    } catch (cause) {
+      const primaryCause =
+        cause instanceof RegularFileCleanupFailure &&
+        cause.outcome.kind === "failed"
+          ? cause.outcome.cause
+          : cause;
+      const cancellation = regularFileCancellation(cause);
+      const primary =
+        cancellation === undefined
+          ? new AnalysisInputError(
+              "start_rizin_debug_session",
+              {
+                cause: primaryCause,
+                diagnostics: { inferior_tty: input.inferior_tty },
+              },
+              [
+                {
+                  path: ["inferior_tty"],
+                  reason: "invalid_value",
+                  message: `Cannot use selected terminal ${input.inferior_tty}: ${primaryCause instanceof Error ? primaryCause.message : String(primaryCause)}`,
+                },
+              ],
+            )
+          : rizinCancellation(
+              "start_rizin_debug_session",
+              undefined,
+              cancellation.reason,
+            );
+      if (!(cause instanceof RegularFileCleanupFailure)) return err(primary);
+      const cleanup = new ProviderCleanupError(
+        "rizin",
+        [ttyPath!],
+        {},
+        { operation: "start_rizin_debug_session", cause: cause.cleanupCause },
+      );
+      const error =
+        cause.outcome.kind === "failed" || cancellation !== undefined
+          ? analysisErrorWithCleanupFailure(
+              primary,
+              cleanup,
+              "start_rizin_debug_session",
+            )
+          : cleanup;
+      ttyLease?.bindCleanupError(cleanup);
+      if (error !== cleanup) ttyLease?.bindCleanupError(error);
+      return err(error);
     }
     // TTY identity validation is asynchronous. Cancellation may arrive while
     // realpath/open/stat are pending, and must prevent the debugger spawn.
     if (signal?.aborted)
-      return err(new AnalysisCancelledError("start_rizin_debug_session"));
+      return err(rizinCancellation("start_rizin_debug_session", signal));
     const id = randomUUID();
     const resolvedPath = absoluteCallerPath(input.path);
     const launchProvenance: RizinLaunchProvenance = {
@@ -393,6 +543,10 @@ export class RizinDebugSessionManager {
       "-N",
       "-0",
       "-d",
+      // Rizin reads REA's commands from its own stdin. Without this key the
+      // target inherits that stream and, once resumed, reads those commands.
+      "-R",
+      `stdin=${ttyPath}`,
       "-R",
       `stdout=${ttyPath}`,
       "-R",
@@ -415,7 +569,7 @@ export class RizinDebugSessionManager {
     } catch (cause) {
       if (signal?.aborted)
         return err(
-          new AnalysisCancelledError("start_rizin_debug_session", { cause }),
+          rizinCancellation("start_rizin_debug_session", signal, cause),
         );
       return err(
         new AnalysisCapabilityUnavailableError(
@@ -471,9 +625,13 @@ export class RizinDebugSessionManager {
       frameChunks: [],
       bufferedFrameBytes: 0,
       ready: false,
+      published: false,
+      closeRequested: false,
       exited: false,
       commandTail: Promise.resolve(),
       protocolError: undefined,
+      stopReason: undefined,
+      cleanupSynchronization: undefined,
       commandCaptureActive: false,
       commandOutputDropped: false,
       discardingOversizedFrame: false,
@@ -495,6 +653,7 @@ export class RizinDebugSessionManager {
     });
     launched.process.once("exit", () => {
       session.exited = true;
+      session.cleanupSynchronization?.reject(new RizinProcessExitError());
       for (const waiter of session.frameWaiters)
         waiter.reject(new RizinProcessExitError());
       session.frameWaiters.length = 0;
@@ -505,67 +664,65 @@ export class RizinDebugSessionManager {
       // initial frame run before publishing the session as ready.
       await new Promise<void>((resolve) => setImmediate(resolve));
       if (signal?.aborted)
-        throw new AnalysisCancelledError("start_rizin_debug_session");
+        throw rizinCancellation("start_rizin_debug_session", signal);
       if (session.exited)
         throw new RizinProcessExitError("Rizin exited during startup.");
       if (session.protocolError !== undefined)
         throw new Error(session.protocolError);
       session.ready = true;
+      session.published = true;
       return ok({ session_id: id, backend: input.backend ?? null });
-    } catch (cause) {
+    } catch (caught) {
+      const protocolFailure = session.protocolError;
+      const cancellation =
+        signal?.aborted || caught instanceof AnalysisCancelledError
+          ? rizinCancellation("start_rizin_debug_session", signal, caught)
+          : undefined;
       const stopped = await this.#stopDebuggerOnly(session);
       const capturedOutput = this.#startupCapturedOutput(session);
       if (stopped.status !== "incomplete") this.#sessions.delete(id);
-      if (stopped.status === "incomplete")
-        return err(
-          this.#retainCleanupFailure(
-            session,
-            "start_rizin_debug_session",
-            stopped.reason,
-            { cause, capturedOutput },
-          ),
+      let primary: AnalysisError;
+      if (cancellation !== undefined)
+        primary = rizinCancellation(
+          "start_rizin_debug_session",
+          undefined,
+          cancellation,
+          { capturedOutput },
         );
-      if (signal?.aborted || cause instanceof AnalysisCancelledError)
-        return err(
-          new AnalysisCancelledError("start_rizin_debug_session", {
-            cause,
-            capturedOutput,
-          }),
+      else if (protocolFailure !== undefined)
+        primary = new AnalysisCapabilityUnavailableError(
+          "rizin",
+          "start_rizin_debug_session",
+          protocolFailure,
+          { cause: caught, capturedOutput },
         );
-      if (session.protocolError !== undefined)
-        return err(
-          new AnalysisCapabilityUnavailableError(
-            "rizin",
-            "start_rizin_debug_session",
-            session.protocolError,
-            { cause, capturedOutput },
-          ),
+      else if (caught instanceof RizinProcessExitError)
+        primary = new AnalysisCapabilityUnavailableError(
+          "rizin",
+          "start_rizin_debug_session",
+          caught.message,
+          { cause: caught, capturedOutput },
         );
-      if (cause instanceof RizinProcessExitError) {
-        return err(
-          new AnalysisCapabilityUnavailableError(
-            "rizin",
-            "start_rizin_debug_session",
-            cause.message,
-            {
-              cause,
-              capturedOutput,
-            },
-          ),
-        );
-      }
-      return err(
-        new AnalysisTimeoutError(
+      else
+        primary = new AnalysisTimeoutError(
           "start_rizin_debug_session",
           this.#startupTimeoutMs,
           {
-            cause,
+            cause: caught,
             capturedOutput,
             ...fixedDeadlineGuidance(
               "Rizin debug session startup",
               this.#startupTimeoutMs,
             ),
           },
+        );
+      return err(
+        this.#finalizeFailure(
+          session,
+          "start_rizin_debug_session",
+          primary,
+          stopped,
+          signal,
         ),
       );
     }
@@ -582,32 +739,47 @@ export class RizinDebugSessionManager {
     >
   > {
     const session = this.#sessions.get(sessionId);
-    if (
-      session === undefined ||
-      !session.ready ||
-      session.exited ||
-      session.protocolError !== undefined ||
-      session.closing ||
-      this.#closingAll
-    )
-      return err(new AnalysisInputError("rizin_debug_command"));
-    if (signal?.aborted)
-      return err(new AnalysisCancelledError("rizin_debug_command"));
-    if (session.pendingCommandCount >= MAX_PENDING_COMMANDS)
+    if (session === undefined)
       return err(
-        new AnalysisResourceConstraintError(
+        unknownDebuggerSessionError(
+          RIZIN_DEBUG_SESSION_TOOLS,
+          "rizin_debug_command",
+        ),
+      );
+    const stopped = this.#stopReason(session);
+    if (stopped !== undefined)
+      return err(
+        stoppedDebuggerSessionError(
+          RIZIN_DEBUG_SESSION_TOOLS,
+          "rizin_debug_command",
+          stopped,
+        ),
+      );
+    if (signal?.aborted)
+      return err(rizinCancellation("rizin_debug_command", signal));
+    if (session.pendingCommandCount >= this.#maxPendingCommands.value)
+      return err(
+        debuggerResourceConstraintError(
           "rizin_debug_command",
           "transport",
-          `Rizin command queue capacity reached (${String(MAX_PENDING_COMMANDS)} pending commands). This release has no runtime override.`,
+          `Rizin command queue capacity reached (${String(this.#maxPendingCommands.value)} pending commands).`,
+          "Wait for a Rizin debug command on this session to finish, then retry.",
+          this.#maxPendingCommands,
           {
-            max_pending_commands: MAX_PENDING_COMMANDS,
+            max_pending_commands: this.#maxPendingCommands.value,
             active_or_queued_commands: session.pendingCommandCount,
-          },
-          {
-            remediationAction: `Wait for a Rizin debug command on this session to finish, then retry. This queue of ${String(MAX_PENDING_COMMANDS)} commands has no runtime override.`,
           },
         ),
       );
+    let acceptedDeadline: DebuggerAdmissionLimit;
+    let acceptedOutput: DebuggerAdmissionLimit;
+    try {
+      acceptedDeadline = this.#commandDeadline;
+      acceptedOutput = this.#commandOutput;
+    } catch (cause: unknown) {
+      if (cause instanceof ConfigurationError) return err(cause);
+      throw cause;
+    }
     session.pendingCommandCount += 1;
     let release: (() => void) | undefined;
     let acquired = false;
@@ -636,21 +808,23 @@ export class RizinDebugSessionManager {
       await waitForTurn(previous, signal);
       acquired = true;
       if (signal?.aborted)
-        return err(new AnalysisCancelledError("rizin_debug_command"));
-      if (
-        !session.ready ||
-        session.exited ||
-        session.closing ||
-        this.#closingAll ||
-        session.protocolError !== undefined
-      )
-        return err(new AnalysisInputError("rizin_debug_command"));
+        return err(rizinCancellation("rizin_debug_command", signal));
+      const stoppedWhileQueued = this.#stopReason(session);
+      if (stoppedWhileQueued !== undefined)
+        return err(
+          stoppedDebuggerSessionError(
+            RIZIN_DEBUG_SESSION_TOOLS,
+            "rizin_debug_command",
+            stoppedWhileQueued,
+          ),
+        );
       if (hasUnclaimedRizinFrames(session)) {
         const message =
           "Unsolicited Rizin frames arrived before a command; command output can no longer be safely correlated.";
         this.#failProtocol(session, message);
         return err(
-          await this.#stopAfterProtocolFailure(session, undefined, {
+          await this.#stopAfterProtocolFailure(session, message, undefined, {
+            signal,
             commandTurnHeld: true,
           }),
         );
@@ -694,9 +868,9 @@ export class RizinDebugSessionManager {
       const received = await waitForCommandFrames(
         session,
         marker,
-        this.#frameTimeoutMs,
+        acceptedDeadline.value,
+        acceptedOutput,
         signal,
-        this.#maxCommandOutputBytes,
       );
       commandCapture = received.ok ? received.value : received.error.capture;
       if (!received.ok) {
@@ -705,11 +879,13 @@ export class RizinDebugSessionManager {
       }
       const captured = received.value;
       if (signal?.aborted)
-        throw new AnalysisCancelledError("rizin_debug_command");
+        throw rizinCancellation("rizin_debug_command", signal);
+      let stopped: Awaited<ReturnType<typeof stopOwnedDebuggerProcess>> = {
+        status: "stopped",
+      };
       let cleanupFailure: string | undefined;
       if (captured.outputTruncated) {
-        // Stryker disable next-line BooleanLiteral -- `waitForCommandFrames` sets `protocolError` before reporting truncation; both detach wrappers therefore fail closed before a queued command can be awaited, so the held-tail flag cannot change this public path.
-        const stopped = await this.#stopDebuggerOnly(session, true);
+        stopped = await this.#stopDebuggerOnly(session, true);
         if (stopped.status === "incomplete") cleanupFailure = stopped.reason;
       }
       const result = commandResult(
@@ -729,7 +905,7 @@ export class RizinDebugSessionManager {
             ? [
                 rizinCaptureStoppedSentence(
                   captured.outputLimit,
-                  this.#maxCommandOutputBytes,
+                  acceptedOutput,
                   cleanupFailure,
                 ),
               ]
@@ -737,18 +913,12 @@ export class RizinDebugSessionManager {
           "The command is unrestricted and may access local files, the shell, network, or mutate the target.",
         ],
       });
-      if (cleanupFailure !== undefined)
-        return err(
-          this.#retainCleanupFailure(
-            session,
-            "rizin_debug_command",
-            cleanupFailure,
-            {
-              partialObservation: evidence,
-            },
-          ),
-        );
-      return ok({ result, evidence });
+      return this.#finalizeCommandObservation(
+        session,
+        { result, evidence },
+        stopped,
+        signal,
+      );
     } catch (cause) {
       // Capture is owned by this dispatched command, independently of which
       // cancellation, protocol or cleanup outcome ultimately takes precedence.
@@ -779,9 +949,7 @@ export class RizinDebugSessionManager {
             });
       if (signal?.aborted || cause instanceof AnalysisCancelledError) {
         if (!commandSent)
-          return err(
-            new AnalysisCancelledError("rizin_debug_command", { cause }),
-          );
+          return err(rizinCancellation("rizin_debug_command", signal, cause));
         const evidence = partialEvidence([
           "The Rizin command was cancelled; collected frame output is partial and command completion is unknown.",
           "The owned debugger session was stopped because command output can no longer be correlated safely.",
@@ -789,30 +957,24 @@ export class RizinDebugSessionManager {
         ]);
         session.protocolError =
           "A Rizin command was cancelled; the owned session was stopped because command output can no longer be correlated safely.";
-        const stopped = await this.#stopDebuggerOnly(session, true);
-        if (stopped.status === "incomplete")
-          return err(
-            this.#retainCleanupFailure(
-              session,
-              "rizin_debug_command",
-              stopped.reason,
-              {
-                cause: new AnalysisCancelledError("rizin_debug_command", {
-                  cause,
-                  ...(capturedOutput === undefined ? {} : { capturedOutput }),
-                }),
-                ...(evidence === undefined
-                  ? {}
-                  : { partialObservation: evidence }),
-              },
-            ),
-          );
-        return err(
-          new AnalysisCancelledError("rizin_debug_command", {
-            cause,
+        const primary = rizinCancellation(
+          "rizin_debug_command",
+          signal,
+          cause,
+          {
             ...(capturedOutput === undefined ? {} : { capturedOutput }),
             ...(evidence === undefined ? {} : { partialObservation: evidence }),
-          }),
+          },
+        );
+        const stopped = await this.#stopDebuggerOnly(session, true);
+        return err(
+          this.#finalizeFailure(
+            session,
+            "rizin_debug_command",
+            primary,
+            stopped,
+            signal,
+          ),
         );
       }
       if (session.protocolError !== undefined) {
@@ -822,14 +984,22 @@ export class RizinDebugSessionManager {
           "The command is unrestricted and may access local files, the shell, network, or mutate the target.",
         ]);
         return err(
-          await this.#stopAfterProtocolFailure(session, cause, {
-            commandTurnHeld: true,
-            ...(evidence === undefined ? {} : { partialObservation: evidence }),
-          }),
+          await this.#stopAfterProtocolFailure(
+            session,
+            session.protocolError,
+            cause,
+            {
+              commandTurnHeld: true,
+              signal,
+              ...(evidence === undefined
+                ? {}
+                : { partialObservation: evidence }),
+            },
+          ),
         );
       }
       if (interruption?.kind === "timeout") {
-        session.protocolError = `Rizin command timed out before its completion marker at ${String(this.#frameTimeoutMs)} ms (deadlineExpired). This release has no runtime override. Output correlation is no longer safe.`;
+        session.protocolError = `Rizin command timed out before its completion marker at ${String(acceptedDeadline.value)} ms (deadlineExpired). ${debuggerAdmissionRecovery(acceptedDeadline)} Output correlation is no longer safe.`;
         const stopped = await this.#stopDebuggerOnly(session, true);
         const result = {
           ...commandResult(interruption.capture, "unknown"),
@@ -840,24 +1010,17 @@ export class RizinDebugSessionManager {
           command,
           result,
           inferiorTty: session.inferiorTty,
+          deadline: acceptedDeadline,
           cleanupFailure:
             stopped.status === "incomplete" ? stopped.reason : undefined,
           launchProvenance: session.launchProvenance,
-          timeoutMs: this.#frameTimeoutMs,
         });
-        if (stopped.status === "incomplete")
-          return err(
-            this.#retainCleanupFailure(
-              session,
-              "rizin_debug_command",
-              stopped.reason,
-              {
-                cause,
-                partialObservation: evidence,
-              },
-            ),
-          );
-        return ok({ result, evidence });
+        return this.#finalizeCommandObservation(
+          session,
+          { result, evidence },
+          stopped,
+          signal,
+        );
       }
       if (interruption?.kind === "exited") {
         const result = commandResult(interruption.capture, "unknown");
@@ -873,16 +1036,12 @@ export class RizinDebugSessionManager {
           ],
         });
         const stopped = await this.#stopDebuggerOnly(session, true);
-        if (stopped.status === "incomplete")
-          return err(
-            this.#retainCleanupFailure(
-              session,
-              "rizin_debug_command",
-              stopped.reason,
-              { cause, partialObservation: evidence },
-            ),
-          );
-        return ok({ result, evidence });
+        return this.#finalizeCommandObservation(
+          session,
+          { result, evidence },
+          stopped,
+          signal,
+        );
       }
       session.protocolError =
         "Rizin did not return the current command-completion marker; the session was stopped to prevent late output from being attributed to a later command.";
@@ -895,23 +1054,25 @@ export class RizinDebugSessionManager {
         ...(evidence === undefined ? {} : { partialObservation: evidence }),
       };
       const stopped = await this.#stopDebuggerOnly(session, true);
-      if (stopped.status === "incomplete")
-        return err(
-          this.#retainCleanupFailure(
-            session,
-            "rizin_debug_command",
-            stopped.reason,
-            errorOptions,
-          ),
-        );
-      return err(
-        new AnalysisTimeoutError("rizin_debug_command", this.#frameTimeoutMs, {
+      const primary = new AnalysisTimeoutError(
+        "rizin_debug_command",
+        this.#frameTimeoutMs,
+        {
           ...errorOptions,
-          ...fixedDeadlineGuidance(
+          ...configurableDeadlineGuidance(
             "The Rizin debug command",
-            this.#frameTimeoutMs,
+            acceptedDeadline,
           ),
-        }),
+        },
+      );
+      return err(
+        this.#finalizeFailure(
+          session,
+          "rizin_debug_command",
+          primary,
+          stopped,
+          signal,
+        ),
       );
     } finally {
       if (acquired) {
@@ -935,27 +1096,40 @@ export class RizinDebugSessionManager {
         readonly recent_output_truncated: boolean;
         readonly diagnostics_truncated: boolean;
         readonly output_invalid_utf8: boolean;
+        readonly closed_reason?: string;
       }
     | undefined {
     const session = this.#sessions.get(sessionId);
-    return session === undefined
-      ? undefined
-      : {
-          session_id: session.id,
-          state:
-            session.exited ||
-            session.protocolError !== undefined ||
-            session.closing ||
-            !session.ready
-              ? "closed"
-              : "ready",
-          inferior_tty: session.inferiorTty,
-          recent_output: [...session.history],
-          recent_output_truncated: session.historyTruncated,
-          diagnostics_truncated:
-            session.supervisor.snapshot().diagnosticTruncated === true,
-          output_invalid_utf8: session.invalidUtf8Observed,
-        };
+    if (session === undefined) return undefined;
+    const stopped = this.#stopReason(session);
+    return {
+      session_id: session.id,
+      state: stopped === undefined ? "ready" : "closed",
+      inferior_tty: session.inferiorTty,
+      recent_output: [...session.history],
+      recent_output_truncated: session.historyTruncated,
+      diagnostics_truncated:
+        session.supervisor.snapshot().diagnosticTruncated === true,
+      output_invalid_utf8: session.invalidUtf8Observed,
+      ...(stopped === undefined ? {} : { closed_reason: stopped }),
+    };
+  }
+
+  /** Why a retained session accepts no commands, or undefined while it is ready. */
+  #stopReason(session: RizinDebugSession): string | undefined {
+    const diagnosed = session.stopReason ?? session.protocolError;
+    if (diagnosed !== undefined) return diagnosed;
+    if (this.#closingAll)
+      return "REA is shutting down and closing every Rizin debug session.";
+    if (session.closeRequested)
+      return "close_rizin_debug_session started releasing this session, and its owned cleanup has not completed.";
+    if (session.exited) {
+      const { exitCode, signalCode } = session.launched.process;
+      return `The Rizin process exited (exit code ${String(exitCode)}, signal ${String(signalCode)}); a command such as q, or a crash, can end it.`;
+    }
+    if (session.closing || !session.ready)
+      return "REA stopped this Rizin debug session.";
+    return undefined;
   }
 
   async close(
@@ -965,7 +1139,13 @@ export class RizinDebugSessionManager {
       return err(new AnalysisInputError("close_rizin_debug_session"));
     const session = this.#sessions.get(sessionId);
     if (session === undefined)
-      return err(new AnalysisInputError("close_rizin_debug_session"));
+      return err(
+        unknownDebuggerSessionError(
+          RIZIN_DEBUG_SESSION_TOOLS,
+          "close_rizin_debug_session",
+        ),
+      );
+    session.closeRequested = true;
     session.closing = true;
     const stopped = await this.#stopDebuggerOnly(session);
     if (stopped.status === "incomplete")
@@ -981,6 +1161,21 @@ export class RizinDebugSessionManager {
   }
 
   async retryCleanupFailures(): Promise<Result<null, AnalysisError>> {
+    try {
+      await this.#ttyResources.retryCleanup();
+    } catch (cause: unknown) {
+      const error = new ProviderCleanupError(
+        "rizin",
+        this.#ttyResources.cleanupResources,
+        {},
+        {
+          operation: "start_rizin_debug_session",
+          cause,
+        },
+      );
+      bindArtifactFileCleanup(cause, error);
+      return err(error);
+    }
     for (const session of this.#sessions.values()) {
       if (session.cleanupFailures.size === 0) continue;
       const stopped = await this.#stopDebuggerOnly(session);
@@ -993,7 +1188,10 @@ export class RizinDebugSessionManager {
               stopped.reason,
             ),
         );
-      this.#sessions.delete(session.id);
+      // The caller still holds a published session's ID; keep it addressable
+      // so commands and status report why it stopped until it is closed.
+      if (!session.published || session.closeRequested)
+        this.#sessions.delete(session.id);
     }
     return ok(null);
   }
@@ -1005,11 +1203,20 @@ export class RizinDebugSessionManager {
         this.#startDrainWaiters.push(resolve),
       );
     for (const session of this.#sessions.values()) session.closing = true;
-    return closeOwnedDebuggerSessions(
-      this.#sessions,
-      (session) => this.#stopDebuggerOnly(session),
-      "Rizin",
+    const outcomes = await Promise.allSettled([
+      closeOwnedDebuggerSessions(
+        this.#sessions,
+        (session) => this.#stopDebuggerOnly(session),
+        "Rizin",
+      ),
+      this.#ttyResources.close(),
+    ]);
+    const failures = outcomes.flatMap((outcome) =>
+      outcome.status === "rejected" ? [outcome.reason] : [],
     );
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1)
+      throw new AggregateError(failures, "Rizin cleanup remains incomplete");
   }
 
   #receive(session: RizinDebugSession, chunk: Buffer): void {
@@ -1034,7 +1241,10 @@ export class RizinDebugSessionManager {
       }
       if (session.bufferedFrameBytes + piece.length > MAX_FRAME_BYTES) {
         const message = `Rizin emitted a NUL frame exceeding the ${String(MAX_FRAME_BYTES)} byte (16 MiB) protocol limit. This release has no runtime override.`;
-        if (!session.commandCaptureActive) {
+        if (
+          !session.commandCaptureActive &&
+          session.cleanupSynchronization === undefined
+        ) {
           this.#failProtocol(session, message);
           return;
         }
@@ -1079,7 +1289,7 @@ export class RizinDebugSessionManager {
     const protocolOutput = [...session.history, partialFrame]
       .filter((frame) => frame.length > 0)
       .join("\n");
-    const stdout = truncateUtf8(protocolOutput, MAX_DIAGNOSTIC_BYTES);
+    const stdout = utf8HeadExcerpt(protocolOutput, MAX_DIAGNOSTIC_BYTES).text;
     return {
       stdout,
       stderr: output.stderr.text,
@@ -1097,7 +1307,22 @@ export class RizinDebugSessionManager {
     frame: RizinFrame,
     frameBytes: number,
   ): void {
-    const historyPrefix = truncateUtf8(frame.text, MAX_RECENT_FRAME_BYTES);
+    const synchronization = session.cleanupSynchronization;
+    if (synchronization !== undefined) {
+      // This fresh, private NUL-delimited echo closes the old command interval.
+      // Earlier frames are discarded, never reused as inferior readback.
+      if (
+        !frame.truncated &&
+        !frame.invalidUtf8 &&
+        frame.text.trim() === synchronization.marker
+      )
+        synchronization.resolve();
+      return;
+    }
+    const historyPrefix = utf8HeadExcerpt(
+      frame.text,
+      MAX_RECENT_FRAME_BYTES,
+    ).text;
     const historyTruncated =
       historyPrefix.length < frame.text.length || frame.truncated;
     if (historyTruncated) session.historyTruncated = true;
@@ -1136,6 +1361,7 @@ export class RizinDebugSessionManager {
 
   #failProtocol(session: RizinDebugSession, message: string): void {
     session.protocolError = message;
+    session.cleanupSynchronization?.reject(new Error(message));
     if (!session.commandCaptureActive) {
       session.frameChunks = [];
       session.bufferedFrameBytes = 0;
@@ -1155,6 +1381,10 @@ export class RizinDebugSessionManager {
           platform: this.#platform,
         }),
       )
+      .catch((cause: unknown) => ({
+        status: "incomplete" as const,
+        reason: `Owned Rizin debugger shutdown failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+      }))
       .then((stopped) => {
         if (stopped.status !== "incomplete") {
           for (const failure of session.cleanupFailures)
@@ -1172,10 +1402,8 @@ export class RizinDebugSessionManager {
   async #detachInferior(
     session: RizinDebugSession,
   ): Promise<OwnedDebuggerDetachResult> {
-    if (session.exited || session.protocolError !== undefined)
-      throw new Error(
-        "Rizin protocol state is ambiguous; inferior detach is unverified.",
-      );
+    if (session.exited)
+      throw new Error("Rizin exited before inferior detach could be verified.");
     const previous = session.commandTail;
     let release!: () => void;
     session.commandTail = new Promise<void>((resolve) => (release = resolve));
@@ -1190,10 +1418,10 @@ export class RizinDebugSessionManager {
   async #detachInferiorUnlocked(
     session: RizinDebugSession,
   ): Promise<OwnedDebuggerDetachResult> {
-    if (session.exited || session.protocolError !== undefined)
-      throw new Error(
-        "Rizin protocol state is ambiguous; inferior detach is unverified.",
-      );
+    if (session.exited)
+      throw new Error("Rizin exited before inferior detach could be verified.");
+    if (session.protocolError !== undefined)
+      await this.#synchronizeCleanup(session);
     session.inferiorInventoryComplete = false;
     session.knownInferiorIdentities.clear();
     const inferior = parseRizinPtraceRows(
@@ -1228,6 +1456,7 @@ export class RizinDebugSessionManager {
     );
     await this.#verifyDebuggerExitPolicy(session);
     await this.#verifyInferiorOutputDescriptors(session, pid);
+    await this.#verifyInferiorStdinIsolated(session, pid);
     await this.#runInternalCommand(session, `o- ${fd}`);
     const after = parseRizinPtraceRows(
       await this.#runInternalCommand(session, "olj"),
@@ -1287,6 +1516,93 @@ export class RizinDebugSessionManager {
     }
   }
 
+  /**
+   * Detach resumes the inferior, which would then read the commands that must
+   * confirm the detach. Only sharing the command stream is refused: a target may
+   * close or replace its own stdin, and neither can consume those commands.
+   */
+  async #verifyInferiorStdinIsolated(
+    session: RizinDebugSession,
+    pid: string,
+  ): Promise<void> {
+    let inferiorStdin: Stats;
+    try {
+      inferiorStdin = await stat(`/proc/${pid}/fd/0`);
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw cause;
+    }
+    const commandStream = await stat(
+      `/proc/${String(session.launched.process.pid)}/fd/0`,
+    );
+    if (
+      inferiorStdin.dev === commandStream.dev &&
+      inferiorStdin.ino === commandStream.ino
+    )
+      throw new Error(
+        "Inferior stdin is the Rizin command stream rather than the selected TTY; detaching would let the target consume debugger commands.",
+      );
+  }
+
+  async #synchronizeCleanup(session: RizinDebugSession): Promise<void> {
+    const stdin = session.launched.process.stdin;
+    if (
+      stdin === null ||
+      stdin === undefined ||
+      stdin.destroyed ||
+      !stdin.writable
+    )
+      throw new Error(
+        "Rizin stdin is unavailable during cleanup synchronization.",
+      );
+    // Admission remains closed. Only cleanup can recover correlation, and then
+    // it still obtains a fresh ptrace inventory and validates identity/output.
+    session.ready = false;
+    session.frames.length = 0;
+    session.queuedFrameBytes = 0;
+    const marker = `__REA_CLEANUP_SYNC_${randomUUID().replaceAll("-", "")}__`;
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const finish = (cause?: Error): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        session.cleanupSynchronization = undefined;
+        if (cause === undefined) {
+          session.stopReason ??= session.protocolError;
+          session.protocolError = undefined;
+          session.commandOutputDropped = false;
+          resolve();
+        } else reject(cause);
+      };
+      const timer = setTimeout(
+        () =>
+          finish(
+            new Error("Rizin cleanup synchronization marker was not observed."),
+          ),
+        CLEANUP_COMMAND_TIMEOUT_MS,
+      );
+      session.cleanupSynchronization = {
+        marker,
+        resolve: () => finish(),
+        reject: (cause) => finish(cause),
+      };
+      try {
+        stdin.write(`!echo ${marker}\n`, "utf8", (cause?: Error | null) => {
+          if (cause) session.cleanupSynchronization?.reject(cause);
+        });
+      } catch (cause) {
+        finish(
+          cause instanceof Error
+            ? cause
+            : new Error("Rizin cleanup synchronization write failed.", {
+                cause,
+              }),
+        );
+      }
+    });
+  }
+
   async #runInternalCommand(
     session: RizinDebugSession,
     command: string,
@@ -1309,13 +1625,87 @@ export class RizinDebugSessionManager {
       session,
       marker,
       CLEANUP_COMMAND_TIMEOUT_MS,
-      undefined,
-      this.#maxCommandOutputBytes,
+      debuggerControlReplyOutput,
     );
     if (!captured.ok) throw captured.error.cause;
     if (captured.value.outputTruncated)
       throw new Error("Rizin cleanup readback was truncated.");
     return captured.value.output;
+  }
+
+  #finalizeCommandObservation(
+    session: RizinDebugSession,
+    observation: {
+      readonly result: RizinDebugCommandResult;
+      readonly evidence: Evidence;
+    },
+    stopped: Awaited<ReturnType<typeof stopOwnedDebuggerProcess>>,
+    signal?: AbortSignal,
+  ): Result<typeof observation, AnalysisError> {
+    if (signal?.aborted) {
+      const primary = rizinCancellation(
+        "rizin_debug_command",
+        signal,
+        undefined,
+        {
+          capturedOutput: {
+            stdout: observation.result.output,
+            stderr: "",
+            truncated: observation.result.output_truncated,
+          },
+          partialObservation: observation.evidence,
+        },
+      );
+      return err(
+        this.#finalizeFailure(
+          session,
+          "rizin_debug_command",
+          primary,
+          stopped,
+          signal,
+        ),
+      );
+    }
+    return stopped.status === "incomplete"
+      ? err(
+          this.#retainCleanupFailure(
+            session,
+            "rizin_debug_command",
+            stopped.reason,
+            { partialObservation: observation.evidence },
+          ),
+        )
+      : ok(observation);
+  }
+
+  #finalizeFailure(
+    session: RizinDebugSession,
+    operation: string,
+    primary: AnalysisError,
+    stopped: Awaited<ReturnType<typeof stopOwnedDebuggerProcess>>,
+    signal?: AbortSignal,
+  ): AnalysisError {
+    if (signal?.aborted && !(primary instanceof AnalysisCancelledError))
+      primary.retainSecondaryFailure(rizinCancellation(operation, signal), {
+        finalization_cancelled: true,
+      });
+    if (stopped.status !== "incomplete") return primary;
+    if (primary instanceof AnalysisCancelledError)
+      return this.#retainCleanupFailure(session, operation, stopped.reason, {
+        cause: primary,
+      });
+    const cleanup = this.#retainCleanupFailure(
+      session,
+      operation,
+      stopped.reason,
+    );
+    const composed = analysisErrorWithCleanupFailure(
+      primary,
+      cleanup,
+      operation,
+    ).bindCleanupDependencies([cleanup]);
+    session.cleanupFailures.add(composed);
+    return composed;
   }
 
   #retainCleanupFailure(
@@ -1324,11 +1714,12 @@ export class RizinDebugSessionManager {
     reason: string,
     options: AnalysisErrorOptions = {},
   ): AnalysisError {
-    const failure = new AnalysisCapabilityUnavailableError(
-      "rizin",
+    const failure = retainedDebuggerCleanupFailure(
+      { provider: "rizin", displayName: "Rizin" },
       operation,
-      `The owned Rizin process could not be confirmed stopped: ${reason}`,
-      { ...options, cleanup: { reason, resources: [session.id] } },
+      reason,
+      [session.id],
+      options,
     );
     session.cleanupFailures.add(failure);
     return failure;
@@ -1336,10 +1727,12 @@ export class RizinDebugSessionManager {
 
   async #stopAfterProtocolFailure(
     session: RizinDebugSession,
+    protocolFailure: string,
     cause: unknown,
     options: {
       readonly commandTurnHeld?: boolean;
       readonly partialObservation?: Evidence;
+      readonly signal?: AbortSignal | undefined;
     } = {},
   ): Promise<AnalysisError> {
     const stopped = await this.#stopDebuggerOnly(
@@ -1352,19 +1745,19 @@ export class RizinDebugSessionManager {
         ? {}
         : { partialObservation: options.partialObservation }),
     };
-    return stopped.status === "incomplete"
-      ? this.#retainCleanupFailure(
-          session,
-          "rizin_debug_command",
-          stopped.reason,
-          errorOptions,
-        )
-      : new AnalysisCapabilityUnavailableError(
-          "rizin",
-          "rizin_debug_command",
-          session.protocolError!,
-          errorOptions,
-        );
+    const primary = new AnalysisCapabilityUnavailableError(
+      "rizin",
+      "rizin_debug_command",
+      protocolFailure,
+      errorOptions,
+    );
+    return this.#finalizeFailure(
+      session,
+      "rizin_debug_command",
+      primary,
+      stopped,
+      options.signal,
+    );
   }
 }
 
@@ -1442,7 +1835,7 @@ const bufferedRizinFrame = (session: RizinDebugSession, truncated: boolean) => {
 
 const rizinCaptureStoppedSentence = (
   limit: RizinOutputLimit | undefined,
-  maxCommandOutputBytes: number,
+  output: DebuggerAdmissionLimit,
   cleanupFailure: string | undefined,
 ): string => {
   const cap =
@@ -1453,22 +1846,27 @@ const rizinCaptureStoppedSentence = (
         : limit === "queued_frames"
           ? `the queued frame limit of ${String(MAX_QUEUED_FRAMES)} frames or ${String(MAX_QUEUED_FRAME_BYTES)} bytes`
           : limit === "command_output_bytes"
-            ? `the ${String(maxCommandOutputBytes)} byte output limit`
+            ? `the ${String(output.value)} byte output limit`
             : "a capture limit";
   const cleanup =
     cleanupFailure === undefined
       ? " The owned debugger session was stopped."
       : ` The owned debugger session remains retained because cleanup could not be verified: ${cleanupFailure}`;
-  return `The Rizin command exceeded ${cap}. This release has no runtime override. Retained output is partial and command completion is unknown.${cleanup}`;
+  const recovery =
+    limit === "command_output_bytes"
+      ? ` ${debuggerAdmissionRecovery(output)}`
+      : " This release has no runtime override.";
+  return `The Rizin command exceeded ${cap}.${recovery} Retained output is partial and command completion is unknown.${cleanup}`;
 };
 
 const waitForCommandFrames = async (
   session: RizinDebugSession,
   marker: string,
   timeoutMs: number,
+  commandOutput: DebuggerAdmissionLimit,
   signal?: AbortSignal,
-  maxCommandOutputBytes = MAX_COMMAND_OUTPUT_BYTES,
 ): Promise<Result<RizinCommandCapture, RizinCommandInterruption>> => {
+  const maxCommandOutputBytes = commandOutput.value;
   const deadline = Date.now() + timeoutMs;
   const output: string[] = [];
   let outputBytes = 0;
@@ -1502,7 +1900,7 @@ const waitForCommandFrames = async (
     const bytes = Buffer.byteLength(text, "utf8");
     if (bytes > remaining) {
       noteLimit("command_output_bytes");
-      const retained = truncateUtf8(text, remaining);
+      const retained = utf8HeadExcerpt(text, remaining).text;
       if (retained.length > 0) output.push(retained);
       outputBytes = maxCommandOutputBytes;
     } else {
@@ -1551,7 +1949,7 @@ const waitForCommandFrames = async (
       });
     }
     const remaining = deadline - Date.now();
-    if (isRizinCommandDeadlineExpired(remaining))
+    if (remaining <= 0)
       return err({
         kind: "timeout",
         cause: new RizinFrameTimeoutError(),
@@ -1596,7 +1994,10 @@ const waitForCommandFrames = async (
     const markerSeen = append(received);
     if (outputTruncated) {
       if (outputLimit === "command_output_bytes")
-        session.protocolError ??= `Rizin command output exceeded the ${String(maxCommandOutputBytes)} byte (16 MiB) command limit. This release has no runtime override.`;
+        session.protocolError ??=
+          commandOutput === debuggerControlReplyOutput
+            ? `Rizin control readback exceeded the ${String(maxCommandOutputBytes)} byte control-reply budget. That budget is separate from REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES and has no runtime override.`
+            : `Rizin command output exceeded the ${String(maxCommandOutputBytes)} byte command limit. ${debuggerAdmissionRecovery(commandOutput)}`;
       else if (outputLimit === "frame_bytes")
         session.protocolError ??= `Rizin emitted a NUL frame exceeding the ${String(MAX_FRAME_BYTES)} byte (16 MiB) protocol limit. This release has no runtime override.`;
       return ok(snapshot());
@@ -1605,22 +2006,13 @@ const waitForCommandFrames = async (
   }
 };
 
-export const truncateUtf8 = (value: string, maximumBytes: number): string => {
-  if (maximumBytes <= 0) return "";
-  // A UTF-16 code unit needs at most three UTF-8 bytes. Buffer.write stops
-  // before a partial character; only decode bytes it actually initialized.
-  const bytes = Buffer.allocUnsafe(Math.min(value.length * 3, maximumBytes));
-  const written = bytes.write(value, "utf8");
-  return bytes.toString("utf8", 0, written);
-};
-
 const waitForFrame = (
   session: RizinDebugSession,
   timeoutMs: number,
   signal?: AbortSignal,
 ): Promise<RizinFrame> => {
   if (signal?.aborted)
-    return Promise.reject(new AnalysisCancelledError("rizin_debug_command"));
+    return Promise.reject(rizinCancellation("rizin_debug_command", signal));
   const queued = session.frames.shift();
   if (queued !== undefined) {
     session.queuedFrameBytes -= queued.queueChargeBytes;
@@ -1637,7 +2029,7 @@ const waitForFrame = (
     };
     const onAbort = (): void => {
       cleanup();
-      reject(new AnalysisCancelledError("rizin_debug_command"));
+      reject(rizinCancellation("rizin_debug_command", signal));
     };
     const timer = setTimeout(() => {
       cleanup();
@@ -1664,15 +2056,23 @@ const waitForTurn = (
   signal?: AbortSignal,
 ): Promise<void> => {
   if (signal === undefined) return previous;
-  if (signal.aborted)
-    return Promise.reject(new AnalysisCancelledError("rizin_debug_command"));
-  return new Promise<void>((resolve, reject) => {
-    const onAbort = (): void =>
-      reject(new AnalysisCancelledError("rizin_debug_command"));
-    signal.addEventListener("abort", onAbort, { once: true });
-    previous.then(() => {
-      signal.removeEventListener("abort", onAbort);
-      resolve();
-    });
+  return waitForAbortable(previous, signal).then((outcome) => {
+    if (outcome === ABORTED)
+      throw rizinCancellation("rizin_debug_command", signal);
   });
 };
+/** Translate only this transport's typed cancellation, preserving opaque/null caller reasons. */
+const rizinCancellation = (
+  operation: string,
+  signal?: AbortSignal,
+  cause?: unknown,
+  options: AnalysisErrorOptions = {},
+): AnalysisCancelledError =>
+  new AnalysisCancelledError(operation, {
+    ...options,
+    cause: signal?.aborted
+      ? signal.reason
+      : cause instanceof AnalysisCancelledError
+        ? cause.cause
+        : cause,
+  });

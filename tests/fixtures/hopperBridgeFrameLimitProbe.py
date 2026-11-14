@@ -16,6 +16,7 @@ Four cases share one loaded bridge module:
   incomplete frame without dispatching it, then close.
 """
 import json
+import os
 import socket
 import sys
 import threading
@@ -78,8 +79,36 @@ def request_line(bridge, params):
     return json.dumps(request, separators=(",", ":")).encode("utf-8")
 
 
+def _load(mode):
+    """Resolve one ceiling. The default invocation ignores an ambient setting."""
+    os.environ.pop("REA_BRIDGE_MAX_REQUEST_BYTES", None)
+    injected = None
+    if mode == "bytes":
+        os.environ["REA_BRIDGE_MAX_REQUEST_BYTES"] = sys.argv[3]
+    elif mode == "inject":
+        os.environ["REA_BRIDGE_MAX_REQUEST_BYTES"] = "9000"
+        injected = int(sys.argv[3])
+    elif mode == "invalid":
+        os.environ["REA_BRIDGE_MAX_REQUEST_BYTES"] = sys.argv[3]
+        try:
+            load_bridge(sys.argv[1])
+        except RuntimeError as error:
+            return {"error": str(error)}
+        return {"error": "invalid setting was accepted"}
+    elif mode != "serve":
+        return {"error": "unknown probe mode"}
+    return load_bridge(
+        sys.argv[1],
+        None if injected is None else {"REA_BRIDGE_MAX_REQUEST_BYTES": injected},
+    )
+
+
 def main():
-    bridge = load_bridge(sys.argv[1])
+    mode = sys.argv[2] if len(sys.argv) > 2 else "serve"
+    bridge = _load(mode)
+    if "error" in bridge and "MAX_REQUEST_BYTES" not in bridge:
+        json.dump(bridge, sys.stdout)
+        return
     bridge.update(REA_TOKEN="owned-token", REA_RUN_ID="owned-run")
     bridge["_probe_dispatches"] = []
 
@@ -118,6 +147,9 @@ def main():
     json.dump(
         {
             "limit": limit,
+            "source": bridge.get("BRIDGE_MAX_REQUEST_BYTES_SOURCE"),
+            "minimum": bridge.get("MINIMUM_BRIDGE_MAX_REQUEST_BYTES"),
+            "maximum": bridge.get("MAXIMUM_BRIDGE_MAX_REQUEST_BYTES"),
             "legit": legit,
             "at_limit": at_limit,
             "past_limit": past_limit,

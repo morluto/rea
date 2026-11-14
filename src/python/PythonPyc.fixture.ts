@@ -8,6 +8,11 @@ const u32 = (value: number): Buffer => {
   bytes.writeUInt32LE(value);
   return bytes;
 };
+const i32 = (value: number): Buffer => {
+  const bytes = Buffer.alloc(4);
+  bytes.writeInt32LE(value);
+  return bytes;
+};
 const concat = (...parts: Buffer[]): Buffer => Buffer.concat(parts);
 
 /** 16-byte CPython 3.7+ pyc header. Hash-based pycs store an 8-byte source hash. */
@@ -136,7 +141,7 @@ export const marshalCode = (
         marshalShortAscii(fields.qualname ?? fields.name ?? "<module>"),
     );
   parts.push(
-    u32(fields.firstlineno ?? 1),
+    i32(fields.firstlineno ?? 1),
     marshalBytes(fields.linetable ?? Buffer.alloc(0)),
   );
   if (layout === "py311")

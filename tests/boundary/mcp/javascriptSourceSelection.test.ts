@@ -5,8 +5,9 @@ import { createHash } from "node:crypto";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { join, resolve } from "node:path";
-import { expect, it } from "vitest";
+import { afterAll, expect, it } from "vitest";
 import { z } from "zod";
+import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
 
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
@@ -18,12 +19,20 @@ import {
 import { createStrippedAsarAddon } from "../../fixtures/strippedAsarAddon.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+// Compile SDK output validators for the tools a test calls, not the whole catalog.
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
 const createSelectionClient = () => {
-  const client = new Client({
-    name: "javascript-source-selection",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "javascript-source-selection",
+      version: "1",
+    },
+    { jsonSchemaValidator: schemaValidation },
+  );
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [resolve("scripts/rea.mjs"), "mcp"],
@@ -76,10 +85,12 @@ it("resolves ESM whitespace specifiers through the public application tool", asy
       ]),
     );
   } finally {
-    await client.close();
-    await transport.close();
+    await closeVerifierResources([
+      () => client.close(),
+      () => transport.close(),
+    ]);
   }
-}, 60_000);
+});
 
 it("retains missing ASAR native-addon inventory through the public application tool", async () => {
   const { archive, addon } = await createStrippedAsarAddon();
@@ -107,10 +118,12 @@ it("retains missing ASAR native-addon inventory through the public application t
       ),
     ).toBe(true);
   } finally {
-    await client.close();
-    await transport.close();
+    await closeVerifierResources([
+      () => client.close(),
+      () => transport.close(),
+    ]);
   }
-}, 60_000);
+});
 
 it("advertises exact source selection and retains its scope through summary, Evidence retrieval and invalid-input recovery", async () => {
   const root = await createTestTempDirectory("rea-js-selected-mcp-");
@@ -234,10 +247,12 @@ it("advertises exact source selection and retains its scope through summary, Evi
     ).toBe(1);
     await client.ping();
   } finally {
-    await client.close();
-    await transport.close();
+    await closeVerifierResources([
+      () => client.close(),
+      () => transport.close(),
+    ]);
   }
-}, 60_000);
+});
 
 it("selects nested ASAR paths and distinguishes missing inventoried bytes from invalid paths", async () => {
   const root = await createTestTempDirectory("rea-js-selected-containers-");
@@ -303,10 +318,12 @@ it("selects nested ASAR paths and distinguishes missing inventoried bytes from i
     });
     await client.ping();
   } finally {
-    await client.close();
-    await transport.close();
+    await closeVerifierResources([
+      () => client.close(),
+      () => transport.close(),
+    ]);
   }
-}, 60_000);
+});
 
 it("accepts ASAR headers with long legal JSON whitespace through the public application tool", async () => {
   const root = await createTestTempDirectory("rea-js-asar-whitespace-mcp-");
@@ -344,10 +361,12 @@ it("accepts ASAR headers with long legal JSON whitespace through the public appl
         .digest("hex"),
     );
   } finally {
-    await client.close();
-    await transport.close();
+    await closeVerifierResources([
+      () => client.close(),
+      () => transport.close(),
+    ]);
   }
-}, 60_000);
+});
 
 it("does not parse ASAR-looking JSON beyond the declared JSON extent through MCP", async () => {
   const archive = join(
@@ -379,7 +398,9 @@ it("does not parse ASAR-looking JSON beyond the declared JSON extent through MCP
     });
     await client.ping();
   } finally {
-    await client.close();
-    await transport.close();
+    await closeVerifierResources([
+      () => client.close(),
+      () => transport.close(),
+    ]);
   }
-}, 60_000);
+});

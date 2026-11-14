@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -89,7 +90,9 @@ cliTest(
           await writer.add(name, new Uint8ArrayReader(fixture.nativeBytes));
         await writeFile(path, await writer.close());
         const inventory = parseEvidence(
-          await runProviderAnalysis(path, "inventory_artifact", {}),
+          await runProviderAnalysis(path, "inventory_artifact", {}).then(
+            projectCliAnalysisResult,
+          ),
         );
         const input = { inventory_evidence: [inventory] };
         const result = await cli.run({
@@ -114,7 +117,9 @@ cliTest(
             inventory_complete: true,
           },
           limitations: expect.arrayContaining([
-            "A bridge basis is inferred from the native path and is repeated for every managed component.",
+            expect.stringMatching(
+              /bridge basis.*inferred.*native path.*every managed component/iu,
+            ),
           ]),
           bridge_candidates: expect.arrayContaining(
             Object.entries(libraries).flatMap(([native_path, basis]) =>
@@ -133,5 +138,4 @@ cliTest(
       }
     }
   },
-  30_000,
 );

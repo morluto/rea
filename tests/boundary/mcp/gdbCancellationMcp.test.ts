@@ -3,11 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import type { CallToolResult } from "@modelcontextprotocol/server";
 import { McpServer } from "@modelcontextprotocol/server";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it } from "vitest";
 import { z } from "zod";
 
+import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import {
   AnalysisCapabilityUnavailableError,
@@ -27,6 +29,7 @@ import {
   createCacheProvider,
   createTestBinarySession,
 } from "../../fixtures/binarySession.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
   validateDebuggerStatusResponse,
   waitForStartedFile,
@@ -125,9 +128,14 @@ process.stdin.on("data", (chunk) => {
       expect(exitedDuringRetry).toBe(true);
       expect(manager.status(sessionId)).toBeUndefined();
     } finally {
-      await Promise.allSettled([client.close(), server.close()]);
-      await manager.closeAll().catch(() => undefined);
-      await rm(directory, { recursive: true, force: true });
+      await closeVerifierResources([
+        () => client.close(),
+        () => server.close(),
+        async () => {
+          await manager.closeAll();
+          await rm(directory, { recursive: true, force: true });
+        },
+      ]);
     }
   },
 );
@@ -154,9 +162,31 @@ process.stdin.on("data", async (chunk) => {
 `,
     );
     await chmod(provider, 0o700);
+    const fixtureOwners = new WeakMap<
+      object,
+      Parameters<typeof stopOwnedDebuggerProcess>[0]
+    >();
+    const stopResults: string[] = [];
     const manager = new GdbSessionManager({
       platform: "linux",
       environment: { REA_GDB_COMMAND: provider },
+      // This fake debugger never starts an inferior. Its held MI command is
+      // unsynchronized after cancellation, so the real manager cannot infer
+      // that fixture fact from the debugger protocol.
+      stopProcess: async (session, name) => {
+        let owner = fixtureOwners.get(session);
+        if (owner === undefined) {
+          owner = Object.create(session, {
+            detachInferior: {
+              value: async () => ({ status: "no-inferior" as const }),
+            },
+          }) as Parameters<typeof stopOwnedDebuggerProcess>[0];
+          fixtureOwners.set(session, owner);
+        }
+        const stopped = await stopOwnedDebuggerProcess(owner, name);
+        stopResults.push(stopped.status);
+        return stopped;
+      },
     });
     const server = new McpServer({ name: "gdb-cancellation", version: "1" });
     registerGdbTools(
@@ -194,12 +224,43 @@ process.stdin.on("data", async (chunk) => {
         "gdb_session_status",
         sessionId,
       );
-      expect(status.state).toBe("closed");
+      expect(status).toMatchObject({
+        state: "closed",
+        closed_reason: expect.stringContaining(
+          "A GDB MI command was cancelled",
+        ),
+      });
       expect(status).toHaveProperty("diagnostics_truncated");
+      // A later command names the retained reason instead of an argument error.
+      expect(
+        parseMcpToolError(
+          (await client.callTool({
+            name: "gdb_console",
+            arguments: { session_id: sessionId, command: "info registers" },
+          })) as CallToolResult,
+        ).error,
+      ).toMatchObject({
+        code: "capability_unavailable",
+        message: expect.stringContaining(
+          "The GDB debug session stopped and accepts no more commands. A GDB MI command was cancelled",
+        ),
+        remediation: {
+          action: expect.stringMatching(
+            /close_gdb_session.*start_gdb_session/u,
+          ),
+        },
+      });
+      await manager.closeAll();
+      expect(stopResults).toContain("stopped");
     } finally {
-      await Promise.allSettled([client.close(), server.close()]);
-      await manager.closeAll().catch(() => undefined);
-      await rm(directory, { recursive: true, force: true });
+      await closeVerifierResources([
+        () => client.close(),
+        () => server.close(),
+        async () => {
+          await manager.closeAll();
+          await rm(directory, { recursive: true, force: true });
+        },
+      ]);
     }
   },
 );
@@ -279,9 +340,14 @@ process.stdin.on("data", (chunk) => {
         inferior_tty_verified: true,
       });
     } finally {
-      await Promise.allSettled([client.close(), server.close()]);
-      await manager.closeAll().catch(() => undefined);
-      await rm(directory, { recursive: true, force: true });
+      await closeVerifierResources([
+        () => client.close(),
+        () => server.close(),
+        async () => {
+          await manager.closeAll();
+          await rm(directory, { recursive: true, force: true });
+        },
+      ]);
     }
   },
 );
@@ -344,9 +410,14 @@ process.stdin.on("data", (chunk) => {
       );
       expect(status.mi_invalid_utf8).toBe(true);
     } finally {
-      await Promise.allSettled([client.close(), server.close()]);
-      await manager.closeAll().catch(() => undefined);
-      await rm(directory, { recursive: true, force: true });
+      await closeVerifierResources([
+        () => client.close(),
+        () => server.close(),
+        async () => {
+          await manager.closeAll();
+          await rm(directory, { recursive: true, force: true });
+        },
+      ]);
     }
   },
 );
@@ -458,7 +529,7 @@ it("records partial GDB Evidence from an MCP command error", async () => {
       },
     });
   } finally {
-    await Promise.allSettled([client.close(), server.close()]);
+    await closeVerifierResources([() => client.close(), () => server.close()]);
   }
 });
 
@@ -532,8 +603,14 @@ it("recovers only the owning debugger cleanup and reopens admitted analysis", as
       (await analysisSession.execute("address_name", { address: "0x1" })).ok,
     ).toBe(true);
   } finally {
-    await Promise.allSettled([client.close(), server.close()]);
-    await analysisSession.close();
+    await closeVerifierResources([
+      () => client.close(),
+      () => server.close(),
+      async () => {
+        const closed = await analysisSession.close();
+        if (!closed.ok) throw closed.error;
+      },
+    ]);
   }
 });
 
@@ -628,6 +705,6 @@ it("records partial GDB startup Evidence from an MCP start error", async () => {
       },
     });
   } finally {
-    await Promise.allSettled([client.close(), server.close()]);
+    await closeVerifierResources([() => client.close(), () => server.close()]);
   }
 });

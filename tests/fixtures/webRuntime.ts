@@ -162,3 +162,55 @@ const runtimeEvents = (command: FakeCdpCommand, origin: string) => {
     },
   }));
 };
+
+/** Positions Chrome 156 reported for an inline script in a helper frame. */
+export const negativeColumnScript = {
+  scriptId: "helper-inline",
+  executionContextId: 7,
+  startLine: 21,
+  startColumn: -60,
+  endLine: 21,
+  endColumn: -15,
+  scriptLanguage: "JavaScript",
+} as const;
+export const negativeColumnScriptUrl = (origin: string) =>
+  `${origin}/empty.html?cross-origin-isolated=1`;
+
+/**
+ * Replays that script and a listener on its first line. Positions on a
+ * script's first line include its start column, so the listener's is negative.
+ */
+export const startNegativeColumnBrowser = () =>
+  startRuntimeBrowser({
+    commandEvents: (command, origin) =>
+      command.method === "Debugger.enable"
+        ? [
+            {
+              ...(command.sessionId === undefined
+                ? {}
+                : { sessionId: command.sessionId }),
+              method: "Debugger.scriptParsed",
+              params: {
+                ...negativeColumnScript,
+                url: negativeColumnScriptUrl(origin),
+              },
+            },
+          ]
+        : undefined,
+    commandResult: (command) =>
+      command.method === "DOMDebugger.getEventListeners"
+        ? {
+            listeners: [
+              {
+                type: "message",
+                useCapture: false,
+                passive: false,
+                once: false,
+                scriptId: negativeColumnScript.scriptId,
+                lineNumber: 21,
+                columnNumber: -50,
+              },
+            ],
+          }
+        : undefined,
+  });

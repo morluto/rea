@@ -84,16 +84,17 @@ it("does not equate an owned native helper exit with an external GUI exit", asyn
   const directory = await createTestTempDirectory("rea-hopper-helper-failure-");
   const targetPath = join(directory, "target");
   await writeFile(targetPath, "fixture target");
+  const helperPath = join(directory, "helper.cjs");
+  await writeFile(
+    helperPath,
+    'process.stderr.write("Hopper has not been found.\\n", () => process.exit(3));',
+  );
   const launcher = new HopperApplicationLauncher({
     environment: {},
     launcherPath: process.execPath,
     targetPath,
     targetKind: "executable",
-    loaderArgs: [
-      "-e",
-      'process.stderr.write("Hopper has not been found.\\n", () => process.exit(3))',
-      "--",
-    ],
+    loaderArgs: [helperPath, "--"],
     bridgeScriptPath: "/rea/hopper_bridge.py",
     launchMode: "native",
   });
@@ -127,11 +128,12 @@ it.skipIf(process.platform !== "darwin")(
     );
     const targetPath = join(directory, "target");
     await writeFile(targetPath, "fixture target");
-    const loaderArgs = [
-      "-e",
-      'process.stderr.write("Hopper has not been found.\\nPlease make sure that Spotlight is active in order for this tool to find Hopper\'s executable.\\n", () => process.exit(3))',
-      "--",
-    ];
+    const helperPath = join(directory, "spotlight-helper.cjs");
+    await writeFile(
+      helperPath,
+      'process.stderr.write("Hopper has not been found.\\nPlease make sure that Spotlight is active in order for this tool to find Hopper\'s executable.\\n", () => process.exit(3));',
+    );
+    const loaderArgs = [helperPath, "--"];
     // Simulate a verified native helper at the launcher provenance boundary;
     // publisher verification itself has real codesign boundary coverage.
     const native = new HopperApplicationLauncher(
@@ -198,6 +200,64 @@ it.skipIf(process.platform !== "darwin")(
     });
   },
 );
+
+it("classifies a pre-handoff Apple Events denial as not retryable from the same client", async () => {
+  const stderr =
+    "Cannot launch Hopper!\nNot authorized to send Apple events to Hopper Disassembler.\n";
+  const launcher: BridgeLauncher = {
+    launch() {
+      return Promise.resolve(
+        ok({
+          process: spawn(
+            process.execPath,
+            [
+              "-e",
+              `process.stderr.write(${JSON.stringify(stderr)}, () => process.exit(2));`,
+            ],
+            { stdio: ["ignore", "pipe", "pipe"] },
+          ),
+          ownsProcessLifetime: false as const,
+          providerLifetime: "external-application" as const,
+          shutdownMode: "bridge-request" as const,
+          authorizationDenialBeforeHandoff: true as const,
+        }),
+      );
+    },
+  };
+  const client = new HopperClient({ launcher, startupTimeoutMs: 10_000 });
+  onTestFinished(async () => {
+    const closed = await client.close();
+    if (!closed.ok) throw closed.error;
+  });
+  const failed = await client.start();
+  expect(failed).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "HopperStartError",
+      cleanupIncomplete: false,
+      launchRejection: {
+        boundary: "apple_events_authorization",
+        reason: "not_authorized",
+      },
+    },
+  });
+  if (failed.ok) throw new Error("Expected Apple Events denial");
+  expect(projectAnalysisError(failed.error)).toMatchObject({
+    code: "provider_unavailable",
+    category: "unavailable",
+    retryable: false,
+    details: {
+      stage: "launch",
+      provider_state: "unknown",
+      retry_action: "unknown",
+      launch_rejection: {
+        boundary: "apple_events_authorization",
+        reason: "not_authorized",
+      },
+      launcher: { exit_code: 2, signal: null },
+    },
+  });
+});
 
 it.each(["exit", "signal", "exit75"] as const)(
   "reports a failed non-owning launcher %s without waiting for bridge timeout or inventing a GUI exit",

@@ -9,16 +9,20 @@ const windowsLaunchableExtensions = new Set([".bat", ".cmd", ".com", ".exe"]);
  *
  * POSIX hosts mark executability with permission bits. Windows has no execute
  * bit (Node reports file modes from the read-only attribute alone), so it marks
- * launchable files by extension instead.
+ * launchable files by extension instead. A symlink carries no marking on any
+ * host: running it runs its target, and its own permission bits do not
+ * control that (Linux reports 0777 for every symlink).
  */
 export const hostExecutableMarking = (
   path: string,
-  metadata: Pick<Stats | BigIntStats, "mode" | "isFile">,
+  metadata: Pick<Stats | BigIntStats, "mode" | "isFile" | "isSymbolicLink">,
   platform: NodeJS.Platform = process.platform,
 ): boolean =>
-  platform === "win32"
-    ? metadata.isFile() &&
-      windowsLaunchableExtensions.has(extname(path).toLowerCase())
-    : typeof metadata.mode === "bigint"
-      ? (metadata.mode & 0o111n) !== 0n
-      : (metadata.mode & 0o111) !== 0;
+  metadata.isSymbolicLink()
+    ? false
+    : platform === "win32"
+      ? metadata.isFile() &&
+        windowsLaunchableExtensions.has(extname(path).toLowerCase())
+      : typeof metadata.mode === "bigint"
+        ? (metadata.mode & 0o111n) !== 0n
+        : (metadata.mode & 0o111) !== 0;

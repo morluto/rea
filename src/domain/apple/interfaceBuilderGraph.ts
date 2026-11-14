@@ -1,6 +1,5 @@
 import { z } from "zod";
 import {
-  bundleResourceRootSchema,
   bundleResourceBoundResultSchema,
   type BundleResourceRoot,
 } from "./bundleResourceRoot.js";
@@ -40,6 +39,10 @@ export const interfaceBuilderAnalysisSchema = bundleResourceBoundResultSchema(
     limitations: z.array(z.string()),
   },
 );
+
+export type InterfaceBuilderAnalysis = z.output<
+  typeof interfaceBuilderAnalysisSchema
+>;
 
 export interface InterfaceBuilderDocumentInput {
   readonly relativePath: string;
@@ -163,6 +166,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
     let connectionEdgeCount = 0;
     let hierarchyEdgeCount = 0;
     let documentOmittedConnections = 0;
+    let connectionObjectLimit = false;
     let documentOmittedHierarchyEdges = 0;
     let hierarchyTruncated = false;
     const objectNodeId = (objectId: string): string =>
@@ -191,6 +195,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
       else connectionEdgeCount += 1;
     };
     const connect = (
+      category: "hierarchy" | "connection",
       id: string,
       from: string,
       to: string | null,
@@ -198,7 +203,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
       description: string,
       reason?: string,
     ) => {
-      const isHierarchy = relation === "contains" && id.includes(":hierarchy:");
+      const isHierarchy = category === "hierarchy";
       if (!nodes.has(from)) {
         truncated = true;
         if (isHierarchy) {
@@ -207,6 +212,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
         } else {
           omittedConnections += 1;
           documentOmittedConnections += 1;
+          connectionObjectLimit = true;
         }
         return;
       }
@@ -215,6 +221,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
       if (unresolvedEndpoint) {
         truncated = true;
         if (isHierarchy) hierarchyTruncated = true;
+        else connectionObjectLimit = true;
       }
       const edgeTo = unresolvedEndpoint ? null : to;
       const edgeReason = unresolvedEndpoint
@@ -296,6 +303,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
           )
             hierarchyTruncated = true;
           connect(
+            "hierarchy",
             graphId("hierarchy", [parentId, childId]),
             parentId,
             childId,
@@ -343,6 +351,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
           evidence: evidenceFor(`action ${item.id}`),
         });
         connect(
+          "connection",
           graphId("action-edge", [item.id, "source"]),
           sourceId,
           actionId,
@@ -359,6 +368,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
             evidence: evidenceFor(`selector ${item.label}`),
           });
           connect(
+            "connection",
             graphId("action-edge", [item.id, "selector"]),
             actionId,
             selectorId,
@@ -368,6 +378,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
         }
         if (destinationId === null || !nodes.has(destinationId))
           connect(
+            "connection",
             graphId("action-edge", [item.id, "destination"]),
             actionId,
             null,
@@ -377,6 +388,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
           );
         else
           connect(
+            "connection",
             graphId("action-edge", [item.id, "destination"]),
             actionId,
             destinationId,
@@ -394,6 +406,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
           evidence: evidenceFor(`outlet ${item.id}`),
         });
         connect(
+          "connection",
           graphId("outlet-edge", [item.id, "source"]),
           sourceId,
           outletId,
@@ -402,6 +415,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
         );
         if (destinationId === null || !nodes.has(destinationId))
           connect(
+            "connection",
             graphId("outlet-edge", [item.id, "destination"]),
             outletId,
             null,
@@ -411,6 +425,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
           );
         else
           connect(
+            "connection",
             graphId("outlet-edge", [item.id, "destination"]),
             outletId,
             destinationId,
@@ -420,6 +435,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
       } else if (item.kind === "segue") {
         if (destinationId === null || !nodes.has(destinationId))
           connect(
+            "connection",
             graphId("segue", [index]),
             sourceId,
             null,
@@ -429,6 +445,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
           );
         else
           connect(
+            "connection",
             graphId("segue", [index]),
             sourceId,
             destinationId,
@@ -437,6 +454,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
           );
       } else {
         connect(
+          "connection",
           graphId("unknown-connection", [index]),
           sourceId,
           null,
@@ -511,12 +529,14 @@ export const buildInterfaceBuilderAnalysis = (input: {
         status:
           connectionsTruncated ||
           documentOmittedConnections > 0 ||
+          connectionObjectLimit ||
           connectionsUnresolved ||
           unsupportedConnections
             ? "partial"
             : "complete",
-        reason:
-          connectionsTruncated || documentOmittedConnections > 0
+        reason: connectionObjectLimit
+          ? "object_limit_reached"
+          : connectionsTruncated || documentOmittedConnections > 0
             ? "connection_limit_reached"
             : connectionsUnresolved
               ? "connection_unresolved"

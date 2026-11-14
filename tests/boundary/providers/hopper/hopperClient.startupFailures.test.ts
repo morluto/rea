@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { access } from "node:fs/promises";
-import { createServer, type Server } from "node:net";
+import { createServer } from "node:net";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -129,9 +129,6 @@ class LateSilentLauncher implements BridgeLauncher {
  * auth/preamble request added before it would hit the -32601 branch.
  */
 class BadHealthLauncher implements BridgeLauncher {
-  #server: Server | undefined;
-  #process: ChildProcess | undefined;
-
   async launch(session: BridgeSession) {
     const server = createServer((socket) => {
       let buffer = "";
@@ -173,7 +170,6 @@ class BadHealthLauncher implements BridgeLauncher {
         resolve();
       });
     });
-    this.#server = server;
     const child = spawn(
       process.execPath,
       ["-e", "setInterval(() => {}, 1000)"],
@@ -181,7 +177,6 @@ class BadHealthLauncher implements BridgeLauncher {
         stdio: "ignore",
       },
     );
-    this.#process = child;
     return ok({
       process: child,
       ownsProcessLifetime: true as const,
@@ -200,7 +195,7 @@ const clients: HopperClient[] = [];
 
 afterEach(async () => {
   await Promise.all(clients.splice(0).map((client) => client.close()));
-}, 45_000);
+});
 
 describe("HopperClient startup deadline", () => {
   it("applies one deadline to launcher, socket, and health startup phases", async () => {
@@ -268,6 +263,7 @@ describe("HopperClient startup failures", () => {
         name: "REA Hopper bridge",
         version: "1.0.0",
         processId: retriedProcess?.pid,
+        maxRequestBytes: 16 * 1024 * 1024,
       },
     });
     await expect(
@@ -300,6 +296,7 @@ describe("HopperClient startup failures", () => {
         name: "REA Hopper bridge",
         version: "1.0.0",
         processId: launcher.processes[0]?.pid,
+        maxRequestBytes: 16 * 1024 * 1024,
       },
     });
     await expect(
@@ -325,7 +322,7 @@ describe("HopperClient startup failures", () => {
     expect(client.operationHealth()).toMatchObject({ state: "unknown" });
   });
 
-  it.each([70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80])(
+  it.each([70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82])(
     "reports Linux adapter exit %i during bridge startup",
     async (exitCode) => {
       const client = new HopperClient({

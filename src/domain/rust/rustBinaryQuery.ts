@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   inspectRustBinaryInputSchema,
   rustPackageSchema,
+  rustPackageFeaturesSchema,
   rustAuditableMetadataSchema,
 } from "./rustBinary.js";
 
@@ -44,7 +45,12 @@ export const rustBinaryViewRequestSchema = z.discriminatedUnion("collection", [
 export const rustBinaryViewPageSchema = z.discriminatedUnion("collection", [
   z.strictObject({
     collection: z.literal("packages"),
-    rows: z.array(rustPackageSchema.partial().extend({ index })),
+    rows: z.array(
+      rustPackageSchema.partial().extend({
+        features: rustPackageFeaturesSchema.optional(),
+        index,
+      }),
+    ),
   }),
   z.strictObject({
     collection: z.literal("edges"),

@@ -1,7 +1,10 @@
 import { createEvidence } from "../domain/evidence.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
-import { FUNCTION_COMPARISON_PROVIDER } from "../domain/comparisonEvidenceIdentity.js";
-import { compareProcessCaptures } from "../domain/process/processComparison.js";
+import {
+  FUNCTION_COMPARISON_PROFILE,
+  FUNCTION_COMPARISON_PROVIDER,
+} from "../domain/comparisonEvidenceIdentity.js";
+import { compareProcessCaptureEvidence } from "../domain/process/processComparisonEvidence.js";
+import { PROCESS_PROVIDER } from "../domain/process/processEvidenceProvider.js";
 import { parseProcessCapture } from "../domain/process/processCaptureParsing.js";
 import { FUNCTION_COMPARISON_EXAMPLE } from "./functionComparisonExample.js";
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../domain/process/processCaptureExample.js";
@@ -26,11 +29,12 @@ export const FUNCTION_COMPARISON_EVIDENCE = createEvidence(
   {
     predicateType: "rea.function-comparison",
     operation: "compare_functions",
+    analysisProfile: FUNCTION_COMPARISON_PROFILE,
     parameters: {
       left_evidence_id: left.value.evidence.evidence_id,
       right_evidence_id: right.value.evidence.evidence_id,
     },
-    result: jsonValueSchema.parse(comparison),
+    result: comparison,
     confidence: "derived",
     authority: "analyst-inference",
     limitations: comparison.limitations,
@@ -41,18 +45,13 @@ export const FUNCTION_COMPARISON_EVIDENCE = createEvidence(
   },
 );
 
-const PROCESS_PROVIDER = {
-  id: "rea-process",
-  name: "REA deterministic process harness",
-  version: "3",
-} as const;
 const capture = parseProcessCapture(EMPTY_PROCESS_CAPTURE_EXAMPLE);
 const captureEvidence = (scenario: string) =>
   createEvidence(undefined, PROCESS_PROVIDER, {
     predicateType: "rea.process-capture",
     operation: "capture_process_scenario",
     parameters: { scenario },
-    result: jsonValueSchema.parse(capture),
+    result: capture,
     confidence: "observed",
     authority: "controlled-replay",
     environment: {
@@ -64,27 +63,10 @@ const captureEvidence = (scenario: string) =>
   });
 export const PROCESS_CAPTURE_REFERENCE = captureEvidence("reference");
 export const PROCESS_CAPTURE_RECONSTRUCTION = captureEvidence("reconstruction");
-export const PROCESS_COMPARISON_EVIDENCE = createEvidence(
-  undefined,
-  PROCESS_PROVIDER,
-  {
-    predicateType: "rea.process-comparison",
-    operation: "compare_process_captures",
-    parameters: {
-      left_evidence_id: PROCESS_CAPTURE_REFERENCE.evidence_id,
-      right_evidence_id: PROCESS_CAPTURE_RECONSTRUCTION.evidence_id,
-      left_normalization: capture.normalization,
-      right_normalization: capture.normalization,
-    },
-    result: jsonValueSchema.parse(compareProcessCaptures(capture, capture)),
-    confidence: "derived",
-    authority: "analyst-inference",
-    evidenceLinks: [
-      PROCESS_CAPTURE_REFERENCE.evidence_id,
-      PROCESS_CAPTURE_RECONSTRUCTION.evidence_id,
-    ],
-  },
-);
+export const PROCESS_COMPARISON_EVIDENCE = compareProcessCaptureEvidence(
+  { record: PROCESS_CAPTURE_REFERENCE, capture },
+  { record: PROCESS_CAPTURE_RECONSTRUCTION, capture },
+).evidence;
 
 /** Canonical inputs for comparison-composed investigation contracts. */
 export const INVESTIGATION_EXAMPLES = {
@@ -94,7 +76,14 @@ export const INVESTIGATION_EXAMPLES = {
       right: PROCESS_CAPTURE_RECONSTRUCTION,
     },
   },
-  find_changed_behavior: { comparisons: [FUNCTION_COMPARISON_EVIDENCE] },
+  find_changed_behavior: {
+    comparisons: [
+      {
+        kind: "retained-evidence",
+        evidence_id: FUNCTION_COMPARISON_EVIDENCE.evidence_id,
+      },
+    ],
+  },
   build_call_path: {
     functions: [FUNCTION_COMPARISON_EXAMPLE.left],
     start: { address: "0x1000" },

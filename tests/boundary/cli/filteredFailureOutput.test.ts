@@ -5,6 +5,7 @@ import { Cli, z } from "incur";
 import { parse as parseYaml } from "yaml";
 import { expect, it } from "vitest";
 
+import { parseCliOutputArguments } from "../../../src/cliOutput.js";
 import {
   createCliResultOutput,
   streamCliCommandResults,
@@ -21,7 +22,10 @@ const runCli = async (arguments_: readonly string[]) => {
       callback();
     },
   });
-  const output = createCliResultOutput(arguments_, destination);
+  const output = createCliResultOutput(
+    parseCliOutputArguments(arguments_),
+    destination,
+  );
   if (output === undefined) throw new Error("Missing CLI result output owner");
   const cli = Cli.create("filtered-failure-test", { sync: false });
   cli.command("trace-application-feature", {
@@ -178,7 +182,10 @@ it("keeps successful scalar filtering available", async () => {
     },
   });
   const argv = ["open-control", "--json", "--filter-output", "open"];
-  const output = createCliResultOutput(argv, destination);
+  const output = createCliResultOutput(
+    parseCliOutputArguments(argv),
+    destination,
+  );
   if (output === undefined) throw new Error("Missing CLI result output owner");
   const cli = Cli.create("filtered-failure-test", { sync: false });
   cli.command("open-control", { run: () => ({ open: false }) });

@@ -1,3 +1,4 @@
+import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
@@ -18,6 +19,9 @@ export const translateArtifactFailure = (
       cause.details,
       cause.message,
       {
+        ...(cause.userMessage === undefined
+          ? {}
+          : { userMessage: cause.userMessage }),
         cause:
           cause.reason === "cancelled"
             ? artifactFileCancellationCause(cause)
@@ -29,12 +33,31 @@ export const translateArtifactFailure = (
         ...(cause.admission === undefined
           ? {}
           : { admission: cause.admission }),
+        ...(cause.boundary === undefined ? {} : { boundary: cause.boundary }),
+        ...(cause.readerLimit === undefined
+          ? {}
+          : { readerLimit: cause.readerLimit }),
       },
     );
+    if (cause.admission !== undefined)
+      error.bindLimit({
+        ...analysisSettingLimit(
+          cause.admission.kind === "asar-header"
+            ? "asar.max_header_bytes"
+            : "asar.max_listing_bytes",
+          cause.admission.maximumBytes,
+          cause.admission.source,
+        ),
+        ...(cause.admission.requiredBytes === undefined
+          ? {}
+          : { required_value: cause.admission.requiredBytes }),
+      });
     bindArtifactFileCleanup(cause, error);
     return error;
   }
   // Keep typed Evidence and other analysis failures instead of reducing them to I/O.
   if (cause instanceof AnalysisError) return cause;
-  return new ArtifactOperationError(operation, "io");
+  return new ArtifactOperationError(operation, "io", undefined, undefined, {
+    cause,
+  });
 };

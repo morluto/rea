@@ -1,5 +1,21 @@
+import {
+  inspectDevicetreeInputSchema,
+  devicetreeSchema,
+} from "../../domain/firmware/devicetree.js";
+import {
+  devicetreeSummaryViewResultSchema,
+  binaryLayoutSummaryViewResultSchema,
+  nativeExportsSummaryViewResultSchema,
+} from "../../domain/analysisView/analysisViewResult.js";
+import {
+  inspectPeLoadConfigInputSchema,
+  peLoadConfigSchema,
+} from "../../domain/native/peLoadConfig.js";
+import {
+  binaryHardeningSchema,
+  inspectBinaryHardeningInputSchema,
+} from "../../domain/native/binaryHardening.js";
 import { inspectByteEntropyInputSchema } from "../../domain/native/byteEntropy.js";
-import { publicInputStrictObject } from "../../domain/publicInput.js";
 import { byteEntropyOutputSchema } from "../toolOutputSchemaGroups.js";
 import {
   inspectRecordedCrashInputSchema,
@@ -9,7 +25,6 @@ import {
   inspectBinaryLayoutInputSchema,
   binaryLayoutSchema,
 } from "../../domain/native/binaryLayout.js";
-import { binaryLayoutSummaryViewResultSchema } from "../../domain/analysisView/analysisView.js";
 import {
   analysisDetailOutputSchemaOf,
   analysisDetailSchema,
@@ -30,36 +45,205 @@ import {
   peCertificatesSchema,
 } from "../../domain/native/peCertificates.js";
 import {
+  inspectPeImportsInputSchema,
+  peImportsSchema,
+} from "../../domain/native/peImports.js";
+import {
   inspectElfNotesInputSchema,
   elfNotesSchema,
 } from "../../domain/native/elfNotes.js";
+import {
+  inspectNativeInitializersInputSchema,
+  nativeInitializersSchema,
+} from "../../domain/native/nativeInitializers.js";
+import {
+  inspectElfUnwindRangesInputSchema,
+  elfUnwindRangesSchema,
+} from "../../domain/native/elfUnwindRanges.js";
+import {
+  inspectAppleIpsInputSchema,
+  appleIpsSchema,
+} from "../../domain/native/appleIps.js";
+import {
+  inspectKernelModuleInputSchema,
+  kernelModuleSchema,
+} from "../../domain/native/kernelModule.js";
+import {
+  inspectKernelBuildConfigInputSchema,
+  kernelBuildConfigSchema,
+} from "../../domain/native/kernelBuildConfig.js";
+import {
+  inspectWindowsShortcutInputSchema,
+  windowsShortcutSchema,
+} from "../../domain/native/windowsShortcut.js";
 
 /** Caller-selected delivery of completed binary layout Evidence. */
 export const inspectBinaryLayoutRequestSchema =
   inspectBinaryLayoutInputSchema.extend({ detail: analysisDetailSchema });
 
-/**
- * Public `inspect_byte_entropy` input. The shared constructor runs before
- * `detail` is added so the advertised input stays closed.
- */
-export const inspectByteEntropyRequestSchema = publicInputStrictObject(
-  inspectByteEntropyInputSchema.shape,
-).extend({ detail: analysisDetailSchema });
+export const inspectNativeExportsRequestSchema =
+  inspectNativeExportsInputSchema.extend({ detail: analysisDetailSchema });
+
+/** Public byte-entropy input retains the producer schema's closed-object policy. */
+export const inspectByteEntropyRequestSchema =
+  inspectByteEntropyInputSchema.extend({ detail: analysisDetailSchema });
 
 /** Offline binary diagnostics are independent of macOS process/UI providers. */
 export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
+  {
+    name: "inspect_devicetree",
+    ...toolContractMetadata("inspect_devicetree"),
+    kind: "native-provider",
+    description:
+      "Inspect an explicit local flattened devicetree blob (FDT v16/v17) without execution or external tools. Returns validated header, memory reservations, full node/property tree with bounded raw hex, derived standard strings, cells and parent-sized reg tuples, aliases and selected single-cell phandle references with unresolved targets. Binding-specific arrays, overlays and runtime hardware remain unknown. Malformed structure or exhausted named budgets fails without partial success. Complete detail returns all Evidence inline; summary retains it for inspect_analysis_view kind devicetree, collections nodes, properties (requires exact path), reservations and references, with offset/limit pagination.",
+    inputSchema: inspectDevicetreeInputSchema.extend({
+      detail: analysisDetailSchema,
+    }),
+    outputSchema: analysisDetailOutputSchemaOf(
+      devicetreeSchema,
+      devicetreeSummaryViewResultSchema,
+    ),
+    examples: [
+      {
+        title: "Inspect a firmware hardware description",
+        input: { path: "/artifacts/board.dtb", detail: "summary" },
+      },
+    ],
+  },
+  {
+    name: "inspect_pe_load_config",
+    ...toolContractMetadata("inspect_pe_load_config"),
+    kind: "native-provider",
+    description:
+      "Inspect PE32/PE32+ TLS callbacks and sized load configuration without executing the image. Returns callback VA/RVA/file offsets and sections, security cookie, SafeSEH (PE32), CFG flags and table pointers/counts, EH continuation and XFG fields. Flag-derived mitigation claims are labeled inferred. Absent directories are null; malformed structures and exhausted budgets fail without partial success. Reads a stable local regular file without a disassembler.",
+    inputSchema: inspectPeLoadConfigInputSchema,
+    outputSchema: evidenceResultOf(peLoadConfigSchema),
+    examples: [
+      {
+        title: "Inspect PE TLS callbacks and load configuration",
+        input: { path: "/artifacts/program" },
+      },
+    ],
+  },
+  {
+    name: "inspect_binary_hardening",
+    ...toolContractMetadata("inspect_binary_hardening"),
+    kind: "native-provider",
+    description:
+      "Inspect static hardening declarations in a local ELF, PE or Mach-O, including every universal slice. Reports PIE/ASLR, NX, RELRO, stack-protector/FORTIFY signs, control-flow flags and stripped state with supporting header/import facts. Missing signs may be unknown, especially for static/stripped images. Signature presence does not establish validity; use inspect_signature for Mach-O hardened runtime. No target execution or exploitability claim. Malformed headers/budgets may fail; limited symbol/property-note reads retain header facts and mark affected rows unknown.",
+    inputSchema: inspectBinaryHardeningInputSchema,
+    outputSchema: evidenceResultOf(binaryHardeningSchema),
+    examples: [
+      {
+        title: "Inspect binary hardening",
+        input: { path: "/artifacts/program" },
+      },
+    ],
+  },
+
+  {
+    name: "inspect_native_initializers",
+    ...toolContractMetadata("inspect_native_initializers"),
+    kind: "native-provider",
+    description:
+      "List declared initializer/finalizer functions in a local ELF32/64 or selected Mach-O slice without execution. Returns paged slots and resolved target addresses/file offsets, sections, exact symbols and resolution basis from dynamic tags, constructor sections, relocations and fixups. Unestablished slots remain unresolved, never treated as stored zero targets. Missing declarations do not prove no code runs before main.",
+    inputSchema: inspectNativeInitializersInputSchema,
+    outputSchema: evidenceResultOf(nativeInitializersSchema),
+    examples: [
+      {
+        title: "List ELF or Mach-O static constructors and finalizers",
+        input: { path: "/artifacts/program" },
+      },
+    ],
+  },
+
   {
     name: "inspect_elf_notes",
     ...toolContractMetadata("inspect_elf_notes"),
     kind: "native-provider",
     description:
-      "Inspect one explicit local ELF32/ELF64 image's PT_NOTE program headers and SHT_NOTE sections without executing it or opening a disassembler. Returns note-table file ranges, owners, types, descriptor SHA-256 and hex previews, plus GNU build-id, ABI-tag and gold-version fields when those descriptors match. A missing table is observed absence of those declarations, not proof the image never carried notes in another container. Reads a stable regular file; malformed ELF headers, truncated notes and exhausted budgets return no partial success. Portable on supported Node hosts; no debug package or catalog is required.",
+      "Inspect one explicit local ELF32/ELF64 image's PT_NOTE program headers and SHT_NOTE sections without executing it or opening a disassembler. Returns note-table file ranges, owners, types, descriptor SHA-256 and hex previews, plus GNU build-id, ABI-tag and gold-version fields, Linux CORE process, mapping, signal, and auxv notes, and Android .note.android.ident API-level and NDK version/build fields when those descriptors match. A missing table is observed absence of those declarations, not proof the image never carried notes in another container. Reads a stable regular file; malformed ELF headers, truncated notes and exhausted budgets return no partial success. Portable on supported Node hosts; no debug package or catalog is required.",
     inputSchema: inspectElfNotesInputSchema,
     outputSchema: evidenceResultOf(elfNotesSchema),
     examples: [
       {
         title: "Inspect ELF GNU build-id and ABI-tag notes",
         input: { path: "/artifacts/program" },
+      },
+    ],
+  },
+  {
+    name: "inspect_elf_unwind_ranges",
+    ...toolContractMetadata("inspect_elf_unwind_ranges"),
+    kind: "native-provider",
+    description:
+      "Inspect ELF32/64 .eh_frame and .eh_frame_hdr for paged FDE function ranges, associated CIE facts, LSDA/personality pointers, symbol matches and search-table agreement. No execution or disassembler. Missing unwind declarations do not prove no functions; truncated records remain incomplete. .debug_frame is detected but not decoded, CFA instructions are not evaluated, and indirect EH pointers are not dereferenced. Malformed headers or exhausted CIE/FDE budgets fail without partial success.",
+    inputSchema: inspectElfUnwindRangesInputSchema,
+    outputSchema: evidenceResultOf(elfUnwindRangesSchema),
+    examples: [
+      {
+        title: "List function ranges from ELF unwind tables",
+        input: { path: "/artifacts/program" },
+      },
+    ],
+  },
+  {
+    name: "inspect_apple_ips",
+    ...toolContractMetadata("inspect_apple_ips"),
+    kind: "native-provider",
+    description:
+      "Inspect a local Apple .ips crash report for process, exception/termination, thread, image and lossless register facts with deterministic classification. Crash parsing supports bug_type string 309; other types, including 288 stackshots, return no crash result. join_path derives static addresses only when image UUID and architecture match a Mach-O slice; it does not symbolicate or read dSYMs. Missing/truncated bodies fail without partial success. No target execution, atos, disassembler or Xcode required.",
+    inputSchema: inspectAppleIpsInputSchema,
+    outputSchema: evidenceResultOf(appleIpsSchema),
+    examples: [
+      {
+        title: "Inspect an Apple .ips crash report",
+        input: { path: "/artifacts/app.ips" },
+      },
+      {
+        title: "Join report frames to the crashed Mach-O",
+        input: {
+          path: "/artifacts/app.ips",
+          join_path: "/artifacts/App.app/Contents/MacOS/App",
+        },
+      },
+    ],
+  },
+  {
+    name: "inspect_kernel_module",
+    ...toolContractMetadata("inspect_kernel_module"),
+    kind: "native-provider",
+    description:
+      "Inspect an uncompressed local ELF32/64 ET_REL Linux kernel module for ordered .modinfo entries, symbol CRCs, module/export/init/exit section facts and appended signature ranges/digests. No execution, struct module decoding or certificate validation. Missing known sections describe this image only. gzip/xz/zstd require external decompression; extract_artifact does not decode those module containers. Malformed headers or exhausted entry budgets fail without partial success. Portable on supported Node hosts.",
+    inputSchema: inspectKernelModuleInputSchema,
+    outputSchema: evidenceResultOf(kernelModuleSchema),
+    examples: [
+      {
+        title:
+          "Inspect Linux kernel module license, vermagic, and dependencies",
+        input: { path: "/artifacts/demo.ko" },
+      },
+    ],
+  },
+  {
+    name: "inspect_kernel_build_config",
+    ...toolContractMetadata("inspect_kernel_build_config"),
+    kind: "native-provider",
+    description:
+      "Inspect a local Linux kernel image (vmlinux, raw arm64 Image, x86 bzImage/zImage or configs.ko) for the version/builder/compiler banner and embedded CONFIG_IKCONFIG. Returns config digest/count and paged, optionally exact-name-filtered CONFIG_* values. Only validated marker-framed gzip config is accepted; a literal marker is insufficient. Supported gzip bzImage payloads are searched; other compressed payloads require external decompression. Truncation is incomplete, not absence; budget exhaustion fails without partial success. No target execution or external tools.",
+    inputSchema: inspectKernelBuildConfigInputSchema,
+    outputSchema: evidenceResultOf(kernelBuildConfigSchema),
+    examples: [
+      {
+        title: "Read a kernel image's version banner and embedded build config",
+        input: { path: "/artifacts/vmlinux" },
+      },
+      {
+        title: "Check one security option in an embedded kernel config",
+        input: {
+          path: "/artifacts/bzImage",
+          name: "CONFIG_SECURITY_SELINUX",
+        },
       },
     ],
   },
@@ -93,7 +277,7 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
     ...toolContractMetadata("inspect_pe_certificates"),
     kind: "native-provider",
     description:
-      "Inspect one explicit local PE32/PE32+ image's IMAGE_DIRECTORY_ENTRY_SECURITY table without executing it, verifying signatures or opening a disassembler. Returns WIN_CERTIFICATE file ranges, types and payload SHA-256, plus structurally decoded PKCS#7 signedData digest algorithms, embedded X.509 serial/issuer/subject/validity fields and signer identifiers, including a subject key identifier, when type 2 is present. A missing directory is observed absence of that table, not proof the image is unsigned in every catalog or overlay sense. Authenticode digest coverage, chain validity and timestamp trust remain unobserved. Reads a stable regular file; malformed PE headers, truncated WIN_CERTIFICATE entries, X.509 certificates missing subjectPublicKeyInfo or signatureValue, and non-signedData PKCS#7 return no partial success. Portable on supported Node hosts; no Windows SDK or engine installation required.",
+      "Inspect a local PE32/PE32+ certificate directory without executing it or verifying signatures. Returns WIN_CERTIFICATE ranges/types/digests and structurally decoded PKCS#7 signer, algorithm and X.509 identity fields when present. Missing directory does not establish globally unsigned status. Authenticode digest coverage, trust chains and timestamp validity remain unobserved. Malformed/truncated structures and unsupported PKCS#7 signed-data shapes fail without partial success. No Windows SDK or disassembler required.",
     inputSchema: inspectPeCertificatesInputSchema,
     outputSchema: evidenceResultOf(peCertificatesSchema),
     examples: [
@@ -104,11 +288,41 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
     ],
   },
   {
+    name: "inspect_pe_imports",
+    ...toolContractMetadata("inspect_pe_imports"),
+    kind: "native-provider",
+    description:
+      "Inspect local PE32/PE32+ standard and delay-load imports without execution. Returns DLL/named/ordinal imports, ILT/IAT RVAs, descriptors and a pefile-compatible standard-table import hash only when its row sequence is complete and comparable. Missing declarations do not establish no API use; loaded IAT, bound snapshots and forward resolution remain unknown. Unreadable names/thunks or missing tables yield partial coverage; malformed headers or exhausted budgets fail. No Windows SDK or disassembler required.",
+    inputSchema: inspectPeImportsInputSchema,
+    outputSchema: evidenceResultOf(peImportsSchema),
+    examples: [
+      {
+        title: "Inspect PE import and delay-load identities",
+        input: { path: "/artifacts/application.exe" },
+      },
+    ],
+  },
+  {
+    name: "inspect_windows_shortcut",
+    ...toolContractMetadata("inspect_windows_shortcut"),
+    kind: "native-provider",
+    description:
+      "Inspect a local Windows Shell Link (.lnk) without resolving or executing its target, COM, or network access. Returns header/time/display facts, target-ID/link-info paths, arguments, working directory/icon and ExtraData observations, with raw hashes for unknown structures. Tracker and behavioral observations are derived. Malformed structures, odd Unicode lengths or exhausted budgets return typed failures or explicitly partial coverage with the failing offset. No Windows SDK required.",
+    inputSchema: inspectWindowsShortcutInputSchema,
+    outputSchema: evidenceResultOf(windowsShortcutSchema),
+    examples: [
+      {
+        title: "Inspect a Windows Shell Link shortcut",
+        input: { path: "/artifacts/shortcut.lnk" },
+      },
+    ],
+  },
+  {
     name: "inspect_pe_resources",
     ...toolContractMetadata("inspect_pe_resources"),
     kind: "native-provider",
     description:
-      "Inspect one explicit local PE32/PE32+ image's complete bounded type/name/language resource tree without executing it or opening a disassembler. Returns numeric IDs versus original UTF-16 names, directory/data-entry file locations, payload RVA/file ranges, complete SHA-256 hashes and static RT_GROUP_ICON image-resource candidates. Language fallback, image decoding and actual shell/window loading remain unobserved. Reads a stable regular file; malformed or ambiguous mappings, non-identical overlapping ranges and exhausted budgets return no partial success. Portable on supported Node hosts; no Windows SDK or engine installation required.",
+      "Inspect a local PE32/PE32+ resource tree without execution: type/name/language identities, empty branches, UTF-16 names, payload RVA/file ranges/digests and static group-icon candidates. Language fallback, image decoding and actual UI loading remain unknown. Malformed/ambiguous mappings, non-identical overlaps or exhausted budgets fail without partial success. No Windows SDK or disassembler required.",
     inputSchema: inspectPeResourcesInputSchema,
     outputSchema: evidenceResultOf(peResourcesSchema),
     examples: [
@@ -123,9 +337,12 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
     ...toolContractMetadata("inspect_native_exports"),
     kind: "native-provider",
     description:
-      "Inspect one explicit local PE or ELF image's export table without executing it or opening an engine: PE export-directory names, ordinals, addresses and forwarders, or ELF defined default/protected global, weak and unique .dynsym symbols with type, binding and symbol version. Ordinal-only, forwarded and hidden-version exports stay distinct. Portable on any supported host. Coverage is partial when table entries are unreadable and unsupported for an ELF without section headers; an empty complete inventory means the image declares no exports. Mach-O exports use inspect_macho.",
-    inputSchema: inspectNativeExportsInputSchema,
-    outputSchema: evidenceResultOf(nativeExportsSchema),
+      "Inspect PE/ELF exports without execution or an analysis engine; use inspect_macho for Mach-O. Returns named/ordinal/forwarded PE exports or defined ELF dynamic symbols with binding/type/version, preserving aliases, hidden versions and raw-name qualifications. Unreadable entries are partial; unavailable ELF section metadata can make enumeration unsupported. An empty complete inventory means no declared exports. detail summary retains full Evidence for inspect_analysis_view kind native-exports, collection exports/issues, with exact names/indices, fields and paging; source_index is parent-scoped.",
+    inputSchema: inspectNativeExportsRequestSchema,
+    outputSchema: analysisDetailOutputSchemaOf(
+      nativeExportsSchema,
+      nativeExportsSummaryViewResultSchema,
+    ),
     examples: [
       {
         title: "List a native library's exports",
@@ -138,7 +355,7 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
     ...toolContractMetadata("inspect_binary_layout"),
     kind: "native-provider",
     description:
-      "Inspect an explicit local binary without launching it as a host process. Returns file-backed section/segment ranges, linked addresses, original symbol/REL/RELA table identities, complete encoded RELR tables and upstream-derived offsets with unknown per-word locations/addends, raw name bytes, dependency/interpreter names and static mitigation inferences inline with artifact SHA-256 Evidence. Initial profile: ELF64 x86-64 little-endian EXEC/DYN/REL on Linux x64 via caller-supplied Python with unchanged pwntools 4.15.0, pyelftools 0.33 and Unicorn 2.1.2. Runtime addresses/library paths, overall relocation inventory completeness and complete derived GOT/PLT coverage remain unknown. Zero executable entry values mean absence; relocatable entries are not applicable. Upstream can emulate PLT instructions with Unicorn for derived static maps. Uses bounded complete output and owned temporary files/processes; malformed, unsupported or oversized objects return no partial success. Select detail summary to retain the complete layout Evidence in this session and receive only its summary view, then inspect sections, symbols, mitigations or linkage with inspect_analysis_view. pwntools_timeout_ms is each owned pwntools command's deadline (omitted means 30000 ms, range 1..2147483647, next call). cpuSeconds 30 and the output, diagnostic, and address-space byte allowances have no runtime override.",
+      "Inspect static ELF section/segment, symbol, relocation, linkage and mitigation facts with artifact SHA-256 Evidence, without launching the image. Linux x64 requires caller-supplied pwntools 4.15.0/pyelftools 0.33/Unicorn 2.1.2; supports ELF64 x86-64/little-endian AArch64 and ELF32 i386/little-endian ARM/little- or big-endian MIPS. Unicorn may emulate PLT instructions for derived maps. Runtime addresses/paths and complete relocation/GOT/PLT discovery remain unknown; RELR per-word locations/addends can be unknown. detail summary retains full Evidence for layout section/symbol/mitigation/linkage views. pwntools_timeout_ms bounds each command independently of producer_limits and inherited OS limits. Unsupported, malformed or oversized inputs fail without partial success.",
     inputSchema: inspectBinaryLayoutRequestSchema,
     outputSchema: analysisDetailOutputSchemaOf(
       binaryLayoutSchema,
@@ -160,7 +377,7 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
     ...toolContractMetadata("inspect_recorded_crash"),
     kind: "native-provider",
     description:
-      "Inspect a supplied Linux ELF64 amd64 or AArch64 little-endian core without launching its target or attaching to any live PID. Returns all recorded segments, raw note owners/descriptors and source ranges, every Linux CORE PRSTATUS thread/register and SIGINFO fields inline with SHA-256 Evidence. Historical PID is recorded metadata; current process/file identity, note coverage and signal-thread associations stay unknown. Optionally add derived core-only GDB/pwndbg mapping candidates through explicit BYO configuration; zero map flags mean unknown permissions. Uses the same stable snapshot for both stages, bounded complete output and owned cleanup. Linux x64 host profile: unchanged pwntools 4.15.0/pyelftools 0.33/Unicorn 2.1.2; optional unchanged pwndbg 2026.09.15. No implicit executable/library pairing, GDB command language, host configuration changes or dependency installation. pwntools_timeout_ms is each owned pwntools command's deadline (omitted means 30000 ms, range 1..2147483647, next call). cpuSeconds 30 and the output, diagnostic, and address-space byte allowances have no runtime override.",
+      "Inspect a saved Linux ELF64 little-endian amd64/AArch64 core without launching its target or attaching to a live PID. Returns recorded segments, raw notes/ranges, thread registers and SIGINFO as digest-bound Evidence. Historical PIDs do not establish current identity; note coverage and signal/thread joins remain unknown. Optional caller-configured GDB/pwndbg adds core-only mapping candidates from the same snapshot; zero flags mean unknown permissions. Linux x64 requires the documented pwntools profile, with optional pwndbg 2026.09.15. No implicit executable/library pairing, command language or installation. pwntools_timeout_ms and producer_limits control independent per-command budgets; malformed or oversized input fails without partial success.",
     inputSchema: inspectRecordedCrashInputSchema,
     outputSchema: evidenceResultOf(recordedCrashSchema),
     examples: [

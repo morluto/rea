@@ -1,14 +1,52 @@
+import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
 
-/** Bounded format failure retained as caller-visible managed coverage. */
+/** Header facts admitted before an unsupported table layout was identified. */
+export interface ManagedMetadataHeaderFacts {
+  readonly version: string;
+  readonly streamNames: readonly string[];
+}
+
+/** Bounded format or applicability failure retained as managed coverage. */
 export class ManagedReaderFailure extends Error {
+  readonly metadataHeader: ManagedMetadataHeaderFacts | null;
+
   constructor(
     readonly issue: ManagedParseIssue,
-    options?: ErrorOptions,
+    options?: ErrorOptions & {
+      readonly metadataHeader?: ManagedMetadataHeaderFacts;
+    },
   ) {
     super(issue.detail, options);
+    this.metadataHeader = options?.metadataHeader ?? null;
   }
 }
+
+/** A resource or unsupported layout leaves metadata unknown, not malformed. */
+export const managedMetadataFailureStatus = (
+  issue: ManagedParseIssue,
+): "partial" | "malformed" =>
+  issue.code === "resource-limit" || issue.code === "unsupported-metadata"
+    ? "partial"
+    : "malformed";
+
+/** Malformed selected metadata is input failure for every inspection workflow. */
+export const managedInspectionInputFailure = (
+  operation: string,
+  path: string,
+  cause: unknown,
+  inputField: "path" | "leftPath" | "rightPath" = "path",
+): AnalysisInputError | undefined =>
+  cause instanceof ManagedReaderFailure &&
+  managedMetadataFailureStatus(cause.issue) === "malformed"
+    ? new AnalysisInputError(operation, { cause }, [
+        {
+          path: [inputField],
+          reason: "invalid_format",
+          message: `Selected artifact ${path}: ${cause.issue.detail}`,
+        },
+      ])
+    : undefined;
 
 /** Construct a typed managed parse failure at an exact byte location. */
 export const managedFailure = (
@@ -29,7 +67,7 @@ export const readManagedValue = <Value>(
   } catch (cause: unknown) {
     if (
       !(cause instanceof ManagedReaderFailure) ||
-      cause.issue.code === "resource-limit"
+      managedMetadataFailureStatus(cause.issue) === "partial"
     )
       throw cause;
     issues.push(cause.issue);

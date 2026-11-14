@@ -1,42 +1,35 @@
+import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import {
   TextReader,
   Uint8ArrayReader,
   Uint8ArrayWriter,
   ZipWriter,
 } from "@zip.js/zip.js";
-import { afterEach, expect, it } from "vitest";
+import { expect, it } from "vitest";
 
 import { createDirectAnalysis } from "../../../src/composition/directAnalysis.js";
-import { parseEvidence } from "../../../src/domain/evidence.js";
+import { androidApplicationProjectionResultSchema } from "../../../src/domain/android/androidApplication.js";
+import { artifactInventoryResultSchema } from "../../../src/domain/artifactGraph.js";
+import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { fragmentInventoryEvidence } from "../../fixtures/artifactEvidence.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { createServer } from "../../../src/server/createServer.js";
+import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 
 const { runProviderAnalysis } = createDirectAnalysis({});
-
-const resources: Array<{ close(): Promise<unknown> }> = [];
-afterEach(async () => {
-  for (const resource of resources.splice(0)) await resource.close();
-});
 
 async function connect() {
   const session = createTestBinarySession(() => {
     throw new Error("mobile graph projection must not launch a provider");
   });
-  const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "mobile-application-graph-test",
-    version: "1",
+  const { client } = await createApplicationMcpHarness({
+    session,
+    clientIdentity: { name: "mobile-application-graph-test", version: "1" },
   });
-  resources.push(client, server, session);
-  const [a, b] = InMemoryTransport.createLinkedPair();
-  await server.connect(b);
-  await client.connect(a);
   return client;
 }
 
@@ -83,7 +76,11 @@ it("advertises and executes Android and Apple inventory projections", async () =
 
   const root = await createTestTempDirectory("rea-mobile-graph-mcp-");
   const apkInventory = parseEvidence(
-    await runProviderAnalysis(await writeApk(root), "inventory_artifact", {}),
+    await runProviderAnalysis(
+      await writeApk(root),
+      "inventory_artifact",
+      {},
+    ).then(projectCliAnalysisResult),
   );
   const apkSources = fragmentInventoryEvidence(apkInventory, 2).toReversed();
   const android = await client.callTool({
@@ -97,6 +94,21 @@ it("advertises and executes Android and Apple inventory projections", async () =
     provider: { id: "rea-android-application" },
   });
   const androidEvidence = parseEvidence(android.structuredContent);
+  const retainedAndroid = await client.callTool({
+    name: "project_android_application_graph",
+    arguments: {
+      inventory_evidence: apkSources.map(({ evidence_id }) => ({
+        kind: "retained-evidence",
+        evidence_id,
+      })),
+    },
+  });
+  expect(retainedAndroid.isError, JSON.stringify(retainedAndroid)).not.toBe(
+    true,
+  );
+  expect(parseEvidence(retainedAndroid.structuredContent)).toEqual(
+    androidEvidence,
+  );
   const androidBundle = await client.callTool({
     name: "get_evidence_bundle",
     arguments: {},
@@ -115,7 +127,9 @@ it("advertises and executes Android and Apple inventory projections", async () =
     name: "project_android_application_graph",
     arguments: { inventory_evidence: [tamperedSource] },
   });
-  expect(rejected.isError).toBe(true);
+  expect(parseMcpToolError(rejected)).toMatchObject({
+    error: { code: "evidence_integrity_mismatch" },
+  });
   const bundleAfterRejectedSource = await client.callTool({
     name: "get_evidence_bundle",
     arguments: {},
@@ -130,7 +144,11 @@ it("advertises and executes Android and Apple inventory projections", async () =
   );
 
   const ipaInventory = parseEvidence(
-    await runProviderAnalysis(await writeIpa(root), "inventory_artifact", {}),
+    await runProviderAnalysis(
+      await writeIpa(root),
+      "inventory_artifact",
+      {},
+    ).then(projectCliAnalysisResult),
   );
   const apple = await client.callTool({
     name: "project_apple_application_graph",
@@ -141,6 +159,194 @@ it("advertises and executes Android and Apple inventory projections", async () =
     operation: "project_apple_application_graph",
     provider: { id: "rea-apple-application" },
   });
+  const retainedApple = await client.callTool({
+    name: "project_apple_application_graph",
+    arguments: {
+      inventory_evidence: [
+        { kind: "retained-evidence", evidence_id: ipaInventory.evidence_id },
+      ],
+    },
+  });
+  expect(retainedApple.isError, JSON.stringify(retainedApple)).not.toBe(true);
+  expect(parseEvidence(retainedApple.structuredContent)).toEqual(
+    parseEvidence(apple.structuredContent),
+  );
+});
+
+it("projects a single inventory page as partial and links only that source", async () => {
+  const client = await connect();
+  const root = await createTestTempDirectory("rea-mobile-partial-page-mcp-");
+  const inventory = parseEvidence(
+    await runProviderAnalysis(
+      await writeApk(root),
+      "inventory_artifact",
+      {},
+    ).then(projectCliAnalysisResult),
+  );
+  const facts = artifactInventoryResultSchema.parse(
+    inventory.normalized_result,
+  );
+  const subject = inventory.subject;
+  if (subject === null) throw new Error("Expected an inventory subject");
+  const page = createEvidence(
+    {
+      path: subject.local_path,
+      sha256: subject.digest.sha256,
+      format: subject.format,
+    },
+    inventory.provider,
+    {
+      operation: "inventory_artifact",
+      parameters: inventory.parameters,
+      result: { ...facts, nodes: [] },
+      confidence: "derived",
+      authority: inventory.authority,
+    },
+  );
+
+  const reply = await client.callTool({
+    name: "project_android_application_graph",
+    arguments: { inventory_evidence: [page] },
+  });
+  if (reply.isError === true) throw new Error(JSON.stringify(reply, null, 2));
+  const projection = parseEvidence(reply.structuredContent);
+  const result = androidApplicationProjectionResultSchema.parse(
+    projection.normalized_result,
+  );
+  expect(result).toMatchObject({
+    source_evidence_ids: [page.evidence_id],
+    coverage: { status: "partial", inventory_complete: false },
+  });
+  expect(result.limitations).toContain(
+    "Source inventory coverage is partial; absence is unknown.",
+  );
+  expect(result.components.dex).toEqual([]);
+  expect(result.unavailable_components).toEqual([]);
+  const dex = facts.occurrences.find(
+    ({ logical_path }) => logical_path === "classes.dex",
+  );
+  if (dex?.artifact_id === null || dex === undefined)
+    throw new Error("Expected a known DEX artifact reference");
+  const dexArtifactId = dex.artifact_id;
+  const unresolved = result.limitations.find((limitation) =>
+    limitation.includes(dexArtifactId),
+  );
+  expect(unresolved).toContain('"classes.dex"');
+  expect(unresolved).toContain(dex.artifact_format);
+  expect(unresolved).toContain("unknown");
+  expect(projection.evidence_links).toEqual([page.evidence_id]);
+  const retained = await client.callTool({
+    name: "project_android_application_graph",
+    arguments: {
+      inventory_evidence: [
+        { kind: "retained-evidence", evidence_id: page.evidence_id },
+      ],
+    },
+  });
+  expect(retained.isError, JSON.stringify(retained)).not.toBe(true);
+  expect(parseEvidence(retained.structuredContent)).toEqual(projection);
+  const bundle = await client.callTool({
+    name: "get_evidence_bundle",
+    arguments: {},
+  });
+  expect(bundle.structuredContent).toMatchObject({
+    result: { records: expect.arrayContaining([page, projection]) },
+  });
+  const completed = await client.callTool({
+    name: "project_android_application_graph",
+    arguments: { inventory_evidence: [page, inventory] },
+  });
+  if (completed.isError === true) throw new Error(JSON.stringify(completed));
+  const resolved = androidApplicationProjectionResultSchema.parse(
+    parseEvidence(completed.structuredContent).normalized_result,
+  );
+  expect(resolved.coverage.inventory_complete).toBe(true);
+  expect(resolved.components.dex).toContainEqual(
+    expect.objectContaining({
+      path: "classes.dex",
+      artifact_id: dex.artifact_id,
+    }),
+  );
+  expect(
+    resolved.limitations.some((limitation) =>
+      limitation.includes(dexArtifactId),
+    ),
+  ).toBe(false);
+});
+
+it("rejects a valid non-inventory carrier as caller-selected input", async () => {
+  const client = await connect();
+  const wrongCarrier = createEvidence(
+    undefined,
+    { id: "fixture", name: "Fixture", version: "1" },
+    { operation: "analyze_binary", parameters: {}, result: {} },
+  );
+
+  const rejected = await client.callTool({
+    name: "project_android_application_graph",
+    arguments: { inventory_evidence: [wrongCarrier] },
+  });
+  expect(parseMcpToolError(rejected)).toMatchObject({
+    error: {
+      code: "invalid_request",
+      category: "invalid_input",
+      details: {
+        issues: [
+          {
+            path: ["inventory_evidence", 0, "operation"],
+          },
+        ],
+      },
+    },
+  });
+  const bundle = await client.callTool({
+    name: "get_evidence_bundle",
+    arguments: {},
+  });
+  expect(bundle.structuredContent).toMatchObject({ result: { records: [] } });
+});
+
+it("rejects authentic pages from different roots without retaining either", async () => {
+  const client = await connect();
+  const root = await createTestTempDirectory("rea-mobile-mixed-pages-mcp-");
+  const apk = parseEvidence(
+    await runProviderAnalysis(
+      await writeApk(root),
+      "inventory_artifact",
+      {},
+    ).then(projectCliAnalysisResult),
+  );
+  const ipa = parseEvidence(
+    await runProviderAnalysis(
+      await writeIpa(root),
+      "inventory_artifact",
+      {},
+    ).then(projectCliAnalysisResult),
+  );
+
+  const rejected = await client.callTool({
+    name: "project_android_application_graph",
+    arguments: {
+      inventory_evidence: [
+        fragmentInventoryEvidence(apk, 2)[0],
+        fragmentInventoryEvidence(ipa, 2)[0],
+      ],
+    },
+  });
+  expect(parseMcpToolError(rejected)).toMatchObject({
+    error: {
+      code: "invalid_request",
+      category: "invalid_input",
+      details: {
+        issues: [{ path: ["inventory_evidence"] }],
+      },
+    },
+  });
+  const bundle = await client.callTool({
+    name: "get_evidence_bundle",
+    arguments: {},
+  });
+  expect(bundle.structuredContent).toMatchObject({ result: { records: [] } });
 });
 
 it.each([
@@ -178,7 +384,9 @@ it.each([
     });
     await writeFile(path, await writer.close());
     const inventory = parseEvidence(
-      await runProviderAnalysis(path, "inventory_artifact", {}),
+      await runProviderAnalysis(path, "inventory_artifact", {}).then(
+        projectCliAnalysisResult,
+      ),
     );
     const reply = await client.callTool({
       name: operation,
@@ -197,6 +405,16 @@ it.each([
       ],
       coverage: { status: "partial", inventory_complete: true },
     });
+    const retained = await client.callTool({
+      name: operation,
+      arguments: {
+        inventory_evidence: [
+          { kind: "retained-evidence", evidence_id: inventory.evidence_id },
+        ],
+      },
+    });
+    expect(retained.isError, JSON.stringify(retained)).not.toBe(true);
+    expect(parseEvidence(retained.structuredContent)).toEqual(evidence);
     const bundle = await client.callTool({
       name: "get_evidence_bundle",
       arguments: {},

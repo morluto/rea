@@ -1,5 +1,7 @@
 import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
+import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
+import { findDuplicateJsonMember } from "../domain/jsonDuplicateMember.js";
 
 import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
@@ -7,11 +9,14 @@ import { err, ok, type Result } from "../domain/result.js";
 import {
   ASAR_HEADER_ADMISSION_SETTING,
   DEFAULT_ASAR_HEADER_ADMISSION,
-  DEFAULT_ASAR_MAX_HEADER_BYTES,
-  MAXIMUM_ASAR_MAX_HEADER_BYTES,
   parseAsarHeaderAdmission,
   type AsarHeaderAdmission,
 } from "../config/asarHeaderAdmission.js";
+import {
+  DEFAULT_ASAR_MAX_HEADER_BYTES,
+  MAXIMUM_ASAR_MAX_HEADER_BYTES,
+} from "../domain/analysisResourceLimits.js";
+import { parseAsarListingAdmission } from "../config/asarListingAdmission.js";
 
 /**
  * Resolve the admission from a composition root's selected environment; an
@@ -25,7 +30,11 @@ export const resolveAsarHeaderAdmission = (
     environment[ASAR_HEADER_ADMISSION_SETTING],
   );
   if (!parsed.ok) throw parsed.error;
-  return parsed.value;
+  const listing = parseAsarListingAdmission(
+    environment.REA_ASAR_MAX_LISTING_BYTES,
+  );
+  if (!listing.ok) throw listing.error;
+  return { ...parsed.value, listing: listing.value };
 };
 
 const MEBIBYTE = 1024 * 1024;
@@ -43,7 +52,7 @@ export const asarHeaderAdmissionRecovery = (
 ): string =>
   [
     `ASAR header/index admission is limited to ${byteAllowance(admission.maximumBytes)}${admission.source === "setting" ? ` by ${ASAR_HEADER_ADMISSION_SETTING}` : ""}.`,
-    `Set ${ASAR_HEADER_ADMISSION_SETTING} in the environment that starts REA to a byte count up to ${byteAllowance(MAXIMUM_ASAR_MAX_HEADER_BYTES)} (default ${byteAllowance(DEFAULT_ASAR_MAX_HEADER_BYTES)}), then restart REA.`,
+    `On MCP, call update_analysis_settings with setting asar.max_header_bytes, action set, and a value in bytes up to ${byteAllowance(MAXIMUM_ASAR_MAX_HEADER_BYTES)} (default ${byteAllowance(DEFAULT_ASAR_MAX_HEADER_BYTES)}), then retry the original request. It applies to the next operation without restarting REA. For CLI or future REA processes, set ${ASAR_HEADER_ADMISSION_SETTING} in the launch environment.`,
     "Selecting fewer sources or narrowing an internal path does not bypass header admission, because the archive index is read before any member can be selected.",
     "Raising max_heap_mb or available host memory does not raise it.",
     "Alternatively, analyze an extracted application directory, which does not admit an ASAR header.",
@@ -53,13 +62,18 @@ export const asarHeaderAdmissionRecovery = (
 /** Refuse an ASAR whose header/index exceeds the effective admission budget. */
 export const asarHeaderAdmissionFailure = (
   admission: AsarHeaderAdmission,
+  requiredBytes?: number,
 ): ArtifactReaderFailure =>
   new ArtifactReaderFailure("limit", asarHeaderAdmissionRecovery(admission), {
-    admission: { kind: "asar-header", ...admission },
+    admission: {
+      kind: "asar-header",
+      ...admission,
+      ...(requiredBytes === undefined ? {} : { requiredBytes }),
+    },
   });
 
 /** Absolute archive prefix required to inspect a header under this admission. */
-export const asarHeaderProbeBytes = (admission: AsarHeaderAdmission): number =>
+const asarHeaderProbeBytes = (admission: AsarHeaderAdmission): number =>
   admission.maximumBytes + 8;
 
 export interface AsarHeaderExtents {
@@ -113,7 +127,7 @@ export type FinalAsarHeaderProbeObservation = Exclude<
  * observed archive size. This establishes byte extents only; JSON validity and
  * the ASAR header schema belong to the decoder at the interpretation boundary.
  */
-export const parseAsarHeaderExtents = (
+const parseAsarHeaderExtents = (
   prefix: Uint8Array,
   archiveBytes?: number,
 ): Result<Omit<AsarHeaderExtents, "archiveBytes">, ArtifactReaderFailure> => {
@@ -387,25 +401,16 @@ export const admitAsarHeader = async (
       "format",
       "ASAR container is not a regular file",
     );
-  const prefix = Buffer.alloc(16);
-  let bytesRead = 0;
-  while (bytesRead < prefix.length) {
-    assertArtifactReadActive(signal);
-    const read = await handle.read(
-      prefix,
-      bytesRead,
-      prefix.length - bytesRead,
-      bytesRead,
-    );
-    assertArtifactReadActive(signal);
-    if (read.bytesRead === 0)
-      throw new ArtifactReaderFailure("format", "Truncated ASAR size pickle");
-    bytesRead += read.bytesRead;
-  }
+  const prefix = await readFileHandleRange(handle, 0, 16, () =>
+    assertArtifactReadActive(signal),
+  );
+  assertArtifactReadActive(signal);
+  if (prefix.length !== 16)
+    throw new ArtifactReaderFailure("format", "Truncated ASAR size pickle");
   const parsed = parseAsarHeaderExtents(prefix, observed.size);
   if (!parsed.ok) throw parsed.error;
   if (parsed.value.headerBytes > admission.maximumBytes)
-    throw asarHeaderAdmissionFailure(admission);
+    throw asarHeaderAdmissionFailure(admission, parsed.value.headerBytes);
   return {
     archiveBytes: observed.size,
     ...parsed.value,
@@ -415,3 +420,47 @@ export const admitAsarHeader = async (
 export const createAsarHeaderSignatureProbe = (
   admission: AsarHeaderAdmission = DEFAULT_ASAR_HEADER_ADMISSION,
 ): AsarHeaderSignatureProbe => new AsarHeaderSignatureProbeImpl(admission);
+
+/** Decode only admitted JSON bytes from the same owned descriptor as its extents. */
+export const readAsarHeader = async (
+  handle: Pick<FileHandle, "read">,
+  extents: AsarHeaderExtents,
+  signal?: AbortSignal,
+): Promise<unknown> => {
+  const bytes = await readFileHandleRange(handle, 16, extents.jsonBytes, () =>
+    assertArtifactReadActive(signal),
+  );
+  assertArtifactReadActive(signal);
+  if (bytes.length !== extents.jsonBytes)
+    throw new ArtifactReaderFailure("format", "Truncated ASAR JSON header");
+  let json: string;
+  try {
+    json = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+      bytes,
+    );
+  } catch (cause: unknown) {
+    throw new ArtifactReaderFailure(
+      "format",
+      "ASAR JSON header is not valid UTF-8",
+      { cause },
+    );
+  }
+  const header = JSON.parse(json) as unknown;
+  rejectDuplicateAsarHeaderMembers(json);
+  return header;
+};
+
+/**
+ * `JSON.parse` keeps only the last of repeated member names, so a second
+ * declaration of a path would hide the first from the listing while coverage
+ * still read as complete. Treat a repeated name as a malformed index, like the
+ * unsafe path components the listing already refuses.
+ */
+const rejectDuplicateAsarHeaderMembers = (json: string): void => {
+  const duplicate = findDuplicateJsonMember(json);
+  if (duplicate !== undefined)
+    throw new ArtifactReaderFailure(
+      "format",
+      `ASAR JSON header declares member ${JSON.stringify(duplicate.name)} more than once in one object (offset ${String(duplicate.offset)})`,
+    );
+};

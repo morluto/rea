@@ -5,8 +5,10 @@ import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
-import { analyzeJavaScriptApplication } from "../../../support/javascriptApplicationScope.js";
-import { reconstructJavaScriptArtifact } from "../../../support/javascriptApplicationScope.js";
+import {
+  analyzeJavaScriptApplication,
+  reconstructJavaScriptArtifact,
+} from "../../../support/javascriptApplicationScope.js";
 import { parseEvidence } from "../../../../src/domain/evidence.js";
 import { parseJavaScriptApplicationGraph } from "../../../../src/domain/javascript/javascriptApplicationGraph.js";
 import { analyzeJavaScriptApplicationInputSchema } from "../../../../src/domain/javascript/javascriptApplicationAnalysis.js";
@@ -162,6 +164,129 @@ describe("static Electron application analysis", () => {
   });
 });
 
+describe("view constructor surfaces", () => {
+  it("reconstructs view constructors without inventing window surfaces", async () => {
+    const root = await viewConstructorFixtureDirectory();
+
+    const result = await reconstructJavaScriptArtifact({ input_path: root });
+    const graph = parseJavaScriptApplicationGraph(result.graph);
+
+    const windows = graph.nodes.filter(({ kind }) => kind === "browser-window");
+    expect(windows).toHaveLength(4);
+    const byLabel = (prefix: string) =>
+      windows
+        .flatMap(({ observations }) => observations)
+        .find(({ label }) => label?.startsWith(`${prefix}@`))?.properties ?? {};
+    const browserWindow = byLabel("BrowserWindow");
+    const baseWindow = byLabel("BaseWindow");
+    // A control: BrowserWindow keeps its construction label and surface.
+    expect(browserWindow).toMatchObject({
+      options_status: "object-literal",
+      web_preferences_status: "object-literal",
+      preload_path: "./browser-preload.js",
+    });
+    expect(browserWindow).not.toHaveProperty("window_constructor");
+    expect(windows.map(({ observations }) => observations[0]?.label)).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^BrowserWindow@/u),
+        expect.stringMatching(/^BaseWindow@/u),
+      ]),
+    );
+    // BaseWindow accepts no webPreferences and exposes no webContents, so its
+    // inert option must not become a preload or an IPC surface.
+    expect(baseWindow).toMatchObject({
+      window_constructor: "BaseWindow",
+      options_status: "object-literal",
+      web_preferences_status: "missing",
+      preload_path: null,
+    });
+    const preloadRoles = graph.nodes.filter(
+      ({ kind }) => kind === "electron-preload",
+    );
+    expect(preloadRoles).toHaveLength(3);
+    expect(preloadRoles[0]?.observations[0]?.properties).toMatchObject({
+      declared_path: "./browser-preload.js",
+    });
+    for (const [constructor, path] of [
+      ["BrowserView", "./view-preload.js"],
+      ["WebContentsView", "./contents-preload.js"],
+    ] as const) {
+      expect(byLabel(constructor)).toMatchObject({
+        window_constructor: constructor,
+        web_preferences_status: "object-literal",
+        preload_path: path,
+      });
+      expect(
+        preloadRoles
+          .flatMap((node) => node.observations)
+          .some(
+            ({ properties }) =>
+              properties.mechanism === `${constructor}:webPreferences.preload`,
+          ),
+      ).toBe(true);
+    }
+    expect(result.electron_summary.ipc).toMatchObject({
+      main_handlers: 3,
+    });
+    const channels = graph.nodes.filter(({ kind }) => kind === "ipc-channel");
+    expect(channels.flatMap(({ observations }) => observations)).toHaveLength(
+      3,
+    );
+  });
+});
+
+describe("native addon association", () => {
+  it.each([
+    { native: false, associations: [] },
+    {
+      native: true,
+      associations: [{ source: "native-addon", resolved: "addon.node" }],
+    },
+  ])(
+    "associates a requested binding only with a resolved native addon (exact addon.node: $native)",
+    async ({ native, associations }) => {
+      const root = await createTestTempDirectory("rea-electron-addon-kind-");
+      await Promise.all([
+        writeFile(
+          join(root, "main.cjs"),
+          'const addon = require("./addon.node");\nvoid addon;\n',
+        ),
+        writeFile(
+          join(root, "addon.node.js"),
+          "module.exports = { requested: true };\n",
+        ),
+        ...(native
+          ? [writeFile(join(root, "addon.node"), Buffer.from([0, 1, 2, 3]))]
+          : []),
+      ]);
+
+      const result = await reconstructJavaScriptArtifact({ input_path: root });
+      const graph = parseJavaScriptApplicationGraph(result.graph);
+      const nodes = new Map(graph.nodes.map((node) => [node.node_id, node]));
+
+      expect(result.electron_summary).toMatchObject({
+        native_addon_bindings: 1,
+        resolved_native_addon_bindings: native ? 1 : 0,
+      });
+      expect(
+        graph.nodes.filter(({ kind }) => kind === "native-export"),
+      ).toHaveLength(1);
+      expect(
+        graph.edges
+          .filter(
+            (edge) =>
+              edge.evidence.extractor.operation ===
+              "associate-native-addon-requested-exports",
+          )
+          .map((edge) => ({
+            source: nodes.get(edge.source_node_id)?.kind,
+            resolved: edge.properties.resolved_path,
+          })),
+      ).toEqual(associations);
+    },
+  );
+});
+
 const exactRuntimeEntrypointFixture = async (): Promise<void> => {
   const root = await createTestTempDirectory("rea-electron-exact-entrypoints-");
   await mkdir(join(root, "renderer/page"), { recursive: true });
@@ -255,7 +380,7 @@ utilityProcess.fork("./service.js");
     authority: "static-relationship-inference",
     state: "inferred",
     limitations: expect.arrayContaining([
-      "Static syntax does not prove that this relationship executes at runtime.",
+      expect.stringMatching(/static syntax.*not prove.*runtime/iu),
     ]),
   });
   expect(utilityLaunches).toEqual(
@@ -376,9 +501,10 @@ const expectElectronSummary = (result: Reconstruction): void => {
     ipc: {
       literal_channels: 5,
       dynamic_channel_operations: 2,
-      paired_renderer_transmissions: 4,
-      ambiguous_renderer_transmissions: 1,
-      unpaired_literal_renderer_transmissions: 1,
+      // Retained module gaps leave preload/renderer application ownership unknown.
+      paired_renderer_transmissions: 0,
+      ambiguous_renderer_transmissions: 7,
+      unpaired_literal_renderer_transmissions: 0,
     },
     sender_validation_observations: 2,
     utility_processes: 1,
@@ -537,18 +663,50 @@ const expectElectronBoundaries = (graph: ApplicationGraph): void => {
     ({ properties }) =>
       properties.pairing_basis === "unique-exact-literal-channel",
   );
-  expect(pairingEdges).toHaveLength(4);
-  expect(
-    pairingEdges.some(
-      ({ properties }) => properties.channel === "rea:ambiguous",
-    ),
-  ).toBe(false);
+  expect(pairingEdges).toHaveLength(0);
   expect(graph.limitations.join(" ")).toMatch(/dynamic IPC|ambiguous/iu);
 };
 
 const fixtureDirectory = async (): Promise<string> => {
   const root = await createTestTempDirectory("rea-electron-boundaries-");
   await writeElectronBoundaryFixture(root);
+  return root;
+};
+
+const viewConstructorFixtureDirectory = async (): Promise<string> => {
+  const root = await createTestTempDirectory("rea-electron-view-constructors-");
+  await Promise.all([
+    writeFile(
+      join(root, "package.json"),
+      JSON.stringify({
+        name: "rea-electron-view-constructors",
+        main: "main.cjs",
+      }),
+    ),
+    writeFile(join(root, "browser-preload.js"), "module.exports = {};"),
+    writeFile(join(root, "view-preload.js"), "module.exports = {};"),
+    writeFile(join(root, "contents-preload.js"), "module.exports = {};"),
+    writeFile(
+      join(root, "main.cjs"),
+      String.raw`
+const { BrowserWindow, BaseWindow, BrowserView, WebContentsView } = require("electron");
+const window = new BrowserWindow({
+  webPreferences: { preload: "./browser-preload.js" },
+});
+window.webContents.ipc.handle("window-channel", () => "window");
+const base = new BaseWindow({
+  width: 800,
+  webPreferences: { preload: "./view-preload.js" },
+});
+base.webContents.ipc.handle("base-channel", () => "base");
+const view = new BrowserView({ webPreferences: { preload: "./view-preload.js" } });
+view.webContents.ipc.handle("view-channel", () => "view");
+const options = { webPreferences: { preload: "./contents-preload.js" } };
+const contents = new WebContentsView(options);
+contents.webContents.mainFrame.ipc.handle("contents-channel", () => "contents");
+`,
+    ),
+  ]);
   return root;
 };
 
@@ -640,7 +798,7 @@ const computedMemberFixtureDirectory = async (): Promise<string> => {
   await mkdir(join(root, "native"));
   await Promise.all([
     writeFile(
-      join(root, "main.js"),
+      join(root, "main.cjs"),
       String.raw`
 const member = "read";
 const selected = require("./native/addon.node")[member];

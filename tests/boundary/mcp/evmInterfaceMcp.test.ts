@@ -1,8 +1,8 @@
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import {
   advertisedMcpToolSchemas,
   assertRecordedMcpEvidence,
 } from "../../fixtures/advertisedMcpTool.js";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { createHash } from "node:crypto";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it, onTestFinished, vi } from "vitest";
@@ -14,13 +14,17 @@ import {
   AnalysisCapabilityUnavailableError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
-import { evmInterfaceSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { evmInterfaceSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { inspectSolidityMetadata } from "../../../src/evm/SolidityMetadata.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
+import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
+import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { registerEvmTools } from "../../../src/server/registerEvmTools.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
+import { mcpTest } from "../../support/mcp/mcpFixture.js";
+import { ownArtifactSession } from "../../support/mcp/artifactSession.js";
 import {
   createDeferred,
   createTestBinarySession,
@@ -45,76 +49,113 @@ const decodedMetadataFixture = () => {
   return value;
 };
 
-it("advertises exact valid schemas and records inline EVM interface evidence without a binary target", async () => {
-  const value = decodedMetadataFixture();
-  const inspect = vi.fn(() =>
-    Promise.resolve(ok(evmInterfaceExecution(value))),
-  );
-  const service = new EvmInterfaceService({
-    inspect,
-  });
-  const session = createTestBinarySession(() => {
-    throw new Error("deep provider must not start");
-  });
-  const server = createServer(
-    { kind: "session", session },
-    { evmInterface: service },
-  );
-  const client = new Client({ name: "evm-interface-contract", version: "1" });
-  onTestFinished(async () => {
-    await client.close();
-    await server.close();
-    await session.close();
-  });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
-  const schemas = await advertisedMcpToolSchemas(
-    client,
-    "inspect_evm_interface",
-  );
-  const { ajv, inputSchema } = schemas;
-  expect(
-    ajv.validate(inputSchema, { path: value.artifact.path, encoding: "hex" }),
-  ).toBe(true);
-  expect(
-    ajv.validate(inputSchema, {
-      path: value.artifact.path,
-      encoding: "hex",
-      approval: true,
-    }),
-  ).toBe(false);
-  expect(() => registerEvmTools(server, service, silentLogger)).toThrow(
-    /inspect_evm_interface.*already registered/,
-  );
-  expect(inspect).not.toHaveBeenCalled();
-  expect(
-    (await client.listTools()).tools.filter(
-      (tool) => tool.name === "inspect_evm_interface",
-    ),
-  ).toHaveLength(1);
-  const response = await client.callTool({
-    name: "inspect_evm_interface",
-    arguments: { path: value.artifact.path, encoding: "hex" },
-  });
-  assertRecordedMcpEvidence(
-    response,
-    "inspect_evm_interface",
-    schemas,
-    session,
-    value,
-    "inferred",
-  );
-  expect(
-    (
-      await client.callTool({
+mcpTest(
+  "preserves shared EVM detail guidance and defaults through full SDK discovery",
+  async ({ mcp }) => {
+    const inspect = vi.fn(async () => {
+      throw new Error("Discovery must not invoke the provider");
+    });
+    const server = new EvidenceMcpServer(
+      { name: "evm-detail", version: "1" },
+      {},
+      undefined,
+      createToolResultDelivery(undefined),
+    );
+    registerEvmTools(
+      server,
+      new EvmInterfaceService({ inspect }),
+      silentLogger,
+    );
+    const client = await mcp.connect(server, {
+      name: "evm-detail",
+      version: "1",
+    });
+    const { inputSchema } = await advertisedMcpToolSchemas(
+      client,
+      "inspect_evm_interface",
+    );
+    expect(inputSchema).toHaveProperty(["properties", "detail"], {
+      type: "string",
+      enum: ["complete", "summary"],
+      default: "complete",
+      description: expect.stringContaining(
+        "summary retains that complete Evidence",
+      ),
+    });
+    expect(inspect).not.toHaveBeenCalled();
+  },
+);
+
+mcpTest(
+  "advertises exact valid schemas and records inline EVM interface evidence without a binary target",
+  async ({ mcp, onTestFinished }) => {
+    const value = decodedMetadataFixture();
+    const inspect = vi.fn(() =>
+      Promise.resolve(ok(evmInterfaceExecution(value))),
+    );
+    const service = new EvmInterfaceService({
+      inspect,
+    });
+    const session = createTestBinarySession(() => {
+      throw new Error("deep provider must not start");
+    });
+    const server = createServer(
+      { kind: "session", session },
+      { evmInterface: service },
+    );
+    ownArtifactSession(session, onTestFinished);
+    const client = await mcp.connect(server, {
+      name: "evm-interface-contract",
+      version: "1",
+    });
+    const schemas = await advertisedMcpToolSchemas(
+      client,
+      "inspect_evm_interface",
+    );
+    const { ajv, inputSchema } = schemas;
+    expect(
+      ajv.validate(inputSchema, { path: value.artifact.path, encoding: "hex" }),
+    ).toBe(true);
+    expect(
+      ajv.validate(inputSchema, {
+        path: value.artifact.path,
+        encoding: "hex",
+        approval: true,
+      }),
+    ).toBe(false);
+    expect(() => registerEvmTools(server, service, silentLogger)).toThrow(
+      /inspect_evm_interface.*already registered/,
+    );
+    expect(inspect).not.toHaveBeenCalled();
+    expect(
+      (await client.listTools()).tools.filter(
+        (tool) => tool.name === "inspect_evm_interface",
+      ),
+    ).toHaveLength(1);
+    const response = await client.callTool(
+      {
         name: "inspect_evm_interface",
-        arguments: { path: "relative.hex", encoding: "hex" },
-      })
-    ).isError,
-  ).toBe(true);
-});
+        arguments: { path: value.artifact.path, encoding: "hex" },
+      },
+      { toolDefinition: schemas.toolDefinition },
+    );
+    assertRecordedMcpEvidence(
+      response,
+      "inspect_evm_interface",
+      session,
+      value,
+      "inferred",
+    );
+    expect(
+      (
+        await client.callTool({
+          name: "inspect_evm_interface",
+          arguments: { path: "relative.hex", encoding: "hex" },
+        })
+      ).isError,
+    ).toBe(true);
+  },
+);
 
 it("rejects an EVM provider response with a non-file subject before recording Evidence", async () => {
   const value = evmInterfaceFixture();
@@ -203,27 +244,29 @@ it.each(["unavailable", "incompatible-output"])(
   },
 );
 
-it("retains the injected EVM owner and retries failed cleanup on server shutdown", async () => {
-  const close = vi
-    .fn()
-    .mockRejectedValueOnce(new Error("retained EVM worker"))
-    .mockResolvedValue(undefined);
-  const service = new EvmInterfaceService({
-    close,
-    inspect: () => Promise.resolve(ok(evmInterfaceExecution())),
-  });
-  const session = createTestBinarySession(() => {
-    throw new Error("deep provider must not start");
-  });
-  const server = createServer(
-    { kind: "session", session },
-    { evmInterface: service },
-  );
-  const client = new Client({ name: "evm-cleanup-retry", version: "1" });
-  const [a, b] = InMemoryTransport.createLinkedPair();
-  try {
-    await server.connect(b);
-    await client.connect(a);
+mcpTest(
+  "retains the injected EVM owner and retries failed cleanup on server shutdown",
+  async ({ mcp, onTestFinished }) => {
+    const close = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("retained EVM worker"))
+      .mockResolvedValue(undefined);
+    const service = new EvmInterfaceService({
+      close,
+      inspect: () => Promise.resolve(ok(evmInterfaceExecution())),
+    });
+    const session = createTestBinarySession(() => {
+      throw new Error("deep provider must not start");
+    });
+    const server = createServer(
+      { kind: "session", session },
+      { evmInterface: service },
+    );
+    ownArtifactSession(session, onTestFinished);
+    const client = await mcp.connect(server, {
+      name: "evm-cleanup-retry",
+      version: "1",
+    });
     const response = await client.callTool({
       name: "inspect_evm_interface",
       arguments: { path: "/artifacts/source-owned.hex", encoding: "hex" },
@@ -232,12 +275,8 @@ it("retains the injected EVM owner and retries failed cleanup on server shutdown
     await expect(server.close()).rejects.toThrow("REA session cleanup failed");
     await server.close();
     expect(close).toHaveBeenCalledTimes(2);
-  } finally {
-    await client.close();
-    await server.close();
-    await session.close();
-  }
-});
+  },
+);
 
 it("settles the admitted EVM operation after SDK cancellation and accepts a subsequent request", async () => {
   const entered = createDeferred<void>();
@@ -276,7 +315,8 @@ it("settles the admitted EVM operation after SDK cancellation and accepts a subs
       () => "completed",
       (error: unknown) => error,
     );
-  await entered.promise;
+  onTestFinished(() => controller.abort());
+  await awaitAcknowledgement(entered.promise, cancellation, "EVM inspection");
   controller.abort(new Error("SDK EVM cancellation verification"));
   expect(await cancellation).toMatchObject({
     message: expect.stringContaining("SDK EVM cancellation verification"),
@@ -332,37 +372,37 @@ it("returns the exact inferred interface summary while preserving complete defau
   const input = { path: value.artifact.path, encoding: "hex" };
   let original;
   for (const detail of [undefined, "complete"] as const) {
-    const response = await harness.client.callTool({
-      name: "inspect_evm_interface",
-      arguments: { ...input, ...(detail ? { detail } : {}) },
-    });
+    const response = await harness.client.callTool(
+      {
+        name: "inspect_evm_interface",
+        arguments: { ...input, ...(detail ? { detail } : {}) },
+      },
+      { toolDefinition: definition },
+    );
     expect(response.isError).not.toBe(true);
-    expect(
-      ajv.validate(outputSchema, response.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
     const evidence = parseEvidence(response.structuredContent);
     expect(evidence.normalized_result).toEqual(value);
     expect(evidence.parameters).toEqual(input);
     original = evidence;
   }
   if (original === undefined) throw new Error("No complete control");
-  const response = await harness.client.callTool({
-    name: "inspect_evm_interface",
-    arguments: { ...input, detail: "summary" },
-  });
+  const response = await harness.client.callTool(
+    {
+      name: "inspect_evm_interface",
+      arguments: { ...input, detail: "summary" },
+    },
+    { toolDefinition: definition },
+  );
   expect(response.isError).not.toBe(true);
-  expect(
-    ajv.validate(outputSchema, response.structuredContent),
-    JSON.stringify(ajv.errors),
-  ).toBe(true);
   const derived = parseEvidence(response.structuredContent);
   const view = evmInterfaceSummaryViewResultSchema.parse(
     derived.normalized_result,
   );
   expect(derived.evidence_id).not.toBe(original.evidence_id);
   expect(derived.evidence_links).toEqual([original.evidence_id]);
-  expect(derived.confidence).toBe("derived");
+  // Retention and paging do not make inferred candidates more certain.
+  expect(original.confidence).toBe("inferred");
+  expect(derived.confidence).toBe("inferred");
   const { hex: _hex, ...bytecode } = value.bytecode;
   expect(view).toMatchObject({
     parent_operation: "inspect_evm_interface",
@@ -481,6 +521,7 @@ it.each(["valid", "wrong-subject", "no-subject"])(
         exhausted: true,
       });
       expect(derived.evidence_links).toEqual([source.evidence_id]);
+      expect(derived.confidence).toBe("inferred");
     } else
       expect(parseMcpToolError(response).error.code).toBe("invalid_request");
     expect(inspect).not.toHaveBeenCalled();
@@ -488,23 +529,25 @@ it.each(["valid", "wrong-subject", "no-subject"])(
   },
 );
 
-it("rejects summary before provider work when retention is unavailable and preserves complete delivery", async () => {
-  const value = evmInterfaceFixture();
-  const inspect = vi.fn(() =>
-    Promise.resolve(ok(evmInterfaceExecution(value))),
-  );
-  const session = createTestBinarySession(() => {
-    throw new Error("deep provider must not start");
-  });
-  const server = createServer(
-    { kind: "fixed", analysis: session },
-    { evmInterface: new EvmInterfaceService({ inspect }) },
-  );
-  const client = new Client({ name: "evm-fixed-delivery", version: "1" });
-  const [a, b] = InMemoryTransport.createLinkedPair();
-  try {
-    await server.connect(b);
-    await client.connect(a);
+mcpTest(
+  "rejects summary before provider work when retention is unavailable and preserves complete delivery",
+  async ({ mcp, onTestFinished }) => {
+    const value = evmInterfaceFixture();
+    const inspect = vi.fn(() =>
+      Promise.resolve(ok(evmInterfaceExecution(value))),
+    );
+    const session = createTestBinarySession(() => {
+      throw new Error("deep provider must not start");
+    });
+    const server = createServer(
+      { kind: "fixed", analysis: session },
+      { evmInterface: new EvmInterfaceService({ inspect }) },
+    );
+    ownArtifactSession(session, onTestFinished);
+    const client = await mcp.connect(server, {
+      name: "evm-fixed-delivery",
+      version: "1",
+    });
     const summary = await client.callTool({
       name: "inspect_evm_interface",
       arguments: {
@@ -525,9 +568,5 @@ it("rejects summary before provider work when retention is unavailable and prese
     expect(parseEvidence(complete.structuredContent).normalized_result).toEqual(
       value,
     );
-  } finally {
-    await client.close();
-    await server.close();
-    await session.close();
-  }
-});
+  },
+);

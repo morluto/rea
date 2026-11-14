@@ -5,48 +5,67 @@ import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   withArtifactRegularFile,
   ArtifactFileCleanupFailure,
+  artifactFileCompletion,
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
   assertArtifactReadActive,
 } from "../artifacts/ArtifactFileOperation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
-import { randomUUID } from "node:crypto";
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { createConnection } from "node:net";
-import { lstat, opendir } from "node:fs/promises";
-import { join } from "node:path";
-import { z } from "zod";
-
+import { isUtf8 } from "node:buffer";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
+  reattributedResourceConstraint,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
+import {
+  randomUUID,
+  createHmac,
+  randomBytes,
+  timingSafeEqual,
+} from "node:crypto";
+import { createConnection } from "node:net";
+import { lstat, opendir } from "node:fs/promises";
+import { join } from "node:path";
+import { z } from "zod";
+
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
+import type { JsonValue } from "../domain/jsonValue.js";
+import {
+  cutterSessionSchema,
+  type CutterBridgeDiscovery,
+  type CutterBridgeSession,
+} from "../domain/cutterDiscovery.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { cutterBridgeMac } from "./cutterBridgeMac.js";
+import { CutterBridgeResponseFrames } from "./cutterAuthenticatedResponse.js";
 import { requireWindowsNativeAuthority } from "../windows/WindowsNativeLoader.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
+import { appendCallerPath } from "../filesystem/callerPath.js";
+import {
+  BRIDGE_MAX_REQUEST_BYTES_SETTING,
+  bridgeRequestLimitMismatchError,
+  bridgeRequestOversizeError,
+  parseBridgeMaxRequestBytes,
+  type BridgeMaxRequestBytes,
+} from "../config/bridgeMaxRequestBytes.js";
+import { DEFAULT_BRIDGE_MAX_REQUEST_BYTES } from "../domain/analysisResourceLimits.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
+import { currentAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
+import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 
 const descriptorSchema = z.object({
-  session_id: z.string().uuid(),
-  pid: z.int().positive(),
+  ...cutterSessionSchema.shape,
   host: z.literal("127.0.0.1"),
   port: z.int().min(1).max(65535),
   token: z.string().min(20),
-  document_generation: z.int().nonnegative(),
-  current_file: z.string().nullable(),
-  cutter_version: z.string().nullable(),
-  identity_status: z.literal("partial"),
+  max_request_bytes: z.int().positive().optional(),
 });
-
-export const CUTTER_PROVIDER_IDENTITY = {
-  id: "cutter.python-plugin",
-  name: "Cutter Python plugin",
-  version: null,
-} as const;
 
 const responseSchema = z.object({
   ok: z.boolean(),
@@ -81,114 +100,86 @@ const acknowledgementSchema = z.object({
   acknowledged: z.boolean(),
 });
 const MAX_DESCRIPTOR_BYTES = 64 * 1024;
-const MAX_FRAME_BYTES = 16 * 1024 * 1024;
-const FRAME_PAGE_BYTES = 64 * 1024;
 const REQUEST_TIMEOUT_MS = 25_000;
-// Bound admitted descriptor input bytes and concurrent file/socket handles.
-const MAX_DESCRIPTOR_CANDIDATES = MAX_FRAME_BYTES / MAX_DESCRIPTOR_BYTES;
+// Discovery stays at the historical 16 MiB descriptor budget. It does not
+// follow REA_BRIDGE_MAX_REQUEST_BYTES.
+const DISCOVERY_CANDIDATE_BUDGET_BYTES = 16 * 1024 * 1024;
+const MAX_DESCRIPTOR_CANDIDATES =
+  DISCOVERY_CANDIDATE_BUDGET_BYTES / MAX_DESCRIPTOR_BYTES;
 const DISCOVERY_CONCURRENCY = 8;
 type AuthenticatedRequestBytes = string & {
   readonly __authenticatedRequestBytes: unique symbol;
 };
 
 const serializeRequest = (
+  limit: BridgeMaxRequestBytes,
   descriptor: z.infer<typeof descriptorSchema>,
   request: Readonly<Record<string, unknown>>,
 ): AuthenticatedRequestBytes => {
-  const requestBytes = JSON.stringify({
+  const requestValue = {
     ...request,
     session_id: descriptor.session_id,
-  });
+  } as JsonValue;
+  // Worst-case JSON expansion (\u00XX) can exceed Node's string ceiling
+  // before an after-the-fact byte check. Measure within the budget first.
+  const measured = jsonValueByteLength(requestValue, limit.maximumBytes);
+  if (measured > limit.maximumBytes)
+    throw bridgeRequestOversizeError(
+      "cutter_command",
+      limit,
+      measured,
+      "Cutter",
+    );
+  const requestBytes = JSON.stringify(requestValue);
   let frameBytes =
     Buffer.byteLength(JSON.stringify({ request: "", proof: "0".repeat(64) })) +
     Buffer.byteLength(requestBytes);
   for (const character of requestBytes)
     if (character === '"' || character === "\\") frameBytes += 1;
-  if (frameBytes > MAX_FRAME_BYTES)
-    throw new AnalysisResourceConstraintError(
+  if (frameBytes > limit.maximumBytes)
+    throw bridgeRequestOversizeError(
       "cutter_command",
-      "transport",
-      `Cutter request exceeds its authenticated frame limit of ${String(MAX_FRAME_BYTES)} bytes (16 MiB); no command was sent. This release has no runtime override.`,
-      { frame_bytes: frameBytes, max_frame_bytes: MAX_FRAME_BYTES },
-      {
-        remediationAction: `Shorten the Cutter command. This ${String(MAX_FRAME_BYTES)} byte frame limit has no runtime override.`,
-      },
+      limit,
+      frameBytes,
+      "Cutter",
     );
   return requestBytes as AuthenticatedRequestBytes;
 };
 
-class CutterBridgeResponseFrames {
-  #parts: Buffer[] = [];
-  #page = Buffer.allocUnsafe(FRAME_PAGE_BYTES);
-  #pageLength = 0;
-  #contentBytes = 0;
-  #framesRead = 0;
+const serverChallengeSchema = z.object({
+  session_id: z.string().uuid(),
+  nonce: z.string().regex(/^[0-9a-f]{64}$/),
+  proof: z.string().regex(/^[0-9a-f]{64}$/),
+});
 
-  push(chunk: Buffer, onFrame: (line: Buffer) => boolean): void {
-    let offset = 0;
-    while (offset < chunk.length) {
-      const delimiter = chunk.indexOf(0x0a, offset);
-      const end = delimiter < 0 ? chunk.length : delimiter;
-      const segment = chunk.subarray(offset, end);
-      if (
-        this.#contentBytes + segment.length + (delimiter < 0 ? 1 : 0) >
-        MAX_FRAME_BYTES
-      )
-        throw new Error(
-          `Cutter bridge response exceeded its framed transport limit of ${String(MAX_FRAME_BYTES)} bytes (16 MiB). This release has no runtime override`,
-        );
-      this.#append(segment);
-      if (delimiter < 0) return;
-      if (++this.#contentBytes > MAX_FRAME_BYTES)
-        throw new Error(
-          `Cutter bridge response exceeded its framed transport limit of ${String(MAX_FRAME_BYTES)} bytes (16 MiB). This release has no runtime override`,
-        );
-      if (this.#pageLength > 0)
-        this.#parts.push(this.#page.subarray(0, this.#pageLength));
-      const line = Buffer.concat(this.#parts, this.#contentBytes - 1);
-      this.#reset();
-      if (++this.#framesRead > 2)
-        throw new Error("Cutter bridge sent more than two protocol frames");
-      offset = delimiter + 1;
-      if (!onFrame(line)) return;
-    }
-  }
-
-  #append(segment: Buffer): void {
-    let copied = 0;
-    while (copied < segment.length) {
-      const length = Math.min(
-        segment.length - copied,
-        FRAME_PAGE_BYTES - this.#pageLength,
-      );
-      segment.copy(this.#page, this.#pageLength, copied, copied + length);
-      this.#pageLength += length;
-      this.#contentBytes += length;
-      copied += length;
-      if (this.#pageLength === FRAME_PAGE_BYTES) {
-        this.#parts.push(this.#page);
-        this.#page = Buffer.allocUnsafe(FRAME_PAGE_BYTES);
-        this.#pageLength = 0;
-      }
-    }
-  }
-
-  #reset(): void {
-    this.#parts = [];
-    this.#page = Buffer.allocUnsafe(FRAME_PAGE_BYTES);
-    this.#pageLength = 0;
-    this.#contentBytes = 0;
-  }
-}
+/** Nonce from a hello whose proof shows this descriptor's bridge is the peer. */
+const authenticatedServerNonce = (
+  descriptor: { readonly session_id: string; readonly token: string },
+  clientNonce: string,
+  value: unknown,
+): string => {
+  const challenge = serverChallengeSchema.parse(value);
+  if (challenge.session_id !== descriptor.session_id)
+    throw new Error("unexpected peer session");
+  const expected = createHmac("sha256", descriptor.token)
+    .update(
+      `rea-cutter-server-v2:${descriptor.session_id}:${clientNonce}:${challenge.nonce}`,
+    )
+    .digest();
+  const presented = Buffer.from(challenge.proof, "hex");
+  if (
+    expected.length !== presented.length ||
+    !timingSafeEqual(expected, presented)
+  )
+    throw new Error("peer proof failed");
+  return challenge.nonce;
+};
 
 const assertBridgeActive = (
   signal: AbortSignal | undefined,
   operation: "cutter_command" | "list_cutter_sessions",
 ): void => {
-  if (signal?.aborted)
-    throw new AnalysisCancelledError(operation, {
-      cause: signal.reason,
-    });
+  if (signal?.aborted) throw cancelledBy(operation, signal);
 };
 
 const mapDiscovery = async <Input, Output>(
@@ -229,7 +220,7 @@ const mapDiscovery = async <Input, Output>(
 export interface CutterDiscoveryOptions {
   readonly signal?: AbortSignal;
 }
-export type CutterBridgeExecutionState =
+type CutterBridgeExecutionState =
   | "not_started"
   | "complete"
   | "failed"
@@ -253,42 +244,28 @@ class CutterBridgeRequestFailure extends Error {
     message: string,
     readonly requestSent: boolean,
     readonly cancellation?: { readonly reason: unknown },
+    readonly limit?: AnalysisResourceConstraintError,
   ) {
     super(message);
   }
 }
 
-export interface WindowsCutterDescriptorReader {
+interface WindowsCutterDescriptorReader {
   verifyDirectory(directory: string): boolean;
   readDescriptor(directory: string, name: string, maxBytes: number): Buffer;
 }
 interface CutterBridgeClientOptions {
   readonly platform?: NodeJS.Platform;
   readonly windowsPrivateReader?: WindowsCutterDescriptorReader;
-}
-
-export type CutterBridgeSession = Omit<
-  z.infer<typeof descriptorSchema>,
-  "token" | "host" | "port"
->;
-export interface CutterBridgeDiscovery {
-  readonly sessions: readonly CutterBridgeSession[];
-  readonly bridge_directory: string;
-  readonly discovery_status:
-    | "sessions_found"
-    | "no_live_bridge_found"
-    | "bridge_directory_unavailable"
-    | "bridge_directory_insecure"
-    | "bridge_directory_capacity_exceeded";
-  readonly bridge_directory_security:
-    | "private_verified"
-    | "not_private"
-    | "unverified_platform_acl"
-    | "not_checked";
+  /** Accepted runtime overrides. The operation snapshot wins when one is bound. */
+  readonly read?: AnalysisSettingsReader;
 }
 
 /** Discovers and communicates with REA Python bridge plugins in live Cutter processes. */
 export class CutterBridgeClient {
+  readonly #launchRequestBytes: BridgeMaxRequestBytes | undefined;
+  readonly #launchRequestError: ConfigurationError | undefined;
+  readonly #read: AnalysisSettingsReader | undefined;
   readonly #directory: string;
   readonly #descriptorResources = new ArtifactResourceScope();
   readonly #platform: NodeJS.Platform;
@@ -299,6 +276,16 @@ export class CutterBridgeClient {
     environment: Readonly<NodeJS.ProcessEnv> = process.env,
     options: CutterBridgeClientOptions = {},
   ) {
+    const launchRequest = parseBridgeMaxRequestBytes(
+      environment[BRIDGE_MAX_REQUEST_BYTES_SETTING],
+    );
+    this.#launchRequestBytes = launchRequest.ok
+      ? launchRequest.value
+      : undefined;
+    this.#launchRequestError = launchRequest.ok
+      ? undefined
+      : launchRequest.error;
+    this.#read = options.read;
     const configured = environment.REA_CUTTER_BRIDGE_DIR;
     const localAppData = environment.LOCALAPPDATA;
     this.#platform = options.platform ?? process.platform;
@@ -334,6 +321,23 @@ export class CutterBridgeClient {
     );
   }
 
+  /** Ceiling for this call. A bound operation keeps the value it accepted. */
+  #requestLimit(): BridgeMaxRequestBytes {
+    const snapshot = currentAnalysisOperationSnapshot();
+    const override =
+      snapshot === undefined
+        ? this.#read?.().overrides["bridge.max_request_bytes"]
+        : snapshot.overrides["bridge.max_request_bytes"];
+    if (override !== undefined)
+      return { maximumBytes: override, source: "runtime" };
+    if (this.#launchRequestBytes === undefined)
+      throw (
+        this.#launchRequestError ??
+        new ConfigurationError("Invalid REA environment configuration")
+      );
+    return this.#launchRequestBytes;
+  }
+
   async retryDescriptorCleanup(): Promise<void> {
     try {
       await this.#descriptorResources.retryCleanup();
@@ -354,6 +358,9 @@ export class CutterBridgeClient {
     options: CutterDiscoveryOptions = {},
   ): Promise<CutterBridgeDiscovery> {
     const { signal } = options;
+    assertBridgeActive(signal, "list_cutter_sessions");
+    this.#requestLimit();
+    const mismatches: number[] = [];
     const loaded = await this.#readDescriptors("list_cutter_sessions", signal);
     if (loaded.error !== undefined)
       return {
@@ -366,11 +373,21 @@ export class CutterBridgeClient {
       loaded.descriptors,
       async (descriptor) => {
         assertBridgeActive(signal, "list_cutter_sessions");
+        const advertised =
+          descriptor.max_request_bytes ?? DEFAULT_BRIDGE_MAX_REQUEST_BYTES;
+        if (advertised !== this.#requestLimit().maximumBytes) {
+          // A crashed process can leave the previous ceiling on disk. Count
+          // the mismatch only after the hello proves a live authenticated
+          // bridge. The probe does not send a status request.
+          if (await this.#liveAuthenticatedBridge(descriptor, signal))
+            mismatches.push(advertised);
+          return undefined;
+        }
         try {
           const status = responseSchema.safeParse(
             await this.#request(
               descriptor,
-              serializeRequest(descriptor, {
+              serializeRequest(this.#requestLimit(), descriptor, {
                 kind: "status",
                 session_id: descriptor.session_id,
               }),
@@ -389,6 +406,8 @@ export class CutterBridgeClient {
             document_generation:
               status.data.document_generation ?? descriptor.document_generation,
             current_file:
+              // Null is an observed unknown path. Only a missing field may
+              // fall back to the descriptor, and never beside a newer generation.
               status.data.current_file === undefined
                 ? descriptor.current_file
                 : status.data.current_file,
@@ -397,13 +416,19 @@ export class CutterBridgeClient {
             identity_status: "partial" as const,
           };
         } catch (cause) {
-          if (
-            cause instanceof CutterBridgeRequestFailure &&
-            cause.cancellation !== undefined
-          )
-            throw new AnalysisCancelledError("list_cutter_sessions", {
-              cause: cause.cancellation.reason,
-            });
+          if (cause instanceof AnalysisResourceConstraintError) throw cause;
+          if (cause instanceof CutterBridgeRequestFailure) {
+            if (cause.cancellation !== undefined)
+              throw cancelledBy(
+                "list_cutter_sessions",
+                carriedReason(cause.cancellation.reason),
+              );
+            if (cause.limit !== undefined)
+              throw reattributedResourceConstraint(
+                "list_cutter_sessions",
+                cause.limit,
+              );
+          }
           return undefined;
         }
       },
@@ -414,6 +439,14 @@ export class CutterBridgeClient {
     const sessions = descriptors.filter(
       (value): value is CutterBridgeSession => value !== undefined,
     );
+    if (mismatches.length > 0)
+      throw bridgeRequestLimitMismatchError(
+        "list_cutter_sessions",
+        this.#requestLimit(),
+        mismatches[0] ?? DEFAULT_BRIDGE_MAX_REQUEST_BYTES,
+        "Cutter",
+        "No status request was sent to the mismatched session.",
+      );
     return {
       sessions,
       bridge_directory: this.#directory,
@@ -432,16 +465,30 @@ export class CutterBridgeClient {
   }): Promise<CutterBridgeExecution> {
     try {
       assertBridgeActive(input.signal, "cutter_command");
+      this.#requestLimit();
       const descriptor = await this.#find(input.sessionId, input.signal);
       assertBridgeActive(input.signal, "cutter_command");
+      const advertised =
+        descriptor.max_request_bytes ?? DEFAULT_BRIDGE_MAX_REQUEST_BYTES;
+      if (advertised !== this.#requestLimit().maximumBytes)
+        throw bridgeRequestLimitMismatchError(
+          "cutter_command",
+          this.#requestLimit(),
+          advertised,
+          "Cutter",
+        );
       const requestId = randomUUID();
-      const commandRequest = serializeRequest(descriptor, {
-        kind: "command",
-        request_id: requestId,
-        expected_generation: input.expectedGeneration,
-        command: input.command,
-        json: input.json,
-      });
+      const commandRequest = serializeRequest(
+        this.#requestLimit(),
+        descriptor,
+        {
+          kind: "command",
+          request_id: requestId,
+          expected_generation: input.expectedGeneration,
+          command: input.command,
+          json: input.json,
+        },
+      );
       await this.#recoverCompletedCommands(descriptor, input.signal);
       await this.#retryPendingAcknowledgements(descriptor);
       assertBridgeActive(input.signal, "cutter_command");
@@ -472,7 +519,9 @@ export class CutterBridgeClient {
           executionState: "unknown",
           error: "transport-response-missing",
           message: `${cause.message}; the command may have completed; do not retry automatically`,
-          outputTruncated: false,
+          // The carried limit is the framed response ceiling. The command was
+          // sent, and the discarded response is omitted output.
+          outputTruncated: cause.limit !== undefined,
           ...(completionToken === undefined ? {} : { completionToken }),
         };
       }
@@ -554,9 +603,10 @@ export class CutterBridgeClient {
       // A transport failure escaping here precedes command admission.
       if (!(cause instanceof CutterBridgeRequestFailure)) throw cause;
       if (cause.cancellation !== undefined)
-        throw new AnalysisCancelledError("cutter_command", {
-          cause: cause.cancellation.reason,
-        });
+        throw cancelledBy(
+          "cutter_command",
+          carriedReason(cause.cancellation.reason),
+        );
       throw new AnalysisCapabilityUnavailableError(
         "cutter",
         "cutter_command",
@@ -617,7 +667,7 @@ export class CutterBridgeClient {
   ): Promise<z.infer<typeof responseSchema>> {
     const raw = await this.#request(
       descriptor,
-      serializeRequest(descriptor, {
+      serializeRequest(this.#requestLimit(), descriptor, {
         kind: "status",
         session_id: descriptor.session_id,
       }),
@@ -666,7 +716,7 @@ export class CutterBridgeClient {
     try {
       const raw = await this.#request(
         descriptor,
-        serializeRequest(descriptor, {
+        serializeRequest(this.#requestLimit(), descriptor, {
           kind: "ack",
           request_id: requestId,
         }),
@@ -743,13 +793,6 @@ export class CutterBridgeClient {
         },
       ]);
     return descriptor;
-  }
-
-  async listDescriptors(): Promise<
-    readonly z.infer<typeof descriptorSchema>[]
-  > {
-    const loaded = await this.#readDescriptors("list_cutter_sessions");
-    return loaded.descriptors;
   }
 
   async #readDescriptors(
@@ -879,11 +922,10 @@ export class CutterBridgeClient {
             );
           } else {
             const boundedBytes = await withArtifactRegularFile(
-              join(this.#directory, entry),
+              appendCallerPath(this.#directory, entry, this.#platform),
               this.#descriptorResources,
               signal,
-              async (file) => {
-                const info = await file.stat();
+              async ({ handle: file, initial: info }) => {
                 if (
                   info.size > MAX_DESCRIPTOR_BYTES ||
                   info.uid !== currentUid ||
@@ -903,7 +945,8 @@ export class CutterBridgeClient {
             bytes = boundedBytes;
           }
           assertArtifactReadActive(signal);
-          if (bytes.byteLength > MAX_DESCRIPTOR_BYTES) return undefined;
+          if (bytes.byteLength > MAX_DESCRIPTOR_BYTES || !isUtf8(bytes))
+            return undefined;
           const parsed = descriptorSchema.safeParse(
             JSON.parse(bytes.toString("utf8")) as unknown,
           );
@@ -934,6 +977,85 @@ export class CutterBridgeClient {
     };
   }
 
+  /**
+   * Hello only. A matching server proof means this descriptor is a live
+   * authenticated bridge. The socket closes before any status or command.
+   */
+  #liveAuthenticatedBridge(
+    descriptor: z.infer<typeof descriptorSchema>,
+    signal: AbortSignal | undefined,
+  ): Promise<boolean> {
+    assertBridgeActive(signal, "list_cutter_sessions");
+    return new Promise((resolve, reject) => {
+      const connection = createConnection({
+        host: descriptor.host,
+        port: descriptor.port,
+      });
+      const frames = new CutterBridgeResponseFrames(this.#requestLimit());
+      let settled = false;
+      const settle = (
+        outcome:
+          | { readonly ok: true; readonly live: boolean }
+          | { readonly ok: false; readonly cause: unknown },
+      ): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        connection.destroy();
+        if (outcome.ok) resolve(outcome.live);
+        else reject(outcome.cause);
+      };
+      const timer = setTimeout(
+        () => settle({ ok: true, live: false }),
+        REQUEST_TIMEOUT_MS,
+      );
+      const onAbort = (): void => {
+        settle({
+          ok: false,
+          cause: cancelledBy(
+            "list_cutter_sessions",
+            carriedReason(signal?.reason),
+          ),
+        });
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+      if (signal?.aborted) {
+        onAbort();
+        return;
+      }
+      const clientNonce = randomBytes(32).toString("hex");
+      connection.once("connect", () => {
+        if (settled) return;
+        connection.write(
+          `${JSON.stringify({ kind: "rea-auth-v2", nonce: clientNonce })}\n`,
+        );
+      });
+      connection.on("data", (chunk: Buffer) => {
+        if (settled) return;
+        try {
+          frames.push(chunk, (frame) => {
+            if (frame.kind !== "challenge") {
+              settle({ ok: true, live: false });
+              return false;
+            }
+            try {
+              authenticatedServerNonce(descriptor, clientNonce, frame.value);
+              settle({ ok: true, live: true });
+            } catch {
+              settle({ ok: true, live: false });
+            }
+            return false;
+          });
+        } catch {
+          settle({ ok: true, live: false });
+        }
+      });
+      connection.once("error", () => settle({ ok: true, live: false }));
+      connection.once("close", () => settle({ ok: true, live: false }));
+    });
+  }
+
   #request(
     descriptor: z.infer<typeof descriptorSchema>,
     requestBytes: AuthenticatedRequestBytes,
@@ -945,7 +1067,7 @@ export class CutterBridgeClient {
         host: descriptor.host,
         port: descriptor.port,
       });
-      const frames = new CutterBridgeResponseFrames();
+      const frames = new CutterBridgeResponseFrames(this.#requestLimit());
       let completion: (() => void) | undefined;
       let requestSent = false;
       let authenticated = false;
@@ -963,10 +1085,16 @@ export class CutterBridgeClient {
       const rejectRequest = (
         message: string,
         cancellation?: { readonly reason: unknown },
+        limit?: AnalysisResourceConstraintError,
       ): void =>
         finish(() =>
           reject(
-            new CutterBridgeRequestFailure(message, requestSent, cancellation),
+            new CutterBridgeRequestFailure(
+              message,
+              requestSent,
+              cancellation,
+              limit,
+            ),
           ),
         );
       const timer = setTimeout(() => {
@@ -990,63 +1118,47 @@ export class CutterBridgeClient {
       connection.on("data", (chunk: Buffer) => {
         if (completion !== undefined) return;
         try {
-          frames.push(chunk, (line) => {
-            const frame: unknown = JSON.parse(line.toString("utf8"));
-            if (!authenticated) {
-              const challenge = z
-                .object({
-                  session_id: z.string().uuid(),
-                  nonce: z.string().regex(/^[0-9a-f]{64}$/),
-                  proof: z.string().regex(/^[0-9a-f]{64}$/),
-                })
-                .parse(frame);
-              if (challenge.session_id !== descriptor.session_id)
-                throw new Error("unexpected peer session");
-              serverNonce = challenge.nonce;
-              connectionOrdinal = challenge.nonce.slice(0, 16);
-              const expected = createHmac("sha256", descriptor.token)
-                .update(
-                  `rea-cutter-server-v2:${descriptor.session_id}:${clientNonce}:${challenge.nonce}`,
-                )
-                .digest();
-              if (
-                !timingSafeEqual(expected, Buffer.from(challenge.proof, "hex"))
-              )
-                throw new Error("peer proof failed");
+          frames.push(chunk, (frame) => {
+            if (frame.kind === "challenge") {
+              if (authenticated) throw new Error("unexpected challenge");
+              serverNonce = authenticatedServerNonce(
+                descriptor,
+                clientNonce,
+                frame.value,
+              );
+              connectionOrdinal = serverNonce.slice(0, 16);
               onAuthenticated?.(connectionOrdinal);
-              const proof = createHmac("sha256", descriptor.token)
-                .update(
-                  `rea-cutter-client-v2:${descriptor.session_id}:${clientNonce}:${challenge.nonce}:${requestBytes}`,
-                )
-                .digest("hex");
+              const proof = cutterBridgeMac(descriptor.token, [
+                `rea-cutter-client-v2:${descriptor.session_id}:${clientNonce}:${serverNonce}:`,
+                requestBytes,
+              ]).toString("hex");
               authenticated = true;
               requestSent = true;
               connection.write(
                 `${JSON.stringify({ request: requestBytes, proof })}\n`,
               );
               return true;
-            } else {
-              const envelope = z
-                .object({
-                  response: z.string(),
-                  proof: z.string().regex(/^[0-9a-f]{64}$/),
-                })
-                .parse(frame);
-              const expected = createHmac("sha256", descriptor.token)
-                .update(
-                  `rea-cutter-response-v2:${descriptor.session_id}:${clientNonce}:${serverNonce}:${envelope.response}`,
-                )
-                .digest();
-              if (
-                !timingSafeEqual(expected, Buffer.from(envelope.proof, "hex"))
-              )
-                throw new Error("response proof failed");
-              const response: unknown = JSON.parse(envelope.response);
-              finish(() => resolve(response));
-              return false;
             }
+            // One decoded payload. The wire pages and outer JSON string are gone.
+            const expected = cutterBridgeMac(descriptor.token, [
+              `rea-cutter-response-v2:${descriptor.session_id}:${clientNonce}:${serverNonce}:`,
+              frame.response,
+            ]);
+            if (!timingSafeEqual(expected, Buffer.from(frame.proof, "hex")))
+              throw new Error("response proof failed");
+            const response: unknown = JSON.parse(frame.response);
+            finish(() => resolve(response));
+            return false;
           });
-        } catch {
+        } catch (cause) {
+          if (cause instanceof AnalysisResourceConstraintError) {
+            // The command is already on the UI thread. Keep the unknown
+            // execution so cleanup waits for its receipt, and carry the
+            // ceiling diagnostic in that result.
+            if (requestSent) rejectRequest(cause.reason, undefined, cause);
+            else finish(() => reject(cause));
+            return;
+          }
           rejectRequest("Cutter bridge peer authentication or response failed");
         }
       });
@@ -1072,14 +1184,18 @@ const resolveBridgeDirectory = (
   if (configured !== undefined && configured !== "") {
     if (configured === "~") return homeDirectory;
     if (configured.startsWith("~/"))
-      return join(homeDirectory, configured.slice(2));
+      return platform === "win32"
+        ? join(homeDirectory, configured.slice(2))
+        : appendCallerPath(homeDirectory, configured.slice(2), platform);
     if (platform === "win32" && configured.startsWith("~\\"))
       return join(homeDirectory, configured.slice(2));
     return configured;
   }
   return platform === "win32" && localAppData
     ? join(localAppData, "REA", "CutterBridge")
-    : join(homeDirectory, ".cache", "rea", "cutter-bridge");
+    : platform === "win32"
+      ? join(homeDirectory, ".cache", "rea", "cutter-bridge")
+      : appendCallerPath(homeDirectory, ".cache/rea/cutter-bridge", platform);
 };
 
 class CutterDiscoveryFailure extends Error {
@@ -1121,15 +1237,12 @@ const discoveryFailure = (
       cause instanceof ArtifactFileCleanupFailure
         ? cause.fileCleanupFailure.outcome
         : undefined;
+    const cancellation = artifactFileCompletion(cause)?.cancellation;
     const primary =
       outcome?.kind === "failed"
         ? discoveryFailure(outcome.cause, operation)
-        : outcome?.kind === "completed" &&
-            cause instanceof ArtifactFileCleanupFailure &&
-            cause.fileCleanupFailure.completionCancellation !== undefined
-          ? new AnalysisCancelledError(operation, {
-              cause: cause.fileCleanupFailure.completionCancellation.reason,
-            })
+        : cancellation !== undefined
+          ? cancelledBy(operation, carriedReason(cancellation.reason))
           : undefined;
     if (primary === undefined && outcome?.kind !== "failed") return cleanup;
     const original =
@@ -1143,8 +1256,9 @@ const discoveryFailure = (
     ).bindCleanupDependencies([cleanup]);
   }
   if (cause.reason === "cancelled")
-    return new AnalysisCancelledError(operation, {
-      cause: artifactFileCancellationCause(cause),
-    });
+    return cancelledBy(
+      operation,
+      carriedReason(artifactFileCancellationCause(cause)),
+    );
   return cause;
 };

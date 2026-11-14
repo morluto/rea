@@ -65,6 +65,16 @@ export const peResourcesSchema = z.strictObject({
     .nullable(),
   directories: z.array(
     z.strictObject({
+      path: z
+        .array(identity)
+        .max(2)
+        .describe(
+          "Type/name identities leading to this directory; [] for the root",
+        ),
+      entry_locations: z
+        .array(range)
+        .max(2)
+        .describe("Incoming entry file ranges corresponding to path"),
       location: range,
       characteristics: uint,
       timestamp: uint,

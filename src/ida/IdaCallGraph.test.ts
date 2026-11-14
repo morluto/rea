@@ -8,6 +8,7 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import {
   isX86OnlyTarget,
   readCallGraphCallees,
+  UNCLASSIFIED_CALL_SITE_LIMITATION,
   UNRECOGNIZED_CALLEE_LIMITATION,
 } from "./IdaCallGraph.js";
 
@@ -174,8 +175,8 @@ describe("reading root callees from the processor-neutral call graph", () => {
       ["lookup_funcs", { queries: ["0x20", "0x100", "0x300"] }],
     ]);
     expect(result.limitations).toContain(UNRECOGNIZED_CALLEE_LIMITATION);
-    expect(result.limitations).toContain(
-      "IDA observed callee address 0x300 but could not resolve its name: Not found; the address is retained.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(/0x300.*could not resolve.*Not found.*retained/iu),
     );
   });
 
@@ -190,8 +191,10 @@ describe("reading root callees from the processor-neutral call graph", () => {
       result.callees,
       "the graph address remains a real observation",
     ).toEqual([{ address: "0x20", name: "0x20" }]);
-    expect(result.limitations).toContain(
-      "IDA observed callee addresses but the name lookup failed (lookup reply failed); the addresses are retained.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(
+        /lookup failed.*lookup reply failed.*addresses are retained/iu,
+      ),
     );
   });
 
@@ -225,9 +228,17 @@ describe("call graph coverage and failure handling", () => {
     expect(
       result.limitations,
       "each truncation signal counts on its own",
-    ).toContain(
-      "Upstream callgraph was truncated; additional callees remain unknown.",
+    ).toContainEqual(
+      expect.stringMatching(
+        /callgraph was truncated.*callees remain unknown/iu,
+      ),
     );
+    expect(result.coverage).toMatchObject({
+      status: "partial",
+      limitations: [
+        "Upstream callgraph was truncated; additional callees remain unknown.",
+      ],
+    });
   });
 
   it("keeps an explicitly uncapped root below its edge cap untruncated", async () => {
@@ -240,6 +251,19 @@ describe("call graph coverage and failure handling", () => {
       result.limitations,
       "an uncapped, unsaturated root has no truncation evidence",
     ).toEqual([UNRECOGNIZED_CALLEE_LIMITATION]);
+    expect(
+      result.coverage,
+      "function edges without call sites cannot establish a computed call's targets",
+    ).toEqual({
+      status: "complete",
+      discovery: {
+        callees: {
+          status: "unknown",
+          reason: UNCLASSIFIED_CALL_SITE_LIMITATION,
+        },
+      },
+      diagnostics: [UNRECOGNIZED_CALLEE_LIMITATION],
+    });
   });
 
   it("reports a graph that saturates its per-function cap with root edges", async () => {
@@ -251,8 +275,10 @@ describe("call graph coverage and failure handling", () => {
     expect(
       result.limitations,
       "reaching the cap is uncertain, so it is reported as possible truncation",
-    ).toContain(
-      "Upstream callgraph may be truncated; additional callees may remain unknown.",
+    ).toContainEqual(
+      expect.stringMatching(
+        /callgraph may be truncated.*callees may remain unknown/iu,
+      ),
     );
   });
 

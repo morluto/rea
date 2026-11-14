@@ -1,15 +1,25 @@
 import { createHash } from "node:crypto";
-import { chmod, mkdir, readdir, truncate, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readdir,
+  readFile,
+  truncate,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 
 import { build } from "plist";
 import { expect, it } from "vitest";
 
 import { ArtifactProvider } from "../../../src/artifacts/ArtifactProvider.js";
+import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
+import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
 import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
 import { inspectBundleKeyedArchive } from "../../../src/artifacts/apple/KeyedArchiveReader.js";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import {
+  AnalysisAccessDeniedError,
   AnalysisInputError,
   AnalysisUnsupportedTargetError,
 } from "../../../src/domain/analysisErrorCore.js";
@@ -236,11 +246,12 @@ it.each([
   async (platform, action) => {
     const root = await createTestTempDirectory("rea-keyed-kind-");
     const path = join(root, "Defaults.plist");
-    await writeFile(path, Buffer.from(build({ plain: true })));
+    const bytes = Buffer.from(build({ plain: true }));
+    await writeFile(path, bytes);
     const result = await new ArtifactProvider(process.env, platform)
       .createClient({
         path,
-        sha256: "0".repeat(64),
+        sha256: createHash("sha256").update(bytes).digest("hex"),
         kind: "artifact",
         format: "plist",
       })
@@ -318,6 +329,45 @@ it.skipIf(process.platform === "darwin" || process.platform === "win32")(
   },
 );
 
+it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "reports a read-denied selected archive as host access denial",
+  async () => {
+    const root = await bundle();
+    const selected = join(root, "Contents", "Resources", "Model.plist");
+    await chmod(selected, 0);
+    try {
+      await expect(readFile(selected)).rejects.toMatchObject({
+        code: "EACCES",
+      });
+      const rejected = await inspect(root, {
+        path: "Contents/Resources/Model.plist",
+      }).catch((cause: unknown) => cause);
+      expect(rejected).toBeInstanceOf(AnalysisAccessDeniedError);
+      expect(rejected).toMatchObject({
+        operation: "inspect_keyed_archive",
+        path: selected,
+        systemCode: "EACCES",
+      });
+      const projected = projectAnalysisError(
+        rejected as AnalysisAccessDeniedError,
+      );
+      expect(projected).toMatchObject({
+        code: "access_denied",
+        category: "unavailable",
+        retryable: false,
+        details: {
+          path: selected,
+          system_code: "EACCES",
+          boundary: "filesystem-read",
+        },
+      });
+      expect(projected.remediation.action).toContain("read access");
+    } finally {
+      await chmod(selected, 0o700);
+    }
+  },
+);
+
 it("keeps an archive readable while preserving a known non-finite real", async () => {
   const root = await bundle();
   const bytes = Buffer.from(
@@ -354,3 +404,49 @@ const asAnalysisError = (value: unknown): AnalysisError => {
   if (!(value instanceof AnalysisError)) throw value;
   return value;
 };
+
+it.skipIf(process.platform === "win32")(
+  "reads bundle-relative archives from a bundle whose executable is a plist",
+  async () => {
+    const root = await createTestTempDirectory("rea-keyed-plist-bundle-");
+    const bundlePath = join(root, "Fixture.app");
+    await mkdir(join(bundlePath, "Contents", "Resources"), { recursive: true });
+    await writeFile(
+      join(bundlePath, "Info.plist"),
+      "<plist><dict><key>CFBundleExecutable</key><string>Settings.plist</string></dict></plist>",
+    );
+    await writeFile(
+      join(bundlePath, "Settings.plist"),
+      build({ setting: "value" }),
+    );
+    await writeFile(
+      join(bundlePath, "Contents", "Resources", "Model.plist"),
+      Buffer.from(archive),
+    );
+    const session = composeBinarySession(
+      new AnalysisProviderRegistry([], "auto", () => true),
+      [new ArtifactProvider(process.env, "darwin")],
+    );
+    try {
+      const opened = await session.open(bundlePath);
+      if (!opened.ok) throw opened.error;
+      expect(session.activeTarget()).toMatchObject({
+        kind: "artifact",
+        format: "plist",
+        bundleInfoPlist: join(bundlePath, "Info.plist"),
+      });
+      const inspected = await session.execute("inspect_keyed_archive", {
+        path: "Contents/Resources/Model.plist",
+      });
+      if (!inspected.ok) throw inspected.error;
+      expect(inspected.value.result).toMatchObject({
+        archive_path: "Contents/Resources/Model.plist",
+        objects: expect.arrayContaining([
+          expect.objectContaining({ value: "value" }),
+        ]),
+      });
+    } finally {
+      await session.close();
+    }
+  },
+);

@@ -77,7 +77,8 @@ it("retains exported constant evidence through a type-only satisfies expression"
 
 it("resolves erased wrappers through the composed application graph", async () => {
   const source = `
-    const dependency = require("./dependency.ts")["value" as const] satisfies number;
+    import * as dependencyModule from "./dependency.ts";
+    const dependency = dependencyModule["value" as const] satisfies number;
     export { dependency };
     function render<T>() { return "ready"; }
     export const specialized = render<string> satisfies () => string;

@@ -61,7 +61,7 @@ export class LldbReadbackFiles {
           path,
           this.#resources,
           undefined,
-          async (handle) => {
+          async ({ handle }) => {
             const value = await read(handle);
             completed = { value };
             return value;

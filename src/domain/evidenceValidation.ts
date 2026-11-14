@@ -1,19 +1,46 @@
 import { z } from "zod";
 
-import { parseEvidence, type Evidence } from "./evidence.js";
+import { parseEvidence, immutableEvidence, type Evidence } from "./evidence.js";
 import { EvidenceIntegrityError } from "./evidenceErrors.js";
 import { describeValidationFailure } from "./validationFailure.js";
 import { err, ok, type Result } from "./result.js";
+
+/** Expected authentication failures, independent of a caller's error contract. */
+export const safeParseEvidence = (
+  input: unknown,
+): Result<Evidence, z.ZodError> => authenticateEvidence(input, parseEvidence);
+
+/** Authenticate and seal source records while retaining typed validation failures. */
+export const safeParseImmutableEvidence = (
+  input: unknown,
+): Result<Evidence, z.ZodError> =>
+  authenticateEvidence(input, immutableEvidence);
 
 /** Authenticate one source record, preserving unexpected implementation failures. */
 export const readEvidence = (
   input: unknown,
 ): Result<Evidence, EvidenceIntegrityError> => {
+  const parsed = safeParseEvidence(input);
+  return parsed.ok ? parsed : err(integrityFailure(parsed.error));
+};
+
+/** Authenticate and seal source records retained independently of mutable input. */
+export const readImmutableEvidence = (
+  input: unknown,
+): Result<Evidence, EvidenceIntegrityError> => {
+  const parsed = safeParseImmutableEvidence(input);
+  return parsed.ok ? parsed : err(integrityFailure(parsed.error));
+};
+
+const authenticateEvidence = (
+  input: unknown,
+  parse: (input: unknown) => Evidence,
+): Result<Evidence, z.ZodError> => {
   try {
-    return ok(parseEvidence(input));
+    return ok(parse(input));
   } catch (cause: unknown) {
     if (!(cause instanceof z.ZodError)) throw cause;
-    return err(integrityFailure(cause));
+    return err(cause);
   }
 };
 

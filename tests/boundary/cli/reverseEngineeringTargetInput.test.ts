@@ -1,8 +1,10 @@
+import { chmod, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect } from "vitest";
 
 import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
+import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../../src/contracts/reverseEngineeringToolContracts.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -48,6 +50,73 @@ cliTest(
         },
       });
     }
+  },
+);
+
+cliTest(
+  "passes Rizin decoder and map flags before the artifact",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-rizin-load-flags-");
+    const provider = join(root, "argv-rizin");
+    const artifact = join(root, "flash.bin");
+    await writeFile(artifact, "flash");
+    await writeFile(
+      provider,
+      `#!${process.execPath}\nprocess.stdout.write(JSON.stringify(process.argv.slice(2)));\n`,
+    );
+    await chmod(provider, 0o755);
+    const result = await cli.run({
+      arguments: [
+        "execute-rizin-command",
+        artifact,
+        "oml",
+        "--asm-arch",
+        "riscv",
+        "--asm-bits",
+        "32",
+        "--asm-cpu",
+        "rv32imc",
+        "--base-address",
+        "0x42000000",
+        "--format",
+        "json",
+      ],
+      cwd: root,
+      environment: { REA_RIZIN_COMMAND: provider },
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const rizinContract = REVERSE_ENGINEERING_TOOL_CONTRACTS.find(
+      (contract) => contract.name === "execute_rizin_command",
+    );
+    if (rizinContract === undefined)
+      throw new Error("execute_rizin_command contract is missing");
+    const evidence = rizinContract.outputSchema.parse(result.json);
+    const argv = [
+      "-N",
+      "-q",
+      "-e",
+      "scr.color=0",
+      "-a",
+      "riscv",
+      "-b",
+      "32",
+      "-e",
+      "asm.cpu=rv32imc",
+      "-n",
+      "-m",
+      "0x42000000",
+      "-c",
+      "oml",
+      artifact,
+    ];
+    expect(JSON.parse(evidence.normalized_result.stdout)).toEqual(argv);
+    expect(evidence.parameters).toMatchObject({
+      asm_arch: "riscv",
+      asm_bits: 32,
+      asm_cpu: "rv32imc",
+      base_address: "0x42000000",
+      command_arguments: argv,
+    });
   },
 );
 

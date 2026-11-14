@@ -1,14 +1,12 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { createEvidence, parseEvidence } from "../../domain/evidence.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { wasmInterfaceComparisonSchema } from "../../contracts/wasm/wasmComparisonContracts.js";
 import { compareWasmInterfaces } from "./WasmInterfaceComparisonService.js";
-import {
-  WASM_INTERFACE_REPRESENTATION_BYTES,
-  wasmInterfaceEntryRepresentationBytes,
-  type WasmInterface,
-} from "../../domain/wasm/wasmInterface.js";
+import { retainAnalysisResultSources } from "../investigation/recordEvidenceSources.js";
+import { ok } from "../../domain/result.js";
+import type { WasmInterface } from "../../domain/wasm/wasmInterface.js";
 import { wasmArtifactFixture } from "../../../tests/fixtures/wasm/artifact.js";
 
 const facts = (
@@ -30,14 +28,17 @@ const facts = (
     },
   ],
 });
-const evidence = (interfaceFacts?: WasmInterface) => {
+const evidence = (
+  interfaceFacts?: WasmInterface,
+  format: "file" | "pe" = "file",
+) => {
   const report = wasmArtifactFixture();
   if (interfaceFacts !== undefined) report.interface = interfaceFacts;
   return createEvidence(
     {
       path: report.artifact.path,
       sha256: report.artifact.sha256,
-      format: "file",
+      format,
     },
     { id: "fixture", name: "typed fixture", version: "1" },
     {
@@ -54,7 +55,9 @@ const compare = async (
 ) => {
   const result = await compareWasmInterfaces({ left, right, scope: "both" });
   if (!result.ok) throw result.error;
-  return wasmInterfaceComparisonSchema.parse(result.value.normalized_result);
+  return wasmInterfaceComparisonSchema.parse(
+    result.value.evidence.normalized_result,
+  );
 };
 
 it("reports all five comparison states, including duplicate ambiguity and explicit selected scope", async () => {
@@ -90,7 +93,7 @@ it("reports all five comparison states, including duplicate ambiguity and explic
     scope: "imports",
   });
   if (!selected.ok) throw selected.error;
-  expect(selected.value.normalized_result).toMatchObject({
+  expect(selected.value.evidence.normalized_result).toMatchObject({
     changes: [],
     coverage: "complete-within-inputs",
   });
@@ -128,7 +131,7 @@ it("withholds absence claims for historical or partial inventories and unsupport
   });
 });
 
-it("authenticates semantic Evidence and binds display subject and selection identity", async () => {
+it("authenticates semantic Evidence and rejects altered artifact digests", async () => {
   const left = JSON.parse(JSON.stringify(evidence(facts("f"))));
   left.normalized_result.interface.entries[0].name = "tampered";
   expect(
@@ -139,7 +142,7 @@ it("authenticates semantic Evidence and binds display subject and selection iden
     }),
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
   const rebound = JSON.parse(JSON.stringify(evidence(facts("f"))));
-  rebound.subject.local_path = "/other.wasm";
+  rebound.subject.digest.sha256 = "b".repeat(64);
   expect(
     await compareWasmInterfaces({
       left: rebound,
@@ -148,6 +151,52 @@ it("authenticates semantic Evidence and binds display subject and selection iden
     }),
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
 });
+
+it("requires the producer's file subject format even for authentic Evidence", async () => {
+  const wrongFormat = evidence(facts("f"), "pe");
+  expect(parseEvidence(wrongFormat)).toEqual(wrongFormat);
+  expect(
+    await compareWasmInterfaces({
+      left: wrongFormat,
+      right: evidence(facts("f")),
+      scope: "both",
+    }),
+  ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
+});
+
+it.each(["left", "right"] as const)(
+  "names the %s argument whose Evidence is rejected",
+  async (side) => {
+    const tampered = JSON.parse(JSON.stringify(evidence(facts("f"))));
+    tampered.normalized_result.interface.entries[0].name = "tampered";
+    const report = wasmArtifactFixture();
+    const otherSelection = createEvidence(
+      {
+        path: report.artifact.path,
+        sha256: report.artifact.sha256,
+        format: "file",
+      },
+      { id: "fixture", name: "typed fixture", version: "1" },
+      {
+        operation: "inspect_wasm_artifact",
+        parameters: { path: "/artifacts/other.wasm" },
+        result: report,
+        confidence: "observed",
+      },
+    );
+    for (const rejected of [tampered, otherSelection])
+      expect(
+        await compareWasmInterfaces({
+          left: side === "left" ? rejected : evidence(facts("f")),
+          right: side === "right" ? rejected : evidence(facts("f")),
+          scope: "both",
+        }),
+      ).toMatchObject({
+        ok: false,
+        error: { issues: [{ path: [side], reason: "invalid_value" }] },
+      });
+  },
+);
 
 it("resolves exact retained references and permits cancellation between comparison batches", async () => {
   const left = evidence(facts("f"));
@@ -165,7 +214,7 @@ it("resolves exact retained references and permits cancellation between comparis
     id === left.evidence_id ? left : right,
   );
   if (!result.ok) throw result.error;
-  expect(result.value.evidence_links).toEqual([
+  expect(result.value.evidence.evidence_links).toEqual([
     left.evidence_id,
     right.evidence_id,
   ]);
@@ -187,70 +236,43 @@ it("resolves exact retained references and permits cancellation between comparis
   expect(cancelled.error.partialObservation).toBeUndefined();
 });
 
-/** One inventory under the comparison cap; two of them exceed it together. */
-const admittedInventory = (label: string): WasmInterface => {
-  const base = facts(label).entries[0]!;
-  const minimum = Math.floor(WASM_INTERFACE_REPRESENTATION_BYTES / 2) + 4096;
-  let low = 0;
-  let high = 4_000_000;
-  let best = 0;
-  while (low <= high) {
-    const mid = Math.floor((low + high) / 2);
-    const name = `${label}-${"n".repeat(mid)}`;
-    const bytes = wasmInterfaceEntryRepresentationBytes({
-      ...base,
-      name,
-      wat_form: `(export "${name}" (func 0))`,
-    });
-    if (bytes >= minimum) {
-      best = mid;
-      high = mid - 1;
-    } else low = mid + 1;
-  }
-  const name = `${label}-${"n".repeat(best)}`;
-  const entry = {
-    ...base,
-    name,
-    wat_form: `(export "${name}" (func 0))`,
-  };
-  const bytes = wasmInterfaceEntryRepresentationBytes(entry);
-  if (
-    bytes >= WASM_INTERFACE_REPRESENTATION_BYTES ||
-    bytes + 512 >= WASM_INTERFACE_REPRESENTATION_BYTES
-  )
-    throw new Error("Sized inventory is not individually admitted");
-  return { state: "complete", issues: [], entries: [entry] };
-};
-
-it("refuses two admitted inventories that together exceed the comparison cap", async () => {
-  const left = admittedInventory("left");
-  const right = admittedInventory("right");
-  const empty: WasmInterface = { state: "complete", issues: [], entries: [] };
+it("admits each selected inventory independently and recovers a combined comparison with more capacity", async () => {
+  const left = evidence(facts("left"));
+  const right = evidence(facts("right"));
+  const empty = evidence({ state: "complete", issues: [], entries: [] });
   const alone = await compareWasmInterfaces({
-    left: evidence(left),
-    right: evidence(empty),
+    left,
+    right: empty,
     scope: "both",
+    max_interface_bytes: 2048,
   });
   expect(alone.ok).toBe(true);
+  const selected = { left, right, scope: "both" as const };
   const combined = await compareWasmInterfaces({
-    left: evidence(left),
-    right: evidence(right),
-    scope: "both",
+    ...selected,
+    max_interface_bytes: 2048,
   });
-  expect(combined.ok).toBe(false);
-  if (combined.ok) throw new Error("Expected comparison allowance refusal");
+  if (combined.ok)
+    throw new Error("Expected combined comparison capacity refusal");
   const projected = projectAnalysisError(combined.error);
-  expect(projected.retryable).toBe(false);
-  expect(projected.code).toBe("resource_constraint");
-  expect(combined.error).toMatchObject({ resource: "capacity" });
-  expect(projected.remediation.action).toContain(
-    "The WASM interface comparison inventory",
-  );
-  expect(projected.remediation.action).toContain("fixed byte allowance");
-  expect(projected.remediation.action).not.toContain("fixed count");
-  expect(projected.remediation.action).not.toMatch(
-    /Wait for an active analysis/u,
-  );
+  expect(projected).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: { reported_limits: { maximum_bytes: 2048, source: "request" } },
+  });
+  expect(projected.remediation.action).toContain("max_interface_bytes");
+  const recovered = await compareWasmInterfaces({
+    ...selected,
+    max_interface_bytes: 8192,
+  });
+  if (!recovered.ok) throw recovered.error;
+  expect(recovered.value.evidence.normalized_result).toMatchObject({
+    coverage: "complete-within-inputs",
+    summary: { added: 1, removed: 1 },
+  });
+  expect(recovered.value.evidence.parameters).toMatchObject({
+    max_interface_bytes: 8192,
+  });
 });
 
 it.each([false, true])(
@@ -300,6 +322,18 @@ it("retains the complete comparison when cancelled at the final handoff", async 
   if (result.ok) throw new Error("Expected cancellation during final handoff");
   expect(result.error).toMatchObject({ _tag: "AnalysisCancelledError" });
   expect(result.error.cause).toBe(reason);
+  expect(result.sourceEvidence).toEqual([left, right]);
+  const retainedSources: string[] = [];
+  const retained = retainAnalysisResultSources(
+    "compare_wasm_interfaces",
+    (source) => {
+      retainedSources.push(source.evidence_id);
+      return ok("added");
+    },
+    result,
+  );
+  expect(retained.ok).toBe(false);
+  expect(retainedSources).toEqual([left.evidence_id, right.evidence_id]);
   const partial = parseEvidence(result.error.partialObservation);
   expect(partial).toMatchObject({
     operation: "compare_wasm_interfaces",
@@ -313,4 +347,24 @@ it("retains the complete comparison when cancelled at the final handoff", async 
     coverage: "complete-within-inputs",
     summary: { changed: 1, added: 0, removed: 0, unchanged: 0, unknown: 0 },
   });
+});
+
+it("does not report unexpected output-construction failures as invalid caller Evidence", async () => {
+  const failure = new Error("comparison output construction failed");
+  const parse = vi
+    .spyOn(wasmInterfaceComparisonSchema, "parse")
+    .mockImplementation(() => {
+      throw failure;
+    });
+  try {
+    await expect(
+      compareWasmInterfaces({
+        left: evidence(facts("f")),
+        right: evidence(facts("f")),
+        scope: "both",
+      }),
+    ).rejects.toBe(failure);
+  } finally {
+    parse.mockRestore();
+  }
 });

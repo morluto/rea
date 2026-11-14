@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 
 import { resolveArtifactPathByContext } from "./JavaScriptArtifactPathResolution.js";
+import { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 
 const files = new Map(
@@ -20,6 +21,7 @@ const files = new Map(
     ],
   ),
 );
+const jsonDocuments = new JavaScriptJsonDocuments();
 
 it.each([
   "../../rea-artifact/shared/window.cjs",
@@ -38,6 +40,7 @@ it.each([
         context: "module-specifier",
         moduleKind: "import",
         files,
+        jsonDocuments,
       }),
     ).toMatchObject({ resolution_status: "rejected", resolved_path: null });
   },
@@ -61,6 +64,7 @@ it.each([
         context: "module-specifier",
         moduleKind: "import",
         files,
+        jsonDocuments,
       }),
     ).toMatchObject({ resolution_status: "resolved", resolved_path: target });
   },

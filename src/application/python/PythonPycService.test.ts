@@ -66,9 +66,32 @@ const report: PythonPyc = {
   ],
 };
 
+it.each([
+  {
+    flags: 1,
+    hash_based: true,
+    source_hash_hex: "",
+    source_mtime: null,
+    source_size: null,
+  },
+  { flags: 1 },
+])("refuses inconsistent provider header facts %j", async (header) => {
+  const result = await new PythonPycService({
+    close: async () => {},
+    identity,
+    inspect: async () =>
+      ok({ ...report, header: { ...report.header, ...header } }),
+  }).inspect({ path: report.artifact.path });
+  expect(result).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
 it("rejects a relative path and extra arguments before reading", async () => {
   let calls = 0;
   const service = new PythonPycService({
+    close: async () => {},
     identity,
     inspect: () => {
       calls += 1;
@@ -89,10 +112,10 @@ it("rejects a relative path and extra arguments before reading", async () => {
 
 it("records the selected artifact and the header plus marshal ranges", async () => {
   const result = await new PythonPycService({
+    close: async () => {},
     identity,
     inspect: () => Promise.resolve(ok(report)),
   }).inspect({ path: report.artifact.path });
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(result.value).toMatchObject({
     confidence: "observed",
@@ -110,6 +133,7 @@ it("retains completed pyc Evidence and the opaque caller reason on late cancella
   const controller = new AbortController();
   const reason = new AnalysisInputError("opaque caller metadata");
   const service = new PythonPycService({
+    close: async () => {},
     identity,
     inspect: () => {
       controller.abort(reason);
@@ -120,7 +144,6 @@ it("retains completed pyc Evidence and the opaque caller reason on late cancella
     { path: report.artifact.path },
     { signal: controller.signal },
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected cancellation");
   expect(result.error).toBeInstanceOf(AnalysisCancelledError);
   expect(result.error.cause).toBe(reason);
@@ -135,6 +158,7 @@ it("retains a pre-admission cancellation reason without calling the pyc provider
   const reason = new Error("caller stopped before pyc admission");
   let calls = 0;
   const service = new PythonPycService({
+    close: async () => {},
     identity,
     inspect: async () => {
       calls++;
@@ -155,6 +179,7 @@ it("retains a pre-admission cancellation reason without calling the pyc provider
 it("preserves malformed provider output instead of relabeling it as a late abort", async () => {
   const controller = new AbortController();
   const service = new PythonPycService({
+    close: async () => {},
     identity,
     inspect: async () => {
       controller.abort(new Error("later caller stop"));

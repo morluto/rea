@@ -21,6 +21,7 @@ import streamArray from "stream-json/streamers/stream-array.js";
 import {
   assertRegularFileActive,
   RegularFileChangedError,
+  RegularFileOperationCancelled,
 } from "../filesystem/RegularFile.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { sealOwnedJsonInput } from "./OwnedJsonInput.js";
@@ -112,8 +113,61 @@ const withJsonInputPipeline = async <Value>(
   else signal.addEventListener("abort", cancel, { once: true });
   try {
     return await run(controller.signal);
+  } catch (cause: unknown) {
+    if (
+      controller.signal.aborted &&
+      controller.signal.reason instanceof JsonInputCancellationFailure &&
+      isOwnedJsonPipelineCancellation(cause, controller.signal.reason)
+    )
+      throw controller.signal.reason;
+    throw cause;
   } finally {
     signal.removeEventListener("abort", cancel);
+  }
+};
+
+/** Node may combine its owned abort with a cooperative read cancellation. */
+const isOwnedJsonPipelineCancellation = (
+  cause: unknown,
+  cancellation: JsonInputCancellationFailure,
+): boolean => {
+  const pending = [cause];
+  const seen = new Set<AggregateError>();
+  let owned = false;
+  try {
+    while (pending.length > 0) {
+      const current = pending.pop();
+      if (
+        current === cancellation ||
+        (current instanceof Error &&
+          current.name === "AbortError" &&
+          "code" in current &&
+          current.code === "ABORT_ERR" &&
+          current.cause === cancellation)
+      ) {
+        owned = true;
+        continue;
+      }
+      if (
+        current instanceof RegularFileOperationCancelled &&
+        current.reason === cancellation.reason
+      )
+        continue;
+      if (!(current instanceof AggregateError) || seen.has(current))
+        return false;
+      const failures: unknown = current.errors;
+      if (!Array.isArray(failures)) return false;
+      const count = failures.length;
+      if (!Number.isSafeInteger(count) || count <= 0) return false;
+      // Cyclic or repeatedly shared aggregate graphs leave ownership unproven.
+      seen.add(current);
+      for (let index = 0; index < count; index += 1)
+        pending.push(failures[index]);
+    }
+    return owned;
+  } catch {
+    // Unreadable aggregate contents do not authorize replacing the failure.
+    return false;
   }
 };
 
@@ -457,7 +511,7 @@ const jsonTokenizers = (
           // The pinned tokenizer reports grammar violations with plain Error;
           // native runtime failures keep their distinct types and identities.
           if (cause instanceof Error && cause.constructor === Error)
-            throw invalidJson(operation, cause.message, cause);
+            throw invalidJson(operation, cause.message, { cause });
           throw cause;
         }
       };
@@ -669,7 +723,9 @@ async function* decodedChunks(
     if (leading && text.length > 0) {
       leading = false;
       if (text.startsWith("\uFEFF"))
-        throw invalidJson(operation, JSON_BYTE_ORDER_MARK_MESSAGE);
+        throw invalidJson(operation, JSON_BYTE_ORDER_MARK_MESSAGE, {
+          userMessage: JSON_BYTE_ORDER_MARK_MESSAGE,
+        });
     }
     return text;
   };
@@ -685,7 +741,9 @@ async function* decodedChunks(
         "code" in cause &&
         cause.code === "ERR_ENCODING_INVALID_ENCODED_DATA"
       )
-        throw invalidJson(operation, "JSON input is not valid UTF-8", cause);
+        throw invalidJson(operation, "JSON input is not valid UTF-8", {
+          cause,
+        });
       throw cause;
     }
   };
@@ -756,16 +814,21 @@ const readNativeJson = async (
   );
   return parsed.ok
     ? ok(parsed.value)
-    : err(invalidJson(operation, parsed.error, parsed.cause));
+    : err(
+        invalidJson(operation, parsed.error, {
+          cause: parsed.cause,
+          ...(parsed.userMessage === undefined
+            ? {}
+            : { userMessage: parsed.userMessage }),
+        }),
+      );
 };
 
 const invalidJson = (
   operation: string,
   message: string,
-  cause?: unknown,
+  options?: { readonly cause?: unknown; readonly userMessage?: string },
 ): AnalysisInputError =>
-  new AnalysisInputError(
-    operation,
-    cause === undefined ? undefined : { cause },
-    [{ path: [], reason: "invalid_format", expected: "JSON", message }],
-  );
+  new AnalysisInputError(operation, options, [
+    { path: [], reason: "invalid_format", expected: "JSON", message },
+  ]);

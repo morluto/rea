@@ -234,7 +234,12 @@ export async function verifyHopperBoundaryContracts(
       ),
     );
     assert.equal(
-      (await call("analyze_function", { procedure: address })).procedure.name,
+      (
+        await call("analyze_function", {
+          procedure: address,
+          detail: "complete",
+        })
+      ).procedure.name,
       renamed,
     );
     assert.equal(
@@ -426,6 +431,7 @@ export async function verifyHopperLifecycleAndCli(client, options, targets) {
     assert.ok(entry, "primary fixture omitted its entry procedure");
     const expectedFunction = await call("analyze_function", {
       procedure: entry.value,
+      detail: "complete",
     });
     const firstDocument = await call("current_document");
     const linuxApplicationIsolation =
@@ -518,6 +524,7 @@ export async function verifyHopperLifecycleAndCli(client, options, targets) {
       assert.ok(delegate, "Objective-C fixture omitted its tail-call method");
       const expected = await call("analyze_function", {
         procedure: delegate.address,
+        detail: "complete",
       });
       await call("close_binary");
       const analyzed = await runCli([

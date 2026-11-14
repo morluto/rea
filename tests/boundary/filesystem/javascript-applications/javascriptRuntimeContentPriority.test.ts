@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 
 import {
-  parseRuntimeReconciliationInput,
+  readRuntimeReconciliationInput,
   reconcileJavaScriptRuntime,
 } from "../../../../src/domain/javascript/javascriptRuntimeReconciliation.js";
 import { reconcileRuntimeEntities } from "../../../../src/domain/javascript/javascriptRuntimeReconciliationMatching.js";
@@ -22,6 +22,14 @@ import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js
 
 const CAPTURED = "export const observed = 'different';\n";
 
+const readInput = (
+  input: Parameters<typeof readRuntimeReconciliationInput>[0],
+) => {
+  const result = readRuntimeReconciliationInput(input);
+  if (!result.ok) throw result.error;
+  return result.value;
+};
+
 const collisionInput = async (
   alternatives: number,
   explicitMapping: boolean,
@@ -33,7 +41,7 @@ const collisionInput = async (
     : root;
   const extra = await createTestTempDirectory("rea-runtime-content-extra-");
   await writeFile(join(extra, "app.js"), CAPTURED);
-  return parseRuntimeReconciliationInput(
+  return readInput(
     reconcileJavaScriptRuntimeInputSchema.parse({
       static_layers: [
         {
@@ -106,7 +114,7 @@ it("restricts content-and-location ambiguity to mapped candidates", async () => 
   const live = await createTestTempDirectory("rea-runtime-content-mapped-");
   const analysis = await analyzeFixture(application);
   const mapping = [{ kind: "file-root", root: live, artifact_prefix: "" }];
-  const parsed = parseRuntimeReconciliationInput(
+  const parsed = readInput(
     reconcileJavaScriptRuntimeInputSchema.parse({
       static_layers: [
         { role: "application", analysis, runtime_mappings: mapping },
@@ -148,7 +156,7 @@ it.each([false, true])(
       "rea-runtime-content-unlocated-",
     );
     const result = reconcileJavaScriptRuntime(
-      parseRuntimeReconciliationInput(
+      readInput(
         reconcileJavaScriptRuntimeInputSchema.parse({
           static_layers: [
             {
@@ -212,6 +220,7 @@ it("keeps unavailable mapped digests unknown instead of borrowing unrelated matc
   const candidate = script?.candidate_static_nodes[0];
   const states = classifyStaticLoadStates(
     parsed.layers,
+    parsed.captures,
     runtime.entities,
     result.items,
     {
@@ -245,7 +254,7 @@ const reconcileCapturedScript = async (input: {
   readonly includeWorker?: boolean;
 }) => {
   const result = reconcileJavaScriptRuntime(
-    parseRuntimeReconciliationInput(
+    readInput(
       reconcileJavaScriptRuntimeInputSchema.parse({
         static_layers: await Promise.all(
           input.layers.map(async ({ root, mapping }, index) => ({
@@ -385,7 +394,7 @@ it.each([
   "applies URL-prefix mapping presence to captured script %s",
   async (url, status) => {
     const root = await applicationFixture();
-    const parsed = parseRuntimeReconciliationInput(
+    const parsed = readInput(
       reconcileJavaScriptRuntimeInputSchema.parse({
         static_layers: [
           {

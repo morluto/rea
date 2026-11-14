@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { createPackageVerifierCommands } from "../../lib/verify-package-commands.mjs";
+import { withVerifierCleanup } from "../../lib/verifier-cleanup.mjs";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
 
 import {
   artifactCliEvidence,
@@ -18,8 +18,6 @@ import { verifyDyldEnvironment } from "./dyld-environment.mjs";
 import { verifyDylibResolution } from "./macos-dylib-e2e.mjs";
 import { verifyMachOOccurrences } from "./macho-occurrences.mjs";
 import { verifyNativeProvenance } from "./native-provenance.mjs";
-
-const exec = promisify(execFile);
 
 await preflightMacosBundleFixture();
 const root = await mkdtemp(join(tmpdir(), "rea-macos-bundle-"));
@@ -67,8 +65,19 @@ const EXPECTED_BUNDLES = [
   ["Contents/XPCServices/Svc.xpc", "xpc-service", "macos-deep", "."],
 ];
 
+const commands = await createPackageVerifierCommands({
+  workspace: {
+    path: root,
+    close: () => rm(root, { recursive: true, force: true }),
+  },
+});
+const exec = (command, args) =>
+  commands.exec(command, args, {
+    timeout: 120_000,
+    maxBuffer: 16 * 1024 * 1024,
+  });
 let report;
-try {
+await withVerifierCleanup(async () => {
   const { app, executable } = await buildMacosBundleFixture(root);
   const nativeProvenance = await verifyNativeProvenance(app, executable);
   const machoOccurrences = await verifyMachOOccurrences(app, executable);
@@ -173,7 +182,5 @@ try {
     dylib_resolution: dylibs,
     dyld_environment: dyldEnvironment,
   };
-} finally {
-  await rm(root, { recursive: true, force: true });
-}
+}, [() => commands.close()]);
 process.stdout.write(`${JSON.stringify(report)}\n`);

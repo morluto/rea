@@ -6,10 +6,28 @@ export const resultFor = (
   port: number,
   options: FakeOptions,
   frameTreeReads: number,
+  allocateSessionId: () => string = () => "session-1",
 ): Readonly<Record<string, unknown>> | undefined => {
   switch (command.method) {
     case "Target.attachToTarget":
-      return attachToTargetResult(options);
+      return attachToTargetResult(options, allocateSessionId);
+    case "Page.getLayoutMetrics":
+      return {
+        cssVisualViewport: {
+          pageX: 0,
+          pageY: 0,
+          clientWidth: 1,
+          clientHeight: 1,
+          scale: 1,
+        },
+        visualViewport: {
+          pageX: 0,
+          pageY: 0,
+          clientWidth: 1,
+          clientHeight: 1,
+          scale: 1,
+        },
+      };
     case "Page.getFrameTree":
       return frameTreeResult(port, options, frameTreeReads);
     case "Page.getResourceTree":
@@ -81,8 +99,11 @@ const browserVersionResult = () => ({
   jsVersion: "13.0",
 });
 
-const attachToTargetResult = (options: FakeOptions) => ({
-  sessionId: options.invalidAttachedSession ? "" : "session-1",
+const attachToTargetResult = (
+  options: FakeOptions,
+  allocateSessionId: () => string,
+) => ({
+  sessionId: options.invalidAttachedSession ? "" : allocateSessionId(),
 });
 
 const frameTreeResult = (

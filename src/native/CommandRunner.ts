@@ -1,7 +1,8 @@
+import type { ProcessInspectionFailure } from "../process/ProcessInspectionCleanup.js";
+import { processInspectionFailure } from "../providers/OwnedCommandCleanup.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { realpath } from "node:fs/promises";
 
 import { err, ok, type Result } from "../domain/result.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -16,8 +17,13 @@ import type {
   ProviderProcessSupervisor,
   SpawnedOwnedProviderProcess,
 } from "../process/ProviderProcess.js";
-import { boundedUtf8Text } from "../process/boundedUtf8Text.js";
+import { utf8HeadExcerpt } from "../domain/utf8HeadExcerpt.js";
 import { DEFAULT_NATIVE_COMMAND_TIMEOUT_MS } from "../domain/native/nativeDeadlines.js";
+import {
+  selectArtifactCommandPath,
+  type ArtifactCommandPath,
+} from "../process/ArtifactCommandPath.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 
 /** Retain complete command output up to a bounded aggregate size. */
 export const NATIVE_COMMAND_OUTPUT_BUDGET_BYTES = 64 * 1024 * 1024;
@@ -51,9 +57,7 @@ export class NativeCommandFailure extends Error {
   readonly cleanupFailures: readonly NativeCommandCleanupFailure[];
   readonly cleanupMarker: ProviderCleanupError | undefined;
   readonly detail: string | null;
-  readonly preparationFailure:
-    | DarwinProcessOwnershipInspectionError
-    | undefined;
+  readonly preparationFailure: ProcessInspectionFailure | undefined;
 
   constructor(
     readonly tool: string,
@@ -79,18 +83,15 @@ export class NativeCommandFailure extends Error {
     this.cleanupFailures = options?.cleanupFailures ?? [];
     this.cleanupMarker = options?.cleanupMarker;
     this.preparationFailure =
-      options?.cause instanceof DarwinProcessOwnershipInspectionError
-        ? options.cause
-        : options?.cause instanceof NativeCommandFailure ||
-            options?.cause instanceof OwnedCommandFailure
-          ? options.cause.preparationFailure
-          : undefined;
+      options?.cause instanceof NativeCommandFailure
+        ? options.cause.preparationFailure
+        : processInspectionFailure(options?.cause);
     this.detail = options?.detail ?? this.preparationFailure?.message ?? null;
   }
 }
 
 /** Named cleanup ownership carried alongside the ordinary error cause. */
-export interface NativeCommandFailureOptions extends ErrorOptions {
+interface NativeCommandFailureOptions extends ErrorOptions {
   /** Exact opaque reason recorded by the cancellation-owning boundary. */
   readonly cancellation?: { readonly reason: unknown };
   /** Typed owner retained when command process cleanup was incomplete. */
@@ -112,7 +113,7 @@ export interface NativeCommandCleanupFailure {
 }
 
 /** Partial output and lifecycle details retained when a native command fails. */
-export interface NativeCommandFailureCapture {
+interface NativeCommandFailureCapture {
   readonly stdout: string;
   readonly stderr: string;
   readonly stdoutBytes: number;
@@ -145,8 +146,8 @@ export type NativeCommandLauncher = (
   options: OwnedProviderProcessSpawnOptions,
 ) => Promise<SpawnedOwnedProviderProcess>;
 
-/** Resolve one allowlisted native tool to an immutable executable identity. */
-export type NativeToolResolver = (
+/** Resolve one native tool's selected invocation and prelaunch file identity. */
+type NativeToolResolver = (
   tool: string,
   signal?: AbortSignal,
   launcher?: NativeCommandLauncher,
@@ -215,7 +216,7 @@ export class XcrunCommandRunner implements NativeCommandRunner {
       return err(this.#retainCleanupOwner(resolved.error));
     }
     const captured = await captureProcess(
-      resolved.value.path,
+      resolved.value.invocationPath,
       arguments_,
       tool,
       options,
@@ -223,18 +224,16 @@ export class XcrunCommandRunner implements NativeCommandRunner {
       this.launcher,
     );
     if (!captured.ok) return err(this.#retainCleanupOwner(captured.error));
-    return captured.ok
-      ? ok({
-          ...captured.value,
-          tool,
-          executable: resolved.value.path,
-          executableSha256: resolved.value.sha256,
-          toolVersion: null,
-          versionReason:
-            "Tool exposes no uniform stable version flag; executable SHA-256 is a prelaunch file sample and does not prove atomic OS image binding.",
-          arguments: [...arguments_],
-        })
-      : captured;
+    return ok({
+      ...captured.value,
+      tool,
+      executable: resolved.value.invocationPath,
+      executableSha256: resolved.value.sha256,
+      toolVersion: null,
+      versionReason:
+        "Tool exposes no uniform stable version flag; executable SHA-256 is a prelaunch file sample and does not prove atomic OS image binding.",
+      arguments: [...arguments_],
+    });
   }
 
   async #retryCleanup(): Promise<readonly NativeCommandCleanupFailure[]> {
@@ -345,9 +344,8 @@ const commandCleanupFailure = (
     [...new Set(failures.flatMap(({ resources }) => resources))],
   );
 
-/** Executable path and SHA-256 sampled during one tool resolution. */
-export interface ResolvedTool {
-  readonly path: string;
+/** Selected invocation and physical executable identity sampled during resolution. */
+export interface ResolvedTool extends ArtifactCommandPath {
   readonly sha256: string;
 }
 
@@ -358,7 +356,6 @@ const ALLOWED_TOOLS = new Set([
   "file",
   "lipo",
   "nm",
-  "otool",
   "plutil",
   "strings",
   "swift-demangle",
@@ -439,22 +436,26 @@ export const resolveXcrunTool = async (
       ),
     );
   try {
-    const path = await realpath(candidate);
-    return ok({ path, sha256: await hashFile(path, signal) });
+    const selected = await selectArtifactCommandPath(candidate, signal);
+    return ok({
+      ...selected,
+      sha256: await hashFile(selected.resolvedPath, signal),
+    });
   } catch (cause: unknown) {
     const capture = failureCapture(found.value, false);
     const cancellation =
       signal?.aborted === true ? { reason: signal.reason } : undefined;
-    const abortedHashRead =
-      cause instanceof Error &&
-      "code" in cause &&
-      cause.code === "ABORT_ERR" &&
+    const observedCancellation =
       signal?.aborted === true &&
-      cause.cause === signal.reason;
+      cause instanceof Error &&
+      cause.cause === signal.reason &&
+      ((cause instanceof ArtifactReaderFailure &&
+        cause.reason === "cancelled") ||
+        ("code" in cause && cause.code === "ABORT_ERR"));
     return err(
       new NativeCommandFailure(
         tool,
-        abortedHashRead ? "cancelled" : "io",
+        observedCancellation ? "cancelled" : "io",
         capture.exitCode,
         {
           cause,
@@ -481,11 +482,11 @@ export const failureCapture = (
   capture: ProcessCapture,
   truncated: boolean,
 ): NativeCommandFailureCapture => {
-  const stdout = boundedUtf8Text(
+  const stdout = utf8HeadExcerpt(
     capture.stdout,
     NATIVE_FAILURE_DIAGNOSTIC_BYTES,
   );
-  const stderr = boundedUtf8Text(
+  const stderr = utf8HeadExcerpt(
     capture.stderr,
     NATIVE_FAILURE_DIAGNOSTIC_BYTES,
   );

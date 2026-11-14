@@ -49,9 +49,10 @@ it.each([
     ["x", ""],
     ["", ""],
   ]);
-  expect([...iterateUrlQueryParameters(query, selected)]).toEqual(
-    [...expected].filter(([name]) => selected.has(name)),
-  );
+  for (const selection of [selected, new Set(selected.keys())])
+    expect([...iterateUrlQueryParameters(query, selection)]).toEqual(
+      [...expected].filter(([name]) => selection.has(name)),
+    );
 });
 
 it.each([

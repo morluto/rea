@@ -81,7 +81,7 @@ export const modelArtifactObjectSchema = z.strictObject({
   limitations: z.array(z.string()),
 });
 
-/** Facts proven before an interrupted GGUF read reached final file identity checks. */
+/** Facts proven before an interrupted model read reached final file identity checks. */
 export const modelArtifactPartialTensorSchema = z.strictObject({
   index: count,
   name: z.string(),
@@ -106,7 +106,7 @@ export const modelArtifactPartialSchema = z.strictObject({
     sha256: z.null(),
     file_identity: z.literal("unverified"),
   }),
-  format: z.literal("gguf"),
+  format: z.enum(["gguf", "safetensors"]),
   version: count.nullable(),
   byte_order: z.enum(["little", "big"]).nullable(),
   alignment: count.nullable(),

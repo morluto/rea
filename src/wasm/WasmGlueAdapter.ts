@@ -5,21 +5,13 @@ import { traverseJavaScriptAst } from "../domain/javascript/javascriptSemanticTr
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 
 /**
- * `.` cannot cross a line terminator and `$` only matches at the end of the
- * literal, so a `.wasm` suffix can only occur on its last line. Testing that
- * line alone keeps long multi-line literals linear.
+ * Only the path before the first query/fragment delimiter determines the suffix.
+ * Query/fragment content can contain any line terminator; one bounded scan suffices.
  */
-const endsWithWasmReference = (value: string): boolean =>
-  /\.wasm(?:[?#].*)?$/iu.test(
-    value.slice(
-      Math.max(
-        value.lastIndexOf("\n"),
-        value.lastIndexOf("\r"),
-        value.lastIndexOf(" "),
-        value.lastIndexOf(" "),
-      ) + 1,
-    ),
-  );
+const endsWithWasmReference = (value: string): boolean => {
+  const delimiter = value.search(/[?#]/u);
+  return /\.wasm$/iu.test(delimiter < 0 ? value : value.slice(0, delimiter));
+};
 
 /** Associate visible literals with selected candidates without asserting data flow or URL identity. */
 export const associateWasmGlue = (

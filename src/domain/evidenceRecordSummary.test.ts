@@ -53,3 +53,59 @@ it("preserves native identity independently of missing or incompatible value-flo
     ]),
   );
 });
+
+it.each([
+  {
+    flow: {
+      available: true,
+      truncated: false,
+      omitted_operations_lower_bound: 2,
+      known_omitted_inputs: 3,
+      known_omitted_edges: 4,
+      operations: "historical collection representation",
+    },
+    expected: {
+      status: "observed",
+      truncated: false,
+      omitted_operations_lower_bound: 2,
+      known_omitted_inputs: 3,
+      known_omitted_edges: 4,
+    },
+  },
+  {
+    flow: { available: false, reason: "" },
+    expected: { status: "unavailable", reason: "" },
+  },
+  {
+    flow: { available: true, truncated: false, known_omitted_edges: -1 },
+    expected: { status: "unknown", reason: expect.any(String) },
+  },
+  {
+    flow: { available: true, truncated: false, known_omitted_inputs: null },
+    expected: { status: "unknown", reason: expect.any(String) },
+  },
+])(
+  "projects retained flow metadata without requiring current full payloads: $flow",
+  ({ flow, expected }) => {
+    const record = createEvidence(
+      { path: "/fixtures/native.exe", format: "pe", sha256: "a".repeat(64) },
+      { id: "provider", name: "Provider", version: "1" },
+      {
+        operation: "analyze_function",
+        parameters: {},
+        result: {
+          procedure: { address: "space:0x10", name: "entry" },
+          native_value_flow: flow,
+        },
+      },
+    );
+    const summary = summarizeEvidenceBundle(createEvidenceBundle([record]));
+    expect(summary.records[0]?.native_dossier).toEqual({
+      available: true,
+      procedure_address: "space:0x10",
+      procedure_name: "entry",
+      value_flow: expected,
+    });
+    expect(record.normalized_result).toMatchObject({ native_value_flow: flow });
+  },
+);

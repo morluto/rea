@@ -1,19 +1,26 @@
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+import { ERLANG_BEAM_PROVIDER_IDENTITY } from "./ErlangBeamProviderIdentity.js";
 import {
-  artifactFilePrimaryFailure,
-  bindArtifactFileCleanup,
-  artifactFileCancellationCause,
+  projectOwnedArtifactIdentityFailure,
+  projectStableArtifactFailure,
+  stableArtifactInputFailure,
+  projectArtifactCloseFailure,
+} from "../artifacts/StableArtifactFailure.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  type StableArtifactSnapshot,
+  readStableArtifact,
+} from "../artifacts/readStableArtifact.js";
+import {
+  artifactFilePrimaryFacts,
+  type ArtifactFilePrimaryFacts,
+  artifactSelectedPathErrno,
 } from "../artifacts/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import type { BeamPort } from "../application/erlang/BeamPort.js";
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
@@ -24,15 +31,7 @@ import {
   type InspectErlangBeamInput,
 } from "../domain/erlang/beam.js";
 import { err, ok } from "../domain/result.js";
-import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { BeamCapacityFailure, parseErlangBeam } from "./BeamParser.js";
-
-/** Bundled format reader identity; module names are separate observed facts. */
-export const ERLANG_BEAM_PROVIDER_IDENTITY = {
-  id: "rea-erlang-beam",
-  name: "REA Erlang BEAM reader",
-  version: "1",
-} as const;
 
 const OPERATION = "inspect_erlang_beam";
 
@@ -45,26 +44,19 @@ export class BeamProvider implements BeamPort {
     try {
       await this.#resources.close();
     } catch (cause: unknown) {
-      if (
-        !(cause instanceof ArtifactReaderFailure) ||
-        cause.cleanup === undefined
-      )
-        throw cause;
-      const error = new ProviderCleanupError(
+      throw projectArtifactCloseFailure(
+        cause,
         ERLANG_BEAM_PROVIDER_IDENTITY.id,
-        cause.cleanup.resources,
-        { reason: cause.cleanup.reason },
-        { cause, operation: OPERATION },
+        OPERATION,
       );
-      bindArtifactFileCleanup(cause, error);
-      throw error;
     }
   }
 
   async inspect(input: InspectErlangBeamInput, options?: ExecutionOptions) {
+    let snapshot: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
-        const snapshot = await readStableArtifact(
+        snapshot = await readStableArtifact(
           input.path,
           input.max_file_bytes,
           options?.signal,
@@ -84,7 +76,7 @@ export class BeamProvider implements BeamPort {
         );
       });
     } catch (cause) {
-      return err(beamFailure(cause, input));
+      return err(beamFailure(cause, input, snapshot));
     }
   }
 }
@@ -112,21 +104,21 @@ const inputBudgetRemediation = (
   }
 };
 
-const beamFailurePrimary = (cause: unknown, input: InspectErlangBeamInput) => {
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "integrity")
-    return new AnalysisArtifactChangedError(
-      OPERATION,
-      input.path,
-      cause.message,
-      {
-        cause,
-      },
-    );
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
-    });
-  if (cause instanceof ArtifactReaderFailure) {
+const beamFailurePrimary = (
+  facts: ArtifactFilePrimaryFacts,
+  input: InspectErlangBeamInput,
+) => {
+  const { cause, origin } = facts;
+  const identityFailure = projectOwnedArtifactIdentityFailure(
+    facts,
+    OPERATION,
+    input.path,
+  );
+  if (identityFailure !== undefined) return identityFailure;
+  if (
+    origin === "owned-or-classified" &&
+    cause instanceof ArtifactReaderFailure
+  ) {
     if (cause.reason === "limit") {
       const remediationAction = inputBudgetRemediation(cause, input);
       return new AnalysisResourceConstraintError(
@@ -150,52 +142,46 @@ const beamFailurePrimary = (cause: unknown, input: InspectErlangBeamInput) => {
       );
     }
     if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_format",
-          message: cause.message,
-        },
-      ]);
+      return stableArtifactInputFailure(cause, OPERATION);
   }
   if (cause instanceof Error && "code" in cause) {
     if (cause.code === "EACCES" || cause.code === "EPERM")
       return new AnalysisAccessDeniedError(OPERATION, input.path, cause.code, {
         cause,
       });
-    if (
-      ["ENOENT", "ENOTDIR", "ELOOP", "ENAMETOOLONG"].includes(
-        String(cause.code),
-      )
-    )
+    const pathErrno = artifactSelectedPathErrno(cause);
+    if (pathErrno !== undefined)
       return new AnalysisInputError(OPERATION, { cause }, [
         {
           path: ["path"],
           reason: "invalid_value",
-          message: `Selected BEAM file could not be read (${String(cause.code)}): ${input.path}.`,
+          message: `Selected BEAM file could not be read (${pathErrno}): ${input.path}.`,
         },
       ]);
   }
   return new ArtifactOperationError(
     OPERATION,
-    cause instanceof ArtifactReaderFailure ? cause.reason : "io",
+    origin === "owned-or-classified" && cause instanceof ArtifactReaderFailure
+      ? cause.reason
+      : "io",
     undefined,
     cause instanceof Error ? cause.message : "BEAM inspection failed.",
     { cause },
   );
 };
 
-const beamFailure = (cause: unknown, input: InspectErlangBeamInput) => {
-  const primary = beamFailurePrimary(artifactFilePrimaryFailure(cause), input);
-  if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
-    return primary;
-  const cleanup = new ProviderCleanupError(
+const beamFailure = (
+  cause: unknown,
+  input: InspectErlangBeamInput,
+  snapshot?: StableArtifactSnapshot,
+) => {
+  const primary = beamFailurePrimary(artifactFilePrimaryFacts(cause), input);
+  return projectStableArtifactFailure(
+    cause,
+    primary,
+    input.path,
     ERLANG_BEAM_PROVIDER_IDENTITY.id,
-    cause.cleanup.resources,
-    { reason: cause.cleanup.reason },
-    { operation: OPERATION, cause },
+    OPERATION,
+    snapshot,
   );
-  const error = analysisErrorWithCleanupFailure(primary, cleanup, OPERATION);
-  bindArtifactFileCleanup(cause, error);
-  return error;
 };

@@ -28,6 +28,7 @@ const report: GoBinary = {
 it("rejects invalid paths and extra caller arguments before invoking the reader", async () => {
   let calls = 0;
   const service = new GoBinaryService({
+    close: async () => {},
     identity,
     inspect: () => {
       calls += 1;
@@ -49,6 +50,7 @@ it("rejects invalid paths and extra caller arguments before invoking the reader"
 it("requires a complete Evidence retention path before starting summary inspection", async () => {
   let calls = 0;
   const service = new GoBinaryService({
+    close: async () => {},
     identity,
     inspect: async () => {
       calls++;
@@ -67,11 +69,11 @@ it("requires a complete Evidence retention path before starting summary inspecti
 
 it("preserves unsupported subject architectures and does not duplicate metadata", async () => {
   const service = new GoBinaryService({
+    close: async () => {},
     identity,
     inspect: () => Promise.resolve(ok(report)),
   });
   const result = await service.inspect({ path: report.artifact.path });
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(result.value.subject).toMatchObject({
     architecture: null,
@@ -113,10 +115,10 @@ it("preserves byte-valued build metadata and validates compiler source lengths",
     limitations: ["Some embedded strings contain non-UTF-8 bytes."],
   };
   const result = await new GoBinaryService({
+    close: async () => {},
     identity,
     inspect: () => Promise.resolve(ok(partial)),
   }).inspect({ path: report.artifact.path });
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(result.value.normalized_result).toEqual(partial);
 
@@ -128,6 +130,7 @@ it("preserves byte-valued build metadata and validates compiler source lengths",
     },
   };
   const invalid = await new GoBinaryService({
+    close: async () => {},
     identity,
     inspect: () => Promise.resolve(ok(mismatched)),
   }).inspect({ path: report.artifact.path });
@@ -163,6 +166,7 @@ it("refuses reader identity changes and invalid original source ranges", async (
     outside,
   ]) {
     const result = await new GoBinaryService({
+      close: async () => {},
       identity,
       inspect: () => Promise.resolve(ok(value)),
     }).inspect({ path: report.artifact.path });
@@ -176,6 +180,7 @@ it("honors cancellation before reading and after a completed observation", async
   const reason = { request: "late Go cancellation" };
   let calls = 0;
   const service = new GoBinaryService({
+    close: async () => {},
     identity,
     inspect: () => {
       calls += 1;
@@ -212,6 +217,7 @@ it("keeps malformed provider output ahead of a late cancellation", async () => {
     artifact: { ...report.artifact, path: "/other" },
   };
   const result = await new GoBinaryService({
+    close: async () => {},
     identity,
     inspect: () => {
       controller.abort();
@@ -240,6 +246,7 @@ it.each([
     controller.abort(reason);
     let calls = 0;
     const service = new GoBinaryService({
+      close: async () => {},
       identity,
       inspect: async () => {
         calls += 1;
@@ -247,7 +254,6 @@ it.each([
       },
     });
     const result = await service.inspect(null, { signal: controller.signal });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected cancelled admission");
     expect(result.error).toBeInstanceOf(AnalysisCancelledError);
     expect(result.error.cause).toBe(reason);
@@ -258,3 +264,100 @@ it.each([
       expect(reason.cleanupIncomplete).toBe(true);
   },
 );
+
+it("validates string_literals input options and output invariants", async () => {
+  let calls = 0;
+  const service = new GoBinaryService({
+    close: async () => {},
+    identity,
+    inspect: () => {
+      calls += 1;
+      return Promise.resolve(ok(report));
+    },
+  });
+  for (const invalidInput of [
+    { path: report.artifact.path, max_string_literals: 10 },
+    {
+      path: report.artifact.path,
+      include_string_literals: false,
+      max_string_literals: 10,
+    },
+    {
+      path: report.artifact.path,
+      include_string_literals: true,
+      max_string_literals: 0,
+    },
+    {
+      path: report.artifact.path,
+      include_string_literals: true,
+      max_string_literals: Number.MAX_SAFE_INTEGER + 1,
+    },
+  ]) {
+    const refused = await service.inspect(invalidInput);
+    expect(refused.ok).toBe(false);
+    if (!refused.ok) expect(refused.error).toBeInstanceOf(AnalysisInputError);
+  }
+  expect(calls).toBe(0);
+  const admitted = await service.inspect({
+    path: report.artifact.path,
+    include_string_literals: true,
+    max_string_literals: 10_001,
+  });
+  if (!admitted.ok) throw admitted.error;
+  expect(admitted.value.parameters).toEqual({
+    path: report.artifact.path,
+    include_string_literals: true,
+    max_string_literals: 10_001,
+  });
+  expect(calls).toBe(1);
+
+  const baseLiterals: NonNullable<GoBinary["string_literals"]> = {
+    evidence_kind: "inferred",
+    discovered_count: 2,
+    aggregate_bytes: 10,
+    max_items: 100,
+    truncated: false,
+    items: [
+      {
+        value: "alpha",
+        location: { offset: 64, bytes: 5 },
+        first_header_offset: 256,
+        reference_count: 1,
+      },
+      {
+        value: "bravo",
+        location: { offset: 69, bytes: 5 },
+        first_header_offset: 272,
+        reference_count: 2,
+      },
+    ],
+  };
+
+  for (const malformedStrings of [
+    { ...baseLiterals, aggregate_bytes: 9 },
+    { ...baseLiterals, discovered_count: 3, truncated: false },
+    {
+      ...baseLiterals,
+      items: [baseLiterals.items[1]!, baseLiterals.items[0]!],
+    },
+    {
+      ...baseLiterals,
+      items: [
+        { ...baseLiterals.items[0]!, first_header_offset: 1020 },
+        baseLiterals.items[1]!,
+      ],
+    },
+  ]) {
+    const out = await new GoBinaryService({
+      close: async () => {},
+      identity,
+      inspect: () =>
+        Promise.resolve(ok({ ...report, string_literals: malformedStrings })),
+    }).inspect({
+      path: report.artifact.path,
+      include_string_literals: true,
+    });
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.error).toBeInstanceOf(AnalysisOutputError);
+  }
+});

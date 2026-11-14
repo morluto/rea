@@ -1,23 +1,23 @@
-import { z } from "zod";
-
-import { AnalysisInputError } from "../domain/analysisErrorCore.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  resolveEvidenceRequest,
+  type EvidenceLookup,
+} from "./EvidenceInputResolver.js";
+import type { ExecutionOptions } from "./AnalysisProvider.js";
+import type { AnalysisInputError } from "../domain/analysisErrorCore.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   createEvidence,
+  evidenceSubjectTarget,
   type Evidence,
   type EvidenceProvider,
-  type EvidenceSubjectTarget,
 } from "../domain/evidence.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
-import type { MobileApplicationProjectionWithSources } from "../domain/mobileApplicationGraphProjection.js";
-import { err, ok, type Result } from "../domain/result.js";
-import { requestInputError } from "./workflowInputError.js";
-import { ArtifactInventoryCarrierError } from "../domain/artifactInventoryEvidence.js";
-
-interface InventoryProjectionInput {
-  readonly inventory_evidence: readonly Evidence[];
-  readonly limits?: unknown;
-}
+import type { JsonValue } from "../domain/jsonValue.js";
+import type { ParsedInventorySet } from "../domain/artifactInventoryEvidence.js";
+import {
+  applicationInventoryProjectionInputSchema,
+  readApplicationInventoryProjection,
+} from "../domain/mobileApplicationGraphProjection.js";
+import { ok, type Result } from "../domain/result.js";
 
 interface InventoryProjectionResult {
   readonly root_sha256: string;
@@ -31,86 +31,59 @@ export interface InventoryProjectionEvidenceResult {
 }
 
 interface InventoryProjectionOptions<
-  Input extends InventoryProjectionInput,
-  Output extends InventoryProjectionResult,
+  Output extends InventoryProjectionResult & JsonValue,
 > {
   readonly rawInput: unknown;
-  readonly schema: z.ZodType<Input>;
+  readonly lookup?: EvidenceLookup;
+  readonly execution?: Pick<ExecutionOptions, "signal">;
   readonly project: (
-    input: Input,
-  ) => MobileApplicationProjectionWithSources<Output>;
+    input: ParsedInventorySet,
+  ) => Result<Output, AnalysisInputError>;
   readonly operation: string;
   readonly predicateType: string;
   readonly provider: EvidenceProvider;
-  readonly subjectFormat: (first: Evidence) => EvidenceSubjectTarget["format"];
 }
 
-/** Parse one inventory projection and wrap its deterministic result in Evidence. */
+/** Resolve source inventory once, then wrap its family projection in Evidence. */
 export const projectInventoryEvidence = <
-  Input extends InventoryProjectionInput,
-  Output extends InventoryProjectionResult,
+  Output extends InventoryProjectionResult & JsonValue,
 >(
-  options: InventoryProjectionOptions<Input, Output>,
+  options: InventoryProjectionOptions<Output>,
 ): Result<InventoryProjectionEvidenceResult, AnalysisError> => {
-  const parsed = options.schema.safeParse(options.rawInput);
-  if (!parsed.success)
-    return err(
-      requestInputError(options.operation, parsed.error, options.rawInput),
-    );
-  try {
-    const projected = options.project(parsed.data);
-    const result = projected.projection;
-    const first = projected.sources[0];
-    return ok({
-      evidence: createEvidence(
-        first?.subject === null || first?.subject === undefined
-          ? undefined
-          : {
-              path: first.subject.local_path,
-              sha256: result.root_sha256,
-              format: options.subjectFormat(first),
-            },
-        options.provider,
-        {
-          predicateType: options.predicateType,
-          operation: options.operation,
-          parameters: {
-            inventory_evidence_ids: [...result.source_evidence_ids],
-            ...("limits" in parsed.data && parsed.data.limits !== undefined
-              ? { limits: jsonValueSchema.parse(parsed.data.limits) }
-              : {}),
-          },
-          result: jsonValueSchema.parse(result),
-          rawResult: null,
-          confidence: "inferred",
-          authority: "analyst-inference",
-          environment: null,
-          limitations: result.limitations,
-          evidenceLinks: result.source_evidence_ids,
-        },
-      ),
-      sources: projected.sources,
-    });
-  } catch (cause: unknown) {
-    if (cause instanceof AnalysisError) return err(cause);
-    if (cause instanceof ArtifactInventoryCarrierError)
-      return err(
-        new AnalysisInputError(
-          options.operation,
-          { cause, userMessage: cause.message },
-          [
-            {
-              path: [
-                "inventory_evidence",
-                ...(cause.index === undefined ? [] : [cause.index]),
-                ...(cause.index === undefined ? [] : ["operation"]),
-              ],
-              reason: "invalid_value",
-              message: cause.message,
-            },
-          ],
-        ),
-      );
-    throw cause;
-  }
+  const request = resolveEvidenceRequest(
+    options.operation,
+    options.rawInput,
+    applicationInventoryProjectionInputSchema,
+    options.lookup,
+    options.execution,
+  );
+  if (!request.ok) return request;
+  const source = readApplicationInventoryProjection(
+    request.value.input,
+    options.operation,
+  );
+  if (!source.ok) return source;
+  const projected = options.project(source.value);
+  if (!projected.ok) return projected;
+  const result = projected.value;
+  const first = source.value.evidence[0];
+  return ok({
+    evidence: createEvidence(
+      evidenceSubjectTarget(first?.subject ?? null),
+      options.provider,
+      {
+        predicateType: options.predicateType,
+        operation: options.operation,
+        parameters: { inventory_evidence_ids: [...result.source_evidence_ids] },
+        result,
+        rawResult: null,
+        confidence: "inferred",
+        authority: "analyst-inference",
+        environment: null,
+        limitations: result.limitations,
+        evidenceLinks: result.source_evidence_ids,
+      },
+    ),
+    sources: source.value.evidence,
+  });
 };

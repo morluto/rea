@@ -11,7 +11,9 @@ import {
   selectedCdpCommandTimeoutMs,
 } from "../../domain/browserDeadline.js";
 import { CdpTargetSessionOwner } from "../CdpTargetSessionOwner.js";
-import { sanitizeBrowserUrl } from "../../domain/browserObservation.js";
+import { classifyCdpFrameUrl } from "../CdpCaptureDocuments.js";
+import type { CdpFrameTree } from "../protocol/CdpFrameTree.js";
+import type { CdpSendParams, CdpSendResult } from "../protocol/CdpCommands.js";
 import {
   WEB_RUNTIME_LIMITS,
   type webRuntimeTargetSchema,
@@ -19,6 +21,7 @@ import {
 import type { z } from "zod";
 import { authorizeCdpTarget } from "../CdpAuthorizedTarget.js";
 import { authorizedMainFrame } from "../CdpAuthorizedMainFrame.js";
+import { cdpOriginScopeRefusal } from "../CdpOriginScopeError.js";
 import {
   discoverCdpEndpoint,
   type CdpEndpointDiscovery,
@@ -27,7 +30,6 @@ import {
   openCdpTargetSession,
   type CdpTargetSession,
 } from "../CdpTargetSession.js";
-import { runtimeFrameTreeSchema } from "./CdpRuntimeProtocol.js";
 
 type Scope = {
   readonly cdp_endpoint: string;
@@ -88,7 +90,7 @@ export class CdpRuntimeSession {
       owner,
     );
     try {
-      const tree = runtimeFrameTreeSchema.parse(
+      const frame = runtimeMainFrame(
         await runtimeDeadline(
           operation,
           options.signal,
@@ -103,11 +105,10 @@ export class CdpRuntimeSession {
           "command",
           "Page.getFrameTree",
         ),
+        allowedOrigins,
+        operation,
       );
-      const frame = tree.frameTree.frame;
-      const url = sanitizeBrowserUrl(frame.url);
-      if (url.origin === null)
-        throw new BrowserObservationError(operation, "target_not_allowed");
+      const url = runtimeFrameUrl(frame, operation);
       return new CdpRuntimeSession(
         transport,
         discovery,
@@ -144,10 +145,10 @@ export class CdpRuntimeSession {
   }
 
   /** Bound each command separately from the caller-selected observation duration. */
-  async command(
-    method: string,
-    params: Readonly<Record<string, unknown>> = {},
-  ): Promise<unknown> {
+  async command<M extends string>(
+    method: M,
+    params?: CdpSendParams<M>,
+  ): Promise<CdpSendResult<M>> {
     const signals = [this.options.signal, this.#completion?.signal].filter(
       (signal): signal is AbortSignal => signal !== undefined,
     );
@@ -200,22 +201,27 @@ export class CdpRuntimeSession {
 
   /** Check document identity before joining any live node or final coverage evidence. */
   async assertDocument(): Promise<void> {
-    const frame = runtimeFrameTreeSchema.parse(
+    const frame = runtimeMainFrame(
       await this.command("Page.getFrameTree"),
-    ).frameTree.frame;
-    const url = sanitizeBrowserUrl(frame.url);
+      this.allowedOrigins,
+      this.operation,
+    );
     if (
       frame.id !== this.target.frame_id ||
       (frame.loaderId ?? null) !== this.target.loader_id ||
-      (this.target.loader_id === null && url.url !== this.target.initial_url)
+      (this.target.loader_id === null &&
+        ((frame.url !== undefined && frame.url !== this.target.initial_url) ||
+          frame.scope === "outside_policy" ||
+          frame.scope === "unsupported"))
     )
       throw new BrowserObservationError(this.operation, "target_changed", {
         detail: `Selected target ${this.target.target_id} changed document during ${this.operation}.`,
       });
-    if (url.origin === null || !this.allowedOrigins.has(url.origin))
-      throw new BrowserObservationError(this.operation, "target_not_allowed", {
-        detail: `Selected target ${this.target.target_id} moved to an unselected origin during ${this.operation}.`,
-      });
+    runtimeFrameUrl(
+      frame,
+      this.operation,
+      `Selected target ${this.target.target_id} moved to an unselected origin during ${this.operation}.`,
+    );
   }
 
   /** Cleanup uses its own deadline after caller cancellation, then closes REA's transport. */
@@ -318,6 +324,40 @@ export class CdpRuntimeSession {
         );
   }
 }
+
+/** Runtime requires document IDs; the frame tree owner parsed them and the URL. */
+const runtimeMainFrame = (
+  tree: CdpFrameTree,
+  allowedOrigins: ReadonlySet<string>,
+  operation: BrowserObservationOperation,
+) => {
+  const { frameId, loaderId, loaderIssue } = tree.root.facts;
+  if (frameId === null || loaderIssue !== null)
+    throw new BrowserObservationError(operation, "protocol_error", {
+      detail:
+        "CDP Page.getFrameTree did not identify the selected main frame's document.",
+    });
+  return {
+    id: frameId,
+    loaderId,
+    ...classifyCdpFrameUrl(tree.root.url, allowedOrigins),
+  };
+};
+
+const runtimeFrameUrl = (
+  frame: ReturnType<typeof runtimeMainFrame>,
+  operation: BrowserObservationOperation,
+  detail?: string,
+) => {
+  if (frame.scope === "outside_policy" || frame.scope === "unsupported")
+    throw cdpOriginScopeRefusal(
+      operation,
+      detail === undefined ? {} : { detail },
+    );
+  if (frame.url === undefined || frame.origin === null)
+    throw new BrowserObservationError(operation, "protocol_error");
+  return { url: frame.url, origin: frame.origin };
+};
 
 /** Apply a disposable command deadline without turning timeout into caller cancellation. */
 export const runtimeDeadline = async <T>(

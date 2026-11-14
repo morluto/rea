@@ -3,6 +3,7 @@ import { expect, it, vi } from "vitest";
 
 import { createArtifact } from "../support/reverseEngineeringCompositionFixtures.js";
 import { TestReverseEngineeringService } from "../support/reverseEngineeringService.js";
+import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 
 it("keeps omitted and undefined selection out of default command Evidence", async () => {
   const { directory, path } = await createArtifact();
@@ -62,8 +63,10 @@ it.each([
         artifact_changed: false,
         completion_status: "complete",
       });
-      expect(result.value.limitations).toContain(
-        "Disassembly is scoped to the caller-selected symbol using the provider's matching and symbol-boundary semantics; an empty match does not establish artifact-wide absence.",
+      expect(result.value.limitations).toContainEqual(
+        expect.stringMatching(
+          /caller-selected symbol.*provider.*symbol-boundary.*empty match.*not establish artifact-wide absence/iu,
+        ),
       );
     } finally {
       await service.close();
@@ -94,6 +97,16 @@ it.each([
     expect(result).toMatchObject({
       ok: false,
       error: { _tag: "AnalysisInputError" },
+    });
+    if (result.ok) throw new Error("Expected selector rejection");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "invalid_request",
+      details: {
+        operation: "inspect_with_objdump",
+        issues: expect.arrayContaining([
+          { path: ["symbol"], reason: "unknown_argument" },
+        ]),
+      },
     });
     expect(digest).not.toHaveBeenCalled();
     expect(run).not.toHaveBeenCalled();

@@ -1,9 +1,6 @@
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
-import {
-  requireAnalysisViewRetention,
-  summarizeRetainedAnalysis,
-} from "../application/analysisView/AnalysisViewService.js";
+import { retainedSummaryDelivery } from "./retainedSummaryDelivery.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
 import { captureSensitiveValues } from "../domain/webNetworkCapture.js";
@@ -26,6 +23,10 @@ export const registerWebNetworkCaptureTool = (
   evidenceById?: EvidenceLookup,
 ): void => {
   const contract = toolContract("inspect_web_network_capture");
+  const delivery = retainedSummaryDelivery(contract.name, {
+    recordEvidence,
+    evidenceById,
+  });
   const registration = applicationToolRegistrationOptions(contract);
   // Keep the exact advertised contract; the shared service validates raw input
   // before effects so caller-declared sensitivity also covers invalid arguments.
@@ -47,14 +48,12 @@ export const registerWebNetworkCaptureTool = (
           ),
         );
       const { detail, ...input } = parsed.data;
-      const retention = { recordEvidence, evidenceById };
-      if (detail === "summary") {
-        const ready = requireAnalysisViewRetention(contract.name, retention);
-        if (!ready.ok) return ready;
-      }
+      const parameters = { detail };
+      const ready = delivery.preflight(parameters);
+      if (!ready.ok) return ready;
       const inspected = await service.inspect(input, options);
-      return detail === "summary" && inspected.ok
-        ? summarizeRetainedAnalysis(inspected.value, retention)
+      return inspected.ok
+        ? delivery.projectEvidence(parameters, inspected.value)
         : inspected;
     },
     logger,

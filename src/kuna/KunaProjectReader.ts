@@ -1,3 +1,11 @@
+import type { RegularFileState } from "../filesystem/RegularFile.js";
+import {
+  RegularFileChangedError,
+  sameRegularFileState,
+  RegularFileOperationCancelled,
+} from "../filesystem/RegularFile.js";
+import { KunaDocumentError } from "./KunaDocumentError.js";
+import { assertKunaFileState } from "./KunaProjectState.js";
 import { createReadStream } from "node:fs";
 import { open } from "node:fs/promises";
 import { join } from "node:path";
@@ -7,17 +15,21 @@ import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.
 import {
   AnalysisCancelledError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import {
   RegularFileCancelled,
   RegularFileCleanupFailure,
+  OwnedRegularFileOperationFailure,
   withOwnedFileHandle,
 } from "../filesystem/OwnedRegularFile.js";
-import { RegularFileOperationCancelled } from "../filesystem/RegularFile.js";
 import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
 import type { KunaProject } from "./KunaProjectCache.js";
 import {
@@ -26,6 +38,7 @@ import {
   type KunaProjectFunction,
 } from "./KunaProjectFiles.js";
 import { KUNA_PROVIDER_ID } from "./KunaRelease.js";
+import type { PseudocodeAbsence } from "../domain/native/pseudocodeAbsence.js";
 import { KUNA_FUNCTION_TEXT_BYTES } from "./KunaLimits.js";
 import { kunaUnavailable } from "./KunaUnavailable.js";
 
@@ -39,14 +52,16 @@ export interface KunaProjectFileSpan {
 
 export interface KunaProjectText {
   readonly result: string | null;
+  readonly unavailableReason?: string;
+  readonly pseudocodeAbsence?: PseudocodeAbsence;
   readonly files?: readonly KunaProjectFileSpan[];
   readonly limitations: readonly string[];
 }
 
 /** Session scope that adopts a span descriptor before the read opens it. */
-export interface KunaSpanOwnership {
-  readonly retainFailedClose?: (path: string, owner: OwnedFileHandle) => void;
-  readonly bindSpanCleanup?: (
+interface KunaSpanOwnership {
+  readonly retainFailedClose: (path: string, owner: OwnedFileHandle) => void;
+  readonly bindSpanCleanup: (
     owner: OwnedFileHandle,
     marker: ProviderCleanupError,
   ) => void;
@@ -54,18 +69,19 @@ export interface KunaSpanOwnership {
    * Check retained cleanup and open one descriptor. The session holds this
    * together with finishSpan so a failed close is retained before the next open.
    */
-  readonly admitSpan?: <T>(
+  readonly admitSpan: <T>(
     operation: string,
     signal: AbortSignal | undefined,
     open: () => Promise<T>,
   ) => Promise<Result<T, AnalysisError>>;
   /** Close one admitted descriptor before another span may open. */
-  readonly finishSpan?: <T>(finish: () => Promise<T>) => Promise<T>;
+  readonly finishSpan: <T>(finish: () => Promise<T>) => Promise<T>;
 }
 
 const readSpan = async (
   operation: string,
   path: string,
+  expected: RegularFileState,
   offset: number,
   length: number,
   ownership: KunaSpanOwnership,
@@ -83,31 +99,51 @@ const readSpan = async (
           file: path,
           byte_offset: offset,
         },
+        fixedAllowanceOptions(
+          `Kuna's buffered function-text allowance of ${String(KUNA_FUNCTION_TEXT_BYTES)} bytes`,
+          "bytes",
+          {
+            limit: KUNA_FUNCTION_TEXT_BYTES,
+            unit: "bytes",
+            narrowing:
+              "Read the complete export locally at details.reported_limits.file from details.reported_limits.byte_offset.",
+          },
+        ),
       ),
     );
   const callerAborted = (): AbortSignal | undefined =>
     signal?.aborted === true ? signal : undefined;
   const cancelled = callerAborted();
-  if (cancelled !== undefined)
-    return err(
-      new AnalysisCancelledError(operation, { cause: cancelled.reason }),
-    );
-  const opened =
-    ownership.admitSpan === undefined
-      ? ok(await open(path, "r"))
-      : await ownership.admitSpan(operation, signal, () => open(path, "r"));
+  if (cancelled !== undefined) return err(cancelledBy(operation, cancelled));
+  const opened = await ownership.admitSpan(operation, signal, () =>
+    open(path, "r"),
+  );
   if (!opened.ok) return opened;
   const owner = new OwnedFileHandle(opened.value);
-  let text: string | undefined;
-  let readFailure: unknown;
+  let read: Result<string, unknown>;
+  let spanCancellation: AnalysisCancelledError | undefined;
   try {
-    const buffer = Buffer.alloc(length);
-    const { bytesRead } = await owner.handle.read(buffer, 0, length, offset);
-    if (bytesRead !== length)
-      throw new Error(`${path} is shorter than its recorded span`);
-    text = buffer.toString("utf8");
+    if (!sameRegularFileState(expected, await owner.handle.stat()))
+      throw new RegularFileChangedError(path);
+    const buffer = await readFileHandleRange(
+      owner.handle,
+      offset,
+      length,
+      (bytesRead) => {
+        // Preserve a fully acquired span for owned finalization, which records
+        // cancellation alongside its text if descriptor cleanup fails.
+        if (bytesRead < length && signal?.aborted)
+          throw (spanCancellation = cancelledBy(operation, signal));
+      },
+    );
+    if (buffer.length !== length)
+      throw new KunaDocumentError("span_short", { path });
+    if (!sameRegularFileState(expected, await owner.handle.stat()))
+      throw new RegularFileChangedError(path);
+    await assertKunaFileState(path, expected);
+    read = ok(buffer.toString("utf8"));
   } catch (cause: unknown) {
-    readFailure = cause;
+    read = err(cause);
   }
   const finish = () =>
     withOwnedFileHandle(
@@ -116,28 +152,36 @@ const readSpan = async (
       {
         // A failed read keeps its own diagnostic. A completed read records
         // cancellation when the caller aborts before the queued close settles.
-        ...(readFailure === undefined && signal !== undefined
-          ? { signal }
-          : {}),
-        ...(ownership.retainFailedClose === undefined
-          ? {}
-          : {
-              retainFailedClose: (failed) =>
-                ownership.retainFailedClose?.(path, failed),
-            }),
+        ...(read.ok && signal !== undefined ? { signal } : {}),
+        retainFailedClose: (failed) =>
+          ownership.retainFailedClose(path, failed),
       },
       async () => {
-        if (readFailure !== undefined) throw readFailure;
-        return text ?? "";
+        if (
+          !read.ok &&
+          spanCancellation !== undefined &&
+          read.error === spanCancellation
+        )
+          throw read.error;
+        if (!read.ok) throw new OwnedRegularFileOperationFailure(read.error);
+        return read.value;
       },
     );
   try {
-    const value =
-      ownership.finishSpan === undefined
-        ? await finish()
-        : await ownership.finishSpan(finish);
+    const value = await ownership.finishSpan(finish);
     return ok(value);
   } catch (cause: unknown) {
+    if (spanCancellation !== undefined && cause === spanCancellation)
+      return err(spanCancellation);
+    if (cause instanceof OwnedRegularFileOperationFailure) {
+      if (cause.operationCause instanceof RegularFileChangedError)
+        throw cause.operationCause;
+      return err(
+        new ProviderAdapterError(KUNA_PROVIDER_ID, operation, {
+          cause: cause.operationCause,
+        }),
+      );
+    }
     if (cause instanceof RegularFileCleanupFailure)
       return err(
         spanCloseFailure(
@@ -145,7 +189,7 @@ const readSpan = async (
           path,
           offset,
           length,
-          spanCloseAfterRead(cause, text, readFailure, signal),
+          spanCloseAfterRead(cause, read, signal),
           ownership,
         ),
       );
@@ -157,9 +201,7 @@ const readSpan = async (
       (cause instanceof RegularFileOperationCancelled ||
         cause instanceof RegularFileCancelled)
     )
-      return err(
-        new AnalysisCancelledError(operation, { cause: aborted.reason }),
-      );
+      return err(cancelledBy(operation, aborted));
     throw cause;
   }
 };
@@ -171,27 +213,23 @@ const readSpan = async (
  */
 const spanCloseAfterRead = (
   failure: RegularFileCleanupFailure<string>,
-  text: string | undefined,
-  readFailure: unknown,
+  read: Result<string, unknown>,
   signal: AbortSignal | undefined,
 ): RegularFileCleanupFailure<string> => {
   if (
     failure.completionCancellation !== undefined ||
-    text === undefined ||
-    readFailure !== undefined ||
+    !read.ok ||
     signal?.aborted !== true ||
     failure.outcome.kind !== "failed" ||
     !(failure.outcome.cause instanceof RegularFileOperationCancelled)
   )
     return failure;
-  return new RegularFileCleanupFailure(
-    failure.path,
-    failure.owner,
-    { kind: "completed", value: text },
-    failure.cleanupCause,
-    failure.retention,
-    { reason: signal.reason },
-  );
+  return new RegularFileCleanupFailure({
+    ...failure,
+    outcome: { kind: "completed", value: read.value },
+    completionCancellation: { reason: signal.reason },
+    operationFailure: undefined,
+  });
 };
 
 /** Keep the span text or the short-read diagnostic with the exact handle. */
@@ -221,18 +259,20 @@ const spanCloseFailure = (
     },
     { operation, cause: failure },
   );
-  ownership.bindSpanCleanup?.(failure.owner, marker);
+  ownership.bindSpanCleanup(failure.owner, marker);
   if (failure.completionCancellation !== undefined)
     return analysisErrorWithCleanupFailure(
-      new AnalysisCancelledError(operation, {
-        cause: failure.completionCancellation.reason,
-      }),
+      cancelledBy(
+        operation,
+        carriedReason(failure.completionCancellation.reason),
+      ),
       marker,
       operation,
     ).bindCleanupDependencies([marker]);
   if (failure.outcome.kind !== "failed") return marker;
   const primaryCause = failure.outcome.cause;
   const primary =
+    failure.operationFailure === undefined &&
     primaryCause instanceof AnalysisError
       ? primaryCause
       : new ProviderAdapterError(KUNA_PROVIDER_ID, operation, {
@@ -267,17 +307,25 @@ export class KunaProjectReader {
     operation: string,
     signal?: AbortSignal,
   ): Promise<Result<KunaProjectText, AnalysisError>> {
+    await assertKunaFileState(
+      join(this.project.directory, this.project.manifest.files.c.path),
+      this.project.fileStates.c,
+      signal ?? this.lifetime.signal,
+    );
     this.#blocks ??= new Map(
       this.project.functions.map((block) => [block.address, block]),
     );
     const block = this.#blocks.get(address);
-    if (block === undefined)
+    if (block === undefined) {
+      const reason =
+        "Kuna's project export contains no decompiled block for this inventory entry. Import slots may have no body; other omissions are not classified.";
       return ok({
         result: null,
-        limitations: [
-          "Kuna's export decompiles code entries only; this inventory entry, such as an import slot, has no body.",
-        ],
+        unavailableReason: reason,
+        pseudocodeAbsence: { kind: "not-in-export", reason },
+        limitations: [reason],
       });
+    }
     const files = [
       {
         facet: "pseudocode" as const,
@@ -286,15 +334,23 @@ export class KunaProjectReader {
         byteLength: block.cLength,
       },
     ];
-    if (block.error !== null)
+    if (block.error !== null) {
+      const reason = `Kuna could not decompile this function: ${block.error}`;
       return ok({
         result: null,
+        unavailableReason: reason,
+        pseudocodeAbsence: { kind: "provider-failure", reason },
         files,
-        limitations: [`Kuna could not decompile this function: ${block.error}`],
+        limitations: [
+          reason,
+          "To try an independent decompile, call procedure_pseudo_code with analysis: independent_fresh, or use rea decompile --analysis independent_fresh. It may use different analysis context and does not replace this observation.",
+        ],
       });
+    }
     const text = await readSpan(
       operation,
       join(this.project.directory, this.project.manifest.files.c.path),
+      this.project.fileStates.c,
       block.cOffset,
       block.cLength,
       this.lifetime,
@@ -306,7 +362,12 @@ export class KunaProjectReader {
         .slice(text.value.indexOf("\n") + 1)
         .replace(/\n+$/u, ""),
       files,
-      limitations: [],
+      limitations:
+        this.project.manifest.inputs.jobs > 1
+          ? [
+              "Parallel Kuna project export does not propagate callee-first prototypes between workers; function signatures and call arguments may differ from a serial export.",
+            ]
+          : [],
     });
   }
 
@@ -328,6 +389,7 @@ export class KunaProjectReader {
     const text = await readSpan(
       operation,
       join(this.project.directory, this.project.manifest.files.asm.path),
+      this.project.fileStates.asm,
       span.offset,
       span.length,
       this.lifetime,
@@ -361,19 +423,33 @@ export class KunaProjectReader {
     operation: string,
     signal: AbortSignal | undefined,
   ): Promise<Result<KunaAssemblyIndex, AnalysisError>> {
+    const path = join(
+      this.project.directory,
+      this.project.manifest.files.asm.path,
+    );
+    await assertKunaFileState(
+      path,
+      this.project.fileStates.asm,
+      signal ?? this.lifetime.signal,
+    );
     this.#assembly ??= this.lifetime.own(
       scanKunaAssembly(
         createReadStream(
           join(this.project.directory, this.project.manifest.files.asm.path),
           { signal: this.lifetime.signal },
         ),
-      ),
+      ).then(async (index) => {
+        await assertKunaFileState(
+          path,
+          this.project.fileStates.asm,
+          this.lifetime.signal,
+        );
+        return index;
+      }),
     );
     const index = await waitForAbortable(this.#assembly, signal);
     if (index === ABORTED)
-      return err(
-        new AnalysisCancelledError(operation, { cause: signal?.reason }),
-      );
+      return err(cancelledBy(operation, carriedReason(signal?.reason)));
     return index.ok
       ? index
       : err(

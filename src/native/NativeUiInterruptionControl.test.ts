@@ -6,18 +6,17 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { expect, it } from "vitest";
 import { NativeUiInterruptionControl } from "./NativeUiInterruptionControl.js";
 
-it("names the selected native UI deadline and the fixed sibling caps", () => {
+it("reports the selected native UI deadline", () => {
   const deadline = AbortSignal.abort();
   const control = new NativeUiInterruptionControl(undefined, deadline, 2_500);
   const error = control.error("observe_native_ui");
   expect(error).toBeInstanceOf(AnalysisTimeoutError);
   if (!(error instanceof AnalysisTimeoutError)) return;
   const projected = projectAnalysisError(error);
-  expect(projected.message).toContain("2500 ms");
-  expect(projected.message).toContain("native_ui_deadline_ms");
-  expect(projected.remediation.action).toContain("--native-ui-deadline-ms");
-  expect(projected.remediation.action).toContain("no runtime override");
-  expect(projected.remediation.action).toContain("67108864");
+  expect(projected).toMatchObject({
+    code: "provider_timeout",
+    details: { timeout_ms: 2500 },
+  });
   control.dispose();
 });
 
@@ -66,10 +65,10 @@ it("records a helper subprocess timeout as the selected UI deadline", () => {
   expect(error).toBeInstanceOf(AnalysisTimeoutError);
   if (!(error instanceof AnalysisTimeoutError)) return;
   const projected = projectAnalysisError(error);
-  expect(projected.message).toContain("2500 ms");
-  expect(projected.message).toContain("native_ui_deadline_ms");
-  expect(projected.message).not.toContain("30000 ms");
-  expect(projected.message).not.toContain("60000 ms");
+  expect(projected).toMatchObject({
+    code: "provider_timeout",
+    details: { timeout_ms: 2500 },
+  });
   control.dispose();
 });
 

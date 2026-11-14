@@ -186,8 +186,39 @@ export async function verifyDylibResolution(app) {
       arguments: { roots: ["../outside"] },
     });
     assert.equal(invalid.isError, true);
+    // Selecting the observed roots removes discovery uncertainty while retaining
+    // complete dependency-resolution coverage for this known fixture.
+    const roots = [...new Set(trace.roots.map(({ image }) => image))];
+    const selected = (
+      await artifactCliEvidence(
+        "trace-dylib-resolution",
+        app,
+        roots.flatMap((root) => ["--root", root]),
+      )
+    ).normalized_result;
+    assert.deepEqual(
+      await artifactMcpResult(client, "trace_dylib_resolution", { roots }),
+      selected,
+    );
+    assert.equal(selected.coverage.status, "complete");
+    assert.deepEqual(selected.roots, trace.roots);
+    assert.deepEqual(selected.images, trace.images);
+    assert.deepEqual(selected.edges, trace.edges);
+    assert.deepEqual(selected.findings, trace.findings);
   });
-  assert.equal(trace.coverage.status, "complete");
+  // Framework aliases are deliberately not followed while discovering process
+  // roots; their possible executable descendants remain unknown.
+  assert.deepEqual(trace.coverage, {
+    status: "partial",
+    unparsed_images: [],
+    roots_without_architecture: [],
+  });
+  assert.ok(
+    trace.limitations.some((item) =>
+      item.startsWith("Executable-root discovery did not follow "),
+    ),
+    "Framework symlinks must retain the root-discovery limitation",
+  );
   assert.deepEqual(trace.roots.map(({ image }) => image).sort(), [
     "Contents/Frameworks/Core.framework/Versions/A/XPCServices/FwSvc.xpc/Contents/MacOS/FwSvc",
     "Contents/Helpers/rea-tool",

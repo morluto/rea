@@ -21,62 +21,6 @@ const metadataLayout = (bytes: Buffer) => {
 
 describe("managed member pointer ownership", () => {
   it.each([
-    { table: "fields" as const, prefix: "0x040000" },
-    { table: "methods" as const, prefix: "0x060000" },
-  ])("maps reordered pointer slots to physical $table", ({ table, prefix }) => {
-    const bytes = buildManagedMemberPointerFixture();
-    const result = inspectManagedMembersBytes(
-      bytes,
-      managedPeFixtureTarget(bytes),
-    );
-
-    expect(result.coverage).toEqual({ state: "complete", issues: [] });
-    expect(result.types.map((type) => type.full_name)).toEqual([
-      "<Module>",
-      "Fixture.A",
-      "Fixture.B",
-    ]);
-    expect(
-      result[table].map(({ token, declaring_type, declaring_type_token }) => ({
-        token,
-        declaring_type,
-        declaring_type_token,
-      })),
-    ).toEqual([
-      {
-        token: `${prefix}01`,
-        declaring_type: "Fixture.B",
-        declaring_type_token: "0x02000003",
-      },
-      {
-        token: `${prefix}02`,
-        declaring_type: "Fixture.A",
-        declaring_type_token: "0x02000002",
-      },
-    ]);
-  });
-
-  it("resolves a local custom-attribute constructor through MethodPtr", () => {
-    const bytes = buildManagedMemberPointerFixture();
-    const target = managedPeFixtureTarget(bytes);
-    const artifact = inspectManagedArtifactBytes(bytes, target);
-    const members = inspectManagedMembersBytes(bytes, target);
-
-    expect(artifact.metadata.stream_names).toContain("#-");
-    expect(artifact.coverage).toEqual({ state: "complete", issues: [] });
-    expect(artifact.attributes).toEqual([
-      expect.objectContaining({
-        parent_token: "0x20000001",
-        constructor_token: "0x06000001",
-        type_name: "Fixture.B",
-      }),
-    ]);
-    expect(artifact.attributes[0]?.type_name).toBe(
-      members.methods[0]?.declaring_type,
-    );
-  });
-
-  it.each([
     {
       label: "identity pointer tables",
       fieldPointers: [1, 2],

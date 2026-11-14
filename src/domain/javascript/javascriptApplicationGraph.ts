@@ -155,6 +155,7 @@ const checkEvidenceNormalization = (
     "ast-static-analysis",
     "static-relationship-inference",
     "native-analysis-provider",
+    "managed-static-analysis",
   ].includes(evidence.authority);
   if (runtimeLocation && staticAuthority)
     context.addIssue({
@@ -244,6 +245,7 @@ const observationMatchesIdentity = (
       return false;
     const location = evidence.location.value;
     return (
+      evidence.evidence_ids.includes(identity.capture_evidence_id) &&
       location.capture_sha256 === identity.capture_sha256 &&
       [location.target_key, location.frame_key, location.script_key].includes(
         identity.runtime_key,

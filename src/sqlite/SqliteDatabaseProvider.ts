@@ -13,24 +13,25 @@ import type {
 } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
-  AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { createEvidence } from "../domain/evidence.js";
+import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   inspectSqliteDatabaseInputSchema,
   sqliteDatabaseSchema,
   type InspectSqliteDatabaseInput,
-  SQLITE_PROVIDER_IDENTITY,
   DEFAULT_SQLITE_WORKER_TIMEOUT_MS,
   sqliteInspectionParameters,
 } from "../domain/sqlite/sqliteDatabase.js";
-import { isAbsolute } from "node:path";
+import { SQLITE_PROVIDER_IDENTITY } from "../domain/sqlite/SqliteProviderIdentity.js";
+import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import {
   OwnedCommandFailure,
@@ -49,6 +50,7 @@ import { SQLITE_DATABASE_LIMITS } from "./SqliteDatabaseLimits.js";
 
 import {
   executeSqliteDatabaseWorker,
+  sqliteReplyFinalizationFailure,
   type SqliteWorkerLauncher,
 } from "./SqliteDatabaseWorkerExecution.js";
 
@@ -93,7 +95,8 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
           cause: options.signal.reason,
         }),
       );
-    if (this.#closed) return err(new AnalysisCancelledError(operation));
+    if (this.#closed)
+      return err(cancelledBy(operation, OwnerCancellation.ownerClosed));
     if (this.#active.size >= SQLITE_DATABASE_LIMITS.concurrentInspections)
       return err(
         new AnalysisResourceConstraintError(
@@ -242,7 +245,11 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
           new ProviderCleanupError(
             SQLITE_PROVIDER_IDENTITY.id,
             failures.flatMap((failure) => failure.cleanupResources),
-            { failures: failures.map(projectAnalysisError) },
+            {
+              failures: failures.map((failure) =>
+                projectAnalysisError(failure),
+              ),
+            },
             { operation },
           ).bindCleanupDependencies(failures),
         );
@@ -274,7 +281,8 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
         throw new AnalysisCancelledError(operation, {
           cause: options.signal.reason,
         });
-      if (this.#closed) throw new AnalysisCancelledError(operation);
+      if (this.#closed)
+        throw cancelledBy(operation, OwnerCancellation.ownerClosed);
       root = await this.createRuntime();
       phase = "artifact-read";
       const snapshot = await captureSqliteDatabaseSnapshot(
@@ -284,7 +292,7 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
         options?.signal,
       );
       phase = "worker";
-      const inspection = await executeSqliteDatabaseWorker({
+      const completed = await executeSqliteDatabaseWorker({
         input,
         root: root.path,
         snapshotPath: snapshot.snapshotPath,
@@ -304,18 +312,29 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
       const validated = sqliteDatabaseSchema.safeParse({
         artifact: snapshot.artifact,
         wal: snapshot.wal,
-        ...inspection,
+        ...completed.inspection,
         worker_timeout_ms: workerTimeoutMs,
       });
       if (!validated.success)
-        throw new AnalysisOutputError(
-          operation,
-          "SQLite worker report dimensions or identity fields are invalid",
-          retainedOutput === undefined
-            ? undefined
-            : { capturedOutput: retainedOutput },
+        throw sqliteReplyFinalizationFailure(
+          new AnalysisOutputError(
+            operation,
+            "SQLite worker report dimensions or identity fields are invalid",
+            retainedOutput === undefined
+              ? undefined
+              : { capturedOutput: retainedOutput },
+          ),
+          completed.finalization,
         );
-      result = ok(createSqliteObservation(validated.data, input.path));
+      const execution = createSqliteObservation(validated.data, input.path);
+      result =
+        completed.finalization === undefined
+          ? ok(execution)
+          : err(
+              completed.finalization.retainPartialObservation(
+                completedSqliteEvidence(input, execution),
+              ),
+            );
     } catch (cause: unknown) {
       // A failure rethrown after retainCleanup carries no owner of its own;
       // keep the retained worker instead of discarding it.
@@ -522,25 +541,17 @@ const completedSqliteEvidence = (
   input: InspectSqliteDatabaseInput,
   execution: AnalysisExecution,
 ) =>
-  createEvidence(execution.subject ?? undefined, execution.provider, {
+  createAnalysisExecutionEvidence(
     operation,
-    parameters: sqliteInspectionParameters(input),
-    result: execution.result,
-    confidence: "observed",
-    locations: execution.locations,
-    limitations: execution.limitations,
-  });
+    sqliteInspectionParameters(input),
+    execution,
+    "observed",
+  );
 
 const validateSqliteInput = (input: InspectSqliteDatabaseInput): void => {
   const parsed = inspectSqliteDatabaseInputSchema.safeParse(input);
-  if (!parsed.success || !isAbsolute(input.path))
-    throw new AnalysisInputError(operation, undefined, [
-      {
-        path: ["path"],
-        reason: "invalid_format",
-        message: parsed.success
-          ? "path must be an absolute local filesystem path"
-          : parsed.error.message,
-      },
-    ]);
+  if (!parsed.success)
+    throw analysisInputErrorFromIssues(operation, parsed.error.issues, input, {
+      cause: parsed.error,
+    });
 };

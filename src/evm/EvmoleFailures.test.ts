@@ -1,7 +1,14 @@
+import { readFile, symlink } from "node:fs/promises";
+import { join } from "node:path";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { expect, it } from "vitest";
-import { evmInterfaceFailure } from "./EvmoleFailures.js";
+import {
+  evmInterfaceFailure,
+  evmReplyBudgetFailure,
+} from "./EvmoleFailures.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   DEFAULT_EVM_TIMEOUT_MS,
@@ -15,6 +22,32 @@ const snapshot: ProviderProcessSnapshot = {
   exitCode: 0,
   signal: null,
 };
+
+it("projects a complete EVM reply allowance refusal as a deterministic resource constraint", () => {
+  const capturedOutput = {
+    stdout: "kept",
+    stderr: "warning",
+    truncated: false,
+  };
+  const projected = projectAnalysisError(
+    evmReplyBudgetFailure(
+      "Complete interface evidence exceeds the 16 MiB reply budget.",
+      { capturedOutput },
+    ),
+  );
+  expect(projected).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: {
+      reported_limits: { maximum_reply_bytes: 16777216 },
+      captured_output: capturedOutput,
+    },
+    remediation: {
+      action: expect.stringContaining("producer_limits.output_bytes"),
+    },
+  });
+  expect(projected.remediation.action).not.toContain("doctor");
+});
 
 it.each([
   undefined,
@@ -36,7 +69,10 @@ it.each([
         cancellation: { reason },
       },
     );
-    const result = evmInterfaceFailure(source, "worker", "/selected.hex");
+    const result = evmInterfaceFailure(source, {
+      phase: "worker",
+      path: "/selected.hex",
+    });
     expect(result).toBeInstanceOf(AnalysisCancelledError);
     expect(result.cause).toBe(reason);
     expect(result.capturedOutput).toEqual({
@@ -56,15 +92,11 @@ it("names timeout_ms, the omitted default, and the caps it does not raise", () =
     null,
   );
   const projected = projectAnalysisError(
-    evmInterfaceFailure(
-      source,
-      "worker",
-      "/selected.hex",
-      undefined,
-      undefined,
-      undefined,
-      45_000,
-    ),
+    evmInterfaceFailure(source, {
+      phase: "worker",
+      path: "/selected.hex",
+      timeoutMs: 45_000,
+    }),
   );
   expect(projected).toMatchObject({
     code: "provider_timeout",
@@ -78,7 +110,7 @@ it("names timeout_ms, the omitted default, and the caps it does not raise", () =
   expect(projected.remediation.action).toContain("no server restart");
 });
 
-it("says a CPU signal has no runtime override and timeout_ms does not raise it", () => {
+it("names the selected CPU budget separately from tighter inherited limits", () => {
   const source = new OwnedCommandFailure(
     "process",
     "signaled",
@@ -90,20 +122,71 @@ it("says a CPU signal has no runtime override and timeout_ms does not raise it",
     null,
   );
   const projected = projectAnalysisError(
-    evmInterfaceFailure(source, "worker", "/selected.hex", {
-      addressSpaceBytes: 1024,
-      cpuSeconds: 30,
-      fileSizeBytes: 1024,
+    evmInterfaceFailure(source, {
+      phase: "worker",
+      path: "/selected.hex",
+      workerLimits: {
+        addressSpaceBytes: 1024,
+        cpuSeconds: 30,
+        fileSizeBytes: 1024,
+      },
     }),
   );
   expect(projected).toMatchObject({
     code: "resource_constraint",
     details: { resource: "cpu" },
   });
-  expect(projected.remediation.action).toContain("no runtime override");
-  expect(projected.remediation.action).toContain(
-    "timeout_ms does not raise it",
+  expect(projected.remediation.action).toContain("producer_limits.cpu_seconds");
+  expect(projected.remediation.action).toContain("inherited");
+});
+
+it("reports the selected carrier input allowance as a resource constraint", () => {
+  const source = new ArtifactReaderFailure(
+    "limit",
+    "Selected artifact exceeds 4194304 bytes: /selected.bin",
+    { boundary: "file-size" },
   );
+  const projected = projectAnalysisError(
+    evmInterfaceFailure(source, {
+      phase: "artifact-read",
+      path: "/selected.bin",
+    }),
+  );
+  expect(projected).toMatchObject({
+    code: "resource_constraint",
+    category: "resource_constraint",
+    retryable: false,
+    details: {
+      operation: "inspect_evm_interface",
+      resource: "file-size",
+      reported_limits: { maximum_input_bytes: 4194304 },
+    },
+  });
+  expect(projected.remediation.action).toContain("producer_limits.input_bytes");
+  expect(projected.remediation.action).toContain("4194304");
+  expect(projected.recovery).toBeUndefined();
+});
+
+it.each([
+  {
+    reason: "path" as const,
+    message: "Expected a regular file without a symlink: /selected.bin",
+  },
+  { reason: "format" as const, message: "Unsupported carrier format." },
+])("keeps reader $reason refusals as invalid input", ({ reason, message }) => {
+  const projected = projectAnalysisError(
+    evmInterfaceFailure(new ArtifactReaderFailure(reason, message), {
+      phase: "artifact-read",
+      path: "/selected.bin",
+    }),
+  );
+  expect(projected).toMatchObject({
+    code: "invalid_request",
+    category: "invalid_input",
+    details: {
+      issues: [{ path: ["path"], reason: "invalid_format", message }],
+    },
+  });
 });
 
 it.each([
@@ -125,10 +208,53 @@ it.each([
     },
     ["exact-owner"],
   );
-  const result = evmInterfaceFailure(source, "worker", "/selected.hex");
+  const result = evmInterfaceFailure(source, {
+    phase: "worker",
+    path: "/selected.hex",
+  });
   expect(result._tag).toBe(tag);
   if (cleanup !== null) {
     expect(result.cleanupIncomplete).toBe(true);
     expect(result.cleanupResources).toEqual(["exact-owner"]);
   }
 });
+
+it.skipIf(process.platform === "win32")(
+  "maps real selected-path failures before the EVM worker starts",
+  async () => {
+    const root = await createTestTempDirectory("rea-evm-path-mapping-");
+    await symlink("loop", join(root, "loop"));
+    for (const [code, path] of [
+      ["ELOOP", join(root, "loop", "carrier.bin")],
+      ["ENAMETOOLONG", join(root, "x".repeat(256))],
+    ] as const) {
+      let source: unknown;
+      try {
+        await readFile(path);
+        throw new Error("Expected selected-path read failure");
+      } catch (cause) {
+        source = cause;
+      }
+      const failure = evmInterfaceFailure(source, {
+        phase: "artifact-read",
+        path: path,
+      });
+      expect(failure.cause).toBe(source);
+      expect(projectAnalysisError(failure)).toMatchObject({
+        code: "invalid_request",
+        details: {
+          issues: [
+            {
+              path: ["path"],
+              reason: "invalid_value",
+              message: expect.stringContaining(code),
+            },
+          ],
+        },
+      });
+      expect(
+        evmInterfaceFailure(source, { phase: "worker", path: path })._tag,
+      ).toBe("ProviderAdapterError");
+    }
+  },
+);

@@ -1,3 +1,8 @@
+import {
+  storageScriptParsedSchema,
+  storageContextSchema,
+  storageContextDestroyedSchema,
+} from "./CdpScriptContextFacts.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { randomUUID } from "node:crypto";
 
@@ -8,6 +13,11 @@ import type { BrowserScenario } from "../domain/browserScenario.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
 import { withPlaywrightExecutionBoundary } from "./PlaywrightExecutionBoundary.js";
+import {
+  admitCdpReply,
+  CdpMalformedReply,
+  type CdpSendResult,
+} from "./protocol/CdpCommands.js";
 import {
   releaseLateScenarioCommand,
   scenarioCommandPending,
@@ -56,19 +66,6 @@ const nestedProtocolMessage = z.object({
   result: z.unknown().optional(),
   error: z.object({ message: z.string() }).optional(),
 });
-const executionContextEvent = z.object({
-  context: z.object({
-    id: z.number(),
-    origin: z.string(),
-    name: z.string(),
-    auxData: z.object({ frameId: z.string().optional() }).optional(),
-  }),
-});
-const scriptParsedEvent = z.object({
-  scriptId: z.string(),
-  executionContextId: z.number(),
-  url: z.string(),
-});
 const pausedEvent = z.object({
   callFrames: z.array(
     z.object({
@@ -87,17 +84,24 @@ type StorageSeed = {
   session: [string, string][];
 };
 
+type StorageTransportSend = (
+  method: string,
+  params?: Record<string, unknown>,
+  timeoutMs?: number,
+) => Promise<unknown>;
+
 interface StorageTarget {
   readonly parentId: string | undefined;
   readonly topLevelTargetId: string;
-  readonly send: (
-    method: string,
+  /** Replies of registered commands are admitted by their result schemas. */
+  readonly send: <M extends string>(
+    method: M,
     params?: Record<string, unknown>,
     timeoutMs?: number,
-  ) => Promise<unknown>;
+  ) => Promise<CdpSendResult<M>>;
   readonly contexts: Map<
     number,
-    z.infer<typeof executionContextEvent>["context"]
+    z.infer<typeof storageContextSchema>["context"]
   >;
   readonly scripts: Map<string, number>;
   ready: Promise<void>;
@@ -135,6 +139,7 @@ export class PlaywrightScenarioStorage {
   #closed = false;
   #cleanupCompleted = false;
   #loadingStopped = false;
+  #popupSeedCoverageUnknown = false;
   #failure: BrowserObservationError | undefined;
   #closePromise: Promise<PlaywrightScenarioStorageCleanup> | undefined;
   #detachPromise: Promise<void> | undefined;
@@ -146,6 +151,7 @@ export class PlaywrightScenarioStorage {
     private readonly cdp: CDPSession,
     private readonly signal: AbortSignal | undefined,
     private readonly commandTimeoutMs: number,
+    private readonly ownsContext: boolean,
   ) {}
 
   static async create(
@@ -213,7 +219,12 @@ export class PlaywrightScenarioStorage {
       }
       throw cause;
     }
-    const owner = new PlaywrightScenarioStorage(cdp, signal, commandTimeoutMs);
+    const owner = new PlaywrightScenarioStorage(
+      cdp,
+      signal,
+      commandTimeoutMs,
+      scenario.browser.mode === "launch",
+    );
     owner.addSeeds(scenario.storage.local_storage, "local", secrets);
     owner.addSeeds(scenario.storage.session_storage, "session", secrets);
     return owner;
@@ -284,10 +295,19 @@ export class PlaywrightScenarioStorage {
     page.on("close", detached);
     context.on("close", detached);
     browser?.on("disconnected", detached);
+    // Discovery is later than the first popup script. It cannot establish
+    // that root-session instrumentation controlled this top-level context.
+    const popup = (opened: Page): void => {
+      if (opened !== page) this.#popupSeedCoverageUnknown = true;
+    };
+    if (this.ownsContext) context.on("page", popup);
+    else page.on("popup", popup);
     this.#removeListeners = () => {
       page.off("close", detached);
       context.off("close", detached);
       browser?.off("disconnected", detached);
+      if (this.ownsContext) context.off("page", popup);
+      else page.off("popup", popup);
     };
     for (const method of [
       "Runtime.executionContextCreated",
@@ -306,15 +326,28 @@ export class PlaywrightScenarioStorage {
     }
   }
 
+  limitations(): readonly string[] {
+    return this.#popupSeedCoverageUnknown
+      ? [
+          "Declared non-cookie storage seeds were controlled for the selected page's instrumented frames; initialization before the first script is unknown for discovered popup top-level contexts.",
+        ]
+      : [];
+  }
+
   private createTarget(
     parentId: string | undefined,
     topLevelTargetId: string,
-    send: StorageTarget["send"],
+    send: StorageTransportSend,
   ): StorageTarget {
     return {
       parentId,
       topLevelTargetId,
-      send,
+      send: async (method, params, timeoutMs) =>
+        admitCdpReply(
+          method,
+          await send(method, params, timeoutMs),
+          "capture_browser_scenario",
+        ),
       contexts: new Map(),
       scripts: new Map(),
       ready: Promise.resolve(),
@@ -351,11 +384,11 @@ export class PlaywrightScenarioStorage {
     });
   }
 
-  private sendObserved(
+  private sendObserved<M extends string>(
     target: StorageTarget,
-    method: string,
+    method: M,
     params?: Record<string, unknown>,
-  ): Promise<unknown> {
+  ): Promise<CdpSendResult<M>> {
     return withPlaywrightExecutionBoundary(
       () => target.send(method, params),
       undefined,
@@ -373,19 +406,18 @@ export class PlaywrightScenarioStorage {
     if (target === undefined) return;
     try {
       if (method === "Runtime.executionContextCreated") {
-        const { context } = executionContextEvent.parse(params);
+        const { context } = storageContextSchema.parse(params);
         if (context.name === this.#sourceUrl)
           target.contexts.set(context.id, context);
       } else if (method === "Runtime.executionContextDestroyed") {
-        const { executionContextId } = z
-          .object({ executionContextId: z.number() })
-          .parse(params);
+        const { executionContextId } =
+          storageContextDestroyedSchema.parse(params);
         target.contexts.delete(executionContextId);
       } else if (method === "Runtime.executionContextsCleared") {
         target.contexts.clear();
         target.scripts.clear();
       } else if (method === "Debugger.scriptParsed") {
-        const script = scriptParsedEvent.parse(params);
+        const script = storageScriptParsedSchema.parse(params);
         if (script.url === this.#sourceUrl)
           target.scripts.set(script.scriptId, script.executionContextId);
       } else if (method === "Debugger.paused") {
@@ -440,7 +472,8 @@ export class PlaywrightScenarioStorage {
     // A child command deadline is already the caller-facing failure. Storing
     // it keeps the command name, selected deadline, and recovery advice.
     this.#failure ??=
-      cause instanceof BrowserObservationError && cause.reason === "timeout"
+      cause instanceof CdpMalformedReply ||
+      (cause instanceof BrowserObservationError && cause.reason === "timeout")
         ? cause
         : new BrowserObservationError(
             "capture_browser_scenario",
@@ -456,18 +489,25 @@ export class PlaywrightScenarioStorage {
     const contextId = target.scripts.get(frame.location.scriptId);
     const context =
       contextId === undefined ? undefined : target.contexts.get(contextId);
-    const seed =
-      context === undefined ? undefined : this.#seeds.get(context.origin);
-    if (
-      this.#closed ||
-      seed === undefined ||
-      context?.auxData?.frameId === undefined
-    )
-      return;
+    if (this.#closed) return;
+    const frameId = context?.auxData?.frameId;
+    if (context === undefined || frameId === undefined)
+      throw new Error(
+        "The private storage seed frame has no execution context or frame identity.",
+      );
+    // Some Chrome builds leave an isolated world's origin empty. The frame's
+    // security origin is authoritative; neither its URL nor its opaque storage
+    // key establishes the document principal (for example, inherited origins).
+    const origin =
+      context.origin === ""
+        ? await this.frameOrigin(target, frameId)
+        : context.origin;
+    const seed = this.#seeds.get(origin);
+    if (seed === undefined) return;
 
     const storageKey = storageKeyResponse.parse(
       await this.sendObserved(target, "Storage.getStorageKey", {
-        frameId: context.auxData.frameId,
+        frameId,
       }),
     ).storageKey;
     const sessionKey = JSON.stringify([target.topLevelTargetId, storageKey]);
@@ -500,6 +540,20 @@ export class PlaywrightScenarioStorage {
       );
     if (local.length > 0) this.#initializedLocal.add(storageKey);
     if (session.length > 0) this.#initializedSession.add(sessionKey);
+  }
+
+  private async frameOrigin(
+    target: StorageTarget,
+    frameId: string,
+  ): Promise<string> {
+    const tree = await this.sendObserved(target, "Page.getFrameTree");
+    const origin = tree.frames.find(
+      (frame) => frame.facts.frameId === frameId,
+    )?.securityOrigin;
+    if (origin !== undefined && origin !== "") return origin;
+    throw new Error(
+      "The browser did not establish the private storage seed frame's security origin.",
+    );
   }
 
   private async seed(

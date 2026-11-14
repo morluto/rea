@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { open, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { parseBinaryTarget } from "../application/BinaryTargetResolver.js";
 import { parseExecutableHeader } from "../domain/binaryTarget.js";
@@ -14,8 +14,17 @@ import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory
 import { IdaSessionClient } from "./IdaSessionClient.js";
 import { IdaWorkspace } from "./IdaWorkspace.js";
 
+interface BufferWritePrototype {
+  write(
+    buffer: Buffer,
+    offset?: number,
+    length?: number,
+  ): Promise<{ bytesWritten: number; buffer: Buffer }>;
+}
+
 const roots: string[] = [];
 afterEach(async () => {
+  vi.restoreAllMocks();
   for (const root of roots.splice(0)) {
     await rm(root, { recursive: true, force: true });
   }
@@ -26,7 +35,6 @@ const resolveUniversalTarget = async (
   hostArchitecture: "arm64" | "x64",
 ) => {
   const directory = await createTestTempDirectory("rea-ida-thin-");
-  roots.push(directory);
   const path = join(directory, "universal");
   await writeFile(path, bytes);
   const resolved = await parseBinaryTarget(path, { hostArchitecture });
@@ -173,7 +181,79 @@ describe("IDA workspace input thinning", () => {
     expect(workspace.inputSha256).toBe(target.sha256);
     await workspace.remove();
   });
+});
 
+describe("IDA workspace write completion", () => {
+  it.each(["thin", "universal"] as const)(
+    "completes short writes before recording the %s input digest",
+    async (kind) => {
+      const selected =
+        kind === "thin"
+          ? await createIdaTarget("arm64")
+          : await universalTarget("arm64");
+      if ("root" in selected) roots.push(selected.root);
+      const { target } = selected;
+      const workspace = await IdaWorkspace.allocate(target);
+      roots.push(workspace.directory);
+      const probe = await open(target.path, "r");
+      const prototype = Object.getPrototypeOf(probe) as BufferWritePrototype;
+      const originalWrite = prototype.write;
+      await probe.close();
+      const write = vi.spyOn(prototype, "write").mockImplementation(function (
+        this: unknown,
+        buffer: Buffer,
+        offset = 0,
+        length = buffer.length,
+      ) {
+        return Reflect.apply(originalWrite, this, [
+          buffer,
+          offset,
+          Math.min(length, 7),
+        ]);
+      });
+      await workspace.copyInput();
+      write.mockRestore();
+      const input = await readFile(workspace.inputPath);
+      const source = await readFile(target.path);
+      const slice =
+        target.format === "mach-o-universal"
+          ? target.universalSlice
+          : undefined;
+      expect(
+        input.equals(
+          slice === undefined
+            ? source
+            : source.subarray(slice.offset, slice.offset + slice.size),
+        ),
+      ).toBe(true);
+      expect(workspace.inputSha256).toBe(
+        createHash("sha256").update(input).digest("hex"),
+      );
+      await workspace.remove();
+    },
+  );
+
+  it("rejects a zero-progress write without publishing an input digest", async () => {
+    const { root, target } = await createIdaTarget("arm64");
+    roots.push(root);
+    const workspace = await IdaWorkspace.allocate(target);
+    roots.push(workspace.directory);
+    const probe = await open(target.path, "r");
+    const prototype = Object.getPrototypeOf(probe) as BufferWritePrototype;
+    await probe.close();
+    const write = vi
+      .spyOn(prototype, "write")
+      .mockResolvedValue({ bytesWritten: 0, buffer: Buffer.alloc(0) });
+    await expect(workspace.copyInput()).rejects.toThrow(
+      "write made no progress",
+    );
+    write.mockRestore();
+    expect(workspace.inputSha256).toBeUndefined();
+    await workspace.remove();
+  });
+});
+
+describe("IDA workspace admission identity", () => {
   it.skipIf(process.platform === "win32")(
     "rejects a universal source that changed after admission",
     async () => {
@@ -191,7 +271,6 @@ describe("IDA workspace input thinning", () => {
   it("binds a headless session to the thinned input identity", async () => {
     const { target } = await universalTarget("arm64");
     const root = await createTestTempDirectory("rea-ida-thin-root-");
-    roots.push(root);
     const producer = new RecordingIdaMcp(target, "headless");
     const client = new IdaSessionClient(
       {

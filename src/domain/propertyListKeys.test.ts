@@ -1,14 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { parse } from "plist";
 
-import { plistNestingLimitMessage } from "./apple/plistValue.js";
-import {
-  omitPrototypeKeys,
-  parseXmlPropertyList as parseWithNumbers,
-} from "./propertyListKeys.js";
+import { PlistNestingLimitError } from "./apple/plistValue.js";
+import { parseXmlPropertyList as parseWithNumbers } from "./propertyListKeys.js";
 
-// Existing key/omission controls assert those facts exactly; numeric facts
-// have separate source-type and ambiguity controls below.
+// Numeric source facts have separate source-type and ambiguity controls.
 const parseXmlPropertyList = (text: string) => {
   const { numberLiterals: _numbers, ...parsed } = parseWithNumbers(text);
   return parsed;
@@ -25,15 +21,18 @@ it.each([
   "<key\n>__proto__</key>",
   "<key>__proto__<!-- trailing comment --></key>",
   "<key><![CDATA[__proto__]]><!-- trailing comment --></key>",
-])("omits and counts a dictionary keyed %s", (key) => {
+])("preserves an own dictionary member keyed %s", (key) => {
   const parsed = parseXmlPropertyList(
     plist(
       `<dict><key>CFBundleExecutable</key><string>App</string>${key}<dict><key>polluted</key><true/></dict><key>list</key><array><dict>${key}<string>x</string><key>kept</key><integer>1</integer></dict></array></dict>`,
     ),
   );
   expect(parsed).toEqual({
-    value: { CFBundleExecutable: "App", list: [{ kept: 1 }] },
-    omittedPrototypeKeys: 2,
+    value: {
+      CFBundleExecutable: "App",
+      ["__proto__"]: { polluted: true },
+      list: [{ ["__proto__"]: "x", kept: 1 }],
+    },
   });
   expect(Object.getPrototypeOf(parsed.value)).toBe(Object.prototype);
 });
@@ -47,7 +46,6 @@ it("keeps __proto__ text in strings, comments, and similar keys", () => {
       " __proto__ ": "<key>__proto__</key>",
       __rea_prototype_key__: "__proto__",
     },
-    omittedPrototypeKeys: 0,
   });
 });
 
@@ -56,8 +54,7 @@ it("keeps a segmented entity-encoded key that decodes to the placeholder", () =>
     "<dict><key>&#95;&#95;rea<![CDATA[_prototype_key__]]></key><string>kept</string><key>__proto__</key><string>x</string></dict>",
   );
   expect(parseXmlPropertyList(text)).toEqual({
-    value: { __rea_prototype_key__: "kept" },
-    omittedPrototypeKeys: 1,
+    value: { __rea_prototype_key__: "kept", ["__proto__"]: "x" },
   });
 });
 
@@ -66,28 +63,16 @@ it("keeps entity-like text beyond Unicode in comments and CDATA", () => {
     "<!-- &#99999999999; --><dict><key>raw</key><string><![CDATA[&#x110000;]]></string><key>__proto__</key><string>x</string></dict>",
   );
   expect(parseXmlPropertyList(text)).toEqual({
-    value: { raw: "&#x110000;" },
-    omittedPrototypeKeys: 1,
+    value: { raw: "&#x110000;", ["__proto__"]: "x" },
   });
 });
 
-it("omits own __proto__ entries that JSON decoding creates", () => {
-  const decoded: unknown = JSON.parse(
-    '{"__proto__":{"x":1},"a":[{"__proto__":2,"b":3}]}',
-  );
-  expect(omitPrototypeKeys(decoded)).toEqual({
-    value: { a: [{ b: 3 }] },
-    omittedPrototypeKeys: 2,
-  });
-});
-
-it("omits complete prototype keys split across character-data nodes", () => {
+it("preserves last-value-wins for prototype keys split across character-data nodes", () => {
   const text = plist(
     "<dict><key>__pro<![CDATA[to__]]></key><string>kept</string><key>__proto__</key><string>omitted</string></dict>",
   );
   expect(parseXmlPropertyList(text)).toEqual({
-    value: {},
-    omittedPrototypeKeys: 1,
+    value: { ["__proto__"]: "omitted" },
   });
 });
 
@@ -97,7 +82,6 @@ it("preserves literal key text, XML characters and encoded line endings across s
   );
   expect(parseXmlPropertyList(text)).toEqual({
     value: { "pre&amp;</key>\r\u0085\u2028]]>post": "a\rb" },
-    omittedPrototypeKeys: 0,
   });
 });
 
@@ -108,7 +92,7 @@ it("does not infer key identity from nested elements", () => {
         "<dict><key>pre<string>nested</string></key><string>kept</string><key>__proto__<string>nested</string></key><string>omitted</string></dict>",
       ),
     ),
-  ).toEqual({ value: { pre: "kept" }, omittedPrototypeKeys: 1 });
+  ).toEqual({ value: { pre: "kept", ["__proto__"]: "omitted" } });
 });
 
 it.each([
@@ -124,7 +108,6 @@ it.each([
     .join("");
   expect(parseXmlPropertyList(plist(`<dict>${entries}</dict>`))).toEqual({
     value: { ab: 3 },
-    omittedPrototypeKeys: 0,
   });
 });
 
@@ -135,7 +118,6 @@ it("keeps empty keys and alias-looking source keys distinct", () => {
     "<key>ma<?ignored value?><![CDATA[in]]></key><integer>42</integer>";
   expect(parseXmlPropertyList(plist(`<dict>${entries}</dict>`))).toEqual({
     value: { "": 3, __rea_plist_key_0__: "literal", main: 42 },
-    omittedPrototypeKeys: 0,
   });
 });
 
@@ -146,7 +128,6 @@ it.each([
   const text = plist(body);
   expect(parseXmlPropertyList(text)).toEqual({
     value: parse(text),
-    omittedPrototypeKeys: 0,
   });
 });
 
@@ -161,17 +142,15 @@ it("preserves OpenStep dictionary and array autodetection", () => {
       values: ["one", "two"],
       __rea_prototype_key__: "kept",
     },
-    omittedPrototypeKeys: 0,
   });
   expect(parseXmlPropertyList("(one, two)")).toEqual({
     value: ["one", "two"],
-    omittedPrototypeKeys: 0,
   });
 });
 
-it("counts OpenStep __proto__ keys the decoder silently drops", () => {
-  // Unquoted, quoted, escape-spelled, and object-valued keys all decode to
-  // __proto__; values, other keys, and `\137` (decoded as "137") do not.
+it("preserves OpenStep __proto__ keys and duplicate assignment semantics", () => {
+  // Unquoted, quoted, escape-spelled, and octal-spelled keys all decode to
+  // __proto__; last assignment wins.
   const result = parseXmlPropertyList(
     '{ __proto__ = a; "__proto__" = b; "\\_\\_proto__" = c; ' +
       'nested = { "__proto__" = { polluted = yes; }; }; ' +
@@ -179,18 +158,17 @@ it("counts OpenStep __proto__ keys the decoder silently drops", () => {
   );
   expect(result).toEqual({
     value: {
-      nested: {},
+      ["__proto__"]: "d",
+      nested: { ["__proto__"]: { polluted: "yes" } },
       kept: "__proto__",
       list: ["__proto__"],
-      "137_proto__": "d",
     },
-    omittedPrototypeKeys: 4,
   });
   const nested = (result.value as { nested: object }).nested;
   expect(Object.getPrototypeOf(nested)).toBe(Object.prototype);
 });
 
-it("counts OpenStep compound keys that coerce to __proto__", () => {
+it("preserves OpenStep compound keys that coerce to __proto__", () => {
   // `obj[key]` coerces an array key to its comma-joined string.
   expect(
     parseXmlPropertyList(
@@ -198,8 +176,7 @@ it("counts OpenStep compound keys that coerce to __proto__", () => {
         "list = (__proto__); }",
     ),
   ).toEqual({
-    value: { "__pro,to__": "c", list: ["__proto__"] },
-    omittedPrototypeKeys: 2,
+    value: { ["__proto__"]: "b", "__pro,to__": "c", list: ["__proto__"] },
   });
 });
 
@@ -237,14 +214,29 @@ const nestedArrays = (depth: number) =>
   );
 
 it("rejects XML nesting beyond the projection limit with the limit diagnostic", () => {
-  // `plist` and the prototype-key traversal recurse once per level, so the
-  // depth check must report the same bounded-resource error as the projection
-  // instead of letting those recursive passes exhaust the call stack.
-  const limit = new RangeError(plistNestingLimitMessage());
-  expect(() => parseXmlPropertyList(nestedDictionaries(129))).toThrow(limit);
-  expect(() => parseXmlPropertyList(nestedArrays(129))).toThrow(limit);
-  expect(() => parseXmlPropertyList(nestedDictionaries(3000))).toThrow(limit);
-  expect(() => parseXmlPropertyList(nestedArrays(4000))).toThrow(limit);
+  // Source depth must report the shared limit before recursive value decoding.
+  expect(() => parseXmlPropertyList(nestedArrays(129))).toThrow(
+    PlistNestingLimitError,
+  );
+  expect(() => parseXmlPropertyList(nestedDictionaries(3000))).toThrow(
+    PlistNestingLimitError,
+  );
+  expect(() => parseXmlPropertyList(nestedArrays(4000))).toThrow(
+    PlistNestingLimitError,
+  );
+  let failure: unknown;
+  try {
+    parseXmlPropertyList(nestedDictionaries(129));
+  } catch (cause: unknown) {
+    failure = cause;
+  }
+  expect(failure).toBeInstanceOf(PlistNestingLimitError);
+  expect(failure).toBeInstanceOf(RangeError);
+  expect(failure).toMatchObject({
+    _tag: "PlistNestingLimitError",
+    maximumDepth: 128,
+    message: expect.stringMatching(/128 nesting levels.*no runtime override/iu),
+  });
 });
 
 it("decodes XML property lists exactly at the projection nesting limit", () => {
@@ -269,7 +261,6 @@ it("does not count markup inside comments, CDATA, or the doctype as nesting", ()
 </dict></plist>`;
   expect(parseXmlPropertyList(text)).toEqual({
     value: { a: "<dict><array><dict>", b: ["x"] },
-    omittedPrototypeKeys: 0,
   });
 });
 
@@ -280,9 +271,7 @@ it.each(['"', "'"])(
     const text = plist(
       opening.repeat(3000) + "<string>x</string>" + "</dict>".repeat(3000),
     );
-    expect(() => parseXmlPropertyList(text)).toThrow(
-      new RangeError(plistNestingLimitMessage()),
-    );
+    expect(() => parseXmlPropertyList(text)).toThrow(PlistNestingLimitError);
     expect(
       parseXmlPropertyList(
         plist(
@@ -301,16 +290,13 @@ it("ignores complete DOCTYPE internal subsets when checking value depth", () => 
 ]><plist><string>x</string></plist>`;
   expect(parseXmlPropertyList(text)).toEqual({
     value: "x",
-    omittedPrototypeKeys: 0,
   });
 });
 
 it("bounds nested plist wrappers before recursive decoding", () => {
   const text =
     "<plist>".repeat(3000) + "<string>x</string>" + "</plist>".repeat(3000);
-  expect(() => parseXmlPropertyList(text)).toThrow(
-    new RangeError(plistNestingLimitMessage()),
-  );
+  expect(() => parseXmlPropertyList(text)).toThrow(PlistNestingLimitError);
   expect(
     parseXmlPropertyList(plist("<plist><string>x</string></plist>")).value,
   ).toEqual(["x"]);
@@ -323,24 +309,25 @@ it.each(["\n", "\r\n", "\r"])(
       `<dict>${newline}<key>kept&#13;key</key><string>a&#13;b&#x85;c&#x2028;d</string>${newline}<key${newline}>__proto__<!--tail--></key><string>omitted</string></dict>`,
     );
     expect(parseXmlPropertyList(text)).toEqual({
-      value: { "kept\rkey": "a\rb\u0085c\u2028d" },
-      omittedPrototypeKeys: 1,
+      value: { "kept\rkey": "a\rb\u0085c\u2028d", ["__proto__"]: "omitted" },
     });
   },
 );
 
-it("locates sparse omitted keys across newline-dense source", () => {
+it("preserves sparse prototype keys across newline-dense source", () => {
   const lines = "\n".repeat(64 * 1024);
   const text = plist(
     `<dict>${lines}<key >__proto__</key><string>omitted</string><key>nested</key><dict>${lines}<key>__proto__<!--tail--></key><string>omitted</string><key>kept</key><true/></dict></dict>`,
   );
   expect(parseXmlPropertyList(text)).toEqual({
-    value: { nested: { kept: true } },
-    omittedPrototypeKeys: 2,
+    value: {
+      ["__proto__"]: "omitted",
+      nested: { ["__proto__"]: "omitted", kept: true },
+    },
   });
 });
 
-describe("OpenStep plist nesting preflight", () => {
+describe("OpenStep plist owned depth", () => {
   const arrays = (depth: number, leaf = "x") =>
     "(".repeat(depth) + leaf + ")".repeat(depth);
 
@@ -348,7 +335,7 @@ describe("OpenStep plist nesting preflight", () => {
     "rejects %s nested OpenStep values with the shared depth limit",
     (depth) => {
       expect(() => parseXmlPropertyList(arrays(depth))).toThrow(
-        plistNestingLimitMessage(),
+        /128 nesting levels/iu,
       );
     },
   );
@@ -358,7 +345,6 @@ describe("OpenStep plist nesting preflight", () => {
     (root) => {
       expect(parseXmlPropertyList(root + arrays(3000))).toEqual({
         value: root === "{}" ? {} : [],
-        omittedPrototypeKeys: 0,
       });
     },
   );
@@ -376,7 +362,6 @@ describe("OpenStep plist nesting preflight", () => {
   ])("preserves pinned separator and compound-key semantics for %s", (text) => {
     expect(parseXmlPropertyList(text)).toEqual({
       value: parse(text),
-      omittedPrototypeKeys: 0,
     });
   });
 
@@ -387,13 +372,12 @@ describe("OpenStep plist nesting preflight", () => {
       ),
     ).toEqual({
       value: { quote: '"( )', data: new Uint8Array([40, 41]), values: ["x"] },
-      omittedPrototypeKeys: 0,
     });
   });
 });
 
 it.each(["\u0085", "\u2028", "\u2029"])(
-  "preserves key identity and omission around inter-element separator %j",
+  "preserves key identity around inter-element separator %j",
   (separator) => {
     const parsed = parseXmlPropertyList(
       plist(
@@ -401,8 +385,10 @@ it.each(["\u0085", "\u2028", "\u2029"])(
       ),
     );
     expect(parsed).toEqual({
-      value: { [`kept${separator}key`]: `a${separator}b` },
-      omittedPrototypeKeys: 1,
+      value: {
+        [`kept${separator}key`]: `a${separator}b`,
+        ["__proto__"]: "omitted",
+      },
     });
   },
 );

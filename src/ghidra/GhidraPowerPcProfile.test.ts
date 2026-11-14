@@ -1,11 +1,10 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { parseConfig } from "../config/parseConfig.js";
 import type {
   BinaryTarget,
-  PowerPcElfMetadata,
+  ElfFamilyMetadata,
 } from "../domain/binaryTargetTypes.js";
 import { silentLogger } from "../logger.js";
 import { HopperProvider } from "../hopper/HopperProvider.js";
@@ -16,7 +15,10 @@ import {
   ghidraProfileLanguageOverride,
 } from "./GhidraAnalysisProfile.js";
 import { GhidraProvider } from "./GhidraProvider.js";
-import { ghidraProfileInstallationHost as host } from "./GhidraInstallation.fixture.js";
+import {
+  ghidraProfileInstallationHost as host,
+  simulatedInstallDirectory,
+} from "./GhidraInstallation.fixture.js";
 
 // Abbreviated from Ghidra 12.1.4 Processors/PowerPC/data/languages/ppc.ldefs.
 const PPC_LDEFS = `<?xml version="1.0" encoding="UTF-8"?>
@@ -38,7 +40,7 @@ const configFor = (environment: NodeJS.ProcessEnv) => {
   return parsed.value;
 };
 const config = configFor({});
-const target = (change: Partial<PowerPcElfMetadata> = {}): BinaryTarget => ({
+const target = (change: Partial<ElfFamilyMetadata> = {}): BinaryTarget => ({
   path: "/fixture.elf",
   sha256: "a".repeat(64),
   kind: "executable",
@@ -76,7 +78,7 @@ describe("bounded Ghidra PowerPC admission", () => {
   });
 
   it("lets a configured language replace the lane default", async () => {
-    const installDir = await createTestTempDirectory("rea-ghidra-ppc-");
+    const installDir = await simulatedInstallDirectory("rea-ghidra-ppc-");
     const languages = join(
       installDir,
       "Ghidra/Processors/PowerPC/data/languages",
@@ -112,6 +114,8 @@ describe("bounded Ghidra PowerPC admission", () => {
     );
     if (!left.ok) throw left.error;
     if (!right.ok) throw right.error;
+    expect(left.value.profile?.digest).toEqual(expect.any(String));
+    expect(right.value.profile?.digest).toEqual(expect.any(String));
     expect(left.value.profile?.digest).not.toBe(right.value.profile?.digest);
   });
 
@@ -131,7 +135,7 @@ describe("bounded Ghidra PowerPC admission", () => {
     [{ type: 1 }, "ET_EXEC"],
     [{ type: 3 }, "ET_EXEC"],
     [{ flags: 0x80000000 }, "EF_PPC_EMB"],
-  ] satisfies [Partial<PowerPcElfMetadata>, string][])(
+  ] satisfies [Partial<ElfFamilyMetadata>, string][])(
     "refuses an unverified PowerPC interpretation %j",
     async (change, reason) => {
       const ghidra = new GhidraProvider(config, silentLogger, {}, host);

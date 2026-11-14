@@ -1,14 +1,14 @@
 import { z } from "zod";
+import { javaScriptFileOccurrenceSchema } from "./javascriptArtifactFiles.js";
 
 import { evidenceSchema } from "../evidence.js";
 import { JAVASCRIPT_APPLICATION_NODE_KINDS } from "./javascriptApplicationGraphSchemas.js";
 import { historicalSourceGraphSchema } from "../referenceSourceGraph.js";
-import { digestSchema } from "../digests.js";
-import { prefixedDigestSchema } from "../digests.js";
+import { digestSchema, prefixedDigestSchema } from "../digests.js";
+import { nonEmptyTextSchema } from "../textSchemas.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const nodeIdSchema = prefixedDigestSchema("jag_node");
-const textSchema = z.string().min(1);
 
 export const SOURCE_TO_BUNDLE_SIGNAL_WEIGHTS = [
   ["exact-source-digest", 100],
@@ -39,11 +39,13 @@ export const compareSourceToBundleInputSchema = z.strictObject({
 const sourceToBundleSignalSchema = z.strictObject({
   kind: sourceToBundleSignalKindSchema,
   weight: z.int().min(1).max(100),
-  source_value: textSchema,
-  current_values: z.array(textSchema).min(1),
+  source_value: nonEmptyTextSchema,
+  current_values: z.array(nonEmptyTextSchema).min(1),
 });
 
 const sourceToBundleCandidateSchema = z.strictObject({
+  current_file_occurrence: javaScriptFileOccurrenceSchema.exactOptional(),
+  representation_node_ids: z.array(nodeIdSchema).min(1).exactOptional(),
   current_node_id: nodeIdSchema,
   current_node_kind: z.enum(JAVASCRIPT_APPLICATION_NODE_KINDS),
   score: z.int().min(1),
@@ -53,9 +55,9 @@ const sourceToBundleCandidateSchema = z.strictObject({
 
 const sourceToBundleItemSchema = z.strictObject({
   mapping_id: prefixedDigestSchema("stbc_item"),
-  source_path: textSchema,
+  source_path: nonEmptyTextSchema,
   source_sha256: digestSchema.nullable(),
-  source_language: textSchema.nullable(),
+  source_language: nonEmptyTextSchema.nullable(),
   status: z.enum([
     "unchanged",
     "modified",
@@ -68,7 +70,7 @@ const sourceToBundleItemSchema = z.strictObject({
   confidence: z.enum(["exact", "high", "medium", "unknown"]),
   current_node_ids: z.array(nodeIdSchema),
   candidates: z.array(sourceToBundleCandidateSchema),
-  limitations: z.array(textSchema),
+  limitations: z.array(nonEmptyTextSchema),
 });
 
 /** Deterministic, evidence-bearing historical-source to shipped-bundle comparison. */
@@ -118,7 +120,7 @@ export const sourceToBundleComparisonResultSchema = z.strictObject({
     candidate_evaluations: z.int().min(0),
   }),
   evidence_links: z.array(evidenceIdSchema).length(1),
-  limitations: z.array(textSchema),
+  limitations: z.array(nonEmptyTextSchema),
 });
 
 export type SourceToBundleComparisonResult = z.infer<

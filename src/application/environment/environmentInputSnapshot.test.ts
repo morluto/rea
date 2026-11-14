@@ -43,9 +43,12 @@ it("seals privately parsed files and shares reported trees across both Evidence 
   expect(webNetworkCaptureSchema.parse(normalized).records[0]?.reported).toBe(
     reported,
   );
-  expect(inputs.value.evidence.bytes).toEqual(
-    await readFile(files.capturePath),
-  );
+  expect(
+    Buffer.compare(
+      inputs.value.evidence.bytes,
+      await readFile(files.capturePath),
+    ),
+  ).toBe(0);
   expect(
     immutableJsonSnapshotMember(
       inputs.value.evidence.value,

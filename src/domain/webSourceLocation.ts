@@ -1,8 +1,11 @@
+import {
+  localSourceMapLimitsSchema,
+  WEB_SOURCE_MAP_LIMITS,
+} from "./sourceMapLimits.js";
 import { z } from "zod";
 import {
   browserDeadlineIncrease,
   browserDeadlineRetry,
-  noRuntimeOverrideSentence,
   optionalBrowserDeadlineMs,
 } from "./browserDeadline.js";
 import { digestSchema } from "./digests.js";
@@ -35,8 +38,13 @@ export const webSourceLocationInputSchema = selectedWebScriptInputSchema.extend(
         ),
     }),
     generated_position: webSourcePositionSchema,
+    source_map_limits: localSourceMapLimitsSchema
+      .exactOptional()
+      .describe(
+        "Per-call source-map admission, decoder and representation budgets. Omitted fields preserve existing defaults; changes apply on the next call without restart.",
+      ),
     decode_timeout_ms: optionalBrowserDeadlineMs(
-      "Source-map decode deadline in milliseconds (default 20000), for the owned codec process. Omitted means 20000 and applies on the next trace_web_source_location call. deadlineExpired returns no partial mapping. Does not raise the fixed 4 MiB map budget, 32 MiB reply budget, or 192 MiB codec heap. Those have no runtime override.",
+      "Source-map decode deadline in milliseconds (default 20000), for the owned codec process. Omitted means 20000 and applies on the next trace_web_source_location call. deadlineExpired returns no partial mapping. Byte, record and heap budgets are independent; select source_map_limits to change them.",
     ),
   },
 );
@@ -118,19 +126,6 @@ export const webSourceMapReportSchema = z.strictObject({
   diagnostics: z.array(z.string()),
 });
 
-/** Bounds for complete source-map evidence and upstream decoded layouts. */
-export const WEB_SOURCE_MAP_LIMITS = {
-  mapBytes: 4 * 1024 * 1024,
-  outputBytes: 32 * 1024 * 1024,
-  decodedRows: 262144,
-  decodedSegments: 262144,
-  decodedRecords: 262144,
-  sectionDepth: 64,
-  decodeTimeoutMs: 20000,
-  /** V8 old-generation heap for the codec, and its Bun process budget. */
-  codecHeapMiB: 192,
-} as const;
-
 /** Decode deadline used when decode_timeout_ms is omitted. */
 export const DEFAULT_WEB_SOURCE_MAP_DECODE_TIMEOUT_MS =
   WEB_SOURCE_MAP_LIMITS.decodeTimeoutMs;
@@ -140,7 +135,7 @@ export const webSourceMapDecodeTimeoutRecovery = (
   timeoutMs: number,
 ): { readonly userMessage: string; readonly remediationAction: string } => ({
   userMessage: `trace_web_source_location reached its ${String(timeoutMs)} ms source-map decode deadline (deadlineExpired) for decode_timeout_ms. No partial mapping is returned. This is not the MCP client deadline.`,
-  remediationAction: `${browserDeadlineIncrease("decode_timeout_ms", timeoutMs, DEFAULT_WEB_SOURCE_MAP_DECODE_TIMEOUT_MS, "--decode-timeout-ms")} ${browserDeadlineRetry} ${noRuntimeOverrideSentence(`The ${String(WEB_SOURCE_MAP_LIMITS.mapBytes)}-byte map budget, ${String(WEB_SOURCE_MAP_LIMITS.outputBytes)}-byte reply budget, and ${String(WEB_SOURCE_MAP_LIMITS.codecHeapMiB)} MiB codec heap stay fixed.`, "decode_timeout_ms")}`,
+  remediationAction: `${browserDeadlineIncrease("decode_timeout_ms", timeoutMs, DEFAULT_WEB_SOURCE_MAP_DECODE_TIMEOUT_MS, "--decode-timeout-ms")} ${browserDeadlineRetry} Byte, record and heap admission are separate per-call source_map_limits fields; changing the deadline does not raise them.`,
 });
 export type WebSourceMapReport = z.output<typeof webSourceMapReportSchema>;
 

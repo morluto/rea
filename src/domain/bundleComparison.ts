@@ -4,13 +4,13 @@ import { z } from "zod";
 
 import {
   parseEvidenceBundle,
+  referencedEvidenceIds,
   serializeEvidenceBundle,
   type EvidenceBundle,
 } from "./evidenceBundle.js";
 import { AnalysisInputError } from "./analysisErrorCore.js";
 import type { ResidualUnknown } from "./residualUnknown.js";
-import { digestSchema } from "./../domain/digests.js";
-import { prefixedDigestSchema } from "./../domain/digests.js";
+import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 import { comparisonStatusSchema } from "./comparisonStatus.js";
 import { localPathStringSchema } from "./localPath.js";
 
@@ -79,7 +79,7 @@ export type BundleComparisonResult = z.infer<
   typeof bundleComparisonResultSchema
 >;
 type BundleChange = z.infer<typeof bundleChangeSchema>;
-type RecordPair = z.infer<
+export type BundleRecordPair = z.infer<
   typeof bundleComparisonInputSchema
 >["record_pairs"][number];
 
@@ -87,7 +87,7 @@ type RecordPair = z.infer<
 export const compareBundles = (
   leftInput: unknown,
   rightInput: unknown,
-  recordPairs: readonly RecordPair[] = [],
+  recordPairs: readonly BundleRecordPair[] = [],
 ): BundleComparisonResult => {
   const left = parseEvidenceBundle(leftInput);
   const right = parseEvidenceBundle(rightInput);
@@ -123,7 +123,7 @@ export const compareBundles = (
 const compareRecords = (
   left: EvidenceBundle,
   right: EvidenceBundle,
-  pairs: readonly RecordPair[],
+  pairs: readonly BundleRecordPair[],
 ) => {
   const leftIds = new Set(left.records.map(({ evidence_id: id }) => id));
   const rightIds = new Set(right.records.map(({ evidence_id: id }) => id));
@@ -212,7 +212,7 @@ const compareRecords = (
 
 const recordPairFailure = (
   index: number,
-  field: keyof RecordPair,
+  field: keyof BundleRecordPair,
   message: string,
 ): AnalysisInputError =>
   new AnalysisInputError("compare_bundles", { userMessage: message }, [
@@ -302,16 +302,7 @@ const histories = (unknowns: readonly ResidualUnknown[]) => {
 };
 
 const historyEvidenceIds = (history: readonly ResidualUnknown[]): string[] =>
-  [
-    ...new Set(
-      history.flatMap((item) => [
-        ...item.supporting_evidence_ids,
-        ...item.contradicting_evidence_ids,
-        ...item.mutation_evidence_ids,
-        ...(item.resolution?.evidence_ids ?? []),
-      ]),
-    ),
-  ].sort(ascii);
+  [...new Set(history.flatMap(referencedEvidenceIds))].sort(ascii);
 
 const bundleDigest = (bundle: EvidenceBundle): string =>
   createHash("sha256").update(serializeEvidenceBundle(bundle)).digest("hex");

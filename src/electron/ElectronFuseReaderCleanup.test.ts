@@ -5,8 +5,10 @@ import type { FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { AnalysisAccessDeniedError } from "../domain/analysisErrorCore.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisAccessDeniedError,
+  AnalysisCancelledError,
+} from "../domain/analysisErrorCore.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { elfFuseImage } from "../../tests/fixtures/electron/fuseImage.js";
@@ -158,7 +160,6 @@ describe("electron fuse final-close failures", () => {
 
     const result = await new ElectronFuseProvider().inspect({ path });
 
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected an error result");
     // A close failure with errno EACCES must not surface as a read denial.
     expect(result.error).not.toBeInstanceOf(AnalysisAccessDeniedError);
@@ -190,7 +191,6 @@ describe("electron fuse final-close failures", () => {
 
     const result = await new ElectronFuseProvider().inspect({ path });
 
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected an error result");
     // The close errno must not replace the original read classification.
     expect(result.error).not.toBeInstanceOf(AnalysisAccessDeniedError);
@@ -225,7 +225,6 @@ describe("electron fuse final-close failures", () => {
       { signal: controller.signal },
     );
 
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected an error result");
     // Typed cancellation composed with the incomplete-cleanup report instead
     // of a bare cancellation that would drop the descriptor owner.
@@ -253,7 +252,6 @@ describe("electron fuse final-close failures", () => {
 
     const result = await new ElectronFuseProvider().inspect({ path });
 
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected an error result");
     expect(result.error.cleanupIncomplete).toBe(true);
     // The successfully read fuse evidence survives as an explicitly partial
@@ -295,7 +293,6 @@ describe("electron fuse read failure precedence", () => {
       { path },
       { signal: controller.signal },
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected an error result");
     expect(result.error.cleanupIncomplete).toBe(true);
     expect(result.error.cleanupResources).toContain(path);

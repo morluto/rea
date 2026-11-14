@@ -1,39 +1,28 @@
 import { digestCanonicalValue } from "./canonicalDigest.js";
 import { z } from "zod";
 
-import { artifactComparisonResultSchema } from "./artifactComparison.js";
-import { AnalysisInputError } from "./analysisErrorCore.js";
+import type { AnalysisInputError } from "./analysisErrorCore.js";
 import { EvidenceIntegrityError } from "./evidenceErrors.js";
 import { analysisInputErrorFromIssues } from "./inputIssueProjection.js";
-import { readEvidence, readEvidencePayload } from "./evidenceValidation.js";
+import { readEvidence } from "./evidenceValidation.js";
 import { uniqueSorted } from "./canonicalOrdering.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
+import { comparisonSourceEvidenceIds } from "./comparisonSourceEvidence.js";
 import {
-  comparisonSourceEvidenceIds,
-  assertComparisonFindingLinks,
-} from "./comparisonSourceEvidence.js";
+  readComparisonResult,
+  type ParsedComparisonEvidence,
+} from "./comparisonEvidenceResult.js";
 import { evidenceSchema, type Evidence } from "./evidence.js";
 import { hasComparisonEvidenceIdentity } from "./comparisonEvidenceIdentity.js";
-import { functionComparisonResultSchema } from "./functionComparisonSchemas.js";
+import { functionComparisonDimensionNameSchema } from "./functionComparisonSchemas.js";
 import type { JsonValue } from "./jsonValue.js";
 import {
   comparisonStatusSchema,
-  processCaptureComparisonSchema,
+  PROCESS_COMPARISON_DIMENSIONS,
 } from "./process/processComparison.js";
-import { PROCESS_COMPARISON_DIMENSIONS } from "./process/processComparison.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
-const functionDimensionSchema = z.enum([
-  "identity",
-  "pseudocode",
-  "assembly",
-  "comments",
-  "calls",
-  "references",
-  "strings_names",
-  "cfg",
-]);
 const runtimeDimensionSchema = z.enum(PROCESS_COMPARISON_DIMENSIONS);
 const expectedPatternSchema = z.enum([
   "cochanged",
@@ -54,7 +43,10 @@ const artifactSelectorSchema = z
   })
   .strict();
 const functionSelectorSchema = z
-  .object({ kind: z.literal("function"), dimension: functionDimensionSchema })
+  .object({
+    kind: z.literal("function"),
+    dimension: functionComparisonDimensionNameSchema,
+  })
   .strict();
 const staticSelectorSchema = z.discriminatedUnion("kind", [
   artifactSelectorSchema,
@@ -151,21 +143,10 @@ export type StaticRuntimeCorrelationResult = z.infer<
 type Mapping = z.infer<typeof mappingSchema>;
 type CorrelationItem = z.infer<typeof correlationItemSchema>;
 type ComparisonStatus = z.infer<typeof comparisonStatusSchema>;
-type StaticComparison =
-  | {
-      readonly operation: "compare_artifacts";
-      readonly evidence: Evidence;
-      readonly result: z.infer<typeof artifactComparisonResultSchema>;
-    }
-  | {
-      readonly operation: "compare_functions";
-      readonly evidence: Evidence;
-      readonly result: z.infer<typeof functionComparisonResultSchema>;
-    };
-interface RuntimeComparison {
-  readonly evidence: Evidence;
-  readonly result: z.infer<typeof processCaptureComparisonSchema>;
-}
+type StaticComparison = ParsedComparisonEvidence<
+  "compare_artifacts" | "compare_functions"
+>;
+type RuntimeComparison = ParsedComparisonEvidence<"compare_process_captures">;
 
 /** Correlate only caller-declared static/runtime hypotheses. */
 export const correlateStaticAndRuntime = (
@@ -173,11 +154,11 @@ export const correlateStaticAndRuntime = (
 ): StaticRuntimeCorrelationResult => {
   const parsed = staticRuntimeCorrelationEnvelopeSchema.safeParse(input);
   if (!parsed.success)
-    throw inputSchemaError(
-      input,
-      parsed.error,
-      "Provide valid static and runtime comparison Evidence and mappings.",
-    );
+    throw analysisInputErrorFromIssues(OPERATION, parsed.error.issues, input, {
+      cause: parsed.error,
+      userMessage:
+        "Provide valid static and runtime comparison Evidence and mappings.",
+    });
   const { data } = parsed;
   const staticEvidence = data.static_comparisons.map((item, index) =>
     parseStatic(item, input, index),
@@ -279,7 +260,7 @@ const correlate = (
   );
   const process = runtimeEvidence.result;
   const runtimeStatus = process[mapping.runtime.dimension];
-  const pattern = observedPattern(selectedStatic.status, runtimeStatus);
+  const pattern = observedPattern(selectedStatic, runtimeStatus);
   const classification =
     pattern === "unknown" || pattern === "truncated"
       ? "unresolved_branch"
@@ -333,16 +314,11 @@ const selectStatic = (
         "Function selector requires function comparison Evidence",
       );
     const result = comparison.result;
-    const matches = result.dimensions.filter(
+    const match = result.dimensions.find(
       ({ dimension }) => dimension === selector.dimension,
     );
-    const match = matches.at(0);
-    if (matches.length !== 1 || match === undefined)
-      throw callerInputError(
-        input,
-        path,
-        "Function selector must resolve exactly once",
-      );
+    if (match === undefined)
+      throw evidenceIntegrityError("Function comparison dimension missing");
     return {
       status: match.status,
       conclusion_kind: match.conclusion_kind,
@@ -397,29 +373,9 @@ const parseStatic = (
       "Static/runtime correlation requires artifact or function comparison Evidence",
     );
   assertComparisonIdentity(evidence);
-  if (evidence.operation === "compare_artifacts") {
-    const result = readEvidencePayload(
-      artifactComparisonResultSchema,
-      evidence.normalized_result,
-    );
-    if (!result.ok) throw result.error;
-    assertComparisonFindingLinks(
-      evidence,
-      result.value.changes.flatMap(({ evidence_links: links }) => links),
-    );
-    return { operation: evidence.operation, evidence, result: result.value };
-  } else {
-    const result = readEvidencePayload(
-      functionComparisonResultSchema,
-      evidence.normalized_result,
-    );
-    if (!result.ok) throw result.error;
-    assertComparisonFindingLinks(
-      evidence,
-      result.value.dimensions.flatMap(({ evidence_links: links }) => links),
-    );
-    return { operation: evidence.operation, evidence, result: result.value };
-  }
+  const result = readComparisonResult(evidence, evidence.operation);
+  if (!result.ok) throw result.error;
+  return result.value;
 };
 
 const parseRuntime = (
@@ -437,12 +393,9 @@ const parseRuntime = (
       "Static/runtime correlation requires process comparison Evidence",
     );
   assertComparisonIdentity(evidence);
-  const result = readEvidencePayload(
-    processCaptureComparisonSchema,
-    evidence.normalized_result,
-  );
+  const result = readComparisonResult(evidence, evidence.operation);
   if (!result.ok) throw result.error;
-  return { evidence, result: result.value };
+  return result.value;
 };
 
 const assertComparisonIdentity = (evidence: Evidence): void => {
@@ -462,12 +415,18 @@ const assertComparisonIdentity = (evidence: Evidence): void => {
 };
 
 const observedPattern = (
-  staticStatus: ComparisonStatus,
+  staticFinding: Pick<CorrelationItem["static"], "status" | "conclusion_kind">,
   runtimeStatus: ComparisonStatus,
 ): z.infer<typeof observedPatternSchema> => {
+  const staticStatus = staticFinding.status;
   if (staticStatus === "truncated" || runtimeStatus === "truncated")
     return "truncated";
-  if (staticStatus === "unknown" || runtimeStatus === "unknown")
+  if (
+    staticStatus === "unknown" ||
+    runtimeStatus === "unknown" ||
+    staticFinding.conclusion_kind !== "derived_relationship" ||
+    runtimeStatus === "contradiction"
+  )
     return "unknown";
   const staticChanged = staticStatus !== "unchanged";
   const runtimeChanged = runtimeStatus !== "unchanged";
@@ -522,38 +481,15 @@ const firstDuplicateIndex = (values: readonly string[]): number | undefined => {
 
 const OPERATION = "correlate_static_and_runtime";
 
-const inputSchemaError = (
-  input: unknown,
-  cause: z.ZodError,
-  userMessage: string,
-): AnalysisInputError => {
-  const projected = analysisInputErrorFromIssues(
-    OPERATION,
-    cause.issues,
-    input,
-    { cause },
-  );
-  return new AnalysisInputError(
-    OPERATION,
-    { cause, userMessage },
-    projected.issues,
-  );
-};
-
 const callerInputError = (
   input: unknown,
   path: readonly (string | number)[],
   message: string,
-): AnalysisInputError => {
-  const projected = analysisInputErrorFromIssues(OPERATION, [], input, {
+): AnalysisInputError =>
+  analysisInputErrorFromIssues(OPERATION, [], input, {
+    userMessage: message,
     additionalIssues: [{ path, reason: "invalid_value", message }],
   });
-  return new AnalysisInputError(
-    OPERATION,
-    { userMessage: message },
-    projected.issues,
-  );
-};
 
 const evidenceIntegrityError = (message: string): EvidenceIntegrityError =>
   new EvidenceIntegrityError(message, { userMessage: message });

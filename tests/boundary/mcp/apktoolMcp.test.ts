@@ -84,7 +84,10 @@ it("advertises exact valid Apktool schemas and records inline evidence through M
   });
   const server = createServer(
     { kind: "session", session },
-    { apktoolAnalysis: provider },
+    {
+      apktoolAnalysis: provider,
+      environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
+    },
   );
   onTestFinished(() => server.close());
   const [clientTransport, serverTransport] =

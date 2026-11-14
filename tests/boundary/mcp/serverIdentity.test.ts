@@ -1,6 +1,6 @@
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -23,9 +23,11 @@ import { PACKAGE_METADATA } from "../../../src/generatedPackageMetadata.js";
 import { PRODUCT_IDENTITY, SDK_IDENTITY } from "../../../src/identity.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import {
-  expandToolAvailability,
-  sessionProvider,
-} from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+  annotationsFromEffects,
+  toolSessionEffects,
+} from "../../../src/contracts/toolEffects.js";
+import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import { sessionOutputSchemas } from "../../../src/contracts/toolOutputSchemaGroups.js";
 import { PROMPT_CONTRACTS } from "../../../src/contracts/promptContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createServerIdentity } from "../../../src/serverIdentity.js";
@@ -243,6 +245,64 @@ describe("server and catalog identity", () => {
   });
 });
 
+it.skipIf(process.platform === "win32")(
+  "compares the selected entrypoint through symlink and parent traversal",
+  async () => {
+    const root = await createTestTempDirectory("server-identity-path-");
+    const scripts = join(root, "package", "scripts");
+    const scratch = join(root, "scratch");
+    await mkdir(scripts, { recursive: true });
+    await mkdir(scratch);
+    const canonical = join(scripts, "rea.mjs");
+    const other = join(root, "other.mjs");
+    await writeFile(canonical, "entrypoint");
+    await writeFile(other, "other entrypoint");
+    await symlink(scripts, join(scratch, "link"));
+    const selected = `${scratch}/link/../scripts/rea.mjs`;
+    // Bun selects a script through native traversal (#8844).
+    const identity = (server_path: string) =>
+      createServerIdentity({
+        catalog: DEFAULT_CATALOG_IDENTITY,
+        startedAt: "2026-07-13T00:00:00.000Z",
+        commandPath: canonical,
+        expected: { server_path },
+        runtime: "bun",
+      });
+
+    expect(identity(selected).alignment).toMatchObject({
+      state: "aligned",
+      reasons: [],
+    });
+    expect(identity(other).alignment).toMatchObject({
+      state: "mcp_server_restart_required",
+      reasons: ["registration_path_mismatch"],
+    });
+    expect(identity(join(root, "missing.mjs")).alignment).toMatchObject({
+      state: "unknown",
+      reasons: [],
+    });
+    // Node resolves its entrypoint lexically, so this spelling runs
+    // scratch/rea.mjs even though traversal through the link leaves scratch.
+    // Bun traverses the link and runs a different file.
+    const lexical = join(scratch, "rea.mjs");
+    await writeFile(lexical, "lexical entrypoint");
+    await writeFile(join(root, "package", "rea.mjs"), "traversed entrypoint");
+    const crossing = (runtime: "node" | "bun") =>
+      createServerIdentity({
+        catalog: DEFAULT_CATALOG_IDENTITY,
+        startedAt: "2026-07-13T00:00:00.000Z",
+        commandPath: lexical,
+        expected: { server_path: `${scratch}/link/../rea.mjs` },
+        runtime,
+      }).alignment;
+    expect(crossing("node")).toMatchObject({ state: "aligned", reasons: [] });
+    expect(crossing("bun")).toMatchObject({
+      state: "mcp_server_restart_required",
+      reasons: ["registration_path_mismatch"],
+    });
+  },
+);
+
 describe("provider capability inventory", () => {
   it("reports composed, host, and target-specific availability truthfully", () => {
     const policy = {
@@ -394,9 +454,15 @@ describe("live server identity over MCP", () => {
             server.catalogIdentity.digests.combined_sha256,
         },
       });
-      const status = z
-        .object({ result: sessionProvider })
-        .parse(response.structuredContent).result;
+      const statusSchema = sessionOutputSchemas.binary_session;
+      const status = statusSchema.parse(response.structuredContent).result;
+      expect(status.open).toBe(false);
+      for (const open of ["invalid", true]) {
+        expect(
+          statusSchema.safeParse({ result: { ...status, open } }).success,
+          `invalid session lifecycle state: ${String(open)}`,
+        ).toBe(false);
+      }
       expect(status.server_identity.catalog).toEqual(server.catalogIdentity);
       expect(status.server_identity.alignment).toMatchObject({
         state: "aligned",
@@ -499,7 +565,7 @@ const activeTargetReasons = async (
     arguments: {},
   });
   const availability = expandToolAvailability(
-    z.object({ result: sessionProvider }).parse(status.structuredContent).result
+    sessionOutputSchemas.binary_session.parse(status.structuredContent).result
       .tool_availability,
   );
   return Object.fromEntries(
@@ -512,11 +578,11 @@ const activeTargetReasons = async (
 const assertLiveIdentity = async (client: Client): Promise<void> => {
   const identity = await client.callTool({
     name: "binary_session",
-    arguments: {},
+    arguments: { detail: "complete" },
   });
-  const status = z
-    .object({ result: sessionProvider })
-    .parse(identity.structuredContent).result;
+  const status = sessionOutputSchemas.binary_session.parse(
+    identity.structuredContent,
+  ).result;
   expect(Object.keys(status.server_identity.catalog).sort()).toEqual([
     "counts",
     "digests",
@@ -526,16 +592,18 @@ const assertLiveIdentity = async (client: Client): Promise<void> => {
     TOOL_CONTRACTS.map(({ name }) => name).sort(),
   );
   for (const contract of TOOL_CONTRACTS) {
+    const effects = toolSessionEffects(contract.name);
+    const annotations = annotationsFromEffects(effects);
     expect(availability).toContainEqual(
       expect.objectContaining({
         name: contract.name,
         surface: contract.kind,
-        effects: contract.effects,
+        effects,
         annotations: {
-          read_only: contract.annotations.readOnlyHint ?? false,
-          destructive: contract.annotations.destructiveHint ?? false,
-          idempotent: contract.annotations.idempotentHint ?? false,
-          open_world: contract.annotations.openWorldHint ?? true,
+          read_only: annotations.readOnlyHint,
+          destructive: annotations.destructiveHint,
+          idempotent: annotations.idempotentHint,
+          open_world: annotations.openWorldHint,
         },
       }),
     );
@@ -552,7 +620,9 @@ const assertLiveIdentity = async (client: Client): Promise<void> => {
         client: { name: "identity-test", version: "9" },
         negotiated_protocol_version: expect.any(String),
         catalog: createCatalogIdentity({
-          budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
+          compactPresentation: {
+            budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
+          },
         }),
         alignment: { state: "unknown" },
       },
@@ -565,9 +635,9 @@ const assertSessionIdentity = async (client: Client): Promise<void> => {
     name: "binary_session",
     arguments: { expected_package_version: "1.2.0" },
   });
-  const parsed = z
-    .object({ result: sessionProvider })
-    .parse(status.structuredContent);
+  const parsed = sessionOutputSchemas.binary_session.parse(
+    status.structuredContent,
+  );
   expect({
     result: {
       ...parsed.result,

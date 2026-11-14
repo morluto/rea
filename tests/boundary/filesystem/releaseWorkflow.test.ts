@@ -1,7 +1,6 @@
 import { execFile } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { expect, it } from "vitest";
 import { parse } from "yaml";
@@ -25,6 +24,8 @@ const jobSchema = z.object({
   if: z.string().optional(),
   needs: z.union([z.string(), z.array(z.string())]).optional(),
   outputs: z.record(z.string(), z.string()).optional(),
+  permissions: z.record(z.string(), z.string()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
   steps: z.array(stepSchema),
 });
 
@@ -45,6 +46,7 @@ async function readReleaseWorkflow() {
           with: z.record(z.string(), z.union([z.string(), z.boolean()])),
         }),
         publish: jobSchema,
+        "verify-npm": jobSchema,
         rehearsal: jobSchema.extend({
           permissions: z.record(z.string(), z.string()),
         }),
@@ -85,7 +87,7 @@ it("validates the source before release creation and the prepared candidate befo
   expect(candidate).toBeGreaterThan(action);
   expect(candidate).toBeLessThan(generation);
   expect(steps[candidate]?.if).toBe(
-    "inputs.phase == 'prepare' && steps.release.outputs.prs_created == 'true'",
+    "inputs.phase == 'prepare' && steps.proposal.outputs.prs_created == 'true'",
   );
   expect(steps[candidate]?.run).toContain("--stage candidate");
   for (const name of [
@@ -107,16 +109,28 @@ it("keeps main pushes proposal-only and gates merged-release automation", async 
   });
   const proposal = workflow.jobs["release-proposal"];
   expect(proposal.if).toBe("github.event_name == 'push'");
-  const action = proposal.steps.find((step) =>
-    step.uses?.startsWith("googleapis/release-please-action@"),
+  const controller = proposal.steps.find((step) =>
+    step.run?.includes("scripts/release-proposal.mjs"),
   );
-  expect(action?.with).toMatchObject({
-    token: "${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}",
-    "target-branch": "main",
-    "skip-github-release": true,
+  expect(controller?.env?.GH_TOKEN).toBe(
+    "${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}",
+  );
+  expect(controller?.run).toContain("--target-branch main");
+  expect(controller?.run).toContain('--source-sha "$SOURCE_SHA"');
+  expect(controller?.env?.SOURCE_SHA).toBe("${{ github.sha }}");
+  expect(controller?.if).toBe("steps.editorial.outputs.frozen != 'true'");
+  expect(
+    proposal.steps.some((step) =>
+      step.uses?.startsWith("googleapis/release-please-action@"),
+    ),
+  ).toBe(false);
+  expect(
+    proposal.steps.find((step) => step.uses?.startsWith("actions/checkout@"))
+      ?.with,
+  ).toMatchObject({
+    "fetch-depth": 0,
+    "persist-credentials": false,
   });
-  expect(action?.with?.["skip-github-pull-request"]).not.toBe(true);
-  expect(action?.if).toBe("steps.editorial.outputs.frozen != 'true'");
   expect(proposal.steps[0]?.run).toContain("rea:release-notes-finalized");
   expect(proposal.steps[0]?.run).toContain("--paginate");
   const merged = workflow.jobs["merged-release"];
@@ -133,6 +147,181 @@ it("keeps main pushes proposal-only and gates merged-release automation", async 
   expect(workflow.concurrency.group).toBe(
     "release-${{ inputs.release_branch || github.event.pull_request.merge_commit_sha || github.ref_name }}",
   );
+});
+
+const finalizedRelease = {
+  number: 1399,
+  headRefName: "release-please--branches--main--components--rea-agents",
+  headRepository: { nameWithOwner: "fixture/rea" },
+};
+
+function editorialPage(nodes: unknown[], hasNextPage = false) {
+  return {
+    data: {
+      repository: {
+        nameWithOwner: "fixture/rea",
+        pullRequests: {
+          nodes,
+          pageInfo: { hasNextPage, endCursor: hasNextPage ? "next" : null },
+        },
+      },
+    },
+  };
+}
+
+it.each([
+  {
+    name: "finalized release",
+    pages: [editorialPage([finalizedRelease])],
+    frozen: true,
+  },
+  { name: "no finalized PR", pages: [editorialPage([])], frozen: false },
+  {
+    name: "fork and unrelated head branch",
+    pages: [
+      editorialPage([
+        { ...finalizedRelease, headRepository: { nameWithOwner: "fork/rea" } },
+        {
+          ...finalizedRelease,
+          headRefName: "release-please--branches--other--component",
+        },
+        { ...finalizedRelease, headRepository: null },
+      ]),
+    ],
+    frozen: false,
+  },
+  {
+    name: "finalized release on a later page",
+    pages: [editorialPage([], true), editorialPage([finalizedRelease])],
+    frozen: true,
+  },
+])("preserves the proposal freeze for $name", async ({ pages, frozen }) => {
+  const step = (await readReleaseWorkflow()).jobs["release-proposal"].steps[0];
+  const directory = await createTestTempDirectory("rea-release-editorial-");
+  const output = join(directory, "output");
+  const summary = join(directory, "summary");
+  const args = join(directory, "args");
+  await writeFile(output, "");
+  await writeFile(summary, "");
+  await writeFile(join(directory, "pages"), JSON.stringify(pages));
+  await writeFile(
+    join(directory, "gh"),
+    '#!/bin/sh\nprintf "%s\n" "$@" > "$GH_ARGS"\ncat "$GH_PAGES"\n',
+    { mode: 0o755 },
+  );
+  await execFileAsync(
+    "bash",
+    ["-e", "-o", "pipefail", "-c", z.string().parse(step?.run)],
+    {
+      env: {
+        ...process.env,
+        PATH: `${directory}${delimiter}${process.env.PATH ?? ""}`,
+        GH_REPO: "fixture/rea",
+        GH_ARGS: args,
+        GH_PAGES: join(directory, "pages"),
+        GITHUB_OUTPUT: output,
+        GITHUB_STEP_SUMMARY: summary,
+      },
+    },
+  );
+  const request = await readFile(args, "utf8");
+  expect(request).toContain("api\ngraphql\n--paginate\n--slurp");
+  expect(request).toContain("owner=fixture");
+  expect(request).toContain("name=rea");
+  expect(request).toContain(
+    'states:OPEN,baseRefName:"main",labels:["rea:release-notes-finalized"]',
+  );
+  expect(request).toContain("after:$endCursor");
+  expect(await readFile(output, "utf8")).toBe(frozen ? "frozen=true\n" : "");
+  expect(await readFile(summary, "utf8")).toBe(
+    frozen
+      ? "Finalized release notes on PR 1399; automatic proposal refresh is paused.\n"
+      : "",
+  );
+});
+
+it.each([
+  { name: "transport quota failure", pages: [], status: 1 },
+  {
+    name: "partial GraphQL error",
+    pages: [{ ...editorialPage([]), errors: [{ message: "quota exceeded" }] }],
+    status: 0,
+  },
+  {
+    name: "unavailable repository",
+    pages: [{ data: { repository: null } }],
+    status: 0,
+  },
+  {
+    name: "missing nodes",
+    pages: [
+      {
+        data: {
+          repository: { nameWithOwner: "fixture/rea", pullRequests: {} },
+        },
+      },
+    ],
+    status: 0,
+  },
+  {
+    name: "malformed PR",
+    pages: [editorialPage([{ ...finalizedRelease, headRefName: null }])],
+    status: 0,
+  },
+  {
+    name: "missing head repository identity",
+    pages: [
+      editorialPage([
+        {
+          number: finalizedRelease.number,
+          headRefName: finalizedRelease.headRefName,
+        },
+      ]),
+    ],
+    status: 0,
+  },
+  {
+    name: "incomplete pagination",
+    pages: [editorialPage([], true)],
+    status: 0,
+  },
+  { name: "empty response", pages: [], status: 0 },
+])("fails closed before release-please on $name", async ({ pages, status }) => {
+  const step = (await readReleaseWorkflow()).jobs["release-proposal"].steps[0];
+  const directory = await createTestTempDirectory(
+    "rea-release-editorial-error-",
+  );
+  const output = join(directory, "output");
+  await writeFile(output, "");
+  await writeFile(join(directory, "pages"), JSON.stringify(pages));
+  await writeFile(
+    join(directory, "gh"),
+    `#!/bin/sh\ncat "$GH_PAGES"\nexit ${status}\n`,
+    { mode: 0o755 },
+  );
+  await expect(
+    execFileAsync(
+      "bash",
+      [
+        "-e",
+        "-o",
+        "pipefail",
+        "-c",
+        `${z.string().parse(step?.run)}\nprintf 'action-ran\n' >> "$GITHUB_OUTPUT"`,
+      ],
+      {
+        env: {
+          ...process.env,
+          PATH: `${directory}${delimiter}${process.env.PATH ?? ""}`,
+          GH_REPO: "fixture/rea",
+          GH_PAGES: join(directory, "pages"),
+          GITHUB_OUTPUT: output,
+          GITHUB_STEP_SUMMARY: join(directory, "summary"),
+        },
+      },
+    ),
+  ).rejects.toMatchObject({ code: expect.any(Number) });
+  expect(await readFile(output, "utf8")).toBe("");
 });
 
 it("validates the reviewed merge before creating its release", async () => {
@@ -190,10 +379,17 @@ it("keeps frozen candidate preparation and publication explicit", async () => {
   expect(release?.with).toMatchObject({
     token: "${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}",
     "target-branch": "${{ inputs.release_branch }}",
-    "skip-github-release": "${{ inputs.phase == 'prepare' }}",
-    "skip-github-pull-request": "${{ inputs.phase == 'publish' }}",
+    "skip-github-release": false,
+    "skip-github-pull-request": true,
   });
+  expect(release?.if).toBe("inputs.phase == 'publish'");
   const steps = workflow.jobs["release-please"].steps;
+  const proposal = steps.find((step) => step.id === "proposal");
+  expect(proposal?.if).toBe("inputs.phase == 'prepare'");
+  expect(proposal?.run).toContain("scripts/release-proposal.mjs");
+  expect(proposal?.run).toContain('--target-branch "$RELEASE_BRANCH"');
+  expect(proposal?.env?.SOURCE_SHA).toBe("${{ steps.branch.outputs.sha }}");
+  expect(proposal?.run).toContain('--source-sha "$SOURCE_SHA"');
   const notesIndex = steps.findIndex((step) =>
     step.run?.includes("release-notes.mjs publication"),
   );
@@ -306,7 +502,7 @@ it("binds npm and MCP publication to the same immutable release SHA", async () =
     "needs.qualification.result == 'success'",
   );
   expect(workflow.jobs["publish-mcp"].if).toContain(
-    "needs.publish.result == 'success'",
+    "needs.verify-npm.result == 'success'",
   );
   expect(workflow.jobs.publish.needs).toContain("merged-release");
   expect(workflow.jobs["publish-mcp"].needs).toContain("merged-release");
@@ -335,30 +531,16 @@ it("binds npm and MCP publication to the same immutable release SHA", async () =
       workflow.jobs["release-please"].steps.find((step) => step.name === name)
         ?.if,
     ).toBe(
-      "inputs.phase == 'prepare' && steps.release.outputs.prs_created == 'true'",
+      "inputs.phase == 'prepare' && steps.proposal.outputs.prs_created == 'true'",
     );
   }
   const publishCommand = workflow.jobs.publish.steps.find(
     (step) => step.name === "Publish",
   )?.run;
-  expect(publishCommand).toContain("scripts/release-npm-tag.mjs");
+  expect(publishCommand).toContain("--ignore-scripts");
   expect(publishCommand).toContain(
-    'npm publish "${VERIFIED_PACKAGE_TARBALL}" --access public --tag "${tag}"',
+    '--registry=https://registry.npmjs.org --access=public --tag="$NPM_RELEASE_TAG"',
   );
-  for (const [version, tag] of [
-    ["6.1.0", "latest"],
-    ["6.1.0-rc.1", "next"],
-  ] as const) {
-    const helper = new URL(
-      "../../../scripts/release-npm-tag.mjs",
-      import.meta.url,
-    );
-    const result = await execFileAsync(process.execPath, [
-      fileURLToPath(helper),
-      version,
-    ]);
-    expect(result.stdout).toBe(tag);
-  }
 });
 
 it.skipIf(process.platform === "win32").each([
@@ -698,7 +880,8 @@ it("rehearses the qualified archive before npm authority and retains registry ve
   const publish = workflow.jobs.publish;
   expect(publish.needs).toContain("rehearsal");
   expect(publish.if).toContain("needs.rehearsal.result == 'success'");
-  for (const job of [rehearsal, publish]) {
+  const verification = workflow.jobs["verify-npm"];
+  for (const job of [rehearsal, verification]) {
     const inputs = job.steps.findIndex(
       (step) => step.uses === "./.github/actions/prepare-release-package",
     );
@@ -746,28 +929,53 @@ it("rehearses the qualified archive before npm authority and retains registry ve
     expect(step.if).toBeUndefined();
     expect(step["continue-on-error"]).toBeUndefined();
   }
-  const commands = publish.steps.map((step) => step.run ?? "");
-  const inspect = commands.findIndex((command) =>
-    command.includes("npm-release.mjs inspect"),
+  expect(publish.permissions).toEqual({
+    contents: "read",
+    "id-token": "write",
+  });
+  expect(
+    publish.steps.filter((step) => step.run).map((step) => step.run),
+  ).toEqual([
+    "node scripts/ci/prepare-npm-publication.mjs",
+    expect.stringContaining(
+      "npm publish .cache/verified-package/package.tgz --ignore-scripts",
+    ),
+  ]);
+  expect(
+    publish.steps
+      .filter((step) => step.uses?.startsWith("actions/download-artifact@"))
+      .map((step) => step.with?.name),
+  ).toEqual(["verified-release-package"]);
+  expect(publish.steps.find((step) => step.name === "Publish")?.if).toBe(
+    "steps.package.outputs.published == 'false'",
   );
-  const write = commands.findIndex((command) =>
-    command.includes("npm publish"),
-  );
+  expect(verification.needs).toContain("publish");
+  expect(verification.if).toContain("needs.publish.result == 'success'");
+  expect(verification.permissions).toEqual({
+    contents: "read",
+    actions: "read",
+  });
+  const commands = verification.steps.map((step) => step.run ?? "");
   const bytes = commands.findIndex((command) =>
     command.includes("npm-release.mjs verify"),
   );
   const canary = commands.findIndex((command) =>
     command.includes("verify-published-package.mjs"),
   );
-  expect(inspect).toBeGreaterThanOrEqual(0);
-  expect(write).toBeGreaterThan(inspect);
-  expect(bytes).toBeGreaterThan(write);
+  expect(bytes).toBeGreaterThanOrEqual(0);
   expect(canary).toBeGreaterThan(bytes);
-  expect(publish.steps[write]?.if).toBe(
-    "steps.registry.outputs.published == 'false'",
-  );
-  for (const index of [inspect, bytes, canary]) {
-    expect(publish.steps[index]?.if).toBeUndefined();
-    expect(publish.steps[index]?.["continue-on-error"]).toBeUndefined();
+  for (const index of [bytes, canary]) {
+    expect(verification.steps[index]?.if).toBeUndefined();
+    expect(verification.steps[index]?.["continue-on-error"]).toBeUndefined();
+  }
+  expect(workflow.jobs["publish-mcp"].needs).toContain("verify-npm");
+  for (const job of [
+    rehearsal,
+    publish,
+    verification,
+    workflow.jobs["publish-mcp"],
+  ]) {
+    expect(job.env?.TURBO_TOKEN).toBe("");
+    expect(job.env?.TURBO_CACHE).toBe("local:rw");
   }
 });

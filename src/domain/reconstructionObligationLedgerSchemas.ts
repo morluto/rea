@@ -4,8 +4,7 @@ import { STABLE_IDENTIFIER_PATTERN } from "./stringPatterns.js";
 
 import { evidenceAuthoritySchema } from "./evidence.js";
 import { evidenceBundleSchema } from "./evidenceBundle.js";
-import { digestSchema } from "./../domain/digests.js";
-import { prefixedDigestSchema } from "./../domain/digests.js";
+import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 import { canonicalJson } from "./comparisonSemantics.js";
 import {
   reconstructionObligationCoverage,
@@ -210,11 +209,15 @@ const diagnosticSchema = z.strictObject({
     "weak-original-case-authority",
     "missing-case",
     "weak-fixture-authority",
+    "inapplicable-fixture-proof",
+    "fixture-failed",
     "missing-verifier",
     "verifier-does-not-enumerate",
     "missing-verifier-result",
     "weak-verifier-authority",
     "verifier-failed",
+    "verifier-unavailable",
+    "inapplicable-verifier-proof",
     "static-only",
     "contradiction",
     "contradiction-evidence-missing",

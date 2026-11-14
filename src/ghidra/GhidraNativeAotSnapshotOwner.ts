@@ -4,9 +4,14 @@ import type {
   AnalysisPartialObservation,
 } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisArtifactChangedError,
+  cancelledBy,
+  carriedReason,
+} from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
+  NativeAotSnapshotIdentityError,
   NATIVE_AOT_MAX_REPORT_BYTES,
   NATIVE_AOT_MAX_SOURCE_BYTES,
   nativeAotSnapshotOverCapacity,
@@ -41,6 +46,7 @@ export class GhidraNativeAotSnapshotOwner {
   constructor(
     private readonly input: {
       readonly targetSha256: string;
+      readonly targetPath: string;
       readonly readSnapshot: GhidraClient["readTargetSnapshot"] | undefined;
       readonly projectFailure: (
         operation: AnalysisOperation,
@@ -134,9 +140,7 @@ export class GhidraNativeAotSnapshotOwner {
           ),
         );
       if (waited.status === "cancelled")
-        return err(
-          this.#cancelled(operation, callerSignal?.reason, observations),
-        );
+        return err(this.#cancelled(operation, waited.reason, observations));
       if (callerSignal?.aborted)
         return err(
           waited.value.ok
@@ -158,9 +162,7 @@ export class GhidraNativeAotSnapshotOwner {
     const attempt = this.#attempt ?? this.#start(normalized);
     const waited = await attempt.wait(callerSignal);
     if (waited.status === "cancelled")
-      return err(
-        this.#cancelled(operation, callerSignal?.reason, observations),
-      );
+      return err(this.#cancelled(operation, waited.reason, observations));
     const settled = waited.value;
     // A completed physical failure or retained cleanup outranks a later abort.
     if (!settled.ok) {
@@ -198,6 +200,29 @@ export class GhidraNativeAotSnapshotOwner {
     imageBase: string,
     observations: JsonValue,
   ): AnalysisError {
+    if (failure.cause instanceof NativeAotSnapshotIdentityError) {
+      const mismatch = failure.cause;
+      const primary = new AnalysisArtifactChangedError(
+        operation,
+        this.input.targetPath,
+        mismatch.message,
+        {
+          cause: mismatch,
+          diagnostics: {
+            expected_sha256: mismatch.expectedSha256,
+            observed_sha256: mismatch.observedSha256,
+          },
+          partialObservation: failure.partialObservation,
+        },
+      );
+      return failure.cleanupFailure?.cleanupIncomplete
+        ? analysisErrorWithCleanupFailure(
+            primary,
+            failure.cleanupFailure,
+            operation,
+          ).bindCleanupDependencies([primary, failure.cleanupFailure])
+        : primary;
+    }
     if (failure.kind !== "cancelled" || this.#conflict === undefined)
       return this.input.projectFailure(
         operation,
@@ -334,8 +359,7 @@ export class GhidraNativeAotSnapshotOwner {
     observations: JsonValue,
     partialObservation?: AnalysisPartialObservation,
   ): AnalysisError {
-    return new AnalysisCancelledError(operation, {
-      cause: reason,
+    return cancelledBy(operation, carriedReason(reason), {
       diagnostics: { measured_observation: observations },
       partialObservation,
     });

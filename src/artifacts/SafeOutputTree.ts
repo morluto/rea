@@ -1,11 +1,14 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import {
+  access,
+  lstat,
   chmod,
   mkdir,
   open,
   readdir,
   realpath,
+  stat,
   type FileHandle,
 } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join } from "node:path";
@@ -15,11 +18,13 @@ import { streamChunkToBuffer } from "./StreamBytes.js";
 
 import {
   ArtifactPathRegistry,
+  DestinationPathUnrepresentableFailure,
   destinationCaseCollision,
   normalizeArtifactPath,
 } from "./ArtifactPaths.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { SafeOutputTreeDestinationRefusal } from "./SafeOutputTreeAdmission.js";
 import { SafeOutputTreeCreationFailure } from "./SafeOutputTreeCreationFailure.js";
 import { hashOutputFile } from "./SafeOutputTreeReadback.js";
 import { removeOwnedTree } from "./SafeOutputTreeCleanup.js";
@@ -52,6 +57,44 @@ export type SafeOutputCleanup =
       readonly residualPaths: readonly [string, ...string[]];
     };
 
+/** Admit an output root's own syntax before any filesystem effect. */
+const admitOutputRootSyntax = (outputRoot: string): string => {
+  if (!isAbsolute(outputRoot))
+    throw new SafeOutputTreeDestinationRefusal("Output root must be absolute");
+  // Path syntax follows the host; `platform` selects only the name policy.
+  const requested = absoluteCallerPath(outputRoot);
+  const name = basename(requested);
+  if (name === "." || name === "..")
+    throw new SafeOutputTreeDestinationRefusal("Invalid output directory");
+  return requested;
+};
+
+/**
+ * Create a root's missing parents only after its syntax is admitted, so a
+ * refused selection leaves no directories behind. A file in the parent path
+ * refuses the selection instead of surfacing as a host write failure.
+ */
+const createOutputParents = async (outputRoot: string): Promise<void> => {
+  const requested = admitOutputRootSyntax(outputRoot);
+  await mkdir(dirname(requested), { recursive: true, mode: 0o700 }).catch(
+    (cause: unknown) => {
+      const code =
+        cause instanceof Error && "code" in cause ? String(cause.code) : "";
+      if (code === "EEXIST" || code === "ENOTDIR")
+        throw new SafeOutputTreeDestinationRefusal(
+          "Output parent must be a directory",
+          { cause },
+        );
+      if (code === "EACCES" || code === "EPERM")
+        throw new SafeOutputTreeDestinationRefusal(
+          "Output parent is unavailable",
+          { cause },
+        );
+      throw cause;
+    },
+  );
+};
+
 /**
  * Materialize files in a tree created by this operation.
  *
@@ -65,7 +108,8 @@ export class SafeOutputTree {
   readonly #nestedDirectories = new Map<string, DirectoryIdentity>();
   readonly #unknownDirectories = new Set<string>();
   readonly #ownedFiles = new Map<string, FileIdentity>();
-  readonly #openFiles = new Map<string, OwnedFileHandle>();
+  /** Exclusive files awaiting identity admission; admitted identity and handles have separate owners. */
+  readonly #pendingFiles = new Map<string, OwnedFileHandle>();
   readonly #openHandles = new Set<OwnedFileHandle>();
   #published = false;
   #createdRoot = true;
@@ -92,28 +136,15 @@ export class SafeOutputTree {
   static async create(
     outputRoot: string,
     platform: NodeJS.Platform = process.platform,
-    options: { readonly acceptExistingEmpty?: boolean } = {},
+    options: {
+      readonly acceptExistingEmpty?: boolean;
+      /** Create missing parents, after the root's own syntax is admitted. */
+      readonly createParents?: boolean;
+    } = {},
   ): Promise<SafeOutputTree> {
-    if (!isAbsolute(outputRoot))
-      throw new ArtifactReaderFailure(
-        "path",
-        "Extraction output root must be absolute",
-      );
-    // Path syntax follows the host; `platform` selects only the name policy.
-    const requested = absoluteCallerPath(outputRoot);
-    const name = basename(requested);
-    if (name === "." || name === "..")
-      throw new ArtifactReaderFailure("path", "Invalid extraction output root");
-    const parent = await realpath(dirname(requested)).catch(
-      (cause: unknown) => {
-        throw new ArtifactReaderFailure(
-          "unavailable",
-          "Extraction output parent is unavailable",
-          { cause },
-        );
-      },
-    );
-    const canonicalOutput = join(parent, name);
+    if (options.createParents === true) await createOutputParents(outputRoot);
+    const { requested, canonicalOutput } =
+      await this.resolveDestination(outputRoot);
     let created = true;
     await mkdir(canonicalOutput, { mode: 0o700 }).catch((cause: unknown) => {
       if (!isAlreadyExists(cause)) throw cause;
@@ -121,20 +152,31 @@ export class SafeOutputTree {
         created = false;
         return;
       }
-      throw new ArtifactReaderFailure(
-        "path",
-        "Extraction output root already exists",
-        { cause },
-      );
+      throw new SafeOutputTreeDestinationRefusal("Output root already exists", {
+        cause,
+      });
     });
     const tree = new SafeOutputTree(canonicalOutput, platform, requested);
     tree.#createdRoot = created;
     try {
-      const rootIdentity = await readDirectoryIdentity(canonicalOutput);
+      const rootIdentity = await readDirectoryIdentity(canonicalOutput).catch(
+        (cause: unknown) => {
+          // An accepted existing root that is not a directory refuses the
+          // selection itself; a root this call created was replaced by a host race.
+          if (
+            !created &&
+            cause instanceof ArtifactReaderFailure &&
+            cause.reason === "path"
+          )
+            throw new SafeOutputTreeDestinationRefusal(cause.message, {
+              cause,
+            });
+          throw cause;
+        },
+      );
       tree.#rootIdentity = rootIdentity;
       if (!created && (await readdir(canonicalOutput)).length > 0)
-        throw new ArtifactReaderFailure(
-          "path",
+        throw new SafeOutputTreeDestinationRefusal(
           "Output directory is not empty",
         );
       if (created)
@@ -144,6 +186,77 @@ export class SafeOutputTree {
     } catch (cause: unknown) {
       throw new SafeOutputTreeCreationFailure(cause, tree);
     }
+  }
+
+  /** Read-only early admission; create() still rechecks and acquires exclusively. */
+  static async checkDestination(outputRoot: string): Promise<void> {
+    const { canonicalOutput } = await this.resolveDestination(outputRoot);
+    const existing = await lstat(canonicalOutput).catch((cause: unknown) => {
+      if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
+        return undefined;
+      if (
+        cause instanceof Error &&
+        "code" in cause &&
+        ["ENOTDIR", "EACCES", "EPERM"].includes(String(cause.code))
+      )
+        throw new SafeOutputTreeDestinationRefusal(
+          "Output path is unavailable",
+          { cause },
+        );
+      throw cause;
+    });
+    if (existing !== undefined)
+      throw new SafeOutputTreeDestinationRefusal("Output root already exists");
+    await access(
+      dirname(canonicalOutput),
+      constants.W_OK | constants.X_OK,
+    ).catch((cause: unknown) => {
+      if (
+        cause instanceof Error &&
+        "code" in cause &&
+        ["EACCES", "EPERM", "ENOENT", "ENOTDIR"].includes(String(cause.code))
+      )
+        throw new SafeOutputTreeDestinationRefusal(
+          "Output parent is not writable",
+          { cause },
+        );
+      throw cause;
+    });
+  }
+
+  /** Resolve an admissible parent without acquiring output; create rechecks it. */
+  static async resolveDestination(outputRoot: string) {
+    const requested = admitOutputRootSyntax(outputRoot);
+    const name = basename(requested);
+    let parent: string;
+    try {
+      const selectedParent = dirname(requested);
+      // Darwin realpath can collapse file/.. despite stat rejecting that
+      // traversal. Admit the selected directory before canonicalizing it.
+      if (!(await stat(selectedParent)).isDirectory())
+        throw new SafeOutputTreeDestinationRefusal(
+          "Output parent must be a directory",
+        );
+      parent = await realpath(selectedParent);
+    } catch (cause: unknown) {
+      if (cause instanceof SafeOutputTreeDestinationRefusal) throw cause;
+      if (
+        cause instanceof Error &&
+        "code" in cause &&
+        ["ENOENT", "ENOTDIR", "EACCES", "EPERM"].includes(String(cause.code))
+      )
+        throw new SafeOutputTreeDestinationRefusal(
+          "Output parent is unavailable",
+          { cause },
+        );
+      throw new ArtifactReaderFailure(
+        "unavailable",
+        "Output parent is unavailable",
+        { cause },
+      );
+    }
+    const canonicalOutput = join(parent, name);
+    return { requested, canonicalOutput };
   }
 
   get outputRoot(): string {
@@ -188,6 +301,8 @@ export class SafeOutputTree {
           constants.O_NOFOLLOW,
         0o600,
       ).catch(async (cause: unknown) => {
+        if (hasUnrepresentableName(cause))
+          throw new DestinationPathUnrepresentableFailure(path, { cause });
         if (isAlreadyExists(cause))
           await throwIfDestinationCaseCollision(parent.path, path, cause);
         throw new ArtifactReaderFailure(
@@ -197,13 +312,14 @@ export class SafeOutputTree {
         );
       });
       const ownedHandle = this.#trackHandle(handle);
-      this.#openFiles.set(destination, ownedHandle);
+      this.#pendingFiles.set(destination, ownedHandle);
       const fileIdentity = await readFileIdentity(
         ownedHandle.handle,
         destination,
       );
       await assertFilePathIdentity(destination, fileIdentity);
       this.#ownedFiles.set(destination, fileIdentity);
+      this.#pendingFiles.delete(destination);
       if (this.platform !== "win32") {
         await ownedHandle.handle.chmod(0o600);
         if (((await ownedHandle.handle.stat()).mode & 0o777) !== 0o600)
@@ -241,7 +357,7 @@ export class SafeOutputTree {
       await this.#assertLineage(lineage);
       await assertFilePathIdentity(destination, fileIdentity);
       await ownedHandle.handle.sync();
-      await this.#closeFileHandle(destination, ownedHandle);
+      await this.#closeHandle(ownedHandle);
       const readbackHandle = this.#trackHandle(
         await open(destination, constants.O_RDONLY | constants.O_NOFOLLOW),
       );
@@ -270,7 +386,7 @@ export class SafeOutputTree {
     }
   }
 
-  /** Sync the owned output tree and prevent further writes through this instance. */
+  /** Sync files' containing directories from children to root, then publish the root in its parent. */
   async commit(signal?: AbortSignal): Promise<void> {
     this.#assertWritable();
     abortIfNeeded(signal);
@@ -288,7 +404,7 @@ export class SafeOutputTree {
         constants.O_RDONLY | constants.O_DIRECTORY,
       ),
     );
-    let output: OwnedFileHandle | undefined;
+    const handles: OwnedFileHandle[] = [parent];
     let sync:
       | { readonly kind: "synced" }
       | {
@@ -296,19 +412,24 @@ export class SafeOutputTree {
           readonly cause: unknown;
         } = { kind: "synced" };
     try {
-      output = this.#trackHandle(
-        await open(
-          this.#outputRoot,
-          constants.O_RDONLY | constants.O_DIRECTORY,
-        ),
-      );
-      await assertHandleIdentity(
-        output.handle,
-        this.#requireRootIdentity(),
-        this.#outputRoot,
-      );
-      await output.handle.sync();
+      // A directory's entries become durable before its parent publishes the
+      // child directory name. Keep only one nested descriptor open at a time.
+      const directories = [...this.#nestedDirectories].reverse();
+      directories.push([this.#outputRoot, this.#requireRootIdentity()]);
+      for (const [path, identity] of directories) {
+        abortIfNeeded(signal);
+        const directory = this.#trackHandle(
+          await open(path, constants.O_RDONLY | constants.O_DIRECTORY),
+        );
+        handles.push(directory);
+        await assertHandleIdentity(directory.handle, identity, path);
+        await directory.handle.sync();
+        abortIfNeeded(signal);
+        await this.#closeHandle(directory);
+        handles.pop();
+      }
       await parent.handle.sync();
+      abortIfNeeded(signal);
       await this.#assertExactEntries();
       abortIfNeeded(signal);
       this.#published = true;
@@ -316,9 +437,7 @@ export class SafeOutputTree {
       sync = { kind: "failed", cause };
     }
     const closeResults = await Promise.allSettled(
-      [parent, output]
-        .filter(isDefined)
-        .map((handle) => this.#closeHandle(handle)),
+      handles.map((handle) => this.#closeHandle(handle)),
     );
     const closeFailures = closeResults
       .filter(isRejected)
@@ -326,7 +445,7 @@ export class SafeOutputTree {
     if (closeFailures.length > 0) {
       const closeFailure = new AggregateError(
         closeFailures,
-        "Extraction output directory handles could not be closed",
+        "Output directory handles could not be closed",
       );
       const cleanup = ArtifactReaderFailure.cleanupObservation(
         closeFailure,
@@ -395,14 +514,14 @@ export class SafeOutputTree {
     if (!complete)
       throw new ArtifactReaderFailure(
         "integrity",
-        `Extraction output cleanup could not be verified${removalFailure === undefined ? "" : `: ${removalFailure instanceof Error ? removalFailure.message : String(removalFailure)}`}`,
+        `Output cleanup could not be verified${removalFailure === undefined ? "" : `: ${removalFailure instanceof Error ? removalFailure.message : String(removalFailure)}`}`,
         {
           cause: removalFailure,
           cleanup: {
             reason:
               removalFailure instanceof Error
                 ? removalFailure.message
-                : "Extraction output root remains after rollback",
+                : "Output root remains after rollback",
             resources: [this.#outputRoot],
           },
         },
@@ -468,7 +587,7 @@ export class SafeOutputTree {
   ): Promise<readonly DirectoryLineageEntry[]> {
     const parts = relativePath.split("/");
     if (parts.pop() === undefined)
-      throw new ArtifactReaderFailure("path", "Invalid extraction path");
+      throw new ArtifactReaderFailure("path", "Invalid output path");
     let current = this.#outputRoot;
     let logicalParent = "";
     const lineage: DirectoryLineageEntry[] = [
@@ -486,6 +605,10 @@ export class SafeOutputTree {
       const creation = await mkdir(current, { mode: 0o700 }).then(
         () => ({ kind: "created" }) as const,
         (cause: unknown) => {
+          if (hasUnrepresentableName(cause))
+            throw new DestinationPathUnrepresentableFailure(logicalPath, {
+              cause,
+            });
           if (!isAlreadyExists(cause)) throw cause;
           return { kind: "existing", cause } as const;
         },
@@ -552,7 +675,7 @@ export class SafeOutputTree {
     if (this.#rootIdentity === undefined)
       throw new ArtifactReaderFailure(
         "path",
-        `Extraction output root identity is unknown: ${this.#outputRoot}`,
+        `Output root identity is unknown: ${this.#outputRoot}`,
       );
     return this.#rootIdentity;
   }
@@ -595,24 +718,18 @@ export class SafeOutputTree {
       throw new AggregateError(failures, "Output tree handles remain open");
   }
 
-  async #closeFileHandle(path: string, owner: OwnedFileHandle): Promise<void> {
-    await this.#closeHandle(owner);
-    this.#openFiles.delete(path);
-  }
-
   async #admitPendingFiles(): Promise<void> {
-    for (const [path, owner] of this.#openFiles) {
+    for (const [path, owner] of this.#pendingFiles) {
       let identity = this.#ownedFiles.get(path);
       if (identity === undefined) {
         identity = await readFileIdentity(owner.handle, path);
         await assertFilePathIdentity(path, identity);
         this.#ownedFiles.set(path, identity);
       }
+      this.#pendingFiles.delete(path);
     }
   }
 }
-
-const isDefined = <T>(value: T | undefined): value is T => value !== undefined;
 
 const isRejected = (
   result: PromiseSettledResult<void>,
@@ -637,7 +754,7 @@ const writeAll = async (
     if (bytesWritten === 0)
       throw new ArtifactReaderFailure(
         "unavailable",
-        "Extraction output stopped accepting bytes",
+        "Output stopped accepting bytes",
       );
     offset += bytesWritten;
   }
@@ -698,3 +815,6 @@ const throwIfDestinationCaseCollision = async (
   );
   if (failure !== undefined) throw failure;
 };
+
+const hasUnrepresentableName = (cause: unknown): boolean =>
+  cause instanceof Error && "code" in cause && cause.code === "ENAMETOOLONG";

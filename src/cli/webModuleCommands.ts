@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
 import { createWebModuleTraceService } from "../composition/webModules.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -5,7 +6,7 @@ import { logCliCommand } from "../cliLogging.js";
 import { webModuleTraceInputSchema } from "../domain/webModuleTrace.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
-import { cliIntegerArgument } from "./options.js";
+import { cliDecimalField } from "./options.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 
@@ -24,8 +25,10 @@ export const registerWebModuleCommands = (
       "Trace one captured script's native imports to URLs and captured source candidates",
     args: z.object({
       manifestPath: webModuleTraceInputSchema.shape.manifest_path,
-      scriptIndex: cliIntegerArgument(0).describe(
-        "Zero-based manifest script index",
+      scriptIndex: cliDecimalField(
+        webModuleTraceInputSchema.shape.script_index.describe(
+          "Zero-based manifest script index",
+        ),
       ),
     }),
     options: z.object({
@@ -67,7 +70,7 @@ export const registerWebModuleCommands = (
             "web-module-trace",
             "trace_web_module_imports",
             signal,
-          ),
+          ).then(projectCliAnalysisResult),
         ),
       ),
   });

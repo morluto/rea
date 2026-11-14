@@ -22,3 +22,20 @@ public struct ReaDeclFixtureGeneric<Value> {
 public actor ReaDeclFixtureActor {
   public init() {}
 }
+
+
+// Distinct same-leaf protocols and conforming types exercise both parent chains.
+public enum ReaNestedA {
+  public protocol Requirement { func nestedValue() -> Int }
+  public struct Implementation: Requirement {
+    public init() {}
+    public func nestedValue() -> Int { 31 }
+  }
+}
+public enum ReaNestedB {
+  public protocol Requirement { func nestedValue() -> Int }
+  public struct Implementation: Requirement {
+    public init() {}
+    public func nestedValue() -> Int { 37 }
+  }
+}

@@ -1,3 +1,4 @@
+import { selectCdpDiscoveryTarget } from "./CdpDiscoveryTargets.js";
 import {
   DEFAULT_ASAR_HEADER_ADMISSION,
   type AsarHeaderAdmission,
@@ -197,6 +198,7 @@ export class CdpElectronProvider implements ElectronObservationPort {
             non_page: nonPage,
           },
           limitations: [
+            ...(discovery.limitations ?? []),
             "Every local file page exposed by the selected loopback CDP endpoint is eligible for listing.",
             ...(unconnectable === 0
               ? []
@@ -205,31 +207,32 @@ export class CdpElectronProvider implements ElectronObservationPort {
                 ]),
             ...(allowed.some((target) => target.attached === null)
               ? [
-                  "CDP discovery omitted attachment state for one or more targets; attached is reported as unknown.",
+                  "CDP discovery could not establish debugger attachment state for one or more targets.",
                 ]
               : []),
           ],
         }),
       );
     } catch (cause: unknown) {
+      const completedPrefix = {
+        browser_version: discovery?.version ?? null,
+        examined_targets: examined,
+        discovered_targets: discovery?.targets.length ?? null,
+        allowed_targets: allowed,
+        excluded: {
+          unsupported_url: unsupportedUrl,
+          non_page: nonPage,
+        },
+        unconnectable_targets: unconnectable,
+        coverage:
+          "partial: target authorization stopped; remaining targets are unknown",
+      };
       const fileFailure = mapElectronFileAuthorizationFailure(
         cause,
         CDP_ELECTRON_PROVIDER_IDENTITY.id,
         "list_electron_targets",
         {
-          completed_prefix: {
-            browser_version: discovery?.version ?? null,
-            examined_targets: examined,
-            discovered_targets: discovery?.targets.length ?? null,
-            allowed_targets: allowed,
-            excluded: {
-              unsupported_url: unsupportedUrl,
-              non_page: nonPage,
-            },
-            unconnectable_targets: unconnectable,
-            coverage:
-              "partial: target authorization stopped; remaining targets are unknown",
-          },
+          completed_prefix: completedPrefix,
         },
       );
       if (fileFailure !== undefined) return err(fileFailure);
@@ -238,19 +241,7 @@ export class CdpElectronProvider implements ElectronObservationPort {
           ? new AnalysisCancelledError("list_electron_targets", {
               cause: options.signal.reason,
               diagnostics: {
-                completed_prefix: {
-                  browser_version: discovery?.version ?? null,
-                  examined_targets: examined,
-                  discovered_targets: discovery?.targets.length ?? null,
-                  allowed_targets: allowed,
-                  excluded: {
-                    unsupported_url: unsupportedUrl,
-                    non_page: nonPage,
-                  },
-                  unconnectable_targets: unconnectable,
-                  coverage:
-                    "partial: target authorization stopped; remaining targets are unknown",
-                },
+                completed_prefix: completedPrefix,
               },
             })
           : providerError(cause, "list_electron_targets"),
@@ -282,7 +273,7 @@ export class CdpElectronProvider implements ElectronObservationPort {
         options.signal,
       );
       const target = await authorizeTarget(
-        discovery.targets,
+        discovery,
         input.target_id,
         this.#asarHeaderAdmission,
         options.signal,
@@ -430,13 +421,18 @@ export class CdpElectronProvider implements ElectronObservationPort {
 }
 
 const authorizeTarget = async (
-  targets: readonly CdpEndpointTarget[],
+  discovery: CdpEndpointDiscovery,
   targetId: string,
   asarHeaderAdmission: AsarHeaderAdmission,
   signal?: AbortSignal,
 ): Promise<CdpEndpointTarget> => {
   throwIfElectronOperationCancelled(signal, "inspect_electron_page");
-  const target = targets.find(({ id }) => id === targetId);
+  const target = selectCdpDiscoveryTarget(
+    discovery.targets,
+    targetId,
+    "inspect_electron_page",
+    discovery.ambiguousTargetIds,
+  );
   if (target === undefined)
     throw new BrowserObservationError("inspect_web_page", "target_not_found");
   if (target.type !== "page")

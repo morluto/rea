@@ -3,8 +3,8 @@ import { expect, it } from "vitest";
 
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComparisonExample.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
-import { functionDossierSchema } from "../../../src/domain/hopperValues.js";
-import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
+import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
+
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -44,7 +44,7 @@ const pathSource = () => {
         ...template.parameters,
         observation: "workflow-unknown-path",
       },
-      result: jsonValueSchema.parse({
+      result: {
         ...dossier,
         callees: [
           {
@@ -54,7 +54,7 @@ const pathSource = () => {
             body: { available: false, reason: "No body was observed." },
           },
         ],
-      }),
+      },
       confidence: template.confidence,
       authority: template.authority,
       relationshipCoverage: { status: "complete" },
@@ -76,10 +76,8 @@ const incompleteRight = (suffix: string) => {
     {
       operation: "analyze_function",
       parameters: { ...template.parameters, observation: suffix },
-      result: jsonValueSchema.parse(
-        functionDossierSchema.parse(
-          FUNCTION_COMPARISON_EXAMPLE.left.normalized_result,
-        ),
+      result: functionDossierSchema.parse(
+        FUNCTION_COMPARISON_EXAMPLE.left.normalized_result,
       ),
       confidence: template.confidence,
       authority: template.authority,
@@ -243,6 +241,9 @@ it("continues rejecting duplicate explicit record_unknown identities", async () 
       name: "record_unknown",
       arguments: input,
     });
-    expect(parseMcpToolError(duplicate).error.code).toBe("revision_conflict");
+    expect(parseMcpToolError(duplicate).error).toMatchObject({
+      code: "invalid_request",
+      message: expect.stringContaining("already exists"),
+    });
   });
 });

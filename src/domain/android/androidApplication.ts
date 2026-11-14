@@ -7,15 +7,12 @@ import { AnalysisInputError } from "../analysisErrorCore.js";
 
 import {
   hasCompleteInventoryCoverage,
-  parseArtifactInventoryEvidence,
+  type ParsedInventorySet,
 } from "../artifactInventoryEvidence.js";
-import { digestSchema } from "../digests.js";
-import { prefixedDigestSchema } from "../digests.js";
+import { digestSchema, prefixedDigestSchema } from "../digests.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { nativeRuntimeConvention } from "../nativeConvention.js";
 import {
-  applicationInventoryProjectionInputSchema,
-  type MobileApplicationProjectionWithSources,
   projectedBridgeCandidateSchema,
   projectedComponentSchema,
   projectedInventoryEntries,
@@ -25,28 +22,23 @@ import {
   unavailableComponentSchema,
 } from "../mobileApplicationGraphProjection.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
-
-const evidenceIdSchema = projectionEvidenceIdSchema;
-const componentSchema = projectedComponentSchema;
-
-/** Authenticated APK inventory pages projected as one Android application. */
-export const androidApplicationProjectionInputSchema =
-  applicationInventoryProjectionInputSchema;
+import { err, ok, type Result } from "../result.js";
+import { isV1SignatureMetadataName } from "../apkSignature/apkV1MetadataName.js";
 
 /** Deterministic, execution-free Android application inventory projection. */
 export const androidApplicationProjectionResultSchema = z.strictObject({
   projection_id: prefixedDigestSchema("adp"),
   root_sha256: digestSchema,
   root_format: z.literal("apk"),
-  source_evidence_ids: z.array(evidenceIdSchema).min(1),
+  source_evidence_ids: z.array(projectionEvidenceIdSchema).min(1),
   components: z.strictObject({
-    manifests: z.array(componentSchema),
-    resources: z.array(componentSchema),
-    dex: z.array(componentSchema),
-    jvm_classes: z.array(componentSchema),
-    native_libraries: z.array(componentSchema),
-    javascript: z.array(componentSchema),
-    signing: z.array(componentSchema),
+    manifests: z.array(projectedComponentSchema),
+    resources: z.array(projectedComponentSchema),
+    dex: z.array(projectedComponentSchema),
+    jvm_classes: z.array(projectedComponentSchema),
+    native_libraries: z.array(projectedComponentSchema),
+    javascript: z.array(projectedComponentSchema),
+    signing: z.array(projectedComponentSchema),
   }),
   unavailable_components: z.array(unavailableComponentSchema),
   runtime_families: z.array(
@@ -78,37 +70,34 @@ export const androidApplicationProjectionResultSchema = z.strictObject({
   limitations: z.array(z.string()),
 });
 
-export type AndroidApplicationProjectionInput = z.infer<
-  typeof androidApplicationProjectionInputSchema
->;
 export type AndroidApplicationProjectionResult = z.infer<
   typeof androidApplicationProjectionResultSchema
 >;
-type Component = z.infer<typeof componentSchema>;
+type Component = z.infer<typeof projectedComponentSchema>;
 
 /** Project exact APK paths and hashes without decoding or executing target code. */
-export const projectAndroidApplication = (
-  input: AndroidApplicationProjectionInput,
-): MobileApplicationProjectionWithSources<AndroidApplicationProjectionResult> => {
-  const parsed = androidApplicationProjectionInputSchema.parse(input);
-  const { evidence, inventory } = parseArtifactInventoryEvidence(
-    parsed.inventory_evidence,
-  );
+export const projectAndroidInventory = (
+  source: ParsedInventorySet,
+): Result<AndroidApplicationProjectionResult, AnalysisInputError> => {
+  const { evidence, inventory } = source;
   if (inventory.manifest.root_format !== "apk")
-    throw new AnalysisInputError("project_android_application_graph", {}, [
-      {
-        path: [
-          "inventory_evidence",
-          0,
-          "normalized_result",
-          "manifest",
-          "root_format",
-        ],
-        reason: "invalid_value",
-        message: `Android application projection requires APK inventory Evidence; the inventory root format is ${inventory.manifest.root_format}. APK is chosen for a ZIP archive whose name ends in .apk.`,
-      },
-    ]);
-  const entries = projectedInventoryEntries(inventory);
+    return err(
+      new AnalysisInputError("project_android_application_graph", {}, [
+        {
+          path: [
+            "inventory_evidence",
+            0,
+            "normalized_result",
+            "manifest",
+            "root_format",
+          ],
+          reason: "invalid_value",
+          message: `Android application projection requires APK inventory Evidence; the inventory root format is ${inventory.manifest.root_format}. APK is chosen for a ZIP archive whose name ends in .apk.`,
+        },
+      ]),
+    );
+  const { entries, limitations: unresolved } =
+    projectedInventoryEntries(inventory);
   const all = projectedFileComponents(entries);
   const unavailable = entries.flatMap(({ unavailable }) =>
     unavailable === undefined ? [] : [unavailable],
@@ -120,6 +109,7 @@ export const projectAndroidApplication = (
   );
   const components = classified;
   const limitations = [
+    ...unresolved,
     ...inventory.limitations,
     ...(!hasCompleteInventoryCoverage(inventory, "container-entries")
       ? ["Source inventory coverage is partial; absence is unknown."]
@@ -129,7 +119,10 @@ export const projectAndroidApplication = (
     "Bridge candidates are path-based hypotheses, not decoded JNI declarations or observed runtime calls.",
     "A bridge basis is inferred from the native path and is repeated for every managed component.",
     "ZIP inventory cannot see the APK Signing Block, so an empty signing array does not mean the APK is unsigned.",
-    ...(all.some(({ path }) => path === "AndroidManifest.xml")
+    ...(entries.some(
+      ({ path, kind }) =>
+        path === "AndroidManifest.xml" && (kind === "file" || kind === "slice"),
+    )
       ? []
       : [
           "No root AndroidManifest.xml occurrence was observed. The APK family comes from the .apk suffix of a ZIP archive, so these bytes may not be an APK.",
@@ -163,13 +156,12 @@ export const projectAndroidApplication = (
     ),
     limitations,
   };
-  return {
-    projection: androidApplicationProjectionResultSchema.parse({
+  return ok(
+    androidApplicationProjectionResultSchema.parse({
       ...withoutId,
       projection_id: `adp_${digestCanonicalValue(withoutId, "Android application projection")}`,
     }),
-    sources: evidence,
-  };
+  );
 };
 
 const classify = (all: readonly Component[]) => ({
@@ -184,9 +176,7 @@ const classify = (all: readonly Component[]) => ({
       format === "elf" || /(?:^|\/)lib\/[^/]+\/[^/]+\.so$/iu.test(path),
   ),
   javascript: all.filter(({ format }) => format === "javascript-bundle"),
-  signing: all.filter(({ path }) =>
-    /^META-INF\/[^/]+\.(?:MF|RSA|DSA|EC|SF)$/iu.test(path),
-  ),
+  signing: all.filter(({ path }) => isV1SignatureMetadataName(path)),
 });
 
 const runtimeFamilies = (
@@ -201,7 +191,7 @@ const runtimeFamilies = (
   if (all.some(({ format }) => format === "elf")) families.add("native");
   if (all.some(({ format }) => format === "javascript-bundle"))
     families.add("javascript");
-  for (const { path } of all) {
+  for (const { path } of components.native_libraries) {
     const convention = nativeRuntimeConvention(path);
     if (convention !== null) families.add(convention);
   }

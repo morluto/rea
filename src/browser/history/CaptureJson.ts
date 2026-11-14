@@ -1,6 +1,7 @@
+import { escapeJsonPointerToken } from "../../domain/jsonPointer.js";
+import { captureBudgets } from "./CaptureBudgets.js";
 import { visit } from "jsonc-parser";
 import { LosslessNumber } from "lossless-json";
-import { WEB_NETWORK_CAPTURE_LIMITS } from "../../domain/webNetworkCapture.js";
 import { CaptureFormatError } from "./CaptureFormatError.js";
 import { TextDecoder } from "node:util";
 
@@ -13,12 +14,43 @@ type Frame =
     }
   | { kind: "array"; pointer: string; items: unknown[] };
 
+/** Admit each retained parser node before its object or numeric wrapper is allocated. */
+const captureNodeAdmission = (maximumNodes: number | undefined) => {
+  let nodes = 0;
+  return (): void => {
+    nodes++;
+    if (maximumNodes !== undefined && nodes > maximumNodes)
+      throw new CaptureFormatError(
+        "input-limit",
+        "JSON exceeds its parser node representation allowance.",
+      );
+  };
+};
+
+const selectCaptureObjectProperty = (
+  frames: Frame[],
+  key: string,
+  format: string,
+): void => {
+  const frame = frames.at(-1);
+  if (frame?.kind !== "object")
+    throw new TypeError("JSON visitor emitted a property outside an object.");
+  if (frame.members.has(key))
+    throw new CaptureFormatError(
+      "format",
+      `${format} JSON contains duplicate object members.`,
+    );
+  frame.pendingKey = key;
+};
+
 /** Materialize upstream JSON events without duplicate folding, prototype setters or numeric rounding. */
 export const parseCaptureJson = (
   text: string,
-  format: "HAR" | "qlog",
+  format: "HAR" | "qlog" | "Playwright trace",
+  maximumNodes?: number,
 ): unknown => {
   const frames: Frame[] = [];
+  const admitNode = captureNodeAdmission(maximumNodes);
   let result: unknown;
   const valuePointer = (): string => {
     const parent = frames.at(-1);
@@ -27,16 +59,17 @@ export const parseCaptureJson = (
       return `${parent.pointer}/${parent.items.length}`;
     return parent.pendingKey === undefined
       ? parent.pointer
-      : `${parent.pointer}/${parent.pendingKey.replaceAll("~", "~0").replaceAll("/", "~1")}`;
+      : `${parent.pointer}/${escapeJsonPointerToken(parent.pendingKey)}`;
   };
   // The document root is container level 1. Admit a container only while
   // its own level stays within the budget; values inside an admitted
   // container add no level, so empty and scalar-bearing containers agree.
   const admitContainer = (): void => {
-    if (frames.length >= WEB_NETWORK_CAPTURE_LIMITS.depth)
+    admitNode();
+    if (frames.length >= captureBudgets().depth)
       throw new CaptureFormatError(
         "input-limit",
-        `${format} exceeds the 64-level complete-evidence nesting budget. This release has no runtime override.`,
+        `${format} exceeds max_nesting_depth (${String(captureBudgets().depth)} levels).`,
         valuePointer(),
       );
   };
@@ -53,6 +86,14 @@ export const parseCaptureJson = (
       delete parent.pendingKey;
     }
   };
+  const endContainer = (kind: "object" | "array"): void => {
+    const frame = frames.pop();
+    if (frame?.kind !== kind)
+      throw new TypeError(`JSON visitor ended an unexpected ${kind}.`);
+    append(
+      frame.kind === "object" ? Object.fromEntries(frame.members) : frame.items,
+    );
+  };
   visit(
     text,
     {
@@ -65,46 +106,25 @@ export const parseCaptureJson = (
         });
       },
       onObjectProperty: (key) => {
-        // Prototype-named members are kept as ordinary own properties: the
-        // members map keys them without prototype setters, and
-        // Object.fromEntries materializes them as own data properties.
-        const frame = frames.at(-1);
-        if (frame?.kind !== "object")
-          throw new TypeError(
-            "JSON visitor emitted a property outside an object.",
-          );
-        if (frame.members.has(key))
-          throw new CaptureFormatError(
-            "format",
-            `${format} JSON contains duplicate object members.`,
-          );
-        frame.pendingKey = key;
+        admitNode();
+        selectCaptureObjectProperty(frames, key, format);
       },
-      onObjectEnd: () => {
-        const frame = frames.pop();
-        if (frame?.kind !== "object")
-          throw new TypeError("JSON visitor ended an unexpected object.");
-        append(Object.fromEntries(frame.members));
-      },
+      onObjectEnd: () => endContainer("object"),
       onArrayBegin: () => {
         admitContainer();
         frames.push({ kind: "array", pointer: valuePointer(), items: [] });
       },
-      onArrayEnd: () => {
-        const frame = frames.pop();
-        if (frame?.kind !== "array")
-          throw new TypeError("JSON visitor ended an unexpected array.");
-        append(frame.items);
-      },
+      onArrayEnd: () => endContainer("array"),
       onLiteralValue: (value: unknown, offset, length) => {
+        admitNode();
         if (typeof value === "number")
           append(new LosslessNumber(text.slice(offset, offset + length)));
-        else if (
-          value === null ||
-          typeof value === "boolean" ||
-          typeof value === "string"
-        )
-          append(value);
+        // jsonc-parser 3.3.1 builds an escaped string fragment by fragment,
+        // which V8 keeps as a rope several times larger than its text.
+        // JSON.parse of the same accepted token returns one flat string.
+        else if (typeof value === "string")
+          append(JSON.parse(text.slice(offset, offset + length)));
+        else if (value === null || typeof value === "boolean") append(value);
         else
           throw new TypeError("JSON visitor emitted an unsupported literal.");
       },

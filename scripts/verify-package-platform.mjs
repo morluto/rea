@@ -1,22 +1,20 @@
-import { json, run, runWithStatus } from "./lib/verify-package-core.mjs";
-
 /** Run platform-specific deep-analysis smoke tests. */
 export async function verifyPackagePlatform({
+  commands,
   cli,
   environment,
   platform = process.platform,
-  runCommand = run,
 }) {
   if (platform === "linux") {
-    const unsupportedExecution = await runWithStatus(
+    const unsupportedExecution = await commands.runWithStatus(
       cli,
       ["analyze", process.execPath, "--provider", "hopper", "--json"],
       environment,
     );
     assertLinuxPackageProviderFailure(unsupportedExecution);
   } else {
-    const overview = json(
-      await runCommand(
+    const overview = JSON.parse(
+      await commands.run(
         cli,
         ["analyze", process.execPath, "--provider", "hopper", "--json"],
         environment,
@@ -26,8 +24,8 @@ export async function verifyPackagePlatform({
       throw new Error(
         `packaged Hopper-backed analyze CLI failed: ${JSON.stringify(overview)}`,
       );
-    const inspected = json(
-      await runCommand(
+    const inspected = JSON.parse(
+      await commands.run(
         cli,
         ["inspect", process.execPath, "--provider", "hopper", "--json"],
         environment,
@@ -35,8 +33,8 @@ export async function verifyPackagePlatform({
     );
     if (!hasPositiveProcedureCount(inspected))
       throw new Error("packaged inspect CLI failed");
-    const functionResult = json(
-      await runCommand(
+    const functionResult = JSON.parse(
+      await commands.run(
         cli,
         [
           "function",
@@ -57,8 +55,8 @@ export async function verifyPackagePlatform({
       throw new Error(
         `packaged function CLI failed: ${JSON.stringify(functionResult)}`,
       );
-    const xrefs = json(
-      await runCommand(
+    const xrefs = JSON.parse(
+      await commands.run(
         cli,
         ["xrefs", process.execPath, "0x1000", "--provider", "hopper", "--json"],
         environment,
@@ -69,8 +67,8 @@ export async function verifyPackagePlatform({
       JSON.stringify(xrefs.normalized_result) !== JSON.stringify(["0x1000"])
     )
       throw new Error(`packaged xrefs CLI failed: ${JSON.stringify(xrefs)}`);
-    const trace = json(
-      await runCommand(
+    const trace = JSON.parse(
+      await commands.run(
         cli,
         [
           "trace",
@@ -108,7 +106,7 @@ export const isUnsupportedHopperLaunchFailure = (failure) => {
 
 /** Require an exact pre-execution rejection, observed helper exit, or missing-Xvfb diagnostic. */
 export const assertLinuxPackageProviderFailure = (execution) => {
-  const failure = json(execution.stdout);
+  const failure = JSON.parse(execution.stdout);
   const details = failure?.details;
   const diagnostic = details?.diagnostics;
   const missingDisplayDependency =

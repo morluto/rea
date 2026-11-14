@@ -95,6 +95,7 @@ export class RecordingIdaMcp implements IdaMcpConnection {
   }
   /** Tool names the fake server advertises; defaults to the profile's full set. */
   tools?: readonly string[];
+  readResource?: NonNullable<IdaMcpConnection["readResource"]>;
   async connect() {
     this.connects += 1;
     return this.tools ?? (this.mode === "attached" ? legacyNames : modernNames);

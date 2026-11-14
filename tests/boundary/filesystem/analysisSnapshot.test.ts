@@ -2,6 +2,7 @@ import { readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it, onTestFinished, vi } from "vitest";
+import canonicalize from "canonicalize";
 
 import { withArtifactResourceScope } from "../../fixtures/artifactInventory.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -130,7 +131,9 @@ describe("analysis snapshots: persistence", () => {
       writeAnalysisSnapshot(snapshot, path, false, resources),
     );
     if (!written.ok) throw written.error;
-    expect((await readFile(path, "utf8")).endsWith("\n")).toBe(true);
+    const encoded = await readFile(path, "utf8");
+    // RFC 8785 bytes are a storage contract, independent of snapshot decoding.
+    expect(encoded).toBe(`${canonicalize(snapshot)}\n`);
     expect((await stat(path)).mode & 0o777).toBe(0o600);
     const roundTrip = await readAnalysisSnapshot(path);
     if (!roundTrip.ok) throw roundTrip.error;
@@ -276,6 +279,7 @@ describe("analysis snapshot member decoding", () => {
       `${" ".repeat(9 * 1024 * 1024)}${JSON.stringify(snapshot)}`,
     );
     const controller = new AbortController();
+    const reason = { request: "cancel snapshot import" };
     const reads = await holdFirstFileRead(path);
     onTestFinished(() => {
       controller.abort();
@@ -283,12 +287,16 @@ describe("analysis snapshot member decoding", () => {
     });
     const pending = readAnalysisSnapshot(path, controller.signal);
     await reads.firstRead;
-    controller.abort();
+    controller.abort(reason);
     reads.release();
     try {
       expect(await pending).toMatchObject({
         ok: false,
-        error: { _tag: "AnalysisCancelledError" },
+        error: {
+          _tag: "AnalysisCancelledError",
+          operation: "open_binary",
+          cause: reason,
+        },
       });
       expect(reads.readCount).toBe(1);
     } finally {
@@ -317,14 +325,17 @@ describe("analysis snapshot file ownership", () => {
         });
       let failure: unknown;
       try {
-        try {
-          await readAnalysisSnapshot(
-            path,
-            cancelDuringClose ? controller.signal : undefined,
-          );
-        } catch (cause: unknown) {
-          failure = cause;
-        }
+        const result = await readAnalysisSnapshot(
+          path,
+          cancelDuringClose ? controller.signal : undefined,
+        );
+        if (result.ok)
+          throw new Error("Expected typed snapshot cleanup failure");
+        expect(result.error.cleanupIncomplete).toBe(true);
+        failure =
+          cancelDuringClose && result.error.cause instanceof AggregateError
+            ? result.error.cause.errors[1].cause
+            : result.error.cause;
         expect(failure).toBeInstanceOf(RegularFileCleanupFailure);
         if (!(failure instanceof RegularFileCleanupFailure))
           throw new Error("Expected the retained snapshot file handle owner");

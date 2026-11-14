@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest";
 import type { IPty } from "@lydell/node-pty";
 
-import { parseProcessScenario } from "../../domain/process/processScenario.js";
+import { processScenarioSchema } from "../../domain/process/processScenario.js";
 import type { ProcessCaptureFinalization } from "../../domain/process/processCapture.js";
 import { awaitTerminalExit } from "./ProcessCaptureLifecycle.js";
 import type { ProcessTimer } from "./ProcessTimer.js";
@@ -75,7 +75,7 @@ const start = (
 ) =>
   awaitTerminalExit({
     terminal: fake.terminal,
-    scenario: parseProcessScenario({
+    scenario: processScenarioSchema.parse({
       executable: "unused",
       idle_timeout_ms: 10_000,
       ...scenario,
@@ -291,7 +291,7 @@ it("records no exit code when no exit was observed", async () => {
     result.finalization?.exit_code,
     "an unobserved exit has no code to record",
   ).toBeNull();
-}, 10_000);
+});
 
 it("records every delivery result and publishes attempts incrementally", async () => {
   snapshots.length = 0;
@@ -422,7 +422,7 @@ it("stops waiting for a hung delivery once the exit is observed", async () => {
     },
   ]);
   expect(exit.signal, "the observed exit is kept").toBe(0);
-}, 10_000);
+});
 
 it("retains a thrown signal error as an unverified delivery reason", async () => {
   const fake = fakeTerminal(
@@ -491,7 +491,7 @@ it("stops waiting when the escalation delivery never settles and no exit arrives
     reason: "delivery did not settle within 1000 ms",
   });
   expect(result.finalization?.elapsed_ms, "no exit was observed").toBeNull();
-}, 10_000);
+});
 
 const activeTimers = (): number =>
   process.getActiveResourcesInfo().filter((name) => name === "Timeout").length;
@@ -529,15 +529,16 @@ it("cancels the bounded-wait timer once deliveries settle after an exit", async 
 
 it("keeps a non-empty reason when a signal delivery throws without a message", async () => {
   const fake = fakeTerminal();
+  let signalStarted = false;
   const throwing = {
     ...fake,
     signalTarget: async (): Promise<never> => {
+      signalStarted = true;
       throw new Error();
     },
   };
   const pending = start(throwing, { timeout_ms: 100, finalization_ms: 5_000 });
-  await waitFor(() => throwing.signals.length >= 0);
-  await new Promise((resolve) => setTimeout(resolve, 150));
+  await waitFor(() => signalStarted);
   throwing.deliverExit({ exitCode: 0, signal: 0 });
 
   const exit = observed(await pending);

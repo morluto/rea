@@ -3,7 +3,7 @@ import { expect, it } from "vitest";
 
 import { emptyUnverifiedProcessCapture } from "../../../src/domain/process/processCapture.fixture.js";
 import { parseProcessCapture } from "../../../src/domain/process/processCaptureParsing.js";
-import { parseProcessScenario } from "../../../src/domain/process/processScenario.js";
+import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
 import { createProcessCaptureEvidence } from "../../../src/application/process/ProcessEvidence.js";
 import { observeSettlement } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
 
@@ -14,7 +14,7 @@ it.each([
 ] as const)(
   "interprets the executable name using the captured %s host",
   (platform, expectedName) => {
-    const scenario = parseProcessScenario({
+    const scenario = processScenarioSchema.parse({
       executable: "/fixtures/directory\\program.exe",
       working_directory: process.cwd(),
       events: [],
@@ -32,7 +32,7 @@ it.each([
 );
 
 it("stamps process Evidence from the capture manifest host", () => {
-  const scenario = parseProcessScenario({
+  const scenario = processScenarioSchema.parse({
     executable: process.execPath,
     working_directory: process.cwd(),
     events: [],

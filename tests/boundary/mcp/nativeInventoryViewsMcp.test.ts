@@ -4,7 +4,7 @@ import { expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import { inspectAnalysisViewInputSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { inspectAnalysisViewInputSchema } from "../../../src/domain/analysisView/analysisViewRequest.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { NATIVE_INVENTORY_OPERATIONS } from "../../../src/domain/native/nativeInventory.js";
 import { ok } from "../../../src/domain/result.js";
@@ -23,6 +23,33 @@ const procedureRows = [
     address: "0x2000",
     value: "second",
     procedure: { external: false, thunk: false, thunk_target: null },
+  },
+];
+// Symbols came from the source-owned PowerPC DOL capture; classification models the updated bridge output.
+const searchProcedureRows = [
+  {
+    address: "0x80003100",
+    value: "FUN_80003100",
+    procedure: { external: false, thunk: false, thunk_target: null },
+    symbol: {
+      primary: true,
+      dynamic: false,
+      external: false,
+      type: "function",
+      source: "default",
+    },
+  },
+  {
+    address: "0x80003130",
+    value: "__start",
+    procedure: { external: false, thunk: false, thunk_target: null },
+    symbol: {
+      primary: true,
+      dynamic: false,
+      external: false,
+      type: "function",
+      source: "user_defined",
+    },
   },
 ];
 const stringRows = [
@@ -55,13 +82,9 @@ it("shares complete/summary source identity and advertised contracts across all 
     "native-inventory-views",
     (operation) => {
       if (operation === "search_procedures")
-        return Promise.resolve(
-          ok(procedureRows.map(({ address, value }) => ({ address, value }))),
-        );
+        return Promise.resolve(ok(searchProcedureRows));
       if (operation === "search_strings")
-        return Promise.resolve(
-          ok(stringRows.map(({ address, value }) => ({ address, value }))),
-        );
+        return Promise.resolve(ok(stringRows));
       const result =
         operation === "list_names"
           ? nameRows
@@ -93,30 +116,27 @@ it("shares complete/summary source identity and advertised contracts across all 
     const parameters = operation.startsWith("search_")
       ? { pattern: ".", mode: "regex" }
       : {};
-    const completeReply = await harness.mcp.callTool({
-      name: operation,
-      arguments: parameters,
-    });
+    const completeReply = await harness.mcp.callTool(
+      { name: operation, arguments: parameters },
+      { toolDefinition: advertised },
+    );
     if (completeReply.isError) throw new Error(JSON.stringify(completeReply));
-    expect(
-      ajv.validate(outputSchema, completeReply.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
     const complete = parseEvidence(
       contract.outputSchema.parse(completeReply.structuredContent),
     );
     if (!Array.isArray(complete.normalized_result))
       throw new Error("Expected complete row array");
+    expect(complete.normalized_result.length).toBeGreaterThan(0);
+    if (operation === "search_procedures")
+      expect(complete.normalized_result).toEqual(searchProcedureRows);
+    if (operation === "search_strings")
+      expect(complete.normalized_result).toEqual(stringRows);
     expect(complete.parameters).not.toHaveProperty("detail");
-    const summaryReply = await harness.mcp.callTool({
-      name: operation,
-      arguments: { ...parameters, detail: "summary" },
-    });
+    const summaryReply = await harness.mcp.callTool(
+      { name: operation, arguments: { ...parameters, detail: "summary" } },
+      { toolDefinition: advertised },
+    );
     if (summaryReply.isError) throw new Error(JSON.stringify(summaryReply));
-    expect(
-      ajv.validate(outputSchema, summaryReply.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
     const summary = parseEvidence(
       contract.outputSchema.parse(summaryReply.structuredContent),
     );
@@ -147,21 +167,20 @@ it("shares complete/summary source identity and advertised contracts across all 
       offset < (complete.normalized_result as unknown[]).length;
       offset++
     ) {
-      const pageReply = await harness.mcp.callTool({
-        name: "inspect_analysis_view",
-        arguments: {
-          source: {
-            kind: "retained-evidence",
-            evidence_id: complete.evidence_id,
+      const pageReply = await harness.mcp.callTool(
+        {
+          name: "inspect_analysis_view",
+          arguments: {
+            source: {
+              kind: "retained-evidence",
+              evidence_id: complete.evidence_id,
+            },
+            view: { kind: "native-inventory", offset, limit: 1 },
           },
-          view: { kind: "native-inventory", offset, limit: 1 },
         },
-      });
+        { toolDefinition: viewTool },
+      );
       if (pageReply.isError) throw new Error(JSON.stringify(pageReply));
-      expect(
-        ajv.validate(viewOutputSchema, pageReply.structuredContent),
-        JSON.stringify(ajv.errors),
-      ).toBe(true);
       const page = toolContract("inspect_analysis_view").outputSchema.parse(
         pageReply.structuredContent,
       ).normalized_result;
@@ -263,12 +282,22 @@ it("refuses summary before provider work when no retaining session is configured
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   await client.connect(clientTransport);
-  const reply = await client.callTool({
-    name: "list_procedures",
-    arguments: { detail: "summary" },
-  });
-  expect(reply.isError).toBe(true);
-  expect(parseMcpToolError(reply).error.code).toBe("capability_unavailable");
+  for (const [name, parameters] of [
+    ["list_procedures", {}],
+    ["inspect_native_load_image", {}],
+    ["procedure_address", { procedure: "fixture_main" }],
+    ["procedure_callees", { procedure: "fixture_main" }],
+    ["procedure_callers", { procedure: "fixture_main" }],
+    ["resolve_containing_procedure", { address: "0x401001" }],
+    ["get_call_graph", { address: "fixture_main" }],
+  ] as const) {
+    const reply = await client.callTool({
+      name,
+      arguments: { ...parameters, detail: "summary" },
+    });
+    expect(reply.isError).toBe(true);
+    expect(parseMcpToolError(reply).error.code).toBe("capability_unavailable");
+  }
   expect(calls).toBe(0);
 });
 

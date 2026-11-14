@@ -1,21 +1,28 @@
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
+import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
 import {
-  artifactFilePrimaryFailure,
-  bindArtifactFileCleanup,
-  artifactFileCancellationCause,
+  projectSelectedArtifactFileFailure,
+  projectOwnedArtifactIdentityFailure,
+  projectStableArtifactFailure,
+  stableArtifactInputFailure,
+  projectArtifactCloseFailure,
+} from "../../artifacts/StableArtifactFailure.js";
+import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import {
+  type StableArtifactSnapshot,
+  readStableArtifact,
+} from "../../artifacts/readStableArtifact.js";
+import {
+  artifactFilePrimaryFacts,
+  type ArtifactFilePrimaryFacts,
 } from "../../artifacts/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import type { PeCertificatesPort } from "../../application/binaryDiagnostics/PeCertificatesPort.js";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import {
-  AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  AnalysisUnsupportedTargetError,
 } from "../../domain/analysisErrorCore.js";
 import {
   MAX_INSPECT_PE_CERTIFICATE_ENTRIES,
@@ -23,8 +30,12 @@ import {
   type InspectPeCertificatesInput,
 } from "../../domain/native/peCertificates.js";
 import { err, ok } from "../../domain/result.js";
-import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
-import { PE_CERTIFICATES_PROVIDER } from "../../application/InvestigationProviders.js";
+import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
+import { PE_CERTIFICATES_PROVIDER } from "../../domain/investigationProviders.js";
+import {
+  PeCertificateAsn1Failure,
+  type PeCertificateDecodeAllowance,
+} from "./PeCertificateAsn1.js";
 import { parsePeCertificates } from "./PeCertificateParser.js";
 
 const OPERATION = "inspect_pe_certificates";
@@ -38,26 +49,19 @@ export class PeCertificatesProvider implements PeCertificatesPort {
     try {
       await this.#resources.close();
     } catch (cause: unknown) {
-      if (
-        !(cause instanceof ArtifactReaderFailure) ||
-        cause.cleanup === undefined
-      )
-        throw cause;
-      const error = new ProviderCleanupError(
+      throw projectArtifactCloseFailure(
+        cause,
         PE_CERTIFICATES_PROVIDER.id,
-        cause.cleanup.resources,
-        { reason: cause.cleanup.reason },
-        { cause, operation: OPERATION },
+        OPERATION,
       );
-      bindArtifactFileCleanup(cause, error);
-      throw error;
     }
   }
 
   async inspect(input: InspectPeCertificatesInput, options?: ExecutionOptions) {
+    let snapshot: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
-        const snapshot = await readStableArtifact(
+        snapshot = await readStableArtifact(
           input.path,
           input.max_file_bytes,
           options?.signal,
@@ -77,7 +81,7 @@ export class PeCertificatesProvider implements PeCertificatesPort {
         );
       });
     } catch (cause) {
-      return err(peCertificatesFailure(cause, input));
+      return err(peCertificatesFailure(cause, input, snapshot));
     }
   }
 }
@@ -94,24 +98,74 @@ const inputBudgetRemediation = (
       ? `The image exceeds the ${String(MAX_INSPECT_PE_CERTIFICATE_ENTRIES)}-entry certificate-table ceiling this operation accepts; select a smaller artifact.`
       : `Raise max_entries above ${String(input.max_entries)} or select a smaller artifact; the limit is the caller-selected certificate entry budget.`;
 
+/** A fixed PKCS#7 decoder allowance; neither request fields nor retries raise it. */
+const decoderAllowanceFailure = (
+  cause: PeCertificateAsn1Failure,
+  { allowance, limit }: PeCertificateDecodeAllowance,
+) => {
+  const selected = {
+    "asn1-nodes": {
+      limits: { max_asn1_values: limit },
+      description: `The PE certificate ASN.1 allowance of ${String(limit)} values per PKCS#7 payload (this release has no runtime override)`,
+    },
+    "asn1-depth": {
+      limits: { max_asn1_depth: limit },
+      description: `The PE certificate ASN.1 allowance of ${String(limit)} nesting levels per PKCS#7 payload (this release has no runtime override)`,
+    },
+    "decoded-text": {
+      limits: { max_decoded_text_bytes: limit },
+      description: `The PE certificate decoded-text allowance of ${String(limit)} bytes per PKCS#7 payload (this release has no runtime override)`,
+    },
+    "oid-bytes": {
+      limits: { max_oid_bytes: limit },
+      description: `The PE certificate OBJECT IDENTIFIER allowance of ${String(limit)} bytes per OID (this release has no runtime override)`,
+    },
+    "oid-arc-bytes": {
+      limits: { max_oid_arc_bytes: limit },
+      description: `The PE certificate OBJECT IDENTIFIER allowance of ${String(limit)} bytes per base-128 arc (this release has no runtime override)`,
+    },
+  }[allowance];
+  return new AnalysisResourceConstraintError(
+    OPERATION,
+    "memory",
+    `PKCS#7 signedData exceeds a fixed decoder allowance: ${cause.message}`,
+    selected.limits,
+    {
+      cause,
+      ...fixedAllowanceOptions(selected.description, "parser"),
+    },
+  );
+};
+
 const peCertificatesFailurePrimary = (
-  cause: unknown,
+  facts: ArtifactFilePrimaryFacts,
   input: InspectPeCertificatesInput,
 ) => {
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "integrity")
-    return new AnalysisArtifactChangedError(
+  const { cause, origin } = facts;
+  if (cause instanceof BinaryFormatFailure && cause.kind === "unsupported")
+    return new AnalysisUnsupportedTargetError(
       OPERATION,
       input.path,
       cause.message,
-      {
-        cause,
-      },
+      { cause },
     );
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
-    });
-  if (cause instanceof ArtifactReaderFailure) {
+
+  const identityFailure = projectOwnedArtifactIdentityFailure(
+    facts,
+    OPERATION,
+    input.path,
+  );
+  if (identityFailure !== undefined) return identityFailure;
+  if (
+    origin === "owned-or-classified" &&
+    cause instanceof PeCertificateAsn1Failure &&
+    cause.exhausted !== null
+  )
+    return decoderAllowanceFailure(cause, cause.exhausted);
+  if (
+    origin === "owned-or-classified" &&
+    cause instanceof ArtifactReaderFailure
+  ) {
     if (cause.reason === "limit")
       return new AnalysisResourceConstraintError(
         OPERATION,
@@ -135,35 +189,20 @@ const peCertificatesFailurePrimary = (
         },
       );
     if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_format",
-          message: cause.message,
-        },
-      ]);
+      return stableArtifactInputFailure(cause, OPERATION);
   }
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(OPERATION, input.path, cause.code, {
-        cause,
-      });
-    if (
-      ["ENOENT", "ENOTDIR", "ELOOP", "ENAMETOOLONG"].includes(
-        String(cause.code),
-      )
-    )
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_value",
-          message: `Selected PE image could not be read (${String(cause.code)}): ${input.path}.`,
-        },
-      ]);
-  }
+  const fileFailure = projectSelectedArtifactFileFailure(
+    cause,
+    OPERATION,
+    input.path,
+    "PE image",
+  );
+  if (fileFailure !== undefined) return fileFailure;
   return new ArtifactOperationError(
     OPERATION,
-    cause instanceof ArtifactReaderFailure ? cause.reason : "io",
+    origin === "owned-or-classified" && cause instanceof ArtifactReaderFailure
+      ? cause.reason
+      : "io",
     undefined,
     cause instanceof Error
       ? cause.message
@@ -175,20 +214,18 @@ const peCertificatesFailurePrimary = (
 const peCertificatesFailure = (
   cause: unknown,
   input: InspectPeCertificatesInput,
+  snapshot?: StableArtifactSnapshot,
 ) => {
   const primary = peCertificatesFailurePrimary(
-    artifactFilePrimaryFailure(cause),
+    artifactFilePrimaryFacts(cause),
     input,
   );
-  if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
-    return primary;
-  const cleanup = new ProviderCleanupError(
+  return projectStableArtifactFailure(
+    cause,
+    primary,
+    input.path,
     PE_CERTIFICATES_PROVIDER.id,
-    cause.cleanup.resources,
-    { reason: cause.cleanup.reason },
-    { operation: OPERATION, cause },
+    OPERATION,
+    snapshot,
   );
-  const error = analysisErrorWithCleanupFailure(primary, cleanup, OPERATION);
-  bindArtifactFileCleanup(cause, error);
-  return error;
 };

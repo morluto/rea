@@ -38,7 +38,7 @@ import type { AnalysisClient } from "../../src/application/AnalysisProvider.js";
 import { observed } from "../fixtures/analysisExecution.js";
 import { createServer } from "../../src/server/createServer.js";
 import { silentLogger } from "../../src/logger.js";
-import { ToolResultDelivery } from "../../src/server/toolResult.js";
+import { ToolResultDelivery } from "../../src/server/ToolResultDelivery.js";
 import { ok } from "../../src/domain/result.js";
 
 const connectSession = async () => {

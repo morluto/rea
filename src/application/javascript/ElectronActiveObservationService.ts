@@ -9,15 +9,22 @@ import type {
 } from "./ElectronActiveObservationPort.js";
 import {
   AnalysisAccessDeniedError,
+  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
+  AnalysisOutputError,
   type AnalysisInputIssue,
 } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { Evidence } from "../../domain/evidence.js";
-import type { ElectronActiveObservationInput } from "../../domain/javascript/electronActiveObservation.js";
+import {
+  electronActiveObservationResultSchema,
+  type ElectronActiveObservationInput,
+} from "../../domain/javascript/electronActiveObservation.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { createElectronActiveEvidence } from "./ElectronActiveEvidence.js";
+import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import { jsonValueSchema } from "../../domain/jsonValue.js";
 
 const OPERATION = "capture_electron_scenario" as const;
 const PROVIDER_ID = "rea-playwright-electron-active";
@@ -60,6 +67,21 @@ const resolveInputPath = async (
   selected: string,
 ): Promise<Result<string, PathAdmissionFailure>> => {
   try {
+    // Darwin realpath can collapse file/.. even though native lookup rejects
+    // that traversal. Admit the selected path before canonicalizing it.
+    const metadata = await stat(selected);
+    if (field === "application_root" && !metadata.isDirectory()) {
+      const cause = new Error("not a directory");
+      return err({
+        kind: "invalid",
+        issue: {
+          path: [field],
+          reason: "invalid_value",
+          message: `application_root ${selected} is not a directory`,
+        },
+        cause,
+      });
+    }
     return ok(await realpath(selected));
   } catch (cause: unknown) {
     return err(
@@ -171,8 +193,16 @@ export const captureElectronScenario = async (
   input: ElectronActiveObservationInput,
   options: ExecutionOptions = {},
 ): Promise<Result<Evidence, AnalysisError>> => {
+  if (options.signal?.aborted)
+    return err(
+      new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
+    );
   const canonical = await canonicalizeInput(input);
   if (!canonical.ok) return canonical;
+  if (options.signal?.aborted)
+    return err(
+      new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
+    );
   if (provider === undefined)
     return err(
       new AnalysisCapabilityUnavailableError(
@@ -182,14 +212,45 @@ export const captureElectronScenario = async (
       ),
     );
   const captured = await provider.capture(canonical.value, options);
-  return captured.ok
-    ? {
-        ok: true,
-        value: createElectronActiveEvidence(
-          canonical.value,
-          captured.value,
-          provider.identity(),
-        ),
-      }
-    : captured;
+  if (!captured.ok) return captured;
+  const json = jsonValueSchema.safeParse(captured.value);
+  if (!json.success)
+    return err(
+      new AnalysisOutputError(
+        OPERATION,
+        "Electron provider returned non-JSON active capture data.",
+        { cause: json.error },
+      ),
+    );
+  const report = electronActiveObservationResultSchema.safeParse(json.data);
+  if (!report.success)
+    return err(
+      new AnalysisOutputError(
+        OPERATION,
+        "Electron provider returned a malformed active capture.",
+        { cause: report.error },
+      ),
+    );
+  if (
+    report.data.application.executable_path !==
+      canonical.value.executable_path ||
+    report.data.application.application_path !==
+      canonical.value.application_path
+  )
+    return err(
+      new AnalysisOutputError(
+        OPERATION,
+        "Electron provider changed the selected executable or application.",
+        { partialObservation: report.data },
+      ),
+    );
+  return completeProviderEvidence(
+    createElectronActiveEvidence(
+      input,
+      report.data,
+      provider.identity(),
+      canonical.value,
+    ),
+    options.signal,
+  );
 };

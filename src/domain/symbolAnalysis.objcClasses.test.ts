@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  discoverObjcClasses,
+  selectObjcClassCandidates,
   projectObjcClassCandidates,
 } from "./symbolAnalysis.js";
 
@@ -19,15 +19,11 @@ const classImport = {
 describe("Objective-C class label discovery", () => {
   it("does not reinterpret a provider-specific label without an owner tag", () => {
     expect(
-      discoverObjcClasses(
+      selectObjcClassCandidates(
         [{ address: "0x1", name: "__objc_class_HuntRoot_class" }],
         "Hunt",
       ),
-    ).toEqual({
-      count: 0,
-      classes: [],
-      identity_coverage: { status: "not_applicable", reason: null },
-    });
+    ).toEqual([]);
   });
 
   it("uses provider-tagged stripped class labels and filters their exact text", () => {
@@ -51,25 +47,10 @@ describe("Objective-C class label discovery", () => {
         : {}),
     }));
 
-    expect(discoverObjcClasses(names, "Hunt")).toEqual({
-      count: 6,
-      classes: names.slice(0, 6).map(({ address, name }) => ({
-        address,
-        name,
-      })),
-      identity_coverage: {
-        status: "unknown",
-        reason: "Exact class-import binding identity is unavailable.",
-      },
-    });
-    expect(discoverObjcClasses(names, "__objc_class_HuntRoot_class")).toEqual({
-      count: 1,
-      classes: [{ address: "0x1", name: "__objc_class_HuntRoot_class" }],
-      identity_coverage: {
-        status: "unknown",
-        reason: "Exact class-import binding identity is unavailable.",
-      },
-    });
+    expect(selectObjcClassCandidates(names, "Hunt")).toEqual(names.slice(0, 6));
+    expect(
+      selectObjcClassCandidates(names, "__objc_class_HuntRoot_class"),
+    ).toEqual([names[0]]);
   });
 
   it("coalesces only selected rows whose own addresses prove the same import", () => {
@@ -99,24 +80,6 @@ describe("Objective-C class label discovery", () => {
           },
         },
         unrelated,
-      ],
-      identity_coverage: completeCoverage,
-    });
-    expect(discoverObjcClasses([alias, canonical], "$GOT", scan)).toEqual({
-      count: 1,
-      classes: [
-        {
-          ...alias,
-          binding_identity: {
-            symbol: classImport.symbol,
-            binding_source: classImport.binding_source,
-            library_ordinal: classImport.library_ordinal,
-            library: classImport.library,
-            weak: false,
-            addend: "0",
-            slot_addresses: ["0x1000"],
-          },
-        },
       ],
       identity_coverage: completeCoverage,
     });
@@ -153,20 +116,13 @@ describe("Objective-C class label discovery", () => {
     ).toMatchObject({ count: 2, classes: rows });
   });
 
-  it("keeps same-named candidates at distinct addresses until bind identity is known", () => {
+  it("deduplicates exact class labels while keeping distinct addresses", () => {
     const rows = [
       { address: "0x1000", name: "OBJC_CLASS_$_Document" },
       { address: "0x1000", name: "OBJC_CLASS_$_Document" },
       { address: "0x2000", name: "OBJC_CLASS_$_Document" },
     ];
-    expect(discoverObjcClasses(rows, "")).toEqual({
-      count: 2,
-      classes: [rows[0], rows[2]],
-      identity_coverage: {
-        status: "unknown",
-        reason: "Exact class-import binding identity is unavailable.",
-      },
-    });
+    expect(selectObjcClassCandidates(rows, "")).toEqual([rows[0], rows[2]]);
   });
 });
 
@@ -176,7 +132,7 @@ it("keeps equal symbols separate when only their lookup ordinals differ", () => 
     { address: "0x2000", name: "OBJC_CLASS_$_Document$GOT" },
   ];
   expect(
-    discoverObjcClasses(rows, "", {
+    projectObjcClassCandidates(rows, {
       bindings: [
         { ...classImport, library_ordinal: -1, library: null },
         {
@@ -203,7 +159,7 @@ it("keeps regular self-scope and weak rebinding records separate", () => {
     { address: "0x2000", name: "OBJC_CLASS_$_Document$GOT" },
   ];
   expect(
-    discoverObjcClasses(rows, "", {
+    projectObjcClassCandidates(rows, {
       bindings: [
         { ...classImport, library_ordinal: 0, library: null },
         {
@@ -223,4 +179,18 @@ it("keeps regular self-scope and weak rebinding records separate", () => {
       { ...rows[1], binding_identity: { binding_source: "weak" } },
     ],
   });
+});
+
+it("excludes pointer and string labels that only contain a class marker", () => {
+  const result = selectObjcClassCandidates(
+    [
+      { address: "0x1", name: "PTR__OBJC_CLASS_$_NSAlert_100028668" },
+      { address: "0x2", name: "s__OBJC_CLASS_$_NSAlert_10002ed0d" },
+      { address: "0x3", name: "AppKit::_OBJC_CLASS_$_NSAlert" },
+    ],
+    "",
+  );
+  expect(result).toEqual([
+    { address: "0x3", name: "AppKit::_OBJC_CLASS_$_NSAlert" },
+  ]);
 });

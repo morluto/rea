@@ -33,6 +33,28 @@ const table = (name: string, rows: readonly (readonly number[])[]): Buffer => {
   return chunk(name, payload);
 };
 
+/** Inert structural container with exact chunk payloads, not executable code. */
+export const erlangBeamChunksFixture = (
+  chunks: readonly (readonly [name: string, payload: Buffer])[],
+): Buffer => {
+  const form = concat(
+    Buffer.from("BEAM", "latin1"),
+    ...chunks.map(([name, payload]) => chunk(name, payload)),
+  );
+  return concat(Buffer.from("FOR1", "latin1"), u32(form.length), form);
+};
+
+/** Legacy atom/export container, with an optional exact AtU8 alternate payload. */
+export const erlangBeamLegacyAtomsFixture = (utf8Payload?: Buffer): Buffer => {
+  const chunks = concat(
+    atoms(["demo", "ÿ"], false),
+    utf8Payload === undefined ? Buffer.alloc(0) : chunk("AtU8", utf8Payload),
+    table("ExpT", [[2, 0, 1]]),
+  );
+  const form = concat(Buffer.from("BEAM", "latin1"), chunks);
+  return concat(Buffer.from("FOR1", "latin1"), u32(form.length), form);
+};
+
 /** Hand-authored BEAM IFF with AtU8, Code, ExpT, ImpT and FunT chunks. */
 export const erlangBeamFixture = (module = "beam_fixture"): Buffer => {
   const atomNames = [
@@ -75,6 +97,18 @@ export const erlangBeamDeclaredRowsFixture = (
   const form = concat(Buffer.from("BEAM", "latin1"), chunks);
   return concat(Buffer.from("FOR1", "latin1"), u32(form.length), form);
 };
+
+/** BEAM table frames with all declared fixed-width row bytes present. */
+export const erlangBeamRowsFixture = (
+  counts: readonly (readonly ["ExpT" | "ImpT" | "FunT", number])[],
+): Buffer =>
+  erlangBeamChunksFixture(
+    counts.map(([name, count]) => {
+      const payload = Buffer.alloc(4 + count * (name === "FunT" ? 24 : 12));
+      payload.writeUInt32BE(count);
+      return [name, payload] as const;
+    }),
+  );
 
 /** BEAM form whose atom table exceeds a caller-selected atom budget. */
 export const erlangBeamManyAtomsFixture = (count: number): Buffer => {

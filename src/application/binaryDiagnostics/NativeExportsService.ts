@@ -1,18 +1,15 @@
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { NativeExportsPort } from "./NativeExportsPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisCancelledError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import {
   inspectNativeExportsInputSchema,
   nativeExportsSchema,
 } from "../../domain/native/nativeExports.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import { parseAnalysisInput } from "../AnalysisInput.js";
 
 const OPERATION = "inspect_native_exports";
 
@@ -29,25 +26,20 @@ export class NativeExportsService {
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-      );
-    const input = inspectNativeExportsInputSchema.safeParse(rawInput);
-    if (!input.success)
-      return err(
-        analysisInputErrorFromIssues(OPERATION, input.error.issues, rawInput, {
-          cause: input.error,
-        }),
-      );
-    const result = await this.provider.inspect(input.data, options);
+    const input = parseAnalysisInput(
+      OPERATION,
+      rawInput,
+      inspectNativeExportsInputSchema,
+      options?.signal,
+    );
+    if (!input.ok) return input;
+    const result = await this.provider.inspect(input.value, options);
     if (!result.ok) return result;
     const report = nativeExportsSchema.safeParse(result.value);
     if (
       !report.success ||
-      report.data.artifact.path !== input.data.path ||
-      report.data.artifact.bytes > input.data.max_file_bytes ||
-      report.data.coverage.exports !== report.data.exports.length
+      report.data.artifact.path !== input.value.path ||
+      report.data.artifact.bytes > input.value.max_file_bytes
     )
       return err(
         new AnalysisOutputError(
@@ -66,7 +58,7 @@ export class NativeExportsService {
         this.provider.identity,
         {
           operation: OPERATION,
-          parameters: input.data,
+          parameters: input.value,
           result: value,
           confidence: "observed",
           limitations: value.limitations,

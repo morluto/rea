@@ -2,6 +2,7 @@ import type {
   InspectPacketFieldsInput,
   PacketFieldRecord,
 } from "../domain/captures/packetFields.js";
+import { literalSubstringPredicate } from "../domain/analysisSearch.js";
 
 export class FieldDiscoveryBudgetError extends Error {}
 export const FIELD_RECORD_BUDGET = 8 * 1024 * 1024;
@@ -13,7 +14,7 @@ export const parseFieldDiscovery = (
 ) => {
   const copy = (value: string) =>
     Buffer.from(value, "utf16le").toString("utf16le");
-  const query = input.query.toLowerCase();
+  const matches = literalSubstringPredicate(input.query, false);
   const records: PacketFieldRecord[] = [];
   let examined = 0,
     matching = 0,
@@ -49,7 +50,7 @@ export const parseFieldDiscovery = (
       continue;
     if (
       ![name, abbreviation, ...(tag === "F" ? [columns[7] ?? ""] : [])].some(
-        (value) => value.toLowerCase().includes(query),
+        matches,
       )
     )
       continue;

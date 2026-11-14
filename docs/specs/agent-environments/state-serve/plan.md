@@ -11,8 +11,9 @@
 2. Add `environmentStateDocument.ts` to validate `rea-state/v1` documents
    against the served types and views, and `environmentStateStore.ts` for the
    live store with reset, atomic replace and the `data/get` snapshot.
-3. Export `selectsRecordedLine`, the body-taking `replayAnswer` and the path
-   rule `pathValueMatches` from `environmentReplay.ts`, export one recorded-body
+3. Export `selectsRecordedLine` and the body-taking `replayAnswer` from
+   `environmentReplay.ts`, reuse `pathSegmentMatches` from the state rules,
+   export one recorded-body
    predicate `stateBodyJson` from the state accumulator and `changesState` from
    the state rules, and widen `collectionPathOf` to any value with a path, so
    state answers reuse selection, matching, body and write rules.

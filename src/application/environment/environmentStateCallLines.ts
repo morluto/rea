@@ -1,7 +1,9 @@
 import {
+  ownMember,
   allLines,
   collectionPathOf,
   collectionMatch,
+  segmentsOf,
   type SuppliedSegment,
   type StateListView,
 } from "../../domain/analysisView/environmentStateRules.js";
@@ -9,6 +11,7 @@ import { pagesOnly } from "../../domain/analysisView/environmentStatePaging.js";
 import {
   selectReplayExchange,
   selectsRecordedLine,
+  type ObservedQuery,
   type ReplayArguments,
 } from "./environmentReplay.js";
 import type {
@@ -26,16 +29,14 @@ export const callSegments = (
   const names = environmentToolArguments(tool).path;
   const params = new Map(tool.params.map((param) => [param.index, param]));
   const segments: SuppliedSegment[] = [];
-  const template = tool.path_template
-    .slice(tool.path_template.indexOf("/") + 1)
-    .split("/");
-  for (const [index, text] of template.entries()) {
+  // Use the collection's path parser so repeated separators remain meaningful.
+  for (const [index, text] of segmentsOf(tool.path_template).entries()) {
     const param = params.get(index);
     if (param === undefined) {
-      if (text !== "") segments.push({ text, supplied: false });
+      segments.push({ text, supplied: false });
       continue;
     }
-    const value = args[names.get(param.name) ?? param.name];
+    const value = ownMember(args, names.get(param.name) ?? param.name);
     if (typeof value !== "string") return undefined;
     segments.push({ text: value, supplied: true });
   }
@@ -48,14 +49,18 @@ export const checkedLine = (
   tool: EnvironmentManifestTool,
   checked: readonly number[],
   args: ReplayArguments,
+  observedQuery?: ObservedQuery,
 ): RecordedExchange | undefined => {
   const lines = new Map<number, RecordedExchange>();
   for (const ordinal of checked) {
     const exchange = source.exchanges.get(ordinal);
-    if (exchange !== undefined && selectsRecordedLine(tool, exchange, args))
+    if (
+      exchange !== undefined &&
+      selectsRecordedLine(tool, exchange, args, observedQuery)
+    )
       lines.set(ordinal, exchange);
   }
-  return selectReplayExchange(tool, lines, args)?.exchange;
+  return selectReplayExchange(tool, lines, args, observedQuery)?.exchange;
 };
 
 /** For a list of a whole collection, a call that supplies no query argument answers from a checked line of the collection its path arguments name that only pages it, chosen as replay chooses; a requested page answers from its recording. */
@@ -64,12 +69,15 @@ export const unfilteredLine = (
   tool: EnvironmentManifestTool,
   checked: readonly number[],
   args: ReplayArguments,
+  observedQuery?: ObservedQuery,
 ): RecordedExchange | undefined => {
   const query = environmentToolArguments(tool).query;
   const segments = callSegments(tool, args);
   if (
     segments === undefined ||
-    [...query.values()].some((argument) => args[argument] !== undefined)
+    [...query.values()].some(
+      (argument) => ownMember(args, argument) !== undefined,
+    )
   )
     return undefined;
   const lines = new Map<number, RecordedExchange>();
@@ -82,7 +90,7 @@ export const unfilteredLine = (
     )
       lines.set(ordinal, exchange);
   }
-  return selectReplayExchange(tool, lines, args)?.exchange;
+  return selectReplayExchange(tool, lines, args, observedQuery)?.exchange;
 };
 
 /** A call's query arguments by parameter name. */
@@ -93,7 +101,7 @@ export const callQuery = (
   new Map(
     [...environmentToolArguments(tool).query].flatMap(
       ([name, argument]): [string, string][] => {
-        const value = args[argument];
+        const value = ownMember(args, argument);
         return value === undefined ? [] : [[name, String(value)]];
       },
     ),
@@ -105,6 +113,7 @@ export const queryLine = (
   tool: EnvironmentManifestTool,
   view: StateListView,
   args: ReplayArguments,
+  observedQuery?: ObservedQuery,
 ): RecordedExchange | undefined => {
   const query = view.query;
   const segments = callSegments(tool, args);
@@ -125,5 +134,5 @@ export const queryLine = (
     )
       lines.set(ordinal, exchange);
   }
-  return selectReplayExchange(tool, lines, args)?.exchange;
+  return selectReplayExchange(tool, lines, args, observedQuery)?.exchange;
 };

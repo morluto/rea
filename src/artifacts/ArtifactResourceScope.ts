@@ -1,4 +1,5 @@
 import type { AnalysisPartialObservation } from "../domain/analysisErrorBase.js";
+import { err, ok, type Result } from "../domain/result.js";
 import type { JavaScriptSourceAnalysisPort } from "../domain/javascript/javascriptSourceAnalysis.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import type { OwnedDirectoryHandle } from "../filesystem/OwnedDirectoryHandle.js";
@@ -228,7 +229,7 @@ export class ArtifactResourceScope {
   }
 
   /** Every registered hook runs. One failure is returned unchanged; several are aggregated. */
-  async #runCloseHooks(): Promise<unknown> {
+  async #runCloseHooks(): Promise<Result<void, unknown>> {
     const failures: unknown[] = [];
     for (const hook of this.#closeHooks) {
       try {
@@ -237,15 +238,17 @@ export class ArtifactResourceScope {
         failures.push(cause);
       }
     }
-    if (failures.length === 0) return undefined;
-    if (failures.length === 1) return failures[0];
-    return new AggregateError(
-      failures,
-      failures
-        .map((cause) =>
-          cause instanceof Error ? cause.message : String(cause),
-        )
-        .join("; "),
+    if (failures.length === 0) return ok(undefined);
+    if (failures.length === 1) return err(failures[0]);
+    return err(
+      new AggregateError(
+        failures,
+        failures
+          .map((cause) =>
+            cause instanceof Error ? cause.message : String(cause),
+          )
+          .join("; "),
+      ),
     );
   }
 
@@ -253,14 +256,14 @@ export class ArtifactResourceScope {
     // A parked analyzer is not a pending owner. Stop it even when another
     // retained cleanup is still failing. A later close retries both.
     const cleanup = await this.retryCleanup().then(
-      () => undefined,
-      (cause: unknown) => cause,
+      () => ok(undefined),
+      (cause: unknown) => err(cause),
     );
-    const hookFailure = await this.#runCloseHooks();
-    if (cleanup !== undefined && hookFailure !== undefined)
-      throw this.#composeCloseFailures(cleanup, hookFailure);
-    if (hookFailure !== undefined) throw hookFailure;
-    if (cleanup !== undefined) throw cleanup;
+    const hooks = await this.#runCloseHooks();
+    if (!cleanup.ok && !hooks.ok)
+      throw this.#composeCloseFailures(cleanup.error, hooks.error);
+    if (!hooks.ok) throw hooks.error;
+    if (!cleanup.ok) throw cleanup.error;
   }
 
   /**

@@ -1,16 +1,11 @@
+import { validateRegistrationEnvironment } from "./RegistrationEnvironmentValidation.js";
 import { isMap, isSeq, type Node, type YAMLMap } from "yaml";
-import {
-  parseEnvironment,
-  parseEnvironmentValues,
-} from "../config/environment.js";
+import type { Environment } from "../config/environment.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { ClientConfigurationDocument } from "./ClientConfigurationDocument.js";
 import { CordisExpression, DshCordisYaml } from "./DshCordisYaml.js";
-import {
-  mergeEnvironmentOverrides,
-  snapshotEnvironment,
-} from "../process/snapshotEnvironment.js";
+import { mergeEnvironmentOverrides } from "../process/snapshotEnvironment.js";
 
 export const DSH_ENTRY_ID = "rea-mcp";
 export const DSH_CLIENT_PACKAGE = "@deepseek-ai/dsh-mcp-client";
@@ -190,7 +185,14 @@ export class DshCordisDocument {
     overrides: Readonly<Record<string, string>> = {},
     validation: "fragment" | "effective" = "effective",
     platform: NodeJS.Platform = process.platform,
-  ): Result<Readonly<Record<string, string>>, ConfigurationError> {
+  ): Result<
+    {
+      readonly values: Readonly<Record<string, string>>;
+      readonly configuration: Environment;
+      readonly unresolvedSettings: ReadonlySet<string>;
+    },
+    ConfigurationError
+  > {
     const config = this.#field("config");
     if (config instanceof CordisExpression)
       return err(
@@ -223,7 +225,7 @@ export class DshCordisDocument {
       return err(
         new ConfigurationError("Cordis server environment must be a mapping"),
       );
-    const literals: Record<string, string> = {};
+    const literals: Record<string, string> = Object.create(null);
     const unresolvedSettings = new Set<string>();
     for (const [key, value] of Object.entries(
       mergeEnvironmentOverrides<unknown>(raw ?? {}, overrides, platform),
@@ -246,21 +248,15 @@ export class DshCordisDocument {
         );
       literals[key] = value;
     }
-    const environment = literals;
-    const runtimeEnvironment = snapshotEnvironment(environment, platform);
-    const unresolved = new Set(
-      Object.keys(
-        snapshotEnvironment(
-          Object.fromEntries([...unresolvedSettings].map((key) => [key, ""])),
-          platform,
-        ),
-      ),
+    const validated = validateRegistrationEnvironment(
+      literals,
+      unresolvedSettings,
+      validation,
+      platform,
     );
-    const validated =
-      validation === "fragment"
-        ? parseEnvironmentValues(runtimeEnvironment, unresolved)
-        : parseEnvironment(runtimeEnvironment, unresolved);
-    return validated.ok ? ok(environment) : validated;
+    return validated.ok
+      ? ok({ values: literals, ...validated.value })
+      : validated;
   }
 
   desired(
@@ -436,6 +432,7 @@ export const parseDshCordisDocument = (
     servers: source.config === undefined ? {} : { rea: source.config },
     serversPath: [],
     dialect: "dsh",
+    environmentKey: "env",
     legacyServers: {},
   };
 };

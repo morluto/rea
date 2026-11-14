@@ -15,7 +15,7 @@ import {
   OwnedCommandFailure,
   runOwnedCommand,
 } from "../../../dist/process/OwnedCommand.js";
-import { closeVerifierResources } from "../../lib/verifier-cleanup.mjs";
+import { withVerifierCleanup } from "../../lib/verifier-cleanup.mjs";
 import { selectExportedJavaScriptFacts } from "../../lib/javascript-facts-reference.mjs";
 
 const { values } = parseArgs({
@@ -56,7 +56,6 @@ const client = new Client({
   version: "1",
 });
 let temporary;
-let primaryError;
 let retainTemporary = false;
 let report;
 const serialize = (value) => JSON.stringify(value);
@@ -106,7 +105,7 @@ const resourceSnapshot = async () => {
   };
 };
 
-try {
+await withVerifierCleanup(async () => {
   const start = performance.now();
   const artifactHash = createHash("sha256");
   for await (const chunk of createReadStream(values.artifact))
@@ -344,23 +343,15 @@ try {
     conditions:
       "Fresh MCP and input hashing (file cache warmed); build/OS caches uncontrolled. First export sample includes export plus caller projection code, later samples reuse that immutable export. View samples precede diagnostic export. Task token projections include preparation, first answer, selected/full name/description/inputSchema catalog and the exact baseline program; exec tool schema, host rendering, output schemas, reasoning and billing unmeasured. At-answer cgroup counters include observer/startup overhead, before repeats/export diagnostics/parity/tokenization; final external observer measures all validation work. No application or native provider executes.",
   };
-} catch (cause) {
-  primaryError = cause;
-  throw cause;
-} finally {
-  await closeVerifierResources(
-    [
-      () => client.close(),
-      () => transport.close(),
-      async () => {
-        if (retainTemporary)
-          throw new Error(
-            `Command cleanup incomplete; retaining owned inputs at ${temporary?.path}.`,
-          );
-        await temporary?.close();
-      },
-    ],
-    primaryError,
-  );
-}
+}, [
+  () => client.close(),
+  () => transport.close(),
+  async () => {
+    if (retainTemporary)
+      throw new Error(
+        `Command cleanup incomplete; retaining owned inputs at ${temporary?.path}.`,
+      );
+    await temporary?.close();
+  },
+]);
 console.log(serialize(report));

@@ -1,12 +1,16 @@
 import { readFile, rm } from "node:fs/promises";
 
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import type { Client } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, onTestFinished } from "vitest";
 import { z } from "zod";
 
 import { toolContract } from "../../src/contracts/toolContracts.js";
-import { createServer } from "../../src/server/createServer.js";
+import type { createServer } from "../../src/server/createServer.js";
+import {
+  createApplicationMcpHarness,
+  type ApplicationMcpHarness,
+} from "../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../fixtures/binarySession.js";
 
 export const waitForStartedFile = async (path: string): Promise<void> => {
@@ -47,24 +51,47 @@ export const createProviderEnvironmentMcpHarness = async (options: {
   readonly clientName: string;
   readonly serverOptions: NonNullable<Parameters<typeof createServer>[1]>;
 }) => {
-  const session = createTestBinarySession(() => {
-    throw new Error("No binary analysis provider should start");
-  });
-  const server = createServer(
-    { kind: "session", session },
-    options.serverOptions,
-  );
-  const client = new Client({ name: options.clientName, version: "1" });
-  onTestFinished(async () => {
-    await client.close();
-    await server.close();
-    await session.close();
-    await rm(options.directory, { recursive: true, force: true });
-  });
+  let closeHarness: ApplicationMcpHarness["close"] | undefined;
+  let directoryOwned = true;
+  let closing: Promise<void> | undefined;
+  const close = (): Promise<void> => {
+    if (closing !== undefined) return closing;
+    const attempt = (async () => {
+      await closeHarness?.();
+      if (!directoryOwned) return;
+      await rm(options.directory, { recursive: true, force: true });
+      directoryOwned = false;
+    })();
+    closing = attempt;
+    void attempt.catch(() => {
+      if (closing === attempt) closing = undefined;
+    });
+    return attempt;
+  };
+  onTestFinished(close);
 
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
-  return { client };
+  try {
+    const harness = await createApplicationMcpHarness({
+      session: createTestBinarySession(() => {
+        throw new Error("No binary analysis provider should start");
+      }),
+      serverOptions: options.serverOptions,
+      clientIdentity: { name: options.clientName, version: "1" },
+      registerCleanup: (close) => {
+        closeHarness = close;
+      },
+    });
+    return { client: harness.client, close };
+  } catch (cause) {
+    try {
+      await close();
+    } catch (cleanup) {
+      throw new AggregateError(
+        [cause, cleanup],
+        "Provider environment MCP harness setup and cleanup failed",
+        { cause },
+      );
+    }
+    throw cause;
+  }
 };

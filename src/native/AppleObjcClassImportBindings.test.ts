@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { PointerFixups } from "./AppleMachoFixups.js";
-import { parsePointerFixups } from "./AppleMachoFixups.js";
+import { parsePointerFixups } from "./AppleMachoFixups.fixture.js";
 import type { MachoLayout } from "./AppleMachoSelection.js";
 import { inspectObjcClassImportBindings } from "./AppleObjcClassImportBindings.js";
 
@@ -19,6 +19,7 @@ const createInput = (
     legacyRebaseStreams: 0,
     legacyBindStreams: 0,
     unreadRebaseBytes: 0,
+    hasUnresolvedLegacyBytes: () => false,
     decode: (address) =>
       address === 0x1000n
         ? {

@@ -145,6 +145,7 @@ export class Il2cppGhidraSeedWriter implements Il2cppSeedWriterPort {
       folded: seeds.folded,
       no_body: seeds.no_body,
       unknown: seeds.unknown,
+      generic_instances: seeds.generic_instances,
     });
   }
   async close(): Promise<void> {

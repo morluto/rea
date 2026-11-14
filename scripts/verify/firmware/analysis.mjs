@@ -11,7 +11,10 @@ import { firmwareResultSchemas } from "../../../dist/domain/firmware/firmwareAna
 import { parseEvidence } from "../../../dist/domain/evidence.js";
 import { ArtifactResourceScope } from "../../../dist/artifacts/ArtifactResourceScope.js";
 import { hashVerifierFile } from "../../lib/verifier-file-resources.mjs";
-import { closeVerifierResources } from "../../lib/verifier-cleanup.mjs";
+import {
+  closeVerifierResources,
+  withVerifierCleanup,
+} from "../../lib/verifier-cleanup.mjs";
 
 const execFileAsync = promisify(execFile);
 const { join, resolve, dirname } = nodePath;
@@ -46,7 +49,7 @@ async function checkPrerequisites() {
     const value = process.env[name];
     if (value === undefined) {
       throw new Error(
-        `verify:firmware requires ${name}; see docs/firmware-analysis.md`,
+        `verify:firmware requires ${name}; see docs/guides/firmware/firmware-analysis.md`,
       );
     }
     await fs.access(value);
@@ -338,7 +341,7 @@ async function stageExt4() {
 async function stageGhidra(mcpFiles) {
   if (process.env.GHIDRA_INSTALL_DIR === undefined) {
     throw new Error(
-      "Firmware Ghidra handoff requires GHIDRA_INSTALL_DIR and Java; see docs/ghidra.md",
+      "Firmware Ghidra handoff requires GHIDRA_INSTALL_DIR and Java; see docs/providers/ghidra-provider.md",
     );
   }
 
@@ -351,6 +354,7 @@ async function stageGhidra(mcpFiles) {
 
   const dossierRaw = await callTool("analyze_function", {
     procedure: "firmware_probe",
+    detail: "complete",
   });
   const dossier = parseEvidence(dossierRaw);
   assert.equal(
@@ -376,8 +380,7 @@ async function stageGhidra(mcpFiles) {
 // Entry point
 // ---------------------------------------------------------------------------
 
-let primaryError;
-try {
+await withVerifierCleanup(async () => {
   assert.equal(
     (await hashVerifierFile(firmwarePath, fileResources)).sha256,
     oracle.sha256,
@@ -395,20 +398,12 @@ try {
     oracle.sha256,
     "Original firmware bytes must remain unchanged",
   );
-} catch (cause) {
-  primaryError = cause;
-  throw cause;
-} finally {
-  await closeVerifierResources(
-    [
-      async () => {
-        await closeVerifierResources([
-          () => mcpClient.close(),
-          () => fileResources.close(),
-        ]);
-        await fs.rm(workDir, { recursive: true, force: true });
-      },
-    ],
-    primaryError,
-  );
-}
+}, [
+  async () => {
+    await closeVerifierResources([
+      () => mcpClient.close(),
+      () => fileResources.close(),
+    ]);
+    await fs.rm(workDir, { recursive: true, force: true });
+  },
+]);

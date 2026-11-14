@@ -16,11 +16,13 @@ describe("Hopper response stream", () => {
       abort,
     });
 
-    stream.push('not json\n{"id":2,"result":null}\n');
+    stream.push(Buffer.from('not json\n{"id":2,"result":null}\n'));
     expect(accepted).toEqual([]);
     expect(abort).toHaveBeenCalledOnce();
 
-    stream.push('{"id":3,"result":null}\n');
+    stream.push(Buffer.from('{"id":3'));
+    expect(accepted).toEqual([2]);
+    stream.push(Buffer.from(',"result":null}\n'));
     expect(accepted).toEqual([2, 3]);
     expect(abort).toHaveBeenCalledOnce();
   });
@@ -39,13 +41,17 @@ describe("Hopper response stream", () => {
       abort,
     });
 
-    stream.push('{"id":3,"result":null}\n{"id":1,"result":null}\n');
+    stream.push(
+      Buffer.from('{"id":3,"result":null}\n{"id":1,"result":null}\n'),
+    );
     expect(accepted).toEqual([]);
     expect(abort).toHaveBeenCalledWith(
       "Hopper returned an unknown response id",
     );
 
-    stream.push('{"id":2,"result":null}\n');
+    stream.push(Buffer.from('{"id":2'));
+    expect(accepted).toEqual([1]);
+    stream.push(Buffer.from(',"result":null}\n'));
     expect(accepted).toEqual([1, 2]);
     expect(abort).toHaveBeenCalledOnce();
   });
@@ -62,9 +68,9 @@ describe("Hopper response stream", () => {
       abort: vi.fn(),
     });
 
-    stream.push('{"id":1,"result":null}');
+    stream.push(Buffer.from('{"id":1,"result":null}'));
     stream.reset();
-    stream.push('{"id":1,"result":null}\n');
+    stream.push(Buffer.from('{"id":1,"result":null}\n'));
     expect(accepted).toEqual([1]);
   });
 });

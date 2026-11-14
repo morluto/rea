@@ -1,9 +1,7 @@
-import type {
-  Il2cppMetadata,
-  Il2cppMetadataSection,
-} from "../domain/il2cpp/il2cppMetadata.js";
+import type { Il2cppMetadata } from "../domain/il2cpp/il2cppMetadata.js";
 import {
   checkRange,
+  checkedSectionCount,
   readIndex,
   Il2cppMetadataFormatFailure,
 } from "./Il2cppMetadataFormat.js";
@@ -24,21 +22,6 @@ export interface MetadataMemberOwners {
   readonly parameters: readonly MetadataOwnerRange[];
 }
 
-const entries = (
-  indexing: MetadataTables["indexing"],
-  section: Il2cppMetadataSection,
-  recordBytes: number,
-) => {
-  const count =
-    indexing === "counted" ? (section.count ?? 0) : section.size / recordBytes;
-  if (!Number.isInteger(count) || section.size !== count * recordBytes)
-    throw new Il2cppMetadataFormatFailure(
-      "record-size-mismatch",
-      `section ${section.name} size ${section.size} does not hold whole ${recordBytes}-byte records`,
-    );
-  return count;
-};
-
 /** Own member record widths and validate all counts before any row allocation. */
 export const readIl2cppMemberTables = ({
   widths,
@@ -52,8 +35,7 @@ export const readIl2cppMemberTables = ({
     parameters: 8 + widths.type,
     stringLiterals: indexing === "counted" ? 4 : 8,
   };
-  const literalRecords = entries(
-    indexing,
+  const literalRecords = checkedSectionCount(
     section("stringLiterals"),
     recordBytes.stringLiterals,
   );
@@ -61,15 +43,13 @@ export const readIl2cppMemberTables = ({
     recordBytes,
     literalRecords,
     counts: {
-      fields: entries(indexing, section("fields"), recordBytes.fields),
-      properties: entries(
-        indexing,
+      fields: checkedSectionCount(section("fields"), recordBytes.fields),
+      properties: checkedSectionCount(
         section("properties"),
         recordBytes.properties,
       ),
-      events: entries(indexing, section("events"), recordBytes.events),
-      parameters: entries(
-        indexing,
+      events: checkedSectionCount(section("events"), recordBytes.events),
+      parameters: checkedSectionCount(
         section("parameters"),
         recordBytes.parameters,
       ),

@@ -1,11 +1,11 @@
+import { parseCliJsonOption } from "./cliJsonOption.js";
 import { inspectModelArtifactInputSchema } from "../domain/model/modelArtifactQuery.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
-import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { safeParseJson } from "../domain/safeJson.js";
 import { z } from "incur";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { createModelArtifactService } from "../composition/model.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -25,7 +25,9 @@ export const registerModelCommands = (
     description:
       "Inspect GGUF or safetensors headers without loading model weights",
     args: z.object({
-      path: z.string().describe("Local model file, detected by content"),
+      path: localPathStringSchema.describe(
+        "Local model file, detected by content",
+      ),
     }),
     options: z.object({
       ...analysisEvidenceDeliveryOptions,
@@ -45,25 +47,13 @@ export const registerModelCommands = (
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.inspectModelArtifact, async () => {
-          const decoded =
-            options.view === undefined
-              ? { ok: true as const, value: undefined }
-              : safeParseJson(options.view);
-          if (!decoded.ok) {
-            return projectAnalysisError(
-              new AnalysisInputError(
-                "inspect_model_artifact",
-                { cause: decoded.cause },
-                [
-                  {
-                    path: ["view"],
-                    reason: "invalid_format",
-                    message: "view must be a JSON model page selection",
-                  },
-                ],
-              ),
-            );
-          }
+          const decoded = parseCliJsonOption(
+            "inspect_model_artifact",
+            "view",
+            options.view,
+            "view must be a JSON model page selection",
+          );
+          if (!decoded.ok) return projectAnalysisError(decoded.error);
           const view = decoded.value;
           const selected = inspectModelArtifactInputSchema.safeParse({
             path: absoluteCallerPath(args.path),
@@ -81,11 +71,12 @@ export const registerModelCommands = (
             );
           const service = createModelArtifactService();
           return deliverCliAnalysisEvidence({
+            callerInputPath: args.path,
             run: () =>
               service.inspect(
                 {
-                  path: absoluteCallerPath(args.path),
-                  hash: options.hash,
+                  path: selected.data.path,
+                  hash: selected.data.hash,
                   detail: "complete",
                 },
                 { signal },

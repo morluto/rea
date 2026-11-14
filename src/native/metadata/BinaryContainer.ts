@@ -1,38 +1,88 @@
+import {
+  resolveMappedFileOffset,
+  type FileMapping,
+  type ZeroFillMapping,
+} from "../../domain/virtualFileMapping.js";
+import type { PeDataDirectory } from "../../domain/peOptionalHeader.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
+
+/** Native container facts a format failure can name. */
+interface BinaryFormatFailureFacts {
+  /** The image holds the metadata, in a form this reader cannot decode. */
+  readonly undecodedContent?: boolean;
+  /** The native format, when the reader knows it. */
+  readonly format?: string;
+  readonly offset?: number;
+  readonly field?: string;
+}
+
 /** Distinguish corrupt recognized binaries from containers outside parser coverage. */
-export class BinaryFormatFailure extends Error {
+export class BinaryFormatFailure extends ParseFailureError<
+  "malformed" | "truncated" | "unsupported"
+> {
   constructor(
-    readonly kind: "malformed" | "unsupported",
+    kind: "malformed" | "truncated" | "unsupported",
+    message: string,
+    facts: BinaryFormatFailureFacts = {},
+  ) {
+    const { undecodedContent = false, format = "native-binary", ...at } = facts;
+    super(
+      kind === "unsupported"
+        ? { kind, format, detail: message, undecodedContent, ...at }
+        : { kind, format, detail: message, ...at },
+    );
+    this.name = "BinaryFormatFailure";
+  }
+
+  /** The image holds the metadata, in a form this reader cannot decode. */
+  get undecodedContent(): boolean {
+    return this.failure.kind === "unsupported" && this.failure.undecodedContent;
+  }
+}
+
+/** A missing file span is a candidate miss; conflicting owners are malformed. */
+export class BinaryMappingFailure extends BinaryFormatFailure {
+  constructor(
+    readonly reason: "unmapped" | "ambiguous",
     message: string,
   ) {
-    super(message);
-    this.name = "BinaryFormatFailure";
+    super("malformed", message);
   }
 }
 
 /** Resource boundary exceeded while decoding metadata or native container structure. */
-export class BinaryResourceFailure extends Error {
+export class BinaryResourceFailure extends ParseFailureError<"limit"> {
   constructor(
     readonly boundary: "build-info" | "structure" | "search",
     readonly maximum_bytes: number,
     message: string,
   ) {
-    super(message);
+    super({
+      kind: "limit",
+      format: "native-binary",
+      detail: message,
+      limit: { name: boundary, maximum: maximum_bytes },
+    });
     this.name = "BinaryResourceFailure";
   }
 }
 
-/** One file-backed virtual range; addresses stay exact until mapped to file offsets. */
-export interface FileMapping {
-  readonly address: bigint;
-  readonly offset: number;
-  readonly size: number;
+/** A bounded read could not establish termination; it does not prove invalid text. */
+export class BinaryStringReadLimitFailure extends Error {
+  constructor(readonly maximumBytes: number) {
+    super(
+      `String termination was not established within its ${String(maximumBytes)}-byte read allowance`,
+    );
+    this.name = "BinaryStringReadLimitFailure";
+  }
 }
 
-/** Declared zero-initialized virtual memory with no corresponding file bytes. */
-export interface ZeroFillMapping {
-  readonly address: bigint;
-  readonly size: bigint;
-}
+/** Recognized format failures and bounded string-read failures. */
+export const isBinaryFormatOrStringLimitFailure = (
+  cause: unknown,
+): cause is BinaryFormatFailure | BinaryStringReadLimitFailure =>
+  cause instanceof BinaryFormatFailure ||
+  cause instanceof BinaryStringReadLimitFailure;
 
 /** Native loader region facts; language-specific fallback selection belongs to consumers. */
 export interface LoadRegion {
@@ -50,7 +100,6 @@ export interface LoadRegion {
 
 /** Parsed section facts; consumer metadata validity is separate from native structure. */
 export type ImageSection = {
-  readonly name: string;
   readonly offset: number;
   readonly size: number;
   readonly file_backed: boolean;
@@ -59,7 +108,10 @@ export type ImageSection = {
 } & (
   | {
       readonly format: "elf";
+      /** Null when the ELF name table is unavailable or this name is unreadable. */
+      readonly name: string | null;
       readonly type: number;
+      readonly flags: bigint;
       readonly address: bigint;
       readonly declared_range: {
         readonly offset: bigint;
@@ -68,15 +120,19 @@ export type ImageSection = {
     }
   | {
       readonly format: "pe";
+      readonly name: string;
       readonly virtual_address: number;
       readonly virtual_size: number;
       readonly raw_size: number;
+      readonly file_alignment: number;
       readonly characteristics: number;
     }
   | {
       readonly format: "macho";
+      readonly name: string;
       readonly section_name: string;
       readonly type: number;
+      readonly flags: number;
       readonly address: bigint;
       readonly declared_range: {
         readonly offset: bigint;
@@ -84,12 +140,19 @@ export type ImageSection = {
       };
       readonly segment_mapping: FileMapping | null;
       readonly segment_unmapped: boolean;
+      /** Declared `reloff` and `nreloc`, which only object files populate. */
+      readonly relocations: { readonly offset: number; readonly count: number };
     }
 );
 
+/** Declared PT_DYNAMIC file extent, before consumer-specific admission. */
+export interface ElfDynamicSegment {
+  readonly offset: bigint;
+  readonly size: bigint;
+}
+
 /** Native container facts, without language metadata search policy. */
-export interface BinaryContainer {
-  readonly format: "elf" | "pe" | "macho";
+interface BinaryContainerFacts {
   readonly architecture: string;
   readonly bits: 32 | 64;
   readonly byte_order: "little" | "big";
@@ -101,12 +164,11 @@ export interface BinaryContainer {
    */
   readonly pe_header_mapping?: FileMapping;
   /** PE optional-header data directories, indexed as declared. */
-  readonly pe_data_directories?: readonly {
-    readonly virtual_address: number;
-    readonly size: number;
-  }[];
+  readonly pe_data_directories?: readonly PeDataDirectory[];
   /** Mach-O load-command observation, when available. */
   readonly macho_chained_fixups?: boolean;
+  /** Section-name lookup was incomplete; absence by name is not established. */
+  readonly section_names_limitation?: string;
   readonly mappings: readonly FileMapping[];
   readonly load_regions?: readonly LoadRegion[];
   /** File-backed ranges the native loader marks executable. */
@@ -115,11 +177,35 @@ export interface BinaryContainer {
   readonly sections: readonly ImageSection[];
 }
 
+/** ELF identity and dynamic declarations are present only for an ELF container. */
+export type BinaryContainer = BinaryContainerFacts &
+  (
+    | {
+        readonly format: "elf";
+        readonly elf: {
+          readonly machine: number;
+          readonly type: number;
+          readonly dynamicSegments: readonly ElfDynamicSegment[];
+        };
+      }
+    | { readonly format: "pe" | "macho" }
+  );
+
+/** All declared file-backed image memory, including PE headers at the image base. */
+export const imageFileMappings = (
+  container: BinaryContainer,
+): readonly FileMapping[] =>
+  container.pe_header_mapping === undefined
+    ? container.mappings
+    : [container.pe_header_mapping, ...container.mappings];
+
 /** Reader that checks every structural range before decoding numeric fields. */
 export class BinaryReader {
   constructor(
     readonly bytes: Buffer,
     readonly little: boolean,
+    /** The native format these bytes hold, named in every failure. */
+    readonly format: string,
   ) {}
 
   range(offset: number, size: number, label: string): Buffer {
@@ -128,12 +214,22 @@ export class BinaryReader {
       !Number.isSafeInteger(size) ||
       offset < 0 ||
       size < 0 ||
-      offset > this.bytes.length ||
-      size > this.bytes.length - offset
+      offset > this.bytes.length
     )
       throw new BinaryFormatFailure(
         "malformed",
         `${label} range is truncated or outside the file`,
+        {
+          format: this.format,
+          field: label,
+          ...(Number.isSafeInteger(offset) ? { offset } : {}),
+        },
+      );
+    if (size > this.bytes.length - offset)
+      throw new BinaryFormatFailure(
+        "truncated",
+        `${label} range is truncated or outside the file`,
+        { format: this.format, offset, field: label },
       );
     return this.bytes.subarray(offset, offset + size);
   }
@@ -155,13 +251,25 @@ export class BinaryReader {
   }
 
   fileRange(offset: bigint, size: bigint, label: string): FileMapping {
-    if (
-      offset > BigInt(this.bytes.length) ||
-      size > BigInt(this.bytes.length) - offset
-    )
+    const length = BigInt(this.bytes.length);
+    if (offset < 0n || offset > length)
       throw new BinaryFormatFailure(
         "malformed",
         `${label} range is outside the file`,
+        {
+          format: this.format,
+          field: label,
+          ...(offset >= BigInt(Number.MIN_SAFE_INTEGER) &&
+          offset <= BigInt(Number.MAX_SAFE_INTEGER)
+            ? { offset: Number(offset) }
+            : {}),
+        },
+      );
+    if (size > length - offset)
+      throw new BinaryFormatFailure(
+        "truncated",
+        `${label} range is outside the file`,
+        { format: this.format, offset: Number(offset), field: label },
       );
     const result = { address: 0n, offset: Number(offset), size: Number(size) };
     this.range(result.offset, result.size, label);
@@ -206,58 +314,284 @@ export const declaredFileRange = (
   };
 };
 
-/** Map a virtual span without losing precision or selecting an ambiguous alias. */
+/** Translate the domain mapping result into native parser failure classes. */
 export const mappedFileOffset = (
   mappings: readonly FileMapping[],
   address: bigint,
   size: number,
   zeroFills: readonly ZeroFillMapping[] = [],
 ): number => {
-  let found: number | undefined;
-  for (const mapping of mappings) {
-    const delta = address - mapping.address;
-    if (
-      delta < 0n ||
-      delta > BigInt(mapping.size) ||
-      BigInt(size) > BigInt(mapping.size) - delta
-    )
-      continue;
-    const offset = mapping.offset + Number(delta);
-    if (found !== undefined && found !== offset)
-      throw new BinaryFormatFailure(
-        "malformed",
-        "Virtual address has ambiguous file mappings",
-      );
-    found = offset;
+  const mapped = resolveMappedFileOffset(mappings, address, size, zeroFills);
+  if (mapped.ok) return mapped.value;
+  const { reason, message } = mapped.error;
+  if (reason === "invalid-size")
+    throw new BinaryFormatFailure("malformed", message);
+  throw new BinaryMappingFailure(reason, message);
+};
+
+/** Index of the last sorted value at or below `value`, or -1. */
+const lastAtOrBelow = (sorted: readonly bigint[], value: bigint): number => {
+  let low = 0;
+  let high = sorted.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if ((sorted[middle] as bigint) <= value) low = middle + 1;
+    else high = middle;
   }
-  if (found === undefined)
-    throw new BinaryFormatFailure(
-      "malformed",
-      "Virtual address or string range is not file mapped",
+  return low - 1;
+};
+
+/** Sorted starts with the furthest end reached by any span starting at or before each. */
+const prefixReach = (
+  spans: readonly { readonly start: bigint; readonly end: bigint }[],
+): { readonly starts: bigint[]; readonly reach: bigint[] } => {
+  const sorted = [...spans].sort((left, right) =>
+    left.start < right.start ? -1 : left.start > right.start ? 1 : 0,
+  );
+  const starts: bigint[] = [];
+  const reach: bigint[] = [];
+  let furthest = -1n;
+  for (const span of sorted) {
+    if (span.end > furthest) furthest = span.end;
+    starts.push(span.start);
+    reach.push(furthest);
+  }
+  return { starts, reach };
+};
+
+/**
+ * Indexed `mappedFileOffset` for parsers that translate many spans in one
+ * image. Construction is O(n log n) over mappings; each lookup is O(log n), so
+ * hostile section counts cannot multiply the cost of every table entry. It
+ * accepts, rejects and translates exactly the spans `mappedFileOffset` does;
+ * a span that is both a conflicting file alias and a zero-fill overlap may be
+ * refused under either ambiguity message.
+ */
+export const createFileMappingIndex = (
+  mappings: readonly FileMapping[],
+  zeroFills: readonly ZeroFillMapping[] = [],
+): FileMappingIndex => {
+  const backed = mappings
+    .filter((mapping) => mapping.size > 0)
+    .map((mapping) => ({
+      start: mapping.address,
+      end: mapping.address + BigInt(mapping.size),
+      translation: BigInt(mapping.offset) - mapping.address,
+    }));
+  const zeroFilled = prefixReach(
+    zeroFills
+      .filter((zeroFill) => zeroFill.size > 0n)
+      .map((zeroFill) => ({
+        start: zeroFill.address,
+        end: zeroFill.address + zeroFill.size,
+      })),
+  );
+  // Elementary intervals between every mapping boundary, each with the single
+  // file translation shared by all mappings covering it (or none/ambiguous).
+  const events = new Map<bigint, { add: bigint[]; remove: bigint[] }>();
+  const event = (at: bigint) => {
+    let entry = events.get(at);
+    if (entry === undefined) {
+      entry = { add: [], remove: [] };
+      events.set(at, entry);
+    }
+    return entry;
+  };
+  for (const span of backed) {
+    event(span.start).add.push(span.translation);
+    event(span.end).remove.push(span.translation);
+  }
+  const boundaries = [...events.keys()].sort((left, right) =>
+    left < right ? -1 : left > right ? 1 : 0,
+  );
+  const active = new Map<bigint, number>();
+  // Undefined is a gap; null is an overlap with conflicting translations.
+  const translations: (bigint | null | undefined)[] = [];
+  for (const boundary of boundaries) {
+    const entry = events.get(boundary);
+    for (const translation of entry?.remove ?? []) {
+      const count = (active.get(translation) ?? 0) - 1;
+      if (count === 0) active.delete(translation);
+      else active.set(translation, count);
+    }
+    for (const translation of entry?.add ?? [])
+      active.set(translation, (active.get(translation) ?? 0) + 1);
+    translations.push(
+      active.size === 0
+        ? undefined
+        : active.size === 1
+          ? (active.keys().next().value as bigint)
+          : null,
     );
-  for (const zeroFill of zeroFills) {
-    if (spansOverlap(address, BigInt(size), zeroFill.address, zeroFill.size))
-      throw new BinaryFormatFailure(
-        "malformed",
+  }
+  // runEnd[i]: end of the maximal run of intervals sharing interval i's translation.
+  const runEnd: bigint[] = boundaries.map(() => 0n);
+  for (let index = boundaries.length - 1; index >= 0; index--) {
+    const next = boundaries[index + 1];
+    const translation = translations[index];
+    runEnd[index] =
+      next === undefined
+        ? (boundaries[index] as bigint)
+        : translation !== null &&
+            translation !== undefined &&
+            translations[index + 1] === translation
+          ? (runEnd[index + 1] as bigint)
+          : next;
+  }
+  const ambiguousPrefix = [0];
+  const previousMapped: number[] = [];
+  const nextMapped: number[] = [];
+  const translationRuns: number[] = [];
+  let previous = -1;
+  let run = 0;
+  let previousTranslation: bigint | undefined;
+  for (const [index, translation] of translations.entries()) {
+    ambiguousPrefix.push(
+      (ambiguousPrefix[index] ?? 0) + (translation === null ? 1 : 0),
+    );
+    if (typeof translation === "bigint") {
+      if (translation !== previousTranslation) run += 1;
+      previousTranslation = translation;
+      previous = index;
+    }
+    previousMapped.push(previous);
+    translationRuns.push(run);
+  }
+  let next = translations.length;
+  for (let index = translations.length - 1; index >= 0; index--) {
+    if (typeof translations[index] === "bigint") next = index;
+    nextMapped[index] = next;
+  }
+  const offset = (address: bigint, size: number): number => {
+    if (!Number.isSafeInteger(size) || size <= 0)
+      return mappedFileOffset(mappings, address, size, zeroFills);
+    const end = address + BigInt(size);
+    const interval = lastAtOrBelow(boundaries, address);
+    const lower = Math.max(0, interval);
+    const upper = lastAtOrBelow(boundaries, end - 1n);
+    const first = nextMapped[lower] ?? translations.length;
+    const last = previousMapped[upper] ?? -1;
+    // Like the scan, conflicts anywhere in the requested span win over gaps.
+    if (
+      (ambiguousPrefix[upper + 1] ?? 0) - (ambiguousPrefix[lower] ?? 0) > 0 ||
+      (first <= upper &&
+        last >= lower &&
+        translationRuns[first] !== translationRuns[last])
+    )
+      throw new BinaryMappingFailure(
+        "ambiguous",
+        "Virtual span has ambiguous or noncontiguous file mappings",
+      );
+    const translation = translations[interval];
+    if (typeof translation !== "bigint" || (runEnd[interval] as bigint) < end)
+      throw new BinaryMappingFailure(
+        "unmapped",
+        "Virtual address or string range is not file mapped",
+      );
+    const zeroFill = lastAtOrBelow(zeroFilled.starts, end - 1n);
+    if (zeroFill >= 0 && (zeroFilled.reach[zeroFill] as bigint) > address)
+      throw new BinaryMappingFailure(
+        "ambiguous",
         "Virtual address has ambiguous file and zero-fill mappings",
       );
-  }
-  const end = address + BigInt(size);
-  for (const mapping of mappings) {
-    const start = address > mapping.address ? address : mapping.address;
-    const mappingEnd = mapping.address + BigInt(mapping.size);
-    const overlapEnd = end < mappingEnd ? end : mappingEnd;
-    if (start >= overlapEnd) continue;
-    if (
-      BigInt(found) + start - address !==
-      BigInt(mapping.offset) + start - mapping.address
-    )
-      throw new BinaryFormatFailure(
-        "malformed",
-        "Virtual address has ambiguous file mappings",
+    return Number(address + translation);
+  };
+  const access: MappedStringAccess = {
+    offset,
+    mappingAt: (address) => {
+      const start = offset(address, 1);
+      const interval = lastAtOrBelow(boundaries, address);
+      return {
+        address,
+        offset: start,
+        size: Number((runEnd[interval] as bigint) - address),
+      };
+    },
+  };
+  return {
+    offset,
+    readCString: (bytes, address, maximumBytes) =>
+      readMappedString(bytes, access, address, maximumBytes),
+  };
+};
+
+/** One immutable image's indexed mappings and bounded string access. */
+export interface FileMappingIndex {
+  readonly offset: (address: bigint, size: number) => number;
+  readonly readCString: (
+    bytes: Buffer,
+    address: bigint,
+    maximumBytes: number,
+  ) => Buffer;
+}
+
+interface MappedStringAccess {
+  readonly mappingAt: (address: bigint) => FileMapping | undefined;
+  readonly offset: (address: bigint, size: number) => number;
+}
+
+/** Read a bounded NUL-terminated string while retaining mapping/alias semantics. */
+export const readMappedCString = (
+  bytes: Buffer,
+  image: BinaryContainer,
+  address: bigint,
+  maximumBytes: number,
+): Buffer => {
+  const mappings = imageFileMappings(image);
+  return readMappedString(
+    bytes,
+    {
+      mappingAt: (cursor) =>
+        mappings.find(
+          (range) =>
+            range.address <= cursor &&
+            cursor < range.address + BigInt(range.size),
+        ),
+      offset: (cursor, size) =>
+        mappedFileOffset(mappings, cursor, size, image.zero_fills),
+    },
+    address,
+    maximumBytes,
+  );
+};
+
+const readMappedString = (
+  bytes: Buffer,
+  access: MappedStringAccess,
+  address: bigint,
+  maximumBytes: number,
+): Buffer => {
+  const chunks: Buffer[] = [];
+  let length = 0;
+  while (length <= maximumBytes) {
+    const cursor = address + BigInt(length);
+    const mapping = access.mappingAt(cursor);
+    if (mapping === undefined) {
+      access.offset(cursor, 1);
+      throw new BinaryMappingFailure(
+        "unmapped",
+        "String range is not file mapped",
       );
+    }
+    const size = Math.min(
+      maximumBytes + 1 - length,
+      Number(mapping.address + BigInt(mapping.size) - cursor),
+    );
+    const offset = mapping.offset + Number(cursor - mapping.address);
+    const chunk = bytes.subarray(offset, offset + size);
+    const terminator = chunk.indexOf(0);
+    const consumed = terminator < 0 ? size : terminator + 1;
+    access.offset(cursor, consumed);
+    if (terminator >= 0) {
+      const tail = chunk.subarray(0, terminator);
+      if (chunks.length === 0) return tail;
+      chunks.push(tail);
+      return Buffer.concat(chunks, length + terminator);
+    }
+    chunks.push(chunk);
+    length += size;
   }
-  return found;
+  throw new BinaryStringReadLimitFailure(maximumBytes);
 };
 
 /** Recognize a wholly zero-filled span while refusing even partial file aliases. */
@@ -278,8 +612,8 @@ export const isZeroFilledSpan = (
     return false;
   for (const mapping of mappings) {
     if (spansOverlap(address, bytes, mapping.address, BigInt(mapping.size)))
-      throw new BinaryFormatFailure(
-        "malformed",
+      throw new BinaryMappingFailure(
+        "ambiguous",
         "Virtual address has ambiguous file and zero-fill mappings",
       );
   }

@@ -2,6 +2,10 @@ import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
 import type { Logger } from "pino";
 
 import type { GdbSessionManager } from "../gdb/GdbSessionManager.js";
+import {
+  GDB_SESSION_TOOLS,
+  unknownDebuggerSessionError,
+} from "../domain/debuggerSessionErrors.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
 import {
@@ -9,9 +13,7 @@ import {
   summarizeRetainedAnalysis,
 } from "../application/analysisView/AnalysisViewService.js";
 import { toolContract } from "../contracts/toolContracts.js";
-import { evidenceSchema } from "../domain/evidence.js";
 import { err, ok } from "../domain/result.js";
-import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import {
   runOwnedCleanupWithExternalMutationAdmission,
   runWithExternalMutationAdmission,
@@ -19,7 +21,7 @@ import {
 } from "./externalMutationAdmission.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import type { ToolResultDelivery } from "./toolResult.js";
+import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 
 export type GdbToolManager = Pick<
   GdbSessionManager,
@@ -57,19 +59,11 @@ export const registerGdbTools = (
           { ok: true, value: result.value },
           start,
         );
-      const partial = result.error.partialObservation;
-      const parsed = evidenceSchema.safeParse(partial);
-      if (parsed.success) {
-        const recorded = recordEvidence?.(parsed.data);
-        if (recorded !== undefined)
-          return delivery.toRecordedPartialErrorToolResult(
-            result.error,
-            parsed.data.evidence_id,
-            recorded,
-            start.returnsTargetContent,
-          );
-      }
-      return delivery.toCallToolResult(result, start);
+      return delivery.toPartialErrorToolResult(
+        result.error,
+        start.returnsTargetContent,
+        recordEvidence,
+      );
     },
   );
   server.registerTool(
@@ -105,21 +99,12 @@ export const registerGdbTools = (
         : input.detail === "summary"
           ? summarizeRetainedAnalysis(executed.value.evidence, retention)
           : ok(executed.value.evidence);
-      if (!result.ok) {
-        const partial = result.error.partialObservation;
-        const parsed = evidenceSchema.safeParse(partial);
-        if (parsed.success) {
-          const recorded = recordEvidence?.(parsed.data);
-          if (recorded !== undefined)
-            return delivery.toRecordedPartialErrorToolResult(
-              result.error,
-              parsed.data.evidence_id,
-              recorded,
-              consoleContract.returnsTargetContent,
-            );
-        }
-        return delivery.toCallToolResult(result, consoleContract);
-      }
+      if (!result.ok)
+        return delivery.toPartialErrorToolResult(
+          result.error,
+          consoleContract.returnsTargetContent,
+          recordEvidence,
+        );
       const recorded = recordEvidence?.(result.value);
       return delivery.toEvidenceToolResult(
         result.value,
@@ -135,7 +120,12 @@ export const registerGdbTools = (
       const result = manager.status(input.session_id);
       if (result === undefined)
         return delivery.toCallToolResult(
-          err(invalidSession("gdb_session_status")),
+          err(
+            unknownDebuggerSessionError(
+              GDB_SESSION_TOOLS,
+              "gdb_session_status",
+            ),
+          ),
           status,
         );
       return delivery.toCallToolResult(
@@ -164,12 +154,7 @@ export const registerGdbTools = (
             manager.close(input.session_id),
           ),
       );
-      return result.ok
-        ? delivery.toCallToolResult({ ok: true, value: result.value }, close)
-        : delivery.toCallToolResult(result, close);
+      return delivery.toCallToolResult(result, close);
     },
   );
 };
-
-const invalidSession = (operation: string): AnalysisInputError =>
-  new AnalysisInputError(operation);

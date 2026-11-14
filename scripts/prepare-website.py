@@ -7,6 +7,7 @@ import xml.etree.ElementTree as ET
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 from website import PageMetadata, page_url
+from website_agents import prepare_discovery, prepare_markdown
 
 
 EXAMPLE_FILES = (
@@ -81,6 +82,8 @@ def prepare_assets(site):
     prepare_sharing_image(site)
     prepare_sitemap(site)
     prepare_notes_example(site)
+    prepare_discovery(Path(__file__).resolve().parent.parent, site)
+    prepare_markdown(site)
 
 
 if __name__ == "__main__":

@@ -1,11 +1,15 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { Uint8ArrayReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { describe, expect, it } from "vitest";
 
 import { classifyArtifactBytesAtPath } from "../../fixtures/artifactClassification.js";
 import { ARTIFACT_CLASSIFICATION_PREFIX_BYTES } from "../../../src/artifacts/ArtifactClassificationProbe.js";
-import { scanCanonicalArtifactInventory } from "../../fixtures/artifactInventory.js";
+import {
+  inventoryArtifact,
+  scanCanonicalArtifactInventory,
+} from "../../fixtures/artifactInventory.js";
 import { artifactInventoryResultSchema } from "../../../src/domain/artifactGraph.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -81,6 +85,30 @@ describe("MZ artifact classification", () => {
     expect(inventory.nodes.map(({ format }) => format)).toEqual(
       expect.arrayContaining(["dos-mz", "pe"]),
     );
+  });
+
+  it("retains a PE signature straddling the bounded prefix in ZIP member evidence", async () => {
+    const root = await createTestTempDirectory("rea-mz-far-pe-");
+    const bytes = peFixture(ARTIFACT_CLASSIFICATION_PREFIX_BYTES - 2);
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    await writer.add("native.exe", new Uint8ArrayReader(bytes), { level: 0 });
+    const path = join(root, "fixture.zip");
+    await writeFile(path, Buffer.from(await writer.close()));
+
+    const inventory = await inventoryArtifact(path);
+    const occurrence = inventory.occurrences.find(
+      ({ logical_path }) => logical_path === "native.exe",
+    );
+    expect(occurrence).toMatchObject({
+      artifact_format: "pe",
+      hash_status: "verified",
+    });
+    expect(
+      inventory.nodes.find(
+        ({ artifact_id }) => artifact_id === occurrence?.artifact_id,
+      ),
+    ).toMatchObject({ format: "pe", size: bytes.length });
+    expect(inventory.coverage.status).toBe("complete");
   });
 });
 

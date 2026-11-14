@@ -2,6 +2,7 @@
 
 import contextlib
 import errno
+from html import unescape
 import importlib.util
 import io
 import json
@@ -250,6 +251,16 @@ class WebsiteSearchChecks(unittest.TestCase):
 
 class WebsiteMaintenanceChecks(unittest.TestCase):
     """Exercise contributor edits and the static preview through real consumers."""
+
+    def test_electron_guide_renderer_matches_download(self):
+        public = ROOT / "website/public"
+        source = (public / "guides/javascript/index.html").read_text(encoding="utf-8")
+        document = Document(source)
+        blocks = [node for node in document.nodes if node.attrs.get("id") == "notes-renderer-source"]
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual(blocks[0].tag, "code")
+        displayed = unescape(source[blocks[0].open_end:blocks[0].end_start]) + "\n"
+        self.assertEqual(displayed, (public / "examples/notes-electron/renderer.js").read_text(encoding="utf-8"))
 
     def test_contributors_render_from_snapshot_and_reject_drift_without_rewriting(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -528,11 +539,13 @@ class WebsiteMaintenanceChecks(unittest.TestCase):
                             self.assertIn(b"color: black", response.read())
                         with self.assertRaises(HTTPError) as error:
                             urlopen(base + prefix + "missing")
-                        self.assertEqual(error.exception.code, 404)
+                        with contextlib.closing(error.exception) as response:
+                            self.assertEqual(response.code, 404)
                         if prefix != "/":
                             with self.assertRaises(HTTPError) as error:
                                 urlopen(base + "/guide/")
-                            self.assertEqual(error.exception.code, 404)
+                            with contextlib.closing(error.exception) as response:
+                                self.assertEqual(response.code, 404)
                     finally:
                         server.shutdown()
                         worker.join()
@@ -540,6 +553,73 @@ class WebsiteMaintenanceChecks(unittest.TestCase):
 
 class WebsiteTranslationChecks(unittest.TestCase):
     """Exercise source edits, translated evidence and language editions at their consumers."""
+
+    def test_language_inventory_preserves_script_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "website/locales").mkdir(parents=True)
+            for code in ("ur", "ur-PK", "ur-Latn", "ur-Latn-PK", "hi-Latn"):
+                inventory = [
+                    {"code": "en", "name": "English", "readme": "README.md", "dir": "ltr"},
+                    {"code": code, "name": "Fixture", "readme": f"docs/readme/README_{code}.md", "dir": "ltr"},
+                ]
+                path = root / "website/locales/languages.json"
+                path.write_text(json.dumps(inventory))
+                with self.subTest(code=code):
+                    self.assertEqual(languages(root), inventory)
+            for code in ("ur-latn", "ur-LATN", "ur-PK-Latn", "ur/Latn"):
+                inventory[1]["code"] = code
+                path.write_text(json.dumps(inventory))
+                with self.subTest(code=code), self.assertRaisesRegex(ValueError, "Invalid or duplicate language"):
+                    languages(root)
+
+    def test_completed_script_tag_pages_pass_search_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            # check_site canonicalizes its root before collecting page keys.
+            site = Path(directory).resolve()
+            (site / "assets").mkdir()
+            shutil.copyfile(ROOT / "website/_site/assets/social-card.png", site / "assets/social-card.png")
+            shutil.copyfile(ROOT / "website/public/robots.txt", site / "robots.txt")
+            pages = {}
+            for code in ("ur-Latn", "ur-Latn-PK"):
+                path = site / code / "index.html"
+                path.parent.mkdir()
+                url = f"https://rea.tools/{code}/"
+                source = dedent(f'''\
+                    <!doctype html>
+                    <html lang="{code}" dir="ltr">
+                    <head>
+                      <title>REA ka ta'aruf</title>
+                      <meta name="description" content="REA ko samjhein." />
+                      <link rel="canonical" href="{url}" />
+                      <link rel="alternate" hreflang="{code}" href="{url}" />
+                      <meta property="og:type" content="website" />
+                      <meta property="og:site_name" content="REA" />
+                      <meta property="og:title" content="REA ka ta'aruf" />
+                      <meta property="og:description" content="REA ko samjhein." />
+                      <meta property="og:url" content="{url}" />
+                      <meta property="og:image" content="https://rea.tools/assets/social-card.png" />
+                      <meta property="og:image:type" content="image/png" />
+                      <meta property="og:image:width" content="1200" />
+                      <meta property="og:image:height" content="630" />
+                      <meta property="og:image:alt" content="REA" />
+                      <meta name="twitter:card" content="summary_large_image" />
+                      <meta name="twitter:title" content="REA ka ta'aruf" />
+                      <meta name="twitter:description" content="REA ko samjhein." />
+                      <meta name="twitter:image" content="https://rea.tools/assets/social-card.png" />
+                      <meta name="twitter:image:alt" content="REA" />
+                    </head>
+                    <body><h1>REA ka ta'aruf</h1></body>
+                    </html>
+                ''')
+                path.write_text(source, encoding="utf-8")
+                page = VERIFY.HtmlReferences()
+                page.feed(source)
+                self.assertFalse(page.translation_fallback)
+                self.assertFalse(page.noindex())
+                pages[path] = page
+            PREPARE.prepare_sitemap(site)
+            self.assertEqual(VERIFY.check_search_metadata(site, pages), (2, []))
 
     @contextlib.contextmanager
     def translated_project(self):

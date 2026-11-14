@@ -18,7 +18,6 @@ import {
   ENVIRONMENT_CARD_PATH,
   ENVIRONMENT_RPC_PATH,
   environmentRoutes,
-  MAX_RPC_BATCH_MESSAGES,
   serveEnvironment as startEnvironment,
   type ServedEnvironment,
 } from "./serveEnvironment.js";
@@ -38,7 +37,7 @@ const serveEnvironment = async (
   if (!result.ok) throw result.error;
   return result.value;
 };
-const definitions = environmentToolDefinitions(source);
+const definitions = environmentToolDefinitions(source, source.manifest.name);
 
 /**
  * The agentenv echo example's card, key for key. Only `name` and the tool
@@ -118,9 +117,18 @@ describe("replay value fidelity over MCP", () => {
         name: "get_users_by_id",
         arguments: { id: "3" },
       });
-      expect(JSON.stringify(ownKeys.structuredContent)).toContain(
-        '"__proto__":{"retained":true}',
-      );
+      const content = ownKeys.structuredContent;
+      if (
+        typeof content !== "object" ||
+        content === null ||
+        !("body" in content)
+      )
+        throw new Error("Expected a structured replay body");
+      const body = content.body;
+      expect(body).toEqual(JSON.parse(proto));
+      if (typeof body !== "object" || body === null)
+        throw new Error("Expected an object replay body");
+      expect(Object.hasOwn(body, "__proto__")).toBe(true);
     } finally {
       await transport.terminateSession();
       await client.close();
@@ -326,13 +334,11 @@ describe("environment data plane validation", () => {
       ).json(),
     ).resolves.toMatchObject({ id: null, error: { code: -32601 } });
     // A batch is bounded before any reply is built for it.
-    const oversized = await post(
-      Array.from({ length: MAX_RPC_BATCH_MESSAGES + 1 }, () => 0),
-    );
+    const oversized = await post(Array.from({ length: 101 }, () => 0));
     expect(oversized.status).toBe(400);
     await expect(oversized.json()).resolves.toMatchObject({
       id: null,
-      error: { code: -32600 },
+      error: { code: -32600, message: "batch exceeds 100 messages" },
     });
   });
 });

@@ -1,7 +1,6 @@
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
 
 import {
@@ -13,21 +12,18 @@ import { advertisedInputJsonSchema } from "../../../src/contracts/toolSchemaMeta
 import { presentAdvertisedInputSchema } from "../../../src/contracts/compactInputSchema.js";
 import { createCatalogDigests } from "../../../src/catalogIdentity.js";
 import {
-  schemaArrays,
-  schemaChildren,
-  schemaMaps,
-} from "../../../src/contracts/jsonSchemaKeywords.js";
-import {
   COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
   parseMcpInputSchemaProfile,
 } from "../../../src/config/mcpInputSchemaProfile.js";
 import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
-import { ToolResultDelivery } from "../../../src/server/toolResult.js";
+import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
+import { createTestMcp } from "../../support/mcp/mcpFixture.js";
 import {
   arrayItemSchemaError,
-  booleanLiteralSchemaError,
+  strictGatewayItemSchemaErrors,
+  unsupportedInputLiteralSchemaError,
 } from "../../fixtures/mcpClientSchemaConstraints.js";
 
 interface AdvertisedTool {
@@ -40,58 +36,16 @@ interface AdvertisedTool {
 const serializedBytes = (value: unknown): number =>
   Buffer.byteLength(JSON.stringify(value), "utf8");
 
-const schemaDepth = (value: unknown, depth = 0): number => {
-  if (Array.isArray(value))
-    return Math.max(
-      depth,
-      ...value.map((child) => schemaDepth(child, depth + 1)),
-    );
-  if (typeof value !== "object" || value === null) return depth;
-  return Math.max(
-    depth,
-    ...Object.values(value).map((child) => schemaDepth(child, depth + 1)),
-  );
-};
-
-const unsupportedDependencyKeywords = (
-  schema: unknown,
-  path = "$",
-): readonly string[] => {
-  if (Array.isArray(schema))
-    return schema.flatMap((child, index) =>
-      unsupportedDependencyKeywords(child, `${path}[${index}]`),
-    );
-  if (typeof schema !== "object" || schema === null) return [];
-  return Object.entries(schema).flatMap(([key, value]) => {
-    const childPath = `${path}.${key}`;
-    if (key === "dependencies" || key === "dependentRequired")
-      return [childPath];
-    if (["const", "enum", "default", "examples"].includes(key)) return [];
-    if (schemaMaps.has(key) && typeof value === "object" && value !== null)
-      return Object.entries(value).flatMap(([name, child]) =>
-        unsupportedDependencyKeywords(child, `${childPath}.${name}`),
-      );
-    if (schemaArrays.has(key) && Array.isArray(value))
-      return unsupportedDependencyKeywords(value, childPath);
-    if (schemaChildren.has(key))
-      return unsupportedDependencyKeywords(value, childPath);
-    return [];
-  });
-};
-
 const listToolsThroughTransport = async (
   server: EvidenceMcpServer,
 ): Promise<readonly AdvertisedTool[]> => {
-  const client = new Client({ name: "compact-profile", version: "0" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
-    return (await client.listTools()).tools;
-  } finally {
-    await Promise.allSettled([client.close(), server.close()]);
-  }
+  const mcp = createTestMcp();
+  onTestFinished(() => mcp.close());
+  const client = await mcp.connect(server, {
+    name: "compact-profile",
+    version: "0",
+  });
+  return (await client.listTools()).tools;
 };
 
 const registerCatalog = (server: EvidenceMcpServer): void => {
@@ -108,7 +62,7 @@ const compactServer = (): EvidenceMcpServer =>
     { name: "compact-profile", version: "0" },
     { capabilities: {} },
     undefined,
-    new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
+    createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
     { budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES },
   );
 
@@ -117,7 +71,7 @@ const fullServer = (): EvidenceMcpServer =>
     { name: "full-profile", version: "0" },
     { capabilities: {} },
     undefined,
-    new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
+    createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
   );
 
 describe("MCP compact input schema profile", () => {
@@ -182,23 +136,17 @@ describe("MCP compact input schema profile", () => {
   });
 });
 
-it("advertises every tool input schema within the provider budget", async () => {
+it("advertises item schemas strict gateways accept", async () => {
   const server = compactServer();
   registerCatalog(server);
   const tools = await listToolsThroughTransport(server);
   expect(tools.map(({ name }) => name).sort()).toEqual(
     TOOL_CONTRACTS.map(({ name }) => name).sort(),
   );
-  const oversized = tools.filter(
-    ({ inputSchema }) =>
-      serializedBytes(inputSchema) > COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
-  );
-  expect(oversized.map(({ name }) => name)).toEqual([]);
-  const tooDeep = tools.filter(
-    ({ inputSchema }) => schemaDepth(inputSchema) > 10,
-  );
   expect(
-    tooDeep.map(({ name, inputSchema }) => [name, schemaDepth(inputSchema)]),
+    tools.flatMap(({ name, inputSchema }) =>
+      strictGatewayItemSchemaErrors(inputSchema, name),
+    ),
   ).toEqual([]);
 });
 
@@ -241,6 +189,41 @@ it("detects missing client-required items in nested array alternatives", () => {
   );
 });
 
+it("detects item schemas Gemini declarations reject in schema positions only", () => {
+  // The #5201 report: `properties[functions].items.items: field predicate
+  // failed: $type == Type.ARRAY` for an any-value element type list.
+  expect(
+    strictGatewayItemSchemaErrors(
+      {
+        type: "object",
+        properties: {
+          functions: {
+            type: "array",
+            items: {
+              type: ["null", "boolean", "object", "array", "number", "string"],
+              items: {},
+            },
+          },
+          actions: {
+            type: "array",
+            items: { oneOf: [{ type: "object" }, { type: "string" }] },
+          },
+          nested: {
+            type: "array",
+            items: { type: "array", items: { type: "string" } },
+          },
+        },
+        default: { items: {} },
+        examples: [{ items: {} }],
+      },
+      "injected",
+    ),
+  ).toEqual([
+    'injected.properties.functions.items.items is beside type ["null","boolean","object","array","number","string"]',
+    "injected.properties.actions.items is an untyped union",
+  ]);
+});
+
 it("preserves arbitrary nested JSON values at the converted SDK boundary", async () => {
   const contract = {
     ...toolContract("binary_session"),
@@ -270,6 +253,7 @@ it("preserves arbitrary nested JSON values at the converted SDK boundary", async
 });
 
 it("keeps SDK-converted schemas valid and accepting canonical examples", async () => {
+  let checkedFullRestrictions = false;
   for (const profile of ["full", "compact"] as const) {
     const server = profile === "full" ? fullServer() : compactServer();
     registerCatalog(server);
@@ -284,7 +268,7 @@ it("keeps SDK-converted schemas valid and accepting canonical examples", async (
         `${profile} profile: ${tool.name}`,
       ).toBeUndefined();
       expect(
-        booleanLiteralSchemaError(tool.inputSchema, tool.name),
+        unsupportedInputLiteralSchemaError(tool.inputSchema, tool.name),
       ).toBeUndefined();
       expect(
         ajv.validateSchema(tool.inputSchema),
@@ -298,10 +282,87 @@ it("keeps SDK-converted schemas valid and accepting canonical examples", async (
           `${profile} profile, ${tool.name}: ${example.title}`,
         ).toBe(true);
     }
+    if (profile === "full") {
+      const adb = tools.find(({ name }) => name === "start_adb_activity");
+      const managed = tools.find(
+        ({ name }) => name === "inspect_managed_members",
+      );
+      const wasm = tools.find(({ name }) => name === "inspect_wasm_artifact");
+      if (adb === undefined || managed === undefined || wasm === undefined)
+        throw new Error("Missing ADB, managed member, or WASM inspection tool");
+      const validateAdb = ajv.compile(adb.inputSchema);
+      const activity = {
+        serial: "emulator-5554",
+        action: "android.intent.action.MAIN",
+      };
+      expect(
+        validateAdb({
+          ...activity,
+          extras: [
+            { key: "bool", type: "boolean", value: "false" },
+            { key: "int", type: "int", value: "-3" },
+            { key: "long", type: "long", value: "9007199254740993" },
+            { key: "float", type: "float", value: "-1.25" },
+          ],
+        }),
+      ).toBe(true);
+      for (const [type, value] of [
+        ["boolean", ""],
+        ["boolean", "yes"],
+        ["int", "1.5"],
+        ["long", ""],
+        ["float", "garbage"],
+      ])
+        expect(
+          validateAdb({
+            ...activity,
+            extras: [{ key: "invalid", type, value }],
+          }),
+          `${type}: ${value}`,
+        ).toBe(false);
+      const validateManaged = ajv.compile(managed.inputSchema);
+      expect(
+        validateManaged({
+          path: "/artifacts/program.dll",
+          type_names: ["Fixture.Program", "Missing.Type"],
+        }),
+      ).toBe(true);
+      expect(
+        validateManaged({
+          path: "/artifacts/program.dll",
+          type_names: ["Fixture.Program", "Fixture.Program"],
+        }),
+      ).toBe(false);
+      const validateWasm = ajv.compile(wasm.inputSchema);
+      expect(
+        validateWasm({ path: "/artifacts/program", detail: "summary" }),
+      ).toBe(true);
+      expect(
+        validateWasm({ path: "/artifacts/program", detail: "brief" }),
+      ).toBe(false);
+      for (const command_timeout_ms of [1, 42_000, 2_147_483_647])
+        expect(
+          validateWasm({ path: "/artifacts/program", command_timeout_ms }),
+        ).toBe(true);
+      for (const command_timeout_ms of [
+        0,
+        -1,
+        1.5,
+        2_147_483_648,
+        "1000",
+        null,
+      ])
+        expect(
+          validateWasm({ path: "/artifacts/program", command_timeout_ms }),
+          String(command_timeout_ms),
+        ).toBe(false);
+      checkedFullRestrictions = true;
+    }
   }
+  expect(checkedFullRestrictions).toBe(true);
 });
 
-it("omits Gemini-unsupported dependency keywords from both catalog profiles", async () => {
+it("states dependency keywords as prose in both catalog profiles", async () => {
   const full = fullServer();
   const compact = compactServer();
   registerCatalog(full);
@@ -310,14 +371,6 @@ it("omits Gemini-unsupported dependency keywords from both catalog profiles", as
     listToolsThroughTransport(full),
     listToolsThroughTransport(compact),
   ]);
-  for (const tools of [fullTools, compactTools])
-    expect(
-      tools.flatMap(({ name, inputSchema }) =>
-        unsupportedDependencyKeywords(inputSchema).map(
-          (path) => `${name}${path.slice(1)}`,
-        ),
-      ),
-    ).toEqual([]);
   const sqlite = fullTools.find(
     ({ name }) => name === "inspect_sqlite_database",
   );
@@ -394,36 +447,33 @@ describe("MCP compact input schema canonical enforcement", () => {
         };
       },
     );
-    const client = new Client({ name: "compact-validation", version: "0" });
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    try {
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
-      const advertised = (await client.listTools()).tools.find(
-        ({ name }) => name === contract.name,
-      );
-      if (advertised === undefined)
-        throw new Error("Process capture tool was not advertised");
-      const ajv = new Ajv2020({ strict: false, validateFormats: false });
-      const validate = ajv.compile(advertised.inputSchema);
-      const valid = { executable: "node", environment: { APP_MODE: "test" } };
-      const reserved = {
-        executable: "node",
-        environment: { REA_PROCESS_RUN_ID: "caller-value" },
-      };
-      expect(validate(valid)).toBe(true);
-      expect(processScenarioSchema.safeParse(valid).success).toBe(true);
-      expect(processScenarioSchema.safeParse(reserved).success).toBe(false);
-      const result = await client.callTool({
-        name: contract.name,
-        arguments: reserved,
-      });
-      expect(result.isError).toBe(true);
-      expect(handlerCalled).toBe(false);
-    } finally {
-      await Promise.allSettled([client.close(), server.close()]);
-    }
+    const mcp = createTestMcp();
+    onTestFinished(() => mcp.close());
+    const client = await mcp.connect(server, {
+      name: "compact-validation",
+      version: "0",
+    });
+    const advertised = (await client.listTools()).tools.find(
+      ({ name }) => name === contract.name,
+    );
+    if (advertised === undefined)
+      throw new Error("Process capture tool was not advertised");
+    const ajv = new Ajv2020({ strict: false, validateFormats: false });
+    const validate = ajv.compile(advertised.inputSchema);
+    const valid = { executable: "node", environment: { APP_MODE: "test" } };
+    const reserved = {
+      executable: "node",
+      environment: { REA_PROCESS_RUN_ID: "caller-value" },
+    };
+    expect(validate(valid)).toBe(true);
+    expect(processScenarioSchema.safeParse(valid).success).toBe(true);
+    expect(processScenarioSchema.safeParse(reserved).success).toBe(false);
+    const result = await client.callTool({
+      name: contract.name,
+      arguments: reserved,
+    });
+    expect(result.isError).toBe(true);
+    expect(handlerCalled).toBe(false);
   });
 
   it("compacts plain standard schemas that are not Zod instances", async () => {
@@ -506,30 +556,115 @@ it.each(["full", "compact"] as const)(
       calls++;
       return { content: [{ type: "text", text: "accepted" }] };
     });
-    const client = new Client({ name: "resource-scope", version: "1" });
-    const [ct, st] = InMemoryTransport.createLinkedPair();
-    try {
-      await server.connect(st);
-      await client.connect(ct);
-      const definition = (await client.listTools()).tools.find(
-        ({ name }) => name === "resource_fixture",
-      );
-      if (definition === undefined) throw new Error("Missing resource fixture");
-      const advertised = new Ajv2020({ strict: false }).compile(
-        definition.inputSchema,
-      );
-      for (const value of [7, "seven"]) {
-        const args = { child: { value } };
-        expect(advertised(args)).toBe(canonical(args));
-        const result = await client.callTool({
-          name: "resource_fixture",
-          arguments: args,
-        });
-        expect(result.isError === true).toBe(!canonical(args));
-      }
-      expect(calls).toBe(1);
-    } finally {
-      await Promise.allSettled([client.close(), server.close()]);
+    const mcp = createTestMcp();
+    onTestFinished(() => mcp.close());
+    const client = await mcp.connect(server, {
+      name: "resource-scope",
+      version: "1",
+    });
+    const definition = (await client.listTools()).tools.find(
+      ({ name }) => name === "resource_fixture",
+    );
+    if (definition === undefined) throw new Error("Missing resource fixture");
+    const advertised = new Ajv2020({ strict: false }).compile(
+      definition.inputSchema,
+    );
+    for (const value of [7, "seven"]) {
+      const args = { child: { value } };
+      expect(advertised(args)).toBe(canonical(args));
+      const result = await client.callTool({
+        name: "resource_fixture",
+        arguments: args,
+      });
+      expect(result.isError === true).toBe(!canonical(args));
+    }
+    expect(calls).toBe(1);
+  },
+);
+
+it("keeps root detail guidance so callers can choose bounded summaries", async () => {
+  const full = fullServer();
+  const compact = compactServer();
+  registerCatalog(full);
+  registerCatalog(compact);
+  const [fullTools, compactTools] = await Promise.all([
+    listToolsThroughTransport(full),
+    listToolsThroughTransport(compact),
+  ]);
+  const detailGuidance = (tools: readonly AdvertisedTool[]) =>
+    Object.fromEntries(
+      tools.flatMap(({ name, inputSchema }) => {
+        const detail = (
+          inputSchema.properties as Record<string, Record<string, unknown>>
+        )?.detail;
+        return typeof detail?.description === "string"
+          ? [[name, detail.description]]
+          : [];
+      }),
+    );
+  const expected = detailGuidance(fullTools);
+  expect(Object.keys(expected)).toEqual(
+    expect.arrayContaining(["inspect_artifact", "inspect_macho"]),
+  );
+  expect(detailGuidance(compactTools)).toEqual(expected);
+});
+
+it.each([
+  [
+    "export_environment_bundle",
+    "name",
+    {
+      source: { kind: "evidence-file", path: "/capture.json" },
+      output_directory: "/bundle",
+    },
+  ],
+  [
+    "measure_build_task",
+    "task",
+    { bundle: "/bundle", model: "test-model", budget_usd: 1 },
+  ],
+] as const)(
+  "advertises portable names for %s through the SDK",
+  async (name, field, base) => {
+    const contract = toolContract(name);
+    const server = fullServer();
+    server.registerTool(
+      contract.name,
+      toolRegistrationOptions(contract),
+      async () => ({ content: [] }),
+    );
+    const tool = (await listToolsThroughTransport(server)).find(
+      ({ name }) => name === contract.name,
+    );
+    expect(tool).toBeDefined();
+    const ajv = new Ajv2020({ strict: false, validateFormats: false });
+    const validate = ajv.compile(tool!.inputSchema);
+    for (const [name, accepted] of [
+      [undefined, field === "name"],
+      ["replay-2", true],
+      ["123-replay", true],
+      ["a".repeat(63), true],
+      ["a".repeat(64), false],
+      ["../escape", false],
+      ["Uppercase", false],
+      ["two--hyphens", false],
+      ["trailing\n", false],
+      ["con", false],
+      ["com1", false],
+      ["lpt9", false],
+      ["123", false],
+      ["0128", false],
+      ["0x", false],
+      ["0xffffffff", false],
+      ["0xg", true],
+      ["com10", true],
+    ] as const) {
+      const input = {
+        ...base,
+        ...(name === undefined ? {} : { [field]: name }),
+      };
+      expect(validate(input), JSON.stringify(input)).toBe(accepted);
+      expect(contract.inputSchema.safeParse(input).success).toBe(accepted);
     }
   },
 );

@@ -1,9 +1,133 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 
+import { nativeLoadImageObservationFixture } from "../../tests/fixtures/nativeLoadImage.js";
 import {
   parseGhidraInventoryInput,
   parseGhidraInventoryResult,
 } from "./GhidraInventoryValues.js";
+
+it.each(["search_procedures", "search_strings"] as const)(
+  "%s retains bridge document selection and native search defaults",
+  (operation) => {
+    for (const selection of [{}, { document: null }, { document: "fixture" }]) {
+      expect(
+        parseGhidraInventoryInput(operation, {
+          pattern: "entry",
+          ...selection,
+        }),
+      ).toEqual({
+        ok: true,
+        namingRequest: null,
+        value: {
+          pattern: "entry",
+          mode: "literal",
+          case_sensitive: false,
+          document: selection.document ?? null,
+        },
+      });
+    }
+    expect(
+      parseGhidraInventoryInput(operation, { pattern: "entry", document: "" })
+        .ok,
+    ).toBe(false);
+    expect(
+      parseGhidraInventoryInput(operation, {
+        pattern: "Entry.*",
+        mode: "regex",
+        case_sensitive: true,
+      }),
+    ).toEqual({
+      ok: true,
+      namingRequest: null,
+      value: {
+        pattern: "Entry.*",
+        mode: "regex",
+        case_sensitive: true,
+        document: null,
+      },
+    });
+  },
+);
+
+it.each(["other", 42, null, {}])(
+  "rejects an invalid own destination with value %j before admitting any batch naming subset",
+  (value) => {
+    const input = {
+      names: Object.fromEntries([
+        ["0x1000", "entry"],
+        ["__proto__", value],
+      ]),
+    };
+    expect(
+      parseGhidraInventoryInput("set_addresses_names", input),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisInputError",
+        issues: [{ path: ["names", "__proto__"] }],
+      },
+    });
+    expect(Object.keys(input.names)).toEqual(["0x1000", "__proto__"]);
+  },
+);
+
+it.each(["list_procedures", "search_procedures"] as const)(
+  "preserves real bridge symbol provenance in %s",
+  (operation) => {
+    // Symbol captured from Ghidra 12.1.4 on the source-owned PowerPC DOL fixture.
+    const rows = [
+      {
+        address: "0x80003130",
+        value: "__start",
+        symbol: {
+          primary: true,
+          dynamic: false,
+          external: false,
+          type: "function",
+          source: "user_defined",
+        },
+        procedure: { external: false, thunk: false, thunk_target: null },
+      },
+    ];
+    expect(parseGhidraInventoryResult(operation, rows, null)).toEqual({
+      ok: true,
+      value: { value: rows },
+    });
+  },
+);
+
+describe("native load-image result projection", () => {
+  it("omits raw bridge output when the observation keeps every reported fact", () => {
+    const observations = JSON.parse(
+      JSON.stringify(nativeLoadImageObservationFixture()),
+    );
+    const parsed = parseGhidraInventoryResult(
+      "inspect_native_load_image",
+      observations,
+      null,
+    );
+    if (!parsed.ok) throw parsed.error;
+    expect(parsed.value.value).toEqual(observations);
+    expect(parsed.value.rawResult).toBeUndefined();
+  });
+
+  it("omits entry-context rows without register observations", () => {
+    const observations = JSON.parse(
+      JSON.stringify({
+        ...nativeLoadImageObservationFixture(),
+        entry_context: [{ address: "ram:0x0010", registers: [] }],
+      }),
+    );
+    const parsed = parseGhidraInventoryResult(
+      "inspect_native_load_image",
+      observations,
+      null,
+    );
+    if (!parsed.ok) throw parsed.error;
+    expect(parsed.value.value).toMatchObject({ entry_context: [] });
+  });
+});
 
 it("validates large masked byte queries at the provider boundary without changing caller spelling", () => {
   const input = {
@@ -11,7 +135,6 @@ it("validates large masked byte queries at the provider boundary without changin
     mask: "ff00".repeat(1024 * 1024),
   };
   const parsed = parseGhidraInventoryInput("search_bytes", input);
-  expect(parsed.ok).toBe(true);
   if (!parsed.ok) throw parsed.error;
   expect(parsed.value.pattern === input.pattern).toBe(true);
   expect(parsed.value.mask === input.mask).toBe(true);
@@ -42,6 +165,7 @@ describe("provider-owned overview boundary", () => {
       parseGhidraInventoryInput("read_binary_inventory_summary", {}),
     ).toEqual({
       ok: true,
+      namingRequest: null,
       value: {},
     });
     expect(
@@ -50,7 +174,11 @@ describe("provider-owned overview boundary", () => {
       }).ok,
     ).toBe(false);
     expect(
-      parseGhidraInventoryResult("read_binary_inventory_summary", overview),
+      parseGhidraInventoryResult(
+        "read_binary_inventory_summary",
+        overview,
+        null,
+      ),
     ).toEqual({
       ok: true,
       value: { value: { ...overview, segment_count: 0 }, rawResult: overview },
@@ -81,6 +209,7 @@ describe("provider-owned overview boundary", () => {
     const parsed = parseGhidraInventoryResult(
       "read_binary_inventory_summary",
       reported,
+      null,
     );
     if (!parsed.ok) throw parsed.error;
     expect(parsed.value.rawResult).toEqual(reported);
@@ -101,10 +230,14 @@ describe("provider-owned overview boundary", () => {
     { extra: "unexpected" },
   ])("rejects malformed aggregates before creating Evidence: %j", (change) => {
     expect(
-      parseGhidraInventoryResult("read_binary_inventory_summary", {
-        ...overview,
-        ...change,
-      }).ok,
+      parseGhidraInventoryResult(
+        "read_binary_inventory_summary",
+        {
+          ...overview,
+          ...change,
+        },
+        null,
+      ).ok,
     ).toBe(false);
   });
 });
@@ -114,6 +247,7 @@ describe("containing-procedure complete body evidence", () => {
   const identity = () => ({
     address: "0x1000",
     name: "fixture_function",
+    symbol: null,
     classification: {
       external: false,
       thunk: false,
@@ -142,10 +276,14 @@ describe("containing-procedure complete body evidence", () => {
     const { body: omitted, ...legacy } = identity();
     expect(omitted.total_bytes).toBe(5);
     expect(
-      parseGhidraInventoryResult("resolve_containing_procedure", {
-        ...found(),
-        procedure: legacy,
-      }).ok,
+      parseGhidraInventoryResult(
+        "resolve_containing_procedure",
+        {
+          ...found(),
+          procedure: legacy,
+        },
+        null,
+      ).ok,
     ).toBe(false);
   });
   it.each([
@@ -171,10 +309,14 @@ describe("containing-procedure complete body evidence", () => {
   ])("rejects malformed or contradictory body evidence %j", (change) => {
     const procedure = identity();
     expect(
-      parseGhidraInventoryResult("resolve_containing_procedure", {
-        ...found(),
-        procedure: { ...procedure, body: { ...procedure.body, ...change } },
-      }).ok,
+      parseGhidraInventoryResult(
+        "resolve_containing_procedure",
+        {
+          ...found(),
+          procedure: { ...procedure, body: { ...procedure.body, ...change } },
+        },
+        null,
+      ).ok,
     ).toBe(false);
   });
   it("accepts canonically encoded address-space endpoints with an unknown enclosing span", () => {
@@ -188,19 +330,242 @@ describe("containing-procedure complete body evidence", () => {
       span_bytes: null,
     };
     expect(
-      parseGhidraInventoryResult("resolve_containing_procedure", {
-        ...found(),
-        procedure: { ...procedure, body },
-      }).ok,
+      parseGhidraInventoryResult(
+        "resolve_containing_procedure",
+        {
+          ...found(),
+          procedure: { ...procedure, body },
+        },
+        null,
+      ).ok,
     ).toBe(true);
   });
 
   it("does not accept a found query that lies in the gap between body ranges", () => {
     expect(
-      parseGhidraInventoryResult("resolve_containing_procedure", {
-        ...found(),
-        query_address: "0x1010",
-      }).ok,
+      parseGhidraInventoryResult(
+        "resolve_containing_procedure",
+        {
+          ...found(),
+          query_address: "0x1010",
+        },
+        null,
+      ).ok,
     ).toBe(false);
   });
 });
+
+const byteSearch = (space = "") => ({
+  matches: [
+    {
+      address: `${space}0x000a`,
+      segment: "text",
+      file_offset: 10,
+      procedure: { address: `${space}0x0008`, name: "entry" },
+    },
+  ],
+  searched: {
+    blocks: [
+      {
+        segment: "text",
+        start: `${space}0x0000`,
+        end: `${space}0x000f`,
+        bytes: 16,
+      },
+    ],
+    bytes: 16,
+    skipped_uninitialized: [
+      {
+        segment: "bss",
+        start: `${space}0x0020`,
+        end: `${space}0x002f`,
+        bytes: 16,
+      },
+    ],
+    skipped_not_loaded: [
+      {
+        segment: "unloaded",
+        start: `${space}0x0030`,
+        end: `${space}0x003f`,
+        bytes: 16,
+      },
+    ],
+    skipped_overlays: [
+      {
+        segment: "overlay",
+        start: `${space}0x0040`,
+        end: `${space}0x004f`,
+        bytes: 16,
+      },
+    ],
+  },
+  complete: true,
+  next_cursor: null as string | null,
+});
+
+it.each(["", "ram%3Aoverlay:"])(
+  "preserves padded byte-search coordinates in space %j",
+  (space) => {
+    const value = byteSearch(space);
+    expect(parseGhidraInventoryResult("search_bytes", value, null)).toEqual({
+      ok: true,
+      value: { value },
+    });
+  },
+);
+
+it.each([
+  ["match", ["matches", 0, "address"]],
+  ["procedure", ["matches", 0, "procedure", "address"]],
+  ["block start", ["searched", "blocks", 0, "start"]],
+  ["block end", ["searched", "blocks", 0, "end"]],
+  ["uninitialized start", ["searched", "skipped_uninitialized", 0, "start"]],
+  ["uninitialized end", ["searched", "skipped_uninitialized", 0, "end"]],
+  ["unloaded start", ["searched", "skipped_not_loaded", 0, "start"]],
+  ["unloaded end", ["searched", "skipped_not_loaded", 0, "end"]],
+  ["overlay start", ["searched", "skipped_overlays", 0, "start"]],
+  ["overlay end", ["searched", "skipped_overlays", 0, "end"]],
+] as const)(
+  "rejects noncanonical %s at its owning address field",
+  (_label, path) => {
+    const value = byteSearch("ram%3Aoverlay:");
+    let object: unknown = value;
+    for (const part of path.slice(0, -1))
+      object = Reflect.get(object as object, part);
+    const field = path.at(-1)!;
+    const address: unknown = Reflect.get(object as object, field);
+    if (typeof address !== "string")
+      throw new Error("Expected an address fixture");
+    Reflect.set(object as object, field, address.replace("%3A", "%3a"));
+    const result = parseGhidraInventoryResult("search_bytes", value, null);
+    if (result.ok) throw new Error("Expected canonical-address refusal");
+    expect(result.error.cause).toBeInstanceOf(z.ZodError);
+    if (!(result.error.cause instanceof z.ZodError))
+      throw new Error("Expected field schema issues");
+    expect(result.error.cause.issues).toContainEqual(
+      expect.objectContaining({ path: [...path] }),
+    );
+  },
+);
+
+it("retains byte-search match capacity and coverage/continuation rules", () => {
+  const overCapacity = byteSearch();
+  overCapacity.matches = Array.from(
+    { length: 1001 },
+    () => overCapacity.matches[0]!,
+  );
+  expect(
+    parseGhidraInventoryResult("search_bytes", overCapacity, null).ok,
+  ).toBe(false);
+  overCapacity.matches.pop();
+  expect(
+    parseGhidraInventoryResult("search_bytes", overCapacity, null).ok,
+  ).toBe(true);
+  const continuation = byteSearch();
+  continuation.next_cursor = "next";
+  expect(
+    parseGhidraInventoryResult("search_bytes", continuation, null).ok,
+  ).toBe(false);
+  const outside = byteSearch();
+  outside.matches[0]!.address = "0x0010";
+  expect(parseGhidraInventoryResult("search_bytes", outside, null).ok).toBe(
+    false,
+  );
+  const range = byteSearch();
+  range.searched.skipped_not_loaded[0]!.bytes = 15;
+  expect(parseGhidraInventoryResult("search_bytes", range, null).ok).toBe(
+    false,
+  );
+});
+
+describe("naming reply request identity", () => {
+  it.each([
+    {
+      operation: "set_address_name",
+      request: { address: "0x1000", name: "entry" },
+      results: { "0x9000": true },
+    },
+    {
+      operation: "set_addresses_names",
+      request: { names: { "0x1000": "entry" } },
+      results: { "0x9000": true },
+    },
+    {
+      operation: "set_addresses_names",
+      request: { names: { "0x1000": "entry", "0x2000": "other" } },
+      results: { "0x1000": true },
+    },
+    {
+      operation: "set_addresses_names",
+      request: { names: { "0X1000": "entry", "0x1000": "entry" } },
+      results: { "0x1000": true },
+    },
+  ] as const)(
+    "refuses unrelated or missing outcomes: $operation $results",
+    ({ operation, request, results }) => {
+      const admitted = parseGhidraInventoryInput(operation, request);
+      expect(admitted.ok).toBe(true);
+      if (!admitted.ok) return;
+      const reply = { results, failures: {}, conflicts: [] };
+      const parsed = parseGhidraInventoryResult(
+        operation,
+        reply,
+        admitted.namingRequest,
+      );
+      expect(parsed).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisOutputError",
+          diagnostics: { bridge_result: reply, mutation_outcome: "unknown" },
+        },
+      });
+    },
+  );
+
+  it("retains distinct request spellings even when addresses alias", () => {
+    const admitted = parseGhidraInventoryInput("set_addresses_names", {
+      names: { "0X1000": "entry", "0x1000": "entry" },
+    });
+    expect(admitted.ok).toBe(true);
+    if (!admitted.ok) return;
+    const results = { "0X1000": true, "0x1000": true };
+    expect(
+      parseGhidraInventoryResult(
+        "set_addresses_names",
+        { results, failures: {}, conflicts: [] },
+        admitted.namingRequest,
+      ),
+    ).toEqual({ ok: true, value: { value: results } });
+  });
+});
+
+it.each([
+  {},
+  { names: {} },
+  { names: null },
+  { names: [] },
+  { names: "0x1000" },
+])(
+  "refuses an invalid or empty naming request before producing key facts: %j",
+  (request) => {
+    expect(
+      parseGhidraInventoryInput("set_addresses_names", request),
+    ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
+  },
+);
+
+it.each([null, { keys: [] }])(
+  "refuses an empty reply without admitted nonempty keys: %j",
+  (request) => {
+    const reply = { results: {}, failures: {}, conflicts: [] };
+    expect(
+      parseGhidraInventoryResult("set_addresses_names", reply, request),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisOutputError",
+        diagnostics: { bridge_result: reply, mutation_outcome: "unknown" },
+      },
+    });
+  },
+);

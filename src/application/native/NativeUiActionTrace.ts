@@ -1,3 +1,6 @@
+import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { permitsCapabilityFallback } from "../CapabilityFallback.js";
+import { stopsTraversal } from "../CallRelationshipTraversal.js";
 import { z } from "zod";
 
 import type { AnalysisOperationPort } from "../AnalysisProvider.js";
@@ -12,6 +15,7 @@ import {
 } from "../../domain/native/nativeInvestigationGraph.js";
 import { nativeDispatchMetadataResultSchema } from "../../domain/native/objcSwiftMetadata.js";
 import { inspectNativeDispatch } from "./NativeDispatchMetadataInspection.js";
+import { parseProcedureAddress } from "../ProcedureAddressResolution.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { readNativeCallRoutes } from "./NativeCallRoutes.js";
 import {
@@ -48,9 +52,33 @@ export const traceNativeUiAction = async (
     ),
     inspectNativeDispatch(analysis, 20_000, { signal }),
   ]);
-  if (!uiExecution.ok && uiExecution.error._tag === "AnalysisCancelledError")
-    return err(uiExecution.error);
-  if (!metadataExecution.ok) return err(metadataExecution.error);
+  if (!uiExecution.ok && !metadataExecution.ok) {
+    const primary =
+      uiExecution.error._tag === "AnalysisCancelledError"
+        ? uiExecution.error
+        : metadataExecution.error;
+    const secondary =
+      primary === uiExecution.error
+        ? metadataExecution.error
+        : uiExecution.error;
+    if (secondary.cleanupIncomplete)
+      return err(
+        analysisErrorWithCleanupFailure(
+          primary,
+          secondary,
+          "trace_native_ui_action",
+        ).bindCleanupDependencies([primary, secondary]),
+      );
+    if (primary.cleanupIncomplete) primary.retainSecondaryFailure(secondary);
+    return err(primary);
+  }
+  if (
+    !uiExecution.ok &&
+    (uiExecution.error._tag === "AnalysisCancelledError" ||
+      uiExecution.error.cleanupIncomplete)
+  )
+    return uiExecution;
+  if (!metadataExecution.ok) return metadataExecution;
   const metadata = nativeDispatchMetadataResultSchema.parse(
     metadataExecution.value,
   );
@@ -65,6 +93,8 @@ export const traceNativeUiAction = async (
 
   let graph = emptyGraph(targetSha256, metadata.provider);
   const coverage = [];
+  let uiOutputBoundReached = false;
+  let sourceGraphTruncated = false;
   if (uiExecution.ok) {
     const decoded = interfaceBuilderAnalysisSchema.safeParse(
       uiExecution.value.result,
@@ -106,8 +136,10 @@ export const traceNativeUiAction = async (
       examined: archiveDecode?.examined ?? decoded.data.documents.length,
       omitted: archiveDecode?.omitted ?? 0,
     });
+    sourceGraphTruncated = graph.truncated;
     const bounded = boundUiGraph(graph, input.max_nodes, input.max_edges);
     graph = bounded.graph;
+    uiOutputBoundReached = bounded.truncated;
     if (bounded.truncated)
       coverage.push({
         facet: "interface_builder_graph",
@@ -134,34 +166,30 @@ export const traceNativeUiAction = async (
       { procedure: input.action },
       signal === undefined ? {} : { signal },
     );
-    if (!native.ok && native.error._tag === "AnalysisCancelledError")
-      return err(native.error);
-    if (
-      !native.ok &&
-      native.error._tag !== "AnalysisCapabilityUnavailableError"
-    )
+    if (!native.ok && !permitsCapabilityFallback(native.error))
       return err(native.error);
     if (native.ok) {
-      const address = z.string().safeParse(native.value.result);
-      if (!address.success || native.value.subject?.sha256 !== targetSha256)
+      const address = parseProcedureAddress(native.value.result);
+      if (!address.ok) return address;
+      if (native.value.subject?.sha256 !== targetSha256)
         return err(
           new AnalysisOutputError(
             NATIVE_UI_ACTION_OPERATIONS.nativeSeed,
-            "Native seed lacks a validated address or matching target identity",
+            "Native seed lacks matching target identity",
           ),
         );
-      const id = `native:function:${address.data}`;
+      const id = `native:function:${address.value}`;
       graph.nodes.push({
         id,
         kind: "function",
         name: input.action,
-        location: { address: address.data, file_offset: null },
+        location: { address: address.value, file_offset: null },
         attributes: { resolved_by: native.value.provider.id },
         evidence: [
           {
             kind: "reference",
             description: `Provider resolved the explicit native seed ${input.action}`,
-            location: { address: address.data, file_offset: null },
+            location: { address: address.value, file_offset: null },
             artifact_path: null,
             artifact_sha256: targetSha256,
           },
@@ -181,7 +209,7 @@ export const traceNativeUiAction = async (
       edges: [],
       unresolved: [],
       reached_depth: 0,
-      truncated: graph.truncated,
+      truncated: graph.truncated || uiOutputBoundReached,
       reason: selected.reason,
       coverage,
       limitations: [
@@ -233,7 +261,7 @@ export const traceNativeUiAction = async (
     nodes: expanded.nodes,
     edges: expanded.edges,
     coverage: [...graph.coverage, ...coverage],
-    truncated: graph.truncated || expanded.truncated,
+    truncated: sourceGraphTruncated,
   });
   const trace = traceNativeInvestigationGraph(finalGraph, {
     start: selected.nodeId,
@@ -244,19 +272,40 @@ export const traceNativeUiAction = async (
       max_edges: input.max_edges,
     },
   });
+  // Expansion starts from the bounded initial trace; its omitted relationships
+  // cannot be recovered merely by tracing that reduced graph again.
+  const initialCutoffReason =
+    initial.truncated && initial.reason !== "source_graph_truncated"
+      ? initial.reason
+      : null;
+  const reason =
+    trace.reason !== null && trace.reason !== "source_graph_truncated"
+      ? trace.reason
+      : (initialCutoffReason ??
+        (uiOutputBoundReached ? "native_trace_output_bound_reached" : null) ??
+        (expanded.truncated ? "native_call_traversal_bound_reached" : null) ??
+        trace.reason);
   return ok(
     jsonValueSchema.parse(
       nativeInvestigationTraceSchema.parse({
         ...trace,
-        truncated: trace.truncated || expanded.truncated || graph.truncated,
-        reason:
-          expanded.truncated && trace.reason === null
-            ? "native_call_traversal_bound_reached"
-            : graph.truncated && trace.reason === null
-              ? "native_trace_output_bound_reached"
-              : trace.reason,
+        truncated:
+          trace.truncated ||
+          initial.truncated ||
+          expanded.truncated ||
+          uiOutputBoundReached,
+        reason,
         limitations: [
           ...trace.limitations,
+          ...(initialCutoffReason !== null && initialCutoffReason !== reason
+            ? [
+                `The initial UI graph trace stopped traversal: ${initialCutoffReason}.`,
+              ]
+            : []),
+          ...(expanded.truncated &&
+          reason !== "native_call_traversal_bound_reached"
+            ? ["Native call expansion stopped at a traversal bound."]
+            : []),
           ...renderSourceLimitations(expanded.limitations),
         ],
       }),
@@ -436,10 +485,7 @@ const expandNativeCalls = async (input: {
     );
     examined += 1;
     sourceLimitations.push(...execution.limitations);
-    if (
-      !execution.outcome.ok &&
-      execution.outcome.error._tag === "AnalysisCancelledError"
-    )
+    if (!execution.outcome.ok && stopsTraversal(execution.outcome.error))
       return { error: execution.outcome.error };
     const unknowns = execution.unknowns;
     for (const [index, unknown] of unknowns.entries()) {

@@ -15,7 +15,6 @@ it("retains the caller abort reason when the socket signal is already aborted", 
     controller.signal,
   );
 
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected cancellation");
   expect(result.error).toBeInstanceOf(HopperCancelledError);
   expect(result.error.cause).toBe(reason);

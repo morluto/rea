@@ -41,11 +41,20 @@ describe("managed PE fixture layout", () => {
     });
 
     expect(
-      image.subarray(rawOffset(0x2800), rawOffset(0x2800) + firstBody.length),
-    ).toEqual(firstBody);
+      Buffer.compare(
+        image.subarray(rawOffset(0x2800), rawOffset(0x2800) + firstBody.length),
+        firstBody,
+      ),
+    ).toBe(0);
     expect(
-      image.subarray(rawOffset(0x2840), rawOffset(0x2840) + secondBody.length),
-    ).toEqual(secondBody);
+      Buffer.compare(
+        image.subarray(
+          rawOffset(0x2840),
+          rawOffset(0x2840) + secondBody.length,
+        ),
+        secondBody,
+      ),
+    ).toBe(0);
     const inspected = inspectManagedMembersBytes(
       image,
       managedPeFixtureTarget(image),
@@ -92,11 +101,14 @@ describe("managed PE fixture layout", () => {
     expect(layout.cli.resources.size).toBe(resourceData.length + 4);
     expect(image.readUInt32LE(directoryOffset)).toBe(resourceData.length);
     expect(
-      image.subarray(
-        directoryOffset + 4,
-        directoryOffset + 4 + resourceData.length,
+      Buffer.compare(
+        image.subarray(
+          directoryOffset + 4,
+          directoryOffset + 4 + resourceData.length,
+        ),
+        resourceData,
       ),
-    ).toEqual(resourceData);
+    ).toBe(0);
     expect(inspection.classification.status).toBe("managed");
     expect(inspection.resources).toMatchObject([
       {

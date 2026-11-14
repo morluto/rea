@@ -5,11 +5,13 @@ import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { parseCliJsonInput } from "../cliJsonInput.js";
 import { logCliCommand } from "../cliLogging.js";
 import { compareSourceToBundleCliInputSchema } from "../contracts/javascript/applicationWorkflowInputContracts.js";
-import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { getEvidenceInputContract } from "../domain/evidenceInputContract.js";
 import { withCommandCancellation } from "./commandCancellation.js";
-import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { jsonInputArgument } from "./jsonInputArgument.js";
+import {
+  evidenceBundleOption,
+  runEvidenceInputCommand,
+} from "./evidenceInputCommand.js";
 
 /** CLI file transport delegates graph authentication and comparison to the same owners as MCP. */
 export const registerSourceToBundleCommand = (
@@ -21,53 +23,40 @@ export const registerSourceToBundleCommand = (
     description:
       "Compare historical source (inline graph or reference {kind:file,path}) with authenticated application Evidence. Save the complete JSON to query with inspect-analysis-view.",
     args: z.object({
-      inputJson: z.string().describe("Inline workflow JSON or JSON file path"),
+      inputJson: jsonInputArgument(
+        "Inline workflow JSON or JSON file path",
+        getEvidenceInputContract(compareSourceToBundleCliInputSchema)
+          .frameSchema,
+      ),
     }),
-    run: ({ args }) =>
+    options: z.object({ evidenceBundle: evidenceBundleOption }),
+    run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, name, async () => {
           const input = await parseCliJsonInput(args.inputJson, name, signal);
           if (!input.ok) return input.error;
-          const parsed = compareSourceToBundleCliInputSchema.safeParse(
-            input.value,
-          );
-          if (!parsed.success)
-            return {
-              error: "Application workflow failed",
-              ...projectAnalysisError(
-                analysisInputErrorFromIssues(
-                  name,
-                  parsed.error.issues,
-                  input.value,
-                ),
-              ),
-            };
-          const resources = new ArtifactResourceScope();
-          const result = await finishAnalysisCommand(
-            async () => {
-              const { resolveSourceToBundleReference } =
-                await import("../application/javascript/SourceToBundleReference.js");
-              const reference = await resolveSourceToBundleReference(
-                parsed.data.reference,
-                signal,
-                resources,
-              );
-              if (!reference.ok) return reference;
-              const { compareSourceToBundleEvidenceValidated } =
-                await import("../application/javascript/JavaScriptApplicationWorkflowService.js");
-              return compareSourceToBundleEvidenceValidated({
-                ...reference.value,
-                application: parsed.data.application,
-              });
-            },
-            resources,
-            "javascript-application-workflow",
+          const result = await runEvidenceInputCommand(
             "compare_source_to_bundle",
+            options.evidenceBundle,
             signal,
+            async (lookup, resources) => {
+              const { executeSourceToBundleComparison } =
+                await import("../application/javascript/JavaScriptApplicationWorkflowService.js");
+              const compared = await executeSourceToBundleComparison(
+                input.value,
+                compareSourceToBundleCliInputSchema,
+                lookup,
+                resources,
+                { signal },
+              );
+              return compared.ok
+                ? { ok: true, value: compared.value.evidence }
+                : compared;
+            },
           );
-          return "evidence_id" in result
-            ? result
-            : { error: "Application workflow failed", ...result };
+          return result.ok
+            ? result.value
+            : { error: "Application workflow failed", ...result.error };
         }),
       ),
   });

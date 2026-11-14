@@ -1,9 +1,14 @@
+import { ConfigurationError } from "../domain/configurationErrors.js";
+import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { readFileSync } from "node:fs";
 import { Worker } from "node:worker_threads";
 
 import { z } from "zod";
 
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import type {
+  AnalysisError,
+  AnalysisErrorOptions,
+} from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
@@ -13,12 +18,15 @@ import {
 import { err, ok, type Result } from "../domain/result.js";
 import {
   DEFAULT_REGEX_MATCHING_DEADLINE,
+  REGEX_MATCHING_DEADLINE_SETTING,
+  regexMatchingDeadlineContinuingRecovery,
   regexMatchingDeadlineRecovery,
   type RegexMatchingDeadline,
 } from "../config/regexMatchingDeadline.js";
 import {
   DEFAULT_REGEX_WORKER_HEAP_REQUEST,
   REGEX_WORKER_HEAP_REQUEST_SETTING,
+  regexWorkerHeapRequestContinuingRecovery,
   regexWorkerHeapRequestRecovery,
   type RegexWorkerHeapRequest,
 } from "../config/regexWorkerHeapRequest.js";
@@ -402,8 +410,8 @@ const launchRegexWorkerHeap = resolveLaunchRegexWorkerHeap(
 const heapBound = (
   heap: RegexWorkerHeapLimit,
   request: RegexWorkerHeapRequest,
+  recovery = regexWorkerHeapRequestRecovery(request),
 ): string => {
-  const recovery = regexWorkerHeapRequestRecovery(request);
   if (heap.kind === "unknown")
     return `The worker requests ${String(request.heapMiB)} MiB. The effective old-generation heap was not established from the launch flags. --max-old-space-size, --max-old-space-size-percentage, --max-heap-size, --env-file, --env-file-if-exists, --experimental-config-file, and --experimental-default-config-file can change that request. ${recovery}`;
   const override = `A positive Node --max-old-space-size, including NODE_OPTIONS, overrides the ${String(request.heapMiB)} MiB worker request`;
@@ -412,30 +420,43 @@ const heapBound = (
     : `${override}. This process has no positive override, so the effective heap is ${String(heap.mib)} MiB. ${recovery}`;
 };
 
-/** Capability text for the supervised ECMAScript matching boundary. */
+/**
+ * Capability text for the supervised ECMAScript matching boundary: the
+ * effective budgets, their sources, and where to change them. Providers repeat
+ * it per search operation, so setting bounds and step-by-step recovery stay
+ * with the deadline and heap errors instead.
+ */
 export const regexMatchingLimitation = (
   heap: RegexWorkerHeapLimit,
   deadline: RegexMatchingDeadline = DEFAULT_REGEX_MATCHING_DEADLINE,
   request: RegexWorkerHeapRequest = DEFAULT_REGEX_WORKER_HEAP_REQUEST,
 ): string => {
-  const deadlineText = `${String(deadline.deadlineMs)} ms matching deadline (source ${deadline.source})`;
-  const preface =
-    heap.kind === "effective"
-      ? `Regex mode uses ECMAScript Unicode semantics in a cancellable worker with a ${deadlineText} and an effective ${String(heap.mib)} MiB old-generation heap.`
-      : `Regex mode uses ECMAScript Unicode semantics in a cancellable worker with a ${deadlineText}.`;
-  return `${preface} ${regexMatchingDeadlineRecovery(deadline)} ${heapBound(heap, request)} Matching failure leaves the service available.`;
+  const requested = `${String(request.heapMiB)} MiB worker heap request (source ${request.source})`;
+  const heapText =
+    heap.kind === "unknown"
+      ? `a ${requested}; launch heap flags can change the effective old-generation heap, which was not established`
+      : heap.overridden
+        ? `an effective ${String(heap.mib)} MiB old-generation heap set by a positive Node --max-old-space-size over its ${requested}`
+        : `an effective ${String(heap.mib)} MiB old-generation heap from its ${requested}`;
+  return `Regex mode uses ECMAScript Unicode semantics in a cancellable worker with a ${String(deadline.deadlineMs)} ms matching deadline (source ${deadline.source}) and ${heapText}. inspect_analysis_settings and update_analysis_settings read and change regex.matching_deadline_ms and regex.worker_heap_request_mib; ${REGEX_MATCHING_DEADLINE_SETTING} and ${REGEX_WORKER_HEAP_REQUEST_SETTING} seed them at launch. Deadline and heap errors report the bounds and recovery. Matching failure leaves the service available.`;
 };
 
 /** Capability text for this process's launch heap, deadline, and heap request. */
 export const launchRegexMatchingLimitation = (
   deadline: RegexMatchingDeadline = DEFAULT_REGEX_MATCHING_DEADLINE,
   request: RegexWorkerHeapRequest = DEFAULT_REGEX_WORKER_HEAP_REQUEST,
-): string =>
-  regexMatchingLimitation(
-    resolveLaunchRegexWorkerHeap(launchExecArgv, launchNodeOptions, request),
-    deadline,
-    request,
-  );
+): string => {
+  try {
+    return regexMatchingLimitation(
+      resolveLaunchRegexWorkerHeap(launchExecArgv, launchNodeOptions, request),
+      deadline,
+      request,
+    );
+  } catch (cause: unknown) {
+    if (!(cause instanceof ConfigurationError)) throw cause;
+    return "Regex mode is unavailable until its invalid launch configuration is corrected with update_analysis_settings or by restarting REA. Inspect analysis settings for the affected value.";
+  }
+};
 
 /**
  * Capability text for the default deadline on this process's launch heap.
@@ -452,13 +473,23 @@ export const regexMatchingDeadlineError = (
   new AnalysisResourceConstraintError(
     operation,
     "cpu",
-    `Regex matching exceeded its supervised deadline of ${String(deadline.deadlineMs)} ms (source ${deadline.source}). ${regexMatchingDeadlineRecovery(deadline)} The service remains available.`,
+    `Regex matching exceeded its supervised deadline of ${String(deadline.deadlineMs)} ms (source ${deadline.source}). ${regexMatchingDeadlineRecovery(deadline)}`,
     {
       matching_deadline_ms: deadline.deadlineMs,
       matching_deadline_source: deadline.source,
     },
     {
-      remediationAction: `${regexMatchingDeadlineRecovery(deadline)} Simplify the ECMAScript Unicode regex or use literal mode, then retry in the same session.`,
+      limit: analysisSettingLimit(
+        "regex.matching_deadline_ms",
+        deadline.deadlineMs,
+        deadline.source,
+      ),
+      remediationAction: `${regexMatchingDeadlineRecovery(deadline)} Simplify the ECMAScript Unicode regex or use literal mode, then retry.`,
+      // A one-shot invocation has ended its session before the caller retries.
+      continuingCallerGuidance: {
+        userMessage: "The service remains available.",
+        remediationAction: `${regexMatchingDeadlineContinuingRecovery(deadline)} Simplify the ECMAScript Unicode regex or use literal mode, then retry in the same session.`,
+      },
     },
   );
 
@@ -487,9 +518,43 @@ export const regexWorkerHeapError = (
         },
     {
       cause,
-      remediationAction: `${heapBound(heap, request)} Restart REA after changing --max-old-space-size or ${REGEX_WORKER_HEAP_REQUEST_SETTING}. A launch --max-old-space-size-percentage takes precedence over that flag in either order. Simplify the pattern or use literal mode.`,
+      ...(heap.kind === "effective" && !heap.overridden
+        ? {
+            limit: analysisSettingLimit(
+              "regex.worker_heap_request_mib",
+              request.heapMiB,
+              request.source,
+            ),
+          }
+        : {}),
+      remediationAction: `${heapBound(heap, request)} Set ${REGEX_WORKER_HEAP_REQUEST_SETTING} in the environment that starts the next REA invocation. Restart REA after changing --max-old-space-size. A launch --max-old-space-size-percentage takes precedence over that flag in either order. Simplify the pattern or use literal mode.`,
+      continuingCallerGuidance: {
+        remediationAction: `${heapBound(heap, request, regexWorkerHeapRequestContinuingRecovery(request))} Call update_analysis_settings with setting regex.worker_heap_request_mib to change the request for the next worker in this session. Launch heap flags can still override it. The launch seed remains ${REGEX_WORKER_HEAP_REQUEST_SETTING}. A launch --max-old-space-size-percentage takes precedence over --max-old-space-size in either order. Simplify the pattern or use literal mode.`,
+      },
     },
   );
+/**
+ * A pattern the regex engine rejects. The caller sees the engine's syntax
+ * error on `pattern` and can retry in literal mode. The worker, providers that
+ * check the pattern before starting, and remote engines that report their own
+ * syntax error (whose message then replaces the default) share this result.
+ */
+export const invalidRegexPatternError = (
+  operation: string,
+  reason: string,
+  options: AnalysisErrorOptions & { readonly userMessage?: string } = {},
+): AnalysisInputError =>
+  new AnalysisInputError(
+    operation,
+    {
+      ...options,
+      userMessage: options.userMessage ?? `Invalid regex pattern: ${reason}`,
+      remediationAction:
+        "Correct the pattern using the reported regex syntax error, or select mode literal to search for the text literally, then retry.",
+    },
+    [{ path: ["pattern"], reason: "invalid_format", message: reason }],
+  );
+
 const replySchema = z.discriminatedUnion("status", [
   z.strictObject({
     status: z.literal("matched"),
@@ -517,6 +582,33 @@ if (expression !== undefined) {
 })();
 `;
 
+export interface RegexConfigurationSnapshot {
+  readonly deadline: RegexMatchingDeadline;
+  readonly heapRequest: RegexWorkerHeapRequest;
+}
+
+/** Capture the operation's admitted regex values without starting work. */
+export const snapshotRegexConfiguration = (
+  selectedDeadline: RegexMatchingDeadline = DEFAULT_REGEX_MATCHING_DEADLINE,
+  selectedHeap: RegexWorkerHeapRequest = DEFAULT_REGEX_WORKER_HEAP_REQUEST,
+): Result<RegexConfigurationSnapshot, ConfigurationError> => {
+  try {
+    return ok({
+      deadline: {
+        deadlineMs: selectedDeadline.deadlineMs,
+        source: selectedDeadline.source,
+      },
+      heapRequest: {
+        heapMiB: selectedHeap.heapMiB,
+        source: selectedHeap.source,
+      },
+    });
+  } catch (cause: unknown) {
+    if (cause instanceof ConfigurationError) return err(cause);
+    throw cause;
+  }
+};
+
 /** Match an inventory off the service thread, and prove worker exit before returning. */
 export const matchRegexValues = async (input: {
   readonly operation: string;
@@ -524,16 +616,23 @@ export const matchRegexValues = async (input: {
   readonly caseSensitive: boolean;
   readonly values: readonly string[];
   readonly signal?: AbortSignal | undefined;
-  readonly invalidPattern?: (reason: string) => AnalysisError;
   /** Resolved deadline. Omitted means the 5000 ms default, not ambient `process.env`. */
   readonly deadline?: RegexMatchingDeadline | undefined;
   /** Resolved heap request. Omitted means the 128 MiB default, not ambient `process.env`. */
   readonly heapRequest?: RegexWorkerHeapRequest | undefined;
 }): Promise<Result<readonly number[], AnalysisError>> => {
-  const deadline = input.deadline ?? DEFAULT_REGEX_MATCHING_DEADLINE;
-  const heapRequest = input.heapRequest ?? DEFAULT_REGEX_WORKER_HEAP_REQUEST;
   if (input.signal?.aborted)
-    return err(new AnalysisCancelledError(input.operation));
+    return err(
+      new AnalysisCancelledError(input.operation, {
+        cause: input.signal.reason,
+      }),
+    );
+  const admitted = snapshotRegexConfiguration(
+    input.deadline,
+    input.heapRequest,
+  );
+  if (!admitted.ok) return admitted;
+  const { deadline, heapRequest } = admitted.value;
   let worker: Worker;
   try {
     worker = new Worker(WORKER_SOURCE, {
@@ -563,7 +662,13 @@ export const matchRegexValues = async (input: {
         resolve(result);
       };
       const onAbort = () =>
-        finish(err(new AnalysisCancelledError(input.operation)));
+        finish(
+          err(
+            new AnalysisCancelledError(input.operation, {
+              cause: input.signal?.reason,
+            }),
+          ),
+        );
       const timer = setTimeout(
         () =>
           finish(err(regexMatchingDeadlineError(input.operation, deadline))),
@@ -584,22 +689,7 @@ export const matchRegexValues = async (input: {
           );
         if (reply.data.status === "invalid_pattern")
           return finish(
-            err(
-              input.invalidPattern?.(reply.data.reason) ??
-                new AnalysisInputError(
-                  input.operation,
-                  {
-                    userMessage: `Invalid regex pattern: ${reply.data.reason}`,
-                  },
-                  [
-                    {
-                      path: ["pattern"],
-                      reason: "invalid_format",
-                      message: "Supply a valid regular expression.",
-                    },
-                  ],
-                ),
-            ),
+            err(invalidRegexPatternError(input.operation, reply.data.reason)),
           );
         if (
           reply.data.indices.some(
