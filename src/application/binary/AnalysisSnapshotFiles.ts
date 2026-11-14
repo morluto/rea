@@ -90,7 +90,23 @@ export const readAnalysisSnapshot = async (
   }
 };
 
+/** Locate an entry's schema issues within its snapshot collection. */
+const locateEntryFailure = (
+  cause: unknown,
+  collection: string,
+  index: number,
+): unknown =>
+  cause instanceof z.ZodError
+    ? new z.ZodError(
+        cause.issues.map((issue) => ({
+          ...issue,
+          path: [collection, index, ...issue.path],
+        })),
+      )
+    : cause;
+
 const snapshotEntryReader = (kind: "provider" | "workflow") => {
+  const collection = kind === "provider" ? "entries" : "workflow_entries";
   let seen = false;
   let entries: PreparedSnapshotEntry[] = [];
   let failure: { readonly cause: unknown } | undefined;
@@ -102,8 +118,12 @@ const snapshotEntryReader = (kind: "provider" | "workflow") => {
       failure = undefined;
     },
     accept: (value) => {
-      if (failure === undefined)
+      if (failure !== undefined) return;
+      try {
         entries.push(prepareSnapshotEntry(value, kind));
+      } catch (cause: unknown) {
+        throw locateEntryFailure(cause, collection, entries.length);
+      }
     },
     reject: (cause) => {
       failure ??= { cause };
@@ -113,9 +133,7 @@ const snapshotEntryReader = (kind: "provider" | "workflow") => {
     reader,
     finish: (): PreparedSnapshotEntry[] => {
       if (!seen)
-        throw new TypeError(
-          `Analysis snapshot ${kind === "provider" ? "entries" : "workflow_entries"} is missing`,
-        );
+        throw new TypeError(`Analysis snapshot ${collection} is missing`);
       if (failure !== undefined) throw failure.cause;
       return entries;
     },
