@@ -637,10 +637,11 @@ invalid existing registration; they do not establish target support. `target`
 entries record a refused kind, format, architecture, or role. An availability-only
 message describes the recorded rejections without claiming that every provider
 is unconfigured or that target support is known.
-For Hopper, Ghidra, IDA, JADX, and Kuna, run
-`rea doctor --provider ID --json` to diagnose the selected engine. Other adapters,
-such as `pwntools-elf`, report their configuration requirements directly and are
-not accepted by `doctor --provider`. See
+For Hopper, Ghidra, IDA, JADX, Kuna, and the desktop-build host, run
+`rea doctor --provider ID --json` to diagnose the selected engine or the
+desktop-build readiness. Other adapters, such as `pwntools-elf`, report their
+configuration requirements directly and are not accepted by `doctor --provider`.
+See
 [task readiness](installation.md#check-readiness-for-your-task) and
 [provider selection](../reference/mcp-contracts.md#identity-and-discovery).
 
