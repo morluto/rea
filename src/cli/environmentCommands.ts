@@ -11,7 +11,10 @@ import type { ServedState } from "../application/environment/environmentState.js
 import { z } from "incur";
 import type { Logger } from "pino";
 
-import { CLI_COMMANDS } from "../cliCommandNames.js";
+import {
+  CLI_COMMANDS,
+  DEFAULT_INFO_LOGGING_COMMANDS,
+} from "../cliCommandNames.js";
 import { parseCliJsonInput } from "../cliJsonInput.js";
 import { logCliCommand } from "../cliLogging.js";
 import { parseEnvironmentName } from "../config/environmentName.js";
@@ -38,7 +41,7 @@ import { inspectWebNetworkCaptureInputSchema } from "../domain/webNetworkCapture
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import type { CliInstance } from "./types.js";
-import { cliDecimalField } from "./options.js";
+import { cliDecimalField, publishArgvInput } from "./options.js";
 
 /** Same envelope label as the other JSON-input commands and `parseCliJsonInput`. */
 const cliError = (error: AnalysisError): JsonValue => ({
@@ -48,10 +51,12 @@ const cliError = (error: AnalysisError): JsonValue => ({
 
 /** The listener announces its URL, and a build its stages, at info like `rea mcp --http`; an explicit REA_LOG_LEVEL still wins. */
 const infoLogger = (
+  command: string,
   environment: Readonly<NodeJS.ProcessEnv>,
   logger: Logger,
 ): Logger =>
-  environment.REA_LOG_LEVEL === undefined
+  environment.REA_LOG_LEVEL === undefined &&
+  DEFAULT_INFO_LOGGING_COMMANDS.has(command)
     ? createLogger("cli", "info")
     : logger;
 
@@ -179,7 +184,11 @@ const serveEnvironmentCommand = async (
     source,
     served: { state, report },
   } = inputs.value;
-  const commandLogger = infoLogger(environment, logger);
+  const commandLogger = infoLogger(
+    CLI_COMMANDS.environmentServe,
+    environment,
+    logger,
+  );
   if (!report.served && report.reason === "unavailable")
     commandLogger.warn(
       { code: report.code, error: report.message },
@@ -411,7 +420,11 @@ const buildEnvironmentCommand = async (
         ],
       ),
     );
-  const commandLogger = infoLogger(environment, logger);
+  const commandLogger = infoLogger(
+    CLI_COMMANDS.environmentBuild,
+    environment,
+    logger,
+  );
   const progress = (stage: string): void => {
     commandLogger.info({ stage }, "Building environment");
   };
@@ -689,11 +702,13 @@ export const registerEnvironmentCommands = (
       host: mcpHttpHostSchema
         .optional()
         .describe("Listener address; default MCP_HOST, else 127.0.0.1"),
-      port: mcpHttpPortSchema
-        .optional()
-        .describe(
-          "Listener port; default MCP_PORT, else 0 for an ephemeral port",
-        ),
+      port: publishArgvInput(
+        mcpHttpPortSchema
+          .optional()
+          .describe(
+            "Listener port; default MCP_PORT, else 0 for an ephemeral port",
+          ),
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>

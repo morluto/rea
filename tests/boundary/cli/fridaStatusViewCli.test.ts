@@ -2,7 +2,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
-import { fridaSessionStatusSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { fridaSessionStatusSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 

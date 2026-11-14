@@ -88,16 +88,12 @@ for (const scenario of ${JSON.stringify(cases)}) {
   }
 }
 `;
-    const result = await processes.run(
-      process.execPath,
-      [
-        "--unhandled-rejections=strict",
-        "--input-type=module",
-        "--eval",
-        source,
-      ],
-      { timeoutMs: 10_000 },
-    );
+    const result = await processes.run(process.execPath, [
+      "--unhandled-rejections=strict",
+      "--input-type=module",
+      "--eval",
+      source,
+    ]);
     expect(result.signal, result.stderr).toBeNull();
     expect(result.exitCode, result.stderr).toBe(0);
   },
@@ -193,17 +189,13 @@ for (const [directory, fails] of ${JSON.stringify([
   }
 }
 `;
-    const result = await processes.run(
-      process.execPath,
-      [
-        "--experimental-vm-modules",
-        "--unhandled-rejections=strict",
-        "--input-type=module",
-        "--eval",
-        source,
-      ],
-      { timeoutMs: 10_000 },
-    );
+    const result = await processes.run(process.execPath, [
+      "--experimental-vm-modules",
+      "--unhandled-rejections=strict",
+      "--input-type=module",
+      "--eval",
+      source,
+    ]);
     expect(result.signal, result.stderr).toBeNull();
     expect(result.exitCode, result.stderr).toBe(0);
   },

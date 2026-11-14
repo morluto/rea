@@ -120,7 +120,7 @@ processTest.skipIf(process.platform === "win32").for([true, false])(
     const result = await processes.run(
       process.execPath,
       ["--import", hook, "scripts/verify-published-package.mjs", "6.9.0"],
-      { cwd: controller, env, timeoutMs: 20_000 },
+      { cwd: controller, env },
     );
     expect(result.exitCode, result.stderr).toBe(0);
     const calls = z

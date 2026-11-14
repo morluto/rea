@@ -11,20 +11,16 @@ const hasNonLoopbackIpv4 = Object.values(networkInterfaces())
 processTest.skipIf(!hasNonLoopbackIpv4)(
   "storage fixture serves localhost and refuses this host's non-loopback interface",
   async ({ processes }) => {
-    const result = await processes.run(
-      process.execPath,
-      [
-        fileURLToPath(
-          new URL(
-            "../../fixtures/browserFixtureHttpTargets.mjs",
-            import.meta.url,
-          ),
+    const result = await processes.run(process.execPath, [
+      fileURLToPath(
+        new URL(
+          "../../fixtures/browserFixtureHttpTargets.mjs",
+          import.meta.url,
         ),
-        "storage",
-        "listener-scope",
-      ],
-      { timeoutMs: 15_000 },
-    );
+      ),
+      "storage",
+      "listener-scope",
+    ]);
     expect(result.signal, result.stderr).toBeNull();
     expect(result.exitCode, result.stderr).toBe(0);
     expect(result.stderr).toBe("");

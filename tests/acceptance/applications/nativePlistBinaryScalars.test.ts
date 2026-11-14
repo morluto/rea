@@ -189,7 +189,6 @@ describe.skipIf(process.platform !== "darwin")(
         expect(Buffer.compare(await readFile(binaryPath), binaryBytes)).toBe(0);
         expect(Buffer.compare(await readFile(xmlPath), xmlBytes)).toBe(0);
       },
-      60_000,
     );
   },
 );

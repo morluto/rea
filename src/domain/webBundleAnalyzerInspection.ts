@@ -20,7 +20,7 @@ import {
   completeSemanticSteps,
 } from "./javascript/javascriptSemanticTraversal.js";
 import { indexJavaScriptBindingsWithReceiversSteps } from "./javascript/javascriptSemanticAnalysis.js";
-import type { JavaScriptOpenReceiverFact } from "./javascript/javascriptSemanticAnalysis.js";
+import type { JavaScriptOpenReceiverFact } from "./javascript/javascriptSemanticReceiverFacts.js";
 import { isIntrinsicMapLookup } from "./javascript/javascriptSemanticMapOperations.js";
 import {
   semanticStaticPropertyKey,

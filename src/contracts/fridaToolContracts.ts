@@ -15,7 +15,7 @@ import {
   fridaSessionStatusInputSchema,
   fridaSessionStatusSchema,
 } from "../domain/fridaSessionStatus.js";
-import { fridaSessionStatusSummaryViewResultSchema } from "../domain/analysisView/analysisView.js";
+import { fridaSessionStatusSummaryViewResultSchema } from "../domain/analysisView/analysisViewResult.js";
 import {
   fridaDeviceListSchema,
   fridaProcessListSchema,

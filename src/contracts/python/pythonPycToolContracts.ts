@@ -9,7 +9,7 @@ import { z } from "zod";
 import {
   pythonPycSummaryViewResultSchema,
   pythonPycCodeObjectsViewResultSchema,
-} from "../../domain/analysisView/analysisView.js";
+} from "../../domain/analysisView/analysisViewResult.js";
 import {
   pythonPycCompleteDeliveryShape,
   pythonPycSummaryDeliveryShape,

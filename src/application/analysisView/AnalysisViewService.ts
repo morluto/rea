@@ -28,11 +28,11 @@ import {
 } from "../../domain/evidence.js";
 import {
   inspectAnalysisViewInputSchema,
-  prepareAnalysisViewProjection,
-  type AnalysisViewResult,
   type AnalysisViewRequest,
   type InspectAnalysisViewInput,
-} from "../../domain/analysisView/analysisView.js";
+} from "../../domain/analysisView/analysisViewRequest.js";
+import { prepareAnalysisViewProjection } from "../../domain/analysisView/analysisView.js";
+import type { AnalysisViewResult } from "../../domain/analysisView/analysisViewResult.js";
 import {
   immutableJsonSnapshotMember,
   isImmutableJsonSnapshot,

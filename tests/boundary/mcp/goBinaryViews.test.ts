@@ -11,7 +11,7 @@ import { goBinarySchema } from "../../../src/domain/go/goBinary.js";
 import {
   analysisViewResultSchema,
   goBinarySummaryViewResultSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+} from "../../../src/domain/analysisView/analysisViewResult.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import {

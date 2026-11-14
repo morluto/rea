@@ -4,7 +4,7 @@ import { expect } from "vitest";
 import { parseEvidence, createEvidence } from "../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../src/domain/evidenceBundle.js";
 import { rustBinarySchema } from "../../src/domain/rust/rustBinary.js";
-import { analysisViewResultSchema } from "../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../src/domain/analysisView/analysisViewResult.js";
 import { readEvidenceBundle } from "../../src/application/EvidenceBundleFiles.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
@@ -309,7 +309,6 @@ cliTest(
       ).toMatchObject({ code: "invalid_request" });
     }
   },
-  60000,
 );
 
 cliTest(
@@ -451,5 +450,4 @@ cliTest(
     }
     expect((await readFile(path)).length).toBeGreaterThan(0);
   },
-  30000,
 );

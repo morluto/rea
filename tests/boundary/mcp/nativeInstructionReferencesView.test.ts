@@ -6,10 +6,8 @@ import { createAnalysisExecution } from "../../../src/application/AnalysisProvid
 import { createServer } from "../../../src/server/createServer.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
-import {
-  analysisViewResultSchema,
-  inspectAnalysisViewInputSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+import { inspectAnalysisViewInputSchema } from "../../../src/domain/analysisView/analysisViewRequest.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { ok } from "../../../src/domain/result.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -275,7 +273,6 @@ it.each(["full", "compact"] as const)(
       if (!closed.ok) throw closed.error;
     }
   },
-  90_000,
 );
 
 it("recovers the complete parent when a single reference exceeds the page budget", async () => {
@@ -363,4 +360,4 @@ it("recovers the complete parent when a single reference exceeds the page budget
     const closed = await session.close();
     if (!closed.ok) throw closed.error;
   }
-}, 90_000);
+});

@@ -31,11 +31,15 @@ describe.skipIf(process.platform !== "darwin")(
         const source = join(directory, "watch.c");
         await writeFile(source, "int rea_watch_value(void) { return 42; }\n");
         const object = join(directory, "watch.o");
-        const compiled = await processes.run(
-          "/usr/bin/xcrun",
-          ["clang", "-arch", "arm64_32", "-c", source, "-o", object],
-          { timeoutMs: 30_000 },
-        );
+        const compiled = await processes.run("/usr/bin/xcrun", [
+          "clang",
+          "-arch",
+          "arm64_32",
+          "-c",
+          source,
+          "-o",
+          object,
+        ]);
         expect(compiled.exitCode, compiled.stderr).toBe(0);
         for (const command of [
           "list-architectures",
@@ -71,7 +75,6 @@ describe.skipIf(process.platform !== "darwin")(
           details: { selection_reason: "target_unsupported" },
         });
       },
-      60_000,
     );
   },
 );

@@ -284,133 +284,136 @@ const REVIEWED_CLIENT_IDS = [
   "amp",
 ];
 
-it("resolves selected-environment paths and scopes without external catalog readers", async () => {
-  const home = await createTestTempDirectory("rea-registration-catalog-");
-  const processes = createTestProcessRegistry();
-  try {
-    await mkdir(join(home, "config"));
-    const child = await processes.run(
-      process.execPath,
-      ["--import", "tsx", "--input-type=module", "--eval", CATALOG_PROGRAM],
-      {
-        timeoutMs: 50_000,
-        env: {
-          PATH: process.env.PATH,
-          SystemRoot: process.env.SystemRoot,
-          WINDIR: process.env.WINDIR,
-          TMPDIR: process.env.TMPDIR,
-          TMP: process.env.TMP,
-          TEMP: process.env.TEMP,
-          HOME: home,
-          USERPROFILE: home,
-          XDG_CONFIG_HOME: join(home, "config"),
-          XDG_DATA_HOME: join(home, "data"),
-          XDG_CACHE_HOME: join(home, "cache"),
-          XDG_STATE_HOME: join(home, "state"),
-          APPDATA: join(home, "appdata"),
-          LOCALAPPDATA: join(home, "localappdata"),
+it(
+  "resolves selected-environment paths and scopes without external catalog readers",
+  { tags: ["long-running"] },
+  async () => {
+    const home = await createTestTempDirectory("rea-registration-catalog-");
+    const processes = createTestProcessRegistry();
+    try {
+      await mkdir(join(home, "config"));
+      const child = await processes.run(
+        process.execPath,
+        ["--import", "tsx", "--input-type=module", "--eval", CATALOG_PROGRAM],
+        {
+          env: {
+            PATH: process.env.PATH,
+            SystemRoot: process.env.SystemRoot,
+            WINDIR: process.env.WINDIR,
+            TMPDIR: process.env.TMPDIR,
+            TMP: process.env.TMP,
+            TEMP: process.env.TEMP,
+            HOME: home,
+            USERPROFILE: home,
+            XDG_CONFIG_HOME: join(home, "config"),
+            XDG_DATA_HOME: join(home, "data"),
+            XDG_CACHE_HOME: join(home, "cache"),
+            XDG_STATE_HOME: join(home, "state"),
+            APPDATA: join(home, "appdata"),
+            LOCALAPPDATA: join(home, "localappdata"),
+          },
         },
-      },
-    );
-    expect(child.exitCode, child.stderr).toBe(0);
-    const result = catalogObservationsSchema.parse(JSON.parse(child.stdout));
-    assertKiloNativeLayers(result, home);
-    expect(result.empty.ok).toBe(true);
-    if (!result.empty.ok) throw new Error(result.empty.error.message);
-    expect(result.empty.value.map((client) => client.id)).toEqual(
-      REVIEWED_CLIENT_IDS,
-    );
-    expect(result.layeredKilo.ok).toBe(true);
-    if (!result.layeredKilo.ok)
-      throw new Error(result.layeredKilo.error.message);
-    const kiloLayers = [
-      "config.json",
-      "kilo.json",
-      "kilo.jsonc",
-      "opencode.json",
-      "opencode.jsonc",
-    ].map((name) => join(home, "layered", "kilo", name));
-    expect(result.layeredKilo.value[0]).toMatchObject({
-      configPath: kiloLayers.at(-1),
-      configPaths: kiloLayers,
-    });
-    expect(result.layeredOpenCode.ok).toBe(true);
-    if (!result.layeredOpenCode.ok)
-      throw new Error(result.layeredOpenCode.error.message);
-    expect(result.layeredOpenCode.value[0]?.configPaths).toEqual(
-      ["config.json", "opencode.json", "opencode.jsonc"].map((name) =>
-        join(home, "config", "opencode", name),
-      ),
-    );
-    expect(result.explicit.ok).toBe(true);
-    if (!result.explicit.ok) throw new Error(result.explicit.error.message);
-    expect(result.explicit.value.map((client) => client.id)).toEqual([
-      "codex",
-      "amp",
-      "gemini-cli",
-      "fx",
-      "windsurf",
-    ]);
-    expect(result.explicit.value[0]?.configPath).toBe(
-      join(home, "selected-codex", "config.toml"),
-    );
-    expect(
-      result.explicit.value.find((client) => client.id === "fx"),
-    ).toMatchObject({ format: "fx", privateProfile: true });
-    expect(result.detected.ok).toBe(true);
-    if (!result.detected.ok) throw new Error(result.detected.error.message);
-    expect(result.detected.value.map((client) => client.id)).toEqual([
-      "claude-code",
-      "cursor",
-      "amp",
-    ]);
-    expect(result.project.ok, JSON.stringify(result.project)).toBe(true);
-    if (!result.project.ok) throw new Error(result.project.error.message);
-    expect(result.project.value[0]?.format).toBe("copilot_cli_project");
-    expect(
-      result.project.value.map(({ configPath, scope }) => ({
-        configPath,
-        scope,
-      })),
-    ).toEqual([
-      {
-        configPath: join(home, "project", ".github", "mcp.json"),
-        scope: "project",
-      },
-      ...(process.platform === "win32"
-        ? []
-        : [
-            {
-              configPath: join(home, "project", ".kilocode", "kilo.jsonc"),
-              scope: "project",
-            },
-          ]),
-      {
-        configPath: join(home, "project", "opencode.jsonc"),
-        scope: "project",
-      },
-    ]);
-    for (const refused of [
-      result.onlyGlobal,
-      result.defaultProject,
-      result.projectAmp,
-      result.unknown,
-      ...(result.blockedCandidate === null ? [] : [result.blockedCandidate]),
-      result.unknownDetection,
-    ]) {
-      expect(refused.ok).toBe(false);
-      if (refused.ok) throw new Error("Expected preflight refusal.");
-      expect(refused.error.tag).toBe("ConfigurationError");
+      );
+      expect(child.exitCode, child.stderr).toBe(0);
+      const result = catalogObservationsSchema.parse(JSON.parse(child.stdout));
+      assertKiloNativeLayers(result, home);
+      expect(result.empty.ok).toBe(true);
+      if (!result.empty.ok) throw new Error(result.empty.error.message);
+      expect(result.empty.value.map((client) => client.id)).toEqual(
+        REVIEWED_CLIENT_IDS,
+      );
+      expect(result.layeredKilo.ok).toBe(true);
+      if (!result.layeredKilo.ok)
+        throw new Error(result.layeredKilo.error.message);
+      const kiloLayers = [
+        "config.json",
+        "kilo.json",
+        "kilo.jsonc",
+        "opencode.json",
+        "opencode.jsonc",
+      ].map((name) => join(home, "layered", "kilo", name));
+      expect(result.layeredKilo.value[0]).toMatchObject({
+        configPath: kiloLayers.at(-1),
+        configPaths: kiloLayers,
+      });
+      expect(result.layeredOpenCode.ok).toBe(true);
+      if (!result.layeredOpenCode.ok)
+        throw new Error(result.layeredOpenCode.error.message);
+      expect(result.layeredOpenCode.value[0]?.configPaths).toEqual(
+        ["config.json", "opencode.json", "opencode.jsonc"].map((name) =>
+          join(home, "config", "opencode", name),
+        ),
+      );
+      expect(result.explicit.ok).toBe(true);
+      if (!result.explicit.ok) throw new Error(result.explicit.error.message);
+      expect(result.explicit.value.map((client) => client.id)).toEqual([
+        "codex",
+        "amp",
+        "gemini-cli",
+        "fx",
+        "windsurf",
+      ]);
+      expect(result.explicit.value[0]?.configPath).toBe(
+        join(home, "selected-codex", "config.toml"),
+      );
+      expect(
+        result.explicit.value.find((client) => client.id === "fx"),
+      ).toMatchObject({ format: "fx", privateProfile: true });
+      expect(result.detected.ok).toBe(true);
+      if (!result.detected.ok) throw new Error(result.detected.error.message);
+      expect(result.detected.value.map((client) => client.id)).toEqual([
+        "claude-code",
+        "cursor",
+        "amp",
+      ]);
+      expect(result.project.ok, JSON.stringify(result.project)).toBe(true);
+      if (!result.project.ok) throw new Error(result.project.error.message);
+      expect(result.project.value[0]?.format).toBe("copilot_cli_project");
+      expect(
+        result.project.value.map(({ configPath, scope }) => ({
+          configPath,
+          scope,
+        })),
+      ).toEqual([
+        {
+          configPath: join(home, "project", ".github", "mcp.json"),
+          scope: "project",
+        },
+        ...(process.platform === "win32"
+          ? []
+          : [
+              {
+                configPath: join(home, "project", ".kilocode", "kilo.jsonc"),
+                scope: "project",
+              },
+            ]),
+        {
+          configPath: join(home, "project", "opencode.jsonc"),
+          scope: "project",
+        },
+      ]);
+      for (const refused of [
+        result.onlyGlobal,
+        result.defaultProject,
+        result.projectAmp,
+        result.unknown,
+        ...(result.blockedCandidate === null ? [] : [result.blockedCandidate]),
+        result.unknownDetection,
+      ]) {
+        expect(refused.ok).toBe(false);
+        if (refused.ok) throw new Error("Expected preflight refusal.");
+        expect(refused.error.tag).toBe("ConfigurationError");
+      }
+      expect(result.cancelled).toMatchObject({
+        ok: false,
+        error: { tag: "AnalysisCancelledError" },
+      });
+    } finally {
+      await processes.shutdown();
+      await rm(home, { recursive: true, force: true });
     }
-    expect(result.cancelled).toMatchObject({
-      ok: false,
-      error: { tag: "AnalysisCancelledError" },
-    });
-  } finally {
-    await processes.shutdown();
-    await rm(home, { recursive: true, force: true });
-  }
-}, 60_000);
+  },
+);
 
 const assertKiloNativeLayers = (
   result: z.infer<typeof catalogObservationsSchema>,

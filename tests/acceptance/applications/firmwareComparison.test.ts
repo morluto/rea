@@ -137,7 +137,7 @@ cliTest(
         },
       }),
     );
-    const run = cli.sharedCliRun?.bind(cli) ?? cli.run.bind(cli);
+    const run = cli.run.bind(cli);
     const result = await run({
       arguments: ["compare-artifacts", requestPath, "--json"],
     });

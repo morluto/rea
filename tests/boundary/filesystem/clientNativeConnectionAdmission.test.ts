@@ -116,7 +116,6 @@ it("keeps owned Gemini launcher facts separate from native connection admission 
       process.execPath,
       ["--import", "tsx", entrypoint],
       {
-        timeoutMs: 20_000,
         env: {
           PATH: process.env.PATH,
           SystemRoot: process.env.SystemRoot,

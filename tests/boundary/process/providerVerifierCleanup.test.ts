@@ -149,7 +149,6 @@ processTest.for(cases)(
           REA_TEST_VERIFIER_CLOSE_FAIL: closeFails ? "1" : "0",
           REA_TEST_VERIFIER_CLOSE_LOG: fixture.closeLog,
         },
-        timeoutMs: 10_000,
       },
     );
 

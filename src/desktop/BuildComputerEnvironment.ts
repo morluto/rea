@@ -8,9 +8,6 @@ import { PRODUCT_IDENTITY } from "../identity.js";
 import { BUILD_COMPUTER_SETTINGS } from "../domain/desktop/buildComputerSettings.js";
 import { resolveProgram } from "./ProgramLookup.js";
 
-/** The settings a build computer reads where the REA server starts. */
-export { BUILD_COMPUTER_SETTINGS };
-
 /** One of the build computer's settings. */
 export type BuildComputerSetting = (typeof BUILD_COMPUTER_SETTINGS)[number];
 

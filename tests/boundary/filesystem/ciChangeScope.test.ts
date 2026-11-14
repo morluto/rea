@@ -106,7 +106,7 @@ async function classify(
 it.each([
   ["bridge/native/rea_lldb_tracer.py", "python"],
   ["bridge/pwndbg/test_core_context.py", "python"],
-  ["tests/support/analysis-efficiency/test_signal_oracle.py", "python"],
+  ["tests/support/analysis-efficiency/test_catalog_eval.py", "python"],
   ["scripts/run-python-tests.py", "python"],
   ["scripts/verify-browser-request.mjs", "browser"],
   ["scripts/lib/browser-request-e2e.mjs", "browser"],
@@ -766,6 +766,18 @@ it.each([
   ],
   [
     "scripts/verify-ghidra-bridge-sources.mjs",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "scripts/verify-ghidra-loader-relocation.mjs",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "tests/conformance/ghidra/ReaLoaderRelocationProbe.java",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "tests/conformance/ghidra/loader-relocation-provider.c",
     { code: true, ghidra_bridge: true, runtime: false, package: false },
   ],
   [

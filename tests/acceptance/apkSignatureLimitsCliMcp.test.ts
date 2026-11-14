@@ -5,7 +5,7 @@ import { expect } from "vitest";
 
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { analysisErrorProjectionSchema } from "../../src/contracts/errorSchemas.js";
-import { apkSignatureSummaryViewResultSchema } from "../../src/domain/analysisView/analysisView.js";
+import { apkSignatureSummaryViewResultSchema } from "../../src/domain/analysisView/analysisViewResult.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";

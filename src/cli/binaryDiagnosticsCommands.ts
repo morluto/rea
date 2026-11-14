@@ -48,6 +48,7 @@ import { inspectKernelBuildConfigInputSchema } from "../domain/native/kernelBuil
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
 import { withEvidenceCallerInputPath } from "../domain/evidence.js";
+import { BYTE_ENTROPY_PROVIDER } from "../domain/investigationProviders.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import {
@@ -476,7 +477,7 @@ export const registerBinaryDiagnosticsCommands = (
                 { signal },
               ),
             entropy,
-            "rea-byte-entropy",
+            BYTE_ENTROPY_PROVIDER.id,
             "inspect_byte_entropy",
             signal,
           ).then(projectCliAnalysisResult);

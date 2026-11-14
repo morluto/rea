@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import * as t from "@babel/types";
 
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
-import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
+import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference.js";
 
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 

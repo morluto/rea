@@ -36,7 +36,6 @@ cliTest(
         "--json",
       ],
       environment,
-      timeoutMs: 30_000,
     });
     expect(result.exitCode, result.stdout + result.stderr).toBe(1);
     expect(result.json).toMatchObject({
@@ -81,5 +80,4 @@ cliTest(
     expect(response.structuredContent).toBeUndefined();
     expect(result.json).not.toHaveProperty("normalized_result");
   },
-  90_000,
 );

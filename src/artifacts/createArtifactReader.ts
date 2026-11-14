@@ -5,8 +5,6 @@ import {
   type ArtifactReaderConstruction,
 } from "./artifactFormats.js";
 
-export type { ArtifactReaderConstruction } from "./artifactFormats.js";
-
 /** Formats with an artifact entry reader; availability policy belongs to the caller. */
 export type ArtifactReaderFormat = {
   [Id in keyof typeof ARTIFACT_FORMATS]: (typeof ARTIFACT_FORMATS)[Id] extends {

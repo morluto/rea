@@ -1339,7 +1339,15 @@ bytes as text, omitting a final UTF-8 code point if it crosses that byte limit.
 `stderr_bytes` counts all observed bytes, including omitted output;
 `stderr_truncated` indicates that output exceeded the retention limit. The same
 diagnostics appear inside the report when `--full-output` is selected. Log
-truncation alone does not change the diagnostic health or exit status.
+truncation alone does not change the diagnostic health or exit status. More than
+32 MiB of combined child stdout and stderr stops the child and fails the check
+in progress.
+
+Doctor owns the server's process group on POSIX hosts, or its Job Object on
+Windows. Before reporting, it stops that process family, including POSIX
+descendants in other process groups that inherited its run token. If that
+cleanup cannot be confirmed, the report keeps its earlier checks and adds a
+failed `cleanup` check with the reason and retained run identifier.
 
 The default terminal format is TOON. Use `--json` when saving results for a
 JSON consumer. Valued output flags (`--format`, `--filter-output`,

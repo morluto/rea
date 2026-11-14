@@ -21,7 +21,7 @@ import {
   androidJniSummaryViewResultSchema,
   androidJniPageViewResultSchema,
   analysisViewResultSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+} from "../../../src/domain/analysisView/analysisViewResult.js";
 import {
   createEvidence,
   parseEvidence,
@@ -409,7 +409,6 @@ it.skipIf(process.platform === "win32")(
     await harness.close();
     await verifyJadxFixtureCleanup(launches);
   },
-  30000,
 );
 
 it("preserves partial/unknown declarations and Unicode text while rejecting missing APK identity and malformed source", async () => {

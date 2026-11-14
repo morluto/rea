@@ -4,10 +4,8 @@ import { completeSemanticSteps } from "../javascript/javascriptSemanticTraversal
 import { buildJavaScriptRouteInventorySteps } from "../javascript/javascriptRouteInventory.js";
 import { freezeJsonSnapshot } from "../immutableJson.js";
 import { projectAnalysisError } from "../analysisErrorProjection.js";
-import {
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "./analysisView.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 import { analysisViewRequestSchema } from "./analysisViewRequest.js";
 
 const inventory = (

@@ -160,7 +160,6 @@ cliTest(
     const result = await driver.run({
       arguments: ["inspect-artifact", path, "--json"],
       environment: process.env,
-      timeoutMs: 15_000,
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const inspection = artifactInspectionResultSchema.parse(
@@ -328,7 +327,6 @@ cliTest(
     const result = await driver.run({
       arguments: ["extract-artifact", path, "--json"],
       environment: process.env,
-      timeoutMs: 15_000,
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const extraction = artifactExtractionResultSchema.parse(
@@ -392,7 +390,6 @@ cliTest(
     const result = await driver.run({
       arguments: ["inspect-artifact", path, "--json"],
       environment: process.env,
-      timeoutMs: 15_000,
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const inspection = artifactInspectionResultSchema.parse(
@@ -445,7 +442,6 @@ cliTest(
     const result = await driver.run({
       arguments: ["inspect-artifact", path, "--json"],
       environment: process.env,
-      timeoutMs: 15_000,
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const inspection = artifactInspectionResultSchema.parse(
@@ -473,7 +469,6 @@ cliTest(
     const result = await driver.run({
       arguments: ["extract-artifact", path, "--json"],
       environment: process.env,
-      timeoutMs: 15_000,
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const extracted = artifactExtractionResultSchema.parse(
@@ -536,7 +531,6 @@ cliTest(
     const inspectResult = await driver.run({
       arguments: ["inspect-artifact", path, "--json"],
       environment: process.env,
-      timeoutMs: 15_000,
     });
     expect(inspectResult.exitCode, inspectResult.stderr).toBe(0);
     const inspection = artifactInspectionResultSchema.parse(
@@ -610,7 +604,6 @@ cliTest(
     const extractResult = await driver.run({
       arguments: ["extract-artifact", path, "--json"],
       environment: process.env,
-      timeoutMs: 15_000,
     });
     expect(extractResult.exitCode, extractResult.stderr).toBe(0);
     const extracted = artifactExtractionResultSchema.parse(
@@ -645,7 +638,6 @@ cliTest(
     const result = await driver.run({
       arguments: ["inspect-artifact", path, "--json"],
       environment: process.env,
-      timeoutMs: 15_000,
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const inspection = artifactInspectionResultSchema.parse(
@@ -688,7 +680,6 @@ cliTest.for([
     const result = await driver.run({
       arguments: ["inspect-artifact", path, "--json"],
       environment: process.env,
-      timeoutMs: 15_000,
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const inspection = artifactInspectionResultSchema.parse(
@@ -752,7 +743,6 @@ cliTest.for([
     const result = await driver.run({
       arguments: ["inspect-artifact", path, "--json"],
       environment: process.env,
-      timeoutMs: 15_000,
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const inspection = artifactInspectionResultSchema.parse(
@@ -800,7 +790,6 @@ cliTest(
     const result = await driver.run({
       arguments: ["inspect-artifact", path, "--json"],
       environment: process.env,
-      timeoutMs: 15_000,
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({

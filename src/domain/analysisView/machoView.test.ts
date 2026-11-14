@@ -1,11 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { inspectMachoSchema } from "../native/nativeInspection.js";
 
-import {
-  analysisViewResultSchema,
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "./analysisView.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import { analysisViewResultSchema } from "./analysisViewResult.js";
 
 it("binds every Mach-O facet to its rows, including empty pages", () => {
   for (const facet of [

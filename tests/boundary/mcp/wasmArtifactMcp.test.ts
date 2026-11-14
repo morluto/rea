@@ -10,7 +10,7 @@ import { readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { WasmArtifactService } from "../../../src/application/wasm/WasmArtifactService.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
-import { wasmArtifactSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { wasmArtifactSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { createServer } from "../../../src/server/createServer.js";

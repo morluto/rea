@@ -338,7 +338,18 @@ handler execution or change the body. Instruction windows and dossiers also
 retain these warnings in their result limitations. An unresolved callee or
 unestablished terminal-flow basis remains explicit. These observations qualify
 the analysis; they do not prove that a no-return flag is incorrect or recover
-excluded code. Analysis profiles version this observation contract so older
+excluded code. When the callee's entry, or the function a thunk forwards to,
+carries the `Non-Returning Function Found` analysis bookmark that Ghidra's
+`Non-Returning Functions - Discovered` analyzer writes, the call's limitation
+says the flag was inferred, and the function's limitations add one statement
+that Ghidra excluded that call's fall-through from the body and pseudocode, so
+code reachable only through it is missing if the callee returns. That analyzer can mark returning callees, such as an
+imported `operator new` thunk, so a constructor may decompile to a few lines. To
+compare, open a fresh import with
+`REA_GHIDRA_DISABLED_ANALYZERS='Non-Returning Functions - Discovered'`; an
+existing project (`REA_GHIDRA_PROJECT_PATH`) keeps the flags its analysis
+already stored. A flag without that bookmark keeps an unknown origin; REA does
+not treat it as declared. Analysis profiles version this observation contract so older
 snapshots cannot replay unqualified results.
 
 On non-Windows hosts, the ephemeral import repair clears no-return flags on the
@@ -350,6 +361,21 @@ entries. If a recovered caller reveals a decoded return, its propagated no-retur
 flag and affected callers are repaired in the same pass. Unknown imports and
 genuine no-return imports keep their flags. Analysis profiles version this repair
 so snapshots produced before it are not reused. Windows P0 does not run it.
+
+Ghidra applies most loader relocations, but it cannot apply some, such as an
+ELF copy relocation into RELRO (for example musl's `stderr`). Those destinations
+keep their file bytes while the runtime loader writes another object's value.
+Before decompiling, a fresh non-Windows import marks each loaded, initialized,
+non-writable block that holds such an unapplied relocation destination volatile
+in the ephemeral database, so the decompiler cannot fold the on-disk value into
+a constant. Applied relocations such as GOT entries stay foldable, so external
+calls keep their names. Permissions and source `FileBytes` are unchanged; the
+whole block is affected because Ghidra sets volatility per block. A procedure
+that reads an unapplied destination adds a limitation naming the relocation.
+Windows P0 and existing projects (`REA_GHIDRA_PROJECT_PATH`) have no
+database-mutation authority: they add the same limitation, but their pseudocode
+may still show the file-backed value. ELF relocatable objects and core files are
+excluded. Analysis profiles version this behavior.
 
 `npm run verify:ghidra` compiles the versioned C oracle into debug and stripped
 host-native targets (x86-64/AArch64 ELF on Linux or Mach-O on macOS), plus a native

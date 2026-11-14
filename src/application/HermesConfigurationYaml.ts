@@ -3,19 +3,26 @@ import {
   isMap,
   isScalar,
   isSeq,
+  Pair,
   parseDocument,
   Document,
   Schema,
+  YAMLMap,
+  type Node,
   type ParsedNode,
   type ScalarTag,
   type Tags,
 } from "yaml";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import {
   preserveYamlAliasValues,
   copyYamlAliasSource,
+  resolveYamlEditPath,
 } from "./YamlConfigurationAliases.js";
 import {
+  materializeUnresolvedYamlAliases,
   retainYamlConfigurationSource,
+  yamlAliasValues,
   retainYamlScalarSource,
   yamlNumericValuesEqual,
 } from "./YamlConfigurationSource.js";
@@ -268,6 +275,108 @@ const parseHermesDocument = (text: string) => {
   return document;
 };
 
+/** The value a path resolves to, merges included, or `absent`. */
+const projectedYamlValue = (
+  document: Document,
+  path: readonly string[],
+): { readonly value: unknown } | "absent" => {
+  let current: unknown = document.toJS();
+  for (const segment of path) {
+    if (
+      typeof current !== "object" ||
+      current === null ||
+      !Object.hasOwn(current, segment)
+    )
+      return "absent";
+    current = (current as Record<string, unknown>)[segment];
+  }
+  return { value: current };
+};
+
+const projectedYamlPathExists = (
+  document: Document,
+  path: readonly string[],
+): boolean => projectedYamlValue(document, path) !== "absent";
+
+const inheritedRegistrationRemovalError = () =>
+  new ConfigurationError(
+    "The registration is inherited from a YAML merge. Remove it at the shared source before rerunning uninstall",
+  );
+
+/** Find the source node selected by YAML merge precedence. */
+const inheritedYamlValue = (
+  document: Document,
+  source: unknown,
+  name: string,
+  visiting = new Set<object>(),
+): unknown => {
+  const node = isAlias(source) ? source.resolve(document) : source;
+  if (!isMap(node) || visiting.has(node)) return undefined;
+  visiting.add(node);
+  try {
+    const matches = node.items.filter((pair) => {
+      const key = isAlias(pair.key) ? pair.key.resolve(document) : pair.key;
+      return isScalar(key) && key.value === name;
+    });
+    if (matches.length > 1)
+      throw new ConfigurationError(
+        `YAML mapping contains more than one key resolving to ${JSON.stringify(name)}`,
+      );
+    if (matches[0] !== undefined) return matches[0].value;
+    for (const pair of node.items) {
+      if (
+        !isScalar(pair.key) ||
+        typeof pair.key.value !== "symbol" ||
+        pair.key.source !== "<<"
+      )
+        continue;
+      const merged = isAlias(pair.value)
+        ? pair.value.resolve(document)
+        : pair.value;
+      const sources = isSeq(merged) ? merged.items : [merged];
+      for (const candidate of sources) {
+        const found = inheritedYamlValue(document, candidate, name, visiting);
+        if (found !== undefined) return found;
+      }
+    }
+    return undefined;
+  } finally {
+    visiting.delete(node);
+  }
+};
+
+/** Create a local override that continues to inherit the shared mapping. */
+const inheritedYamlMapOverride = (
+  document: Document,
+  parent: readonly (string | Node)[],
+  name: string,
+): void => {
+  const owner =
+    parent.length === 1
+      ? document.contents
+      : document.getIn(parent.slice(0, -1), true);
+  let inherited = inheritedYamlValue(document, owner, name);
+  if (isAlias(inherited)) inherited = inherited.resolve(document);
+  if (!isMap(inherited))
+    throw new ConfigurationError(
+      `Inherited YAML setting ${JSON.stringify(name)} is not a mapping`,
+    );
+  const mergeDocument = parseHermesDocument("<<: {}\n");
+  if (
+    !isMap(mergeDocument.contents) ||
+    mergeDocument.contents.items[0] === undefined
+  )
+    throw new ConfigurationError("Cannot create a YAML merge key");
+  const alias = document.createAlias(inherited, "rea_inherited");
+  const override = new YAMLMap(document.schema);
+  override.items.push(new Pair(mergeDocument.contents.items[0].key, alias));
+  document.setIn(parent, override);
+  if (alias.resolve(document) !== inherited)
+    throw new ConfigurationError(
+      "The inherited YAML anchor is shadowed; edit its shared source before rerunning setup",
+    );
+};
+
 /** Parse a Hermes `config.yaml`, preserving the distinction between no root and explicit null. */
 export const parseHermesConfigurationYaml = (text: string): unknown => {
   const document = parseHermesDocument(text);
@@ -299,7 +408,7 @@ export const editHermesConfigurationYaml = (
     document.contents = map;
   }
   for (let length = 1; length < path.length; length++) {
-    const parent = path.slice(0, length);
+    const parent = resolveYamlEditPath(document, path.slice(0, length));
     const previous = document.getIn(parent, true);
     if (isAlias(previous)) {
       const copied = copyYamlAliasSource(previous, document);
@@ -308,38 +417,74 @@ export const editHermesConfigurationYaml = (
         document.setIn(parent, copied);
       }
     } else if (value !== undefined && !document.hasIn(parent)) {
+      if (projectedYamlPathExists(document, path.slice(0, length))) {
+        inheritedYamlMapOverride(document, parent, path[length - 1]!);
+        continue;
+      }
       // Implicit JS Map parents serialize as !!omap in YAML 1.1.
       document.setIn(parent, document.createNode({}));
     }
   }
-  const previous = document.getIn(path, true);
+  // A registration inherited whole through a merge keeps that inheritance:
+  // override it with the merge, then write only the fields that differ.
+  const inheritedSourcePath = resolveYamlEditPath(document, path);
+  // An explicit replacement that drops inherited fields, such as remote
+  // connection selectors, writes a local registration instead.
+  const inheritedRegistration = document.hasIn(inheritedSourcePath)
+    ? "absent"
+    : projectedYamlValue(document, path);
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    inheritedRegistration !== "absent" &&
+    typeof inheritedRegistration.value === "object" &&
+    inheritedRegistration.value !== null &&
+    Object.keys(inheritedRegistration.value).every((key) =>
+      Object.hasOwn(value, key),
+    )
+  )
+    inheritedYamlMapOverride(document, inheritedSourcePath, path.at(-1)!);
+  const sourcePath = resolveYamlEditPath(document, path);
+  const previous = document.getIn(sourcePath, true);
   // Deletion removes the pair's key too; replacement retains that key node.
   const parent =
-    value === undefined ? document.getIn(path.slice(0, -1), true) : undefined;
+    value === undefined
+      ? document.getIn(sourcePath.slice(0, -1), true)
+      : undefined;
+  if (
+    value === undefined &&
+    !document.hasIn(sourcePath) &&
+    projectedYamlPathExists(document, path)
+  )
+    throw inheritedRegistrationRemovalError();
   const removedKey = isMap(parent)
-    ? parent.items.find(
-        (pair) => isScalar(pair.key) && pair.key.value === path.at(-1),
-      )?.key
+    ? parent.items.find((pair) => pair.key === sourcePath.at(-1))?.key
     : undefined;
+  const aliasValues = yamlAliasValues(previous, document);
   const retainedSources = preserveYamlAliasValues(document, [
     previous,
     removedKey,
   ]);
   if (value === undefined) {
-    if (!document.deleteIn(path)) return text;
+    if (!document.deleteIn(sourcePath)) return text;
+    if (projectedYamlPathExists(document, path))
+      throw inheritedRegistrationRemovalError();
   } else {
     // Let YAML's scalar update preserve numeric formats for a direct edit.
     // Replacing containers needs explicit retention of unchanged child nodes.
     document.setIn(
-      path,
+      sourcePath,
       isMap(previous) || isSeq(previous)
         ? retainYamlConfigurationSource(
             previous,
             document.createNode(value),
             retainedSources,
+            document,
           )
         : value,
     );
+    materializeUnresolvedYamlAliases(document, aliasValues);
   }
   // Editing REA must not reflow unrelated user prompts or other YAML scalars.
   return document.toString({

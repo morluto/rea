@@ -11,7 +11,7 @@ import {
 } from "../../../src/artifacts/fit/FitImage.fixture.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { artifactExtractionResultSchema } from "../../../src/domain/artifactGraph.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 
 // The compiled stdio fixture checks advertised schemas against their dialect and
 // validates actual tool responses, avoiding a second source server module graph.

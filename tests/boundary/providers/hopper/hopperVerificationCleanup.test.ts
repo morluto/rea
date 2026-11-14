@@ -47,16 +47,18 @@ it.skipIf(process.platform === "win32")(
     try {
       const children = await readdir(directory);
       expect(children).toHaveLength(1);
-      expect(await snapshotHopperRuntime(parent, directory)).toEqual(
+      const snapshot = await snapshotHopperRuntime(parent, directory);
+      expect(snapshot.paths).toEqual(
         new Set(children.map((name) => join(directory, name))),
       );
+      expect(snapshot.confirmedSessions.size).toBe(0);
     } finally {
       await acquired.lease.release();
     }
   },
 );
 
-it("reports retained sessions belonging to observed MCP processes", async () => {
+it("reports sessions with unresolved identity without calling them foreign", async () => {
   const parent = await createTestTempDirectory("rea-cleanup-retained-session-");
   const directory = join(parent, "rea-hopper-501");
   const previous = join(parent, "rea-existing-session");
@@ -65,7 +67,10 @@ it("reports retained sessions belonging to observed MCP processes", async () => 
   const retained = join(parent, "rea-retained-session");
   const unrelated = join(parent, "rea-unrelated-session");
   const unknown = join(parent, "rea-no-ownership-record");
-  for (const path of [retained, unrelated, unknown]) await mkdir(path);
+  const malformed = join(parent, "rea-invalid-ownership-record");
+  const invalidJson = join(parent, "rea-invalid-ownership-json");
+  for (const path of [retained, unrelated, unknown, malformed, invalidJson])
+    await mkdir(path);
   await writeFile(join(retained, "bootstrap.py"), "source-owned fixture");
   await writeFile(
     join(retained, "ownership.json"),
@@ -75,13 +80,18 @@ it("reports retained sessions belonging to observed MCP processes", async () => 
     join(unrelated, "ownership.json"),
     JSON.stringify({ parent_pid: process.pid + 1 }),
   );
-  const after = await snapshotHopperRuntime(
-    parent,
-    directory,
-    new Set([process.pid]),
-  );
+  await writeFile(join(malformed, "ownership.json"), "{}");
+  await writeFile(join(invalidJson, "ownership.json"), "{");
+  const after = await snapshotHopperRuntime(parent, directory);
 
-  expect([...after].filter((path) => !before.has(path))).toEqual([retained]);
+  expect(
+    [...after.paths].filter((path) => !before.paths.has(path)).sort(),
+  ).toEqual([invalidJson, malformed, unknown, unrelated, retained].sort());
+  expect(
+    [...after.unresolvedSessions]
+      .filter((path) => !before.paths.has(path))
+      .sort(),
+  ).toEqual([invalidJson, malformed, unknown, unrelated, retained].sort());
 });
 
 it("reports an unexpected file at the shared lease root", async () => {
@@ -89,8 +99,37 @@ it("reports an unexpected file at the shared lease root", async () => {
   const directory = join(parent, "rea-hopper-501");
   await writeFile(directory, "unexpected lease root file");
 
-  expect(await snapshotHopperRuntime(parent, directory)).toEqual(
+  expect((await snapshotHopperRuntime(parent, directory)).paths).toEqual(
     new Set([directory]),
+  );
+});
+
+it("requires the selected run identity before treating a session as identified", async () => {
+  const parent = await createTestTempDirectory("rea-hopper-run-identity-");
+  const leases = join(parent, "rea-hopper-501");
+  const selected = join(parent, "rea-selected");
+  const reusedPid = join(parent, "rea-other-run");
+  const missing = join(parent, "rea-missing-run");
+  for (const path of [selected, reusedPid, missing]) await mkdir(path);
+  await writeFile(
+    join(selected, "ownership.json"),
+    JSON.stringify({ parent_pid: process.pid, run_id: "selected-run" }),
+  );
+  await writeFile(
+    join(reusedPid, "ownership.json"),
+    JSON.stringify({ parent_pid: process.pid, run_id: "other-run" }),
+  );
+  await writeFile(
+    join(missing, "ownership.json"),
+    JSON.stringify({ parent_pid: process.pid }),
+  );
+  const observed = await snapshotHopperRuntime(parent, leases, "selected-run");
+  expect([...observed.paths].sort()).toEqual(
+    [selected, reusedPid, missing].sort(),
+  );
+  expect([...observed.confirmedSessions]).toEqual([selected]);
+  expect([...observed.unresolvedSessions].sort()).toEqual(
+    [reusedPid, missing].sort(),
   );
 });
 

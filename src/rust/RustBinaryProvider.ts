@@ -2,7 +2,7 @@ import { RUST_BINARY_PROVIDER_IDENTITY } from "./RustBinaryProviderIdentity.js";
 import {
   projectSelectedArtifactFileFailure,
   projectStableArtifactFailure,
-  stableArtifactInputRecovery,
+  stableArtifactInputFailure,
   projectArtifactCloseFailure,
 } from "../artifacts/StableArtifactFailure.js";
 import {
@@ -436,11 +436,7 @@ const artifactReaderFailure = (
       },
     );
   if (cause.reason === "path")
-    return new AnalysisInputError(
-      OPERATION,
-      { cause, ...stableArtifactInputRecovery(cause) },
-      [{ path: ["path"], reason: "invalid_format", message: cause.message }],
-    );
+    return stableArtifactInputFailure(cause, OPERATION);
   return new ProviderAdapterError(RUST_BINARY_PROVIDER_IDENTITY.id, OPERATION, {
     cause,
     diagnostics: { path, reason: cause.message },

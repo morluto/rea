@@ -5,22 +5,20 @@ import {
   readStableArtifact,
 } from "../artifacts/readStableArtifact.js";
 import {
-  artifactFileCancellationCause,
   artifactFilePrimaryFacts,
   artifactSelectedPathErrno,
   type ArtifactFilePrimaryFacts,
 } from "../artifacts/ArtifactFileOperation.js";
 import {
   projectArtifactCloseFailure,
+  projectOwnedArtifactIdentityFailure,
   projectStableArtifactFailure,
-  stableArtifactInputRecovery,
+  stableArtifactInputFailure,
 } from "../artifacts/StableArtifactFailure.js";
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
 import type { V8CodeCachePort } from "../application/v8CodeCache/V8CodeCachePort.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
@@ -200,27 +198,12 @@ const v8CodeCacheFailurePrimary = (
             message: cause.message,
           },
         ]);
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "integrity"
-  )
-    return new AnalysisArtifactChangedError(
-      OPERATION,
-      input.path,
-      cause.message,
-      {
-        cause,
-      },
-    );
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "cancelled"
-  )
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
-    });
+  const identityFailure = projectOwnedArtifactIdentityFailure(
+    facts,
+    OPERATION,
+    input.path,
+  );
+  if (identityFailure !== undefined) return identityFailure;
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure
@@ -244,17 +227,7 @@ const v8CodeCacheFailurePrimary = (
       );
     }
     if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(
-        OPERATION,
-        { cause, ...stableArtifactInputRecovery(cause) },
-        [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: cause.message,
-          },
-        ],
-      );
+      return stableArtifactInputFailure(cause, OPERATION);
   }
   if (cause instanceof Error && "code" in cause) {
     if (cause.code === "EACCES" || cause.code === "EPERM")

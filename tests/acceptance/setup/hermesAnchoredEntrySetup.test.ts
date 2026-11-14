@@ -23,7 +23,6 @@ const cliLifecycle = (cli: TestCli, home: string, profile: string) => {
       arguments: arguments_,
       cwd: home,
       environment: { HOME: home, USERPROFILE: home, HERMES_HOME: profile },
-      timeoutMs: 20_000,
     });
   const setup = [
     "setup",

@@ -8,7 +8,7 @@ import {
   webSourceLocationSummaryViewResultSchema,
   webSourceLocationMatchesViewResultSchema,
   webSourceLocationTextViewResultSchema,
-} from "../domain/analysisView/analysisView.js";
+} from "../domain/analysisView/analysisViewResult.js";
 import {
   exportWebScriptsInputSchema,
   webScriptExportResultSchema,

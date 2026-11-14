@@ -33,7 +33,6 @@ cliTest(
           USERPROFILE: home,
           CLAUDE_CONFIG_DIR: "",
         },
-        timeoutMs: 20_000,
       });
     const setup = (flags: readonly string[] = []) =>
       run(["setup", "--client", "claude_code", ...flags, "--json"]);
@@ -151,7 +150,6 @@ for (const policy of [{ excluded: ["rea"] }, { allowed: ["other"] }]) {
           arguments: arguments_,
           cwd: home,
           environment: { HOME: home, USERPROFILE: home },
-          timeoutMs: 20_000,
         });
       const setup = await run([
         "setup",
@@ -221,7 +219,6 @@ cliTest(
         arguments: arguments_,
         cwd: home,
         environment: { HOME: home, USERPROFILE: home },
-        timeoutMs: 20_000,
       });
     const before = await run(["doctor", "--client", "opencode", "--json"]);
     expect(before.exitCode).toBe(1);

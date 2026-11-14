@@ -6,7 +6,7 @@ import {
   devicetreeSummaryViewResultSchema,
   binaryLayoutSummaryViewResultSchema,
   nativeExportsSummaryViewResultSchema,
-} from "../../domain/analysisView/analysisView.js";
+} from "../../domain/analysisView/analysisViewResult.js";
 import {
   inspectPeLoadConfigInputSchema,
   peLoadConfigSchema,

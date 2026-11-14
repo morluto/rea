@@ -539,7 +539,7 @@ it("inspects native SAZ through the public CLI and MCP with equal evidence, byte
   expect(
     records.find((record) => record.evidence_id === fromMcp.evidence_id),
   ).toEqual(fromMcp);
-}, 60_000);
+});
 
 it("pages retained SAZ Evidence through public MCP and portable CLI after source deletion", async () => {
   const path = await fixture(await archive());
@@ -624,7 +624,7 @@ it("pages retained SAZ Evidence through public MCP and portable CLI after source
   expect(
     parseEvidence(JSON.parse(standalone.stdout)).normalized_result,
   ).toEqual(summary.normalized_result);
-}, 60_000);
+});
 
 it("keeps CRLF separators inside a body after LF-only HTTP headers", async () => {
   const body = Buffer.from("\ufefffirst\r\n\r\nsecond\n\nthird");

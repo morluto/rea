@@ -12,7 +12,7 @@ import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest, type TestCli } from "../support/cli/cliFixture.js";
 
 const inspectBoth = async (cli: TestCli, path: string) => {
-  const output = await cli.sharedCliRun!({
+  const output = await cli.run({
     arguments: [
       "inspect-apk-signature",
       path,
