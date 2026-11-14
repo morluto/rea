@@ -17,6 +17,7 @@ tester.run("project-wait-deadline", rule, {
     `${vitest} await expect.poll(() => ready).toBe(true);`,
     `${vitest} await expect.poll(() => ready, { interval: 10 }).toBe(true);`,
     `${vitest} await expect.poll(() => ready, { message: "ready" }).toBe(true);`,
+    `${vitest} await expect.poll(() => ready, { ["interval"]: 10 }).toBe(true);`,
     `import { waitFor } from "../support/testWait.js"; await waitFor(() => ready, { interval: 10 });`,
     // Same names that are not Vitest's: a fixture method, or a shadowed local.
     `${vitest} await fixture.vi.waitFor(() => ready, { timeout: 5_000 });`,
@@ -40,6 +41,9 @@ tester.run("project-wait-deadline", rule, {
       `${vitest} await expect.poll(() => ready, options).toBe(true);`,
       `import { expect as assert } from "vitest"; await assert.poll(() => ready, { timeout: 5 }).toBe(true);`,
       `import * as vitest from "vitest"; await vitest.expect.poll(() => ready, { "timeout": 5 }).toBe(true);`,
+      `${vitest} await expect.poll(() => ready, { ["timeout"]: 5 }).toBe(true);`,
+      `${vitest} await expect.poll(() => ready, { ...{ timeout: 5 } }).toBe(true);`,
+      `${vitest} await expect.poll(() => ready, { [key]: 5 }).toBe(true);`,
     ].map((code) => ({
       code,
       filename,
