@@ -108,24 +108,28 @@ const DATED_PROSE = /^docs\/(?:releases|specs|verification|adr)\//u;
 const PROSE_FILE = /\.(?:md|html)$/u;
 // A count of ten or more tools, such as "240 tools" or "all 1,024 MCP tools".
 const LITERAL_TOOL_COUNT =
-  /\b[1-9]\d*(?:,\d{3})*\s+(?:(?:public|MCP|canonical|registered|advertised|available)\s+)*tools\b/giu;
+  /\b[1-9]\d*(?:,\d{3})*\s+(?:(?:REA|public|MCP|canonical|registered|advertised|available)\s+)*tools\b/giu;
 
 const proseFiles = async (root) => {
   const files = [];
+  const walk = async (path) => {
+    if (path === "docs/.vitepress/dist" || DATED_PROSE.test(`${path}/`)) return;
+    for (const entry of await readdir(join(root, path), {
+      withFileTypes: true,
+    })) {
+      const child = `${path}/${entry.name}`;
+      if (entry.isDirectory()) await walk(child);
+      else if (entry.isFile() && PROSE_FILE.test(child)) files.push(child);
+    }
+  };
   for (const start of LIVING_PROSE_ROOTS) {
-    let entries;
     try {
-      entries = (await stat(join(root, start))).isDirectory()
-        ? (await readdir(join(root, start), { recursive: true })).map(
-            (entry) => `${start}/${entry.split(sep).join("/")}`,
-          )
-        : [start];
+      if ((await stat(join(root, start))).isDirectory()) await walk(start);
+      else if (PROSE_FILE.test(start)) files.push(start);
     } catch (cause) {
       if (cause?.code === "ENOENT") continue;
       throw cause;
     }
-    for (const path of entries)
-      if (PROSE_FILE.test(path) && !DATED_PROSE.test(path)) files.push(path);
   }
   return files.sort();
 };

@@ -81,9 +81,9 @@ does not write in this release.
 
 The [manual stdio connection](../getting-started/client-configuration.md#llamacpp) was checked on
 macOS arm64 with Node.js 24.18.0, llama-server b11715 (`9d1878a43`), and the
-published `rea-agents@6.5.0` package. `GET /tools` exposed 207 REA tools without
+published `rea-agents@6.5.0` package. `GET /tools` exposed REA tools without
 enabling llama.cpp's built-in tools. With the source checkout at `9e372c6`, all
-207 forwarded names, descriptions and input schemas matched a direct MCP client.
+forwarded names, descriptions and input schemas matched a direct MCP client.
 
 Calls through `POST /tools` returned session metadata and JavaScript analysis
 Evidence for a fixture at a Unicode path. A missing target returned REA's input

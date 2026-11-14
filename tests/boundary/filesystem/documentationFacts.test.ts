@@ -79,12 +79,18 @@ describe("literal tool counts", () => {
       "One line.\nThe client saw all 1,024 MCP tools.\nIt registered 0 tools.\n",
     );
     await write("website/public/index.html", "<p>240 public tools</p>");
+    await write("docs/guides/rea.md", "The client saw 207 REA tools.\n");
+    await write(
+      "docs/.vitepress/dist/verification/run.html",
+      "<p>234 tools</p>",
+    );
     await write("docs/verification/run.md", "The catalog had 240 tools.\n");
     await write("docs/releases/1.0.md", "Adds 12 tools.\n");
     await write("docs/guides/b.md", "Six initial tools, then 34 loaded.\n");
     await expect(literalToolCountIssues(directory)).resolves.toEqual([
       'README.md:1: literal tool count "255 tools"; link the generated catalog instead',
       'docs/guides/a.md:2: literal tool count "1,024 MCP tools"; link the generated catalog instead',
+      'docs/guides/rea.md:1: literal tool count "207 REA tools"; link the generated catalog instead',
       'website/public/index.html:1: literal tool count "240 public tools"; link the generated catalog instead',
     ]);
   });
