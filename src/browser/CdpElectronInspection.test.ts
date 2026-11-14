@@ -6,6 +6,10 @@ import { pathToFileURL } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import {
+  fakeCdpSend,
+  frameTreeReply,
+} from "../../tests/fixtures/fakeCdpSend.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
 import type { CdpContextFrameClaim } from "./CdpScriptContextFacts.js";
 import {
@@ -118,7 +122,7 @@ it.each([
         listener = value;
         return () => {};
       },
-      send: async (method: string) => {
+      send: fakeCdpSend(async (method) => {
         if (method === "Page.getFrameTree") {
           reads++;
           const shouldInject =
@@ -198,7 +202,7 @@ it.each([
           return { strings: [], documents: [] };
         if (method === "Target.getTargets") return { targetInfos: [] };
         return {};
-      },
+      }),
     } as unknown as CdpConnection;
     const result = await inspectRaceConnection(connection, mainUrl);
     if (stage === "stable")
@@ -328,7 +332,7 @@ it.each([
         listener = value;
         return () => {};
       },
-      send: async (method: string) => {
+      send: fakeCdpSend(async (method) => {
         if (method === "Page.getFrameTree") {
           reads++;
           const trigger =
@@ -339,7 +343,12 @@ it.each([
                 : kind === "late-main"
                   ? reads === 3
                   : reads === 2;
-          let frameUrlReads = 0;
+          if (trigger && !fired) {
+            fired = true;
+            // The reply is parsed and its documents seeded in microtasks;
+            // inject during the later asynchronous file checks.
+            setImmediate(inject);
+          }
           return {
             frameTree: {
               frame: { id: "main", url: mainUrl, loaderId: "loader-main" },
@@ -349,19 +358,7 @@ it.each([
                     id: "child",
                     parentId: "main",
                     loaderId: "loader-child",
-                    get url() {
-                      frameUrlReads++;
-                      // Seeded protocol facts are read first; inject during the later file check.
-                      if (
-                        trigger &&
-                        !fired &&
-                        (kind !== "late-main" || frameUrlReads === 2)
-                      ) {
-                        fired = true;
-                        queueMicrotask(inject);
-                      }
-                      return childUrl;
-                    },
+                    url: childUrl,
                   },
                 },
               ],
@@ -376,7 +373,7 @@ it.each([
           return { strings: [], documents: [] };
         if (method === "Target.getTargets") return { targetInfos: [] };
         return {};
-      },
+      }),
     } as unknown as CdpConnection;
     const result = inspectRaceConnection(connection, mainUrl, {
       report: async (update) => {
@@ -419,7 +416,7 @@ it.each([7, null, "", "claimed-parent"])(
     await writeFile(main, "main");
     const completeness = new CdpCaptureCompleteness();
     const { frames } = await captureFrames(
-      {
+      frameTreeReply({
         frameTree: {
           frame: { id: "main", url: pathToFileURL(main).href, parentId },
           childFrames: [
@@ -432,7 +429,7 @@ it.each([7, null, "", "claimed-parent"])(
             },
           ],
         },
-      },
+      }),
       completeness,
       DEFAULT_ASAR_HEADER_ADMISSION,
     );
@@ -460,7 +457,7 @@ describe("Electron frame capture", () => {
       const completeness = new CdpCaptureCompleteness();
 
       const { frames } = await captureFrames(
-        {
+        frameTreeReply({
           frameTree: {
             frame: { id: "frame-main", url: mainUrl },
             childFrames: [
@@ -472,7 +469,7 @@ describe("Electron frame capture", () => {
               },
             ],
           },
-        },
+        }),
         completeness,
         DEFAULT_ASAR_HEADER_ADMISSION,
       );
@@ -779,7 +776,7 @@ it.each([
         listener = value;
         return () => {};
       },
-      send: async (method: string) => {
+      send: fakeCdpSend(async (method) => {
         if (method === "Page.getFrameTree") {
           reads++;
           return {
@@ -808,7 +805,7 @@ it.each([
           return { strings: [], documents: [] };
         if (method === "Target.getTargets") return { targetInfos: [] };
         return {};
-      },
+      }),
     } as unknown as CdpConnection;
     const result = inspectRaceConnection(connection, mainUrl, {
       report: async (update) => {
@@ -849,7 +846,7 @@ it.each([2, 3])(
     let reads = 0;
     const connection = {
       onEvent: () => () => {},
-      send: async (method: string) => {
+      send: fakeCdpSend(async (method) => {
         if (method === "Page.getFrameTree") {
           reads += 1;
           return {
@@ -868,7 +865,7 @@ it.each([2, 3])(
           return { strings: [], documents: [] };
         if (method === "Target.getTargets") return { targetInfos: [] };
         return {};
-      },
+      }),
     } as unknown as CdpConnection;
     await expect(
       inspectRaceConnection(connection, mainUrl),
@@ -913,7 +910,7 @@ it.each([
         listener = value;
         return () => {};
       },
-      send: async (method: string) => {
+      send: fakeCdpSend(async (method) => {
         if (method === "Page.getFrameTree") {
           reads++;
           return {
@@ -953,7 +950,7 @@ it.each([
           return { strings: [], documents: [] };
         if (method === "Target.getTargets") return { targetInfos: [] };
         return {};
-      },
+      }),
     } as unknown as CdpConnection;
     const result = await inspectRaceConnection(connection, mainUrl);
     for (const section of ["frames", "scripts", "workers"] as const)
@@ -1002,7 +999,7 @@ it.each([
     let reads = 0;
     const connection = {
       onEvent: () => () => {},
-      send: async (method: string) => {
+      send: fakeCdpSend(async (method) => {
         if (method === "Page.getFrameTree") {
           const loaderId = loaders[reads++];
           return {
@@ -1021,7 +1018,7 @@ it.each([
           return { strings: [], documents: [] };
         if (method === "Target.getTargets") return { targetInfos: [] };
         return {};
-      },
+      }),
     } as unknown as CdpConnection;
     const result = inspectRaceConnection(connection, mainUrl);
     if (changed)

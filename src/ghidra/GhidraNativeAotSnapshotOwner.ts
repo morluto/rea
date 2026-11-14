@@ -6,7 +6,8 @@ import type {
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisArtifactChangedError,
-  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
@@ -139,9 +140,7 @@ export class GhidraNativeAotSnapshotOwner {
           ),
         );
       if (waited.status === "cancelled")
-        return err(
-          this.#cancelled(operation, callerSignal?.reason, observations),
-        );
+        return err(this.#cancelled(operation, waited.reason, observations));
       if (callerSignal?.aborted)
         return err(
           waited.value.ok
@@ -163,9 +162,7 @@ export class GhidraNativeAotSnapshotOwner {
     const attempt = this.#attempt ?? this.#start(normalized);
     const waited = await attempt.wait(callerSignal);
     if (waited.status === "cancelled")
-      return err(
-        this.#cancelled(operation, callerSignal?.reason, observations),
-      );
+      return err(this.#cancelled(operation, waited.reason, observations));
     const settled = waited.value;
     // A completed physical failure or retained cleanup outranks a later abort.
     if (!settled.ok) {
@@ -362,8 +359,7 @@ export class GhidraNativeAotSnapshotOwner {
     observations: JsonValue,
     partialObservation?: AnalysisPartialObservation,
   ): AnalysisError {
-    return new AnalysisCancelledError(operation, {
-      cause: reason,
+    return cancelledBy(operation, carriedReason(reason), {
       diagnostics: { measured_observation: observations },
       partialObservation,
     });
