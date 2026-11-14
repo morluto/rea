@@ -2066,7 +2066,7 @@ Setup binds persistent MCP registrations to the installation that performed setu
 Running current setup later migrates recognized legacy package-runner registrations
 through the normal reviewed setup transaction.
 
-With Bun, `bunx rea-agents@6.9.0 setup` (or `bunx rea-agents@6.9.0 setup`) is the
+With Bun, `bunx rea-agents@6.9.0 setup` is the
 equivalent acquisition entry point. Managed registrations use the selected Bun
 executable and REA entry script directly. Windows registrations likewise use
 absolute runtime and script paths, without a package-runner command shim.
