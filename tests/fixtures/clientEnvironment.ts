@@ -1,8 +1,15 @@
 import { vi } from "vitest";
 
 /** Environment variables that redirect where supported clients keep config. */
-export const CLIENT_LOCATION_ENVIRONMENT = [
+const CLIENT_LOCATION_ENVIRONMENT = [
+  "HOME",
+  "USERPROFILE",
+  "HOMEDRIVE",
+  "HOMEPATH",
   "APPDATA",
+  "CLINE_MCP_SETTINGS_PATH",
+  "CLINE_DATA_DIR",
+  "CLINE_DIR",
   "CLAUDE_CONFIG_DIR",
   "CODEX_HOME",
   "DSH_HOME",

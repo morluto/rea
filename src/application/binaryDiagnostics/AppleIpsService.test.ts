@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { parseAppleIps } from "../../native/apple/AppleIpsParser.js";
+import { inspectAppleIpsInputSchema } from "../../domain/native/appleIps.js";
 import { parseEvidence } from "../../domain/evidence.js";
 import { expect, it } from "vitest";
 import { AppleIpsService } from "./AppleIpsService.js";
@@ -10,52 +13,19 @@ import {
 } from "../../domain/analysisErrorCore.js";
 
 const identity = APPLE_IPS_PROVIDER;
-const report: AppleIps = {
-  artifact: {
-    path: "/artifacts/report.ips",
-    sha256: "a".repeat(64),
-    bytes: 128,
+const bytes = Buffer.from(
+  '{"bug_type":"309"}\n{"procName":"rea-crash-fixture","threads":[],"usedImages":[]}',
+);
+const path = "/artifacts/report.ips";
+const report = parseAppleIps(
+  bytes,
+  {
+    path,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    bytes: bytes.length,
   },
-  metadata: {
-    bug_type: "309",
-    timestamp: null,
-    os_version: null,
-    bundle_id: null,
-    incident_id: null,
-    name: null,
-    build_version: null,
-    platform: null,
-    unlisted_keys: [],
-  },
-  process: {
-    name: "rea-crash-fixture",
-    path: null,
-    pid: null,
-    parent: null,
-    parent_pid: null,
-    cpu_type: null,
-    translated: null,
-    os_version: null,
-  },
-  exception: null,
-  termination: null,
-  faulting_thread: null,
-  threads: [],
-  images: [],
-  classification: { status: "unclassified", matches: [] },
-  coverage: {
-    status: "complete",
-    reason: null,
-    threads: 0,
-    frames: 0,
-    images: 0,
-    registers: 0,
-    type_mismatches: [],
-  },
-  unlisted_body_keys: [],
-  join: null,
-  limitations: ["Opened Mach-O and dSYM UUID joins remain unobserved."],
-};
+  inspectAppleIpsInputSchema.parse({ path }),
+);
 
 it.each([0, 5])(
   "rejects an unresolved faulting thread %s without its mismatch",

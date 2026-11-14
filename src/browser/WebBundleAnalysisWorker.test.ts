@@ -1259,8 +1259,8 @@ it.each(["typed", "physical"] as const)(
     const prepare = vi
       .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
       .mockResolvedValue();
-    const launcher = vi.fn(
-      async (options: Parameters<typeof spawnOwnedProviderProcess>[0]) => {
+    const launcher = vi.fn<typeof spawnOwnedProviderProcess>(
+      async (options) => {
         expect(options.signal).toBeDefined();
         controller.abort(reason);
         expect(options.signal?.reason).toBe(reason);
@@ -1284,6 +1284,13 @@ it.each(["typed", "physical"] as const)(
       }
       expect(error.cause).toBe(reason);
       expect(launcher).toHaveBeenCalledOnce();
+      launcher.mockImplementationOnce(launcherFor({ kind: "source" }));
+      const recovered = await worker.analyze(
+        makeScript("fetch('/after-admission');"),
+        5_000,
+      );
+      expect(recovered.ok).toBe(true);
+      expect(launcher).toHaveBeenCalledTimes(2);
     } finally {
       prepare.mockRestore();
       await worker.close();

@@ -1,7 +1,12 @@
 import { isProcessOwnershipInspectionCancellation } from "../ProcessInspectionCancellation.js";
 import { processInspectionCancellations } from "../ProcessInspectionCleanup.js";
 import type { ProcessCaptureResourceScope } from "./ProcessCaptureLifecycle.js";
-import type { ProcessCaptureError } from "./ProcessCaptureError.js";
+import {
+  captureInspectionFailures,
+  normalizeCaptureFailure,
+  ProcessCaptureSamplingFailure,
+  type ProcessCaptureError,
+} from "./ProcessCaptureError.js";
 import type { ProcessSamplingCoverage } from "../../domain/process/processCaptureCoverage.js";
 import type {
   ProcessSample,
@@ -19,8 +24,6 @@ import {
 } from "./LinuxProcessSampling.js";
 import {
   settleSamplingReads,
-  samplingInspectionFailures,
-  SamplingReadBatchFailure,
   mergeSamplingDiagnostics,
   readProcSamplingSource,
   readSamplingSource,
@@ -44,7 +47,7 @@ type ProcessIdentitySnapshot = Pick<
 >;
 
 /** Prove that forkpty completed session setup and installed the run token. */
-export const isInitializedPtyRoot = (options: {
+const isInitializedPtyRoot = (options: {
   readonly rootPid: number;
   readonly expectedRunId: string;
   readonly before: ProcessIdentitySnapshot;
@@ -371,10 +374,10 @@ const sampleProcesses = async (
 
 /** A private stop intent qualifies only explicit pure cancellation from every rejected read. */
 const isOwnedSamplingShutdown = (cause: unknown, reason: unknown): boolean => {
-  const inspections = samplingInspectionFailures(cause);
+  const inspections = captureInspectionFailures(cause);
   return (
     inspections.length > 0 &&
-    (!(cause instanceof SamplingReadBatchFailure) ||
+    (!(cause instanceof ProcessCaptureSamplingFailure) ||
       cause.userCategory === "cancelled") &&
     inspections.every(
       (inspection) =>
@@ -472,16 +475,22 @@ export const startProcessSampler = (options: {
         }
       })
       .catch((cause: unknown) => {
-        const inspections = samplingInspectionFailures(cause);
+        const normalized = normalizeCaptureFailure(cause);
+        const inspections = captureInspectionFailures(normalized);
         for (const inspection of inspections)
           options.resourceScope.retainInspectionFailure(inspection);
         if (inspections.length > 0) {
-          if (stopRequested && isOwnedSamplingShutdown(cause, shutdownReason)) {
+          if (
+            stopRequested &&
+            isOwnedSamplingShutdown(normalized, shutdownReason)
+          ) {
             samplingWasInterrupted = true;
             return;
           }
           inspectionFailure =
-            cause instanceof SamplingReadBatchFailure ? cause : inspections[0];
+            normalized instanceof ProcessCaptureSamplingFailure
+              ? normalized
+              : inspections[0];
           stopped = true;
           clearInterval(timer);
           return;

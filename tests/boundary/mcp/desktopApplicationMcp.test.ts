@@ -118,15 +118,11 @@ it("advertises exact schemas and retains a compact directory answer with typed s
   expect(
     schemas.ajv.validate(schemas.inputSchema, { path: root, execute: true }),
   ).toBe(false);
-  const result = await client.callTool({
-    name: "inspect_desktop_application",
-    arguments: { path: root },
-  });
+  const result = await client.callTool(
+    { name: "inspect_desktop_application", arguments: { path: root } },
+    { toolDefinition: schemas.toolDefinition },
+  );
   expect(result.isError).not.toBe(true);
-  expect(
-    schemas.ajv.validate(schemas.outputSchema, result.structuredContent),
-    JSON.stringify(schemas.ajv.errors),
-  ).toBe(true);
   const summary = parseEvidence(result.structuredContent);
   const view = analysisViewResultSchema.parse(summary.normalized_result);
   expect(view.kind).toBe("summary");
@@ -139,27 +135,26 @@ it("advertises exact schemas and retains a compact directory answer with typed s
   const archive = full.files.find((file) => file.path === "resources/app.asar");
   if (archive === undefined)
     throw new Error("Missing retained ASAR convention");
-  const selected = await client.callTool({
-    name: "inspect_analysis_view",
-    arguments: {
-      source: {
-        kind: "retained-evidence",
-        evidence_id: view.parent_evidence_id,
-      },
-      view: {
-        kind: "desktop-application",
-        collection: "files",
-        file_ids: [archive.file_id],
-        fields: ["path", "read_status"],
-        limit: 1,
+  const selected = await client.callTool(
+    {
+      name: "inspect_analysis_view",
+      arguments: {
+        source: {
+          kind: "retained-evidence",
+          evidence_id: view.parent_evidence_id,
+        },
+        view: {
+          kind: "desktop-application",
+          collection: "files",
+          file_ids: [archive.file_id],
+          fields: ["path", "read_status"],
+          limit: 1,
+        },
       },
     },
-  });
+    { toolDefinition: views.toolDefinition },
+  );
   expect(selected.isError).not.toBe(true);
-  expect(
-    views.ajv.validate(views.outputSchema, selected.structuredContent),
-    JSON.stringify(views.ajv.errors),
-  ).toBe(true);
   const page = parseEvidence(selected.structuredContent);
   expect(page.evidence_links).toEqual([view.parent_evidence_id]);
   expect(page.normalized_result).toMatchObject({
@@ -204,14 +199,14 @@ it("surfaces unavailable probes and filters their complete retained diagnostics 
       join(partialRoot, `probe${String(index).padStart(2, "0")}.exe`),
       buildNativePeFixture(),
     );
-  const partial = await client.callTool({
-    name: "inspect_desktop_application",
-    arguments: { path: partialRoot, max_probe_bytes: 4096 },
-  });
+  const partial = await client.callTool(
+    {
+      name: "inspect_desktop_application",
+      arguments: { path: partialRoot, max_probe_bytes: 4096 },
+    },
+    { toolDefinition: schemas.toolDefinition },
+  );
   expect(partial.isError).not.toBe(true);
-  expect(
-    schemas.ajv.validate(schemas.outputSchema, partial.structuredContent),
-  ).toBe(true);
   const partialEvidence = parseEvidence(partial.structuredContent);
   const partialView = analysisViewResultSchema.parse(
     partialEvidence.normalized_result,
@@ -275,14 +270,11 @@ it("surfaces unavailable probes and filters their complete retained diagnostics 
       },
     };
     expect(views.ajv.validate(views.inputSchema, args)).toBe(true);
-    const response = await client.callTool({
-      name: "inspect_analysis_view",
-      arguments: args,
-    });
+    const response = await client.callTool(
+      { name: "inspect_analysis_view", arguments: args },
+      { toolDefinition: views.toolDefinition },
+    );
     expect(response.isError).not.toBe(true);
-    expect(
-      views.ajv.validate(views.outputSchema, response.structuredContent),
-    ).toBe(true);
     const evidence = parseEvidence(response.structuredContent);
     expect(evidence.evidence_links).toEqual([partialView.parent_evidence_id]);
     expect(evidence.normalized_result).toMatchObject({
@@ -329,21 +321,21 @@ it.skipIf(process.platform === "win32")(
       kind: "retained-evidence",
       evidence_id: summary.parent_evidence_id,
     };
-    const listed = await harness.client.callTool({
-      name: "inspect_analysis_view",
-      arguments: {
-        source,
-        view: {
-          kind: "desktop-application",
-          collection: "omissions",
-          limit: 2,
+    const listed = await harness.client.callTool(
+      {
+        name: "inspect_analysis_view",
+        arguments: {
+          source,
+          view: {
+            kind: "desktop-application",
+            collection: "omissions",
+            limit: 2,
+          },
         },
       },
-    });
+      { toolDefinition: schemas.toolDefinition },
+    );
     expect(listed.isError).not.toBe(true);
-    expect(
-      schemas.ajv.validate(schemas.outputSchema, listed.structuredContent),
-    ).toBe(true);
     const page = analysisViewResultSchema.parse(
       parseEvidence(listed.structuredContent).normalized_result,
     );
@@ -369,14 +361,11 @@ it.skipIf(process.platform === "win32")(
         },
       };
       expect(schemas.ajv.validate(schemas.inputSchema, args)).toBe(true);
-      const selected = await harness.client.callTool({
-        name: "inspect_analysis_view",
-        arguments: args,
-      });
+      const selected = await harness.client.callTool(
+        { name: "inspect_analysis_view", arguments: args },
+        { toolDefinition: schemas.toolDefinition },
+      );
       expect(selected.isError).not.toBe(true);
-      expect(
-        schemas.ajv.validate(schemas.outputSchema, selected.structuredContent),
-      ).toBe(true);
       const evidence = parseEvidence(selected.structuredContent);
       expect(evidence.evidence_links).toEqual([summary.parent_evidence_id]);
       expect(evidence.normalized_result).toHaveProperty(

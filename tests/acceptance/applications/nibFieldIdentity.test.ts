@@ -196,5 +196,4 @@ cliTest(
     );
     expect(Buffer.compare(await readFile(path), archive)).toBe(0);
   },
-  60_000,
 );

@@ -4,13 +4,11 @@ import { jsonValueSchema } from "../domain/jsonValue.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import {
+  DARWIN_PROCESS_OWNERSHIP_REMEDIATION,
   LINUX_PROCESS_OWNERSHIP_REMEDIATION,
   LinuxOwnedProcessPrerequisiteError,
 } from "../process/ProcessOwnershipObservation.js";
 import type { ProviderAvailability } from "./AnalysisProvider.js";
-
-const DARWIN_REMEDIATION =
-  "Check the selected Xcode or Command Line Tools and Swift compiler configuration, then restart REA and retry.";
 
 // Provider adapters re-attribute capability errors and keep the original as cause.
 const prerequisiteRefusal = (
@@ -94,8 +92,8 @@ export const ownedProcessPrerequisiteAvailability = (
   return {
     status: "unavailable",
     code: "runtime_unavailable",
-    reason: `${darwin.message}. ${DARWIN_REMEDIATION}`,
-    remediation: DARWIN_REMEDIATION,
+    reason: `${darwin.message}. ${DARWIN_PROCESS_OWNERSHIP_REMEDIATION}`,
+    remediation: DARWIN_PROCESS_OWNERSHIP_REMEDIATION,
     diagnostics: {
       stage: "ownership_preparation",
       ...(darwin.compilerOutcome === undefined

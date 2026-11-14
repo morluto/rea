@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 
 import { captureProcessScenarioFile } from "../../../src/application/process/ProcessCli.js";
-import { projectReferenceSourceImportError } from "../../../src/application/ReferenceSourceImportTypes.js";
+import { referenceSourceImportAnalysisError } from "../../../src/application/ReferenceSourceImportTypes.js";
 import { readJsonFile } from "../../../src/application/JsonFiles.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -27,7 +27,9 @@ it.skipIf(process.platform === "win32")(
         policy: { secretPatterns: [] },
       });
       if (result.ok) throw new Error("expected invalid root");
-      expect(projectReferenceSourceImportError(result.error)).toMatchObject({
+      expect(
+        projectAnalysisError(referenceSourceImportAnalysisError(result.error)),
+      ).toMatchObject({
         code: "invalid_request",
         category: "invalid_input",
         message: expect.stringContaining(errno),

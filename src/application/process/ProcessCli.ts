@@ -20,6 +20,7 @@ import { processScenarioSchema } from "../../domain/process/processScenario.js";
 import {
   compareParsedProcessEvidence,
   readProcessComparisonSource,
+  unsupportedProcessCaptureProvider,
 } from "./ProcessComparisonService.js";
 import { createProgressReporter } from "../ProgressReporter.js";
 import { captureProcessScenario } from "../../process/capture/ProcessHarness.js";
@@ -151,7 +152,7 @@ export const captureProcessScenarioFile = async (
         );
         captureOutcome = captured.ok
           ? ok(createProcessCaptureEvidence(parsed.data, captured.value))
-          : err(captured.error);
+          : captured;
       } catch (cause: unknown) {
         captureOutcome = err(cause);
       }
@@ -287,13 +288,7 @@ const projectCaptureFileFailure = (
         "invalid_value",
       );
     case "unsupported-provider":
-      return new AnalysisInputError("compare_process_captures", undefined, [
-        {
-          path: [side, "provider"],
-          reason: "invalid_value",
-          message: `The ${side} Evidence provider ${failure.provider.id} v${failure.provider.version} (${failure.provider.name}) is not the current or supported legacy ${PROCESS_PROVIDER.id} v${PROCESS_PROVIDER.version} process capture provider.`,
-        },
-      ]);
+      return unsupportedProcessCaptureProvider(side, failure);
     case "invalid-capture":
       return invalidCaptureEvidence(failure.cause, side);
   }
@@ -366,6 +361,19 @@ const cliAnalysisError = (error: AnalysisError): ProcessCliErrorOutput => ({
   error: "Process command failed",
   ...projectAnalysisError(error),
 });
+
+/** Project retained input cleanup only when the CLI delivers the error. */
+export const projectProcessCliInputCleanupError = (
+  cause: unknown,
+): ProcessCliErrorOutput => {
+  if (
+    !(cause instanceof ProviderAdapterError) ||
+    !(cause.cause instanceof ArtifactReaderFailure) ||
+    cause.cause.cleanup === undefined
+  )
+    throw cause;
+  return cliAnalysisError(cause);
+};
 
 /**
  * This catch includes target execution, and the projection stays non-retryable.
@@ -483,12 +491,27 @@ const withProcessInputResources = async (
       inherited === undefined || local === undefined
         ? undefined
         : [...new Set([...inherited, ...local])];
-    const failure = ArtifactReaderFailure.withCleanup(
+    let failure = ArtifactReaderFailure.withCleanup(
       primary,
       cleanup,
       outcome.ok ? outcome.value : undefined,
       leases,
     );
+    if (leases === undefined && cause instanceof ArtifactReaderFailure) {
+      // Keep local retry authority reachable when coverage of the primary is unknown.
+      failure = new ArtifactReaderFailure(
+        failure.reason,
+        failure.message,
+        {
+          cause: new AggregateError(
+            [failure, cause],
+            "Process and input cleanup remain incomplete",
+          ),
+          ...artifactFailureFacts(failure),
+        },
+        failure.details,
+      );
+    }
     const typedPrimary =
       primary instanceof AnalysisError
         ? primary
@@ -503,7 +526,7 @@ const withProcessInputResources = async (
       userMessage: failure.userMessage ?? failure.message,
     });
     bindArtifactFileCleanup(failure, error);
-    return cliAnalysisError(error);
+    throw error;
   }
   if (
     !outcome.ok &&

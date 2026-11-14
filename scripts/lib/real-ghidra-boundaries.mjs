@@ -10,7 +10,6 @@ import { access, readFile, readdir, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
-import { GHIDRA_ANNOTATIONS_RETAINED } from "../../dist/ghidra/GhidraProviderClient.js";
 import Ajv from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import { OFFICIAL_TOOL_CONTRACTS } from "../../dist/contracts/officialToolContracts.js";
@@ -571,7 +570,11 @@ export async function verifyGhidraBoundaries(
   // The producer reason describes the failure; continuing-session guidance
   // is projected separately and the following live calls verify it.
   assert.match(regexError.details.reason, /stack while matching pattern/u);
-  assert.ok(regexError.message.includes(GHIDRA_ANNOTATIONS_RETAINED));
+  assert.ok(
+    regexError.message.includes(
+      "The active analysis session and annotations remain available.",
+    ),
+  );
   rejectedCalls++;
   const nestedPattern = "(".repeat(12000) + "a" + ")".repeat(12000);
   const compileFailure = await client.callTool(

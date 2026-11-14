@@ -694,10 +694,7 @@ export const createIdaMcpConnection = (
 };
 
 /** Resource metadata follows the SDK's optional media type; content/identity stay strict. */
-export const decodeIdaJsonResource = (
-  uri: string,
-  response: unknown,
-): JsonValue => {
+const decodeIdaJsonResource = (uri: string, response: unknown): JsonValue => {
   const resource = z
     .object({
       contents: z

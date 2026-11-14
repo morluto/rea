@@ -1,73 +1,60 @@
-import { processInspectionCancellations } from "../ProcessInspectionCleanup.js";
+import {
+  isProcessInspectionFailure,
+  processInspectionCancellations,
+  type ProcessInspectionFailure,
+} from "../ProcessInspectionCleanup.js";
 import {
   ProcessOwnershipInspectionCancelled,
   isProcessOwnershipInspectionCancellation,
 } from "../ProcessInspectionCancellation.js";
-import {
-  normalizeCaptureFailure,
-  ProcessCaptureInspectionFailure,
-  ProcessCaptureError,
-} from "./ProcessCaptureError.js";
 import { ProcessRunTokenReadError } from "../ProcessRunTokenObservations.js";
 import { err, ok, type Result } from "../../domain/result.js";
 
-/** All admitted sampling reads settled; exact fulfilled values and failures remain available. */
-export class SamplingReadBatchFailure extends ProcessCaptureError {
-  readonly inspectionFailures: readonly ProcessCaptureInspectionFailure[];
-  constructor(readonly outcomes: readonly PromiseSettledResult<unknown>[]) {
+/** Settled sampling facts are neutral; each consumer owns its error presentation and cleanup. */
+export class SamplingReadBatchFailure extends AggregateError {
+  readonly #outcomes: readonly PromiseSettledResult<unknown>[];
+  readonly #inspectionFailures: readonly ProcessInspectionFailure[];
+  readonly #otherFailures: readonly unknown[];
+
+  get outcomes(): readonly PromiseSettledResult<unknown>[] {
+    return this.#outcomes;
+  }
+
+  get inspectionFailures(): readonly ProcessInspectionFailure[] {
+    return this.#inspectionFailures;
+  }
+
+  get otherFailures(): readonly unknown[] {
+    return this.#otherFailures;
+  }
+
+  constructor(outcomes: readonly PromiseSettledResult<unknown>[]) {
     const rejected = outcomes.flatMap((outcome) =>
       outcome.status === "rejected" ? [outcome.reason as unknown] : [],
     );
-    const inspections = [
+    super(rejected, "Admitted process sampling reads failed");
+    this.name = "SamplingReadBatchFailure";
+    this.#outcomes = outcomes;
+    this.#inspectionFailures = [
       ...new Set(rejected.flatMap(samplingInspectionFailures)),
     ];
-    const untypedPhysical = rejected.some(
-      (failure) =>
-        samplingInspectionFailures(failure).length === 0 ||
-        (failure instanceof SamplingReadBatchFailure &&
-          failure.userCategory !== "cancelled" &&
-          failure.inspectionFailures.every(
-            (leaf) => leaf.userCategory === "cancelled",
-          )),
+    this.#otherFailures = rejected.flatMap((failure) =>
+      failure instanceof SamplingReadBatchFailure
+        ? failure.otherFailures
+        : isProcessInspectionFailure(failure)
+          ? []
+          : [failure],
     );
-    const primary =
-      inspections.find((failure) => failure.userCategory !== "cancelled") ??
-      (untypedPhysical ? undefined : inspections[0]);
-    const resources = [
-      ...new Set(inspections.flatMap((failure) => failure.cleanupResources)),
-    ];
-    super(primary?.message ?? "Process sampling reads failed", {
-      cause: new AggregateError(
-        rejected,
-        "Admitted process sampling reads failed",
-      ),
-      ...(primary === undefined ? {} : { cleanupPrimary: primary }),
-      ...(primary?.userCategory === "cancelled"
-        ? { userCategory: "cancelled" as const, reason: "cancelled" as const }
-        : {}),
-      ...(resources.length === 0
-        ? {}
-        : {
-            cleanup: {
-              reason: "Process sampling descriptors remain owned",
-              resources,
-            },
-          }),
-    });
-    this.inspectionFailures = inspections;
-    for (const failure of inspections)
-      if (failure !== primary) this.retainSecondaryFailure(failure);
-    this.bindCleanupDependencies(inspections);
   }
 }
 
-/** Only the direct inspection fact or this owner's explicit settled vector transfers leases. */
+/** Only the direct lower fact or this owner's explicit settled vector transfers inspection facts. */
 export const samplingInspectionFailures = (
   cause: unknown,
-): readonly ProcessCaptureInspectionFailure[] =>
+): readonly ProcessInspectionFailure[] =>
   cause instanceof SamplingReadBatchFailure
     ? cause.inspectionFailures
-    : cause instanceof ProcessCaptureInspectionFailure
+    : isProcessInspectionFailure(cause)
       ? [cause]
       : [];
 
@@ -154,9 +141,9 @@ export const readSamplingSource = async <T>(
       )
     )
       return err({ kind: "cancelled", reason: signal.reason });
-    const inspection = normalizeCaptureFailure(cancellation ?? cause);
+    const inspection = cancellation ?? cause;
     if (
-      inspection instanceof ProcessCaptureInspectionFailure ||
+      isProcessInspectionFailure(inspection) ||
       inspection instanceof SamplingReadBatchFailure
     )
       throw inspection;

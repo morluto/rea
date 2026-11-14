@@ -1,9 +1,10 @@
 import {
+  imageFileSizeRemediation,
+  projectSelectedArtifactFileFailure,
   projectStableArtifactFailure,
   stableArtifactInputRecovery,
   projectArtifactCloseFailure,
 } from "../../artifacts/StableArtifactFailure.js";
-import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
   type StableArtifactSnapshot,
@@ -20,7 +21,6 @@ import type { NativeExportsPort } from "../../application/binaryDiagnostics/Nati
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
   AnalysisInputError,
@@ -85,11 +85,6 @@ export class NativeExportsProvider implements NativeExportsPort {
     }
   }
 }
-
-const fileSizeRemediation = (input: InspectNativeExportsInput): string =>
-  input.max_file_bytes >= MAX_INSPECT_NATIVE_EXPORTS_FILE_BYTES
-    ? `The image exceeds the ${String(MAX_INSPECT_NATIVE_EXPORTS_FILE_BYTES)}-byte input ceiling this operation accepts. This release has no runtime override. Select a smaller artifact.`
-    : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`;
 
 const nativeExportsFailurePrimary = (
   facts: ArtifactFilePrimaryFacts,
@@ -161,7 +156,10 @@ const nativeExportsFailurePrimary = (
         {
           cause,
           retryable: false,
-          remediationAction: fileSizeRemediation(input),
+          remediationAction: imageFileSizeRemediation(
+            input.max_file_bytes,
+            MAX_INSPECT_NATIVE_EXPORTS_FILE_BYTES,
+          ),
         },
       );
     if (cause.reason === "path" || cause.reason === "format")
@@ -171,20 +169,13 @@ const nativeExportsFailurePrimary = (
         [{ path: ["path"], reason: "invalid_format", message: cause.message }],
       );
   }
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(OPERATION, input.path, cause.code, {
-        cause,
-      });
-    if (isSelectedRegularFileError(cause))
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_value",
-          message: `Selected image could not be read (${String(cause.code)}): ${input.path}.`,
-        },
-      ]);
-  }
+  const fileFailure = projectSelectedArtifactFileFailure(
+    cause,
+    OPERATION,
+    input.path,
+    "image",
+  );
+  if (fileFailure !== undefined) return fileFailure;
   return new ProviderAdapterError(NATIVE_EXPORTS_PROVIDER.id, OPERATION, {
     cause,
     diagnostics: {

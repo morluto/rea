@@ -1341,7 +1341,7 @@ the matching native decompiler. Experimental Windows x64 P0 admits native
 x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs, [DOS MZ
 executables](../../providers/ghidra-dos.md), plus explicitly selected
 [raw NMOS 6502 images](../../providers/raw-binary.md#nmos-6502) with a caller-supplied load address,
-on fixed local NTFS volumes. Other raw CPU families remain unsupported on Windows.
+on fixed local NTFS/ReFS volumes. Other raw CPU families remain unsupported on Windows.
 The boundary uses bundled Job Object ownership, protected runtime DACLs, and
 handle-based path admission. See [Windows Ghidra P0](../../providers/windows-ghidra-p0.md) and
 [issue #527](https://github.com/morluto/rea/issues/527).

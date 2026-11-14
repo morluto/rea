@@ -13,6 +13,7 @@ import type { GhidraProviderClientFactory } from "../../../src/ghidra/GhidraProv
 import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createDeferred } from "../../fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 import { GhidraFixtureLauncher } from "../providers/ghidra/ghidraClient.fixture.js";
 
@@ -109,9 +110,17 @@ it.each([0, 1])(
               (cause: unknown) => ({ ok: false as const, cause }),
             ),
         );
-        await admitted[index]?.promise;
+        await awaitAcknowledgement(
+          admitted[index]!.promise,
+          calls[index]!,
+          "MCP caller admission",
+        );
       }
-      await entered.promise;
+      await awaitAcknowledgement(
+        entered.promise,
+        Promise.race(calls),
+        "Ghidra startup",
+      );
       controllers[cancelledIndex]?.abort();
       await vi.waitFor(() =>
         expect(startResults[cancelledIndex]).toMatchObject({

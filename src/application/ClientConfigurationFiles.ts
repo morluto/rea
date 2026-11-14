@@ -23,14 +23,14 @@ export interface ClientConfigurationSource extends ClientConfigurationDocument {
 const invalidEnvironment = (
   path: string,
   error: ConfigurationError,
-  overrides: Readonly<Record<string, string>> = {},
-  platform: NodeJS.Platform = process.platform,
+  overrides: Readonly<Record<string, string>> | undefined,
+  platform: NodeJS.Platform,
 ): ClientConfigurationFileError => {
   const constraints = error.settings
     .map(({ setting, constraint }) => `${setting}: ${constraint}`)
     .join("; ");
   const overrideNames = new Set(
-    Object.keys(overrides).map((name) =>
+    Object.keys(overrides ?? {}).map((name) =>
       platform === "win32" ? name.toUpperCase() : name,
     ),
   );
@@ -129,7 +129,7 @@ export const readClientConfigurationFiles = async (
     if (document.value !== undefined) {
       const environment = clientRegistrationEnvironment(
         document.value,
-        client.name,
+        client,
         path === client.configPath ? writeOverrides : undefined,
         "fragment",
         platform,
@@ -148,7 +148,7 @@ export const readClientConfigurationFiles = async (
   }
   const environment = clientRegistrationEnvironment(
     effectiveClientConfiguration(documents, undefined, platform),
-    client.name,
+    client,
     writeOverrides,
     "effective",
     platform,
