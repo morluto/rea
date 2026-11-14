@@ -281,6 +281,32 @@ describe("Xtensa .xtensa.info inspection without a declaration", () => {
     },
   );
 
+  it("names the fixed section-name budget when names cannot be scanned within it", async () => {
+    // A 64 KiB name table without a NUL, and 300 sections whose names start at
+    // its first byte: each scan reads the whole table, past the 16 MiB budget.
+    const base = xtensaElf();
+    const names = Buffer.alloc(65536, 0x41);
+    const count = 300;
+    const table = Buffer.alloc(count * 40);
+    base.copy(table, 0, 52, 52 + 3 * 40);
+    for (let index = 0; index < count; index += 1)
+      table.writeUInt32LE(0, index * 40);
+    table.writeUInt32LE(base.length, 2 * 40 + 16);
+    table.writeUInt32LE(names.length, 2 * 40 + 20);
+    const bytes = Buffer.concat([base, names, table]);
+    bytes.writeUInt32LE(base.length + names.length, 32);
+    bytes.writeUInt16LE(count, 48);
+    const target = await resolveFixture(bytes);
+    expect(target.xtensa.abi).toMatchObject({
+      status: "unavailable",
+      reason: expect.stringContaining("16777216-byte structural budget"),
+    });
+    expect(target.xtensa.abi).toMatchObject({
+      reason: expect.stringContaining("no runtime override"),
+    });
+    expectRefusalWithReaderReason(target);
+  });
+
   it("reports the fixed .xtensa.info bound as structured limit facts", async () => {
     // A 12-byte note header, the 12-byte owner and a 5000-byte descriptor.
     const target = await resolveFixture(

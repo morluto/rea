@@ -121,6 +121,14 @@ describe(".xtensa.info declarations", () => {
 
   it.each([
     [info("ABI=0\n\0ABI=1\n"), "non-zero bytes after its terminating NUL"],
+    [
+      elfNote(
+        "Xtensa_Info",
+        1,
+        Buffer.from("USE_ABSOLUTE_LITERALS=0\nABI=0\n", "latin1"),
+      ),
+      "no terminating NUL",
+    ],
     [Buffer.concat([info("ABI=0\n"), info("ABI=0\n")]), "more than one"],
     [elfNote("GNU", 1, Buffer.from("ABI=0\n\0", "latin1")), "no Xtensa_Info"],
     [BINUTILS_WINDOWED.subarray(0, 40), "exceeds its table"],

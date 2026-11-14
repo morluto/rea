@@ -60,7 +60,7 @@ function* readSectionNames(
   // The admitted section extents lie inside the file, so the size is exact.
   if (header.value.size > BigInt(NAME_BYTES))
     return err(
-      `ELF section names declare ${String(header.value.size)} bytes, above REA's ${NAME_BYTES}-byte structural budget`,
+      `ELF section names declare ${String(header.value.size)} bytes, above REA's fixed ${NAME_BYTES}-byte structural budget. This release has no runtime override, and runtime analysis settings do not raise this bound.`,
     );
   const raw = yield {
     offset: Number(header.value.offset),
@@ -80,7 +80,7 @@ function* readSectionNames(
       return err(decoded.message);
     case "limit":
       return err(
-        `Decoded ELF section names require ${String(decoded.requiredBytes)} bytes, above the ${String(decoded.maximumBytes)}-byte remaining structural budget`,
+        `Decoded ELF section names require ${String(decoded.requiredBytes)} bytes, above the ${String(decoded.maximumBytes)} bytes left in REA's fixed ${NAME_BYTES}-byte structural budget. This release has no runtime override, and runtime analysis settings do not raise this bound.`,
       );
     case "unsupported":
       return err(
@@ -158,7 +158,7 @@ function* findXtensaInfoSection(
       // Names are scanned, not kept, so repeated offsets are charged again.
       if (scanned > NAME_BYTES)
         return unavailableLookup(
-          "Decoded ELF section names exceed the 16 MiB structural budget",
+          `Scanning ELF section names exceeds REA's fixed ${NAME_BYTES}-byte structural budget. This release has no runtime override, and runtime analysis settings do not raise this bound.`,
         );
       if (name.state === "outside")
         limitation ??=

@@ -112,18 +112,21 @@ export const parseXtensaInfo = (
       unavailable(".xtensa.info holds no Xtensa_Info note."),
     );
   const end = descriptor.indexOf(0);
+  // GNU as ends the text with a NUL inside descsz; without it the framing is
+  // not the one this parser recognizes.
+  if (end < 0)
+    return undeclaredXtensaInfo(
+      unavailable("The Xtensa_Info note's text has no terminating NUL."),
+    );
   // binutils pads the text's terminator with NULs to a word boundary; other
   // bytes after it could contradict the declaration read before it.
-  if (end >= 0 && !descriptor.subarray(end).every((byte) => byte === 0))
+  if (!descriptor.subarray(end).every((byte) => byte === 0))
     return undeclaredXtensaInfo(
       unavailable(
         "The Xtensa_Info note holds non-zero bytes after its terminating NUL.",
       ),
     );
-  const lines = descriptor
-    .subarray(0, end < 0 ? descriptor.length : end)
-    .toString("latin1")
-    .split("\n");
+  const lines = descriptor.subarray(0, end).toString("latin1").split("\n");
   return {
     abi: declaration(lines, "ABI", ABI_VALUES),
     literals: declaration(lines, "USE_ABSOLUTE_LITERALS", LITERAL_VALUES),
