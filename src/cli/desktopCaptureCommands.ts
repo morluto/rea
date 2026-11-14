@@ -29,6 +29,7 @@ import {
 import { SessionRequestQueue } from "../desktop/DesktopSessionRequests.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import type { CliInstance } from "./types.js";
+import { writeCliProgressLine } from "./cliProgress.js";
 
 /** One coherent view policy; invalid JSON and unknown controls fail at admission. */
 const viewPolicyOption = z
@@ -562,7 +563,7 @@ export const registerDesktopCaptureCommands = (
                         ...(event === undefined ? {} : { event }),
                       },
                     };
-                    process.stderr.write(`${JSON.stringify(progress)}\n`);
+                    writeCliProgressLine(progress.rea_progress);
                   },
                 },
                 signal,

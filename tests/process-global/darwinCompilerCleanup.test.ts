@@ -53,6 +53,7 @@ import { primaryAnalysisError } from "../../src/domain/analysisErrorBase.js";
 import { systemProcessOwnershipHost } from "../../src/process/ProcessOwnershipObservation.js";
 import { ghidraFixturePath } from "../boundary/providers/ghidra/ghidraClient.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { waitFor } from "../support/testWait.js";
 let releaseCleanup: (() => void) | undefined;
 const clients: GhidraClient[] = [];
 const readers: ReturnType<typeof createDarwinProcessRunTokenReader>[] = [];
@@ -112,14 +113,11 @@ const waitForCompilerReady = async (
       settled = { value };
     },
   );
-  const outcome = await vi.waitFor(
-    async () => {
-      if (settled !== undefined) return settled;
-      expect(await readFile(readyPath, "utf8")).toBe("ready");
-      return undefined;
-    },
-    { timeout: 10_000 },
-  );
+  const outcome = await waitFor(async () => {
+    if (settled !== undefined) return settled;
+    expect(await readFile(readyPath, "utf8")).toBe("ready");
+    return undefined;
+  });
   if (outcome !== undefined)
     throw new Error("Compiler operation settled before its ready marker", {
       cause: outcome.value,
@@ -186,7 +184,7 @@ it
       mode === "two retries"
         ? reader.prepare().catch((cause: unknown) => cause)
         : reader.close();
-    await vi.waitFor(() => expect(fault.attempts).toBe(before + 1));
+    await waitFor(() => expect(fault.attempts).toBe(before + 1));
     await new Promise((resolve) => setImmediate(resolve));
     expect(fault.attempts).toBe(before + 1);
     release?.();

@@ -7,6 +7,7 @@ import noPositionalToolContract from "./rules/no-positional-tool-contract.mjs";
 import noSharedModuleMock from "./rules/no-shared-module-mock.mjs";
 import noLocaleCompare from "./rules/no-locale-compare.mjs";
 import noBabelVisitorKeys from "./rules/no-babel-visitor-keys.mjs";
+import projectWaitDeadline from "./rules/project-wait-deadline.mjs";
 
 export default {
   meta: { name: "rea" },
@@ -19,5 +20,6 @@ export default {
     "no-shared-module-mock": noSharedModuleMock,
     "no-locale-compare": noLocaleCompare,
     "no-babel-visitor-keys": noBabelVisitorKeys,
+    "project-wait-deadline": projectWaitDeadline,
   },
 };

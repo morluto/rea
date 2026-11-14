@@ -1,9 +1,14 @@
-/** Fail promptly if an operation never reaches its controlled lifecycle boundary. */
+import { testWaitDeadline } from "../support/testWait.js";
+
+/**
+ * Fail if an operation settles, or the test's wait deadline passes, before it
+ * reaches its controlled lifecycle boundary.
+ */
 export const awaitAcknowledgement = async (
   acknowledgement: Promise<void>,
   operation: Promise<unknown>,
   boundary: string,
-  timeoutMs = 2_000,
+  timeoutMs = testWaitDeadline(),
 ): Promise<void> => {
   let deadline: ReturnType<typeof setTimeout> | undefined;
   try {

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { analysisErrorProjectionSchema } from "../../contracts/errorSchemas.js";
+import { pseudocodeAbsenceSchema } from "./pseudocodeAbsence.js";
 
 /** Identity facts attached to one requested batch selector. */
 export const batchProcedureIdentitySchema = z.discriminatedUnion("status", [
@@ -27,7 +28,7 @@ export const batchItemLimitationsSchema = z
   .array(z.string())
   .exactOptional()
   .describe(
-    "Caveats of this item's own provider observation when it supplied no pseudocode, including any reason the provider reported.",
+    "Caveats of this item's own provider observation, including any reason the provider reported when it supplied no pseudocode.",
   );
 
 /** One ordered batch outcome; array position keeps duplicate selectors distinct. */
@@ -37,12 +38,16 @@ export const batchDecompileItemSchema = z.discriminatedUnion("status", [
     procedure: batchProcedureIdentitySchema,
     status: z.literal("ok"),
     pseudocode: z.string().min(1),
+    limitations: batchItemLimitationsSchema,
   }),
   z.object({
     address: batchSelectorSchema,
     procedure: batchProcedureIdentitySchema,
     status: z.literal("unavailable"),
     reason: z.literal("no_pseudocode"),
+    pseudocode_absence: pseudocodeAbsenceSchema
+      .exactOptional()
+      .describe("The provider's reported reason for null pseudocode."),
     limitations: batchItemLimitationsSchema,
   }),
   z.object({

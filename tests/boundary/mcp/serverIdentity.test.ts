@@ -1,6 +1,6 @@
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -244,6 +244,64 @@ describe("server and catalog identity", () => {
     });
   });
 });
+
+it.skipIf(process.platform === "win32")(
+  "compares the selected entrypoint through symlink and parent traversal",
+  async () => {
+    const root = await createTestTempDirectory("server-identity-path-");
+    const scripts = join(root, "package", "scripts");
+    const scratch = join(root, "scratch");
+    await mkdir(scripts, { recursive: true });
+    await mkdir(scratch);
+    const canonical = join(scripts, "rea.mjs");
+    const other = join(root, "other.mjs");
+    await writeFile(canonical, "entrypoint");
+    await writeFile(other, "other entrypoint");
+    await symlink(scripts, join(scratch, "link"));
+    const selected = `${scratch}/link/../scripts/rea.mjs`;
+    // Bun selects a script through native traversal (#8844).
+    const identity = (server_path: string) =>
+      createServerIdentity({
+        catalog: DEFAULT_CATALOG_IDENTITY,
+        startedAt: "2026-07-13T00:00:00.000Z",
+        commandPath: canonical,
+        expected: { server_path },
+        runtime: "bun",
+      });
+
+    expect(identity(selected).alignment).toMatchObject({
+      state: "aligned",
+      reasons: [],
+    });
+    expect(identity(other).alignment).toMatchObject({
+      state: "mcp_server_restart_required",
+      reasons: ["registration_path_mismatch"],
+    });
+    expect(identity(join(root, "missing.mjs")).alignment).toMatchObject({
+      state: "unknown",
+      reasons: [],
+    });
+    // Node resolves its entrypoint lexically, so this spelling runs
+    // scratch/rea.mjs even though traversal through the link leaves scratch.
+    // Bun traverses the link and runs a different file.
+    const lexical = join(scratch, "rea.mjs");
+    await writeFile(lexical, "lexical entrypoint");
+    await writeFile(join(root, "package", "rea.mjs"), "traversed entrypoint");
+    const crossing = (runtime: "node" | "bun") =>
+      createServerIdentity({
+        catalog: DEFAULT_CATALOG_IDENTITY,
+        startedAt: "2026-07-13T00:00:00.000Z",
+        commandPath: lexical,
+        expected: { server_path: `${scratch}/link/../rea.mjs` },
+        runtime,
+      }).alignment;
+    expect(crossing("node")).toMatchObject({ state: "aligned", reasons: [] });
+    expect(crossing("bun")).toMatchObject({
+      state: "mcp_server_restart_required",
+      reasons: ["registration_path_mismatch"],
+    });
+  },
+);
 
 describe("provider capability inventory", () => {
   it("reports composed, host, and target-specific availability truthfully", () => {

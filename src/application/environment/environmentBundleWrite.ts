@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { mkdir, type FileHandle } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import type { FileHandle } from "node:fs/promises";
+import { join } from "node:path";
 import { Readable } from "node:stream";
 
 import {
@@ -168,11 +168,10 @@ const writeBundleFiles = async (
       }
     | { readonly kind: "failed"; readonly cause: unknown };
   try {
-    if (input.exclusiveDestination !== true)
-      await mkdir(dirname(input.directory), { recursive: true, mode: 0o700 });
     try {
       tree = await SafeOutputTree.create(input.directory, process.platform, {
         acceptExistingEmpty: input.exclusiveDestination !== true,
+        createParents: input.exclusiveDestination !== true,
       });
     } catch (cause: unknown) {
       if (cause instanceof SafeOutputTreeCreationFailure) tree = cause.tree;

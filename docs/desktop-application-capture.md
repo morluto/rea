@@ -35,7 +35,11 @@ rea capture-desktop-application --executable gnucash --argument /home/ada/books.
 
 Desktop entries are looked up in `$XDG_DATA_HOME/applications` and then each
 `$XDG_DATA_DIRS` directory; an entry installed as a symbolic link, as flatpak
-and Nix do, is followed to its file. The entry's `Exec` line is expanded with no files;
+and Nix do, is followed to its file. An XDG base folder variable counts only
+when its value is an absolute path, as the XDG Base Directory Specification
+requires, so a relative value leaves the home default in use instead of
+naming a folder under the working directory. The entry's `Exec` line is
+expanded with no files;
 `--argument` values are appended in its place, and the application runs in the
 entry's `Path` or the home directory. When the line starts with
 `env NAME=value`, the program is found on the `PATH` those assignments set,
@@ -338,7 +342,9 @@ the fuse sentinel in their binary or a `resources/app.asar` beside it. State
 directories are the XDG config, data, state and cache folders and the
 dot-folder named after the package, the executable, the desktop entry's full
 id and its last part, and the entry's name, with whether each existed at the
-start. A folder in those places whose name is one of these in another letter
+start, which stays unknown rather than absent when the check could not reach
+it, such as a folder whose permissions deny the user. A folder in those places
+whose name is one of these in another letter
 case joins them, such as GIMP's `~/.config/GIMP` for the `gimp` package; only
 the whole name is compared, so `~/.config/GIMPshop` does not. A file under a
 folder the application creates during the capture beside one of them, with

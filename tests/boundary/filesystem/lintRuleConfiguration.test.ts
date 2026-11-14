@@ -106,6 +106,16 @@ const cases: readonly AcceptanceCase[] = [
     diagnostics: [],
   },
   {
+    name: "rejects test-owned wait deadlines through the repository plugin",
+    filename: testSource,
+    source: `
+      import { expect } from "vitest";
+      await expect.poll(() => true, { timeout: 5_000 }).toBe(true);
+    `,
+    exitCode: 1,
+    diagnostics: [{ code: "rea(project-wait-deadline)", severity: "error" }],
+  },
+  {
     name: "rejects an unreturned promise callback containing assertions",
     filename: testSource,
     source: `

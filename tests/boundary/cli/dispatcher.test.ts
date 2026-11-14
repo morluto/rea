@@ -17,7 +17,7 @@ const installCliRuntime = async (
   await workspace.mkdir("dist");
   // The bundle's entrypoints and shared chunks form one emitted runtime. The
   // one-shot owner and its output admission stay production code; only the
-  // command runtime and result output are replaced below.
+  // command runtime, its recorded registrars, and result output are replaced.
   await cp("dist/cli-runtime", workspace.path("dist/cli-runtime"), {
     recursive: true,
   });
@@ -43,6 +43,11 @@ const installCliRuntime = async (
     ),
     workspace.write("dist/cli-runtime/cli.js", cliSource),
     workspace.write("dist/cli-runtime/cliResultOutput.js", resultOutput),
+    // Without a recording, every command loads the replaced complete CLI.
+    workspace.write(
+      "dist/recordedCliCommandRegistrations.js",
+      "export const RECORDED_CLI_COMMAND_REGISTRATIONS = undefined;\n",
+    ),
   ]);
 };
 
@@ -645,6 +650,43 @@ describe("project-scoped Amp registration dispatch", () => {
       expect(plain.stdout).toBe("");
       expect(plain.stderr.length).toBeGreaterThan(0);
       expect(plain.stdout).not.toContain(runtimeReached);
+    },
+  );
+});
+
+describe("executable dispatcher exit", () => {
+  workspaceCliTest(
+    "exits with the requested status once the command's handles close",
+    async ({ processes, workspace }) => {
+      // The interval stops after the exit request: the loop drains, the
+      // process does not wait for the forced-exit grace, and the status holds.
+      await installCliRuntime(
+        workspace,
+        "export const closeCliResources = () => {}; export const createCli = () => ({ serve: (_args, options) => { const timer = setInterval(() => {}, 50); options.exit(3); setTimeout(() => clearInterval(timer), 100); } });\n",
+      );
+      const result = await processes.run(
+        process.execPath,
+        [workspace.path("scripts/rea.mjs"), "fixture"],
+        { cwd: workspace.root },
+      );
+      expect(result.exitCode, result.stderr).toBe(3);
+    },
+  );
+
+  workspaceCliTest(
+    "forces the requested exit when a command leaves a handle open",
+    async ({ processes, workspace }) => {
+      await installCliRuntime(
+        workspace,
+        "export const closeCliResources = () => {}; export const createCli = () => ({ serve: (_args, options) => { setInterval(() => {}, 1_000); options.exit(4); } });\n",
+      );
+      const result = await processes.run(
+        process.execPath,
+        [workspace.path("scripts/rea.mjs"), "fixture"],
+        { cwd: workspace.root },
+      );
+      expect(result.exitCode, result.stderr).toBe(4);
+      expect(result.signal).toBeNull();
     },
   );
 });

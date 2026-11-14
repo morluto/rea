@@ -143,7 +143,6 @@ function release() { clearInterval(timer); clearTimeout(deadline); socket.end();
         ready.promise,
         closed,
         "test-owned descendant readiness",
-        5_000,
       );
       runner.kill(signal);
       expect(await closed).toEqual({

@@ -210,22 +210,29 @@ const sameImport = (left: Import, right: Import): boolean =>
   left.weak === right.weak &&
   left.addend === right.addend;
 
-const readImport = (
-  data: {
-    readonly bytes: Buffer;
-    readonly base: number;
-    readonly end: number;
-    readonly dylibs: FixupCommands["dylibs"];
-  },
-  header: {
-    readonly offset: number;
-    readonly count: number;
-    readonly format: number;
-    readonly symbols: number;
-  },
+/** Validated location of a chained-fixup import table and its symbol pool. */
+interface ChainedImportTable {
+  readonly offset: number;
+  readonly count: number;
+  readonly format: number;
+  readonly symbols: number;
+}
+
+/** One import-table record before its library ordinal is resolved. */
+interface ChainedImportEntry {
+  readonly nameOffset: number;
+  readonly ordinal: number;
+  readonly weak: boolean;
+  readonly addend: bigint;
+}
+
+const chainedImportEntry = (
+  bytes: Buffer,
+  base: number,
+  end: number,
+  header: ChainedImportTable,
   index: number,
-): Import => {
-  const { bytes, base, end, dylibs } = data;
+): ChainedImportEntry => {
   const size = header.format === 3 ? 16 : header.format === 2 ? 8 : 4;
   if (header.format < 1 || header.format > 3)
     throw new RangeError(`Unsupported chained import format ${header.format}`);
@@ -240,32 +247,43 @@ const readImport = (
   if (header.format === 3) {
     const word = bytes.readBigUInt64LE(at);
     const encodedOrdinal = Number(bits(word, 0, 16));
-    const ordinal =
-      encodedOrdinal > 0xfff0 ? encodedOrdinal - 0x10000 : encodedOrdinal;
     return {
-      ...cString(
-        bytes,
-        base + header.symbols + Number(bits(word, 32, 32)),
-        end,
-      ),
-      binding_source: "chained",
-      library_ordinal: ordinal,
-      ...libraryFacts(ordinal, dylibs),
+      nameOffset: Number(bits(word, 32, 32)),
+      ordinal:
+        encodedOrdinal > 0xfff0 ? encodedOrdinal - 0x10000 : encodedOrdinal,
       weak: bits(word, 16, 1) === 1n,
       addend: bytes.readBigInt64LE(at + 8),
     };
   }
   const word = bytes.readUInt32LE(at);
   const encodedOrdinal = word & 0xff;
-  const ordinal =
-    encodedOrdinal > 0xf0 ? encodedOrdinal - 0x100 : encodedOrdinal;
   return {
-    ...cString(bytes, base + header.symbols + (word >>> 9), end),
-    binding_source: "chained",
-    library_ordinal: ordinal,
-    ...libraryFacts(ordinal, dylibs),
+    nameOffset: word >>> 9,
+    ordinal: encodedOrdinal > 0xf0 ? encodedOrdinal - 0x100 : encodedOrdinal,
     weak: ((word >>> 8) & 1) === 1,
     addend: header.format === 2 ? BigInt(bytes.readInt32LE(at + 4)) : 0n,
+  };
+};
+
+const readImport = (
+  data: {
+    readonly bytes: Buffer;
+    readonly base: number;
+    readonly end: number;
+    readonly dylibs: FixupCommands["dylibs"];
+  },
+  header: ChainedImportTable,
+  index: number,
+): Import => {
+  const { bytes, base, end, dylibs } = data;
+  const entry = chainedImportEntry(bytes, base, end, header, index);
+  return {
+    ...cString(bytes, base + header.symbols + entry.nameOffset, end),
+    binding_source: "chained",
+    library_ordinal: entry.ordinal,
+    ...libraryFacts(entry.ordinal, dylibs),
+    weak: entry.weak,
+    addend: entry.addend,
   };
 };
 
@@ -379,6 +397,68 @@ const readChainedPage = (
   return { locations, lastOffset, failure };
 };
 
+/** Validate one `LC_DYLD_CHAINED_FIXUPS` header and its import table. */
+const chainedFixupsHeader = (
+  bytes: Buffer,
+  base: number,
+  size: number,
+): { readonly startsOffset: number; readonly imports: ChainedImportTable } => {
+  const end = base + size;
+  if (
+    !Number.isSafeInteger(base) ||
+    base < 0 ||
+    !Number.isSafeInteger(size) ||
+    size < 28 ||
+    end > bytes.length
+  )
+    throw new RangeError("Chained fixup header exceeds the target");
+  if (bytes.readUInt32LE(base) !== 0)
+    throw new RangeError("Unsupported chained fixup header version");
+  const imports = {
+    offset: bytes.readUInt32LE(base + 8),
+    symbols: bytes.readUInt32LE(base + 12),
+    count: bytes.readUInt32LE(base + 16),
+    format: bytes.readUInt32LE(base + 20),
+  };
+  const importSize = imports.format === 3 ? 16 : imports.format === 2 ? 8 : 4;
+  const importTableEnd = base + imports.offset + imports.count * importSize;
+  if (imports.format < 1 || imports.format > 3)
+    throw new RangeError(`Unsupported chained import format ${imports.format}`);
+  if (
+    imports.offset < 28 ||
+    imports.symbols < imports.offset ||
+    importTableEnd > base + imports.symbols ||
+    base + imports.symbols > end
+  )
+    throw new RangeError("Chained import table exceeds the fixup data");
+  if (bytes.readUInt32LE(base + 24) !== 0)
+    throw new RangeError(
+      "Compressed chained-fixup symbol names are not supported",
+    );
+  return { startsOffset: bytes.readUInt32LE(base + 4), imports };
+};
+
+/**
+ * Symbol names of one `LC_DYLD_CHAINED_FIXUPS` payload's import table, indexed
+ * by import ordinal. A name without a lossless text projection is null.
+ */
+export const chainedImportNames = (
+  fixups: Buffer,
+): readonly (string | null)[] => {
+  const { imports } = chainedFixupsHeader(fixups, 0, fixups.length);
+  const names: (string | null)[] = [];
+  for (let index = 0; index < imports.count; index++) {
+    const entry = chainedImportEntry(fixups, 0, fixups.length, imports, index);
+    const { symbol } = cString(
+      fixups,
+      imports.symbols + entry.nameOffset,
+      fixups.length,
+    );
+    names.push(symbol);
+  }
+  return names;
+};
+
 /** A known eight-byte chain word starting elsewhere overlaps this pointer read. */
 const hasPartialChainedPointer = (
   chain: ChainedSegment,
@@ -410,44 +490,13 @@ const chainedFixups = (
   const { bytes, segments, dylibs, baseAddress } = image;
   const base = range.offset;
   const end = range.offset + range.size;
-  if (
-    !Number.isSafeInteger(base) ||
-    base < 0 ||
-    !Number.isSafeInteger(range.size) ||
-    range.size < 28 ||
-    end > bytes.length
-  )
-    throw new RangeError("Chained fixup header exceeds the target");
-  if (bytes.readUInt32LE(base) !== 0)
-    throw new RangeError("Unsupported chained fixup header version");
-  const startsOffset = bytes.readUInt32LE(base + 4);
-  const importHeader = {
-    offset: bytes.readUInt32LE(base + 8),
-    symbols: bytes.readUInt32LE(base + 12),
-    count: bytes.readUInt32LE(base + 16),
-    format: bytes.readUInt32LE(base + 20),
-  };
-  const importSize =
-    importHeader.format === 3 ? 16 : importHeader.format === 2 ? 8 : 4;
-  const importTableEnd =
-    base + importHeader.offset + importHeader.count * importSize;
-  if (importHeader.format < 1 || importHeader.format > 3)
-    throw new RangeError(
-      `Unsupported chained import format ${importHeader.format}`,
-    );
-  if (
-    importHeader.offset < 28 ||
-    importHeader.symbols < importHeader.offset ||
-    importTableEnd > base + importHeader.symbols ||
-    base + importHeader.symbols > end
-  )
-    throw new RangeError("Chained import table exceeds the fixup data");
+  const { startsOffset, imports: importHeader } = chainedFixupsHeader(
+    bytes,
+    base,
+    range.size,
+  );
   const imports = (index: number) =>
     readImport({ bytes, base, end, dylibs }, importHeader, index);
-  if (bytes.readUInt32LE(base + 24) !== 0)
-    throw new RangeError(
-      "Compressed chained-fixup symbol names are not supported",
-    );
   const starts = base + startsOffset;
   const startsEnd = base + importHeader.offset;
   const requireStartsRange = (at: number, size: number): void => {

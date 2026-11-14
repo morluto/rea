@@ -1,4 +1,4 @@
-import { expect, it as test, vi } from "vitest";
+import { expect, it as test } from "vitest";
 import { readKunaConfiguration } from "../../../../src/kuna/KunaConfiguration.js";
 import { KUNA_DIAGNOSTIC_BYTES } from "../../../../src/kuna/KunaLimits.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
@@ -6,6 +6,7 @@ import { ProviderCleanupError } from "../../../../src/domain/providerCleanupErro
 
 import { fakeKunaCalls, setFakeKunaBehavior } from "./fakeKuna.js";
 import { run, session, unprovenCleanupLauncher } from "./kunaSessionFixture.js";
+import { waitFor } from "../../../support/testWait.js";
 
 const it = test.skipIf(process.platform === "win32");
 const scans = async (kuna: string) =>
@@ -241,7 +242,7 @@ it("cancels one waiter without stopping the shared scan, and rebuilds in a fresh
       { signal: abort.signal },
     );
     const survivor = first.execute("search_strings", { pattern: "fixture" });
-    await vi.waitFor(async () => expect(await scans(kuna)).toHaveLength(1));
+    await waitFor(async () => expect(await scans(kuna)).toHaveLength(1));
     abort.abort();
     expect(await cancelled).toMatchObject({
       ok: false,
@@ -273,7 +274,7 @@ it("drains a cancelled last scan before retrying", async () => {
       {},
       { signal: abort.signal },
     );
-    await vi.waitFor(async () => expect(await scans(kuna)).toHaveLength(1));
+    await waitFor(async () => expect(await scans(kuna)).toHaveLength(1));
     abort.abort();
     expect(await pending).toMatchObject({
       ok: false,
@@ -303,7 +304,7 @@ it("retains metadata admission until a string process stop is proven", async () 
       {},
       { signal: abort.signal },
     );
-    await vi.waitFor(async () => expect(await scans(kuna)).toHaveLength(1));
+    await waitFor(async () => expect(await scans(kuna)).toHaveLength(1));
     abort.abort();
     expect(await pending).toMatchObject({
       ok: false,

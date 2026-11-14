@@ -7,11 +7,9 @@ import {
   peExportImage,
 } from "../../../tests/fixtures/binaryDiagnostics/nativeExports.js";
 import * as nativeExportContracts from "../../domain/native/nativeExports.js";
+import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
 import {
-  BinaryFormatFailure,
-  BinaryResourceFailure,
-} from "../metadata/BinaryContainer.js";
-import {
+  NativeExportLimitFailure,
   parseNativeExports,
   parseNativeExportsSteps,
 } from "./NativeExportParser.js";
@@ -21,6 +19,15 @@ const parse = (bytes: Buffer) =>
   nativeExportContracts.nativeExportsSchema.parse(
     parseNativeExports(bytes, artifact),
   );
+/** The refusal thrown for one image, so its structured limit tag is visible. */
+const refusal = (bytes: Buffer): unknown => {
+  try {
+    parseNativeExports(bytes, artifact);
+  } catch (cause) {
+    return cause;
+  }
+  throw new Error("Expected the parser to refuse the image");
+};
 
 /** Encode real gABI compressed storage, retaining logical section links. */
 const compressExportSection = (
@@ -562,13 +569,17 @@ describe("PE export directories", () => {
     });
   });
 
-  it("refuses an export table above the inventory allowance", () => {
-    expect(() =>
-      parseNativeExports(
-        peExportImage({ functions: [], declaredFunctions: 0x40001 }),
-        artifact,
-      ),
-    ).toThrow(BinaryResourceFailure);
+  it("refuses an export table above the inventory allowance as an entry count", () => {
+    const cause = refusal(
+      peExportImage({ functions: [], declaredFunctions: 0x40001 }),
+    );
+    expect(cause).toBeInstanceOf(NativeExportLimitFailure);
+    expect(cause).toMatchObject({
+      limit: "rows",
+      boundary: "structure",
+      maximum_bytes: nativeExportContracts.MAX_NATIVE_EXPORT_ROWS,
+      message: expect.stringContaining("262144-entry export inventory"),
+    });
   });
 });
 
@@ -1070,9 +1081,14 @@ describe("export inventory review regressions", () => {
     });
 
     expect(bytes.length).toBeLessThan(100_000);
-    expect(() => parseNativeExports(bytes, artifact)).toThrow(
-      BinaryResourceFailure,
-    );
+    const cause = refusal(bytes);
+    expect(cause).toBeInstanceOf(NativeExportLimitFailure);
+    expect(cause).toMatchObject({
+      limit: "retained_text",
+      boundary: "structure",
+      maximum_bytes: 16_777_216,
+      message: expect.stringContaining("16777216-byte retained-text"),
+    });
   });
 
   it("keeps exports when the version table lies outside the file", () => {

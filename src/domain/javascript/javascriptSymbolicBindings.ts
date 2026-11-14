@@ -47,6 +47,7 @@ import {
   type SymbolicEnvironment,
   type SymbolicFunction,
 } from "./javascriptSymbolicValues.js";
+import { appendAll } from "../appendAll.js";
 
 interface PropertyWrite {
   readonly path: readonly string[];
@@ -1395,10 +1396,10 @@ export class JavaScriptSymbolicBindings {
           returnedValue,
           depth + 1,
         );
-        possible.push(...flow.values.map(guardCurrentPath));
+        appendAll(possible, flow.values.map(guardCurrentPath));
         if (!flow.fallsThrough)
           return { values: possible, fallsThrough: false };
-        continuationConditions.push(...(flow.conditions ?? []));
+        appendAll(continuationConditions, flow.conditions ?? []);
         unresolvedFallthrough ||= flow.conditionUnresolved === true;
       }
       if (t.isIfStatement(statement)) {
@@ -1415,8 +1416,9 @@ export class JavaScriptSymbolicBindings {
             depth + 1,
           ),
         );
-        possible.push(
-          ...flows.flatMap((flow, index) =>
+        appendAll(
+          possible,
+          flows.flatMap((flow, index) =>
             flow.values.map((value) => {
               const guarded = guardCurrentPath(value);
               return truth === undefined
@@ -1431,7 +1433,7 @@ export class JavaScriptSymbolicBindings {
         if (flows.every((flow) => !flow.fallsThrough))
           return { values: possible, fallsThrough: false };
         if (truth !== undefined) {
-          continuationConditions.push(...(flows[0]?.conditions ?? []));
+          appendAll(continuationConditions, flows[0]?.conditions ?? []);
           unresolvedFallthrough ||= flows[0]?.conditionUnresolved === true;
         } else {
           const fallthrough = flows.flatMap((flow, index) =>

@@ -1219,9 +1219,7 @@ it("resolves every reported shutdown cleanup failure after ownership recovers", 
     cleanupFails = false;
     // Closing the transport can leave the child between live and exited
     // snapshots. Retry retained ownership until cleanup is actually verified.
-    await expect
-      .poll(() => provider.close(), { timeout: 5_000 })
-      .toBeUndefined();
+    await expect.poll(() => provider.close()).toBeUndefined();
   };
   try {
     const outcome = await service.execute("inspect_android_package", {
@@ -1423,6 +1421,33 @@ it("retains parsed native body absence without claiming an empty implementation"
   expect(result.body_status).toBe("not_available");
   expect(result.source.text).toBe("");
   expect(result.markers).toEqual(["native_method"]);
+  await provider.close();
+  await verifyCleanup(launches);
+});
+
+it("classifies a heap shortage that stops the bridge before the handshake", async () => {
+  const { service, apk, launches, provider } = await setup(
+    "start-heap-exhausted",
+  );
+  const outcome = await service.execute("inspect_android_package", {
+    path: apk,
+  });
+  if (outcome.ok) throw new Error("Expected a heap-exhaustion failure");
+  const projected = projectAnalysisError(outcome.error);
+  expect(projected).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    remediation: { action: expect.stringContaining("REA_JADX_HEAP_MIB") },
+    details: {
+      operation: "inspect_android_package",
+      resource: "memory",
+      // The bridge never answered, so nothing measured this run's heap.
+      reported_limits: { observed_max_heap_bytes: null },
+      captured_output: {
+        stderr: expect.stringContaining("OutOfMemoryError: Java heap space"),
+      },
+    },
+  });
   await provider.close();
   await verifyCleanup(launches);
 });

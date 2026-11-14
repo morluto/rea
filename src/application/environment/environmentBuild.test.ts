@@ -332,6 +332,19 @@ describe("buildEnvironment naming and refusals", () => {
     });
   });
 
+  it("does not create parents when the selected build root ends with dot-dot", async () => {
+    const root = await createTestTempDirectory(
+      "rea-environment-build-invalid-destination-",
+    );
+    const parent = join(root, "untouched");
+    const directory = `${join(parent, "a", "b", "c")}/..`;
+    const result = await buildEnvironment(
+      await buildInput(root, undefined, { directory }),
+    );
+    expect(result.ok).toBe(false);
+    await expect(readdir(parent)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("refuses an occupied directory and leaves it as it was", async () => {
     const root = await createTestTempDirectory("rea-environment-build-busy-");
     const input = await buildInput(root);
