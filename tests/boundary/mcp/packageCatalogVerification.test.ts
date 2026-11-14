@@ -4,6 +4,26 @@ import { verifyCompleteToolCatalog } from "../../../scripts/lib/verify-package-c
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 
+it("verifies the profiles selected for the packaged server", async () => {
+  const environment = {
+    REA_MCP_INPUT_SCHEMA_PROFILE: "full",
+    REA_MCP_OUTPUT_SCHEMA_PROFILE: "compact",
+  };
+  const harness = await createApplicationMcpHarness({
+    serverOptions: { environment },
+  });
+  try {
+    const names = await verifyCompleteToolCatalog(
+      harness.client,
+      undefined,
+      environment,
+    );
+    expect(names).toContain("binary_session");
+  } finally {
+    await harness.close();
+  }
+});
+
 it("verifies canonical names, converted schemas and session metadata together", async () => {
   const harness = await createApplicationMcpHarness();
   try {

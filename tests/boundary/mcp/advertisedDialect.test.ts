@@ -32,6 +32,10 @@ describe("portable regex grammar", () => {
     ["^(?<n>a)$", "named-group"],
     ["^\\p{L}+$", "unicode-property"],
     ["^a{1,1001}$", "repeat-above-1000"],
+    ["^(?:a{32}){32}$", "nested-repeat-above-1000"],
+    ["^a{01}$", "repeat-leading-zero"],
+    ["^a{1,010}$", "repeat-leading-zero"],
+    ["^\\/[^\\x00]*$", "escape:\\/"],
     ["^(?i)a$", "inline-flags-or-other-group"],
     ["^\\-$", "escaped-hyphen-outside-class"],
     ["^[\\:]$", "escape:\\:"],
@@ -51,7 +55,8 @@ describe("portable regex grammar", () => {
     "^[A-Za-z0-9._\\-]+$",
     "^[a-z0-9_\\-]+$",
     "^(?:[A-Za-z]|_)[A-Za-z0-9_]{0,63}$",
-    "^\\/[^\\x00]*$",
+    "^/[^\\x00]*$",
+    "^(?:a{32}|b{50}){20}$",
     "^[!#%&,:;<=>@`~'\" _.+*?$]$",
     "^a{2,1000}$",
     "^(?:a|b)\\.c\\$$",
@@ -192,4 +197,4 @@ it("advertises every profile within the portable dialect or its recorded baselin
     ),
   ).toEqual({ compact: [], full: [] });
   expect(observed).toEqual(ADVERTISED_INPUT_DIALECT_BASELINE);
-}, 120_000);
+});
