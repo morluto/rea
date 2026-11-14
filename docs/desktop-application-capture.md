@@ -284,8 +284,12 @@ filesystem resolves them. The selected leaf name and its physical target are
 both queried for package ownership, with the required name's owner first.
 Distinct required links are retained even when they reach one physical object;
 that object's dependencies are walked once through its first load path, which
-supplies its own `$ORIGIN`. A dependency is app-contained only when both its
-required leaf and physical target lie inside the application's own folder.
+supplies its own `$ORIGIN`. Directory symlink entries needed to reach a library are retained separately
+from the physical object, including when that object is inside the application's
+folder. External directory aliases need their own package owner; ownership of
+their target directory cannot hide an unowned alias. A library is app-contained
+only when its required leaf and physical target are inside the application's
+folder and its required directory aliases are captured there as well.
 A combination with another dollar expression that REA does not expand remains
 unresolved with a reason, rather than selecting a literal token-named file.
 Each candidate's ELF machine, class and byte order must match the

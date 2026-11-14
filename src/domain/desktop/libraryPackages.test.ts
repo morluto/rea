@@ -59,6 +59,7 @@ const host = (
     path: posix.normalize(path),
     resolvedPath: posix.normalize(path),
     fileIdentity: posix.normalize(path),
+    directoryAliases: [],
   }),
   dependencies: async (path: string, expected: ElfLibraryIdentity) => {
     const image = images[path];
@@ -147,6 +148,7 @@ describe("libraryClosure", () => {
       ],
       missing: ["libsecret-1.so.0"],
       unreadable: [],
+      directoryAliases: [],
       truncated: false,
     });
   });
@@ -173,6 +175,7 @@ describe("libraryClosure", () => {
           reason: "the file could not be read",
         },
       ],
+      directoryAliases: [],
       truncated: true,
     });
   });
@@ -211,6 +214,7 @@ describe("libraryClosure candidate identity", () => {
         ],
         missing: [],
         unreadable: [],
+        directoryAliases: [],
         truncated: false,
       });
     },
@@ -245,6 +249,7 @@ describe("libraryClosure candidate identity", () => {
       ],
       missing: [],
       unreadable: [],
+      directoryAliases: [],
       truncated: false,
     });
   });
@@ -267,6 +272,7 @@ describe("libraryClosure unresolved candidates", () => {
       unreadable: [
         { path: "/unreadable/libcore.so", reason: "cannot read header" },
       ],
+      directoryAliases: [],
       truncated: false,
     });
   });
@@ -285,6 +291,7 @@ describe("libraryClosure unresolved candidates", () => {
       unreadable: [
         { path, reason: expect.stringContaining("incompatible ELF") },
       ],
+      directoryAliases: [],
       truncated: false,
     });
   });
@@ -361,6 +368,7 @@ describe("libraryClosure unresolved candidates", () => {
       libraries: [],
       missing: ["libcore.so"],
       unreadable: [],
+      directoryAliases: [],
       truncated: false,
     });
   });
@@ -394,6 +402,7 @@ describe("libraryClosure search paths", () => {
       ],
       missing: ["libunsupported.so"],
       unreadable: [],
+      directoryAliases: [],
       truncated: false,
     });
   });

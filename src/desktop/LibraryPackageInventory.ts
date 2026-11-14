@@ -3,7 +3,7 @@ import {
   desktopLibraryPolicy,
   type DesktopLibraryPolicy,
 } from "../domain/desktop/libraryPolicy.js";
-import { realpath, stat } from "node:fs/promises";
+import { lstat, readlink, realpath, stat } from "node:fs/promises";
 import { posix } from "node:path";
 
 import type { DesktopPackage } from "../domain/desktop/desktopCapture.js";
@@ -41,6 +41,41 @@ export type LibraryPackages = {
 >;
 
 const QUERY_BATCH = 200;
+
+/** Required directory-link entries, before realpath erases their lookup names. */
+const directoryAliases = async (path: string): Promise<string[]> => {
+  const aliases = new Set<string>();
+  const visit = async (lookup: string, includeLeaf: boolean): Promise<void> => {
+    const ends: number[] = [];
+    for (
+      let end = lookup.indexOf("/", lookup.startsWith("/") ? 1 : 0);
+      end !== -1;
+      end = lookup.indexOf("/", end + 1)
+    )
+      ends.push(end);
+    if (includeLeaf) ends.push(lookup.length);
+    for (const end of ends) {
+      const prefix = lookup.slice(0, end);
+      if (!(await lstat(prefix)).isSymbolicLink()) continue;
+      // The kernel resolves ../ after symlinks, including in a link's target.
+      const alias = posix.join(
+        await realpath(posix.dirname(prefix)),
+        posix.basename(prefix),
+      );
+      if (aliases.has(alias)) continue;
+      aliases.add(alias);
+      const target = await readlink(prefix);
+      await visit(
+        posix.isAbsolute(target)
+          ? target
+          : `${posix.dirname(prefix)}/${target}`,
+        true,
+      );
+    }
+  };
+  await visit(path, false);
+  return [...aliases];
+};
 
 const elfDependencies = async (
   path: string,
@@ -185,6 +220,7 @@ export const inspectLibraryPackages = async (
             path: selected,
             resolvedPath,
             fileIdentity: `${identity.dev}:${identity.ino}`,
+            directoryAliases: await directoryAliases(path),
           };
         } catch (cause) {
           if (isRefusedRead(cause)) return undefined;
@@ -197,10 +233,15 @@ export const inspectLibraryPackages = async (
     },
     policy.libraries,
   );
-  const located = closure.libraries.map(({ path, resolvedPath }) => ({
-    path,
-    candidates: ownershipCandidates([path, resolvedPath]),
-  }));
+  const located = [
+    ...closure.libraries.map(({ path, resolvedPath }) => ({
+      path,
+      candidates: ownershipCandidates([path, resolvedPath]),
+    })),
+    // A directory alias is its own required entry. Ownership of the target
+    // directory cannot substitute for ownership of an unowned alias.
+    ...closure.directoryAliases.map((path) => ({ path, candidates: [path] })),
+  ];
   const owners = await packageOwners(
     located.flatMap((library) => library.candidates),
     runQuery,

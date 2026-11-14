@@ -128,6 +128,7 @@ export interface LibraryPath {
   readonly resolvedPath: string;
   /** Device and inode identify one loaded object across hard-link names. */
   readonly fileIdentity: string;
+  readonly directoryAliases: readonly string[];
 }
 
 /** Host reads the closure walk needs. */
@@ -143,6 +144,8 @@ export interface LibraryWalkHost {
 
 /** The shared libraries an executable loads at start, as the dynamic linker would find them. */
 export interface LibraryClosure {
+  /** Required directory-link entries outside the captured application folder. */
+  readonly directoryAliases: readonly string[];
   /** Required paths or targets outside the application's own folder, by their declared soname. */
   readonly libraries: readonly {
     readonly soname: string;
@@ -176,6 +179,7 @@ export const libraryClosure = async (
 ): Promise<LibraryClosure> => {
   const seen = new Set<string>();
   const closure = {
+    directoryAliases: [] as string[],
     libraries: [] as { soname: string; path: string; resolvedPath: string }[],
     missing: [] as string[],
     unreadable: [] as { path: string; reason: string }[],
@@ -195,6 +199,7 @@ export const libraryClosure = async (
   // Every required lookup can have its own package; the same resolved object
   // supplies its dependency declarations only once, through its first load path.
   const walkedObjects = new Set([rootPath.fileIdentity]);
+  const retainedAliases = new Set<string>();
   for (const object of queue) {
     const directories = searchDirectories(object);
     for (const soname of object.dependencies.needed) {
@@ -212,7 +217,11 @@ export const libraryClosure = async (
       // An unresolved declaration cannot claim a known literal lookup's identity.
       const key = unsupported
         ? compositeKey(["unresolved", object.path, soname])
-        : compositeKey(["lookup", request]);
+        : compositeKey([
+            "lookup",
+            request,
+            ...(directPath?.directoryAliases ?? []),
+          ]);
       if (seen.has(key)) continue;
       if (seen.size >= limit) return { ...closure, truncated: true };
       seen.add(key);
@@ -236,6 +245,7 @@ export const libraryClosure = async (
             resolvedPath: string;
             fileIdentity: string;
             lookupPath: string;
+            directoryAliases: readonly string[];
             dependencies: Result<ElfDependencies, ElfDependenciesFailure>;
           }
         | undefined;
@@ -289,6 +299,7 @@ export const libraryClosure = async (
           resolvedPath,
           fileIdentity: resolved.fileIdentity,
           lookupPath: request.startsWith("/") ? expandedRequest : candidate,
+          directoryAliases: resolved.directoryAliases,
           dependencies,
         };
         break;
@@ -299,6 +310,12 @@ export const libraryClosure = async (
       }
       const { path, resolvedPath, fileIdentity, lookupPath, dependencies } =
         selected;
+      for (const alias of selected.directoryAliases) {
+        if (isWithinAny(alias, [ownFolder]) || retainedAliases.has(alias))
+          continue;
+        retainedAliases.add(alias);
+        closure.directoryAliases.push(alias);
+      }
       if (
         !isWithinAny(path, [ownFolder]) ||
         !isWithinAny(resolvedPath, [ownFolder])

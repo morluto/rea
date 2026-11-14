@@ -36,6 +36,7 @@ it.skipIf(process.platform === "win32")(
       symlink(parent, secondLink),
     ]);
     const owners = new Map([
+      [join(root, "bridge"), "bridge-owner"],
       [firstLink, "first-link-owner"],
       [secondLink, "second-link-owner"],
       [parent, "app"],
@@ -62,6 +63,7 @@ it.skipIf(process.platform === "win32")(
     );
     expect(report).toEqual({
       library_packages: [
+        "bridge-owner",
         "child-owner",
         "first-link-owner",
         "second-link-owner",
@@ -107,6 +109,7 @@ it
       ),
     ]);
     const owners = new Map([
+      [join(root, "bridge"), "bridge-owner"],
       [actual, "actual-owner"],
       [decoy, "decoy-owner"],
     ]);
@@ -136,7 +139,9 @@ it
     );
     expect(report).toEqual({
       library_packages:
-        kind === "needed" ? ["actual-owner", "decoy-owner"] : ["actual-owner"],
+        kind === "needed"
+          ? ["actual-owner", "bridge-owner", "decoy-owner"]
+          : ["actual-owner", "bridge-owner"],
       missing_libraries: [],
       unpackaged_libraries: [],
     });
@@ -359,5 +364,175 @@ it.skipIf(process.platform === "win32")(
       /DT_NEEDED.*unsupported dynamic token/,
     );
     expect(queried).toEqual([library]);
+  },
+);
+
+it.skipIf(process.platform === "win32").each([
+  {
+    label: "external packaged",
+    external: true,
+    owner: "vendor",
+    expected: ["vendor"],
+    unpackaged: false,
+  },
+  {
+    label: "external separately packaged",
+    external: true,
+    owner: "alias-owner",
+    expected: ["alias-owner"],
+    unpackaged: false,
+  },
+  {
+    label: "external unowned",
+    external: true,
+    owner: undefined,
+    expected: [],
+    unpackaged: true,
+  },
+  {
+    label: "captured internal",
+    external: false,
+    owner: "vendor",
+    expected: [],
+    unpackaged: false,
+  },
+])(
+  "retains required directory aliases ($label) when the DSO itself is captured",
+  async ({ external, owner, expected, unpackaged }) => {
+    const root = await createTestTempDirectory("rea-needed-directory-owner-");
+    const bin = join(root, "app", "bin");
+    await mkdir(bin, { recursive: true });
+    const alias = join(external ? root : bin, "alias");
+    const library = join(bin, "libinside.so");
+    const executable = join(bin, "app");
+    await symlink(bin, alias);
+    await writeFile(library, elfImage({}));
+    await writeFile(
+      executable,
+      elfImage({ needed: [`${alias}/libinside.so`] }),
+    );
+    const owners = new Map([
+      [library, "vendor"],
+      ...(owner === undefined ? [] : [[alias, owner] as const]),
+    ]);
+    const queried: string[] = [];
+    const report = await inspectLibraryPackages(
+      executable,
+      "app",
+      async (command, args) => {
+        if (command === "ldconfig") return { stdout: "", exitCode: 0 };
+        queried.push(...args.slice(1));
+        return {
+          stdout: args
+            .slice(1)
+            .flatMap((path) =>
+              owners.has(path) ? [`${owners.get(path)}: ${path}`] : [],
+            )
+            .join("\n"),
+          exitCode: 0,
+        };
+      },
+      undefined,
+    );
+    expect(report).toEqual({
+      library_packages: expected,
+      missing_libraries: [],
+      unpackaged_libraries: unpackaged ? [alias] : [],
+    });
+    expect(queried.includes(alias)).toBe(external);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "retains every package in a required directory-alias chain",
+  async () => {
+    const root = await createTestTempDirectory("rea-needed-directory-chain-");
+    const bin = join(root, "app", "bin");
+    await mkdir(bin, { recursive: true });
+    const outer = join(root, "outer");
+    const inner = join(root, "inner");
+    await symlink("inner", outer);
+    await symlink("app/bin", inner);
+    const library = join(bin, "libinside.so");
+    const executable = join(bin, "app");
+    await writeFile(library, elfImage({}));
+    await writeFile(
+      executable,
+      elfImage({ needed: [`${outer}/libinside.so`] }),
+    );
+    const owners = new Map([
+      [outer, "outer-owner"],
+      [inner, "inner-owner"],
+    ]);
+    const report = await inspectLibraryPackages(
+      executable,
+      "app",
+      async (command, args) =>
+        command === "ldconfig"
+          ? { stdout: "", exitCode: 0 }
+          : {
+              stdout: args
+                .slice(1)
+                .flatMap((path) =>
+                  owners.has(path) ? [`${owners.get(path)}: ${path}`] : [],
+                )
+                .join("\n"),
+              exitCode: 0,
+            },
+      undefined,
+    );
+    expect(report).toEqual({
+      library_packages: ["inner-owner", "outer-owner"],
+      missing_libraries: [],
+      unpackaged_libraries: [],
+    });
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "retains distinct directory aliases before deduplicating the same loaded DSO",
+  async () => {
+    const root = await createTestTempDirectory(
+      "rea-needed-directory-distinct-",
+    );
+    const bin = join(root, "app", "bin");
+    await mkdir(bin, { recursive: true });
+    const first = join(root, "first"),
+      second = join(root, "second");
+    await symlink("app/bin", first);
+    await symlink("app/bin", second);
+    const library = join(bin, "libinside.so");
+    const executable = join(bin, "app");
+    await writeFile(library, elfImage({}));
+    await writeFile(
+      executable,
+      elfImage({ needed: [`${first}/libinside.so`, `${second}/libinside.so`] }),
+    );
+    const owners = new Map([
+      [first, "first-owner"],
+      [second, "second-owner"],
+    ]);
+    const report = await inspectLibraryPackages(
+      executable,
+      "app",
+      async (command, args) =>
+        command === "ldconfig"
+          ? { stdout: "", exitCode: 0 }
+          : {
+              stdout: args
+                .slice(1)
+                .flatMap((path) =>
+                  owners.has(path) ? [`${owners.get(path)}: ${path}`] : [],
+                )
+                .join("\n"),
+              exitCode: 0,
+            },
+      undefined,
+    );
+    expect(report).toEqual({
+      library_packages: ["first-owner", "second-owner"],
+      missing_libraries: [],
+      unpackaged_libraries: [],
+    });
   },
 );
