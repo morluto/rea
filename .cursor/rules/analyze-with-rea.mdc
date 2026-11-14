@@ -1,0 +1,21 @@
+---
+alwaysApply: true
+---
+
+When the user asks to analyze with REA, including "rea를 사용해서 해당 부분을 분석해줘" or the same intent in English, call REA on the path they indicated. Do this even for ordinary source in the open editor.
+
+Resolve one absolute target:
+
+- A directory or `.asar` they named: that path.
+- A file, "해당 부분", "this", "this file", "the current file", or an editor selection: the directory that contains that file. Use the nearest directory with `package.json`; otherwise use the file's parent. A selection still means that whole file's directory.
+- A folder they indicated: that folder.
+
+Call the connected MCP server `rea`, tool `analyze_javascript_application`, with `input_path` set to that absolute directory or `.asar`. If the tool schema includes `source_paths` and the user indicated a file, also pass that file's path relative to `input_path`. Pass `detail` `"summary"` only when the schema includes it.
+
+If the `rea` tools are not in this session, run this command and read the JSON on stdout. The positional path is that same absolute directory or `.asar`, never a single file:
+
+```bash
+npx -y rea-agents@latest analyze-javascript-application <absolute-directory-or-asar> --json
+```
+
+Answer from that result's findings, evidence, limitations, and unknowns, and focus on the file or folder the user indicated.
