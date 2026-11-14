@@ -6,6 +6,8 @@ import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { pe } from "../../../src/domain/binaryTarget.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { rawLoadAtEntry } from "../../../src/domain/rawBinary.fixture.js";
+import { stating } from "../../support/statingFacts.js";
 
 describe("executable format refusal diagnostics", () => {
   it.each([
@@ -139,9 +141,11 @@ describe("target route diagnostics", () => {
     await writeFile(path, Buffer.from([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0]));
     expect(
       await parseBinaryTarget(path, {
-        formatHint: "raw-binary",
-        architecture: "x86",
-        entryPoint: "0x001000",
+        loadSelection: {
+          format: "raw-binary",
+          architecture: "x86",
+          entryPoint: "0x001000",
+        },
       }),
     ).toMatchObject({
       ok: true,
@@ -149,8 +153,7 @@ describe("target route diagnostics", () => {
         path: await realpath(path),
         format: "raw-binary",
         architecture: "x86",
-        entryPoint: "0x1000",
-        entryPointSource: "0x001000",
+        rawLoad: rawLoadAtEntry("0x001000"),
       },
     });
   });
@@ -240,9 +243,11 @@ describe("raw-binary load rejection diagnostics", () => {
 
   it("projects a misaligned arm entry as caller input without path advice", async () => {
     const projected = await rawBinaryRejection({
-      formatHint: "raw-binary",
-      architecture: "arm",
-      entryPoint: "0x1",
+      loadSelection: {
+        format: "raw-binary",
+        architecture: "arm",
+        entryPoint: "0x1",
+      },
     });
     expect(projected).toMatchObject({
       code: "invalid_request",
@@ -258,8 +263,17 @@ describe("raw-binary load rejection diagnostics", () => {
         constraint: "load_selection_rejected",
       },
       remediation: {
-        action: expect.stringMatching(
-          /--target-format.*--architecture.*--entry-point.*entry_point/i,
+        action: stating(
+          "--target-format",
+          "--architecture",
+          "--architecture-variant",
+          "--entry-point",
+          "--base-address",
+          "--vector-table-address",
+          "architecture_variant",
+          "entry_point",
+          "base_address",
+          "vector_table_address",
         ),
       },
     });
@@ -268,9 +282,11 @@ describe("raw-binary load rejection diagnostics", () => {
 
   it("projects an x86 entry beyond the address width as caller input", async () => {
     const projected = await rawBinaryRejection({
-      formatHint: "raw-binary",
-      architecture: "x86",
-      entryPoint: "0xffffffffff",
+      loadSelection: {
+        format: "raw-binary",
+        architecture: "x86",
+        entryPoint: "0xffffffffff",
+      },
     });
     expect(projected).toMatchObject({
       code: "invalid_request",
@@ -283,8 +299,7 @@ describe("raw-binary load rejection diagnostics", () => {
 
   it("projects architecture and entry without raw-binary format as caller input", async () => {
     const projected = await rawBinaryRejection({
-      architecture: "arm",
-      entryPoint: "0x0",
+      loadSelection: { architecture: "arm", entryPoint: "0x0" },
     });
     expect(projected).toMatchObject({
       code: "invalid_request",
@@ -300,9 +315,11 @@ describe("raw-binary load rejection diagnostics", () => {
   it("keeps an empty raw-binary file a target refusal", async () => {
     const projected = await rawBinaryRejection(
       {
-        formatHint: "raw-binary",
-        architecture: "arm",
-        entryPoint: "0x8000000",
+        loadSelection: {
+          format: "raw-binary",
+          architecture: "arm",
+          entryPoint: "0x8000000",
+        },
       },
       Buffer.alloc(0),
     );
@@ -318,10 +335,12 @@ describe("raw-binary load rejection diagnostics", () => {
 
   it("projects the raw-binary target-kind pairing as caller input", async () => {
     const projected = await rawBinaryRejection({
-      formatHint: "raw-binary",
+      loadSelection: {
+        format: "raw-binary",
+        architecture: "x86",
+        entryPoint: "0x1000",
+      },
       targetKind: "database",
-      architecture: "x86",
-      entryPoint: "0x1000",
     });
     expect(projected).toMatchObject({
       code: "invalid_request",
@@ -335,7 +354,7 @@ describe("raw-binary load rejection diagnostics", () => {
 
   it("projects the DOS COM target-kind pairing as caller input too", async () => {
     const projected = await rawBinaryRejection({
-      formatHint: "dos-com",
+      loadSelection: { format: "dos-com" },
       targetKind: "database",
     });
     expect(projected).toMatchObject({
@@ -377,7 +396,7 @@ describe("caller-selected and inferred target interpretation", () => {
     const path = join(directory, "module.hop");
     await writeFile(path, Buffer.from([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0]));
     expect(
-      await parseBinaryTarget(path, { formatHint: "dos-com" }),
+      await parseBinaryTarget(path, { loadSelection: { format: "dos-com" } }),
     ).toMatchObject({
       ok: true,
       value: { kind: "executable", format: "dos-com", architecture: "x86" },

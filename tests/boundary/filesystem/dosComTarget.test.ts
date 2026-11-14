@@ -14,7 +14,7 @@ describe("DOS COM admission", () => {
     const target = await parseBinaryTarget(path, {
       cwd: directory,
       hostArchitecture: "arm64",
-      formatHint: "dos-com",
+      loadSelection: { format: "dos-com" },
     });
     expect(target).toMatchObject({
       ok: true,
@@ -39,7 +39,7 @@ describe("DOS COM admission", () => {
       await parseBinaryTarget(path, {
         cwd: directory,
         hostArchitecture: "x64",
-        formatHint: "dos-com",
+        loadSelection: { format: "dos-com" },
       }),
     ).toMatchObject({ ok: false, error: { _tag: "BinaryTargetError" } });
   });
@@ -51,7 +51,7 @@ describe("DOS COM admission", () => {
     const target = await parseBinaryTarget(path, {
       cwd: directory,
       hostArchitecture: "x64",
-      formatHint: "dos-com",
+      loadSelection: { format: "dos-com" },
     });
     if (!target.ok) throw target.error;
     expect(target.value).toMatchObject({
@@ -70,7 +70,7 @@ describe("DOS COM admission", () => {
         cwd: directory,
         hostArchitecture: "x64",
         targetKind: "database",
-        formatHint: "dos-com",
+        loadSelection: { format: "dos-com" },
       }),
     ).toMatchObject({ ok: false, error: { _tag: "BinaryTargetError" } });
   });

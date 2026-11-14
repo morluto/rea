@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("raw-binary admission", () => {
@@ -29,9 +30,11 @@ describe("raw-binary admission", () => {
     const canonical = await realpath(requested);
     const target = await parseBinaryTarget("linked/fixture.bin", {
       cwd: directory,
-      formatHint: "raw-binary",
-      architecture: "6502",
-      entryPoint: "0x8000",
+      loadSelection: {
+        format: "raw-binary",
+        architecture: "6502",
+        entryPoint: "0x8000",
+      },
     });
     expect(target).toMatchObject({
       ok: true,
@@ -52,9 +55,11 @@ describe("raw-binary admission", () => {
     const target = await parseBinaryTarget(path, {
       cwd: directory,
       hostArchitecture: "arm64",
-      formatHint: "raw-binary",
-      architecture: "arm",
-      entryPoint: "0x08000000",
+      loadSelection: {
+        format: "raw-binary",
+        architecture: "arm",
+        entryPoint: "0x08000000",
+      },
     });
     expect(target).toMatchObject({
       ok: true,
@@ -64,8 +69,11 @@ describe("raw-binary admission", () => {
         kind: "executable",
         architecture: "arm",
         availableArchitectures: ["arm"],
-        entryPoint: "0x8000000",
-        entryPointSource: "0x08000000",
+        rawLoad: {
+          baseAddress: "0x8000000",
+          entryPoint: "0x8000000",
+          entrySource: { kind: "caller" },
+        },
         sha256: createHash("sha256").update(bytes).digest("hex"),
       },
     });
@@ -81,7 +89,7 @@ describe("raw-binary admission", () => {
       await parseBinaryTarget(path, {
         cwd: directory,
         hostArchitecture: "x64",
-        formatHint: "raw-binary",
+        loadSelection: { format: "raw-binary" },
       }),
     ).toMatchObject({
       ok: false,
@@ -99,8 +107,7 @@ describe("raw-binary admission", () => {
       await parseBinaryTarget(path, {
         cwd: directory,
         hostArchitecture: "x64",
-        architecture: "arm",
-        entryPoint: "0x8000000",
+        loadSelection: { architecture: "arm", entryPoint: "0x8000000" },
       }),
     ).toMatchObject({
       ok: false,
@@ -118,9 +125,11 @@ describe("raw-binary admission", () => {
       await parseBinaryTarget(path, {
         cwd: directory,
         hostArchitecture: "x64",
-        formatHint: "raw-binary",
-        architecture: "x86",
-        entryPoint: "0x1000",
+        loadSelection: {
+          format: "raw-binary",
+          architecture: "x86",
+          entryPoint: "0x1000",
+        },
       }),
     ).toMatchObject({ ok: false, error: { _tag: "BinaryTargetError" } });
   });
@@ -133,10 +142,114 @@ describe("raw-binary admission", () => {
         cwd: directory,
         hostArchitecture: "x64",
         targetKind: "database",
-        formatHint: "raw-binary",
-        architecture: "x86",
-        entryPoint: "0x1000",
+        loadSelection: {
+          format: "raw-binary",
+          architecture: "x86",
+          entryPoint: "0x1000",
+        },
       }),
     ).toMatchObject({ ok: false, error: { _tag: "BinaryTargetError" } });
+  });
+});
+
+describe("M-profile raw-binary admission", () => {
+  const image = () => {
+    // A 256-byte header, then a vector table: initial SP and an odd Reset.
+    const bytes = Buffer.alloc(0x200);
+    bytes.writeUInt32LE(0x20042000, 0x100);
+    bytes.writeUInt32LE(0x100001f7, 0x104);
+    return bytes;
+  };
+
+  it("reads Reset from the vector table in the file", async () => {
+    const directory = await createTestTempDirectory("rea-raw-vectors-");
+    const path = join(directory, "flash.bin");
+    const bytes = image();
+    await writeFile(path, bytes);
+    const target = await parseBinaryTarget(path, {
+      cwd: directory,
+      loadSelection: {
+        format: "raw-binary",
+        architecture: "arm",
+        architectureVariant: "armv6-m",
+        baseAddress: "0x10000000",
+        vectorTableAddress: "0x10000100",
+      },
+    });
+    expect(target).toMatchObject({
+      ok: true,
+      value: {
+        format: "raw-binary",
+        architecture: "arm",
+        rawLoad: {
+          baseAddress: "0x10000000",
+          architectureVariant: "armv6-m",
+          entryPoint: "0x100001f6",
+          entryIsaMode: "thumb",
+          entrySource: {
+            kind: "vector-table",
+            address: "0x10000100",
+            resetVector: "0x100001f7",
+            initialStackPointer: "0x20042000",
+          },
+        },
+      },
+    });
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
+  });
+
+  it("refuses an odd entry and names its code address in the error details", async () => {
+    const directory = await createTestTempDirectory("rea-raw-thumb-");
+    const path = join(directory, "flash.bin");
+    await writeFile(path, image());
+    const result = await parseBinaryTarget(path, {
+      cwd: directory,
+      loadSelection: {
+        format: "raw-binary",
+        architecture: "arm",
+        architectureVariant: "armv7-m",
+        baseAddress: "0x10000000",
+        entryPoint: "0x100001f7",
+      },
+    });
+    if (result.ok) throw new Error("an odd Thumb entry was admitted");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+      details: {
+        constraint: "load_selection_rejected",
+        diagnostics: {
+          entry_point: "0x100001f7",
+          code_address: "0x100001f6",
+          isa_mode: "thumb",
+          suggestion: expect.stringContaining("Omit entry_point"),
+        },
+      },
+    });
+  });
+
+  it("refuses an even Reset word read from the file", async () => {
+    const directory = await createTestTempDirectory("rea-raw-reset-");
+    const path = join(directory, "flash.bin");
+    const bytes = image();
+    bytes.writeUInt32LE(0x100001f6, 0x104);
+    await writeFile(path, bytes);
+    const result = await parseBinaryTarget(path, {
+      cwd: directory,
+      loadSelection: {
+        format: "raw-binary",
+        architecture: "arm",
+        architectureVariant: "armv8-m.main",
+        baseAddress: "0x10000000",
+        vectorTableAddress: "0x10000100",
+      },
+    });
+    if (result.ok) throw new Error("an even Reset word was admitted");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      details: {
+        constraint: "load_selection_rejected",
+        diagnostics: { reset_vector: "0x100001f6" },
+      },
+    });
   });
 });

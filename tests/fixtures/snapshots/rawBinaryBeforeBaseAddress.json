@@ -1,0 +1,669 @@
+{
+  "target": {
+    "sha256": "379bec29dccd0a93c94826144d7ef6e42fab64ef195a3b8313a16926f66f388f",
+    "kind": "executable",
+    "architecture": "arm",
+    "format": "raw-binary",
+    "entry_point": "0x8000000"
+  },
+  "binding": {
+    "provider": {
+      "id": "ghidra",
+      "name": "Ghidra",
+      "version": "12.1.4"
+    },
+    "analysis_profile": {
+      "provider": {
+        "id": "ghidra",
+        "name": "Ghidra",
+        "version": "12.1.4"
+      },
+      "parameters": {
+        "target_kind": "executable",
+        "target_format": "raw-binary",
+        "architecture": "arm",
+        "available_architectures": ["arm"],
+        "import_mode": "ephemeral-source-immutable",
+        "annotation_policy": "atomic-function-entry-metadata-v1",
+        "load_image_observations": "source-mappings-entry-context-v2",
+        "function_body_evidence": "complete-inclusive-ranges-v1",
+        "function_references": "complete-body-and-entry-reference-manager-v2",
+        "call_relationship_coverage": "function-body-call-coverage-v5",
+        "function_dossier_coverage": "observed-facets-and-call-relationships-v1",
+        "string_inventory_evidence": "defined-data-coverage-v1",
+        "location_resolution": "explicit-address-exact-entry-symbol-first-v3",
+        "procedure_file_offset_resolution": "address-first-unique-target-source-mapping-v2",
+        "instruction_flow_evidence": "decoded-return-pcode-v1",
+        "instruction_references": "exact-address-incoming-without-synthetic-entry-v2",
+        "function_boundary_observations": "ghidra-function-boundary-limitations-v4",
+        "no_return_repair": "returning-imports-decoded-return-v2",
+        "process_launch": "inspected-jvm-launch-support-v1",
+        "jump_table_evidence": "typed-case-default-blocks-v1",
+        "decompiler_jump_loads": true,
+        "load_image_evidence": "independent-raw-mapping-context-v4",
+        "loader": "BinaryLoader",
+        "language_id": "ARM:LE:32:v7",
+        "compiler_spec_id": "default",
+        "language_selection": "caller-supplied-v1",
+        "entry_point": "0x8000000",
+        "entry_seed": "external-entry-and-function-before-analysis-v1",
+        "analyzer_preset": "ghidra-default",
+        "function_coordinate_context": {
+          "kind": "native-function-coordinate-context-v1",
+          "selected_image": null,
+          "mapping_sha256": "df051a4eb3b8b938d4fce13292ae82729b3282c18d4447c74d6d6fef8435ed89"
+        }
+      },
+      "digest": "c83436441786074ecde2eb776201e6546311affca43bf8905af7b79c8d387733"
+    }
+  },
+  "entries": [
+    {
+      "query_id": "query_0e732d0a30ed7f338732a403789355b734b9b3336ec77cf83b3dacb346dae4da",
+      "operation": "inspect_native_load_image",
+      "parameters": {},
+      "execution": {
+        "result": {
+          "status": "verified",
+          "format": "raw-binary",
+          "target_sha256": "379bec29dccd0a93c94826144d7ef6e42fab64ef195a3b8313a16926f66f388f",
+          "architecture": "arm",
+          "language_id": "ARM:LE:32:v7",
+          "compiler_spec_id": "default",
+          "base_address": "0x8000000",
+          "file_bytes": 4,
+          "entry": {
+            "address": "0x8000000",
+            "file_offset": 0
+          },
+          "observations": {
+            "executable_format": "Raw Binary",
+            "language_id": "ARM:LE:32:v7",
+            "compiler_spec_id": "default",
+            "image_base": "0x0",
+            "default_address_space": "ram",
+            "source_files": [
+              {
+                "name": "ecu.bin",
+                "size": 4,
+                "original_sha256": "379bec29dccd0a93c94826144d7ef6e42fab64ef195a3b8313a16926f66f388f",
+                "modified_sha256": "379bec29dccd0a93c94826144d7ef6e42fab64ef195a3b8313a16926f66f388f"
+              }
+            ],
+            "mappings": [
+              {
+                "block": "ram",
+                "start": "0x8000000",
+                "end": "0x8000003",
+                "address_space": "ram",
+                "initialized": true,
+                "loaded": true,
+                "overlay": false,
+                "readable": true,
+                "writable": false,
+                "executable": true,
+                "length": 4,
+                "source_file_index": 0,
+                "file_offset": 0,
+                "sha256": "379bec29dccd0a93c94826144d7ef6e42fab64ef195a3b8313a16926f66f388f"
+              }
+            ],
+            "relocations": [],
+            "entry_points": ["0x8000000"],
+            "entry_context": []
+          },
+          "checks": [
+            {
+              "name": "executable_format",
+              "matched": true,
+              "expected": "Raw Binary",
+              "observed": "Raw Binary",
+              "file_offset": null,
+              "address": null
+            },
+            {
+              "name": "language_id",
+              "matched": true,
+              "expected": "ARM:LE:32:v7",
+              "observed": "ARM:LE:32:v7",
+              "file_offset": null,
+              "address": null
+            },
+            {
+              "name": "compiler_spec_id",
+              "matched": true,
+              "expected": "default",
+              "observed": "default",
+              "file_offset": null,
+              "address": null
+            },
+            {
+              "name": "image_base",
+              "matched": true,
+              "expected": "0x0",
+              "observed": "0x0",
+              "file_offset": null,
+              "address": null
+            },
+            {
+              "name": "default_address_space",
+              "matched": true,
+              "expected": "ram",
+              "observed": "ram",
+              "file_offset": null,
+              "address": null
+            },
+            {
+              "name": "source_file_count",
+              "matched": true,
+              "expected": 1,
+              "observed": 1,
+              "file_offset": null,
+              "address": null
+            },
+            {
+              "name": "source_file_size",
+              "matched": true,
+              "expected": 4,
+              "observed": 4,
+              "file_offset": null,
+              "address": null
+            },
+            {
+              "name": "original_file_sha256",
+              "matched": true,
+              "expected": "379bec29dccd0a93c94826144d7ef6e42fab64ef195a3b8313a16926f66f388f",
+              "observed": "379bec29dccd0a93c94826144d7ef6e42fab64ef195a3b8313a16926f66f388f",
+              "file_offset": null,
+              "address": null
+            },
+            {
+              "name": "modified_file_sha256",
+              "matched": true,
+              "expected": "379bec29dccd0a93c94826144d7ef6e42fab64ef195a3b8313a16926f66f388f",
+              "observed": "379bec29dccd0a93c94826144d7ef6e42fab64ef195a3b8313a16926f66f388f",
+              "file_offset": null,
+              "address": null
+            },
+            {
+              "name": "mapping_count",
+              "matched": true,
+              "expected": 1,
+              "observed": 1,
+              "file_offset": null,
+              "address": null
+            },
+            {
+              "name": "initialized_unbacked_mappings",
+              "matched": true,
+              "expected": 0,
+              "observed": 0,
+              "file_offset": null,
+              "address": null
+            },
+            {
+              "name": "mapping.source_file_index",
+              "matched": true,
+              "expected": 0,
+              "observed": 0,
+              "file_offset": null,
+              "address": null
+            },
+            {
+              "name": "mapping.initialized",
+              "matched": true,
+              "expected": true,
+              "observed": true,
+              "file_offset": null,
+              "address": null
+            },
+            {
+              "name": "mapping.loaded",
+              "matched": true,
+              "expected": true,
+              "observed": true,
+              "file_offset": null,
+              "address": null
+            },
+            {
+              "name": "mapping.overlay",
+              "matched": true,
+              "expected": false,
+              "observed": false,
+              "file_offset": null,
+              "address": null
+            },
+            {
+              "name": "mapping.address_space",
+              "matched": true,
+              "expected": "ram",
+              "observed": "ram",
+              "file_offset": null,
+              "address": null
+            },
+            {
+              "name": "mapping.file_offset",
+              "matched": true,
+              "expected": 0,
+              "observed": 0,
+              "file_offset": 0,
+              "address": "0x8000000"
+            },
+            {
+              "name": "mapping.start",
+              "matched": true,
+              "expected": "0x8000000",
+              "observed": "0x8000000",
+              "file_offset": 0,
+              "address": "0x8000000"
+            },
+            {
+              "name": "mapping.end",
+              "matched": true,
+              "expected": "0x8000003",
+              "observed": "0x8000003",
+              "file_offset": 0,
+              "address": "0x8000003"
+            },
+            {
+              "name": "mapping.length",
+              "matched": true,
+              "expected": 4,
+              "observed": 4,
+              "file_offset": 0,
+              "address": "0x8000000"
+            },
+            {
+              "name": "mapping.sha256",
+              "matched": true,
+              "expected": "379bec29dccd0a93c94826144d7ef6e42fab64ef195a3b8313a16926f66f388f",
+              "observed": "379bec29dccd0a93c94826144d7ef6e42fab64ef195a3b8313a16926f66f388f",
+              "file_offset": 0,
+              "address": "0x8000000"
+            },
+            {
+              "name": "entry_point",
+              "matched": true,
+              "expected": "0x8000000",
+              "observed": "0x8000000",
+              "file_offset": null,
+              "address": null
+            },
+            {
+              "name": "relocation_records",
+              "matched": true,
+              "expected": [],
+              "observed": [],
+              "file_offset": null,
+              "address": null
+            }
+          ],
+          "limitations": [
+            "Raw binary is a headerless interpretation explicitly selected by the caller, not format identification from file bytes.",
+            "Verification covers complete original/modified source identity, initialized and loaded non-overlay file bytes in the default address space, the caller-supplied entry, and the bound Ghidra language with its fixed byte order. File offset 0 is mapped at the entry address.",
+            "Ghidra may report additional language-defined external entries outside the mapped image. They are preserved as observations; verification requires the caller-supplied entry and does not attest other entries.",
+            "Language-defined uninitialized memory, such as 6502 zero page and stack, is preserved as observations but is not attested as file-backed bytes.",
+            "Reset vectors, memory-mapped I/O, alternate-endian and Thumb-only variants, and runtime boot behavior are not modeled or verified. No original executable bytes are changed.",
+            "Mapping ends are inclusive; a mismatching digest identifies its source range, not the first differing byte."
+          ]
+        },
+        "raw_result": null,
+        "provider": {
+          "id": "ghidra",
+          "name": "Ghidra",
+          "version": "12.1.4"
+        },
+        "limitations": [],
+        "relationship_coverage": null,
+        "locations": [],
+        "subject": {
+          "path": "/tmp/ecu.bin",
+          "sha256": "379bec29dccd0a93c94826144d7ef6e42fab64ef195a3b8313a16926f66f388f",
+          "format": "raw-binary",
+          "architecture": "arm"
+        }
+      }
+    }
+  ],
+  "workflow_entries": [],
+  "evidence_bundle": {
+    "artifacts": [
+      {
+        "digest": {
+          "sha256": "379bec29dccd0a93c94826144d7ef6e42fab64ef195a3b8313a16926f66f388f"
+        },
+        "format": "raw-binary",
+        "architecture": "arm"
+      }
+    ],
+    "providers": [
+      {
+        "id": "ghidra",
+        "name": "Ghidra",
+        "version": "12.1.4"
+      }
+    ],
+    "environments": [],
+    "scenarios": [],
+    "captures": [],
+    "unknowns": [],
+    "records": [
+      {
+        "evidence_id": "ev_272e9e8fdbf97a7c46eaaf2c39790154b6ec99c7a6b061e4a0b37b0e514c7cf5",
+        "subject": {
+          "name": "ecu.bin",
+          "digest": {
+            "sha256": "379bec29dccd0a93c94826144d7ef6e42fab64ef195a3b8313a16926f66f388f"
+          },
+          "local_path": "/tmp/ecu.bin",
+          "format": "raw-binary",
+          "architecture": "arm"
+        },
+        "provider": {
+          "id": "ghidra",
+          "name": "Ghidra",
+          "version": "12.1.4"
+        },
+        "analysis_profile": {
+          "provider": {
+            "id": "ghidra",
+            "name": "Ghidra",
+            "version": "12.1.4"
+          },
+          "parameters": {
+            "target_kind": "executable",
+            "target_format": "raw-binary",
+            "architecture": "arm",
+            "available_architectures": ["arm"],
+            "import_mode": "ephemeral-source-immutable",
+            "annotation_policy": "atomic-function-entry-metadata-v1",
+            "load_image_observations": "source-mappings-entry-context-v2",
+            "function_body_evidence": "complete-inclusive-ranges-v1",
+            "function_references": "complete-body-and-entry-reference-manager-v2",
+            "call_relationship_coverage": "function-body-call-coverage-v5",
+            "function_dossier_coverage": "observed-facets-and-call-relationships-v1",
+            "string_inventory_evidence": "defined-data-coverage-v1",
+            "location_resolution": "explicit-address-exact-entry-symbol-first-v3",
+            "procedure_file_offset_resolution": "address-first-unique-target-source-mapping-v2",
+            "instruction_flow_evidence": "decoded-return-pcode-v1",
+            "instruction_references": "exact-address-incoming-without-synthetic-entry-v2",
+            "function_boundary_observations": "ghidra-function-boundary-limitations-v4",
+            "no_return_repair": "returning-imports-decoded-return-v2",
+            "process_launch": "inspected-jvm-launch-support-v1",
+            "jump_table_evidence": "typed-case-default-blocks-v1",
+            "decompiler_jump_loads": true,
+            "load_image_evidence": "independent-raw-mapping-context-v4",
+            "loader": "BinaryLoader",
+            "language_id": "ARM:LE:32:v7",
+            "compiler_spec_id": "default",
+            "language_selection": "caller-supplied-v1",
+            "entry_point": "0x8000000",
+            "entry_seed": "external-entry-and-function-before-analysis-v1",
+            "analyzer_preset": "ghidra-default",
+            "function_coordinate_context": {
+              "kind": "native-function-coordinate-context-v1",
+              "selected_image": null,
+              "mapping_sha256": "df051a4eb3b8b938d4fce13292ae82729b3282c18d4447c74d6d6fef8435ed89"
+            }
+          },
+          "digest": "c83436441786074ecde2eb776201e6546311affca43bf8905af7b79c8d387733"
+        },
+        "predicate_type": "rea.analysis",
+        "operation": "inspect_native_load_image",
+        "parameters": {},
+        "raw_result": null,
+        "normalized_result": {
+          "status": "verified",
+          "format": "raw-binary",
+          "target_sha256": "379bec29dccd0a93c94826144d7ef6e42fab64ef195a3b8313a16926f66f388f",
+          "architecture": "arm",
+          "language_id": "ARM:LE:32:v7",
+          "compiler_spec_id": "default",
+          "base_address": "0x8000000",
+          "file_bytes": 4,
+          "entry": {
+            "address": "0x8000000",
+            "file_offset": 0
+          },
+          "observations": {
+            "executable_format": "Raw Binary",
+            "language_id": "ARM:LE:32:v7",
+            "compiler_spec_id": "default",
+            "image_base": "0x0",
+            "default_address_space": "ram",
+            "source_files": [
+              {
+                "name": "ecu.bin",
+                "size": 4,
+                "original_sha256": "379bec29dccd0a93c94826144d7ef6e42fab64ef195a3b8313a16926f66f388f",
+                "modified_sha256": "379bec29dccd0a93c94826144d7ef6e42fab64ef195a3b8313a16926f66f388f"
+              }
+            ],
+            "mappings": [
+              {
+                "block": "ram",
+                "start": "0x8000000",
+                "end": "0x8000003",
+                "address_space": "ram",
+                "initialized": true,
+                "loaded": true,
+                "overlay": false,
+                "readable": true,
+                "writable": false,
+                "executable": true,
+                "length": 4,
+                "source_file_index": 0,
+                "file_offset": 0,
+                "sha256": "379bec29dccd0a93c94826144d7ef6e42fab64ef195a3b8313a16926f66f388f"
+              }
+            ],
+            "relocations": [],
+            "entry_points": ["0x8000000"],
+            "entry_context": []
+          },
+          "checks": [
+            {
+              "name": "executable_format",
+              "matched": true,
+              "expected": "Raw Binary",
+              "observed": "Raw Binary",
+              "file_offset": null,
+              "address": null
+            },
+            {
+              "name": "language_id",
+              "matched": true,
+              "expected": "ARM:LE:32:v7",
+              "observed": "ARM:LE:32:v7",
+              "file_offset": null,
+              "address": null
+            },
+            {
+              "name": "compiler_spec_id",
+              "matched": true,
+              "expected": "default",
+              "observed": "default",
+              "file_offset": null,
+              "address": null
+            },
+            {
+              "name": "image_base",
+              "matched": true,
+              "expected": "0x0",
+              "observed": "0x0",
+              "file_offset": null,
+              "address": null
+            },
+            {
+              "name": "default_address_space",
+              "matched": true,
+              "expected": "ram",
+              "observed": "ram",
+              "file_offset": null,
+              "address": null
+            },
+            {
+              "name": "source_file_count",
+              "matched": true,
+              "expected": 1,
+              "observed": 1,
+              "file_offset": null,
+              "address": null
+            },
+            {
+              "name": "source_file_size",
+              "matched": true,
+              "expected": 4,
+              "observed": 4,
+              "file_offset": null,
+              "address": null
+            },
+            {
+              "name": "original_file_sha256",
+              "matched": true,
+              "expected": "379bec29dccd0a93c94826144d7ef6e42fab64ef195a3b8313a16926f66f388f",
+              "observed": "379bec29dccd0a93c94826144d7ef6e42fab64ef195a3b8313a16926f66f388f",
+              "file_offset": null,
+              "address": null
+            },
+            {
+              "name": "modified_file_sha256",
+              "matched": true,
+              "expected": "379bec29dccd0a93c94826144d7ef6e42fab64ef195a3b8313a16926f66f388f",
+              "observed": "379bec29dccd0a93c94826144d7ef6e42fab64ef195a3b8313a16926f66f388f",
+              "file_offset": null,
+              "address": null
+            },
+            {
+              "name": "mapping_count",
+              "matched": true,
+              "expected": 1,
+              "observed": 1,
+              "file_offset": null,
+              "address": null
+            },
+            {
+              "name": "initialized_unbacked_mappings",
+              "matched": true,
+              "expected": 0,
+              "observed": 0,
+              "file_offset": null,
+              "address": null
+            },
+            {
+              "name": "mapping.source_file_index",
+              "matched": true,
+              "expected": 0,
+              "observed": 0,
+              "file_offset": null,
+              "address": null
+            },
+            {
+              "name": "mapping.initialized",
+              "matched": true,
+              "expected": true,
+              "observed": true,
+              "file_offset": null,
+              "address": null
+            },
+            {
+              "name": "mapping.loaded",
+              "matched": true,
+              "expected": true,
+              "observed": true,
+              "file_offset": null,
+              "address": null
+            },
+            {
+              "name": "mapping.overlay",
+              "matched": true,
+              "expected": false,
+              "observed": false,
+              "file_offset": null,
+              "address": null
+            },
+            {
+              "name": "mapping.address_space",
+              "matched": true,
+              "expected": "ram",
+              "observed": "ram",
+              "file_offset": null,
+              "address": null
+            },
+            {
+              "name": "mapping.file_offset",
+              "matched": true,
+              "expected": 0,
+              "observed": 0,
+              "file_offset": 0,
+              "address": "0x8000000"
+            },
+            {
+              "name": "mapping.start",
+              "matched": true,
+              "expected": "0x8000000",
+              "observed": "0x8000000",
+              "file_offset": 0,
+              "address": "0x8000000"
+            },
+            {
+              "name": "mapping.end",
+              "matched": true,
+              "expected": "0x8000003",
+              "observed": "0x8000003",
+              "file_offset": 0,
+              "address": "0x8000003"
+            },
+            {
+              "name": "mapping.length",
+              "matched": true,
+              "expected": 4,
+              "observed": 4,
+              "file_offset": 0,
+              "address": "0x8000000"
+            },
+            {
+              "name": "mapping.sha256",
+              "matched": true,
+              "expected": "379bec29dccd0a93c94826144d7ef6e42fab64ef195a3b8313a16926f66f388f",
+              "observed": "379bec29dccd0a93c94826144d7ef6e42fab64ef195a3b8313a16926f66f388f",
+              "file_offset": 0,
+              "address": "0x8000000"
+            },
+            {
+              "name": "entry_point",
+              "matched": true,
+              "expected": "0x8000000",
+              "observed": "0x8000000",
+              "file_offset": null,
+              "address": null
+            },
+            {
+              "name": "relocation_records",
+              "matched": true,
+              "expected": [],
+              "observed": [],
+              "file_offset": null,
+              "address": null
+            }
+          ],
+          "limitations": [
+            "Raw binary is a headerless interpretation explicitly selected by the caller, not format identification from file bytes.",
+            "Verification covers complete original/modified source identity, initialized and loaded non-overlay file bytes in the default address space, the caller-supplied entry, and the bound Ghidra language with its fixed byte order. File offset 0 is mapped at the entry address.",
+            "Ghidra may report additional language-defined external entries outside the mapped image. They are preserved as observations; verification requires the caller-supplied entry and does not attest other entries.",
+            "Language-defined uninitialized memory, such as 6502 zero page and stack, is preserved as observations but is not attested as file-backed bytes.",
+            "Reset vectors, memory-mapped I/O, alternate-endian and Thumb-only variants, and runtime boot behavior are not modeled or verified. No original executable bytes are changed.",
+            "Mapping ends are inclusive; a mismatching digest identifies its source range, not the first differing byte."
+          ]
+        },
+        "confidence": "observed",
+        "authority": "shipped-artifact",
+        "environment": null,
+        "limitations": [],
+        "relationship_coverage": null,
+        "locations": [],
+        "evidence_links": []
+      }
+    ]
+  }
+}

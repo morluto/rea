@@ -230,7 +230,7 @@ const espFlashTargetSelection = (options: {
 }): ArtifactTargetSelection => ({
   ...(options.targetFormat === undefined
     ? {}
-    : { formatHint: options.targetFormat }),
+    : { loadSelection: { format: options.targetFormat } }),
   ...(options.flashOffset === undefined &&
   options.partitionTableOffset === undefined
     ? {}

@@ -4,12 +4,9 @@ import {
 } from "./oneShotOperationInput.js";
 import { admitCompletedAnalysis } from "./investigation/admitCompletedAnalysis.js";
 import type { EspFlashSelection } from "../domain/firmware/espFlashLocation.js";
-import type { ExecutableFormatHint } from "../domain/dosCom.js";
 import { dispatchQueuedInterrupts } from "../process/queuedInterrupts.js";
-import type {
-  BinaryArchitecture,
-  BinaryTarget,
-} from "../domain/binaryTargetTypes.js";
+import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
+import type { NativeLoadSelection } from "../domain/rawBinary.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { DirectAnalysisDependencies } from "./DirectAnalysisDependencies.js";
 import type { BinarySession } from "./binary/BinarySession.js";
@@ -128,9 +125,7 @@ export const runDirectAnalysis = async (
     readonly snapshotPath?: string | undefined;
     readonly signal?: AbortSignal;
     readonly providerId?: AnalysisProviderSelector;
-    readonly formatHint?: ExecutableFormatHint;
-    readonly architecture?: BinaryArchitecture;
-    readonly entryPoint?: string;
+    readonly loadSelection?: NativeLoadSelection;
     readonly espFlash?: EspFlashSelection;
     readonly includeEvidenceSources?: boolean;
   } = {},
@@ -162,26 +157,18 @@ export const runDirectAnalysis = async (
 
 /** How the caller asks an artifact target to be read. */
 export interface ArtifactTargetSelection {
-  readonly formatHint?: ExecutableFormatHint;
+  readonly loadSelection?: NativeLoadSelection;
   readonly espFlash?: EspFlashSelection;
 }
 
 /** The caller's target interpretation, forwarded unchanged to every open. */
 const targetSelection = (options: {
-  readonly formatHint?: ExecutableFormatHint;
-  readonly architecture?: BinaryArchitecture;
-  readonly entryPoint?: string;
+  readonly loadSelection?: NativeLoadSelection;
   readonly espFlash?: EspFlashSelection;
 }) => ({
-  ...(options.formatHint === undefined
+  ...(options.loadSelection === undefined
     ? {}
-    : { formatHint: options.formatHint }),
-  ...(options.architecture === undefined
-    ? {}
-    : { architecture: options.architecture }),
-  ...(options.entryPoint === undefined
-    ? {}
-    : { entryPoint: options.entryPoint }),
+    : { loadSelection: options.loadSelection }),
   ...(options.espFlash === undefined ? {} : { espFlash: options.espFlash }),
 });
 
@@ -398,9 +385,7 @@ const runAnalysis = async (
     readonly createSession?: () => BinarySession | Promise<BinarySession>;
     readonly includeEvidenceSources?: boolean;
     readonly providerId?: AnalysisProviderSelector;
-    readonly formatHint?: ExecutableFormatHint;
-    readonly architecture?: BinaryArchitecture;
-    readonly entryPoint?: string;
+    readonly loadSelection?: NativeLoadSelection;
     readonly espFlash?: EspFlashSelection;
   },
 ): Promise<AnalysisResultWithSources<Evidence, JsonValue>> => {
@@ -872,9 +857,7 @@ const prepareSnapshot = async (options: {
     "readAnalysisSnapshot" | "resolveTarget"
   >;
   readonly path: string;
-  readonly formatHint?: ExecutableFormatHint;
-  readonly architecture?: BinaryArchitecture;
-  readonly entryPoint?: string;
+  readonly loadSelection?: NativeLoadSelection;
   readonly espFlash?: EspFlashSelection;
   readonly snapshotPath: string | undefined;
   readonly signal: AbortSignal;

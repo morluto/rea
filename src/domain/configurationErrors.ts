@@ -2,6 +2,7 @@ import {
   AnalysisError,
   type AnalysisErrorOptions,
 } from "./analysisErrorBase.js";
+import type { LoadSelectionIssue } from "./rawBinary.js";
 
 /** One rejected configuration setting and the constraint it failed. */
 export interface ConfigurationSettingIssue {
@@ -69,6 +70,8 @@ export interface BinaryTargetErrorOptions extends AnalysisErrorOptions {
     | "file_format_rejected"
     | "load_selection_rejected"
     | BundleTargetConstraint;
+  /** The load-selection input to correct, when one input is to blame. */
+  readonly field?: LoadSelectionIssue["field"];
   /** Info.plist whose declaration selected, or failed to select, the program file. */
   readonly infoPlist?: string;
   /** Bundle paths examined before resolution failed. */
@@ -80,6 +83,7 @@ export interface BinaryTargetErrorOptions extends AnalysisErrorOptions {
 export class BinaryTargetError extends AnalysisError {
   readonly _tag = "BinaryTargetError";
   readonly constraint: BinaryTargetErrorOptions["constraint"];
+  readonly field: BinaryTargetErrorOptions["field"];
   readonly infoPlist: string | undefined;
   readonly probedPaths: readonly string[] | undefined;
   readonly remediationAction: string | undefined;
@@ -92,6 +96,7 @@ export class BinaryTargetError extends AnalysisError {
   ) {
     super(`Cannot open artifact: ${reason}`, options);
     this.constraint = options?.constraint;
+    this.field = options?.field;
     this.infoPlist = options?.infoPlist;
     this.probedPaths = options?.probedPaths;
     this.remediationAction = options?.remediationAction;

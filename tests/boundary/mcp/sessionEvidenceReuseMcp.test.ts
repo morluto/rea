@@ -62,7 +62,9 @@ it.each(["normal", "copied", "parameters", "forged", "source"] as const)(
       },
     );
     const session = new BinarySession(router);
-    const opened = await session.open(path, { formatHint: "dos-com" });
+    const opened = await session.open(path, {
+      loadSelection: { format: "dos-com" },
+    });
     if (!opened.ok) throw opened.error;
     source = createEvidence(
       opened.value,
