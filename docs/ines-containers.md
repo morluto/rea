@@ -36,6 +36,11 @@ optional `trailing.bin`. Every input byte is retained, including unused header
 fields and uninterpreted trailing data. Zero CHR-ROM units create no CHR region;
 REA does not fabricate CHR-RAM contents.
 
+Reader shutdown stops region streams and waits for admitted reads and final
+source checks before releasing an extraction-owned descriptor. Inventory readers
+leave their borrowed descriptor open for the admitting scope. A failed descriptor
+close retains the same owner for retry.
+
 After extraction, concatenate the materialized files in
 `ines.reconstruction.region_order` from the inspection inventory. Their bytes
 reproduce the input exactly. Graph path order is lexical and is not physical
