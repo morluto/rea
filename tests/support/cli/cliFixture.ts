@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
@@ -216,12 +217,36 @@ const parseJson = (stdout: string): unknown | undefined => {
   }
 };
 
+/**
+ * Strip a `rea` executable from the inherited PATH.
+ *
+ * Setup registers a PATH alias that proves the same file as the selected
+ * entrypoint, so a developer machine with a globally installed or linked `rea`
+ * would change the command under test. The suite asserts the repo entrypoint;
+ * give it a PATH where no such alias exists.
+ */
+const pathWithoutReaAliases = (path: string): string =>
+  path
+    .split(process.platform === "win32" ? ";" : ":")
+    .filter((directory) => directory.length > 0 && !hasReaExecutable(directory))
+    .join(process.platform === "win32" ? ";" : ":");
+
+const hasReaExecutable = (directory: string): boolean => {
+  for (const name of ["rea", "rea-agents"]) {
+    for (const suffix of process.platform === "win32"
+      ? [".cmd", ".exe", ""]
+      : [""])
+      if (existsSync(`${directory}/${name}${suffix}`)) return true;
+  }
+  return false;
+};
+
 /** Child environment for one compiled CLI process, without the parent environment. */
 export const cliProcessEnvironment = (
   environment: NodeJS.ProcessEnv | undefined,
   compileCache?: string,
 ): NodeJS.ProcessEnv => ({
-  PATH: process.env.PATH ?? "",
+  PATH: pathWithoutReaAliases(process.env.PATH ?? ""),
   // Native Windows APIs need the system root and a writable temporary
   // directory even when the command's application environment is empty.
   ...(process.platform === "win32"
