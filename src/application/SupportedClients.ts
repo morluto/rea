@@ -201,12 +201,6 @@ const codexDirectory = ({ home, env }: ClientPathContext): string =>
 const kimiDirectory = ({ home, env }: ClientPathContext): string =>
   env.KIMI_CODE_HOME || join(home, ".kimi-code");
 
-/** Clients registered with the compact input-schema profile unless one is selected. */
-export const compactInputSchemaByDefault = ({
-  name,
-}: Pick<SetupClient, "name">): boolean =>
-  name === "kimi" || name === "lm_studio";
-
 /**
  * LM Studio's findLMStudioHome, read-only: a home pointer file wins, then an
  * existing ~/.cache/lm-studio, then ~/.lmstudio. Setup never writes the pointer.

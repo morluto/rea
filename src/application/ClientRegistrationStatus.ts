@@ -11,7 +11,6 @@ import { lstat, stat } from "node:fs/promises";
 import { err, ok, type Result } from "../domain/result.js";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
-import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 import {
   MCP_STARTUP_POLICY,
@@ -28,7 +27,6 @@ import {
 import {
   clientEvidencePaths,
   clientOwnershipEvidencePaths,
-  compactInputSchemaByDefault,
   manualRegistrationRemediation,
   supportedClients,
 } from "./SupportedClients.js";
@@ -337,15 +335,13 @@ export const readClientRegistrationInspections = async (
         continue;
       }
       const registrationEnvironment =
-        compactInputSchemaByDefault(client) || client.name === "codex"
+        client.name === "kimi" || client.name === "codex"
           ? await clientRegistrationEnvironmentDetailsWithBudget(
               parsed,
               client,
               {},
               "effective",
-              client.name === "kimi" || client.name === "codex"
-                ? options.resolveProviderRequestBudget
-                : undefined,
+              options.resolveProviderRequestBudget,
               options.platform,
             )
           : undefined;
@@ -375,12 +371,6 @@ export const readClientRegistrationInspections = async (
             registration,
             client: effectiveClient,
             commandFacts,
-            inputSchemaProfileSelected:
-              registrationEnvironment?.ok === true &&
-              snapshotEnvironment(
-                registrationEnvironment.value.values,
-                options.platform,
-              ).REA_MCP_INPUT_SCHEMA_PROFILE !== undefined,
           });
       record(
         configuredStatus(
@@ -510,12 +500,10 @@ const registrationAligned = ({
   registration,
   client,
   commandFacts,
-  inputSchemaProfileSelected,
 }: {
   readonly registration: ClientRegistration;
   readonly client: SetupClient;
   readonly commandFacts: ClientRegistrationCommandFacts;
-  readonly inputSchemaProfileSelected: boolean;
 }): "aligned" | "stale" | "unknown" => {
   const { identity } = commandFacts;
   if (identity === "unknown") return "unknown";
@@ -536,8 +524,6 @@ const registrationAligned = ({
     (registration.startupTimeoutMs === undefined ||
       registration.toolTimeoutMs === undefined)
   )
-    return "stale";
-  if (compactInputSchemaByDefault(client) && !inputSchemaProfileSelected)
     return "stale";
   // Native transport is admitted separately; the Harness route must name REA.
   if (client.format === "dsh" && registration.serverName !== "rea")
