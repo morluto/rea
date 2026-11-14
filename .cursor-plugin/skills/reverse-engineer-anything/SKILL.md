@@ -84,7 +84,14 @@ active-target native or archive workflows; target-free tools take their own
 explicit path or endpoint and do not need it.
 
 - ASAR or extracted JavaScript/Electron tree:
-  `analyze_javascript_application`.
+  `analyze_javascript_application`. For a large packaged `app.asar` when only
+  specific files or entrypoints are needed, inventory first with `open_binary`
+  then `inspect_artifact(detail: "summary")`, and pass narrowed `source_paths`
+  so analysis stays within MCP client tool deadlines; omit `source_paths` only
+  when a full-application static graph is required. Pass
+  `integrity_policy: "record-and-continue"` when `.unpacked` companions were
+  re-signed after ASAR creation and retaining digest contradictions is intended.
+  See `references/javascript-applications.md`.
 - Archive/package member inventory (ZIP/APK/IPA/MSIX/AppX, DMG, or a PyInstaller
   executable): `open_binary` with the supplied local path; use `inspect_artifact`
   when its graph and findings help answer the question. A PyInstaller CArchive
@@ -404,7 +411,11 @@ explicit path or endpoint and do not need it.
   with an explicit path; portable, no active target or engine.
 - Native executable, library, or analysis database: `open_binary`, then
   use focused analysis tools directly; call `binary_overview` when metadata or
-  inventory context is useful and available from the selected provider.
+  inventory context is useful and available from the selected provider. When
+  multiple deep providers (for example `ghidra` and `hopper`) may be configured
+  on the host, pass an explicit `provider_id` or call `binary_session({})` first;
+  omitting `provider_id` fails as `capability_unavailable` with
+  `selection_reason: "ambiguous"`.
 
 For an existing IDA MCP configuration, use `open_binary` with the original
 input binary and `provider_id: "ida"`; do not pass an `.idb` or `.i64` database.
