@@ -202,9 +202,9 @@ directives are errors. `vitest/valid-expect` warns (`maxArgs: 2`) because valid 
 collected assertions can be awaited later. `import/no-duplicates` warns with
 `preferInline: false`.
 
-`no-useless-escape` keeps intentional `\-` regex escapes because advertised
-patterns must also compile in `v` mode; the catalog regression checks every
-advertised pattern.
+`no-useless-escape` keeps intentional `\-` regex escapes. Source regexes need
+no escaping for clients: the presentation re-emits every advertised pattern in
+the portable grammar (`src/contracts/portablePattern.ts`).
 
 Fast lint stays syntax-based. `npm run lint:typed` runs serially with pinned
 `oxlint-tsgolint` 7.0.2005 and records native plus typed diagnostics in
@@ -284,7 +284,11 @@ advertised dialect: the keyword allowlist, size and depth limits, and the regex
 grammar that compiles in V8, Python, RE2 and Rust. `advertisedDialect.test.ts`
 lists every input, output and catalog profile combination and compares the
 violation counts with `advertisedDialectBaseline.ts`, which may only shrink;
-the packaged catalog check applies the same rules to the default profiles. Keep canonical rejection checks separate from the
+the packaged catalog check applies the same rules to the default profiles.
+Advertised patterns, input and output, are enforced at zero:
+`portablePattern.ts` re-emits each one exactly, widens it, or omits it, and the
+presentation drops any enclosing `not` or `if` and turns `oneOf` into `anyOf`
+when a pattern widens. Keep canonical rejection checks separate from the
 intentionally reduced compact advertisement, and probe actual client renderers
 when changing schema representations.
 

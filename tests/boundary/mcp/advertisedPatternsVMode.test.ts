@@ -4,6 +4,7 @@ import { expect, it, onTestFinished } from "vitest";
 
 import { createServer } from "../../../src/server/createServer.js";
 import { advertisedSchemaPatterns } from "../../../src/contracts/advertisedDialect.js";
+import { projectPortablePattern } from "../../../src/contracts/portablePattern.js";
 import {
   BASE64_QUARTET_LENGTH_PATTERN,
   INVALID_BASE64_CHARACTER_PATTERN,
@@ -14,7 +15,14 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 
 // Pattern portability across every profile is owned by
 // advertisedDialect.test.ts. This file keeps the composed canonical base64
-// constraint's advertised semantics.
+// constraint's advertised semantics after portable re-emission.
+
+const advertised = (pattern: RegExp): string => {
+  const projection = projectPortablePattern(pattern.source);
+  if (projection.kind === "unexpressible")
+    throw new Error(`No portable form for ${pattern.source}`);
+  return projection.pattern;
+};
 
 const collectCanonicalBase64Leaves = (
   value: unknown,
@@ -34,7 +42,7 @@ const collectCanonicalBase64Leaves = (
         entry !== null &&
         typeof entry === "object" &&
         "pattern" in entry &&
-        entry.pattern === BASE64_QUARTET_LENGTH_PATTERN.source,
+        entry.pattern === advertised(BASE64_QUARTET_LENGTH_PATTERN),
     )
   )
     leaves.push(record);
@@ -62,10 +70,10 @@ const listAdvertisedTools = async () => {
 };
 
 it("advertises the composed canonical base64 constraint with exact SDK semantics", async () => {
-  const advertised = await listAdvertisedTools();
+  const tools = await listAdvertisedTools();
   const patterns: string[] = [];
   const canonicalBase64Leaves: Record<string, unknown>[] = [];
-  for (const tool of advertised)
+  for (const tool of tools)
     for (const schema of [tool.inputSchema, tool.outputSchema]) {
       if (schema === undefined) continue;
       patterns.push(
@@ -80,12 +88,7 @@ it("advertises the composed canonical base64 constraint with exact SDK semantics
     INVALID_BASE64_PADDING_PATTERN,
     INVALID_CANONICAL_BASE64_PAD_BITS_PATTERN,
   ])
-    expect(
-      patterns.some((advertisedPattern) =>
-        advertisedPattern.includes(pattern.source),
-      ),
-      pattern.source,
-    ).toBe(true);
+    expect(patterns.includes(advertised(pattern)), pattern.source).toBe(true);
 
   expect(canonicalBase64Leaves.length).toBeGreaterThan(0);
   const sdkValidator = new AjvJsonSchemaValidator();

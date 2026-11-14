@@ -6,7 +6,10 @@ import { z } from "zod";
 
 import type { ToolContract } from "./toolContractTypes.js";
 import { advertisedInputExamples } from "./advertisedInputExamples.js";
-import { presentInputJsonSchema } from "./inputSchemaPresentation.js";
+import {
+  presentInputJsonSchema,
+  presentOutputJsonSchema,
+} from "./inputSchemaPresentation.js";
 import {
   schemaArrays,
   schemaChildren,
@@ -141,10 +144,12 @@ export const toolOutputSchemaWithMetadata = <Contract extends ToolContract>(
       contract.outputSchema,
       "output",
       (project) => (options) => {
-        const shared = project({
-          ...options,
-          libraryOptions: { reused: "ref", ...options.libraryOptions },
-        });
+        const shared = presentOutputJsonSchema(
+          project({
+            ...options,
+            libraryOptions: { reused: "ref", ...options.libraryOptions },
+          }),
+        );
         // An explicit ID owns the reference base. Relative external references
         // also depend on that base, so leave those projections unchanged.
         if ("$id" in shared || hasRelativeSchemaReference(shared))
