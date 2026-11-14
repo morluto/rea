@@ -140,7 +140,7 @@ flag; FastMCP was tested with explicit refresh calls. Neither establishes
 automatic refresh for every installed version or other client. Keep `full`
 until refresh is established for the selected client and configuration.
 See the [discovery contract](../reference/mcp-contracts.md#hotcold-catalog-discovery) for
-pagination, identity and family-scope semantics.
+ordering, pagination, identity and family-scope semantics.
 
 Analysis tools, including `inspect_analysis_view`, load on demand. For example,
 load `inspect_api_contract` and supply its `view` to answer an initial OpenAPI

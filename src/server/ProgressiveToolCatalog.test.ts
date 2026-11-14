@@ -2,6 +2,7 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { EvidenceMcpServerCore } from "./EvidenceMcpServerCore.js";
+import { discoveryPreview } from "./ProgressiveToolCatalog.js";
 import { ToolResultDelivery } from "./ToolResultDelivery.js";
 
 const cleanup: Array<() => Promise<unknown>> = [];
@@ -10,7 +11,11 @@ afterEach(async () => {
 });
 
 const connect = async (
-  options: { replyBytes?: number; bulk?: boolean } = {},
+  options: {
+    replyBytes?: number;
+    bulk?: boolean;
+    extra?: ReadonlyArray<{ name: string; description: string }>;
+  } = {},
 ) => {
   const bulkNames = options.bulk
     ? Array.from(
@@ -18,6 +23,7 @@ const connect = async (
         (_, index) => `bulk_${String(index).padStart(2, "0")}`,
       )
     : [];
+  const extra = options.extra ?? [];
   const server = new EvidenceMcpServerCore(
     { name: "catalog-test", version: "1" },
     { capabilities: {} },
@@ -28,7 +34,7 @@ const connect = async (
     {
       counts: {
         cli_commands: 0,
-        mcp_tools: 3 + bulkNames.length,
+        mcp_tools: 3 + bulkNames.length + extra.length,
         mcp_prompts: 0,
       },
       digests: {
@@ -45,11 +51,14 @@ const connect = async (
     "beta_sqlite",
     "excluded_sqlite",
     ...bulkNames,
+    ...extra.map((tool) => tool.name),
   ]) {
+    const described = extra.find((tool) => tool.name === name);
     const registration = server.registerTool(
       name,
       {
-        description: `${name} SQLite database inspection`,
+        description:
+          described?.description ?? `${name} SQLite database inspection`,
         inputSchema: name.startsWith("bulk_")
           ? z.strictObject({
               payload: z.string().describe("schema guidance ".repeat(64)),
@@ -242,4 +251,154 @@ it("distinguishes exhausted pages from unmatched queries without loading tools",
     next_offset: null,
     next_step: expect.stringContaining("Call the returned tool"),
   });
+});
+
+it("ranks a leading task word ahead of an alphabetical later mention", async () => {
+  const buried = `${"padding ".repeat(40)}javascript module graph`;
+  const commonThenLate = `${"notes ".repeat(50)}javascript module graph`;
+  const f = await connect({
+    extra: [
+      { name: "alpha_calendar", description: "calendar export" },
+      { name: "alpha_misc", description: buried },
+      { name: "notes_misc", description: commonThenLate },
+      {
+        name: "zebra_misc",
+        description: "javascript module graph for bundles",
+      },
+    ],
+  });
+  const first = await f.discover({ query: "javascript", limit: 1 });
+  expect(first.structuredContent).toMatchObject({
+    total_matches: 3,
+    tools: [{ name: "zebra_misc" }],
+  });
+  const page = await f.discover({ query: "javascript", limit: 3 });
+  const tools = z
+    .object({
+      tools: z.array(z.object({ name: z.string(), description: z.string() })),
+    })
+    .parse(page.structuredContent).tools;
+  expect(tools.map((tool) => tool.name)).toEqual([
+    "zebra_misc",
+    "notes_misc",
+    "alpha_misc",
+  ]);
+  const latePreview = tools[1]?.description ?? "";
+  expect(latePreview.length).toBeLessThanOrEqual(240);
+  expect(latePreview.startsWith("notes")).toBe(true);
+  expect(latePreview).toContain("javascript");
+  const buriedPreview = tools[2]?.description ?? "";
+  expect(buriedPreview.length).toBeLessThanOrEqual(240);
+  expect(buriedPreview.startsWith("padding")).toBe(true);
+  expect(buriedPreview).toContain("javascript");
+  const notesPage = await f.discover({ query: "notes javascript", limit: 1 });
+  const notesTool = z
+    .object({
+      tools: z.array(z.object({ name: z.string(), description: z.string() })),
+    })
+    .parse(notesPage.structuredContent).tools[0];
+  expect(notesTool?.name).toBe("notes_misc");
+  expect(notesTool?.description.length ?? 0).toBeLessThanOrEqual(240);
+  expect(notesTool?.description).toContain("javascript");
+  expect(notesTool?.description.startsWith("notes")).toBe(true);
+});
+
+it("ranks an affirmative task ahead of an alphabetical denial and keeps that task sentence", async () => {
+  const task = "Inspect a saved local HAR capture.";
+  const description = `${task}${" recorded ".repeat(30)}This does not prove network loss.`;
+  const f = await connect({
+    extra: [
+      {
+        name: "alpha_misc",
+        description: "Export packets without network access.",
+      },
+      { name: "network_misc", description: "calendar export" },
+      { name: "zebra_misc", description: "Inspect captured network records." },
+      { name: "notes_misc", description },
+    ],
+  });
+  const page = await f.discover({ query: "network", limit: 4 });
+  const tools = z
+    .object({
+      tools: z.array(z.object({ name: z.string(), description: z.string() })),
+    })
+    .parse(page.structuredContent).tools;
+  expect(tools.map((tool) => tool.name)).toEqual([
+    "network_misc",
+    "zebra_misc",
+    "alpha_misc",
+    "notes_misc",
+  ]);
+  const preview = tools[3]?.description ?? "";
+  expect(preview.length).toBeLessThanOrEqual(240);
+  expect(preview.startsWith(task)).toBe(true);
+  expect(preview).toContain("network");
+  expect(preview).toContain("not");
+});
+
+it("drops tools loaded by the previous connection on the same server", async () => {
+  const f = await connect();
+  await f.discover({ names: ["alpha_sqlite"] });
+  await f.client.close();
+  const client = new Client({ name: "catalog-next-connection", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  cleanup.push(() => client.close());
+  await f.server.connect(serverTransport);
+  await client.connect(clientTransport);
+  expect((await client.listTools()).tools.map(({ name }) => name)).toEqual([
+    "binary_session",
+    "discover_tools",
+  ]);
+});
+
+it("keeps tools loaded in one catalog invisible to another", async () => {
+  const first = await connect();
+  const second = await connect();
+  await first.discover({ names: ["alpha_sqlite"] });
+  expect(
+    (await first.client.listTools()).tools.map(({ name }) => name),
+  ).toContain("alpha_sqlite");
+  expect(
+    (await second.client.listTools()).tools.map(({ name }) => name),
+  ).toEqual(["binary_session", "discover_tools"]);
+});
+
+it("keeps a denial in the same sentence ahead of the next sentence", async () => {
+  const f = await connect({
+    extra: [
+      {
+        name: "alpha_misc",
+        description: "Measure startup time. Does not open a target.",
+      },
+      {
+        name: "zebra_misc",
+        description: `${"padding ".repeat(40)}startup probe`,
+      },
+    ],
+  });
+  const page = await f.discover({ query: "startup", limit: 2 });
+  const tools = z
+    .object({ tools: z.array(z.object({ name: z.string() })) })
+    .parse(page.structuredContent).tools;
+  expect(tools.map((tool) => tool.name)).toEqual(["alpha_misc", "zebra_misc"]);
+});
+
+it("keeps the governing not when a late match has a long tail", () => {
+  const description =
+    "Push one local file to an absolute device path. If the destination is an existing directory, adb places the file inside it under the local basename and the result reports that file path. A device-mutating tool: checks for an existing destination file before transfer and refuses it unless overwrite is explicitly requested; this check is not atomic and another process can create the path before adb writes. The private staged copy remains non-writable and preserves source executable bits.";
+  const preview = discoveryPreview(description, ["atomic"]);
+  expect(preview.length).toBeLessThanOrEqual(240);
+  expect(preview.startsWith("Push one local file")).toBe(true);
+  expect(preview).toContain("not atomic");
+});
+
+it("finds one late hit when the query repeats that word", () => {
+  const description = `${"padding ".repeat(40)}120-second budget for recovery`;
+  const preview = discoveryPreview(
+    description,
+    Array.from({ length: 4000 }, () => "120-second"),
+  );
+  expect(preview.length).toBeLessThanOrEqual(240);
+  expect(preview).toContain("120-second");
 });

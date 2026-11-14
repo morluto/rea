@@ -62,7 +62,7 @@ const outputSchema = z.strictObject({
       description: z
         .string()
         .describe(
-          "Abbreviated canonical description; read tools/list for the complete contract.",
+          "At most 240 characters. The opening sentence stays, and a query word past that cap is appended. A names lookup shows the opening. Read tools/list for the complete contract.",
         ),
       input_schema: z
         .record(z.string(), z.unknown())
