@@ -280,6 +280,31 @@ export const DELPHI_FORM_FLOAT_NOTES: Readonly<Record<string, string>> = {
 };
 
 /**
+ * Round `significand * 2 ** scale` to the nearest binary64 value. The integer
+ * significand stays intact until the final rounding step: converting it to a
+ * double first can cross a subnormal midpoint that the later scaling needs.
+ */
+const roundExtendedToDouble = (significand: bigint, scale: number): number => {
+  const exponent = scale + significand.toString(2).length - 1;
+  // Below the smallest normal every value is a multiple of 2^-1074;
+  // otherwise round to 53 significant bits.
+  const quantum = exponent < -1022 ? -1074 : exponent - 52;
+  const shift = scale - quantum;
+  let rounded: bigint;
+  if (shift >= 0) {
+    rounded = significand << BigInt(shift);
+  } else {
+    const dropped = BigInt(-shift);
+    rounded = significand >> dropped;
+    const remainder = significand & ((1n << dropped) - 1n);
+    const halfway = 1n << (dropped - 1n);
+    if (remainder > halfway || (remainder === halfway && (rounded & 1n) !== 0n))
+      rounded += 1n;
+  }
+  return Number(rounded) * 2 ** quantum;
+};
+
+/**
  * Convert the ten-byte x87 extended value used by `vaExtended` to a double.
  * Precision beyond a double is not retained and is reported to the caller.
  */
@@ -291,18 +316,7 @@ export const decodeDelphiExtended = (raw: Buffer): number | null => {
   if (exponent === 0x7fff) return null;
   if (exponent === 0 && mantissa === 0n) return 0;
   const sign = (exponentAndSign & 0x8000) === 0 ? 1 : -1;
-  // Normalize the mantissa before applying the exponent. Scaling the full
-  // 64-bit mantissa first underflows for values near the smallest double.
-  const normalized = Number(mantissa) / 2 ** 63;
-  const scale = exponent - 16383;
-  // Split a sub-normal scale in two so each power of two is computed in the
-  // normal range. `2 ** -1075` alone rounds to zero before the mantissa is
-  // applied, which would turn the smallest subnormal into zero.
-  const lower = Math.trunc(scale / 2);
-  const value =
-    scale < -1022
-      ? normalized * 2 ** (scale - lower) * 2 ** lower
-      : normalized * 2 ** scale;
+  const value = roundExtendedToDouble(mantissa, exponent - 16383 - 63);
   return Number.isFinite(value) ? sign * value : null;
 };
 

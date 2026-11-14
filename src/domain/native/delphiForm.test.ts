@@ -22,6 +22,12 @@ describe("delphi form extended values", () => {
     expect(decodeDelphiExtended(negative)).toBe(-Number.MIN_VALUE);
     const exact = Buffer.from("0000000000000080cd3b", "hex");
     expect(decodeDelphiExtended(exact)).toBe(Number.MIN_VALUE);
+    const tie = Buffer.from("0000000000000080cc3b", "hex");
+    expect(decodeDelphiExtended(tie)).toBe(0);
+    const aboveTie = Buffer.from("0100000000000080cc3b", "hex");
+    expect(decodeDelphiExtended(aboveTie)).toBe(Number.MIN_VALUE);
+    const negativeAboveTie = Buffer.from("0100000000000080ccbb", "hex");
+    expect(decodeDelphiExtended(negativeAboveTie)).toBe(-Number.MIN_VALUE);
   });
 });
 
