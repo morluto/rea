@@ -369,7 +369,7 @@ const selectInterfaceBuilderCandidates = async (
   let unclassifiedSymlinks = 0;
   let firstUnclassifiedSymlink: string | undefined;
   let total = 0;
-  for await (const entry of reader.entries(signal, traversal)) {
+  for await (const entry of traversal.entries(reader, signal)) {
     if (entry.kind === "symlink") {
       if (
         isInterfaceBuilderArchive(entry.path) ||
@@ -389,7 +389,7 @@ const selectInterfaceBuilderCandidates = async (
     retainCandidate(candidates, entry, capacity);
   }
   if (unclassifiedSymlinks > 0)
-    traversal.onCoverage({
+    traversal.record({
       status: "unknown",
       limitations: [
         `Interface Builder discovery did not follow ${unclassifiedSymlinks} symlink(s); whether they contain archives is unknown. First path: ${JSON.stringify(firstUnclassifiedSymlink)}.`,

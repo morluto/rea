@@ -10,16 +10,14 @@ import {
   type V8CodeCache,
 } from "../domain/v8/v8CodeCache.js";
 import type { V8CodeCacheInputBudget } from "../domain/v8/v8CodeCacheBudget.js";
-import {
-  V8CodeCacheBudgetFailure,
-  V8CodeCacheFormatFailure,
-} from "../v8/V8CodeCache.errors.js";
+import { V8CodeCacheBudgetFailure } from "../v8/V8CodeCache.errors.js";
+import { malformedInput, unsupportedInput } from "../domain/parseFailure.js";
 
 const unsupported = (message: string): never => {
-  throw new V8CodeCacheFormatFailure("unsupported", message);
+  throw unsupportedInput("v8-code-cache", message);
 };
 const malformed = (message: string): never => {
-  throw new V8CodeCacheFormatFailure("malformed", message);
+  throw malformedInput("v8-code-cache", message);
 };
 
 /**

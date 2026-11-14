@@ -10,7 +10,7 @@ import {
 } from "./referenceSourcePathIdentity.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 import { digestSchema, prefixedDigestSchema } from "./digests.js";
-const boundedTextSchema = z.string().min(1);
+import { nonEmptyTextSchema } from "./textSchemas.js";
 const relativePathSchema = z
   .string()
   .min(1)
@@ -38,9 +38,9 @@ const classificationSchema = z.enum([
 const entryBaseShape = {
   path: relativePathSchema,
   classifications: z.array(classificationSchema).min(1),
-  limitations: z.array(boundedTextSchema),
+  limitations: z.array(nonEmptyTextSchema),
   // Host presentation is retained evidence, separate from relocatable semantics.
-  local_diagnostics: z.array(boundedTextSchema).exactOptional(),
+  local_diagnostics: z.array(nonEmptyTextSchema).exactOptional(),
 };
 
 const sourceFileBaseShape = {
@@ -129,7 +129,7 @@ const sourceRelationshipSchema = z.strictObject({
 const parseFailureSchema = z.strictObject({
   path: relativePathSchema,
   parser: z.string().min(1),
-  reason: boundedTextSchema,
+  reason: nonEmptyTextSchema,
 });
 
 const exclusionSchema = z.discriminatedUnion("reason", [
@@ -144,7 +144,7 @@ const exclusionSchema = z.discriminatedUnion("reason", [
       "default-ignored",
       "caller-excluded",
     ]),
-    pattern: boundedTextSchema,
+    pattern: nonEmptyTextSchema,
   }),
   z.strictObject({
     path: relativePathSchema,
@@ -196,7 +196,7 @@ const graphShape = {
       .min(1)
       .regex(/^[\w .:@\x2f+\x2d]+$/u),
   }),
-  limitations: z.array(boundedTextSchema),
+  limitations: z.array(nonEmptyTextSchema),
 };
 
 const historicalSourceGraphStructureSchema = z

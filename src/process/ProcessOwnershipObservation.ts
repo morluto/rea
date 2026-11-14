@@ -1748,12 +1748,17 @@ const liveProcessIdentity = (
     ? undefined
     : identity;
 
-/** Confirm whether the process that held an authenticated bridge has exited. */
+/**
+ * Confirm whether the process that held an authenticated bridge has exited.
+ * `exiting` is a positively observed native exit in progress (Linux
+ * PF_EXITING before state Z) that outlasted the cleanup grace; like
+ * `present`, it does not confirm exit.
+ */
 export const observeProcessStartIdentityExit = async (
   pid: number,
   expectedIdentity: string,
   host: ProcessOwnershipHost = systemProcessOwnershipHost,
-): Promise<"exited" | "present" | "unverified"> => {
+): Promise<"exited" | "exiting" | "present" | "unverified"> => {
   try {
     let observed = await observeProcessStartIdentity(pid, host);
     // An exiting process closes its sockets before it becomes a zombie, so a
@@ -1776,7 +1781,8 @@ export const observeProcessStartIdentityExit = async (
     }
     if (observed === undefined) return "exited";
     if (observed.state !== "readable") return "unverified";
-    return observed.identity === expectedIdentity ? "present" : "exited";
+    if (observed.identity !== expectedIdentity) return "exited";
+    return processIdentityIsExiting(observed) ? "exiting" : "present";
   } catch (cause: unknown) {
     rethrowInspectionFailure(cause);
     return "unverified";

@@ -64,6 +64,8 @@ import {
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
   AnalysisUnsupportedTargetError,
+  cancelledBy,
+  OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -1273,7 +1275,7 @@ export class AdbProvider {
     options?: ExecutionOptions,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     if (this.#closing)
-      return err(new AnalysisCancelledError(request.operation));
+      return err(cancelledBy(request.operation, OwnerCancellation.ownerClosed));
     const release = this.#beginOperation();
     try {
       try {
