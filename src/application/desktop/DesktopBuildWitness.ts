@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from "node:crypto";
-import { readdir } from "node:fs/promises";
 
 import { z } from "zod";
 
@@ -41,7 +40,9 @@ import {
 } from "../ProgressReporter.js";
 import type { ReadonlyActionLog } from "./DesktopBuildActionLog.js";
 import { errorText } from "./DesktopBuildCommands.js";
+import { outputDirectoryAdmissionRefusal } from "../../artifacts/SafeOutputTreeAdmission.js";
 import { desktopOperationFailure } from "./DesktopCaptureRefusals.js";
+import { admitNewOrEmptyOutputDirectory } from "./DesktopOutputTree.js";
 import { settledAppData, type BuildSettle } from "./DesktopBuildSettle.js";
 import { DesktopRemoteTaskReaders } from "./DesktopRemoteTaskReaders.js";
 import {
@@ -114,14 +115,6 @@ const recordDirectoryRefusal = (
         "Ask again without directory or with the original folder; another witness needs a fresh computer.",
       )
     : undefined;
-
-/** Whether a folder can take the record: absent, or empty. */
-const usableFolder = async (directory: string): Promise<boolean> =>
-  readdir(directory).then(
-    (entries) => entries.length === 0,
-    (cause: unknown) =>
-      (cause as NodeJS.ErrnoException | undefined)?.code === "ENOENT",
-  );
 
 /**
  * A witness from its seed on: `open` while stages are checked, `saving`
@@ -543,13 +536,22 @@ export class DesktopBuildWitness {
           "Give directory, a new or empty folder on this host for the record and recording.",
         ),
       );
-    if (!(await usableFolder(directory)))
+    // Admit the folder before starting the recording: a symlink, a regular
+    // file, or an unwritable folder would only fail at publication, after
+    // every stage ran and the recording ended, with no way to save the
+    // finished witness elsewhere.
+    try {
+      await admitNewOrEmptyOutputDirectory(directory);
+    } catch (cause: unknown) {
       return err(
-        refused(
-          `${directory} exists and is not empty.`,
-          "Give a new or empty folder.",
+        desktopOperationFailure(
+          outputDirectoryAdmissionRefusal(CHECK, "directory", cause),
+          signal,
+          CHECK,
+          "Checking the output folder",
         ),
       );
+    }
     let differs: string | undefined;
     if (this.#bundle !== undefined) {
       try {

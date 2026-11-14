@@ -48,9 +48,11 @@ import {
 import {
   planOutputTree,
   writeOutputTree,
+  admitNewOrEmptyOutputDirectory,
   desktopOutputFailure,
   type DesktopOutputCompletion,
 } from "./DesktopOutputTree.js";
+import { outputDirectoryAdmissionRefusal } from "../../artifacts/SafeOutputTreeAdmission.js";
 
 const EXPORT = "export_build_environment";
 const exportResultSchema = z.looseObject({
@@ -372,6 +374,14 @@ export const exportBuild = async (
       }
     | undefined;
   try {
+    // Admit the host folder before running anything in the computer: an
+    // unusable directory would only fail when the bundle comes back, after
+    // the in-computer export already ran.
+    await admitNewOrEmptyOutputDirectory(request.directory).catch(
+      (cause: unknown) => {
+        throw outputDirectoryAdmissionRefusal(EXPORT, "directory", cause);
+      },
+    );
     const argv = [
       "export-desktop-application",
       `${folder}/capture`,
