@@ -371,6 +371,51 @@ it("retains named auxiliary path choices without changing identity, history or s
   ).toThrow();
 });
 
+it.each(["string", "array"] as const)(
+  "retains prototype-named auxiliary paths with a %s value",
+  (kind) => {
+    const original = createEvidence(TARGET, PROVIDER, {
+      operation: "inspect",
+      parameters: {},
+      result: { value: "observed" },
+    });
+    const paths = JSON.parse(
+      kind === "string"
+        ? '{"__proto__":"./selected","binary_path":"./known"}'
+        : '{"__proto__":["./selected","./selected"],"binary_path":"./known"}',
+    );
+    const rebound = withEvidenceCallerInputPath(original, undefined, paths);
+    expect(Object.hasOwn(rebound.caller_input_paths!, "__proto__")).toBe(true);
+    expect(rebound.caller_input_paths!["__proto__"]).toEqual(
+      paths["__proto__"],
+    );
+    expect(rebound.caller_input_paths?.binary_path).toBe("./known");
+    expect(rebound.evidence_id).toBe(original.evidence_id);
+    const parsed = parseEvidence(JSON.parse(JSON.stringify(rebound)));
+    expect(Object.hasOwn(parsed.caller_input_paths!, "__proto__")).toBe(true);
+    expect(parsed.caller_input_paths!["__proto__"]).toEqual(paths["__proto__"]);
+    expect(Object.getPrototypeOf(parsed.caller_input_paths)).toBe(
+      Object.prototype,
+    );
+  },
+);
+
+it("rejects an invalid prototype-named auxiliary path value", () => {
+  const original = createEvidence(TARGET, PROVIDER, {
+    operation: "inspect",
+    parameters: {},
+    result: null,
+  });
+  const paths = JSON.parse('{"__proto__":42,"binary_path":"./known"}');
+  expect(() =>
+    withEvidenceCallerInputPath(original, undefined, paths),
+  ).toThrow();
+  expect(
+    evidenceSchema.safeParse({ ...original, caller_input_paths: paths })
+      .success,
+  ).toBe(false);
+});
+
 it.each(["caller selection", "subject display"])(
   "preserves sealed JSON ownership when rebinding %s metadata",
   (metadata) => {

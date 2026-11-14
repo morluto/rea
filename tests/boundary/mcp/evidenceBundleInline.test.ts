@@ -11,6 +11,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
+import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { ANALYSIS_SNAPSHOT_TARGET } from "../../../src/domain/analysisSnapshot.fixture.js";
 
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
@@ -78,6 +79,77 @@ it("exports and imports GameCube DOL Evidence without losing its subject identit
       target.server.close(),
       importedSession.close(),
     ]);
+  }
+});
+
+it("retains and validates prototype-named caller paths during bundle import", async () => {
+  const root = await createTestTempDirectory("rea-bundle-caller-paths-");
+  const path = join(root, "bundle.json");
+  const invalidPath = join(root, "invalid.json");
+  const record = createEvidence(
+    {
+      path: join(root, "game.dol"),
+      sha256: "d".repeat(64),
+      format: "gamecube-dol",
+      architecture: "powerpc",
+    },
+    { id: "fixture", name: "Fixture", version: "1" },
+    {
+      operation: "inspect_artifact",
+      parameters: {},
+      result: { observed: true },
+    },
+  );
+  const paths = JSON.parse(
+    '{"__proto__":["./a","./a","./b"],"binary_path":"./known"}',
+  );
+  await writeFile(
+    path,
+    JSON.stringify(
+      createEvidenceBundle([{ ...record, caller_input_paths: paths }]),
+    ),
+  );
+  await writeFile(
+    invalidPath,
+    JSON.stringify(
+      createEvidenceBundle([
+        { ...record, caller_input_paths: JSON.parse('{"__proto__":42}') },
+      ]),
+    ),
+  );
+  const session = createTestBinarySession(() => {
+    throw new Error("bundle import must not run a provider");
+  });
+  const { client, server } = await connectEvidenceMcp(
+    "bundle-caller-paths",
+    session,
+  );
+  try {
+    const imported = await client.callTool({
+      name: "import_evidence_bundle",
+      arguments: { path },
+    });
+    expect(imported.isError).not.toBe(true);
+    const before = structured(
+      await client.callTool({ name: "get_evidence_bundle", arguments: {} }),
+    ).result;
+    const records = object(before).records as Array<Record<string, unknown>>;
+    expect(records).toHaveLength(1);
+    expect(JSON.stringify(records[0]?.caller_input_paths)).toBe(
+      JSON.stringify(paths),
+    );
+    expect(records[0]?.evidence_id).toBe(record.evidence_id);
+    const invalid = await client.callTool({
+      name: "import_evidence_bundle",
+      arguments: { path: invalidPath },
+    });
+    expect(invalid.isError).toBe(true);
+    const after = structured(
+      await client.callTool({ name: "get_evidence_bundle", arguments: {} }),
+    ).result;
+    expect(after).toEqual(before);
+  } finally {
+    await Promise.allSettled([client.close(), server.close(), session.close()]);
   }
 });
 
