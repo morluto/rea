@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
 
 const fault = vi.hoisted(() => ({
   selected: "",
@@ -903,7 +904,7 @@ it("waits through selected-range snapshot finalization when shutdown starts duri
     new AbortController().signal,
   );
   try {
-    await entered;
+    await awaitAcknowledgement(entered, pending, "firmware source close");
     let closed = false;
     const closing = files.close().then(() => {
       closed = true;
@@ -1038,9 +1039,14 @@ it("shares one workspace cleanup attempt across concurrent shutdown callers", as
   blocked = false;
   const first = provider.close();
   try {
-    await entered;
+    await awaitAcknowledgement(entered, first, "firmware workspace cleanup");
     const second = provider.close();
-    expect(second).toBe(first);
+    let secondSettled = false;
+    void second.then(() => {
+      secondSettled = true;
+    });
+    await Promise.resolve();
+    expect(secondSettled).toBe(false);
     expect(attempts).toBe(2);
     release();
     await Promise.all([first, second]);

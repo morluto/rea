@@ -459,7 +459,10 @@ describe("native DMG directory ownership", () => {
     await expect(realpath(mount.root() ?? "")).rejects.toMatchObject({
       code: "ENOENT",
     });
-    expect((await iterator.next()).done).toBe(true);
+    await expect(iterator.next()).rejects.toMatchObject({
+      reason: "unavailable",
+      message: "DMG reader is closed",
+    });
   });
 });
 
@@ -517,7 +520,10 @@ describe("native DMG traversal shutdown", () => {
       await Promise.resolve();
       expect(state.detachAttempts).toBe(4);
       releaseAdvance();
-      expect((await advancing).done).toBe(true);
+      await expect(advancing).rejects.toMatchObject({
+        reason: "unavailable",
+        message: "DMG reader is closed",
+      });
       await closing;
       expect(state.detachAttempts).toBe(5);
       await expect(realpath(state.mountRoot ?? "")).rejects.toMatchObject({
@@ -1500,7 +1506,6 @@ describe("native DMG localized verification diagnostics", () => {
       ).rejects.toMatchObject({ reason: "unavailable" });
       expect(run).toHaveBeenCalledTimes(3);
     },
-    10_000,
   );
 
   it("keeps a localized failure without an untranslated status line unavailable", async () => {
@@ -1752,7 +1757,6 @@ describe("native DMG real verification diagnostics", () => {
       expect(Reflect.get(failure.cause, "code")).toBe(1);
       expect(Reflect.get(failure.cause, "stderr")).toContain("is INVALID");
     },
-    60_000,
   );
 });
 

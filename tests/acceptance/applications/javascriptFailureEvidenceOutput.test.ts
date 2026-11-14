@@ -119,7 +119,6 @@ cliTest(
       Buffer.byteLength(inline.stdout),
     );
   },
-  60_000,
 );
 
 cliTest(
@@ -152,7 +151,6 @@ cliTest(
     });
     expect(await readFile(output, "utf8")).toBe("kept");
   },
-  60_000,
 );
 
 // A one-line module finishes well within 5 s; a string-array-style module of
@@ -227,7 +225,6 @@ cliTest(
       ]),
     );
   },
-  120_000,
 );
 
 // Drive the real staged publication of the partial Evidence across its
@@ -305,7 +302,6 @@ cliTest(
     });
     expect(staging).toHaveLength(1);
   },
-  60_000,
 );
 
 cliTest(
@@ -327,7 +323,6 @@ cliTest(
     });
     expect(staging).toEqual([]);
   },
-  60_000,
 );
 
 cliTest(
@@ -356,5 +351,4 @@ cliTest(
     });
     expect(staging).toEqual([]);
   },
-  60_000,
 );

@@ -11,6 +11,7 @@ import {
 import { join } from "node:path";
 
 import { expect, it as test, vi } from "vitest";
+import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
 
 import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
 import type { JsonValue } from "../../../../src/domain/jsonValue.js";
@@ -749,7 +750,12 @@ it("keeps an overflow as the primary failure when cancellation arrives during fi
     { signal: caller.signal },
   );
   try {
-    await entered;
+    await awaitAcknowledgement(
+      entered,
+      pending,
+      "Kuna overflow cleanup",
+      10_000,
+    );
     caller.abort("cancel during overflow cleanup");
     releaseCleanup();
     const result = await pending;

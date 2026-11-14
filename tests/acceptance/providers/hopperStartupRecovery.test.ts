@@ -61,7 +61,6 @@ const closeWithLateBridge = async (
 
 test.for(["target", "loader"] as const)(
   "preserves a prepared target or refuses literal-unsafe %s before handoff",
-  { timeout: 90_000 },
   async (source, { workspace, cli }) => {
     const target = workspace.path(
       source === "target" ? 'quoted"target' : "loader-target",
@@ -244,7 +243,6 @@ test("recovers a denied Hopper launch through the same stdio MCP session and CLI
 
 test.for(["handoff", "not-found"] as const)(
   "preserves an unconfirmed %s handoff and closes only a late bridge with matching run identity",
-  { timeout: 60_000 },
   async (launchMode, { workspace }) => {
     const target = workspace.path("target");
     await copyFile("/usr/bin/true", target);

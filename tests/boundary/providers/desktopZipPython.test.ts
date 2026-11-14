@@ -356,7 +356,7 @@ describe("zip entries the exported module cannot fully read", () => {
     );
     // Parsing the 4,200,004-byte entry before refusing it traced about 110 MB here.
     expect(peak).toBeLessThan(4 * objects.length);
-  }, 60_000);
+  });
 
   it("keeps a JSON entry nested too deeply on that entry and reads its siblings, as REA does", async () => {
     const nested = (levels: number) =>

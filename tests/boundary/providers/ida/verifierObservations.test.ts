@@ -305,5 +305,4 @@ it.each([
       await upstream.close(cleanupConfirmed);
     }
   },
-  120000,
 );

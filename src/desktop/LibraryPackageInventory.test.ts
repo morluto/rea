@@ -10,6 +10,50 @@ import { inspectLibraryPackages } from "./LibraryPackageInventory.js";
 import { elfImage } from "../domain/desktop/elfImage.fixture.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
+describe.skipIf(process.platform === "win32")(
+  "literal ELF origin paths",
+  () => {
+    it.each(["rpath", "runpath"] as const)(
+      "resolves %s libraries when the executable's directory contains dollars",
+      async (tag) => {
+        const root = await createTestTempDirectory("rea-library-origin-");
+        const bin = join(root, "$build-$&", "bin");
+        const lib = join(root, "$build-$&", "lib");
+        await Promise.all([
+          mkdir(bin, { recursive: true }),
+          mkdir(lib, { recursive: true }),
+        ]);
+        const executable = join(bin, "app");
+        const library = join(lib, "liborigin.so");
+        await Promise.all([
+          writeFile(
+            executable,
+            elfImage({ needed: ["liborigin.so"], [tag]: "${ORIGIN}/../lib" }),
+          ),
+          writeFile(library, elfImage({})),
+        ]);
+        const queried: string[] = [];
+        const result = await inspectLibraryPackages(
+          executable,
+          "app",
+          async (command, args) => {
+            if (command === "ldconfig") return { stdout: "", exitCode: 0 };
+            queried.push(...args.slice(1));
+            return { stdout: `origin-owner: ${library}`, exitCode: 0 };
+          },
+          undefined,
+        );
+        expect(result).toEqual({
+          library_packages: ["origin-owner"],
+          missing_libraries: [],
+          unpackaged_libraries: [],
+        });
+        expect(queried).toContain(library);
+      },
+    );
+  },
+);
+
 it.skipIf(process.platform === "win32")(
   "retains a compatible candidate's package when its declared header size is invalid",
   async () => {

@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 
 import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
 import { topLevelBinding } from "./javascriptSemanticAnalysis.fixture.js";
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 import {
   analyzeCommonJsStaticFixture,
   analyzeCommonJsSemanticFixture,

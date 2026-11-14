@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  MFT_DEFAULT_RECORD_BYTES,
-  MFT_MAX_FILE_BYTES,
   createMftDecoder,
   parseMftIndex,
   selectMftMetadata,
 } from "./ntfsMft.js";
+
+// The fixtures use the documented 1024-byte default, independently of the reader.
+const MFT_DEFAULT_RECORD_BYTES = 1024;
 
 interface RecordOptions {
   readonly sequenceNumber?: number;
@@ -526,7 +527,7 @@ describe("parseMftIndex refusals and limits", () => {
   });
 
   it("refuses a file above the fixed ceiling", () => {
-    const decoder = createMftDecoder(MFT_MAX_FILE_BYTES + 1);
+    const decoder = createMftDecoder(512 * 1024 * 1024 + 1);
     expect(decoder.ok).toBe(false);
     if (decoder.ok) return;
     expect(decoder.error).toMatchObject({

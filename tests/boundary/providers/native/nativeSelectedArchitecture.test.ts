@@ -325,6 +325,30 @@ it("uses the uniquely matching FAT entry when lipo omits the selected slice offs
   });
 });
 
+it.each([
+  ["offset 8192\n", "offset 12288\n"],
+  ["offset 8192\n size 4096\n", "offset 8192\n size 4095\n"],
+] as const)(
+  "refuses lipo slice facts that disagree with the selected FAT entry",
+  async (original, replacement) => {
+    const fixture = await makeFat(["x86_64", "arm64"]);
+    const lipo = fixture.lipo.replace(original, replacement);
+    expect(lipo).not.toBe(fixture.lipo);
+    const result = await inspect(
+      new NativeMacOSProvider(
+        {},
+        new NativeFixtureRunner({ lipo }),
+        "darwin",
+      ).createClient(fixture.target),
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Mismatched FAT slice was admitted");
+    expect(result.error.message).toContain(
+      "Selected lipo slice does not identify exactly one FAT entry",
+    );
+  },
+);
+
 it("reports the selected 32-bit slice's word size and byte order", async () => {
   const fixture = await makeFat(["x86_64", "i386"]);
   const runner = sliceSelectingRunner(

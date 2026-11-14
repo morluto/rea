@@ -3,6 +3,7 @@ import { constants as bufferConstants } from "node:buffer";
 import { commandEvidenceDetailSchema } from "./commandObservation.js";
 import { localPathStringSchema } from "./localPath.js";
 import { RAW_BINARY_ENTRY_POINT } from "./rawBinary.js";
+import { rejectUnpairedSurrogates } from "./stringPatterns.js";
 
 /** Omitted one-shot objdump/rizin wall clock. Preflight shares it; the command gets it again. */
 export const DEFAULT_REVERSE_COMMAND_TIMEOUT_MS = 120_000;
@@ -62,15 +63,13 @@ const objdumpArtifactInputSchema = z
 
 const objdumpDisassemblyInputSchema = objdumpArtifactInputSchema.extend({
   operation: z.literal("disassemble"),
-  symbol: z
-    .string()
-    .min(1)
-    .regex(/^[^\x00]*$/u)
-    // Keep UTF-16 checks out of patterns consumed by scalar Unicode engines.
-    .refine(
-      (symbol) => !/[\uD800-\uDFFF]/u.test(symbol),
-      "Symbol must be well-formed Unicode.",
-    )
+  symbol: rejectUnpairedSurrogates(
+    z
+      .string()
+      .min(1)
+      .regex(/^[^\x00]*$/u),
+    "Symbol must be well-formed Unicode.",
+  )
     .describe(
       "Native symbol to disassemble, expressed as well-formed Unicode. Matching and symbol boundaries follow the selected executable; omitted means all code sections.",
     )

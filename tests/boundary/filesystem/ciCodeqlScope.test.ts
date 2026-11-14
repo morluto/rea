@@ -85,6 +85,9 @@ it("uses the scope in a bounded workflow gated on administrator activation", asy
   const workflow = z
     .object({
       permissions: z.object({ contents: z.literal("read") }),
+      concurrency: z.object({
+        "cancel-in-progress": z.string(),
+      }),
       jobs: z.object({
         analyze: z.object({
           if: z.string(),
@@ -108,6 +111,9 @@ it("uses the scope in a bounded workflow gated on administrator activation", asy
     .parse(
       parse(await readFile(new URL("workflows/codeql.yml", github), "utf8")),
     );
+  expect(workflow.concurrency["cancel-in-progress"]).toBe(
+    "${{ github.event_name == 'pull_request' }}",
+  );
   const job = workflow.jobs.analyze;
   expect(job.if).toBe("vars.REA_CODEQL_ADVANCED == 'true'");
   expect(job.strategy.matrix.language).toEqual([

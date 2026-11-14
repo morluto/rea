@@ -125,8 +125,6 @@ interface NetworkCaptureOptions {
     reason: BrowserScenarioEventBudgetReason,
   ) => void;
   readonly signal?: AbortSignal;
-  /** Production uses 5s; a fixture can supply its own bounded-read clock. */
-  readonly readTimeoutMs?: number;
 }
 
 /** Captures correlated network phases and drains selected content before browser cleanup. */
@@ -156,7 +154,7 @@ export class PlaywrightScenarioNetwork {
   constructor(private readonly options: NetworkCaptureOptions) {
     this.limits = options.limits;
     this.readOptions = {
-      timeoutMs: options.readTimeoutMs ?? PLAYWRIGHT_NETWORK_READ_TIMEOUT_MS,
+      timeoutMs: PLAYWRIGHT_NETWORK_READ_TIMEOUT_MS,
       maxBodyBytes: this.limits.max_network_body_bytes,
       maxBodyAllocationBytes: this.limits.max_network_body_allocation_bytes,
       maxHeaderAllocationBytes: this.limits.max_network_header_allocation_bytes,

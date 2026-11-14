@@ -238,7 +238,9 @@ broad changes or diagnosing CI, rather than after every edit. Package/install
 changes additionally need package verification; provider changes need actual
 provider evidence.
 
-Vitest projects use up to two workers, bounded by host parallelism.
+Vitest projects use up to two workers, bounded by host parallelism. GitHub
+Actions jobs own their runner and use up to four; see
+[test deadlines](#developer-commands) for how deadlines scale there.
 `process-boundary` runs later with serial files because process-tree sampling
 shares host resources. Acceptance and process-global cases use isolated forks
 without serial scheduling. Pure domain/service, composition, conformance,
@@ -283,7 +285,7 @@ coverage. Ordinary CI also exhausted the former 384 MiB budget after earlier
 files loaded the shared source/contract graph, while later command registration
 and schema/help rendering still needed transient allocation space. This is a
 measured capacity control, not a suite-wide speedup claim. The worker count
-remains bounded at two, and spawned REA processes retain their own heap settings.
+remains bounded, and spawned REA processes retain their own heap settings.
 Coverage enablement still controls instrumentation, test deadlines and coverage
 thresholds; explicitly disabling it or selecting only a provider does not enable
 instrumentation.
@@ -298,6 +300,18 @@ and profile a bounded representative case before retrying. Separate production
 work from fixture generation, schema compilation, subprocess startup and cleanup.
 Choose elapsed, CPU and process-family memory limits before the run; a worker
 count or test timeout alone does not enforce those limits.
+
+A test deadline turns a hang into a named failure; it is not a performance
+assertion. `vitest.config.ts` applies the deadlines in
+`tests/support/testDeadlines.ts` per project: 30 seconds for source projects
+and 120 seconds for built projects, with hooks sharing their project's
+deadline. Coverage doubles every deadline, and so does hosted CI, where
+CPU-bound cases share every core with other workers and their subprocesses.
+Do not pass a per-test timeout to fit a slow host. Tag a bounded workload that needs longer with
+`{ tags: ["long-running"] }`, or a whole file with
+`// @module-tag long-running`. Assert elapsed time explicitly when speed is the
+behavior under test. Derive an explicit deadline only when a test must outlive
+an operation deadline whose diagnostics it checks.
 
 Keep capacity fixtures intact when diagnosing a test failure. For byte equality
 of large buffers, use `Buffer.equals` or `Buffer.compare`; a generic structural
@@ -406,6 +420,10 @@ it rejects advanced CodeQL uploads. Then enable the variable and manually run
 relying on the new scope. While the variable is unset, the existing default
 setup continues scanning. Adding the configuration file alone does not change
 default setup in this user-owned repository.
+
+Pull-request scans are cancelled when superseded. Active scans on `main` finish
+so frequent pushes cannot prevent a complete baseline from being uploaded.
+Cancelled runs skip the SARIF artifact upload when no report was produced.
 
 Each analysis uses two threads and a 4096 MiB CodeQL memory budget; language
 jobs run one at a time. Complete SARIF reports are retained for seven days.
@@ -1098,7 +1116,8 @@ is separate and grows when more shard jobs compete for runners.
 `process-boundary` stays serial because process-tree sampling shares the host.
 Raising the worker cap from two to four on this four-core host cut a six-file
 acceptance sample from 96–101 seconds to 71 seconds and did not remove the
-single-file floor, so the cap stays two. Full qualification keeps six covered
+single-file floor. Hosted CI jobs use four workers; other hosts stay at two
+because they are shared with other checks. Full qualification keeps six covered
 shards; its longer instrumentation is outside this fast budget.
 
 The separate `CI timings` workflow batches recent completed CI and Release runs

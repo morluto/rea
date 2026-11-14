@@ -121,7 +121,7 @@ describe("canonical product catalog", () => {
       await readFile("docs/public/product-catalog.json", "utf8"),
     );
     await expect(documentationFactIssues(root, catalog)).resolves.toEqual([]);
-  }, 60_000);
+  });
 });
 
 describe("canonical CLI catalog", () => {
@@ -129,7 +129,7 @@ describe("canonical CLI catalog", () => {
     const inventory = createCliInventory(createCli());
     expect(inventory.primary).toEqual([...CLI_COMMAND_NAMES].sort());
     expect(inventory.aliases).toEqual([]);
-  }, 30_000);
+  });
 
   it("describes every primary command argument and option", () => {
     expect(cliCommandDescriptionIssues(createCli())).toEqual([]);

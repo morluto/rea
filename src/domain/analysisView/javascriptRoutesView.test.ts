@@ -1,14 +1,14 @@
 import { expect, it } from "vitest";
-import { analyzeJavaScriptStaticSource } from "../javascript/javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 import { completeSemanticSteps } from "../javascript/javascriptSemanticTraversal.js";
 import { buildJavaScriptRouteInventorySteps } from "../javascript/javascriptRouteInventory.js";
 import { freezeJsonSnapshot } from "../immutableJson.js";
 import { projectAnalysisError } from "../analysisErrorProjection.js";
 import {
   projectAnalysisView,
-  analysisViewRequestSchema,
   type AnalysisViewParent,
 } from "./analysisView.js";
+import { analysisViewRequestSchema } from "./analysisViewRequest.js";
 
 const inventory = (
   text = `createBrowserRouter([{path:'/reports',children:[{path:':id'},{path:'settings'}]}]);router.push('/login');`,

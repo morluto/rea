@@ -1,15 +1,14 @@
+import { CLAUDE_DESKTOP_PACKAGE_FAMILY } from "../../tests/fixtures/claudeDesktop.js";
 import { basename, dirname, join, sep } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
 import {
-  CLAUDE_DESKTOP_PACKAGE_FAMILY,
   resolveWindowsClaudeDesktopLocation,
   type ClaudeDesktopLocationFileSystem,
 } from "./ClaudeDesktopConfigLocation.js";
 import {
   packagePrivateLauncherBlocker,
-  packagePrivateStorageFamily,
   redirectedWriteBlocker,
   type MsixPackageView,
   windowsAppDataRoots,
@@ -642,15 +641,19 @@ describe("package-private REA launchers", () => {
     "rea.mjs",
   );
 
-  it("names the package that privately stores a path", () => {
-    expect(packagePrivateStorageFamily(stored, packages)).toBe(
-      CLAUDE_DESKTOP_PACKAGE_FAMILY,
-    );
-    expect(packagePrivateStorageFamily(launcher, packages)).toBeUndefined();
+  it("blocks private cache paths without treating other package paths as private", () => {
+    const identity = (path: string) => path;
     expect(
-      packagePrivateStorageFamily(
-        join(packages, CLAUDE_DESKTOP_PACKAGE_FAMILY, "LocalState", "x"),
+      packagePrivateLauncherBlocker([stored], packages, identity),
+    ).toContain(CLAUDE_DESKTOP_PACKAGE_FAMILY);
+    expect(
+      packagePrivateLauncherBlocker([launcher], packages, identity),
+    ).toBeUndefined();
+    expect(
+      packagePrivateLauncherBlocker(
+        [join(packages, CLAUDE_DESKTOP_PACKAGE_FAMILY, "LocalState", "x")],
         packages,
+        identity,
       ),
     ).toBeUndefined();
   });
