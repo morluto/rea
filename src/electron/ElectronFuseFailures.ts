@@ -17,7 +17,6 @@ import {
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
