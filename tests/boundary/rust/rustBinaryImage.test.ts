@@ -12,7 +12,7 @@ import {
 import { readRustBinaryImage } from "../../../src/rust/RustBinaryImage.js";
 import { readBinaryContainer } from "../../../src/native/metadata/readBinaryContainer.js";
 import { readGoBinaryImage } from "../../../src/go/GoBinaryImage.js";
-import { RustAuditableFormatFailure } from "../../../src/rust/RustAuditableReader.js";
+import { ParseFailureError } from "../../../src/domain/parseFailure.js";
 
 const packages = [
   {
@@ -306,7 +306,7 @@ it("finds rustc paths in read-only ELF load data without section headers", () =>
 
 it("refuses a universal Mach-O container", () => {
   expect(() => readRustBinaryImage(fat([0x0100000c]))).toThrow(
-    RustAuditableFormatFailure,
+    ParseFailureError,
   );
   expect(() => readRustBinaryImage(fat([0x0100000c]))).toThrow(/thin slice/);
 });
@@ -319,7 +319,7 @@ it("does not read SHT_NOBITS dependency sections as stored bytes", () => {
   try {
     metadata = readRustBinaryImage(bytes).auditable_metadata;
   } catch (cause: unknown) {
-    expect(cause).toBeInstanceOf(RustAuditableFormatFailure);
+    expect(cause).toBeInstanceOf(ParseFailureError);
     return;
   }
   expect(metadata).toBeNull();
