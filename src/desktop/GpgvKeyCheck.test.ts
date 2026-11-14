@@ -2,6 +2,15 @@ import { access, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  armor,
+  createMessage,
+  enums,
+  generateKey,
+  readKey,
+  readKeys,
+  sign,
+} from "openpgp";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
@@ -82,6 +91,103 @@ describe.skipIf(!hasGpgv)("withGpgvKeyCheck with gpgv", () => {
     });
     expect(verified.bytes.toString()).toBe(A_ARMORED);
   });
+});
+
+describe.skipIf(!hasGpgv)("retained signing-key versions", () => {
+  it.each(["file", "held"] as const)(
+    "keeps the verifying primary's key versions without trusting another primary: %s",
+    async (source) => {
+      const { privateKey } = await generateKey({
+        type: "ecc",
+        curve: "curve25519Legacy",
+        userIDs: [{ name: "Versioned repository fixture" }],
+        subkeys: [{ sign: true }, { sign: true }, { sign: true }],
+        date: new Date("2024-01-01T00:00:00Z"),
+        format: "object",
+      });
+      const primary = privateKey.getFingerprint().toUpperCase();
+      const versions = await Promise.all(
+        privateKey.subkeys.map(async (_, index) => {
+          const key = await readKey({
+            binaryKey: privateKey.toPublic().write(),
+          });
+          key.subkeys = key.subkeys.slice(index, index + 1);
+          return Buffer.from(key.write());
+        }),
+      );
+      // The signing subkey is in neither the first nor last version, in either order.
+      const ordered = source === "file" ? versions : versions.toReversed();
+      const keyring = Buffer.concat([
+        ordered[0]!,
+        VENDOR_B.key,
+        ordered[1]!,
+        ordered[2]!,
+      ]);
+      const folder = await createTestTempDirectory("desktop-gpgv-versions-");
+      const release = join(folder, "Release");
+      const signature = `${release}.gpg`;
+      const bytes = Buffer.from(
+        "Origin: Versioned repository fixture\nSuite: stable\n",
+      );
+      await writeFile(release, bytes);
+      await writeFile(
+        signature,
+        await sign({
+          message: await createMessage({ binary: bytes }),
+          signingKeys: privateKey,
+          signingKeyIDs: [privateKey.subkeys[1]!.getKeyID()],
+          detached: true,
+          format: "binary",
+        }),
+      );
+      const path = join(
+        folder,
+        source === "file" ? "vendor.gpg" : "vendor.sources",
+      );
+      if (source === "file") await writeFile(path, keyring);
+      const verified = await withGpgvKeyCheck(
+        runHostQuery,
+        undefined,
+        (check) =>
+          source === "file"
+            ? check.firstVerifying([path], [signature, release])
+            : check.heldVerifying(
+                {
+                  path,
+                  bytes: Buffer.from(armor(enums.armor.publicKey, keyring)),
+                },
+                [signature, release],
+              ),
+      );
+      if ("reason" in verified) throw new Error(verified.reason);
+      expect(verified.fingerprint).toBe(primary);
+      // Keeping the complete input would make this pass crypto but broaden trust.
+      const retainedKeys = await readKeys({ binaryKeys: verified.bytes });
+      expect(
+        new Set(retainedKeys.map((key) => key.getFingerprint().toUpperCase())),
+      ).toEqual(new Set([primary]));
+      const retained = join(folder, "retained.gpg");
+      await writeFile(retained, verified.bytes);
+      const replay = await runHostQuery(
+        "gpgv",
+        [
+          "--homedir",
+          folder,
+          "--status-fd",
+          "1",
+          "--keyring",
+          retained,
+          signature,
+          release,
+        ],
+        undefined,
+      );
+      expect(replay).toMatchObject({ exitCode: 0 });
+      if (typeof replay === "object")
+        expect(replay.stdout).toContain("[GNUPG:] VALIDSIG ");
+      expect(verified.bytes.equals(Buffer.concat(ordered))).toBe(true);
+    },
+  );
 });
 
 describe("withGpgvKeyCheck cleanup", () => {
