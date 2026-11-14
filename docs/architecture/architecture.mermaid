@@ -2,7 +2,7 @@ graph TD
     %% Selected layer owners and dependency/wiring paths, not a directory or import inventory.
     %% Current deep-provider candidates are wired in src/composition/binary.ts.
     subgraph "Entry Points"
-        CLI["src/cli.ts + src/cli/<br/>One-shot CLI adapter<br/>setup, diagnostics, analysis, decompilation"]
+        CLI["src/cli.ts + src/cli/<br/>One-shot CLI adapter<br/>setup, diagnostics, analysis, decompilation<br/>cliLoader: recorded registrar per command, complete CLI otherwise"]
         MAIN["src/main.ts + src/main/<br/>MCP server adapter: stdio default, streamable HTTP opt-in<br/>config, session, process lifetime"]
         DISPATCH["scripts/rea.mjs<br/>Executable dispatcher<br/>routes mcp / mcp --http / one-shot"]
     end

@@ -266,7 +266,7 @@ it.runIf(supportedHost)(
       await provider.close();
     });
     const first = provider.inspect({ path });
-    await awaitAcknowledgement(started, first, "pwntools launch", 10_000);
+    await awaitAcknowledgement(started, first, "pwntools launch");
     const controller = new AbortController();
     const cancelled = provider.inspect({ path }, { signal: controller.signal });
     const reason = { stage: "queued" };

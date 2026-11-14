@@ -513,15 +513,14 @@ const machOClaims = async (
     if (!read.ok) break;
     const { command: cmd, offset, size } = read.value;
     if (cmd === LC_SEGMENT_64 || cmd === LC_SEGMENT)
-      claims.push(
-        ...segmentClaims(
-          commands.subarray(offset, offset + size),
-          littleEndian,
-          cmd === LC_SEGMENT_64,
-          imageOffset,
-          Math.min(fileSize, imageOffset + imageLimit),
-        ),
-      );
+      for (const claim of segmentClaims(
+        commands.subarray(offset, offset + size),
+        littleEndian,
+        cmd === LC_SEGMENT_64,
+        imageOffset,
+        Math.min(fileSize, imageOffset + imageLimit),
+      ))
+        claims.push(claim);
   }
   return claims;
 };
@@ -587,7 +586,8 @@ const fatClaims = async (
   for (const slice of parsed.slices) {
     abortIfNeeded(signal);
     if (parsed.rangeIssues[slice.index] !== null) continue;
-    claims.push(...(await machOClaims(source, slice.offset, slice.size)));
+    for (const claim of await machOClaims(source, slice.offset, slice.size))
+      claims.push(claim);
   }
   return claims;
 };

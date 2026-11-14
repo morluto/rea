@@ -32,6 +32,7 @@ import {
   PlaywrightElectronActiveProvider,
   safeElectronEnvironment,
 } from "./PlaywrightElectronActiveProvider.js";
+import { waitFor } from "../../tests/support/testWait.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -1051,7 +1052,7 @@ it("reports an expired final state grace period as the caller's cancellation", a
     };
 
     const capture = captureWithController(controller, application, []);
-    await vi.waitFor(() => expect(evaluate).toHaveBeenCalled());
+    await waitFor(() => expect(evaluate).toHaveBeenCalled());
     await vi.advanceTimersByTimeAsync(5_000);
     const result = await capture;
 

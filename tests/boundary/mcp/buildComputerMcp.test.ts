@@ -11,7 +11,7 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import type { Client } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
-import { expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
 import { z } from "zod";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
@@ -29,6 +29,7 @@ import {
   type FakeComputer,
 } from "../../fixtures/fakeAgentEnvComputer.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { waitFor } from "../../support/testWait.js";
 
 const images = (result: CallToolResult) =>
   result.content.filter((block) => block.type === "image");
@@ -677,7 +678,7 @@ it("runs one computer's calls in the order they arrive and another computer's be
     callOk(client, "act_on_build_computer", { computer_id: id, action });
   const order: string[] = [];
   const reset = act(first, "reset").then(() => order.push("reset"));
-  await vi.waitFor(() => expect(app.methods).toEqual(["data/reset"]));
+  await waitFor(() => expect(app.methods).toEqual(["data/reset"]));
   const behind = act(first, "screenshot").then(() =>
     order.push("screenshot behind the reset"),
   );
@@ -703,7 +704,7 @@ it("sends progress while an action waits for the call before it on its computer"
     computer_id: id,
     action: "reset",
   });
-  await vi.waitFor(() => expect(app.methods).toEqual(["data/reset"]));
+  await waitFor(() => expect(app.methods).toEqual(["data/reset"]));
   const progress: unknown[] = [];
   const waited = await client.callTool(
     {
@@ -729,7 +730,7 @@ it("cancels a computer's call in progress on close and refuses the calls waiting
   const call = (name: string, fields: Record<string, unknown> = {}) =>
     client.callTool({ name, arguments: { computer_id: id, ...fields } });
   const reset = call("act_on_build_computer", { action: "reset" });
-  await vi.waitFor(() => expect(app.methods).toEqual(["data/reset"]));
+  await waitFor(() => expect(app.methods).toEqual(["data/reset"]));
   const waiting = [
     call("act_on_build_computer", { action: "screenshot" }),
     call("stop_build_capture"),

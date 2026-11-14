@@ -167,6 +167,37 @@ it("advertises portable NUL escapes and patterns that compile in all JS modes", 
     );
 });
 
+it("advertises patterns compatible with the full input profile", async () => {
+  const advertised = await listAdvertisedTools({
+    ...process.env,
+    REA_MCP_INPUT_SCHEMA_PROFILE: "full",
+  });
+  const patterns: AdvertisedPattern[] = [];
+  for (const tool of advertised) {
+    collectPatterns(tool.inputSchema, "inputSchema", tool.name, patterns);
+    if (tool.outputSchema !== undefined)
+      collectPatterns(tool.outputSchema, "outputSchema", tool.name, patterns);
+  }
+
+  const uncompilable = patterns.flatMap((entry) =>
+    ["", "u", "v"].flatMap((flags) => {
+      try {
+        new RegExp(entry.pattern, flags);
+        return [];
+      } catch (cause: unknown) {
+        return [
+          `${entry.tool} ${entry.where} /${entry.pattern}/${flags}: ${cause instanceof Error ? cause.message : String(cause)}`,
+        ];
+      }
+    }),
+  );
+  expect(uncompilable).toEqual([]);
+
+  expect(
+    patterns.filter(({ pattern }) => /\(\?<?[=!]|\\[1-9]|\\k</u.test(pattern)),
+  ).toEqual([]);
+});
+
 it.each(
   (["compact", "full"] as const).flatMap((input) =>
     (["full", "compact", "off"] as const).map((output) => [input, output]),

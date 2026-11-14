@@ -88,6 +88,7 @@
     {
       "files": ["src/**/*.ts"],
       "rules": {
+        "rea/typed-resource-refusal": "error",
         "rea/no-babel-visitor-keys": "error",
         "typescript/no-misused-promises": "error"
       }
@@ -100,6 +101,7 @@
         "src/**/*.fixture.ts"
       ],
       "rules": {
+        "rea/typed-resource-refusal": "off",
         "rea/no-babel-visitor-keys": "off",
         "max-lines": "off",
         "max-lines-per-function": [
@@ -170,6 +172,12 @@
         ],
         "vitest/valid-expect-in-promise": "error",
         "vitest/no-focused-tests": "error"
+      }
+    },
+    {
+      "files": ["tests/**/*.ts", "src/**/*.test.ts", "src/**/*.fixture.ts"],
+      "rules": {
+        "rea/project-wait-deadline": "error"
       }
     },
     {

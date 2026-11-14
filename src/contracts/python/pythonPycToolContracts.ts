@@ -31,7 +31,7 @@ export const PYTHON_PYC_TOOL_CONTRACTS = [
     kind: "artifact-provider",
     requiresActiveTarget: true,
     description:
-      "Inspect local CPython 3.7–3.13 .pyc headers and nested code objects without executing bytecode, invoking Python or recovering source. Returns pinned version/header fields, names, constant summaries and bytecode lengths/digests; nested_code links code constants, not runtime calls. Default complete returns full Evidence; detail summary retains it for inspect_analysis_view kind python-pyc, collection code_objects, with exact names/indices/fields and paging. source_index preserves same-name alternatives. Unsupported layouts, truncation and exhausted budgets fail without partial success. Recognized 3.14/3.15 headers receive a version/flags-qualified refusal, not decoded code objects. A header does not prove matching .py source exists.",
+      "Inspect local CPython 3.7–3.15 .pyc headers and nested code objects without executing bytecode, invoking Python or recovering source. Returns pinned version/header fields, names, constant summaries and bytecode lengths/digests; nested_code links code constants, not runtime calls. Default complete returns full Evidence; detail summary retains it for inspect_analysis_view kind python-pyc, collection code_objects, with exact names/indices/fields and paging. source_index preserves same-name alternatives. Unsupported magics/layouts, truncation and exhausted budgets fail without partial success. A header does not prove matching .py source exists.",
     inputSchema: inspectPythonPycRequestSchema,
     outputSchema: analysisDetailOutputSchemaOf(
       pythonPycSchema,

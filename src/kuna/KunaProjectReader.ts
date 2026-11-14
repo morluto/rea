@@ -16,6 +16,7 @@ import {
   AnalysisCancelledError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -96,6 +97,16 @@ const readSpan = async (
           file: path,
           byte_offset: offset,
         },
+        fixedAllowanceOptions(
+          `Kuna's buffered function-text allowance of ${String(KUNA_FUNCTION_TEXT_BYTES)} bytes`,
+          "bytes",
+          {
+            limit: KUNA_FUNCTION_TEXT_BYTES,
+            unit: "bytes",
+            narrowing:
+              "Read the complete export locally at details.reported_limits.file from details.reported_limits.byte_offset.",
+          },
+        ),
       ),
     );
   const callerAborted = (): AbortSignal | undefined =>

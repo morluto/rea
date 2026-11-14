@@ -6,6 +6,7 @@ import {
 import {
   ClientConfigurationShapeError,
   clientConfigurationServersKey,
+  clientConfigurationSyntaxName,
   parseClientConfiguration,
   parseGgcodeLegacyConfiguration,
   serializeClientConfiguration,
@@ -906,7 +907,8 @@ const readClientConfiguration = async (
     );
   if (client.configPathError !== undefined)
     return configurationFailure(client.configPathError);
-  if (client.format === "unsupported")
+  const { format } = client;
+  if (format === "unsupported")
     return itemRead(
       item(
         client.name,
@@ -928,6 +930,8 @@ const readClientConfiguration = async (
   });
   if (typeof original !== "string") return original;
   try {
+    // ggcode uninstall may read the legacy in-main mapping layout, whose
+    // client-aware admission differs from the standalone sequence parser.
     const parsed = parseUninstallConfiguration(client, original);
     return { kind: "configuration", transactionPath, original, parsed };
   } catch (cause: unknown) {
@@ -935,7 +939,9 @@ const readClientConfiguration = async (
       cause instanceof ClientConfigurationShapeError ||
         cause instanceof ConfigurationError
         ? `Configuration was not changed: ${cause.message}. Repair it, then rerun uninstall.`
-        : `Configuration is not valid ${client.format === "toml" || client.format === "grok" ? "TOML" : client.format === "opencode" ? "JSONC" : client.format === "hermes" || client.format === "ggcode" || client.format === "dsh" ? "YAML" : "JSON"} and was not changed. Repair it, then rerun uninstall.`,
+        : format === undefined
+          ? "This client's configuration syntax is unknown, so its configuration was not changed."
+          : `Configuration is not valid ${clientConfigurationSyntaxName(format)} and was not changed. Repair it, then rerun uninstall.`,
     );
   }
 };

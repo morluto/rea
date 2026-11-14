@@ -277,12 +277,11 @@ const runSetupCommand = async (
       : undefined,
   );
   if (interactive) renderInteractiveSetupResult(result, environment);
-  else if (
-    options.dryRun &&
-    !input.formatExplicit &&
-    hasInteractiveTerminal()
-  ) {
-    if (result.status === "planned") renderSetupDryRun(result.plannedActions);
+  // Setup's output is agent-only, which incur hides when stdout is a terminal
+  // and no format was chosen, so that terminal gets a rendered summary instead.
+  else if (!input.formatExplicit && process.stdout.isTTY === true) {
+    if (result.status === "planned")
+      renderSetupDryRun(result.plannedActions, result.remediation);
     else renderInteractiveSetupResult(result, environment);
   }
   return result;

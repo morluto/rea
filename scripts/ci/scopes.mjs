@@ -168,6 +168,7 @@ const PATH_SCOPES = {
     "tests/boundary/process/nativeUiVerifierLane.test.ts",
     "tests/conformance/native/ui-offscreen.swift",
     "tests/boundary/cli/nativeSignatureCli.test.ts",
+    "tests/boundary/cli/nativeMachoImportNamesCli.test.ts",
     "tests/boundary/cli/nativeMachoArm64_32Cli.test.ts",
     "tests/boundary/cli/nativeMachoEncryptionCli.test.ts",
     "tests/boundary/mcp/nativeSignatureTargetBindingMcp.test.ts",

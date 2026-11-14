@@ -63,14 +63,8 @@ const nativeUiScopeOptions = {
       "Exact selected application window ID",
     ),
   ),
-  screenshot: z
-    .boolean()
-    .default(true)
-    .describe("Capture only the selected window"),
-  accessibility: z
-    .boolean()
-    .default(true)
-    .describe("Read the selected window accessibility tree"),
+  screenshot: nativeUiScopeFields.screenshot,
+  accessibility: nativeUiScopeFields.accessibility,
   maxNodes: cliDecimalField(
     nativeUiScopeFields.max_nodes.describe(
       "Maximum accessibility nodes per capture",
@@ -235,8 +229,7 @@ const registerNativeCommands = (
       path: localPathStringSchema.describe("App or Mach-O path"),
     }),
     options: z.object({
-      relativePath: z
-        .string()
+      relativePath: localPathStringSchema
         .optional()
         .describe(
           "Plist path relative to the app root, or an absolute path (default: the bundle's Info.plist)",
