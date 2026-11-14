@@ -1547,7 +1547,7 @@ describe("ReleaseExposureReader member allowances", () => {
     await writeFile(join(root, "bin", "app"), "not a package");
     const directory = await inspect(join(root, "bin"));
     expect(directory.debug_companions.paths).toEqual([
-      expect.stringMatching(/bin\/app\.map$/u),
+      expect.stringMatching(/bin[\\/]app\.map$/u),
     ]);
     expect(directory.source_maps.skipped).toBe(0);
 
@@ -3068,7 +3068,8 @@ describe("ReleaseExposureReader unexpanded package PE reads", () => {
       const scanned = await inspect(root);
       expect(scanned.coverage).toBe("unknown");
       expect(scanned.limitations).toContain(
-        `Could not read ${join(root, "app.dll", "payload.bin")} to rule out a native image or package.`,
+        // A packaged member is named by its host file, then its "/" member path.
+        `Could not read ${join(root, "app.dll")}/payload.bin to rule out a native image or package.`,
       );
     } finally {
       createdReaders.wrap = undefined;
