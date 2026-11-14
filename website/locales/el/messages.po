@@ -14577,11 +14577,16 @@ msgstr ""
 #: website/public/get-started/index.html:1694
 msgctxt "page:get-started/index.html"
 msgid ""
-"On macOS or Linux, you can also use the curl installer after preparing "
-"Node.js:"
+"On macOS or Linux, review a release-tagged installer before running it. This example "
+"pins 6.9.0. The default-branch script tracks main and is not a pinned release."
 msgstr ""
-"Σε macOS ή Linux, μπορείτε επίσης να χρησιμοποιήσετε το πρόγραμμα "
-"εγκατάστασης μέσω curl αφού προετοιμάσετε το Node.js:"
+
+#~ msgid ""
+#~ "On macOS or Linux, you can also use the curl installer after preparing "
+#~ "Node.js:"
+#~ msgstr ""
+#~ "Σε macOS ή Linux, μπορείτε επίσης να χρησιμοποιήσετε το πρόγραμμα "
+#~ "εγκατάστασης μέσω curl αφού προετοιμάσετε το Node.js:"
 
 #. {ph0}: <code>rea setup</code>
 #: website/public/get-started/index.html:1712

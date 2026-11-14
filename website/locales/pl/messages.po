@@ -14101,11 +14101,16 @@ msgstr ""
 #: website/public/get-started/index.html:1694
 msgctxt "page:get-started/index.html"
 msgid ""
-"On macOS or Linux, you can also use the curl installer after preparing "
-"Node.js:"
+"On macOS or Linux, review a release-tagged installer before running it. This example "
+"pins 6.9.0. The default-branch script tracks main and is not a pinned release."
 msgstr ""
-"W macOS lub Linux po przygotowaniu Node.js możesz również użyć instalatora "
-"przez curl:"
+
+#~ msgid ""
+#~ "On macOS or Linux, you can also use the curl installer after preparing "
+#~ "Node.js:"
+#~ msgstr ""
+#~ "W macOS lub Linux po przygotowaniu Node.js możesz również użyć instalatora "
+#~ "przez curl:"
 
 #: website/public/get-started/index.html:1732
 msgctxt "page:get-started/index.html"

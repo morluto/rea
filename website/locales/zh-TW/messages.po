@@ -12848,9 +12848,14 @@ msgstr "把 {ph0} 換成目標函式清單中的名稱或位址。先完成 Ghid
 #: website/public/get-started/index.html:1694
 msgctxt "page:get-started/index.html"
 msgid ""
-"On macOS or Linux, you can also use the curl installer after preparing "
-"Node.js:"
-msgstr "macOS 或 Linux 準備好 Node.js 後，也可以使用 curl 安裝："
+"On macOS or Linux, review a release-tagged installer before running it. This example "
+"pins 6.9.0. The default-branch script tracks main and is not a pinned release."
+msgstr ""
+
+#~ msgid ""
+#~ "On macOS or Linux, you can also use the curl installer after preparing "
+#~ "Node.js:"
+#~ msgstr "macOS 或 Linux 準備好 Node.js 後，也可以使用 curl 安裝："
 
 #: website/public/get-started/index.html:1732
 msgctxt "page:get-started/index.html"
