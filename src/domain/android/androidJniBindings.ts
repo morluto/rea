@@ -222,6 +222,29 @@ export const expectedJniNames = (
 };
 
 type ProjectionFailure = { readonly kind: "capacity" };
+/**
+ * An APK whose manifest requires splits, or whose requirements are unknown, may
+ * keep native libraries in split APKs this inventory never examined.
+ */
+const withSplitRequirements = (
+  inventory: AndroidJniReport["library_inventory"],
+  splits: AndroidNativeDeclarations["manifest_splits"],
+): AndroidJniReport["library_inventory"] => {
+  const reason =
+    splits.status === "unknown"
+      ? `Split APK requirements are unknown (${splits.reason}); native libraries may be in split APKs not examined here.`
+      : splits.split_required || splits.required_split_types.length > 0
+        ? `The manifest requires split APKs${splits.required_split_types.length === 0 ? "" : ` (${splits.required_split_types.join(", ")})`}; native libraries in those splits are not in this APK.`
+        : undefined;
+  return reason === undefined
+    ? inventory
+    : {
+        ...inventory,
+        status: inventory.status === "complete" ? "partial" : inventory.status,
+        unknowns: [...inventory.unknowns, reason],
+      };
+};
+
 /** Join once against the COMPLETE declaration inventory before applying selection. */
 export const projectAndroidJniBindings = (input: {
   readonly apk: AndroidJniReport["apk"];
@@ -230,6 +253,10 @@ export const projectAndroidJniBindings = (input: {
   readonly libraries: readonly AndroidJniLibraryObservation[];
   readonly libraryInventory: AndroidJniReport["library_inventory"];
 }): Result<AndroidJniReport, ProjectionFailure> => {
+  const libraryInventory = withSplitRequirements(
+    input.libraryInventory,
+    input.inventory.manifest_splits,
+  );
   const declarations = input.inventory.methods.map((method) => ({
     ...method,
     declaration_id: id("jni_method", [
@@ -446,7 +473,7 @@ export const projectAndroidJniBindings = (input: {
         (candidate) => candidate.class_attribution === "ambiguous-native-pair",
       );
       const incomplete =
-        input.libraryInventory.status !== "complete" ||
+        libraryInventory.status !== "complete" ||
         abiLibraries.some(
           (library) =>
             library.failure !== null ||
@@ -497,13 +524,14 @@ export const projectAndroidJniBindings = (input: {
     scope: input.inventory.scope,
     coverage: input.inventory.coverage,
     unknowns: input.inventory.unknowns,
+    manifest_splits: input.inventory.manifest_splits,
   };
   const report: AndroidJniReport = {
     apk: input.apk,
     selection: input.selection,
     native_inventory,
     library_inventory: {
-      ...input.libraryInventory,
+      ...libraryInventory,
       selected_libraries: libraries.length,
     },
     declarations,

@@ -30,6 +30,15 @@ export const androidNativeDeclarationsSchema = z.strictObject({
     examined_methods: count,
   }),
   unknowns: z.array(z.string()),
+  /** Root manifest split requirements; required splits can carry native libraries. */
+  manifest_splits: z.discriminatedUnion("status", [
+    z.strictObject({
+      status: z.literal("observed"),
+      required_split_types: z.array(z.string().min(1)),
+      split_required: z.boolean(),
+    }),
+    z.strictObject({ status: z.literal("unknown"), reason: z.string().min(1) }),
+  ]),
 });
 
 export type AndroidNativeDeclarations = z.infer<
