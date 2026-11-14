@@ -94,9 +94,17 @@ export const renderSetupProgress = (event: SetupProgressEvent): void => {
 };
 
 /** Show the resolved dry-run plan to a human at an interactive terminal. */
-export const renderSetupDryRun = (actions: readonly SetupAction[]): void => {
+export const renderSetupDryRun = (
+  actions: readonly SetupAction[],
+  remediation?: string,
+): void => {
   intro("REA setup plan", promptStreams);
   renderPreflight(actions);
+  // A known manual step belongs to the plan, as it does at approval.
+  if (remediation !== undefined) {
+    writeLine("│");
+    writeLine(`│  ${remediation}`);
+  }
   outro("Dry run complete. No changes were made.", promptStreams);
 };
 

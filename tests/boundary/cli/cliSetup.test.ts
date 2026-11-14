@@ -277,38 +277,47 @@ const runSetupInTty = async (
   return { exitCode, output };
 };
 
+const manualConnectorFixture = async (): Promise<{
+  readonly home: string;
+  readonly environment: NodeJS.ProcessEnv;
+}> => {
+  const home = await createTestTempDirectory("rea-cli-setup-manual-");
+  const bin = join(home, "bin");
+  await mkdir(bin);
+  const hopper = join(bin, "hopper");
+  await writeFile(hopper, "#!/bin/sh\necho 'Hopper Disassembler v6.0.0'\n", {
+    mode: 0o755,
+  });
+  // Linux's executable probe runs ldd before accepting this inert launcher.
+  await writeFile(join(bin, "ldd"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  for (const runner of ["npx", "npm", "bun"])
+    await writeFile(join(bin, runner), "#!/bin/sh\nexit 99\n", {
+      mode: 0o755,
+    });
+  return {
+    home,
+    environment: {
+      PATH: `${bin}:${process.env.PATH ?? ""}`,
+      HOPPER_LAUNCHER_PATH: hopper,
+      DSH_HOME: join(home, ".dsh"),
+      DSH_AGENTS_HOME: join(home, ".dsh-agents"),
+      XDG_DATA_HOME: join(home, ".local/share"),
+      XDG_CACHE_HOME: join(home, ".cache"),
+      XDG_STATE_HOME: join(home, ".local/state"),
+    },
+  };
+};
+
 describe("manual connector approval", () => {
   it.skipIf(process.platform === "win32").each([true, false])(
     "discloses the manual step before approval (apply: %s)",
     async (approved) => {
-      const home = await createTestTempDirectory("rea-cli-setup-manual-");
-      const bin = join(home, "bin");
-      await mkdir(bin);
-      const hopper = join(bin, "hopper");
-      await writeFile(
-        hopper,
-        "#!/bin/sh\necho 'Hopper Disassembler v6.0.0'\n",
-        { mode: 0o755 },
-      );
-      // Linux's executable probe runs ldd before accepting this inert launcher.
-      await writeFile(join(bin, "ldd"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-      for (const runner of ["npx", "npm", "bun"])
-        await writeFile(join(bin, runner), "#!/bin/sh\nexit 99\n", {
-          mode: 0o755,
-        });
+      const { home, environment } = await manualConnectorFixture();
       const { output, exitCode } = await runSetupInTty(
         home,
         ["--client", "grok_bot"],
         approved,
-        {
-          PATH: `${bin}:${process.env.PATH ?? ""}`,
-          HOPPER_LAUNCHER_PATH: hopper,
-          DSH_HOME: join(home, ".dsh"),
-          DSH_AGENTS_HOME: join(home, ".dsh-agents"),
-          XDG_DATA_HOME: join(home, ".local/share"),
-          XDG_CACHE_HOME: join(home, ".cache"),
-          XDG_STATE_HOME: join(home, ".local/state"),
-        },
+        environment,
       );
       const prompt = output.indexOf("Apply this change?");
       const remediation = manualRegistrationRemediation("grok_bot");
@@ -326,6 +335,24 @@ describe("manual connector approval", () => {
         expect(exitCode, output).toBe(0);
         await expect(access(skill)).rejects.toMatchObject({ code: "ENOENT" });
       }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "shows the manual step in a TTY dry run",
+    async () => {
+      const { home, environment } = await manualConnectorFixture();
+      const { output, exitCode } = await runSetupInTty(
+        home,
+        ["--dry-run", "--client", "grok_bot"],
+        undefined,
+        environment,
+      );
+      const remediation = manualRegistrationRemediation("grok_bot");
+      expect(remediation).toBeDefined();
+      expect(exitCode, output).toBe(0);
+      expect(output).toContain(remediation);
+      expect(output).toContain("Dry run complete. No changes were made.");
     },
   );
 });
