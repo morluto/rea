@@ -12,6 +12,7 @@ export interface LayerGraphFacts {
 
 export function layerGraphFacts(
   imports: readonly { readonly file: string; readonly target: string }[],
+  files?: readonly string[],
 ): LayerGraphFacts;
 
 export function compareLayerBaseline(

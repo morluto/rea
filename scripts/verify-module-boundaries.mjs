@@ -59,6 +59,7 @@ const files = await enumerateSourceFiles();
 
 let checked = 0;
 const resolvedImports = [];
+const checkedFiles = [];
 for (const file of new Set(files.filter((path) => path.endsWith(".ts")))) {
   let source;
   try {
@@ -72,6 +73,7 @@ for (const file of new Set(files.filter((path) => path.endsWith(".ts")))) {
     throw cause;
   }
   checked += 1;
+  checkedFiles.push(file.replaceAll("\\", "/"));
   try {
     const imports = resolveModuleImports(file, source, root);
     resolvedImports.push(...imports);
@@ -91,7 +93,7 @@ for (const file of new Set(files.filter((path) => path.endsWith(".ts")))) {
 if (selected.length === 0) {
   const baselinePath = resolve(root, "scripts/lib/module-layers.baseline.json");
   const baseline = JSON.parse(await readFile(baselinePath, "utf8"));
-  const facts = layerGraphFacts(resolvedImports);
+  const facts = layerGraphFacts(resolvedImports, checkedFiles);
   if (printLayerBaseline) {
     console.log(
       JSON.stringify({ upward: facts.upward, cycles: facts.cycles }, null, 2),

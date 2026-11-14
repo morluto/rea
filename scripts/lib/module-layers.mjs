@@ -137,9 +137,14 @@ const mutualPairs = (edges) =>
  * units are not reported; every such cycle contains an upward import, which
  * the layer count already ratchets.
  */
-export const layerGraphFacts = (imports) => {
+export const layerGraphFacts = (imports, files = []) => {
   const edges = new Map();
   const undeclared = new Set();
+  for (const file of files) {
+    const unit = sourceUnit(file);
+    if (unit !== undefined && UNIT_LAYERS[unit] === undefined)
+      undeclared.add(unit);
+  }
   for (const { file, target } of imports) {
     const from = sourceUnit(file);
     const to = sourceUnit(target);

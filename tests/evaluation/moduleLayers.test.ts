@@ -53,6 +53,15 @@ describe("top-level module layers", () => {
       layerGraphFacts([edge("src/newProvider/A.ts", "src/domain/B.js")])
         .undeclared,
     ).toEqual(["newProvider"]);
+    expect(layerGraphFacts([], ["src/isolated/A.ts"]).undeclared).toEqual([
+      "isolated",
+    ]);
+    expect(
+      layerGraphFacts(
+        [edge("src/isolated/A.ts", "src/isolated/B.js")],
+        ["src/isolated/A.ts"],
+      ).undeclared,
+    ).toEqual(["isolated"]);
   });
 
   it("fails on growth and only reports shrinkage", () => {
