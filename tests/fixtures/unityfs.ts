@@ -197,8 +197,7 @@ export const buildUnityFs = (
  * Fixture for a raw LZ4 block whose match reaches back 513 bytes:
  * 513 literal bytes, a 513-byte match at distance 513, and five final
  * literal bytes. The uncompressed ~1 KiB artifact exercises decoded-byte
- * identity at a long-distance match the shared decoder has to grow from the
- * source of the match into its own output.
+ * identity for a non-overlapping long-distance match.
  */
 const lz4LongDistanceBlock = (plain: Buffer): Buffer => {
   if (plain.length !== 1031)
