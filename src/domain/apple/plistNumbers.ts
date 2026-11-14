@@ -45,6 +45,26 @@ export const createPlistNumberCollector = () => {
   };
 };
 
+/**
+ * Drop integer literals already decoded exactly from their source objects, so their
+ * rounded values no longer collide with integral reals during value-based association.
+ */
+export const withoutDecodedPlistIntegers = (
+  literals: PlistNumberLiterals,
+  decimals: Iterable<string>,
+): PlistNumberLiterals => {
+  const integers = new Map(
+    [...literals.integers].map(([rounded, set]) => [rounded, new Set(set)]),
+  );
+  for (const decimal of decimals) {
+    const rounded = Number(BigInt(decimal));
+    const candidates = integers.get(rounded);
+    candidates?.delete(decimal);
+    if (candidates?.size === 0) integers.delete(rounded);
+  }
+  return { ...literals, integers };
+};
+
 /** One association established from source literals, before adapter projection. */
 type PlistNumberSource =
   | { readonly kind: "integer"; readonly decimal: string }
@@ -117,17 +137,18 @@ export const createPlistNumberProjection = (literals: PlistNumberLiterals) => {
   };
   return {
     project: map,
-    limitations: () => [
+    /** `decodedExactIntegers` counts integers already decoded exactly from their source objects. */
+    limitations: (decodedExactIntegers = 0) => [
       ...(literals.incomplete ? [incompletePlistNumberLimitation] : []),
       ...(literals.unsafeIntegerLiterals === 0
         ? []
         : [
             `${String(literals.unsafeIntegerLiterals)} observed integer literal(s) in the original archive exceed the exact range of a JSON number. Decoded numbers may lose integer precision unless represented as { "$plist_type": "integer", "decimal": "<exact digits>" }; the original archive bytes retain those literals.`,
           ]),
-      ...(exactIntegerCount === 0
+      ...(exactIntegerCount + decodedExactIntegers === 0
         ? []
         : [
-            `${String(exactIntegerCount)} unambiguous integer value(s) are reported with exact decimal text as { "$plist_type": "integer", "decimal": "<exact digits>" }.`,
+            `${String(exactIntegerCount + decodedExactIntegers)} unambiguous integer value(s) are reported with exact decimal text as { "$plist_type": "integer", "decimal": "<exact digits>" }.`,
           ]),
       ...(ambiguousNumberCount === 0
         ? []

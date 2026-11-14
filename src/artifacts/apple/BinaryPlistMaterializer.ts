@@ -74,11 +74,16 @@ const scalarOccurrence = (
   return value;
 };
 
-/** Decode validated source containers without losing dictionary keys or alias occurrence identity. */
+/**
+ * Decode validated source containers without losing dictionary keys or alias occurrence identity.
+ * With `exactIntegers`, an integer object beyond the exact range of a JSON number decodes as its
+ * exact `bigint` source value instead of the pinned decoder's rounded number.
+ */
 export const decodeBinaryPlistValue = (
   bytes: Buffer,
   plan: PlistDecodePreflight,
   metadata: BinaryPlistScalarMetadata = scanBinaryPlistScalars(bytes, plan),
+  { exactIntegers = false }: { readonly exactIntegers?: boolean } = {},
 ): unknown => {
   const source = plan.binaryValuePlan;
   if (source === undefined)
@@ -90,6 +95,17 @@ export const decodeBinaryPlistValue = (
       source.scalars.map(({ object }) => object),
     ),
   ) as unknown[];
+  if (exactIntegers && metadata.exactIntegers.length > 0) {
+    const layout = readBinaryPlistLayout(bytes);
+    if (!layout.ok) throw new RangeError("binary plist trailer is truncated");
+    const exact = new Map(
+      metadata.exactIntegers.map(({ offset, value }) => [offset, value]),
+    );
+    source.scalars.forEach(({ object }, index) => {
+      const value = exact.get(Number(layout.value.objectOffset(object)));
+      if (value !== undefined) scalars[index] = value;
+    });
+  }
   const scalarIndex = new Map(
     source.scalars.map((scalar, index) => [scalar.object, index]),
   );
