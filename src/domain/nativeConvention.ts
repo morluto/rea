@@ -47,11 +47,11 @@ export const nativeRuntimeConvention = (
   return null;
 };
 
-/** Swift runtime libraries are `libswift*.dylib` segments, not every dynamic library. */
+/** Swift runtime libraries are `libswift*.dylib` files, not ancestor directories. */
 export const isSwiftRuntimeLibrary = (path: string): boolean =>
-  path
-    .split("/")
-    .some((segment) => /^libswift.+\.dylib$/u.test(foldSegment(segment)));
+  /^libswift.+\.dylib$/u.test(
+    foldSegment(path.slice(path.lastIndexOf("/") + 1)),
+  );
 
 /** Unity names the pre-IL2CPP managed backup `<Product>_BackUpThisFolder_ButDontShipItWithYourGame`. */
 const UNITY_IL2CPP_BACKUP_SUFFIX =
