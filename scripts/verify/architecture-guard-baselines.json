@@ -360,7 +360,7 @@
     "src/domain/zipEndOfCentralDirectory.ts": 8,
     "src/domain/zipPackageFormat.ts": 3,
     "src/dotnet/ManagedConstantValue.ts": 12,
-    "src/dotnet/ManagedFieldConstants.ts": 1,
+    "src/dotnet/ManagedConstants.ts": 1,
     "src/dotnet/ManagedFieldDefinitionRows.ts": 1,
     "src/dotnet/ManagedMemberInstructionDecoder.ts": 30,
     "src/dotnet/ManagedMemberPointers.ts": 2,

@@ -2,17 +2,14 @@ import type {
   ManagedMemberInspection,
   ManagedParseIssue,
 } from "../domain/managed/managedArtifact.js";
+import { BinaryReader } from "../native/metadata/BinaryContainer.js";
 import type { ManagedConstantReader } from "./ManagedConstants.js";
 import { managedDecodeBudget } from "./ManagedDecodeBudget.js";
 import {
   metadataRowOffset,
   type ManagedMetadataLayout,
 } from "./ManagedMetadataLayout.js";
-import {
-  metadataRowCursor,
-  metadataToken,
-  readMetadataString,
-} from "./ManagedMetadataHeaps.js";
+import { metadataToken, readMetadataString } from "./ManagedMetadataHeaps.js";
 import {
   memberListDefinitionRow,
   memberListListsDefinition,
@@ -131,6 +128,33 @@ const attributedRun = (
 };
 
 /**
+ * Param columns (ECMA-335 II.22.33): Flags and Sequence, then the Name string
+ * index. Layout admission bounds every row of the table, and the checked
+ * reader names any range that is not.
+ */
+const readParamRow = (
+  reader: BinaryReader,
+  layout: ManagedMetadataLayout,
+  row: number,
+): {
+  readonly offset: number;
+  readonly flags: number;
+  readonly sequence: number;
+  readonly nameIndex: number;
+} => {
+  const offset = metadataRowOffset(layout, 8, row);
+  return {
+    offset,
+    flags: reader.u16(offset),
+    sequence: reader.u16(offset + 2),
+    nameIndex:
+      layout.stringIndexSize === 2
+        ? reader.u16(offset + 4)
+        : reader.u32(offset + 4),
+  };
+};
+
+/**
  * ECMA-335 II.22.26 with ParamPtr: a method owns the Param rows its pointer
  * positions name. A row no pointer lists has no owning run, so a default it
  * declares could belong to any method and no method's defaults are complete.
@@ -138,14 +162,15 @@ const attributedRun = (
  */
 const unlistedParameterDefault = (
   bytes: Buffer,
+  reader: BinaryReader,
   layout: ManagedMetadataLayout,
   constant: ManagedConstantReader,
 ): ManagedReaderFailure | null => {
   const rows = layout.table(8)?.rowCount ?? 0;
   for (let row = 1; row <= rows; row += 1) {
     if (memberListListsDefinition(bytes, layout, 8, row)) continue;
-    const offset = metadataRowOffset(layout, 8, row);
-    if (constant(8, row, bytes.readUInt16LE(offset)) === null) continue;
+    const { offset, flags } = readParamRow(reader, layout, row);
+    if (constant(8, row, flags) === null) continue;
     return managedFailure(
       "invalid-row",
       `metadata.Param:${metadataToken(8, row)}`,
@@ -167,6 +192,7 @@ export const createManagedParameterDefaultReader = (
   issues: ManagedParseIssue[],
   constant: ManagedConstantReader,
 ): ((methodRow: number) => ParameterDefault[] | null) => {
+  const reader = new BinaryReader(bytes, true, "managed");
   let runs: ParamRuns | undefined;
   let unlisted: ManagedReaderFailure | null | undefined;
   return (methodRow) => {
@@ -176,30 +202,29 @@ export const createManagedParameterDefaultReader = (
     try {
       runs ??= readParamRuns(bytes, layout);
       const { start, end } = attributedRun(bytes, layout, runs, methodRow);
-      unlisted ??= unlistedParameterDefault(bytes, layout, constant);
+      unlisted ??= unlistedParameterDefault(bytes, reader, layout, constant);
       if (unlisted !== null) throw unlisted;
       const defaults: ParameterDefault[] = [];
       for (let position = start; position < end; position += 1) {
         const row = memberListDefinitionRow(bytes, layout, 8, position);
         // One unreadable Param row is reported without hiding its siblings.
         const entry = readManagedValue((): ParameterDefault | null => {
-          const flags = bytes.readUInt16LE(metadataRowOffset(layout, 8, row));
-          const declared = constant(8, row, flags);
+          const param = readParamRow(reader, layout, row);
+          const declared = constant(8, row, param.flags);
           if (declared === null) return null;
-          const cursor = metadataRowCursor(bytes, layout, 8, row);
-          cursor.readUInt16();
-          const sequence = cursor.readUInt16();
+          // A retained default carries the row bookkeeping its cursor did.
+          managedDecodeBudget(layout).reserveRow(8, row, param.offset);
           return {
             token: metadataToken(8, row),
-            row_offset: cursor.start,
-            sequence,
+            row_offset: param.offset,
+            sequence: param.sequence,
             name: readMetadataString(
               bytes,
               layout,
-              cursor.readIndex(layout.stringIndexSize),
+              param.nameIndex,
               layout.strings.size,
             ),
-            flags,
+            flags: param.flags,
             constant: declared,
           };
         }, issues);

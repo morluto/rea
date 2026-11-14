@@ -1,3 +1,4 @@
+import { BinaryReader } from "../native/metadata/BinaryContainer.js";
 import {
   metadataRowOffset,
   type ManagedMetadataLayout,
@@ -69,11 +70,10 @@ export const readMethodParamList = (
     8 +
     layout.stringIndexSize +
     layout.blobIndexSize;
+  const reader = new BinaryReader(bytes, true, "managed");
   return {
     raw:
-      layout.tableIndexSize(8) === 2
-        ? bytes.readUInt16LE(offset)
-        : bytes.readUInt32LE(offset),
+      layout.tableIndexSize(8) === 2 ? reader.u16(offset) : reader.u32(offset),
     offset,
   };
 };

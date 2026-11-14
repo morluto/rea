@@ -1,3 +1,4 @@
+import { BinaryReader } from "../native/metadata/BinaryContainer.js";
 import { managedDecodeBudget } from "./ManagedDecodeBudget.js";
 import type {
   ManagedMetadataLayout,
@@ -155,7 +156,8 @@ export const memberListDefinitionRow = (
   // The index validates every pointer row once and replays its failure.
   memberListIndex(bytes, layout, table);
   const offset = pointers.offset + (position - 1) * pointers.rowSize;
+  const reader = new BinaryReader(bytes, true, "managed");
   return layout.tableIndexSize(table) === 2
-    ? bytes.readUInt16LE(offset)
-    : bytes.readUInt32LE(offset);
+    ? reader.u16(offset)
+    : reader.u32(offset);
 };
