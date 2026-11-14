@@ -12,6 +12,8 @@ import {
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { ghidraReleaseLineAccepted as ghidraReleaseLineAcceptedByLine } from "./lib/ghidra-nativeaot-release-gate.mjs";
+
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const source = resolve(
   process.env.REA_NATIVEAOT_SOURCE ??
@@ -157,10 +159,13 @@ function propertyValue(content, name) {
   return null;
 }
 
-/** Release line supported by the separately pinned NativeAOT integration. */
+/** Release line supported by the separately pinned NativeAOT integration.
+ *
+ * Delegates to `scripts/lib` so the boundary suite exercises the same
+ * predicate this build runs.
+ */
 function ghidraReleaseLineAccepted(raw) {
-  const match = /^(\d+)\.(\d+)(?:\.(\d+))?([-+].*)?$/u.exec(raw ?? "");
-  return match !== null && Number(match[1]) === 12 && Number(match[2]) >= 1;
+  return ghidraReleaseLineAcceptedByLine(raw);
 }
 
 function capture(command, args) {

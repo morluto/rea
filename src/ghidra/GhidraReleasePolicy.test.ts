@@ -79,4 +79,22 @@ describe("ghidraVersionDetail", () => {
     expect(detail).toContain("compatible");
     expect(detail).toContain(SUPPORTED_GHIDRA_VERSION);
   });
+
+  it("names the verified build alone, with no accepted-line suffix", () => {
+    // The doctor's `ghidra-version` detail is user-visible; the certified build
+    // must read as plain "12.2", not "12.2; compatible ... (verified build 12.2)".
+    expect(ghidraVersionDetail("12.2")).toBe("12.2");
+  });
+
+  it("keeps the accepted line while naming the verified build", () => {
+    expect(ghidraVersionDetail("12.1.4")).toBe(
+      `12.1.4; compatible ${ghidraReleaseLine()} release (verified build ${SUPPORTED_GHIDRA_VERSION})`,
+    );
+  });
+
+  it("states the accepted line for an unsupported build", () => {
+    expect(ghidraVersionDetail("13.0")).toBe(
+      `13.0; accepted releases are ${ghidraReleaseLine()} (verified build ${SUPPORTED_GHIDRA_VERSION})`,
+    );
+  });
 });
