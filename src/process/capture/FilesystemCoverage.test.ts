@@ -624,6 +624,7 @@ it.each(["nested", "outside", "no-roots"] as const)(
           ),
         cleanup: (path) => rm(path, { recursive: true, force: true }),
       },
+      createTestProcessCaptureResourceScope(),
     );
     try {
       const expectedPaths =
