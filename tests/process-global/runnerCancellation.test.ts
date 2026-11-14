@@ -51,7 +51,9 @@ it.runIf(process.platform !== "win32")(
       const fs = require("node:fs");
       process.on("SIGTERM", () => {});
       fs.writeFileSync(${JSON.stringify(activityPath)}, "active\\n");
-      fs.writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));
+      // The runner polls for this path; publish only the complete PID by renaming.
+      fs.writeFileSync(${JSON.stringify(`${pidPath}.pending`)}, String(process.pid));
+      fs.renameSync(${JSON.stringify(`${pidPath}.pending`)}, ${JSON.stringify(pidPath)});
       setInterval(() => fs.appendFileSync(${JSON.stringify(activityPath)}, "active\\n"), 20);
     `;
     const runner = launch(
