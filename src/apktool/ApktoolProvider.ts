@@ -58,6 +58,7 @@ import {
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { finalizedResult, runOwned } from "../providers/runOwned.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
@@ -779,44 +780,31 @@ export class ApktoolProvider {
         });
       result = err(retained);
     }
-    const released = await this.#artifacts.release(owner);
-    const observation =
-      result.ok && (released.kind === "failed" || signal?.aborted === true)
-        ? createAnalysisExecutionEvidence(
+    const completed = result;
+    return finalizedResult(
+      await runOwned(async () => completed, {
+        providerId: "apktool",
+        operation,
+        signal,
+        close: async () => {
+          const released = await this.#artifacts.release(owner);
+          if (released.kind === "failed")
+            throw new ProviderCleanupError(
+              "apktool",
+              [root],
+              {},
+              { operation, cause: released.cause },
+            );
+        },
+        cleanupLeases: [lease],
+        partial: (execution) =>
+          createAnalysisExecutionEvidence(
             operation,
             input,
-            result.value,
+            execution,
             "observed",
-          )
-        : undefined;
-    if (result.ok && signal?.aborted)
-      result = err(
-        cancelledBy(operation, signal, { partialObservation: observation }),
-      );
-    if (released.kind === "failed") {
-      const cleanup = new ProviderCleanupError(
-        "apktool",
-        [root],
-        {},
-        {
-          operation,
-          cause: released.cause,
-          ...(observation === undefined
-            ? {}
-            : { partialObservation: observation }),
-        },
-      );
-      new AnalysisCleanupLeaseGroup(cleanup, [lease]);
-      return err(
-        result.ok
-          ? cleanup
-          : analysisErrorWithCleanupFailure(
-              result.error,
-              cleanup,
-              operation,
-            ).bindCleanupDependencies([result.error, cleanup]),
-      );
-    }
-    return result;
+          ),
+      }),
+    );
   }
 }

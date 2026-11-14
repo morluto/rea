@@ -1,3 +1,7 @@
+import {
+  AnalysisCleanupLeaseGroup,
+  type AnalysisCleanupLease,
+} from "../artifacts/AnalysisCleanupLease.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   AnalysisError,
@@ -64,11 +68,22 @@ export interface RecoveredCompletion<Value> {
 export interface RunOwnedOptions<Value> {
   readonly providerId: string;
   readonly operation: string;
-  readonly signal: AbortSignal;
+  readonly signal?: AbortSignal | undefined;
   /** Releases everything the work acquired; awaited before the signal is read. */
   readonly close: () => Promise<void>;
+  /**
+   * The partial observation a pre-commit cancellation or a retained cleanup
+   * keeps of a completed value.
+   */
+  readonly partial: (value: Value) => AnalysisPartialObservation;
   /** Names the owned resources when a non-REA close failure names none. */
   readonly fallbackResource?: string;
+  /**
+   * The exact leases whose confirmed release resolves a close failure; they
+   * also attribute its resources. Omit them when close throws an error its
+   * producer already bound.
+   */
+  readonly cleanupLeases?: readonly AnalysisCleanupLease[];
   /**
    * Publishes a completed value. Cancellation observed before it runs cancels
    * the work; cancellation observed after it keeps the committed value.
@@ -114,7 +129,7 @@ const closeFailure = (
 };
 
 /** Run owned work, close its owner, and apply the finalization precedence once. */
-export const runOwned = async <Value extends AnalysisPartialObservation>(
+export const runOwned = async <Value>(
   work: () => Promise<Result<Value, AnalysisError>>,
   options: RunOwnedOptions<Value>,
 ): Promise<Finalized<Value>> => {
@@ -145,15 +160,15 @@ export const runOwned = async <Value extends AnalysisPartialObservation>(
         ok: false,
         error:
           cause instanceof AnalysisError
-            ? cause.retainPartialObservation(value)
+            ? cause.retainPartialObservation(options.partial(value))
             : new ProviderAdapterError(options.providerId, options.operation, {
                 cause,
-                partialObservation: value,
+                partialObservation: options.partial(value),
               }),
       };
     }
   };
-  if (primary.ok && options.commit !== undefined && !options.signal.aborted)
+  if (primary.ok && options.commit !== undefined && !isAborted(options.signal))
     primary = await commit(primary.value);
   options.inspectPrimary?.(primary);
   const hadIncompleteCleanup = !primary.ok && primary.error.cleanupIncomplete;
@@ -163,7 +178,10 @@ export const runOwned = async <Value extends AnalysisPartialObservation>(
     // they can confirm it, so its status is read again afterwards.
     await options.close();
   } catch (cause) {
-    cleanup = { kind: "retained", failure: closeFailure(cause, options) };
+    const failure = closeFailure(cause, options);
+    if (options.cleanupLeases !== undefined)
+      new AnalysisCleanupLeaseGroup(failure, options.cleanupLeases);
+    cleanup = { kind: "retained", failure };
   }
   const signal = options.signal;
   let outcome:
@@ -197,7 +215,7 @@ export const runOwned = async <Value extends AnalysisPartialObservation>(
     outcome.ok &&
     !primary.ok &&
     options.commit !== undefined &&
-    !signal.aborted
+    !isAborted(signal)
   ) {
     const publication = await commit(outcome.value);
     if (!publication.ok) {
@@ -235,7 +253,7 @@ export const runOwned = async <Value extends AnalysisPartialObservation>(
       outcome = {
         ok: false,
         error: cancelledBy(options.operation, signal, {
-          partialObservation: outcome.value,
+          partialObservation: options.partial(outcome.value),
           ...(outcome.diagnostics === undefined
             ? {}
             : { diagnostics: outcome.diagnostics }),
@@ -248,7 +266,9 @@ export const runOwned = async <Value extends AnalysisPartialObservation>(
       return {
         kind: "completed-cleanup-retained",
         value: outcome.value,
-        error: cleanup.failure.retainPartialObservation(outcome.value),
+        error: cleanup.failure.retainPartialObservation(
+          options.partial(outcome.value),
+        ),
       };
     return {
       kind: cancelled ? "cancelled" : "failed",

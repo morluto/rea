@@ -9,6 +9,7 @@ import {
   type AnalysisError,
   type AnalysisPartialObservation,
 } from "../domain/analysisErrorBase.js";
+import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -35,6 +36,7 @@ const options = (controller: AbortController, close: () => Promise<void>) => ({
   operation: "fixture_operation",
   signal: controller.signal,
   close,
+  partial: (completed: AnalysisPartialObservation) => completed,
 });
 
 describe("runOwned precedence", () => {
@@ -160,6 +162,88 @@ describe("runOwned precedence", () => {
     const result = finalizedResult(finalized);
     if (result.ok) throw new Error("expected failure");
     expect(result.error._tag).toBe("ProviderAdapterError");
+  });
+});
+
+describe("runOwned completed-value projection and lease binding", () => {
+  const counted = async (): Promise<
+    Result<{ readonly count: number }, AnalysisError>
+  > => ok({ count: 3 });
+  const project = (completed: { readonly count: number }) => ({
+    kind: "retained-evidence" as const,
+    evidence_id: `counted-${String(completed.count)}`,
+  });
+
+  it("projects the completed value when publication fails", async () => {
+    const finalized = await runOwned(counted, {
+      ...options(new AbortController(), async () => undefined),
+      partial: project,
+      commit: async () => {
+        throw new Error("publication failed");
+      },
+    });
+    const result = finalizedResult(finalized);
+    if (result.ok) throw new Error("expected publication failure");
+    expect(result.error.partialObservation).toEqual(project({ count: 3 }));
+  });
+
+  it("keeps the projected partial when cancellation arrives during final cleanup", async () => {
+    const controller = new AbortController();
+    const finalized = await runOwned(counted, {
+      ...options(controller, closeThenAbort(controller)),
+      partial: project,
+    });
+    const result = finalizedResult(finalized);
+    if (result.ok) throw new Error("expected cancellation");
+    expect(result.error.partialObservation).toEqual(project({ count: 3 }));
+  });
+
+  it("binds a typed close failure to the exact lease that later confirms release", async () => {
+    const controller = new AbortController();
+    let attempts = 0;
+    const lease = new AnalysisCleanupLease(async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("close failed");
+    }, ["/owned/root"]);
+    const finalized = await runOwned(counted, {
+      ...options(controller, () => lease.release()),
+      partial: project,
+      cleanupLeases: [lease],
+    });
+    expect(finalized.kind).toBe("completed-cleanup-retained");
+    const result = finalizedResult(finalized);
+    if (result.ok) throw new Error("expected cleanup failure");
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.cleanupResources).toEqual(["/owned/root"]);
+    expect(result.error.partialObservation).toEqual(project({ count: 3 }));
+    await lease.release();
+    expect(result.error.cleanupIncomplete).toBe(false);
+  });
+
+  it("binds a typed close failure to the leases while the failed work stays primary", async () => {
+    const controller = new AbortController();
+    const failure = new AnalysisProtocolError("fixture failure");
+    const typed = new ProviderCleanupError("fixture", ["/producer/root"], {
+      reason: "still owned",
+    });
+    const lease = new AnalysisCleanupLease(
+      async () => undefined,
+      ["/owned/root"],
+    );
+    const finalized = await runOwned(async () => err(failure), {
+      ...options(controller, async () => {
+        throw typed;
+      }),
+      partial: project,
+      cleanupLeases: [lease],
+    });
+    const result = finalizedResult(finalized);
+    if (result.ok) throw new Error("expected failure");
+    expect(primaryAnalysisError(result.error)).toBe(failure);
+    expect(result.error.cleanupResources).toEqual(["/owned/root"]);
+    await lease.release();
+    expect(typed.cleanupIncomplete).toBe(false);
+    expect(result.error.cleanupIncomplete).toBe(false);
   });
 });
 
