@@ -16,6 +16,7 @@ import { estimateTokenCount } from "tokenx";
 import { parseCliOutputArguments } from "../../../dist/cliOutput.js";
 import { createCliResultOutput } from "../../../dist/cli/cliResultOutput.js";
 import { createEvidence } from "../../../dist/domain/evidence.js";
+import { unknownTarget } from "../../../dist/domain/targetIdentity.js";
 import {
   VerifierFixture,
   withVerifierFixture,
@@ -59,7 +60,7 @@ fixture.releaseAfter(async () => {
 });
 await withVerifierFixture(fixture, async () => {
   const evidence = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "large-output-fixture", name: "Large output fixture", version: "1" },
     {
       operation: "inspect_fixture",

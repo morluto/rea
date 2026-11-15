@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { nativeDeadlineRecovery } from "../../domain/native/nativeDeadlines.js";
 import { Budget } from "../../domain/budget.js";
@@ -1213,7 +1214,7 @@ export class ReverseEngineeringService {
     ];
     const evidence = createEvidence(
       absolutePath === undefined || digest === undefined
-        ? undefined
+        ? unknownTarget("not-observed")
         : { path: absolutePath, sha256: digest, format: "unknown" },
       profile.identity,
       {

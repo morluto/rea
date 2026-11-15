@@ -130,7 +130,7 @@ async function callTool(name, args) {
 // ---------------------------------------------------------------------------
 
 function verifyRegions(evidence) {
-  assert.equal(evidence.subject.digest.sha256, oracle.sha256);
+  assert.equal(evidence.subject.identity.sha256, oracle.sha256);
 
   const parsed = firmwareResultSchemas.inspect_firmware_regions.parse(
     evidence.normalized_result,
@@ -360,7 +360,7 @@ async function stageGhidra(mcpFiles) {
   });
   const dossier = parseEvidence(dossierRaw);
   assert.equal(
-    dossier.subject.digest.sha256,
+    dossier.subject.identity.sha256,
     oracle.files["usr/bin/probe"].sha256,
   );
 

@@ -3,13 +3,13 @@ import { awaitAcknowledgement } from "../../../../tests/fixtures/lifecycleAcknow
 import { readFile, rename, copyFile } from "node:fs/promises";
 import { expect, it, vi } from "vitest";
 import { ArtifactResourceScope } from "../../../resources/ArtifactResourceScope.js";
-import { ZipArtifactReader } from "../../../artifacts/ZipArtifactReader.js";
 import { PlaywrightTraceDecoder } from "./PlaywrightTraceDecoder.js";
 import { PlaywrightTraceService } from "../../../application/playwrightTrace/PlaywrightTraceService.js";
 import { parseEvidence } from "../../../domain/evidence.js";
 import { playwrightTraceSchema } from "../../../domain/playwrightTrace/playwrightTrace.js";
 import { playwrightTraceFixture } from "../../../../tests/fixtures/playwrightTrace.js";
 import { OwnedFileHandle } from "../../../filesystem/OwnedFileHandle.js";
+import { ZipArtifactReader } from "../../../resources/index.js";
 
 it("preserves only fully verified streams when cancellation arrives before the network member", async () => {
   const fixture = await playwrightTraceFixture();

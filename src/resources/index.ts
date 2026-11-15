@@ -25,6 +25,7 @@ export {
   ArtifactFileSource,
   assertArtifactFileSelectedSource,
 } from "./ArtifactFileSource.js";
+export { translateArtifactFailure } from "./ArtifactOperationFailure.js";
 export {
   ArtifactFileCancelled,
   ArtifactFileCleanupFailure,
@@ -32,6 +33,7 @@ export {
   artifactFileCompletion,
   artifactFilePrimaryFacts,
   artifactOperationCause,
+  artifactParseFailure,
   artifactReadCancelledBy,
   artifactSelectedPathErrno,
   assertArtifactReadActive,
@@ -125,3 +127,9 @@ export {
   targetDigestChangedFailure,
   withArtifactTargetIdentity,
 } from "./withArtifactTargetIdentity.js";
+export {
+  ZIP_READER_OPTIONS,
+  ZipArtifactReader,
+  decodeZipEntryText,
+  zipEntryPath,
+} from "./ZipArtifactReader.js";

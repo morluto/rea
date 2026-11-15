@@ -12,6 +12,7 @@ import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   ArtifactResourceScope,
+  artifactParseFailure,
 } from "../../resources/index.js";
 import { fixedNativeAllowance } from "../../domain/native/nativeDeadlines.js";
 import type { PeResourcesPort } from "../../ports/binaryDiagnostics/PeResourcesPort.js";
@@ -31,8 +32,9 @@ import { err, ok } from "../../domain/result.js";
 import { PE_RESOURCES_PROVIDER } from "../../domain/investigationProviders.js";
 import {
   parsePeResources,
+  peResourceLimitBoundary,
   PE_RESOURCE_METADATA_BYTES,
-} from "../../artifacts/pe/PeResourceParser.js";
+} from "../../domain/pe/peResourceInventory.js";
 
 /** Portable parser over one bounded, identity-checked regular file. */
 export class PeResourcesProvider implements PeResourcesPort {
@@ -62,18 +64,23 @@ export class PeResourcesProvider implements PeResourcesPort {
           undefined,
           this.#resources,
         );
-        return ok(
-          await parsePeResources(
-            snapshot.bytes,
-            {
-              path: input.path,
-              sha256: snapshot.sha256,
-              bytes: snapshot.bytes.length,
-            },
-            input,
+        const { bytes, sha256 } = snapshot;
+        try {
+          return ok(
+            await parsePeResources(
+              bytes,
+              { path: input.path, sha256, bytes: bytes.length },
+              input,
+              options?.signal,
+            ),
+          );
+        } catch (cause) {
+          throw artifactParseFailure(
+            cause,
             options?.signal,
-          ),
-        );
+            peResourceLimitBoundary,
+          );
+        }
       });
     } catch (cause) {
       return err(peResourcesFailure(cause, input, snapshot));

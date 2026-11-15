@@ -1,3 +1,4 @@
+import { displayedEvidenceSubject } from "../../fixtures/evidenceSubject.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -54,11 +55,10 @@ cliTest(
       records: [
         {
           ...record,
-          subject: {
-            ...record.subject!,
+          subject: displayedEvidenceSubject(record.subject, {
             name: "renamed.elf",
             local_path: join(root, "renamed.elf"),
-          },
+          }),
         },
       ],
     };

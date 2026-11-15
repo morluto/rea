@@ -101,7 +101,7 @@ it("records the selected image and each slot range as Evidence", async () => {
   if (!result.ok) throw result.error;
   expect(result.value).toMatchObject({
     confidence: "observed",
-    subject: { format: "elf", architecture: "x86_64" },
+    subject: { identity: { format: "elf", architecture: "x86_64" } },
     normalized_result: report,
     locations: [
       { kind: "artifact-path", path: report.artifact.path },
@@ -134,7 +134,9 @@ it.each(["arm64", "x86_64", undefined] as const)(
       return;
     }
     expect(result.value).toMatchObject({
-      subject: { format: "mach-o-universal", architecture: "arm64" },
+      subject: {
+        identity: { format: "mach-o-universal", architecture: "arm64" },
+      },
       normalized_result: parsed,
       parameters: { architecture: "arm64" },
     });

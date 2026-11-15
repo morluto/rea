@@ -13,6 +13,7 @@ import {
 import {
   ArtifactReaderFailure,
   type ArtifactReader,
+  ZipArtifactReader,
 } from "../resources/index.js";
 import type { ArtifactReaderAdmission } from "./ArtifactReaderAdmission.js";
 import { AsarArtifactReader } from "./AsarArtifactReader.js";
@@ -45,7 +46,6 @@ import { NtfsMftArtifactReader } from "./NtfsMftArtifactReader.js";
 import { UImageArtifactReader } from "./UImageArtifactReader.js";
 import { UnityFsArtifactReader } from "./UnityFsArtifactReader.js";
 import { WxapkgArtifactReader } from "./WxapkgArtifactReader.js";
-import { ZipArtifactReader } from "./ZipArtifactReader.js";
 
 /** How inventory describes a format when no reader was constructed. */
 export type AbsentInventory = "platform" | "universal" | "unavailable" | "root";

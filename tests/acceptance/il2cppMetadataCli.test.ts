@@ -1,3 +1,4 @@
+import { fileIdentity } from "../fixtures/evidenceSubject.js";
 import { desktopSummarySchema } from "../../src/domain/analysisView/desktopApplicationView.js";
 import { createHash } from "node:crypto";
 import {
@@ -768,7 +769,7 @@ it("imports historical metadata Evidence with unavailable member collections wit
   const historical = createEvidence(
     {
       path,
-      sha256: original.subject!.digest.sha256,
+      sha256: fileIdentity(original.subject).sha256,
       format: "file",
     },
     original.provider,

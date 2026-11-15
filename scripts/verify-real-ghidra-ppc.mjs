@@ -241,7 +241,10 @@ try {
       );
       assert.ok(snapshot.evidence_bundle.records.length > 0);
       for (const evidence of snapshot.evidence_bundle.records)
-        assert.equal(parseEvidence(evidence).subject?.architecture, "powerpc");
+        assert.equal(
+          parseEvidence(evidence).subject?.identity.architecture,
+          "powerpc",
+        );
       await call("open_binary", {
         path: fixture.path,
         provider_id: "ghidra",
@@ -265,8 +268,8 @@ try {
         { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
       );
       const evidence = parseEvidence(JSON.parse(cli.stdout));
-      assert.equal(evidence.subject?.architecture, "powerpc");
-      assert.equal(evidence.subject?.digest.sha256, fixture.sha256);
+      assert.equal(evidence.subject?.identity.architecture, "powerpc");
+      assert.equal(evidence.subject?.identity.sha256, fixture.sha256);
       const cliDossier = functionDossierSchema.parse(
         evidence.normalized_result,
       );

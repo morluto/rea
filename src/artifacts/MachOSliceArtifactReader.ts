@@ -18,7 +18,7 @@ import type { ArtifactCommand } from "../domain/artifactGraph.js";
 import {
   XcrunCommandRunner,
   type NativeCommandRunner,
-} from "../native/CommandRunner.js";
+} from "../providers/NativeCommandRunner.js";
 import type { MachoSlice } from "../domain/apple/dylibResolution.js";
 import {
   machoArchitectureFamily,

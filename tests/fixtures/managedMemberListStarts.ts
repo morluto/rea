@@ -1,7 +1,7 @@
-import { readManagedMetadataLayout } from "../../src/dotnet/ManagedMetadataLayout.js";
+import { readManagedMetadataLayout } from "../../src/domain/managed/managedMetadataLayout.js";
 import { buildManagedPeFixture } from "../../src/dotnet/ManagedPe.fixture.js";
-import { readManagedPeLayout } from "../../src/dotnet/ManagedPeReader.js";
-import { readTypeDefinitionRowFacts } from "../../src/dotnet/ManagedTypeDefinitionRows.js";
+import { readManagedPeLayout } from "../../src/domain/managed/managedPeReader.js";
+import { readTypeDefinitionRowFacts } from "../../src/domain/managed/managedTypeDefinitionRows.js";
 
 /** Select TypeDef list coordinates while retaining the fixture's readable member rows. */
 export const managedMemberListStartsFixture = (
