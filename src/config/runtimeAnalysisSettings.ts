@@ -3,8 +3,8 @@ import {
   currentAnalysisOperationSnapshot,
   currentAnalysisSettingOverride,
 } from "../domain/analysisOperationSnapshot.js";
-import type { ConfigurationError } from "../domain/configurationErrors.js";
-import { ok, type Result } from "../domain/result.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
+import { err, ok, type Result } from "../domain/result.js";
 import type { AppConfig } from "./types.js";
 import {
   DEFAULT_GHIDRA_VALUE_FLOW_MAX_OPERATIONS,
@@ -24,6 +24,23 @@ import {
   parseNativeMatchingAllowance,
   type NativeMatchingAllowance,
 } from "./nativeMatchingAllowance.js";
+
+/**
+ * Read typed runtime settings at a request boundary. The views below throw the
+ * `ConfigurationError` of a malformed launch seed whenever no override covers
+ * it, which can first happen after startup (an override is reset); a caller
+ * that admits settings per request receives that refusal as a value.
+ */
+export const readRuntimeSetting = <T>(
+  read: () => T,
+): Result<T, ConfigurationError> => {
+  try {
+    return ok(read());
+  } catch (cause: unknown) {
+    if (cause instanceof ConfigurationError) return err(cause);
+    throw cause;
+  }
+};
 
 /**
  * Typed views read the enclosing operation snapshot, never the ambient

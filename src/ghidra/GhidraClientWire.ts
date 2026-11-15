@@ -1,6 +1,7 @@
 import type { Socket } from "node:net";
 
 import {
+  admitBridgeRequestLimit,
   bridgeRequestOversizeError,
   type BridgeMaxRequestBytes,
 } from "../config/bridgeMaxRequestBytes.js";
@@ -11,10 +12,14 @@ import {
 } from "../config/bridgeMaxReplyBytes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
-import { err, type Result } from "../domain/result.js";
+import { err, ok, type Result } from "../domain/result.js";
+import type { ConfigurationError } from "../domain/configurationErrors.js";
 import type { Logger } from "pino";
 import type { PendingOperations } from "../process/PendingOperations.js";
-import type { GhidraRequestOptions } from "./GhidraClientTypes.js";
+import type {
+  GhidraAdmittedLimits,
+  GhidraRequestOptions,
+} from "./GhidraClientTypes.js";
 import type {
   GhidraSessionError,
   GhidraSessionFailureFactory,
@@ -51,9 +56,26 @@ export class GhidraWire {
     return this.#replyLimit;
   }
 
-  /** Copy the effective reply ceiling in the admitting caller's context. */
-  admitReplyLimit(): BridgeMaxReplyBytes {
-    return admitBridgeReplyLimit(this.#options.bridgeMaxReplyBytes);
+  /**
+   * Copy the effective request and reply ceilings in the admitting caller's
+   * context. A malformed launch seed no override covers is an admission
+   * refusal carrying its `ConfigurationError`.
+   */
+  admitLimits(): Result<GhidraAdmittedLimits, GhidraSessionError> {
+    const requestLimit = admitBridgeRequestLimit(
+      this.#options.bridgeMaxRequestBytes,
+    );
+    if (!requestLimit.ok) return err(this.#refused(requestLimit.error));
+    const replyLimit = admitBridgeReplyLimit(this.#options.bridgeMaxReplyBytes);
+    if (!replyLimit.ok) return err(this.#refused(replyLimit.error));
+    return ok({
+      requestLimit: requestLimit.value,
+      replyLimit: replyLimit.value,
+    });
+  }
+
+  #refused(cause: ConfigurationError): GhidraSessionError {
+    return this.#options.failure("admission", cause.message, cause);
   }
 
   /** Write one authenticated request and return its correlated reply. */
@@ -96,13 +118,17 @@ export class GhidraWire {
         ? {}
         : { decompile_max_payload_mib: options.decompileMaxPayloadMiB }),
     };
+    const limits =
+      options.limits === undefined ? this.admitLimits() : ok(options.limits);
+    if (!limits.ok) return limits;
+    const { requestLimit, replyLimit } = limits.value;
     const payloadBytes = jsonValueByteLength(payloadValue);
     // Refuse before registering the operation and before any socket write, so
     // an oversized request never reaches the bridge or occupies a pending key.
-    if (payloadBytes > this.#options.bridgeMaxRequestBytes.maximumBytes) {
+    if (payloadBytes > requestLimit.maximumBytes) {
       const oversize = bridgeRequestOversizeError(
         method,
-        this.#options.bridgeMaxRequestBytes,
+        requestLimit,
         payloadBytes,
         "Ghidra",
       );
@@ -113,7 +139,7 @@ export class GhidraWire {
     const payload = JSON.stringify(payloadValue);
     // Only the request being written owns the next reply's ceiling; a
     // refused or still-queued request never changes it.
-    this.#replyLimit = options.replyLimit ?? this.admitReplyLimit();
+    this.#replyLimit = replyLimit;
     const response = this.#options.pending.wait(id, {
       ...(timeoutMs === undefined
         ? {}

@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { BridgeMaxRequestBytes } from "../config/bridgeMaxRequestBytes.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { ok, type Result } from "../domain/result.js";
 import { PendingOperations } from "../process/PendingOperations.js";
@@ -104,7 +105,13 @@ describe("GhidraWire reply ceiling", () => {
     const refused = await wire.request(
       "list_strings",
       { pattern: "x".repeat(1024) },
-      { timeoutMs: 1, replyLimit: { maximumBytes: 1, source: "runtime" } },
+      {
+        timeoutMs: 1,
+        limits: {
+          requestLimit: limit(512),
+          replyLimit: { maximumBytes: 1, source: "runtime" },
+        },
+      },
     );
     expect(refused.ok).toBe(false);
     expect(
@@ -112,9 +119,48 @@ describe("GhidraWire reply ceiling", () => {
       "a refused request leaves the written request's ceiling in force",
     ).toEqual({ maximumBytes: 8 * 1024 * 1024, source: "setting" });
 
-    void wire.request("ping", {}, { timeoutMs: 1, replyLimit: admitted });
+    void wire.request(
+      "ping",
+      {},
+      {
+        timeoutMs: 1,
+        limits: { requestLimit: limit(512), replyLimit: admitted },
+      },
+    );
     expect(wire.replyLimit()).toEqual(admitted);
   });
+});
+
+describe("GhidraWire ceiling admission", () => {
+  it.each([
+    ["request", "REA_BRIDGE_MAX_REQUEST_BYTES"],
+    ["reply", "REA_BRIDGE_MAX_REPLY_BYTES"],
+  ] as const)(
+    "returns a %s seed refused after startup as an admission failure",
+    async (which, setting) => {
+      // A malformed seed is refused by the runtime view once the override
+      // that covered it at startup is reset.
+      const refusal = new ConfigurationError(`${setting} is invalid`, {
+        settings: [{ setting, constraint: "a positive decimal integer" }],
+      });
+      const refused = {
+        get maximumBytes(): number {
+          throw refusal;
+        },
+        source: "setting" as const,
+      };
+      const { writes, pending, wire } =
+        which === "request" ? harness(refused) : harness(limit(8192), refused);
+
+      const result = await wire.request("ping", {}, {});
+
+      if (result.ok) throw new Error("Expected a configuration refusal");
+      expect(result.error.kind).toBe("admission");
+      expect(result.error.cause).toBe(refusal);
+      expect(writes).toEqual([]);
+      expect(pending.size).toBe(0);
+    },
+  );
 });
 
 describe("GhidraWire request ceiling", () => {

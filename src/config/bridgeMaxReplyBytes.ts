@@ -2,6 +2,9 @@ import { positiveDecimalIntegerSchema } from "./positiveDecimalInteger.js";
 
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
+import type { ConfigurationError } from "../domain/configurationErrors.js";
+import type { Result } from "../domain/result.js";
+import { readRuntimeSetting } from "./runtimeAnalysisSettings.js";
 
 import {
   DEFAULT_BRIDGE_MAX_REPLY_BYTES,
@@ -37,14 +40,17 @@ export const DEFAULT_BRIDGE_MAX_REPLY: BridgeMaxReplyBytes = {
  * Copy the effective ceiling when a request is admitted. Socket reads run
  * outside the request's async context, where a runtime override is not
  * visible, so each request carries the value it admitted and the reader
- * enforces it only while that request is the one on the wire.
+ * enforces it only while that request is the one on the wire. A runtime view
+ * refuses a malformed launch seed once no override covers it (for example
+ * after the override is reset), so admission returns that refusal.
  */
 export const admitBridgeReplyLimit = (
   limit: BridgeMaxReplyBytes,
-): BridgeMaxReplyBytes => ({
-  maximumBytes: limit.maximumBytes,
-  source: limit.source,
-});
+): Result<BridgeMaxReplyBytes, ConfigurationError> =>
+  readRuntimeSetting(() => ({
+    maximumBytes: limit.maximumBytes,
+    source: limit.source,
+  }));
 
 /** Bridges whose replies the shared JSON-line reader bounds. */
 export type BridgeReplyPeer = "Hopper" | "Ghidra";

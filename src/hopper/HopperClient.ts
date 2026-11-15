@@ -25,7 +25,7 @@ import {
   HopperTimeoutError,
 } from "../domain/hopperErrors.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { ConfigurationError } from "../domain/configurationErrors.js";
+import { readRuntimeSetting } from "../config/runtimeAnalysisSettings.js";
 import {
   hopperStartupFailure,
   type HopperStartupFailureDiagnostic,
@@ -81,6 +81,7 @@ import {
 } from "./HopperProcessDiagnostic.js";
 import { DEFAULT_HOPPER_STARTUP_TIMEOUT_MS } from "../domain/analysisResourceLimits.js";
 import {
+  admitBridgeRequestLimit,
   bridgeRequestLimitMismatchError,
   bridgeRequestOversizeError,
   DEFAULT_BRIDGE_MAX_REQUEST,
@@ -241,7 +242,7 @@ export class HopperClient {
         options.bridgeMaxRequestBytes ?? DEFAULT_BRIDGE_MAX_REQUEST,
     };
     this.#requests = new HopperRequestQueue(
-      ({ id, method, params, replyLimit }, failed) => {
+      ({ id, method, params, requestLimit, replyLimit }, failed) => {
         const socket = this.#socket;
         const token = this.#token;
         if (socket === undefined || socket.destroyed || token === undefined) {
@@ -264,13 +265,14 @@ export class HopperClient {
           return;
         }
         const payloadBytes = Buffer.byteLength(payload);
-        if (payloadBytes > this.#options.bridgeMaxRequestBytes.maximumBytes) {
+        const admitted = requestLimit ?? DEFAULT_BRIDGE_MAX_REQUEST;
+        if (payloadBytes > admitted.maximumBytes) {
           this.#requests.accept(
             id,
             err(
               bridgeRequestOversizeError(
                 method,
-                this.#options.bridgeMaxRequestBytes,
+                admitted,
                 payloadBytes,
                 "Hopper",
               ),
@@ -469,15 +471,13 @@ export class HopperClient {
           new HopperProtocolError("Hopper client is already started"),
       );
     }
-    let startupTimeoutMs: number;
-    try {
-      startupTimeoutMs =
+    const startupTimeout = readRuntimeSetting(
+      () =>
         this.#options.readStartupTimeoutMs?.() ??
-        this.#options.startupTimeoutMs;
-    } catch (cause: unknown) {
-      if (cause instanceof ConfigurationError) return err(cause);
-      throw cause;
-    }
+        this.#options.startupTimeoutMs,
+    );
+    if (!startupTimeout.ok) return startupTimeout;
+    const startupTimeoutMs = startupTimeout.value;
     this.#operationFailure = undefined;
     this.#startupFailureResult = undefined;
     this.#resources.shutdownConfirmed = false;
@@ -506,16 +506,16 @@ export class HopperClient {
   async #startWithin(
     deadline: ProviderStartupDeadline,
   ): Promise<Result<HopperServerInfo, AnalysisError>> {
-    // Admit the reply ceiling before acquiring anything: an invalid launch
+    // Admit both bridge ceilings before acquiring anything: an invalid launch
     // seed is a configuration refusal, not a failure after Hopper started.
-    try {
-      admitBridgeReplyLimit(
-        this.#options.bridgeMaxReplyBytes ?? DEFAULT_BRIDGE_MAX_REPLY,
-      );
-    } catch (cause: unknown) {
-      if (!(cause instanceof ConfigurationError)) throw cause;
-      return err(cause);
-    }
+    const requestLimit = admitBridgeRequestLimit(
+      this.#options.bridgeMaxRequestBytes,
+    );
+    if (!requestLimit.ok) return requestLimit;
+    const replyLimit = admitBridgeReplyLimit(
+      this.#options.bridgeMaxReplyBytes ?? DEFAULT_BRIDGE_MAX_REPLY,
+    );
+    if (!replyLimit.ok) return replyLimit;
     try {
       this.#resources.runtimeRoot = await PrivateRuntimeRoot.create({
         parent: SESSION_ROOT,
@@ -1146,26 +1146,33 @@ export class HopperClient {
     const payloadValue = { id, token, method, params };
     // Count escaped JSON before the request can wait in the FIFO. A rejected
     // payload is not serialized, and an admitted one is serialized only when
-    // it reaches the wire.
+    // it reaches the wire. Both ceilings are admitted here, in the caller's
+    // context; a queued request is written later outside it.
+    const requestLimit = admitBridgeRequestLimit(
+      this.#options.bridgeMaxRequestBytes,
+    );
+    if (!requestLimit.ok) return requestLimit;
     const replyLimit = admitBridgeReplyLimit(
       this.#options.bridgeMaxReplyBytes ?? DEFAULT_BRIDGE_MAX_REPLY,
     );
+    if (!replyLimit.ok) return replyLimit;
     const measured = jsonValueByteLength(
       payloadValue,
-      this.#options.bridgeMaxRequestBytes.maximumBytes,
+      requestLimit.value.maximumBytes,
     );
-    if (measured > this.#options.bridgeMaxRequestBytes.maximumBytes)
+    if (measured > requestLimit.value.maximumBytes)
       return err(
         bridgeRequestOversizeError(
           method,
-          this.#options.bridgeMaxRequestBytes,
+          requestLimit.value,
           measured,
           "Hopper",
         ),
       );
     const startedAt = performance.now();
     const result = await this.#requests.run(id, method, params, {
-      replyLimit,
+      requestLimit: requestLimit.value,
+      replyLimit: replyLimit.value,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       ...(options.timeoutMs === undefined
         ? {}
