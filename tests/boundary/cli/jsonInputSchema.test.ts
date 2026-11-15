@@ -36,6 +36,7 @@ import {
   jsonInputArgument,
   jsonInputContentSchema,
 } from "../../../src/cli/jsonInputArgument.js";
+import { cliJsonCallerPathSchema } from "../../../src/cliJsonInput.js";
 import { visitRegisteredCommands } from "../../../src/cli/visitRegisteredCommands.js";
 import type { CliInstance } from "../../../src/cli/types.js";
 
@@ -228,6 +229,10 @@ const advertisedInput = (stdout: string): InputJsonSchema => {
 
 type JsonSchemaNode = Record<string, unknown>;
 
+const cliCallerPath = jsonInputContentSchema(
+  cliJsonCallerPathSchema,
+) as JsonSchemaNode;
+
 /** Expect a caller path as the CLI admits it: any nonempty local spelling. */
 const admitRelativePath = (
   schema: JsonSchemaNode,
@@ -235,8 +240,8 @@ const admitRelativePath = (
 ): JsonSchemaNode => {
   const [head, ...tail] = path;
   if (head === undefined) {
-    const { allOf: _patterns, ...rest } = schema;
-    return { ...rest, pattern: "^[^\\x00]*$" };
+    const { allOf: _patterns, pattern: _pattern, ...rest } = schema;
+    return { ...rest, ...cliCallerPath };
   }
   const branches = (["anyOf", "oneOf"] as const).flatMap((keyword) =>
     Array.isArray(schema[keyword])
@@ -289,6 +294,25 @@ it("advertises the parsed document for every JSON-input command", async () => {
       command,
     ).not.toThrow();
   }
+});
+
+it("advertises caller paths as local spellings the CLI resolves, not URLs", async () => {
+  const input = advertisedInput(
+    (await serve([CLI_COMMANDS.compareSourceToBundle, "--schema", "--json"]))
+      .stdout,
+  );
+  const validate = new Ajv2020({
+    strict: false,
+    validateFormats: false,
+  }).compile(input.contentSchema as AnySchema);
+  const document = (path: string) => ({
+    reference: { kind: "file", path },
+    application: {},
+  });
+  for (const path of ["ref.json", "./file:ref.json", "C:\\ref.json"])
+    expect(validate(document(path)), path).toBe(true);
+  for (const path of ["file:ref.json", "FILE:ref.json", "https://x/ref.json"])
+    expect(validate(document(path)), path).toBe(false);
 });
 
 it("validates representative parsed documents with the advertised schema", async () => {
