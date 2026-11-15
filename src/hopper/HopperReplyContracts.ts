@@ -37,7 +37,9 @@ type HopperBridgeMethod =
   | Exclude<HopperOperation, "procedure_callers">
   | "rea_caller_base"
   | "rea_caller_scan_page"
-  | "rea_caller_scan_target";
+  | "rea_caller_scan_target"
+  | "shutdown"
+  | "shutdown_document";
 
 const nullableText = z.string().nullable();
 
@@ -61,6 +63,18 @@ const compactEdgeSchema = z.strictObject({
   ]),
   target_procedure: z.string(),
   call: nativeCallClassificationSchema,
+});
+/**
+ * The bridge's shutdown reply (bridge/hopper_bridge.py `_dispatch`): analysis
+ * and document state, plus whether the document was deliberately retained or
+ * the owned process group must be cleaned up by REA.
+ */
+const shutdownReplySchema = z.object({
+  shutdown: z.literal(true),
+  analysis_stopped: z.boolean(),
+  document_closed: z.boolean(),
+  document_retained: z.literal(true).exactOptional(),
+  cleanup_required: z.literal(true).exactOptional(),
 });
 const callerScanTargetSchema = z.strictObject({
   target: procedureIdentitySchema,
@@ -115,6 +129,9 @@ export const hopperReplySchemas = {
     unresolved_calls: z.array(unresolvedCallSchema),
     references: z.array(referenceEdgeSchema),
   }),
+  // REA-private lifecycle methods.
+  shutdown: shutdownReplySchema,
+  shutdown_document: shutdownReplySchema,
   // REA-private bridge methods behind procedure_callers reconciliation.
   rea_caller_base: callerScanTargetSchema.extend({
     callers: z.array(z.string()),
@@ -170,4 +187,30 @@ export const parseHopperReply = <M extends HopperReplyMethod>(
           },
         ),
       );
+};
+
+/**
+ * What a shutdown reply establishes: the bridge detached with its document
+ * closed and analysis stopped, or with the document deliberately retained
+ * (`confirmed`); the owned process group still needs REA's cleanup
+ * (`cleanup_required`); or nothing (`unconfirmed`). A reply outside the
+ * contract is refused with its field diagnostics.
+ */
+export const parseHopperShutdownReply = (
+  method: "shutdown" | "shutdown_document",
+  value: JsonValue,
+): Result<
+  "confirmed" | "cleanup_required" | "unconfirmed",
+  AnalysisOutputError
+> => {
+  const reply = parseHopperReply(method, value);
+  if (!reply.ok) return reply;
+  const { analysis_stopped, document_closed, document_retained } = reply.value;
+  if (reply.value.cleanup_required === true) return ok("cleanup_required");
+  return ok(
+    (analysis_stopped && document_closed) ||
+      (!document_closed && document_retained === true)
+      ? "confirmed"
+      : "unconfirmed",
+  );
 };

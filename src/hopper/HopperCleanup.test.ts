@@ -274,7 +274,14 @@ describe("Hopper shutdown rejection diagnostics", () => {
       request: (method) => {
         methods.push(method);
         return method === "shutdown"
-          ? Promise.resolve(ok({ shutdown: true, cleanup_required: true }))
+          ? Promise.resolve(
+              ok({
+                shutdown: true,
+                analysis_stopped: true,
+                document_closed: false,
+                cleanup_required: true,
+              }),
+            )
           : Promise.reject(failure("fixture fallback rejection"));
       },
       releaseTransport: () => undefined,

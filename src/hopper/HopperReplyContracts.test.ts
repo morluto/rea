@@ -11,6 +11,7 @@ import {
   hasHopperReplyContract,
   hopperBridgeMethod,
   parseHopperReply,
+  parseHopperShutdownReply,
 } from "./HopperReplyContracts.js";
 
 it("gives every Hopper operation's bridge method a reply contract", () => {
@@ -20,6 +21,67 @@ it("gives every Hopper operation's bridge method a reply contract", () => {
 
   expect(missing, "no Hopper reply reaches Evidence unvalidated").toEqual([]);
 });
+
+it.each([
+  [
+    "closed",
+    { shutdown: true, analysis_stopped: true, document_closed: true },
+    "confirmed",
+  ],
+  [
+    "retained",
+    {
+      shutdown: true,
+      analysis_stopped: false,
+      document_closed: false,
+      document_retained: true,
+    },
+    "confirmed",
+  ],
+  [
+    "cleanup required",
+    {
+      shutdown: true,
+      analysis_stopped: true,
+      document_closed: false,
+      cleanup_required: true,
+    },
+    "cleanup_required",
+  ],
+  [
+    "analysis still running",
+    { shutdown: true, analysis_stopped: false, document_closed: true },
+    "unconfirmed",
+  ],
+  [
+    "document still open",
+    { shutdown: true, analysis_stopped: true, document_closed: false },
+    "unconfirmed",
+  ],
+] as const)("reads a %s shutdown reply", (_case, reply, outcome) => {
+  for (const method of ["shutdown", "shutdown_document"] as const)
+    expect(parseHopperShutdownReply(method, reply)).toEqual(ok(outcome));
+});
+
+it.each([
+  ["missing analysis state", { shutdown: true, document_closed: true }],
+  [
+    "string flag",
+    { shutdown: "true", analysis_stopped: true, document_closed: true },
+  ],
+  ["non-object", true],
+] as const)(
+  "refuses a %s shutdown reply with field diagnostics",
+  (_case, reply) => {
+    expect(parseHopperShutdownReply("shutdown", reply)).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisOutputError",
+        diagnostics: { contract_issue_count: expect.any(Number) },
+      },
+    });
+  },
+);
 
 it("returns the validated source reply without dropping unlisted fields", () => {
   const reply = [
