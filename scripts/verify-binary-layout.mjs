@@ -1120,11 +1120,11 @@ try {
         cases++;
       }
     } finally {
-      try {
-        await limitedClient.close();
-      } finally {
-        await limitedTransport.close();
-      }
+      // A close that fails keeps the root until release confirms it.
+      await root.closeEarly([
+        () => limitedClient.close(),
+        () => limitedTransport.close(),
+      ]);
     }
   }
   const unsupported = Buffer.from(object);
@@ -1224,11 +1224,11 @@ try {
     }
     assert.deepEqual(await readFile(memoryHeavyPath), memoryHeavy);
   } finally {
-    try {
-      await memoryClient.close();
-    } finally {
-      await memoryTransport.close();
-    }
+    // A close that fails keeps the root until release confirms it.
+    await root.closeEarly([
+      () => memoryClient.close(),
+      () => memoryTransport.close(),
+    ]);
   }
   // Extended section numbering keeps this valid while providing enough work
   // to reach the one-second CPU limit even on faster CI runners.
@@ -1269,11 +1269,11 @@ try {
     }
     assert.deepEqual(await readFile(cpuHeavyPath), cpuHeavy);
   } finally {
-    try {
-      await cpuClient.close();
-    } finally {
-      await cpuTransport.close();
-    }
+    // A close that fails keeps the root until release confirms it.
+    await root.closeEarly([
+      () => cpuClient.close(),
+      () => cpuTransport.close(),
+    ]);
   }
   for (const limit of [1024, 1]) {
     const fileEnvironment = limitedEnvironment(`--fsize=${limit}:`);
@@ -1309,11 +1309,11 @@ try {
       }
       assert.deepEqual(await readFile(sectionHeavyPath), sectionHeavy);
     } finally {
-      try {
-        await fileClient.close();
-      } finally {
-        await fileTransport.close();
-      }
+      // A close that fails keeps the root until release confirms it.
+      await root.closeEarly([
+        () => fileClient.close(),
+        () => fileTransport.close(),
+      ]);
     }
   }
   // EM_RISCV: AArch64 (183) is now an admitted profile.
@@ -1424,11 +1424,11 @@ try {
         cases++;
       }
     } finally {
-      try {
-        await selectedClient.close();
-      } finally {
-        await selectedTransport.close();
-      }
+      // A close that fails keeps the root until release confirms it.
+      await root.closeEarly([
+        () => selectedClient.close(),
+        () => selectedTransport.close(),
+      ]);
     }
   }
   for (const mode of ["cli", "mcp"]) {

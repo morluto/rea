@@ -369,11 +369,11 @@ try {
         cases++;
       }
     } finally {
-      try {
-        await limitedClient.close();
-      } finally {
-        await limitedTransport.close();
-      }
+      // A close that fails keeps the root until release confirms it.
+      await root.closeEarly([
+        () => limitedClient.close(),
+        () => limitedTransport.close(),
+      ]);
     }
   }
   const brokenLimiter = join(root.path, "broken-limiter");
@@ -463,11 +463,11 @@ try {
         cases++;
       }
     } finally {
-      try {
-        await selectedClient.close();
-      } finally {
-        await selectedTransport.close();
-      }
+      // A close that fails keeps the root until release confirms it.
+      await root.closeEarly([
+        () => selectedClient.close(),
+        () => selectedTransport.close(),
+      ]);
     }
   }
   for (const [name, encoding] of [
