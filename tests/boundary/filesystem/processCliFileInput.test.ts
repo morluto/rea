@@ -93,6 +93,8 @@ describe("process CLI error projection", () => {
           analysisErrorProjectionSchema.parse(projection).remediation.action;
         expect(action).not.toContain("SECRET");
         expect(action).not.toMatch(/\bretry\b/iu);
+        // Doctor does not check process commands.
+        expect(action).not.toContain("doctor");
         expect(
           await readFile("docs/user-visible-errors.csv", "utf8"),
         ).toContain(action);
