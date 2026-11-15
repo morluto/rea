@@ -14,6 +14,14 @@ import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.
 import { analysisClientFailureContext } from "../providers/AnalysisClientFailure.js";
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import {
+  hopperBridgeReplyContracts,
+  parseHopperReply,
+  type HopperBridgeReplyContracts,
+  type ValueKeepingContracts,
+  type HopperContractReply,
+  type HopperReplyContracts,
+} from "./HopperReplyContracts.js";
+import {
   hopperCancelledBySignal,
   type HopperCancelledError,
   type HopperError,
@@ -110,8 +118,15 @@ const HOPPER_PROCESS_DIAGNOSTIC_BYTES = 8 * 1024 * 1024;
 const SESSION_ROOT = process.platform === "darwin" ? "/tmp" : tmpdir();
 
 /** Dependencies, deadlines, and redacted diagnostics for one bridge client. */
-export interface HopperClientOptions {
+export interface HopperClientOptions<
+  Contracts extends HopperReplyContracts = HopperBridgeReplyContracts,
+> {
   readonly launcher: BridgeLauncher;
+  /**
+   * Reply contract for each callable method. Production uses the bridge's
+   * `hopperReplySchemas`; transport tests supply their own methods.
+   */
+  readonly replyContracts?: Contracts & ValueKeepingContracts<Contracts>;
   readonly runId?: string;
   readonly startupTimeoutMs?: number;
   readonly readStartupTimeoutMs?: () => number;
@@ -152,11 +167,14 @@ type HopperClientCloseOptions = {
  * only terminates launch processes explicitly marked as owned; the normal
  * Hopper launcher does not confer ownership of the GUI application.
  */
-export class HopperClient {
+export class HopperClient<
+  Contracts extends HopperReplyContracts = HopperBridgeReplyContracts,
+> {
   readonly #options: Required<
     Pick<HopperClientOptions, "startupTimeoutMs" | "bridgeMaxRequestBytes">
   > &
-    HopperClientOptions;
+    HopperClientOptions<Contracts>;
+  readonly #contracts: Contracts & ValueKeepingContracts<Contracts>;
   readonly #requests: HopperRequestQueue;
   readonly #responses: JsonLineBridgeReader<
     HopperBridgeMessage,
@@ -232,8 +250,16 @@ export class HopperClient {
     this.#rememberProcessFailure(error, []);
   };
 
-  constructor(options: HopperClientOptions) {
+  constructor(options: HopperClientOptions<Contracts>) {
     this.#logger = options.logger ?? silentLogger;
+    // The default type argument is the production table this default supplies.
+    // Without a table the type argument is its default, the production table.
+    // A caller that names another type argument but omits its table gets a
+    // typed refusal per method (see #typedReply), never a throw.
+    this.#contracts =
+      options.replyContracts ??
+      (hopperBridgeReplyContracts as unknown as Contracts &
+        ValueKeepingContracts<Contracts>);
     this.#options = {
       ...options,
       startupTimeoutMs:
@@ -696,34 +722,66 @@ export class HopperClient {
       };
   }
 
-  /** Invoke one declared operation, returning timeout and cancellation as values. */
-  async callTool(
-    name: string,
+  /**
+   * Invoke one bridge method and validate its reply against that method's
+   * contract. Timeout, cancellation and a reply outside the contract
+   * (`HopperReplyContractError`, which keeps the raw reply) return as values.
+   * `operation` attributes a failure to the analyst operation the method serves.
+   */
+  async callTool<M extends keyof Contracts & string>(
+    method: M,
     arguments_: Readonly<Record<string, JsonValue>> = {},
     options: {
       readonly signal?: AbortSignal;
       /** Deadline after startup, including waiting for Hopper's serial bridge. */
       readonly timeoutMs?: number;
       readonly progress?: ProgressReporter;
+      readonly operation?: string;
     } = {},
-  ): Promise<Result<JsonValue, AnalysisError>> {
+  ): Promise<Result<HopperContractReply<Contracts, M>, AnalysisError>> {
     const started = await this.start(options.signal);
     if (!started.ok) return started;
-    return this.#normalizeToolResult(
-      name,
-      await this.#request(name, arguments_, options),
+    return this.#typedReply(
+      method,
+      options.operation ?? method,
+      await this.#request(method, arguments_, options),
     );
   }
 
   /** Dispatch against the connected bridge without invoking startup or retry. */
-  callToolIfReady(
-    name: string,
+  callToolIfReady<M extends keyof Contracts & string>(
+    method: M,
     arguments_: Readonly<Record<string, JsonValue>> = {},
     options: { readonly signal?: AbortSignal } = {},
-  ): Promise<Result<JsonValue, AnalysisError> | undefined> {
+  ): Promise<
+    Result<HopperContractReply<Contracts, M>, AnalysisError> | undefined
+  > {
     if (!this.isReady()) return Promise.resolve(undefined);
-    return this.#request(name, arguments_, options).then((result) =>
-      this.#normalizeToolResult(name, result),
+    return this.#request(method, arguments_, options).then((result) =>
+      this.#typedReply(method, method, result),
+    );
+  }
+
+  #typedReply<M extends keyof Contracts & string>(
+    method: M,
+    operation: string,
+    result: Result<JsonValue, AnalysisError>,
+  ): Result<HopperContractReply<Contracts, M>, AnalysisError> {
+    const normalized = this.#normalizeToolResult(method, result);
+    if (!normalized.ok) return normalized;
+    if (this.#contracts[method] === undefined)
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          "hopper",
+          operation,
+          `No reply contract is installed for the Hopper bridge method ${method}; its reply was not read.`,
+        ),
+      );
+    return parseHopperReply<Contracts, M>(
+      this.#contracts,
+      method,
+      normalized.value,
+      operation,
     );
   }
 
