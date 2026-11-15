@@ -1,4 +1,3 @@
-import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { readRegularFileText } from "./RegularFileRead.js";
@@ -295,7 +294,7 @@ export const inlineRegistrationOverride = (
   client: Pick<SetupClient, "configPath" | "configPaths">,
   sources: readonly ClientConfigurationSource[],
   desired: unknown,
-  platform: NodeJS.Platform = HOST_PLATFORM.platform,
+  platform: NodeJS.Platform,
 ): ClientInlineConfiguration["origin"] | undefined => {
   const name = PRODUCT_IDENTITY.mcpServerKey;
   const inline = sources.filter(
