@@ -3,6 +3,7 @@ import type { Logger } from "pino";
 
 import { logCliCommand } from "../cliLogging.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { Result } from "../domain/result.js";
 import { deliverCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
@@ -32,8 +33,8 @@ export interface ContractCommandContext {
   readonly operation: string;
   /** Each caller-path field as the caller spelled it, before resolution. */
   readonly callerInputs: Readonly<Record<string, string>>;
-  /** The selected delivery, for a projection with `evidenceDelivery`. */
-  readonly delivery: CliEvidenceDeliveryChoice;
+  /** The admitted delivery, for a projection with `evidenceDelivery`. */
+  readonly delivery: CliEvidenceDeliveryChoice | undefined;
 }
 
 /** A closeable one-shot service that inspects one contract input. */
@@ -82,6 +83,9 @@ export const deliverWithService =
   (service: () => EvidenceInspectionService, providerId: string) =>
   (input: unknown, context: ContractCommandContext) => {
     const callerInputPath = primaryCallerPath(context);
+    const { delivery } = context;
+    if (delivery === undefined)
+      throw new Error(`${context.operation} does not declare evidenceDelivery`);
     const owned = service();
     return deliverCliAnalysisEvidence({
       callerInputPath,
@@ -90,8 +94,9 @@ export const deliverWithService =
       providerId,
       operation: context.operation,
       signal: context.signal,
-      detail: context.delivery.detail,
-      evidenceOutput: context.delivery.evidenceOutput,
+      detail: delivery.detail,
+      evidenceOutput: delivery.evidenceOutput,
+      ...(delivery.view === undefined ? {} : { view: delivery.view }),
     });
   };
 
@@ -174,8 +179,11 @@ export const registerContractCommand = <
     }) => {
       const values = { ...options, ...args };
       return withCommandCancellation((signal) =>
-        logCliCommand(logger, description.command, () =>
-          run(
+        logCliCommand(logger, description.command, async () => {
+          const delivery = description.delivery?.(values);
+          if (delivery?.ok === false)
+            return projectAnalysisError(delivery.error);
+          return run(
             description.toContractInput(values) as z.input<
               Contract["inputSchema"]
             >,
@@ -183,10 +191,10 @@ export const registerContractCommand = <
               signal,
               operation: contract.name,
               callerInputs: description.callerInputs(values),
-              delivery: description.delivery(values),
+              delivery: delivery?.value,
             },
-          ),
-        ),
+          );
+        }),
       );
     },
   } as never);

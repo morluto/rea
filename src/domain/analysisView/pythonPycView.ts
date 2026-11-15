@@ -40,10 +40,6 @@ export const pythonPycSummaryDeliveryShape = {
   detail: z.literal("summary"),
   view: pythonPycViewRequestSchema.exactOptional(),
 };
-export const pythonPycDeliverySchema = z.discriminatedUnion("detail", [
-  z.strictObject(pythonPycCompleteDeliveryShape),
-  z.strictObject(pythonPycSummaryDeliveryShape),
-]);
 
 export const pythonPycViewItemsSchema = z.array(
   code.partial().extend({ source_index: z.int().nonnegative() }),
