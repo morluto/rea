@@ -74,13 +74,28 @@ interface CliEvidenceDelivery extends CliEvidencePublication {
   readonly providerId: string;
 }
 
+/**
+ * Refuse a delivery that cannot keep complete source Evidence available: a
+ * summary needs a bundle, and a selected page is cut from a retained summary.
+ */
 export const cliEvidenceDeliveryInputError = (
   input: Pick<
     CliEvidencePublication,
     "detail" | "evidenceOutput" | "operation"
-  >,
-): AnalysisInputError | undefined =>
-  input.detail === "summary" && input.evidenceOutput === undefined
+  > & {
+    readonly view?: AnalysisViewRequest | undefined;
+  },
+): AnalysisInputError | undefined => {
+  if (input.view !== undefined && input.detail !== "summary")
+    return new AnalysisInputError(input.operation, undefined, [
+      {
+        path: ["view"],
+        reason: "invalid_value",
+        message:
+          "A selected page requires --detail summary and --evidence_output.",
+      },
+    ]);
+  return input.detail === "summary" && input.evidenceOutput === undefined
     ? new AnalysisInputError(input.operation, undefined, [
         {
           path: ["evidence_output"],
@@ -90,6 +105,7 @@ export const cliEvidenceDeliveryInputError = (
         },
       ])
     : undefined;
+};
 
 /** Parse delivery JSON once and enforce its owning schema before opening a target. */
 export const parseCliAnalysisEvidenceDelivery = <

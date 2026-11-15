@@ -25,20 +25,10 @@ import {
   deliverCliAnalysisEvidence,
 } from "./analysisEvidenceDelivery.js";
 
-const deliverySchema = z
-  .object({
-    detail: analysisEvidenceDeliveryOptions.detail,
-    view: apiContractViewSelectionSchema.optional(),
-  })
-  .superRefine((value, context) => {
-    if (value.view !== undefined && value.detail !== "summary")
-      context.addIssue({
-        code: "custom",
-        path: ["view"],
-        message:
-          "A selected page requires --detail summary and --evidence_output.",
-      });
-  });
+const deliverySchema = z.object({
+  detail: analysisEvidenceDeliveryOptions.detail,
+  view: apiContractViewSelectionSchema.optional(),
+});
 
 /** Standard one-shot publication keeps complete inventory Evidence for later offline pages. */
 export const registerApiContractCommand = (
