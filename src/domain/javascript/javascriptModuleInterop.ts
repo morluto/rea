@@ -30,7 +30,12 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { semanticKnownArrayIterationAt } from "./javascriptSemanticReferenceSources.js";
-import { semanticOpaqueBindingReadMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
+import {
+  opaqueCodeMayRebindBinding,
+  semanticAmbientIntrinsicWrites,
+  semanticAmbientWriteGeneration,
+} from "./javascriptSemanticEffectLog.js";
+import { semanticDirectEvalRecorded } from "./javascriptSemanticEffectRecord.js";
 
 // Match the complete Rolldown runtime operations, including its live getters.
 // Names and formatting are irrelevant; lexical roles, operators and keys are not.
@@ -756,7 +761,7 @@ export const createSemanticModuleInterop = (
       return result;
     },
     aliasMayHaveChanged: (binding: JavaScriptSemanticBindingState): boolean => {
-      if (state.opaqueEffects.byScope.size === 0) return false;
+      if (!semanticDirectEvalRecorded(state)) return false;
       const cached = aliasChangedCache.get(binding.bindingId);
       if (cached !== undefined) return cached;
       origin(binding);
@@ -768,13 +773,7 @@ export const createSemanticModuleInterop = (
         seen.add(current.bindingId);
         const next = aliasTargets.get(current.bindingId);
         if (next === undefined) break;
-        if (
-          semanticOpaqueBindingReadMayHaveChanged(
-            next.targetBinding,
-            next.node,
-            state,
-          )
-        ) {
+        if (opaqueCodeMayRebindBinding(next.targetBinding, state, next.node)) {
           changed = true;
           break;
         }
@@ -911,4 +910,30 @@ const controlBodyOperation = (node: t.Node): t.Node => {
     node = statement;
   }
   return node;
+};
+
+const ambientWriteInterops = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  {
+    readonly generation: number;
+    readonly interop: ReturnType<typeof createSemanticModuleInterop>;
+  }
+>();
+
+/**
+ * Module interop that retains every recorded ambient global write, so an
+ * intrinsic invocation is resolved only while its intrinsic is unreplaced at
+ * the call. It is rebuilt when a later ambient write is recorded.
+ */
+export const semanticModuleInteropWithAmbientWrites = (
+  state: JavaScriptSemanticAnalysisState,
+): ReturnType<typeof createSemanticModuleInterop> => {
+  const generation = semanticAmbientWriteGeneration(state);
+  const prior = ambientWriteInterops.get(state);
+  if (prior?.generation === generation) return prior.interop;
+  const interop = createSemanticModuleInterop(state);
+  for (const { site, path } of semanticAmbientIntrinsicWrites(state))
+    interop.retainWrite(site, path);
+  ambientWriteInterops.set(state, { generation, interop });
+  return interop;
 };
