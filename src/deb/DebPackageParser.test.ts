@@ -8,6 +8,7 @@ import {
   DebPackageFormatFailure,
 } from "./DebPackage.errors.js";
 import {
+  DEFAULT_CONTROL_TEXT,
   debPackageFixture,
   notArBytes,
   tarMember,
@@ -757,4 +758,46 @@ it.for([
     DebPackageFormatFailure,
   );
   expect(error.kind).toBe("truncated");
+});
+
+it("reads an entry whose PAX size record overrides its header size", () => {
+  const control = Buffer.from(DEFAULT_CONTROL_TEXT, "utf8");
+  const block = Buffer.alloc(Math.ceil(control.length / 512) * 512);
+  block.set(control);
+  const tar = Buffer.concat([
+    tarMember({
+      name: "./PaxHeaders/control",
+      type: "x",
+      content: paxRecord("size", String(control.length)),
+    }),
+    // The ustar header says 0 bytes; the PAX record carries the real size.
+    tarMember({ name: "./control" }),
+    block,
+    Buffer.alloc(1024),
+  ]);
+  const report = parse(
+    debPackageFixture({ controlMemberBytes: gzipSync(tar) }),
+  );
+  expect(report.control?.package).toBe("hello");
+});
+
+it("compares md5sums lines whose names GNU md5sum escaped", () => {
+  const report = parse(
+    debPackageFixture({
+      md5sums: [
+        `\\${"0".repeat(32)}  usr/share/doc/a\\\\b`,
+        "not a digest line",
+        "",
+      ].join("\n"),
+      dataEntries: [{ name: "./usr/share/doc/a\\b", content: "x" }],
+    }),
+  );
+  expect(report.md5sums_cross_check).toMatchObject({
+    listed: 1,
+    present: 1,
+    missing_from_md5sums: 0,
+  });
+  expect(report.limitations).toContain(
+    "1 md5sums line(s) are not md5sum digest lines and were not compared.",
+  );
 });

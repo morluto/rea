@@ -169,7 +169,15 @@ export const undecodableTarNamesLimitation = (count: number): string =>
 const MAX_TAR_EXTENSION_HEADERS = 8;
 
 /** The PAX record keys this reader applies to the following entry. */
-const PAX_KEYS = ["path", "linkpath", "uid", "gid", "uname", "gname"] as const;
+const PAX_KEYS = [
+  "path",
+  "linkpath",
+  "size",
+  "uid",
+  "gid",
+  "uname",
+  "gname",
+] as const;
 
 const paxId = (value: string | undefined): number | undefined => {
   if (value === undefined || !/^[0-9]+$/u.test(value)) return undefined;
@@ -412,7 +420,29 @@ const parseTar = (
           `tar header checksum failed in ${memberName} at offset ${String(offset)}.`,
         ),
       };
-    const size = parseTarNumber(header.subarray(124, 136));
+    const typeFlag = header[156] ?? 0;
+    const extension =
+      typeFlag === 76 ||
+      typeFlag === 75 ||
+      typeFlag === 120 ||
+      typeFlag === 103;
+    // A PAX size record overrides the following entry's header size field;
+    // reading or skipping by the header field would desynchronize the stream.
+    const paxSize = extension ? undefined : pax.size;
+    if (paxSize !== undefined && paxId(paxSize) === undefined)
+      return {
+        entries,
+        files,
+        undecodableNames,
+        error: new DebPackageFormatFailure(
+          "malformed",
+          `PAX size record is not a decimal byte count in ${memberName} at offset ${String(offset)}.`,
+        ),
+      };
+    const size =
+      paxSize === undefined
+        ? parseTarNumber(header.subarray(124, 136))
+        : (paxId(paxSize) ?? null);
     if (size === null)
       return {
         entries,
@@ -435,17 +465,11 @@ const parseTar = (
         ),
       };
     const payload = bytes.subarray(dataStart, dataStart + size);
-    const typeFlag = header[156] ?? 0;
     const prefix = tarText(header.subarray(345, 500));
     const rawName = tarText(header.subarray(0, 100));
     const headerName =
       prefix.text.length > 0 ? `${prefix.text}/${rawName.text}` : rawName.text;
-    if (
-      typeFlag === 76 ||
-      typeFlag === 75 ||
-      typeFlag === 120 ||
-      typeFlag === 103
-    ) {
+    if (extension) {
       extensionHeaders += 1;
       if (extensionHeaders > MAX_TAR_EXTENSION_HEADERS)
         return {
@@ -792,16 +816,50 @@ const parseControl = (tar: TarParse, issues: DebPackageIssue[]): DebControl => {
   };
 };
 
-const md5Paths = (text: string | null): readonly string[] => {
-  if (text === null) return [];
+const MD5SUM_ESCAPES: Readonly<Record<string, string>> = {
+  "\\": "\\",
+  n: "\n",
+  r: "\r",
+};
+
+/** A GNU md5sum escaped name; undefined when an escape is not one it writes. */
+const unescapeMd5Name = (name: string): string | undefined => {
+  let unknown = false;
+  const text = name.replaceAll(/\\(.?)/gu, (_, next: string) => {
+    const value = Object.hasOwn(MD5SUM_ESCAPES, next)
+      ? MD5SUM_ESCAPES[next]
+      : undefined;
+    if (value === undefined) unknown = true;
+    return value ?? "";
+  });
+  return unknown ? undefined : text;
+};
+
+const md5Paths = (
+  text: string,
+): { readonly paths: readonly string[]; readonly unread: number } => {
   const paths: string[] = [];
-  for (const line of text.split(/\n/u)) {
-    // md5sum separates the digest from the path with a space and a space
-    // or `*`; the path keeps any other spaces it holds.
-    const match = /^[0-9a-f]{32} [ *](.*)$/iu.exec(line.replace(/\r$/u, ""));
-    if (match?.[1] !== undefined) paths.push(logicalTarPath(match[1]));
+  let unread = 0;
+  for (const raw of text.split(/\n/u)) {
+    const line = raw.replace(/\r$/u, "");
+    if (line === "") continue;
+    // GNU md5sum prefixes a line with a backslash when it escaped the name
+    // (backslash, newline or carriage return). The digest is separated from
+    // the path by a space and a space or `*`; other spaces stay in the path.
+    const escaped = line.startsWith("\\");
+    const match = /^[0-9a-f]{32} [ *](.*)$/iu.exec(
+      escaped ? line.slice(1) : line,
+    );
+    const name =
+      match?.[1] === undefined
+        ? undefined
+        : escaped
+          ? unescapeMd5Name(match[1])
+          : match[1];
+    if (name === undefined) unread += 1;
+    else paths.push(logicalTarPath(name));
   }
-  return paths;
+  return { paths, unread };
 };
 
 const attachPartial = (cause: unknown, partial: DebPackage): never => {
@@ -947,7 +1005,11 @@ export const parseDebPackage = (
       "No data.tar inventory was read; the md5sums cross-check is unknown.",
     );
   if (md5sumsText !== null && dataTar !== null) {
-    const listed = md5Paths(md5sumsText);
+    const { paths: listed, unread } = md5Paths(md5sumsText);
+    if (unread > 0)
+      limitations.push(
+        `${String(unread)} md5sums line(s) are not md5sum digest lines and were not compared.`,
+      );
     const inventory = new Set(
       dataTar.entries
         .filter((entry) => entry.type === "file" || entry.type === "hardlink")
