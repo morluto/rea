@@ -83,7 +83,9 @@ it("times out a worker whose ready frame never arrives and stops it", async () =
   // the stand-in is running, so a slow launch cannot end the test before the
   // missing ready frame is what the deadline interrupts.
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
-  onTestFinished(() => vi.useRealTimers());
+  onTestFinished(() => {
+    vi.useRealTimers();
+  });
   const analysis = worker.analyze(file, budget);
   await fixture.spawned.reached(analysis, "stand-in worker launched");
   vi.advanceTimersByTime(timeoutMs);
