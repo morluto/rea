@@ -54,6 +54,9 @@ const SIMPLE_ESCAPES: Readonly<Record<string, number>> = {
   "?": 63,
 };
 
+const HEX_DIGITS = /[0-9a-f]+/iy;
+const OCTAL_DIGITS = /[0-7]{1,3}/y;
+
 const HEADER = /^(\d*)\^(done|running|connected|error|exit)(?=,|$)/u;
 
 /**
@@ -192,61 +195,83 @@ class MiParser {
     }
   }
 
-  /** Decode one C-string; escapes produce bytes, other characters UTF-8. */
+  /**
+   * Decode one C-string; escapes produce bytes, other characters UTF-8. Runs
+   * of unescaped characters are validated in place and encoded once.
+   */
   #cString(): Result<GdbMiValue, GdbMiRecordFailure> {
     const line = this.#line;
-    const bytes: number[] = [];
+    const chunks: Uint8Array[] = [];
+    let escaped: number[] = [];
     let index = this.#cursor + 1;
+    let runStart = index;
+    const flushEscaped = (): void => {
+      if (escaped.length === 0) return;
+      chunks.push(Uint8Array.from(escaped));
+      escaped = [];
+    };
+    const flushRun = (): void => {
+      if (index === runStart) return;
+      flushEscaped();
+      chunks.push(Buffer.from(line.slice(runStart, index), "utf8"));
+    };
+    const failAt = (at: number, reason: string) => {
+      this.#cursor = at;
+      return err(this.fail(reason));
+    };
     while (index < line.length) {
-      const character = line[index]!;
-      if (character === '"') {
+      const code = line.charCodeAt(index);
+      if (code === 0x22) {
+        flushRun();
+        flushEscaped();
         this.#cursor = index + 1;
-        return ok({ kind: "const", bytes: Uint8Array.from(bytes) });
+        const joined = Buffer.concat(chunks);
+        return ok({
+          kind: "const",
+          bytes: new Uint8Array(
+            joined.buffer,
+            joined.byteOffset,
+            joined.byteLength,
+          ),
+        });
       }
-      if (character !== "\\") {
-        const codePoint = line.codePointAt(index)!;
-        if (codePoint < 0x20) {
-          this.#cursor = index;
-          return err(this.fail("unescaped control character in C-string"));
+      if (code !== 0x5c) {
+        if (code < 0x20)
+          return failAt(index, "unescaped control character in C-string");
+        if (code >= 0xd800 && code <= 0xdbff) {
+          const low = line.charCodeAt(index + 1);
+          if (!(low >= 0xdc00 && low <= 0xdfff))
+            return failAt(index, "lone surrogate in C-string");
+          index += 2;
+          continue;
         }
-        if (codePoint >= 0xd800 && codePoint <= 0xdfff) {
-          this.#cursor = index;
-          return err(this.fail("lone surrogate in C-string"));
-        }
-        const text = String.fromCodePoint(codePoint);
-        for (const byte of Buffer.from(text, "utf8")) bytes.push(byte);
-        index += text.length;
+        if (code >= 0xdc00 && code <= 0xdfff)
+          return failAt(index, "lone surrogate in C-string");
+        index += 1;
         continue;
       }
-      const escaped = line[index + 1];
-      const simple =
-        escaped === undefined ? undefined : SIMPLE_ESCAPES[escaped];
+      flushRun();
+      const escape = line[index + 1];
+      const simple = escape === undefined ? undefined : SIMPLE_ESCAPES[escape];
       if (simple !== undefined) {
-        bytes.push(simple);
+        escaped.push(simple);
         index += 2;
-        continue;
-      }
-      if (escaped === "x") {
-        const hex = /^[0-9a-f]+/iu.exec(line.slice(index + 2))?.[0];
-        if (hex === undefined) {
-          this.#cursor = index;
-          return err(this.fail("\\x escape without hex digits"));
-        }
-        bytes.push(Number.parseInt(hex.slice(-2), 16));
+      } else if (escape === "x") {
+        HEX_DIGITS.lastIndex = index + 2;
+        const hex = HEX_DIGITS.exec(line)?.[0];
+        if (hex === undefined)
+          return failAt(index, "\\x escape without hex digits");
+        escaped.push(Number.parseInt(hex.slice(-2), 16));
         index += 2 + hex.length;
-        continue;
-      }
-      if (escaped !== undefined && escaped >= "0" && escaped <= "7") {
-        const octal = /^[0-7]{1,3}/u.exec(line.slice(index + 1))![0];
-        bytes.push(Number.parseInt(octal, 8) & 0xff);
+      } else if (escape !== undefined && escape >= "0" && escape <= "7") {
+        OCTAL_DIGITS.lastIndex = index + 1;
+        const octal = OCTAL_DIGITS.exec(line)![0];
+        escaped.push(Number.parseInt(octal, 8) & 0xff);
         index += 1 + octal.length;
-        continue;
-      }
-      this.#cursor = index;
-      return err(this.fail("invalid C-string escape"));
+      } else return failAt(index, "invalid C-string escape");
+      runStart = index;
     }
-    this.#cursor = index;
-    return err(this.fail("unterminated C-string"));
+    return failAt(index, "unterminated C-string");
   }
 }
 
