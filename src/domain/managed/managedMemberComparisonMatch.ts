@@ -12,10 +12,7 @@ import type {
   ManagedMemberComparisonResult,
   ManagedMemberComparisonSide,
 } from "./managedMemberComparison.js";
-import {
-  comparableSides,
-  signatureIdentity,
-} from "./managedMemberSignatureIdentity.js";
+import { signatureIdentity } from "./managedMemberSignatureIdentity.js";
 type Method = ManagedMemberInspection["methods"][number];
 type Field = ManagedMemberInspection["fields"][number];
 
@@ -506,14 +503,13 @@ const matchObserved = <Item extends Declared>(
 };
 
 export const keyMembers = (
-  observedLeft: ManagedMemberComparisonSide,
-  observedRight: ManagedMemberComparisonSide,
+  left: ManagedMemberComparisonSide,
+  right: ManagedMemberComparisonSide,
   scope: ManagedComparisonScope,
 ): {
   readonly methodMatches: ReturnType<typeof matchMethods>;
   readonly fieldMatches: ReturnType<typeof matchFields>;
 } => {
-  const [left, right] = comparableSides(observedLeft, observedRight);
   const declared = (
     inspection: ManagedMemberInspection,
     names: ReadonlyMap<string, string | null>,
