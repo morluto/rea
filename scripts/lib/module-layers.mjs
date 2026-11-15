@@ -395,6 +395,44 @@ const isEntryFile = (unit, target) =>
     (file) => sourcePath(target) === `src/${unit}/${file}`,
   );
 
+/**
+ * Declared provider-to-provider dependencies: files of one provider folder,
+ * relative to `src/<to>/`, that another provider folder may import. Each one
+ * is a deliberate decision, not baseline debt: imports of these files are not
+ * counted in `crossProvider`, and any other import between the same folders
+ * still is. Keep the list short and say why.
+ */
+export const PROVIDER_DEPENDENCIES = Object.freeze([
+  Object.freeze({
+    from: "inspector",
+    to: "browser",
+    files: Object.freeze([
+      "CdpCaptureValues.ts",
+      "CdpConnection.ts",
+      "CdpDiscoveryTargets.ts",
+      "CdpEndpoint.ts",
+      "CdpScriptContextFacts.ts",
+      "CdpTargetSessionOwner.ts",
+      "protocol/CdpEvents.ts",
+    ]),
+    // The V8 inspector speaks the Chrome DevTools Protocol. It reuses
+    // browser's CDP client (endpoint discovery, connection, target sessions
+    // and captured value projection) instead of keeping a second client.
+    reason: "the V8 inspector reuses the browser provider's CDP client",
+  }),
+]);
+
+/** Whether one provider-to-provider import is a declared dependency. */
+const isDeclaredProviderDependency = (from, to, target) =>
+  PROVIDER_DEPENDENCIES.some(
+    (dependency) =>
+      dependency.from === from &&
+      dependency.to === to &&
+      dependency.files.some(
+        (file) => sourcePath(target) === `src/${to}/${file}`,
+      ),
+  );
+
 const sortedCounts = (counts) =>
   Object.fromEntries(
     [...counts].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
@@ -405,9 +443,10 @@ const sortedCounts = (counts) =>
  *
  * A provider folder may import the domain, contracts, foundation and ports
  * layers, the shared provider core (its own layer, below providers) and its
- * own files. An import of another provider folder is an explicit, recorded exception (for example inspector
- * reusing browser's CDP helpers): `crossProvider` counts them per pair, and a
- * pair that is not in the baseline fails. Application, composition and the
+ * own files. Any other import of another provider folder is recorded debt
+ * unless PROVIDER_DEPENDENCIES declares its target file for that pair:
+ * `crossProvider` counts them per pair, and a pair that is not in the
+ * baseline fails. Application, composition and the
  * CLI/MCP adapters reach a provider only through its declared ENTRY_FILES, and
  * every unit reaches src/resources only through its `index.ts`: `entry` counts
  * the imports of any other file in such a unit. Both counts may only shrink.
@@ -420,9 +459,10 @@ export const providerBoundaryFacts = (imports) => {
     const to = sourceUnit(target);
     if (from === undefined || to === undefined || from === to) continue;
     const key = `${from} -> ${to}`;
-    if (isProviderUnit(from) && isProviderUnit(to))
-      cross.set(key, (cross.get(key) ?? 0) + 1);
-    else if (requiresEntry(from, to) && !isEntryFile(to, target))
+    if (isProviderUnit(from) && isProviderUnit(to)) {
+      if (!isDeclaredProviderDependency(from, to, target))
+        cross.set(key, (cross.get(key) ?? 0) + 1);
+    } else if (requiresEntry(from, to) && !isEntryFile(to, target))
       entry.set(key, (entry.get(key) ?? 0) + 1);
   }
   return {

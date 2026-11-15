@@ -24,6 +24,17 @@ export function isProviderUnit(unit: string): boolean;
  */
 export declare const ENTRY_FILES: Readonly<Record<string, readonly string[]>>;
 
+/**
+ * Declared provider-to-provider dependencies: files of `to`, relative to
+ * src/<to>/, that `from` may import without a crossProvider count.
+ */
+export declare const PROVIDER_DEPENDENCIES: readonly {
+  readonly from: string;
+  readonly to: string;
+  readonly files: readonly string[];
+  readonly reason: string;
+}[];
+
 export interface ProviderBoundaryFacts {
   /** Imports from one provider folder into another, per unit pair. */
   readonly crossProvider: Readonly<Record<string, number>>;
