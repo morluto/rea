@@ -331,6 +331,7 @@ const ARGV_SATISFYING_RULES: Readonly<
 > = {
   "annotate-native-function": { name: "renamed" },
   "search-bytes": { pattern: "41 ??" },
+  "cutter-command": { sessionId: "00000000-0000-4000-8000-000000000001" },
   "inspect-native-data-type": { type: "/struct" },
   "capture-native-ui-scenario": {
     steps: '[{"kind":"wait","milliseconds":0}]',
@@ -372,7 +373,6 @@ const contractBuilt: ReadonlySet<string> = new Set(
  */
 const HAND_REGISTERED_CONTRACT_COMMANDS = [
   "compare-process-captures",
-  "cutter-command",
   "execute-rizin-command",
   "export-web-scripts",
   "guided-workflows",
@@ -381,7 +381,6 @@ const HAND_REGISTERED_CONTRACT_COMMANDS = [
   "inspect-web-event-listeners",
   "inspect-web-network-capture",
   "inspect-with-objdump",
-  "list-cutter-sessions",
   "observe-web-execution",
   "recover-javascript-sources",
   "trace-web-module-imports",
