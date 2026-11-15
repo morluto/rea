@@ -22,12 +22,10 @@ import {
   projectInputIssues,
 } from "../domain/inputIssueProjection.js";
 
-import { compareWebScreenshotsInputSchema } from "../domain/webScreenshot.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { parseCliJsonInput } from "../cliJsonInput.js";
 import type { Logger } from "pino";
 
-import { cliDecimalField } from "./options.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 
 import { contractNamed } from "./contractCliDescription.js";
@@ -151,52 +149,56 @@ const registerScreenshotDiff = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
 ): void => {
-  cli.command(CLI_COMMANDS.compareWebScreenshots, {
-    description: "Compare two self-verifying PNG artifact JSON values",
-    args: z.object({
-      beforeJson: z
-        .string()
-        .describe("Earlier screenshot artifact JSON or JSON file path"),
-      afterJson: z
-        .string()
-        .describe("Later screenshot artifact JSON or JSON file path"),
-    }),
-    options: z.object({
-      channelThreshold: cliDecimalField(
-        compareWebScreenshotsInputSchema.shape.channel_threshold,
-      ).describe("Per-channel difference threshold for changed pixels"),
-    }),
-    run: ({ args, options }) =>
-      logCliCommand(logger, "compare-web-screenshots", async () => {
-        const operation = "compare_web_screenshots";
-        const inputs = await parseJsonArguments(operation, {
-          before: args.beforeJson,
-          after: args.afterJson,
-        });
-        if (!inputs.ok) return inputs.error;
-        const { before, after } = inputs.value;
-        const input = {
-          before,
-          after,
-          channel_threshold: options.channelThreshold,
-        };
-        const parsed = compareWebScreenshotsInputSchema.safeParse(input);
-        if (!parsed.success)
-          return browserCliError(
-            analysisInputErrorFromIssues(
-              operation,
-              parsed.error.issues,
-              input,
-              { cause: parsed.error },
-            ),
-          );
-        const result = await compareWebScreenshotEvidence(
-          new CdpBrowserProvider(),
-          parsed.data,
+  const contract = contractNamed(
+    BROWSER_TOOL_CONTRACTS,
+    "compare_web_screenshots",
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contract,
+    {
+      command: CLI_COMMANDS.compareWebScreenshots,
+      description: "Compare two self-verifying PNG artifact JSON values",
+      positionals: ["before", "after"],
+      // Screenshot artifacts embed PNG bytes that can exceed the host's
+      // command-line length limit, so each may be a JSON file.
+      jsonInputs: {
+        before: "beforeJson must be inline JSON or a JSON file path",
+        after: "afterJson must be inline JSON or a JSON file path",
+      },
+      fields: {
+        before: {
+          name: "beforeJson",
+          description: "Earlier screenshot artifact JSON or JSON file path",
+        },
+        after: {
+          name: "afterJson",
+          description: "Later screenshot artifact JSON or JSON file path",
+        },
+        channel_threshold: {
+          description: "Per-channel difference threshold for changed pixels",
+        },
+      },
+    },
+    async (input) => {
+      const parsed = contract.inputSchema.safeParse(input);
+      if (!parsed.success)
+        return browserCliError(
+          analysisInputErrorFromIssues(
+            contract.name,
+            parsed.error.issues,
+            input,
+            { cause: parsed.error },
+          ),
         );
-        return result.ok ? result.value : browserCliError(result.error);
-      }),
-  });
+      const result = await compareWebScreenshotEvidence(
+        new CdpBrowserProvider(),
+        parsed.data,
+      );
+      return result.ok ? result.value : browserCliError(result.error);
+    },
+  );
 };
 
 /**
