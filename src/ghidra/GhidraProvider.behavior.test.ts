@@ -109,6 +109,7 @@ import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { silentLogger } from "../logger.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
 import {
   createFunctionCoordinateContext,
@@ -4732,6 +4733,42 @@ it.each([
     );
   },
 );
+
+it("keeps a refused setting's configuration error through the provider boundary", async () => {
+  const refusal = new ConfigurationError("invalid bridge reply ceiling", {
+    settings: [
+      {
+        setting: "REA_BRIDGE_MAX_REPLY_BYTES",
+        constraint: "a positive decimal integer",
+      },
+    ],
+  });
+  const failure = new GhidraSessionError(
+    "admission",
+    refusal.message,
+    {},
+    { cause: refusal },
+  );
+  const ghidra = provider(installationHost(), () => ({
+    start: async () => err(failure),
+    callTool: async () => err(failure),
+    close: async () => ok(null),
+  }));
+  onTestFinished(async () => {
+    await ghidra.closeOwnedResources();
+  });
+  const target = executableTarget("elf", "x86_64");
+  const profile = await ghidra.resolveAnalysisProfile(target);
+  if (!profile.ok || profile.value.profile === null)
+    throw new Error("Expected profile");
+
+  const result = await ghidra
+    .createClient(target, profile.value.profile)
+    .execute("list_documents", {});
+
+  expect(result.ok ? undefined : result.error).toBe(refusal);
+  expect(projectAnalysisError(refusal).code).toBe("configuration_invalid");
+});
 
 describe("Ghidra startup deadline for a finished invocation", () => {
   const startupLimit = {

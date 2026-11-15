@@ -377,6 +377,17 @@ checkCounted(
   ["src/gdb/GdbMiRecord.ts"],
 );
 
+// A runtime setting view throws the ConfigurationError of a malformed launch
+// seed; readRuntimeSetting in src/config/runtimeAnalysisSettings.ts returns it
+// as a Result. Catching it by hand mixes it into each site's own failures.
+checkCounted(
+  "hand-caught ConfigurationError (read runtime settings with readRuntimeSetting from src/config/runtimeAnalysisSettings)",
+  "hand-caught-configuration-error",
+  files,
+  /\bcause instanceof ConfigurationError\b/gu,
+  ["src/config/runtimeAnalysisSettings.ts"],
+);
+
 // Byte-format parsers read untrusted input. Bounds, truncation and failure
 // kind belong to BinaryReader (src/native/metadata/BinaryContainer.ts) and
 // the ParseFailure algebra (src/domain/parseFailure.ts), not to each parser.

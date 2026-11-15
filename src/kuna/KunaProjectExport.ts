@@ -43,11 +43,7 @@ import {
   runKunaCommand,
   type KunaProcessLauncher,
 } from "./KunaCommand.js";
-import {
-  kunaProjectDeadline,
-  type KunaConfiguration,
-  type KunaDeadline,
-} from "./KunaConfiguration.js";
+import type { KunaDeadline } from "./KunaConfiguration.js";
 import type { KunaInstallation } from "./KunaInstallation.js";
 import { KUNA_DIAGNOSTIC_BYTES } from "./KunaLimits.js";
 import {
@@ -66,12 +62,6 @@ import {
 
 /** Operation name every export and cache failure reports. */
 export const KUNA_EXPORT_OPERATION = "kuna:decompile-project";
-
-/** The deadline an export already accepted, otherwise the current snapshot. */
-export const acceptedExportDeadline = (
-  configuration: KunaConfiguration,
-  retained?: KunaDeadline,
-): KunaDeadline => retained ?? kunaProjectDeadline(configuration);
 
 const INVENTORY_FILE = "functions.json";
 
@@ -160,7 +150,7 @@ export interface KunaExportRequest {
   readonly onStatus: (status: KunaExportStatus) => void;
   readonly launcher?: KunaProcessLauncher | undefined;
   /** Deadline accepted when the export started. Later setting changes do not rewrite it. */
-  readonly deadline?: KunaDeadline;
+  readonly deadline: KunaDeadline;
 }
 
 const message = (cause: unknown): string =>
@@ -283,11 +273,7 @@ export const exportKunaProject = async (
   request: KunaExportRequest,
 ): Promise<KunaExportOutcome> => {
   const { installation, signal } = request;
-  const { configuration } = installation;
-  const acceptedDeadline = acceptedExportDeadline(
-    configuration,
-    request.deadline,
-  );
+  const acceptedDeadline = request.deadline;
   const deadline = Deadline.after(acceptedDeadline.ms);
   const input = join(request.workspace, "input", basename(request.targetPath));
   await mkdir(join(request.workspace, "input"), { mode: 0o700 });
@@ -365,7 +351,7 @@ export const exportKunaProject = async (
       "-o",
       request.output,
       "--jobs",
-      String(configuration.jobs),
+      String(installation.configuration.jobs),
     ],
     // Kuna prints one summary line per export on stdout.
     KUNA_DIAGNOSTIC_BYTES,

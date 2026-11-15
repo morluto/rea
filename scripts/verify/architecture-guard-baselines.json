@@ -373,6 +373,18 @@
     "src/server/createServer.ts": 1,
     "src/windows/WindowsNativeLoader.ts": 1
   },
+  "hand-caught-configuration-error": {
+    "src/application/binary/BinarySession.ts": 3,
+    "src/application/McpClientRegistration.ts": 1,
+    "src/application/McpRegistrationCatalog.ts": 1,
+    "src/application/McpRegistrationGit.ts": 1,
+    "src/application/SetupClientConfiguration.ts": 5,
+    "src/application/SupportedClients.ts": 1,
+    "src/application/Uninstall.ts": 2,
+    "src/application/WebScriptExportService.ts": 1,
+    "src/ghidra/GhidraProviderClient.ts": 1,
+    "src/ida/IdaConfiguration.ts": 1
+  },
   "abort-without-reason": {},
   "completed-abort-reclassification": {
     "src/application/EvidenceInputResolver.ts": 1,
