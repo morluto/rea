@@ -1,10 +1,6 @@
 {
   "upward": {
-    "application -> catalogDiscovery.ts": 1,
-    "application -> catalogIdentity.ts": 2,
-    "application -> serverIdentity.ts": 1,
     "artifacts -> application": 1,
-    "composition -> cliCommandNames.ts": 3,
     "dotnet -> application": 1
   },
   "cycles": [

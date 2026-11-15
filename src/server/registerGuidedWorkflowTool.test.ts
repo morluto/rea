@@ -7,7 +7,7 @@ import {
   type TestMcp,
 } from "../../tests/support/mcp/mcpFixture.js";
 import { PROMPT_CONTRACTS } from "../contracts/promptContracts.js";
-import { createCatalogDigests } from "../catalogIdentity.js";
+import { createCatalogDigests } from "../contracts/catalog/catalogIdentity.js";
 import { TOOL_CONTRACTS, toolContract } from "../contracts/toolContracts.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import { registerGuidedWorkflowTool } from "./registerGuidedWorkflowTool.js";

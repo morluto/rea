@@ -4,8 +4,8 @@ import { dirname, join } from "node:path";
 import {
   ArtifactReaderFailure,
   ArtifactResourceScope,
+  normalizeArtifactPath,
 } from "../../resources/index.js";
-import { normalizeArtifactPath } from "../../resources/index.js";
 import type { WebScriptArtifactPort } from "../../ports/WebScriptArtifactPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import {

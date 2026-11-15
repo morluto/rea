@@ -23,7 +23,7 @@ import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { cliDecimalField } from "./options.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
+import { CLI_COMMANDS } from "../contracts/cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import {
   DESKTOP_CAPTURE_DEFAULTS,
