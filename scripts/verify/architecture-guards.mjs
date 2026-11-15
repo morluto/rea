@@ -448,11 +448,21 @@ const PROCESS_LIFECYCLE_OWNERS = [
   "src/android/JadxWorkspaceRoot.ts",
   "src/native/pwntools/PwntoolsDecoder.ts",
 ];
+const PLAIN_THROW = /throw new (?:Error|TypeError|RangeError)\(/gu;
 checkCounted(
   "plain Error, TypeError or RangeError thrown by a parser (throw a ParseFailureError from src/domain/parseFailure for an input fault, or invariantViolation from src/domain/internalInvariant for a broken internal assumption)",
   "parser-plain-throw",
   parserFiles.filter((file) => !PROCESS_LIFECYCLE_OWNERS.includes(file.path)),
-  /throw new (?:Error|TypeError|RangeError)\(/gu,
+  PLAIN_THROW,
+  [],
+);
+// The lifecycle owners' existing process-failure throws are counted, so a
+// parse fault or defect added there later cannot hide behind the exemption.
+checkCounted(
+  "plain Error, TypeError or RangeError thrown by a parser-folder process-lifecycle owner (keep its existing process-failure throws; throw a ParseFailureError for an input fault or invariantViolation for a broken internal assumption)",
+  "lifecycle-plain-throw",
+  parserFiles.filter((file) => PROCESS_LIFECYCLE_OWNERS.includes(file.path)),
+  PLAIN_THROW,
   [],
 );
 

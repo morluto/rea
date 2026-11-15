@@ -535,5 +535,9 @@
     "scripts/verify/javascript/recovery.mjs": 1,
     "scripts/verify/javascript/retained-facts.mjs": 1
   },
-  "macho-load-command-literal": {}
+  "macho-load-command-literal": {},
+  "lifecycle-plain-throw": {
+    "src/android/JadxWorkspaceRoot.ts": 4,
+    "src/native/pwntools/PwntoolsDecoder.ts": 1
+  }
 }
