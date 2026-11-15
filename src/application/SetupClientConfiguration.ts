@@ -109,6 +109,8 @@ export const configureClientConfiguration = async (
   environment: SetupProviderEnvironment = {},
   command: readonly string[] = currentClientRegistrationCommand(),
   resolveProviderRequestBudget?: ProviderRequestBudgetResolver,
+  // Setup writes the running host's client files unless its host selects one.
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
 ): Promise<ClientConfigurationResult> => {
   if (command.length === 0)
     return {
@@ -127,7 +129,7 @@ export const configureClientConfiguration = async (
   try {
     return await withClientConfigurationTransaction(transactionPath, () =>
       configureClientDocument(
-        { client, transactionPath },
+        { client, transactionPath, platform },
         environment,
         command,
         resolveProviderRequestBudget,
@@ -148,7 +150,12 @@ const configureClientDocument = async (
   {
     client,
     transactionPath,
-  }: { readonly client: SetupClient; readonly transactionPath: string },
+    platform,
+  }: {
+    readonly client: SetupClient;
+    readonly transactionPath: string;
+    readonly platform: NodeJS.Platform;
+  },
   environment: SetupProviderEnvironment,
   command: readonly string[],
   resolveProviderRequestBudget?: ProviderRequestBudgetResolver,
@@ -159,7 +166,7 @@ const configureClientDocument = async (
   const files = await readClientConfigurationFiles(
     client,
     undefined,
-    undefined,
+    platform,
     environment,
   );
   if (!files.ok) {
@@ -204,6 +211,7 @@ const configureClientDocument = async (
       parsed,
       original ?? "",
       files.value,
+      platform,
     );
     if (ownershipBlocker !== undefined)
       return {
@@ -220,6 +228,7 @@ const configureClientDocument = async (
         command,
         parsed,
         files.value,
+        platform,
         resolveProviderRequestBudget,
       ),
     );
@@ -235,7 +244,7 @@ const configureClientDocument = async (
     void cause;
     return { status: "failed", reason: "readback" };
   }
-  const fallback = await readZcodeFallbackServers(client, parsed);
+  const fallback = await readZcodeFallbackServers(client, platform, parsed);
   if (!fallback.ok) {
     if (fallback.error.kind !== "registration_ownership")
       throwCleanupFailure(fallback.error);
@@ -256,16 +265,22 @@ const configureClientDocument = async (
       servers: { ...fallback.value, ...parsed.servers },
     },
     files.value,
+    platform,
     resolveProviderRequestBudget,
   );
   // The settings written now can differ from the ones inspection admitted,
   // for example a Hopper path set by an installation earlier in this setup.
-  const override = inlineOverrideBlocker(client, files.value, desired);
+  const override = inlineOverrideBlocker(
+    client,
+    files.value,
+    desired,
+    platform,
+  );
   if (override !== undefined)
     return { status: "failed", reason: "read_only_override", detail: override };
   if (
     registrationCurrent(parsed, desired) &&
-    (await privateProfileCurrent(client, original))
+    (await privateProfileCurrent(client, original, platform))
   )
     return { status: "unchanged" };
   return persistClientConfiguration({
@@ -277,6 +292,7 @@ const configureClientDocument = async (
     parsed,
     desired,
     fallbackServers: fallback.value,
+    platform,
   });
 };
 
@@ -291,6 +307,7 @@ interface ClientConfigurationUpdate {
   readonly parsed: ClientConfigurationDocument;
   readonly desired: unknown;
   readonly fallbackServers: Readonly<Record<string, unknown>>;
+  readonly platform: NodeJS.Platform;
 }
 
 const persistClientConfiguration = async ({
@@ -302,6 +319,7 @@ const persistClientConfiguration = async ({
   parsed,
   desired,
   fallbackServers,
+  platform,
 }: ClientConfigurationUpdate): Promise<ClientConfigurationResult> => {
   // The plan chose this file; an MSIX package may have switched to its
   // private copy since, for example when it quit.
@@ -335,6 +353,7 @@ const persistClientConfiguration = async ({
       ...parsed.servers,
       [PRODUCT_IDENTITY.mcpServerKey]: desired,
     },
+    platform,
     PRODUCT_IDENTITY.mcpServerKey,
   );
   // OMP's denylist would hide the registration; keep every other listed name.
@@ -409,10 +428,7 @@ const persistClientConfiguration = async ({
         ? { mode: PRIVATE_PROFILE_MODES.directory }
         : {}),
     });
-    if (
-      client.privateProfile !== undefined &&
-      HOST_PLATFORM.platform !== "win32"
-    )
+    if (client.privateProfile !== undefined && platform !== "win32")
       await securePrivateDirectory(
         dirname(transactionPath),
         client.privateProfile.home,
@@ -519,20 +535,22 @@ const readClientRefresh = async (
   providerEnvironment: SetupProviderEnvironment,
   command: readonly string[],
   {
+    platform,
     resolveProviderRequestBudget,
     resources,
     currentCommandPath,
   }: {
+    readonly platform: NodeJS.Platform;
     readonly resolveProviderRequestBudget?: ProviderRequestBudgetResolver;
     readonly resources?: ArtifactResourceScope;
     /** The entry point whose registrations setup owns; update names the new one. */
     readonly currentCommandPath?: string;
-  } = {},
+  },
 ): Promise<Result<ClientRefresh, ClientConfigurationFileError>> => {
   const files = await readClientConfigurationFiles(
     client,
     resources,
-    undefined,
+    platform,
     providerEnvironment,
   );
   if (!files.ok) {
@@ -561,6 +579,7 @@ const readClientRefresh = async (
     command,
     parsed,
     files.value,
+    platform,
     resolveProviderRequestBudget,
   );
   const target =
@@ -570,6 +589,7 @@ const readClientRefresh = async (
       files.value,
       parsed,
       original,
+      platform,
       currentCommandPath,
     );
   if (target !== undefined)
@@ -584,7 +604,7 @@ const readClientRefresh = async (
     client,
     files.value,
     desired,
-    HOST_PLATFORM.platform,
+    platform,
   );
   if (overrideOrigin !== undefined)
     return ok({
@@ -626,6 +646,8 @@ export const clientConfigurationAligned = async (
   providerEnvironment: SetupProviderEnvironment,
   command: readonly string[],
   resolveProviderRequestBudget?: ProviderRequestBudgetResolver,
+  // Setup reads the running host's client files unless its host selects one.
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
 ): Promise<boolean> => {
   if (client.configPathError !== undefined) return false;
   try {
@@ -634,8 +656,8 @@ export const clientConfigurationAligned = async (
       providerEnvironment,
       command,
       resolveProviderRequestBudget === undefined
-        ? {}
-        : { resolveProviderRequestBudget },
+        ? { platform }
+        : { platform, resolveProviderRequestBudget },
     );
     return (
       refresh.ok &&
@@ -643,7 +665,7 @@ export const clientConfigurationAligned = async (
       refresh.value.parsed !== undefined &&
       refresh.value.refusal === undefined &&
       registrationCurrent(refresh.value.parsed, refresh.value.desired) &&
-      (await privateProfileCurrent(client, refresh.value.original))
+      (await privateProfileCurrent(client, refresh.value.original, platform))
     );
   } catch (cause: unknown) {
     if (cause instanceof RegularFileCleanupFailure) throw cause;
@@ -698,6 +720,7 @@ export const clientRefreshRefusal = async (
       providerEnvironment,
       command,
       {
+        platform,
         currentCommandPath,
         ...(resources === undefined ? {} : { resources }),
       },
@@ -782,6 +805,7 @@ const discoveredInlineSettings = async (
     command,
     refresh.parsed,
     refresh.sources,
+    platform,
   );
   return inlineRegistrationOverride(
     client,
@@ -799,6 +823,8 @@ export const inspectClientConfiguration = async (
   providerEnvironment: SetupProviderEnvironment,
   command: readonly string[],
   resolveProviderRequestBudget?: ProviderRequestBudgetResolver,
+  // Setup reads the running host's client files unless its host selects one.
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
 ): Promise<ClientConfigurationInspection> => {
   let inspection: ClientConfigurationInspection;
   try {
@@ -806,6 +832,7 @@ export const inspectClientConfiguration = async (
       client,
       providerEnvironment,
       command,
+      platform,
       resolveProviderRequestBudget,
     );
   } catch (cause: unknown) {
@@ -828,6 +855,7 @@ const inspectClientDocument = async (
   client: SetupClient,
   providerEnvironment: SetupProviderEnvironment,
   command: readonly string[],
+  platform: NodeJS.Platform,
   resolveProviderRequestBudget?: ProviderRequestBudgetResolver,
 ): Promise<ClientConfigurationInspection> => {
   if (client.configPathError !== undefined)
@@ -836,7 +864,7 @@ const inspectClientDocument = async (
   const files = await readClientConfigurationFiles(
     client,
     undefined,
-    undefined,
+    platform,
     providerEnvironment,
   );
   if (!files.ok) {
@@ -869,6 +897,7 @@ const inspectClientDocument = async (
         files.value,
         undefined,
         undefined,
+        platform,
       );
       if (ownershipBlocker !== undefined)
         return { status: "invalid", remediation: ownershipBlocker };
@@ -878,9 +907,15 @@ const inspectClientDocument = async (
         command,
         undefined,
         files.value,
+        platform,
         resolveProviderRequestBudget,
       );
-      const override = inlineOverrideBlocker(client, files.value, desired);
+      const override = inlineOverrideBlocker(
+        client,
+        files.value,
+        desired,
+        platform,
+      );
       if (override !== undefined)
         return { status: "invalid", remediation: override };
       // This read establishes absence; do not reuse an earlier user-file policy.
@@ -894,7 +929,7 @@ const inspectClientDocument = async (
       }
       if (policy.value !== undefined)
         return { status: "invalid", remediation: policy.value };
-      const fallback = await readZcodeFallbackServers(client);
+      const fallback = await readZcodeFallbackServers(client, platform);
       if (!fallback.ok) {
         if (fallback.error.kind !== "registration_ownership")
           throwCleanupFailure(fallback.error);
@@ -917,6 +952,7 @@ const inspectClientDocument = async (
       files.value,
       parsed,
       original,
+      platform,
     );
     if (ownershipBlocker !== undefined)
       return { status: "invalid", remediation: ownershipBlocker };
@@ -926,9 +962,15 @@ const inspectClientDocument = async (
       command,
       parsed,
       files.value,
+      platform,
       resolveProviderRequestBudget,
     );
-    const override = inlineOverrideBlocker(client, files.value, desired);
+    const override = inlineOverrideBlocker(
+      client,
+      files.value,
+      desired,
+      platform,
+    );
     if (override !== undefined)
       return { status: "invalid", remediation: override };
     const policy = await readClientPolicyBlock(client, parsed, desired);
@@ -943,10 +985,10 @@ const inspectClientDocument = async (
       return { status: "invalid", remediation: policy.value };
     if (
       registrationCurrent(parsed, desired) &&
-      (await privateProfileCurrent(client, original))
+      (await privateProfileCurrent(client, original, platform))
     )
       return { status: "already_current" };
-    const fallback = await readZcodeFallbackServers(client, parsed);
+    const fallback = await readZcodeFallbackServers(client, platform, parsed);
     if (!fallback.ok) {
       if (fallback.error.kind !== "registration_ownership")
         throwCleanupFailure(fallback.error);
@@ -993,14 +1035,9 @@ const inlineOverrideBlocker = (
   client: SetupClient,
   sources: readonly ClientConfigurationSource[],
   desired: unknown,
+  platform: NodeJS.Platform,
 ): string | undefined => {
-  // Setup writes and its client reads this file on the running host.
-  const origin = inlineRegistrationOverride(
-    client,
-    sources,
-    desired,
-    HOST_PLATFORM.platform,
-  );
+  const origin = inlineRegistrationOverride(client, sources, desired, platform);
   return origin === undefined
     ? undefined
     : inlineOverrideRemediation(client, origin);
@@ -1034,6 +1071,7 @@ const writeTargetOwnershipBlocker = (
   sources: readonly ClientConfigurationSource[],
   parsed: ClientConfigurationDocument | undefined,
   original: string | undefined,
+  platform: NodeJS.Platform,
   currentCommandPath?: string,
 ): string | undefined => {
   if (parsed !== undefined)
@@ -1042,12 +1080,14 @@ const writeTargetOwnershipBlocker = (
       parsed,
       original ?? "",
       sources,
+      platform,
       currentCommandPath,
     );
-  const inherited = effectiveClientConfiguration(sources, {
-    client,
-    document: undefined,
-  });
+  const inherited = effectiveClientConfiguration(
+    sources,
+    { client, document: undefined },
+    platform,
+  );
   return inherited === undefined
     ? undefined
     : registrationOwnershipBlocker(
@@ -1055,6 +1095,7 @@ const writeTargetOwnershipBlocker = (
         inherited,
         "",
         sources,
+        platform,
         currentCommandPath,
       );
 };
@@ -1064,17 +1105,19 @@ const registrationOwnershipBlocker = (
   client: SetupClient,
   parsed: ClientConfigurationDocument,
   original: string,
-  sources: readonly ClientConfigurationSource[] = [],
+  sources: readonly ClientConfigurationSource[],
+  platform: NodeJS.Platform,
   currentCommandPath?: string,
 ): string | undefined => {
   // Cordis owns registrations by stable entry ID, including malformed launchers.
   if (parsed.dialect === "dsh") return undefined;
   const name = PRODUCT_IDENTITY.mcpServerKey;
   const entries: { value: unknown; paths: readonly string[] }[] = [];
-  const effective = effectiveClientConfiguration(sources, {
-    client,
-    document: parsed,
-  });
+  const effective = effectiveClientConfiguration(
+    sources,
+    { client, document: parsed },
+    platform,
+  );
   if (effective !== undefined && Object.hasOwn(effective.servers, name))
     entries.push({
       value: effective.servers[name],
@@ -1121,6 +1164,7 @@ const registrationOwnershipBlocker = (
 /** Admit the fallback only when the first native ZCode server would suppress it. */
 const readZcodeFallbackServers = async (
   client: SetupClient,
+  platform: NodeJS.Platform,
   parsed?: ClientConfigurationDocument,
 ): Promise<
   Result<
@@ -1155,6 +1199,8 @@ const readZcodeFallbackServers = async (
       { ...client, configPath: path, format: "zcode_fallback" },
       parsed,
       source.value,
+      [],
+      platform,
     );
     if (ownershipBlocker !== undefined)
       return err({
@@ -1162,7 +1208,7 @@ const readZcodeFallbackServers = async (
         path,
         detail: ownershipBlocker,
       });
-    const environment = clientRegistrationEnvironment(parsed, client);
+    const environment = clientRegistrationEnvironment(parsed, client, platform);
     if (!environment.ok)
       return err({
         kind: "malformed",
@@ -1266,13 +1312,11 @@ const registrationCurrent = (
 const privateProfileCurrent = async (
   client: SetupClient,
   original: string | undefined,
+  platform: NodeJS.Platform,
 ): Promise<boolean> =>
   client.privateProfile === undefined ||
   (original !== undefined &&
-    (await privateProfileModesCurrent(
-      client.configPath,
-      HOST_PLATFORM.platform,
-    )));
+    (await privateProfileModesCurrent(client.configPath, platform)));
 
 const clientConfigurationDesired = async (
   client: SetupClient,
@@ -1280,12 +1324,14 @@ const clientConfigurationDesired = async (
   command: readonly string[],
   parsed: ClientConfigurationDocument | undefined,
   sources: readonly ClientConfigurationSource[],
+  platform: NodeJS.Platform,
   resolveProviderRequestBudget?: ProviderRequestBudgetResolver,
 ): Promise<unknown> => {
-  const effective = effectiveClientConfiguration(sources, {
-    client,
-    document: parsed,
-  });
+  const effective = effectiveClientConfiguration(
+    sources,
+    { client, document: parsed },
+    platform,
+  );
   const format = clientWriteDialect(
     parsed?.dialect ?? client.format ?? "json",
     sources,
@@ -1296,6 +1342,7 @@ const clientConfigurationDesired = async (
     const validated = clientRegistrationEnvironment(
       effective,
       client,
+      platform,
       providerEnvironment,
     );
     if (!validated.ok) throw validated.error;
@@ -1303,7 +1350,7 @@ const clientConfigurationDesired = async (
       parsed === undefined
         ? new DshCordisDocument("")
         : dshDocument(parsed.document)
-    ).desired(launcher, providerEnvironment, HOST_PLATFORM.platform);
+    ).desired(launcher, providerEnvironment, platform);
     if (!desired.ok) throw desired.error;
     return desired.value;
   }
@@ -1315,6 +1362,7 @@ const clientConfigurationDesired = async (
     client.name === "codex" || client.name === "kimi"
       ? resolveProviderRequestBudget
       : undefined,
+    platform,
   );
   if (!validated.ok) throw validated.error;
   // Preserve explicitly configured server settings, never the ambient process
@@ -1323,6 +1371,7 @@ const clientConfigurationDesired = async (
   const environment = clientRegistrationEnvironment(
     parsed,
     client,
+    platform,
     providerEnvironment,
     "fragment",
   );
@@ -1346,6 +1395,7 @@ const clientConfigurationDesired = async (
     sources,
     effective,
     providerEnvironment,
+    platform,
   );
 };
 
@@ -1371,13 +1421,15 @@ const withInheritedGooseSettings = (
   sources: readonly ClientConfigurationSource[],
   effective: ClientConfigurationDocument | undefined,
   providerEnvironment: SetupProviderEnvironment,
+  platform: NodeJS.Platform,
 ): Record<string, unknown> => {
   if (format !== "goose") return withoutInherited;
   // The layers below the user file, which the user entry overlays field by field.
-  const lower = effectiveClientConfiguration(sources, {
-    client,
-    document: undefined,
-  });
+  const lower = effectiveClientConfiguration(
+    sources,
+    { client, document: undefined },
+    platform,
+  );
   const declares = (
     document: ClientConfigurationDocument | undefined,
     keys: readonly string[],
@@ -1422,6 +1474,7 @@ const withInheritedGooseSettings = (
   const inherited = clientRegistrationEnvironment(
     effective,
     client,
+    platform,
     providerEnvironment,
     "fragment",
   );
