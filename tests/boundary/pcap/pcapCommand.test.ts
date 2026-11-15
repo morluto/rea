@@ -3,9 +3,9 @@ import { writeFile } from "node:fs/promises";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
-import { setTimeout as delay } from "node:timers/promises";
 import { expect, it, onTestFinished, test, vi } from "vitest";
 import { runPcapCommand } from "../../../src/pcap/PcapCommand.js";
+import { Deadline } from "../../../src/domain/deadline.js";
 import * as ownership from "../../../src/process/ProcessOwnershipObservation.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
@@ -164,7 +164,14 @@ it.skipIf(process.platform !== "darwin")(
           await gate;
         }
       });
+    const timeoutMs = 4321;
+    const deadlines = vi.spyOn(Deadline, "after");
+    const commandDeadlines = () =>
+      deadlines.mock.calls.filter(
+        ([milliseconds]) => milliseconds === timeoutMs,
+      );
     onTestFinished(() => {
+      deadlines.mockRestore();
       prepare.mockRestore();
       release();
     });
@@ -172,7 +179,7 @@ it.skipIf(process.platform !== "darwin")(
       operation: "inspect_pcap_client",
       command: process.execPath,
       arguments: ["--version"],
-      limits: { timeoutMs: 1000, maxOutputBytes: 1024 },
+      limits: { timeoutMs, maxOutputBytes: 1024 },
       environment: {},
       signal: undefined,
       retain: (owner) => {
@@ -185,11 +192,16 @@ it.skipIf(process.platform !== "darwin")(
       (error: unknown) => ({ ok: false as const, error }),
     );
     await preparing;
-    await delay(1100);
+    // Observe before release; assert after the command is joined so a failed
+    // check never leaves it running past the test.
+    const armedWhilePreparing = commandDeadlines();
     release();
     const result = await pending;
+    // The command deadline is armed only once preparation has finished.
+    expect(armedWhilePreparing).toEqual([]);
     if (!result.ok) throw result.error;
     expect(result.value.stdout.trim()).toBe(process.version);
+    expect(commandDeadlines()).toHaveLength(1);
   },
 );
 
