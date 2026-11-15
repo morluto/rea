@@ -14,7 +14,6 @@ import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { captureProviderEnvironment } from "./providerEnvironment.js";
 import { createByteEntropyService } from "../composition/binaryDiagnostics.js";
 import { registerDesktopBuildTools } from "./registerDesktopBuildTools.js";
-import { registerAnalysisViewTool } from "./registerAnalysisViewTool.js";
 import { registerBinaryDiagnosticsTools } from "./registerBinaryDiagnosticsTools.js";
 import { registerFridaTools } from "./registerFridaTools.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
@@ -608,14 +607,6 @@ export const createServer = (
           options.optionalProviderLoadFailures?.javascriptRuntimeObservation,
       }),
     application: () => {
-      registerAnalysisViewTool(
-        server,
-        toolLogger,
-        evidenceById,
-        recordEvidence,
-        analysisAdmission,
-        artifactResources,
-      );
       registerServiceTools(
         server,
         {
@@ -623,6 +614,7 @@ export const createServer = (
             settings: analysisSettings,
             delivery: server.delivery,
           },
+          analysisView: { resources: artifactResources },
           webScripts: artifactResources,
           guidance: artifactResources,
           webModuleTrace,

@@ -1,5 +1,4 @@
 {
-  "src/server/registerAnalysisViewTool.ts": 1,
   "src/server/registerApplicationTools/apiContract.ts": 1,
   "src/server/registerApplicationTools/compareEndpoints.ts": 1,
   "src/server/registerApplicationTools/compareExportShapes.ts": 1,

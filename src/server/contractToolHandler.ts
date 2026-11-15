@@ -150,11 +150,12 @@ export const createEvidenceToolHandler =
     logger: Logger,
     recordEvidence?: EvidenceWriter["recordEvidence"],
     withAdmittedAnalysis?: WithAdmittedAnalysis,
+    viewSource?: (input: unknown) => JsonValue | undefined,
   ) =>
   <TOperation extends string>(contract: ToolContract<TOperation>) =>
   (input: unknown, context: ServerContext) =>
     runEvidenceToolOperation(
-      { server, logger, recordEvidence, withAdmittedAnalysis },
+      { server, logger, recordEvidence, withAdmittedAnalysis, viewSource },
       contract,
       undefined,
       { input, context },

@@ -6,7 +6,12 @@ import type { AndroidAnalysisService } from "../application/android/AndroidAnaly
 import { inspectAndroidJniBindings } from "../application/android/AndroidJniInspection.js";
 import { inspectAndroidPackage } from "../application/android/AndroidPackageInspection.js";
 import { inspectAndroidSymbol } from "../application/android/AndroidSymbolInspection.js";
-import type { AnalysisViewRetention } from "../application/analysisView/AnalysisViewService.js";
+import {
+  inspectAnalysisView,
+  type AnalysisViewRetention,
+} from "../application/analysisView/AnalysisViewService.js";
+import { z } from "zod";
+import { analysisViewSourceSchema } from "../domain/analysisView/analysisViewRequest.js";
 import type { ApkSignatureService } from "../application/apkSignature/ApkSignatureService.js";
 import type { ApktoolResourceAnalysisService } from "../application/apktool/ApktoolResourceAnalysisService.js";
 import type { DesktopApplicationService } from "../application/artifacts/DesktopApplicationService.js";
@@ -83,6 +88,26 @@ export interface AnalysisSettingsToolOptions {
   readonly settings: AnalysisSettings;
   readonly delivery: ToolResultDelivery;
 }
+
+/** Artifact resources a selected view may read, when the server owns them. */
+export interface AnalysisViewToolOptions {
+  readonly resources?: ArtifactResourceScope | undefined;
+}
+
+const viewInputSourceSchema = z.looseObject({
+  source: analysisViewSourceSchema,
+});
+
+/**
+ * The source overflow recovery may name again. An inline record cannot be
+ * repeated within the response it just overflowed, so it has none.
+ */
+const analysisViewOverflowSource = (input: unknown): JsonValue | undefined => {
+  const parsed = viewInputSourceSchema.safeParse(input);
+  return parsed.success && parsed.data.source.kind !== "inline"
+    ? jsonValueSchema.parse(parsed.data.source)
+    : undefined;
+};
 
 /** Deliver a workflow's typed output as the JSON value its contract declares. */
 const jsonValueResult = <Error>(
@@ -526,6 +551,19 @@ const SERVICE_TOOL_BINDINGS = {
       value: async (input) => jsonValueResult(settings.update(input)),
     },
   })) satisfies Bind<AnalysisSettingsToolOptions>,
+  // A selected view of other Evidence; its overflow recovery can name the
+  // same retained source again.
+  analysisView: (({ resources }, retention) => ({
+    inspect_analysis_view: {
+      admission: "application",
+      viewSource: analysisViewOverflowSource,
+      run: (input, { signal }) =>
+        inspectAnalysisView(input, retention.evidenceById, {
+          ...(signal === undefined ? {} : { signal }),
+          ...(resources === undefined ? {} : { resources }),
+        }),
+    },
+  })) satisfies Bind<AnalysisViewToolOptions>,
   sessionStatus: ((options) => ({
     binary_session: {
       admission: "sdk",
