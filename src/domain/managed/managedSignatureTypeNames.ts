@@ -1,16 +1,16 @@
 import { createHash } from "node:crypto";
 
-import { managedDecodeBudget } from "./ManagedDecodeBudget.js";
-import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
+import { managedDecodeBudget } from "./managedDecodeBudget.js";
+import type { ManagedParseIssue } from "./managedArtifact.js";
 import type {
   parseTypes,
   ManagedType,
   SignatureTypeName,
   DeclarationTypeName,
-} from "./ManagedMemberInspectorCore.js";
-import type { ManagedTypeReferenceLookup } from "./ManagedTypeReferences.js";
-import type { ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
-import { managedFailure, readManagedValue } from "./ManagedReaderFailure.js";
+} from "./managedMemberInspectorCore.js";
+import type { ManagedTypeReferenceLookup } from "./managedTypeReferences.js";
+import type { ManagedMetadataLayout } from "./managedMetadataLayout.js";
+import { managedFailure, readManagedValue } from "./managedReaderFailure.js";
 
 const TYPE_REF = 1;
 const TYPE_DEF = 2;

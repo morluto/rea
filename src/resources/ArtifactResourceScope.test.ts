@@ -19,7 +19,7 @@ import {
   ArtifactReaderFailure,
   type ArtifactReader,
 } from "./ArtifactReader.js";
-import { translateArtifactFailure } from "../artifacts/ArtifactOperationFailure.js";
+import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
 
 it("waits for admitted operations and shares concurrent close", async () => {
   const scope = new ArtifactResourceScope();

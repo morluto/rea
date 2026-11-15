@@ -1,17 +1,17 @@
-import { managedDecodeBudget } from "./ManagedDecodeBudget.js";
-import type { ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
+import { managedDecodeBudget } from "./managedDecodeBudget.js";
+import type { ManagedMetadataLayout } from "./managedMetadataLayout.js";
 import {
   decodeMetadataCodedIndex,
   metadataRowCursor,
   metadataToken,
   readMetadataString,
-} from "./ManagedMetadataHeaps.js";
-import { readManagedValue } from "./ManagedReaderFailure.js";
+} from "./managedMetadataHeaps.js";
+import { readManagedValue } from "./managedReaderFailure.js";
 import {
   MANAGED_CODED_INDEXES,
   metadataRowOffset,
-} from "./ManagedMetadataLayout.js";
-import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
+} from "./managedMetadataLayout.js";
+import type { ManagedParseIssue } from "./managedArtifact.js";
 
 export interface ManagedTypeReference {
   readonly namespace: string;

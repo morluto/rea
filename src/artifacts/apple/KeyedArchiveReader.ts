@@ -12,6 +12,7 @@ import {
   ArtifactResourceScope,
   DirectoryArtifactReader,
   DirectoryArtifactEntryAccessDenied,
+  translateArtifactFailure,
 } from "../../resources/index.js";
 import { createHash } from "node:crypto";
 import {
@@ -53,7 +54,6 @@ import {
   projectKeyedArchive,
 } from "../../domain/apple/keyedArchive.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
 import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 

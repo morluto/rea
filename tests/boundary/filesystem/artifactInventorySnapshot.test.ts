@@ -6,7 +6,10 @@ import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-import { translateArtifactFailure } from "../../../src/artifacts/ArtifactOperationFailure.js";
+import {
+  translateArtifactFailure,
+  DirectoryArtifactReader,
+} from "../../../src/resources/index.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
@@ -17,7 +20,6 @@ import { AsarArtifactReader } from "../../../src/artifacts/AsarArtifactReader.js
 import { scanCanonicalArtifactInventoryInScope } from "../../../src/artifacts/inventory/scanCanonical.js";
 import { scanArtifactInventory } from "../../fixtures/artifactInventory.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
-import { DirectoryArtifactReader } from "../../../src/resources/index.js";
 
 describe("artifact inventory snapshot", () => {
   it("retains the complete scan after the source directory changes", async () => {

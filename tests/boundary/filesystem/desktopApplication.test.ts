@@ -26,9 +26,9 @@ import {
   buildManagedPeFixture,
   buildNativePeFixture,
 } from "../../../src/dotnet/ManagedPe.fixture.js";
-import { readManagedMetadataLayout } from "../../../src/dotnet/ManagedMetadataLayout.js";
-import { readManagedPeLayout } from "../../../src/dotnet/ManagedPeReader.js";
-import { readAssemblyReference } from "../../../src/dotnet/ManagedMetadataInventoryRows.js";
+import { readManagedMetadataLayout } from "../../../src/domain/managed/managedMetadataLayout.js";
+import { readManagedPeLayout } from "../../../src/domain/managed/managedPeReader.js";
+import { readAssemblyReference } from "../../../src/domain/managed/managedMetadataInventoryRows.js";
 import {
   CPU,
   FILE_TYPE,

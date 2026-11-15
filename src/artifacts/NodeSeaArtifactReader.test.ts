@@ -32,7 +32,7 @@ import {
   nodeSeaUniversal,
 } from "./nodeSea/NodeSea.fixture.js";
 import { elfNote, elfNoteFixture } from "../native/elf/ElfNotes.fixture.js";
-import { peResourceFixture } from "./pe/PeResources.fixture.js";
+import { peResourceFixture } from "../domain/pe/peResources.fixture.js";
 import { locateNodeSea } from "./nodeSea/NodeSeaLocation.js";
 import { MAX_INSPECT_PE_FILE_BYTES } from "../domain/native/peResources.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
