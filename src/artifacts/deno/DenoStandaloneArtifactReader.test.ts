@@ -13,7 +13,7 @@ import {
   MAX_INSPECT_ELF_NOTE_FILE_BYTES,
 } from "../../domain/native/elfNotes.js";
 import { MAX_INSPECT_PE_FILE_BYTES } from "../../domain/native/peResources.js";
-import { peResourceFixture } from "../../native/pe/PeResources.fixture.js";
+import { peResourceFixture } from "../pe/PeResources.fixture.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../../tests/fixtures/artifactInventory.js";
 import { artifactFormatDescriptor } from "../artifactFormats.js";
