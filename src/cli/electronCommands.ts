@@ -6,6 +6,7 @@ import { electronActiveObservationInputSchema } from "../domain/javascript/elect
 import { ELECTRON_TOOL_CONTRACTS } from "../contracts/javascript/electronToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
 import {
+  admittedContractInput,
   inspectWithService,
   registerContractCommand,
   registerContractDocumentCommand,
@@ -263,13 +264,13 @@ const observeElectron =
       signal: AbortSignal,
     ) => Promise<Result<Evidence, AnalysisError>>,
   ) =>
-  async (input: unknown, { signal }: ContractCommandContext) => {
-    const parsed = contract.inputSchema.safeParse(input);
-    if (!parsed.success)
-      return inputError(contract.name, parsed.error.issues, input);
+  async (_input: unknown, context: ContractCommandContext) => {
+    const admitted = admittedContractInput(context);
+    if (!admitted.ok) return cliError(admitted.error);
+    const input = admitted.value as z.output<Schema>;
     const provider = await createCliElectronObservationProvider(environment);
     return finishAnalysisCommand(
-      () => run(provider, parsed.data, signal),
+      () => run(provider, input, context.signal),
       {
         close: async () => {
           await provider.close?.();
@@ -277,7 +278,7 @@ const observeElectron =
       },
       provider.identity().id,
       contract.name,
-      signal,
+      context.signal,
     ).then(projectCliAnalysisResult);
   };
 

@@ -1,4 +1,5 @@
 import { z } from "incur";
+import { invariantViolation } from "../domain/internalInvariant.js";
 import type { Logger } from "pino";
 
 import { logCliCommand } from "../cliLogging.js";
@@ -13,7 +14,7 @@ import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js"
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import type { CallerInputPaths, Evidence } from "../domain/evidence.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import type { Result } from "../domain/result.js";
+import { err, ok, type Result } from "../domain/result.js";
 import type { ArtifactAnalysisOperation } from "../contracts/artifactToolContracts.js";
 import { openBinaryTargetSelection } from "../contracts/sessionLifecycleInputs.js";
 import {
@@ -94,15 +95,41 @@ export interface ContractCommandContext<
   /** The admitted delivery, for a projection with `evidenceDelivery`. */
   readonly delivery: CliEvidenceDeliveryChoice | undefined;
   /**
-   * The contract's parse of the input, when the projection decodes JSON at
-   * run time and admission parsed the whole input; undefined otherwise.
+   * The contract's parse of the input, when admission parsed the whole
+   * input: the projection decodes JSON at run time, or argv supplies every
+   * contract field. Undefined when a session target, Evidence target or the
+   * handler supplies part of the input.
    */
   readonly parsed: Parsed | undefined;
+  /**
+   * The contract's refusal of an argv-supplied whole input, which the
+   * handler reports in its own workflow's shape; undefined when the input
+   * conforms or was not parsed whole.
+   */
+  readonly refusal: AnalysisInputError | undefined;
   /** What each `jsonInputChecks` check admitted, by contract field. */
   readonly checked: Checked;
   /** The projection's CLI-only options, whose effect the handler owns. */
   readonly cliOptions: CliOptions;
 }
+
+/**
+ * The contract's parse of a projection whose admission parses the whole
+ * input, or its refusal. Neither means the projection supplies part of the
+ * input elsewhere, which is a defect in that command's registration.
+ */
+export const admittedContractInput = <Parsed>(context: {
+  readonly operation: string;
+  readonly parsed: Parsed | undefined;
+  readonly refusal: AnalysisInputError | undefined;
+}): Result<Parsed, AnalysisInputError> => {
+  if (context.refusal !== undefined) return err(context.refusal);
+  if (context.parsed === undefined)
+    throw invariantViolation(
+      `${context.operation} does not admit its whole contract input on the CLI`,
+    );
+  return ok(context.parsed);
+};
 
 /** The Evidence targets one invocation selected. */
 export interface CliEvidenceTargetSelection {
@@ -628,6 +655,7 @@ export const registerContractCommand = <
                 parsed: admitted.value.parsed as
                   | z.output<Contract["inputSchema"]>
                   | undefined,
+                refusal: admitted.value.refusal,
                 checked: read.checked as CliCheckedJsonInputs<Checks>,
                 cliOptions: selected.cliOptionValues(
                   values,
@@ -905,6 +933,7 @@ export const registerRoutedCommand = (
               opening: opening.value,
               delivery: admitted.value.delivery,
               parsed: admitted.value.parsed,
+              refusal: admitted.value.refusal,
               checked: { ...shared.checked, ...read.checked },
               cliOptions: description.cliOptionValues(
                 withCliOnlyDefaults(description, values),

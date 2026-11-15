@@ -602,9 +602,16 @@ export interface ContractCliAdmission {
   readonly input: Record<string, unknown>;
   /**
    * The contract's parse of the whole input, when admission decoded JSON at
-   * run time and so parsed it; undefined otherwise.
+   * run time or argv supplied every contract field and the input conforms;
+   * undefined otherwise.
    */
   readonly parsed: unknown;
+  /**
+   * The contract's refusal of an argv-supplied whole input. Admission leaves
+   * it to the handler, whose workflow owns how a nonconforming input is
+   * reported; undefined when the input conforms or was not parsed whole.
+   */
+  readonly refusal: AnalysisInputError | undefined;
   /** The admitted delivery, for a projection with `evidenceDelivery`. */
   readonly delivery: CliEvidenceDeliveryChoice | undefined;
 }
@@ -2412,7 +2419,16 @@ export const describeContractCommand = <
       }
       return admitInvocation(
         contract,
-        { evidenceDelivery, viewDelivery, parameters, shape },
+        {
+          evidenceDelivery,
+          viewDelivery,
+          parameters,
+          shape,
+          wholeInput:
+            sessionTarget === undefined &&
+            evidenceTargets === undefined &&
+            handlerFields.length === 0,
+        },
         selectedValues,
         toContractInput,
         rename,
@@ -2571,7 +2587,9 @@ const selectSpelledSelector = (
  * Decode run-time JSON, then map the values to the contract input and the
  * selected delivery. When the projection decodes JSON at run time, the
  * decoded input, delivery and view are admitted together by the contract
- * input schema, so the contract's own rules and messages apply.
+ * input schema, so the contract's own rules and messages apply. When argv
+ * supplies the whole contract input, it is parsed once the same way and the
+ * handler receives the parse or the refusal.
  */
 const admitInvocation = (
   contract: ProjectedContract,
@@ -2580,12 +2598,18 @@ const admitInvocation = (
     readonly viewDelivery: CliViewDelivery | undefined;
     readonly parameters: readonly ContractCliParameter[];
     readonly shape: Readonly<Record<string, z.ZodType>>;
+    /**
+     * Argv supplies every contract field: no session target, Evidence
+     * target or handler fills one.
+     */
+    readonly wholeInput: boolean;
   },
   values: Readonly<Record<string, unknown>>,
   toContractInput: ContractCliDescription["toContractInput"],
   rename: (field: string) => string,
 ): Result<ContractCliAdmission, AnalysisInputError> => {
-  const { evidenceDelivery, viewDelivery, parameters, shape } = command;
+  const { evidenceDelivery, viewDelivery, parameters, shape, wholeInput } =
+    command;
   const inline = decodeInlineJson(contract.name, parameters, values);
   if (!inline.ok) return inline;
   const decoded = inline.value;
@@ -2595,7 +2619,11 @@ const admitInvocation = (
     : undefined;
   let view: object | undefined;
   let parsed: unknown;
-  if (parameters.some(({ runtimeJson }) => runtimeJson !== undefined)) {
+  let refusal: AnalysisInputError | undefined;
+  const runtimeJson = parameters.some(
+    ({ runtimeJson }) => runtimeJson !== undefined,
+  );
+  if (wholeInput || runtimeJson) {
     const selected =
       viewDelivery === undefined ? undefined : decoded[rename("view")];
     const candidate = {
@@ -2606,19 +2634,21 @@ const admitInvocation = (
       ...(selected === undefined ? {} : { view: selected }),
     };
     const admitted = contract.inputSchema.safeParse(candidate);
-    if (!admitted.success)
-      return err(
-        analysisInputErrorFromIssues(
-          contract.name,
-          admitted.error.issues,
-          candidate,
-        ),
+    if (admitted.success) {
+      parsed = admitted.data;
+      if (viewDelivery !== undefined)
+        ({ view } = admitted.data as { readonly view?: object });
+    } else {
+      refusal = analysisInputErrorFromIssues(
+        contract.name,
+        admitted.error.issues,
+        candidate,
       );
-    parsed = admitted.data;
-    if (viewDelivery !== undefined)
-      ({ view } = admitted.data as { readonly view?: object });
+      if (runtimeJson) return err(refusal);
+    }
   }
-  if (!evidenceDelivery) return ok({ input, parsed, delivery: undefined });
+  if (!evidenceDelivery)
+    return ok({ input, parsed, refusal, delivery: undefined });
   const delivery: CliEvidenceDeliveryChoice = {
     detail: detail ?? (view === undefined ? "complete" : "summary"),
     evidenceOutput: decoded.evidence_output as string | undefined,
@@ -2634,7 +2664,9 @@ const admitInvocation = (
     ...delivery,
     operation: contract.name,
   });
-  return refused === undefined ? ok({ input, parsed, delivery }) : err(refused);
+  return refused === undefined
+    ? ok({ input, parsed, refusal, delivery })
+    : err(refused);
 };
 
 /**

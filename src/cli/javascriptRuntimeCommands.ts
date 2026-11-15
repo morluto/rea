@@ -11,7 +11,6 @@ import { JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS } from "../contracts/java
 import { V8InspectorAdmission } from "../inspector/V8InspectorProvider.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Evidence } from "../domain/evidence.js";
-import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { Result } from "../domain/result.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
@@ -19,6 +18,7 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "pino";
 import { contractNamed } from "./contractCliDescription.js";
 import {
+  admittedContractInput,
   registerContractCommand,
   type ContractCommandContext,
 } from "./contractCommand.js";
@@ -42,23 +42,18 @@ export const registerJavaScriptRuntimeObservationCommands = (
         options: { readonly signal: AbortSignal },
       ) => Promise<Result<Evidence, AnalysisError>>,
     ) =>
-    async (input: unknown, { signal }: ContractCommandContext) => {
-      const parsed = contract.inputSchema.safeParse(input);
-      if (!parsed.success)
-        return cliError(
-          analysisInputErrorFromIssues(
-            contract.name,
-            parsed.error.issues,
-            input,
-          ),
-        );
+    async (_input: unknown, context: ContractCommandContext) => {
+      const admitted = admittedContractInput(context);
+      if (!admitted.ok) return cliError(admitted.error);
+      const input = admitted.value as z.output<Schema>;
+      const { signal } = context;
       const provider = createJavaScriptRuntimeObservationProvider(
         environment,
         undefined,
         admission,
       );
       return finishAnalysisCommand(
-        () => run(provider, parsed.data, { signal }),
+        () => run(provider, input, { signal }),
         { close: () => provider.close?.() ?? Promise.resolve() },
         provider.identity().id,
         contract.name,

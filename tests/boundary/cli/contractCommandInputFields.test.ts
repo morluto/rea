@@ -3,7 +3,10 @@ import pino from "pino";
 import { expect, it } from "vitest";
 
 import { publishCliAnalysisEvidence } from "../../../src/cli/analysisEvidenceDelivery.js";
-import { registerContractCommand } from "../../../src/cli/contractCommand.js";
+import {
+  admittedContractInput,
+  registerContractCommand,
+} from "../../../src/cli/contractCommand.js";
 import type { CliInstance } from "../../../src/cli/types.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
 
@@ -132,4 +135,56 @@ it("keeps a branch-only default out of the branch the caller selects", async () 
     await execute({ args: {}, options: parse(options) });
   // The selected branch applies its own default when it parses the input.
   expect(received).toEqual([{ action: "list" }, { action: "render" }]);
+});
+
+it("hands a whole-input handler the contract's parse, or its refusal, without parsing again", async () => {
+  const cli = Cli.create("rea-admitted-input-test", {
+    version: "1",
+    sync: false,
+  });
+  const received: unknown[] = [];
+  registerContractCommand(
+    cli as unknown as CliInstance,
+    pino({ enabled: false }),
+    {
+      name: "admitted_probe",
+      inputSchema: z
+        .object({
+          name: z.string(),
+          limit: z.number().int().default(5),
+        })
+        .refine(({ name }) => name !== "blocked", {
+          message: "This name is reserved",
+          path: ["name"],
+        }),
+    },
+    { command: "admitted-probe", description: "Admitted probe" },
+    async (_input, context) => {
+      const admitted = admittedContractInput(context);
+      received.push(admitted.ok ? admitted.value : "refused");
+      return admitted.ok ? {} : { refused: admitted.error.issues.length };
+    },
+  );
+  const registered = Cli.toCommands.get(cli)?.get("admitted-probe");
+  if (registered === undefined) throw new Error("admitted-probe is missing");
+  const options = (value: unknown) =>
+    (
+      Reflect.get(registered, "options") as { parse(v: unknown): unknown }
+    ).parse(value);
+  const execute = Reflect.get(registered, "run") as (
+    value: unknown,
+  ) => Promise<unknown>;
+  const exitCode = process.exitCode;
+  try {
+    await execute({ args: {}, options: options({ name: "ok" }) });
+    // A contract rule over the whole input, checked after argv parsing,
+    // reaches the handler as a refusal it reports in its own shape.
+    await expect(
+      execute({ args: {}, options: options({ name: "blocked" }) }),
+    ).resolves.toEqual({ refused: 1 });
+  } finally {
+    process.exitCode = exitCode;
+  }
+  // The parse applied the contract default the raw input did not carry.
+  expect(received).toEqual([{ name: "ok", limit: 5 }, "refused"]);
 });
