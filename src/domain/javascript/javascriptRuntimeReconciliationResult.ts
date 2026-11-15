@@ -2,7 +2,7 @@ import type { JavaScriptApplicationGraph } from "./javascriptApplicationGraph.js
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import {
-  reconciliationInputStatus,
+  reconciliationInputCoverage,
   type ReconciliationInputStatus,
 } from "./javascriptRuntimeReconciliationGraph.js";
 import type { StaticLoadStateProjection } from "./javascriptRuntimeLoadState.js";
@@ -28,6 +28,7 @@ interface ReconciliationProjection {
 interface CompletionFlags {
   readonly outputTruncated: boolean;
   readonly inputStatus: ReconciliationInputStatus;
+  readonly inputTruncated: boolean;
 }
 
 /** Build and verify the deterministic caller-visible reconciliation result. */
@@ -155,13 +156,18 @@ const reconciliationCoverage = (
         : completion.inputStatus === "partial"
           ? "partial"
           : "complete-within-inputs",
-  truncated:
-    completion.outputTruncated || completion.inputStatus === "truncated",
+  // A known input truncation stays visible even when the status is unknown.
+  truncated: completion.outputTruncated || completion.inputTruncated,
   omitted_runtime_entities: input.runtime.omittedEntities,
   omitted_reconciliation_items: input.matching.omittedItems,
   omitted_static_load_states: input.loadStates.omittedStates,
   omitted_graph_items: input.omittedGraphItems,
 });
+
+const inputCompletion = (input: ReconciliationProjection) => {
+  const { status, truncated } = reconciliationInputCoverage(input);
+  return { inputStatus: status, inputTruncated: truncated };
+};
 
 const completionFlags = (input: ReconciliationProjection): CompletionFlags => ({
   outputTruncated:
@@ -169,7 +175,7 @@ const completionFlags = (input: ReconciliationProjection): CompletionFlags => ({
     input.matching.omittedItems > 0 ||
     input.loadStates.omittedStates > 0 ||
     input.omittedGraphItems > 0,
-  inputStatus: reconciliationInputStatus(input),
+  ...inputCompletion(input),
 });
 
 const reconciliationLimitations = (completion: CompletionFlags): string[] =>

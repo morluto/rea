@@ -28,6 +28,7 @@ interface GraphCoverageFacts {
   readonly knownOmissions: number;
   readonly omissionsKnown: boolean;
   readonly inputStatus: ReconciliationInputStatus;
+  readonly inputTruncated: boolean;
   readonly outputTruncated: boolean;
 }
 
@@ -42,10 +43,14 @@ export type ReconciliationInputStatus =
  * The one reading of reconciliation input coverage. Bounded captures report
  * only known gaps; a static graph whose producer could not tell or could not
  * run makes the inputs unknown, which wins over a known truncation.
+ * `truncated` keeps a known input truncation even when the status is unknown.
  */
-export const reconciliationInputStatus = (
+export const reconciliationInputCoverage = (
   input: Pick<ReconciledGraphInput, "layers" | "captures">,
-): ReconciliationInputStatus => {
+): {
+  readonly status: ReconciliationInputStatus;
+  readonly truncated: boolean;
+} => {
   const coverage = joinCoverageStatus([
     "complete",
     ...input.layers.map(({ graph }) =>
@@ -57,13 +62,16 @@ export const reconciliationInputStatus = (
         : ("partial" as const),
     ),
   ]);
-  if (coverage === "unknown") return "unknown";
   const truncated =
     input.layers.some(({ graph }) => graph.coverage.truncated) ||
     input.captures.some(({ inspection }) =>
       inspection.completeness.conditions.includes("truncated"),
     );
-  return truncated ? "truncated" : coverage;
+  return {
+    status:
+      coverage === "unknown" ? "unknown" : truncated ? "truncated" : coverage,
+    truncated,
+  };
 };
 
 /** Combined graph plus omissions introduced while merging its observations. */
@@ -98,15 +106,16 @@ export const buildReconciledApplicationGraph = (
       "Runtime presence is bounded to passive capture windows and does not prove feature execution.",
       "Cross-layer observed_as edges are inferences; digest equality proves byte identity only.",
       "Source-map relationships retain their original static authority and are not promoted into runtime matches.",
-      ...(facts.inputStatus === "truncated"
+      ...(facts.inputTruncated
         ? [
             "One or more source graphs or passive captures were incomplete or truncated.",
           ]
-        : facts.inputStatus === "unknown"
-          ? [
-              "One or more source graphs could not establish their coverage, so the reconciled graph's coverage is unknown.",
-            ]
-          : []),
+        : []),
+      ...(facts.inputStatus === "unknown"
+        ? [
+            "One or more source graphs could not establish their coverage, so the reconciled graph's coverage is unknown.",
+          ]
+        : []),
       ...(facts.outputTruncated
         ? [
             "The reconciled graph omitted entities or classifications during projection.",
@@ -191,11 +200,13 @@ const graphCoverageFacts = (
     !captureTruncated &&
     !captureHasUnknownOmissions &&
     input.layers.every(({ graph }) => graph.coverage.omitted_count !== null);
+  const inputCoverage = reconciliationInputCoverage(input);
   return {
     projectionOmissions,
     knownOmissions: projectionOmissions + sourceOmissions,
     omissionsKnown,
-    inputStatus: reconciliationInputStatus(input),
+    inputStatus: inputCoverage.status,
+    inputTruncated: inputCoverage.truncated,
     outputTruncated,
   };
 };

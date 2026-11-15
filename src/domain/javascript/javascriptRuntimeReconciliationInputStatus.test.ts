@@ -1,9 +1,11 @@
 import { expect, it } from "vitest";
 
 import type { JavaScriptApplicationGraph } from "./javascriptApplicationGraph.js";
-import { reconciliationInputStatus } from "./javascriptRuntimeReconciliationGraph.js";
+import { reconciliationInputCoverage } from "./javascriptRuntimeReconciliationGraph.js";
 
-type Input = Parameters<typeof reconciliationInputStatus>[0];
+const status = (input: Input) => reconciliationInputCoverage(input).status;
+
+type Input = Parameters<typeof reconciliationInputCoverage>[0];
 type Coverage = JavaScriptApplicationGraph["coverage"];
 
 // Only the coverage facts the reading consumes; the rest of a parsed layer or
@@ -32,19 +34,19 @@ const unknown = (status: "unknown" | "unavailable"): Coverage => ({
 
 it("reads complete inputs as complete and a limited capture as a known gap", () => {
   expect(
-    reconciliationInputStatus({
+    status({
       layers: [layer(complete)],
       captures: [capture("complete_within_window")],
     }),
   ).toBe("complete");
   expect(
-    reconciliationInputStatus({
+    status({
       layers: [layer(complete)],
       captures: [capture("attach_limited")],
     }),
   ).toBe("partial");
   expect(
-    reconciliationInputStatus({
+    status({
       layers: [layer(complete)],
       captures: [capture("truncated")],
     }),
@@ -52,13 +54,13 @@ it("reads complete inputs as complete and a limited capture as a known gap", () 
 });
 
 it.each(["unknown", "unavailable"] as const)(
-  "reads a %s static graph as unknown, even beside a truncated capture",
-  (status) => {
+  "reads a %s static graph as unknown and keeps a truncated capture's truncation",
+  (graphStatus) => {
     expect(
-      reconciliationInputStatus({
-        layers: [layer(complete), layer(unknown(status))],
+      reconciliationInputCoverage({
+        layers: [layer(complete), layer(unknown(graphStatus))],
         captures: [capture("truncated")],
       }),
-    ).toBe("unknown");
+    ).toEqual({ status: "unknown", truncated: true });
   },
 );
