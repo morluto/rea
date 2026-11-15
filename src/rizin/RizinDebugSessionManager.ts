@@ -66,7 +66,7 @@ import {
 } from "../process/ownedDebuggerSession.js";
 import { OwnedDebuggerSessionRegistry } from "../process/OwnedDebuggerSessionRegistry.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
-import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
+import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
 import { utf8HeadExcerpt } from "../domain/utf8HeadExcerpt.js";
 
 const CLEANUP_COMMAND_TIMEOUT_MS = 1_000;
@@ -2009,7 +2009,8 @@ const waitForTurn = (
 ): Promise<void> => {
   if (signal === undefined) return previous;
   return waitForAbortable(previous, signal).then((outcome) => {
-    if (outcome === ABORTED) throw cancelledBy("rizin_debug_command", signal);
+    if (outcome instanceof AbortedWait)
+      throw cancelledBy("rizin_debug_command", outcome);
   });
 };
 /** Translate only this transport's typed cancellation, preserving opaque/null caller reasons. */

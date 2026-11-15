@@ -740,9 +740,9 @@ describe("ELF version index 0 unversioned exports", () => {
   });
 });
 
-describe("historical ELF export evidence", () => {
-  it("normalizes historical ELF export evidence lacking visibility to unknown", () => {
-    const historical = {
+describe("ELF export evidence without visibility", () => {
+  it("refuses an ELF export row without visibility", () => {
+    const withoutVisibility = {
       artifact,
       format: "elf" as const,
       architecture: "amd64",
@@ -769,10 +769,9 @@ describe("historical ELF export evidence", () => {
       issues: [],
       limitations: [],
     };
-    const parsed = nativeExportContracts.nativeExportsSchema.parse(historical);
-    expect(parsed.format).toBe("elf");
-    if (parsed.format !== "elf") throw new Error("Expected ELF result");
-    expect(parsed.exports[0]?.visibility).toBe("unknown");
+    const parsed =
+      nativeExportContracts.nativeExportsSchema.safeParse(withoutVisibility);
+    expect(parsed.error?.issues[0]?.path).toEqual(["exports", 0, "visibility"]);
   });
 });
 
