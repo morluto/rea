@@ -135,10 +135,17 @@ const idaStdioLauncher =
       options.env ?? {},
       "win32",
     );
+    // The owned transport aborts this signal when it closes, so a lookup that
+    // stalls on an unreachable PATH directory cannot hold shutdown open.
     const found = await findWindowsExecutable(options.command, environment, {
       signal: options.signal ?? new AbortController().signal,
       allowBatch: true,
     });
+    if (!found.ok && found.error.kind === "interrupted")
+      throw (
+        options.signal?.reason ??
+        new Error("IDA MCP command lookup was interrupted")
+      );
     if (!found.ok)
       throw new Error(
         found.error.kind === "invalid_extension"

@@ -1,3 +1,4 @@
+import { OwnerCancellation } from "../domain/analysisErrorCore.js";
 import {
   deserializeMessage,
   serializeMessage,
@@ -65,6 +66,8 @@ export class OwnedMcpStdioTransport implements Transport {
     [this.runId],
   );
   #starting: Promise<void> | undefined;
+  /** Ends a launch still resolving or spawning when the transport closes. */
+  readonly #acquisition = new AbortController();
   #failure: OwnedMcpTransportFailure | undefined;
 
   constructor(
@@ -105,6 +108,10 @@ export class OwnedMcpStdioTransport implements Transport {
       ...this.options,
       runId: this.runId,
       stdin: "pipe",
+      signal:
+        this.options.signal === undefined
+          ? this.#acquisition.signal
+          : AbortSignal.any([this.options.signal, this.#acquisition.signal]),
     });
     this.#spawned = spawned;
     this.#supervisor = new ProviderProcessSupervisor(
@@ -218,7 +225,9 @@ export class OwnedMcpStdioTransport implements Transport {
   async #stop(): Promise<void> {
     this.#frameBuffer = Buffer.alloc(0);
     this.#frameLength = 0;
-    // A cancellation may race acquisition. Join it before inspecting ownership.
+    // A cancellation may race acquisition: end a launch that is still
+    // resolving its command, then join it before inspecting ownership.
+    this.#acquisition.abort(OwnerCancellation.ownerClosed);
     await this.#starting?.catch(() => undefined);
     const process = this.#spawned?.process;
     process?.stdout?.off("data", this.#read);

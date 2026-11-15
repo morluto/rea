@@ -1,19 +1,13 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { createIdaMcpConnection } from "./IdaMcpConnection.js";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
-const roots: string[] = [];
-afterEach(async () => {
-  vi.unstubAllEnvs();
-  for (const root of roots.splice(0))
-    await rm(root, { recursive: true, force: true });
-});
+afterEach(() => vi.unstubAllEnvs());
 
 it("launches the owned stdio server with only the selected snapshot, never ambient variables", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-ida-environment-"));
-  roots.push(root);
+  const root = await createTestTempDirectory("rea-ida-environment-");
   const script = join(root, "producer.mjs");
   await writeFile(
     script,
@@ -82,8 +76,7 @@ input.on('line', (line) => {
 });
 
 it("refuses a stdio reply over the owned frame limit as a fixed transport allowance", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-ida-frame-limit-"));
-  roots.push(root);
+  const root = await createTestTempDirectory("rea-ida-frame-limit-");
   const script = join(root, "producer.mjs");
   await writeFile(
     script,
