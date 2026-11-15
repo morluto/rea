@@ -450,7 +450,6 @@
     "src/application/JsonFiles.ts": 1,
     "src/application/McpClientRegistration.ts": 4,
     "src/application/SetupHost.ts": 1,
-    "src/application/SetupSkill.ts": 7,
     "src/application/SupportedClients.ts": 2,
     "src/application/Uninstall.ts": 1,
     "src/application/UpdateCommandRunner.ts": 2,
