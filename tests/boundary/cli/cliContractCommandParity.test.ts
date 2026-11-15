@@ -412,6 +412,21 @@ it("builds every contract-named command from its contract", () => {
   ).toEqual(RENAMED_CONTRACT_COMMANDS);
 });
 
+// The CLI resolves a relative caller path against the working directory, so
+// its help must not inherit an MCP description that requires an absolute one.
+it("describes every caller path without requiring an absolute path", () => {
+  expect(
+    descriptions.flatMap(({ command, parameters }) =>
+      parameters
+        .filter(
+          ({ callerPath, description }) =>
+            callerPath && /\babsolute\b/iu.test(description ?? ""),
+        )
+        .map(({ key }) => `${command} ${key}`),
+    ),
+  ).toEqual([]);
+});
+
 // An argv fixture names a contract-built command, so it cannot outlive its registration.
 it("keeps every argv fixture on a contract-built command", () => {
   expect(
