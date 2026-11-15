@@ -133,6 +133,7 @@ const CDP_COMMAND_REPLIES = {
   }),
   "DOMDebugger.getEventListeners": eventListenersReply,
   "Accessibility.getFullAXTree": z.object({ nodes: inventory }),
+  "Browser.close": acknowledgement,
   "Browser.getVersion": browserVersionReply,
   "CacheStorage.requestCacheNames": z.object({ caches: inventory }),
   "CacheStorage.requestCachedResponse": z.object({
@@ -186,6 +187,7 @@ const CDP_COMMAND_REPLIES = {
   "Page.addScriptToEvaluateOnNewDocument": z.object({
     identifier: z.string(),
   }),
+  "Page.createIsolatedWorld": z.object({ executionContextId: z.int() }),
   "Page.disable": acknowledgement,
   "Page.enable": acknowledgement,
   // `data` is base64 PNG; its canonical decoding stays with the screenshot owner.
@@ -193,6 +195,12 @@ const CDP_COMMAND_REPLIES = {
   "Page.getFrameTree": cdpFrameTreeReplySchema,
   "Page.getLayoutMetrics": layoutMetricsReply,
   "Page.getResourceTree": cdpResourceTreeReplySchema,
+  "Page.navigate": z.object({
+    frameId: z.string().min(1),
+    loaderId: z.string().min(1).optional(),
+    errorText: z.string().optional(),
+  }),
+  "Page.reload": acknowledgement,
   "Page.removeScriptToEvaluateOnNewDocument": acknowledgement,
   "Page.setLifecycleEventsEnabled": acknowledgement,
   "Page.stopLoading": acknowledgement,
@@ -219,7 +227,10 @@ const CDP_COMMAND_REPLIES = {
     usage: z.number(),
     quota: z.number(),
   }),
+  "Target.activateTarget": acknowledgement,
   "Target.attachToTarget": z.object({ sessionId: z.string().min(1) }),
+  "Target.closeTarget": acknowledgement,
+  "Target.createTarget": z.object({ targetId: z.string().min(1) }),
   "Target.detachFromTarget": acknowledgement,
   "Target.getTargetInfo": z.object({
     targetInfo: z.object({ targetId: z.string() }),
@@ -233,6 +244,14 @@ const CDP_COMMAND_REPLIES = {
 } as const satisfies { readonly [M in CdpProtocolMethod]?: z.ZodType };
 
 export type CdpCommand = keyof typeof CDP_COMMAND_REPLIES;
+
+/**
+ * Whether a run-time name has a registered result schema. TypeScript senders
+ * cannot name another command; this check covers JavaScript callers and keeps
+ * prototype members such as `toString` from being read as schemas.
+ */
+export const isCdpCommand = (method: string): method is CdpCommand =>
+  Object.hasOwn(CDP_COMMAND_REPLIES, method);
 
 type DomainOf<C, Verb extends string> = C extends `${infer Domain}.${Verb}`
   ? Domain
@@ -291,6 +310,12 @@ export const parseCdpCommandResult = <M extends CdpCommand>(
   command: M,
   value: unknown,
 ): Result<CdpCommandResult<M>, CdpMalformedReplyFacts> => {
+  if (!isCdpCommand(command))
+    return err({
+      command,
+      pointer: "",
+      issue: "No result schema is registered for this command.",
+    });
   const schema: z.ZodType = CDP_COMMAND_REPLIES[command];
   const parsed = schema.safeParse(value) as z.ZodSafeParseResult<
     CdpCommandResult<M>
