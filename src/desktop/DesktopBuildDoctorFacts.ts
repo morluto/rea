@@ -9,7 +9,11 @@ import type {
   DesktopBuildFacts,
   DesktopBuildFactsInput,
 } from "../application/DesktopBuildDoctor.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
+} from "../domain/analysisErrorCore.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import {
   readRegularFileText,
@@ -18,6 +22,7 @@ import {
 import { DESKTOP_EXPORT_FRAMEWORK_VERSION } from "../domain/desktop/appExport.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { execFileOutputFailure } from "../process/ExecFileOutput.js";
+import { describeSystemPs, resolveSystemPs } from "../process/systemPs.js";
 import { agentEnvInterpreter } from "./AgentEnvComputerHelper.js";
 import {
   agentEnvReportedVersion,
@@ -187,12 +192,21 @@ const settingCommand = async (
     : { status: "invalid", value };
 };
 
-/** procps `ps` accepts `-p`; busybox's does not. */
+/**
+ * Probe the `ps` REA's process supervisor selects: a fixed system location
+ * first, REA's PATH only as the fallback. procps `ps` accepts `-p`; busybox's
+ * does not.
+ */
 const psFact = async (
   input: DesktopBuildFactsInput,
 ): Promise<DesktopBuildFacts["ps"]> => {
-  const ps = await programOnPath("ps", input.environment);
-  if (ps === undefined) return { found: false, detail: "No ps is on PATH." };
+  const selected = await resolveSystemPs(process.platform);
+  const ps =
+    selected.source === "system"
+      ? selected.command
+      : await programOnPath("ps", input.environment);
+  if (ps === undefined)
+    return { found: false, detail: `No ${describeSystemPs(selected)}.` };
   const probe = await attempt(input, ps, [
     "-o",
     "pid=",
@@ -449,8 +463,7 @@ const solveEndpoint = async (
   input: DesktopBuildFactsInput,
   runner: DesktopBuildCommand,
 ): Promise<string | null | undefined> => {
-  if (input.signal.aborted)
-    throw new AnalysisCancelledError("doctor", { cause: input.signal.reason });
+  if (input.signal.aborted) throw cancelledBy("doctor", input.signal);
   if (runner.status !== "found") return null;
   const discovery = await attempt(input, runner.path, [
     "config",
@@ -515,15 +528,9 @@ const canReadModelConfig = async (
   input: DesktopBuildFactsInput,
 ): Promise<boolean> => {
   try {
-    if (input.signal.aborted)
-      throw new AnalysisCancelledError("doctor", {
-        cause: input.signal.reason,
-      });
+    if (input.signal.aborted) throw cancelledBy("doctor", input.signal);
     const candidate = await stat(path);
-    if (input.signal.aborted)
-      throw new AnalysisCancelledError("doctor", {
-        cause: input.signal.reason,
-      });
+    if (input.signal.aborted) throw cancelledBy("doctor", input.signal);
     if (!candidate.isFile() || candidate.size > CONFIG_BYTES) return false;
     await readRegularFileText(path, {
       signal: input.signal,
@@ -532,7 +539,7 @@ const canReadModelConfig = async (
           throw new Error("Configuration exceeds the read limit");
       },
       cancellationFailure: (reason) =>
-        new AnalysisCancelledError("doctor", { cause: reason }),
+        cancelledBy("doctor", carriedReason(reason)),
     });
     return true;
   } catch (cause: unknown) {
@@ -541,10 +548,7 @@ const canReadModelConfig = async (
       throw cause;
     }
     if (cause instanceof AnalysisCancelledError) throw cause;
-    if (input.signal.aborted)
-      throw new AnalysisCancelledError("doctor", {
-        cause: input.signal.reason,
-      });
+    if (input.signal.aborted) throw cancelledBy("doctor", input.signal);
     return false;
   }
 };

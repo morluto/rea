@@ -1,3 +1,4 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { readFile, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
@@ -11,7 +12,6 @@ import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   DEFAULT_EVM_TIMEOUT_MS,
-  MAX_EVM_TIMEOUT_MS,
   selectedEvmProducerLimits,
 } from "../domain/evm/evmInterface.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
@@ -111,7 +111,9 @@ it("names timeout_ms, the omitted default, and the caps it does not raise", () =
   expect(projected.message).toContain("timeout_ms");
   expect(projected.message).toContain(String(DEFAULT_EVM_TIMEOUT_MS));
   expect(projected.remediation.action).toContain("--timeout-ms");
-  expect(projected.remediation.action).toContain(String(MAX_EVM_TIMEOUT_MS));
+  expect(projected.remediation.action).toContain(
+    String(MAX_NODE_TIMER_DELAY_MS),
+  );
   expect(projected.remediation.action).toContain("does not raise");
   expect(projected.remediation.action).toContain("no server restart");
 });

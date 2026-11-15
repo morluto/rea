@@ -3,15 +3,19 @@ import type { Logger } from "pino";
 
 import { logCliCommand } from "../cliLogging.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import type { Evidence } from "../domain/evidence.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import type { CallerInputPaths, Evidence } from "../domain/evidence.js";
 import type { Result } from "../domain/result.js";
 import { deliverCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
 import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
+import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import {
   describeContractCommand,
   type CliContractProjection,
   type CliEvidenceDeliveryChoice,
+  type CliOptionShape,
+  type CliOptionValues,
   type ContractCliDescription,
   type ContractField,
   type ProjectedContract,
@@ -26,14 +30,20 @@ import type { CliInstance } from "./types.js";
  */
 
 /** What a contract command's handler receives besides the contract input. */
-export interface ContractCommandContext {
+export interface ContractCommandContext<
+  CliOptions extends Readonly<Record<string, unknown>> = Readonly<
+    Record<string, unknown>
+  >,
+> {
   readonly signal: AbortSignal;
   /** The contract name, which is the canonical operation. */
   readonly operation: string;
   /** Each caller-path field as the caller spelled it, before resolution. */
   readonly callerInputs: Readonly<Record<string, string>>;
-  /** The selected delivery, for a projection with `evidenceDelivery`. */
-  readonly delivery: CliEvidenceDeliveryChoice;
+  /** The admitted delivery, for a projection with `evidenceDelivery`. */
+  readonly delivery: CliEvidenceDeliveryChoice | undefined;
+  /** The projection's CLI-only options, whose effect the handler owns. */
+  readonly cliOptions: CliOptions;
 }
 
 /** A closeable one-shot service that inspects one contract input. */
@@ -45,27 +55,57 @@ export interface EvidenceInspectionService {
   close(): Promise<void>;
 }
 
-const primaryCallerPath = ({
+/**
+ * The caller's spelling of `path`, and of each other caller-path field keyed
+ * by its contract field name.
+ */
+const callerSpellings = ({
   operation,
   callerInputs,
-}: ContractCommandContext): string => {
-  const callerPath = callerInputs.path;
-  if (callerPath === undefined)
+}: ContractCommandContext): {
+  readonly path: string;
+  readonly others: CallerInputPaths | undefined;
+} => {
+  const { path, ...others } = callerInputs;
+  if (path === undefined)
     throw new Error(`${operation} has no caller path field named path`);
-  return callerPath;
+  return {
+    path,
+    others: Object.keys(others).length === 0 ? undefined : others,
+  };
 };
 
 /**
  * Inspect through a closeable service, finish its cleanup, and record the
- * caller's spelling of `path` in the Evidence.
+ * caller's spelling of each selected path in the Evidence.
  */
 export const inspectWithService =
   (service: () => EvidenceInspectionService, providerId: string) =>
   (input: unknown, context: ContractCommandContext) => {
-    const callerPath = primaryCallerPath(context);
+    const spellings = callerSpellings(context);
     const owned = service();
     return finishCliEvidenceCommand(
-      callerPath,
+      spellings.path,
+      () => owned.inspect(input, { signal: context.signal }),
+      owned,
+      providerId,
+      context.operation,
+      context.signal,
+      spellings.others,
+    ).then(projectCliAnalysisResult);
+  };
+
+/**
+ * Run an analysis that selects no target path through a closeable service
+ * and finish its cleanup.
+ */
+export const analyzeWithService =
+  (service: () => EvidenceInspectionService, providerId: string) =>
+  (input: unknown, context: ContractCommandContext) => {
+    if (Object.keys(context.callerInputs).length > 0)
+      throw new Error(`${context.operation} selects a caller path`);
+    const owned = service();
+    return finishAnalysisCommand(
       () => owned.inspect(input, { signal: context.signal }),
       owned,
       providerId,
@@ -76,22 +116,30 @@ export const inspectWithService =
 
 /**
  * Inspect through a closeable service, then deliver complete Evidence or a
- * summary with its bundle, recording the caller's spelling of `path`.
+ * summary with its bundle, recording the caller's spelling of each selected
+ * path.
  */
 export const deliverWithService =
   (service: () => EvidenceInspectionService, providerId: string) =>
   (input: unknown, context: ContractCommandContext) => {
-    const callerInputPath = primaryCallerPath(context);
+    const spellings = callerSpellings(context);
+    const { delivery } = context;
+    if (delivery === undefined)
+      throw new Error(`${context.operation} does not declare evidenceDelivery`);
     const owned = service();
     return deliverCliAnalysisEvidence({
-      callerInputPath,
+      callerInputPath: spellings.path,
+      ...(spellings.others === undefined
+        ? {}
+        : { callerInputPaths: spellings.others }),
       run: () => owned.inspect(input, { signal: context.signal }),
       service: owned,
       providerId,
       operation: context.operation,
       signal: context.signal,
-      detail: context.delivery.detail,
-      evidenceOutput: context.delivery.evidenceOutput,
+      detail: delivery.detail,
+      evidenceOutput: delivery.evidenceOutput,
+      ...(delivery.view === undefined ? {} : { view: delivery.view }),
     });
   };
 
@@ -133,14 +181,15 @@ const incurOptions = (description: ContractCliDescription): z.ZodType => {
 export const registerContractCommand = <
   Contract extends ProjectedContract,
   Value,
+  CliOptions extends CliOptionShape = Record<never, z.ZodType>,
 >(
   cli: CliInstance,
   logger: Logger,
   contract: Contract,
-  projection: CliContractProjection<ContractField<Contract>>,
+  projection: CliContractProjection<ContractField<Contract>, CliOptions>,
   run: (
     input: z.input<Contract["inputSchema"]>,
-    context: ContractCommandContext,
+    context: ContractCommandContext<CliOptionValues<CliOptions>>,
   ) => Promise<Value>,
 ): void => {
   const description = describeContractCommand(contract, projection);
@@ -174,19 +223,19 @@ export const registerContractCommand = <
     }) => {
       const values = { ...options, ...args };
       return withCommandCancellation((signal) =>
-        logCliCommand(logger, description.command, () =>
-          run(
-            description.toContractInput(values) as z.input<
-              Contract["inputSchema"]
-            >,
-            {
-              signal,
-              operation: contract.name,
-              callerInputs: description.callerInputs(values),
-              delivery: description.delivery(values),
-            },
-          ),
-        ),
+        logCliCommand(logger, description.command, async () => {
+          const admitted = description.admit(values);
+          if (!admitted.ok) return projectAnalysisError(admitted.error);
+          return run(admitted.value.input as z.input<Contract["inputSchema"]>, {
+            signal,
+            operation: contract.name,
+            callerInputs: description.callerInputs(values),
+            delivery: admitted.value.delivery,
+            cliOptions: description.cliOptionValues(
+              values,
+            ) as CliOptionValues<CliOptions>,
+          });
+        }),
       );
     },
   } as never);

@@ -117,6 +117,18 @@ describe("curated Windows test lane", () => {
     );
   });
 
+  it("keeps advertised schema checks in the lane", async () => {
+    // Windows hosts advertise their own absolute-path pattern (#7151); only
+    // this lane compiles it and validates host paths against it.
+    expect(await explicitPaths("windows")).toEqual(
+      expect.arrayContaining([
+        "tests/boundary/mcp/advertisedDialect.test.ts",
+        "tests/boundary/mcp/absoluteLocalPathSchema.test.ts",
+        "tests/boundary/mcp/toolSchemaValidity.test.ts",
+      ]),
+    );
+  });
+
   it("keeps Windows runner cancellation coverage in the lane", async () => {
     expect(await explicitPaths("windows")).toEqual(
       expect.arrayContaining([

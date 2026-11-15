@@ -1,3 +1,4 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import WebSocket, { type RawData } from "ws";
 import { isUtf8 } from "node:buffer";
 
@@ -7,8 +8,9 @@ import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { CdpCommandRejection } from "./CdpCommandRejection.js";
 import {
   admitCdpReply,
-  type CdpSendParams,
-  type CdpSendResult,
+  type CdpCommand,
+  type CdpCommandParams,
+  type CdpCommandResult,
 } from "./protocol/CdpCommands.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import {
@@ -17,11 +19,11 @@ import {
   cdpCommandTimeoutIsSelectable,
   cdpCommandTimeoutUnrelatedControl,
   DEFAULT_CDP_COMMAND_TIMEOUT_MS,
-  MAX_BROWSER_DEADLINE_MS,
   noRuntimeOverrideSentence,
 } from "../domain/browserDeadline.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import { WEB_RUNTIME_LIMITS } from "../domain/webRuntime.js";
+import { isRecord } from "../domain/isRecord.js";
 
 // ws currently stores maxPayload as a signed 32-bit integer. Larger values can
 // wrap to a negative number, which disables its limit check.
@@ -587,12 +589,12 @@ export class CdpConnection {
    * window. A registered command's reply is parsed by its result schema; a
    * mismatch rejects that command with `CdpMalformedReply`.
    */
-  async send<M extends string>(
+  async send<M extends CdpCommand>(
     method: M,
-    params?: CdpSendParams<M>,
+    params?: CdpCommandParams<M>,
     sessionId?: string,
     signal?: AbortSignal,
-  ): Promise<CdpSendResult<M>> {
+  ): Promise<CdpCommandResult<M>> {
     const reply = await this.core.send(
       method,
       params ?? {},
@@ -623,9 +625,6 @@ const rawBytes = (data: RawData): Buffer =>
     : Buffer.isBuffer(data)
       ? data
       : Buffer.from(data);
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const waitForOpen = async (
   socket: WebSocket,
@@ -666,7 +665,7 @@ const waitForOpen = async (
       signal?.removeEventListener("abort", onAbort);
     };
     const boundedTimeoutMs = Math.min(
-      MAX_BROWSER_DEADLINE_MS,
+      MAX_NODE_TIMER_DELAY_MS,
       handshakeTimeoutMs,
     );
     const timer = setTimeout(() => {
