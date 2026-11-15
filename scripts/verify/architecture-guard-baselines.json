@@ -122,7 +122,7 @@
     "src/domain/apple/dylibResolution.ts": 1,
     "src/domain/explicitSensitiveFailure.ts": 1,
     "src/electron/ElectronFuseFailures.ts": 3,
-    "src/evm/EvmoleFailures.ts": 2,
+    "src/evm/EvmoleFailures.ts": 1,
     "src/evm/EvmoleInterfaceProvider.ts": 6,
     "src/firmware/FirmwareFailures.ts": 1,
     "src/firmware/FirmwareFiles.ts": 1,
@@ -176,7 +176,7 @@
     "src/sqlite/SqliteDatabaseProvider.ts": 4,
     "src/sqlite/SqliteDatabaseWorkerExecution.ts": 2,
     "src/wasm/WabtArtifactProvider.ts": 2,
-    "src/wasm/WabtFailures.ts": 2
+    "src/wasm/WabtFailures.ts": 1
   },
   "parser-format-failure-class": {
     "src/browser/assets/WebArtifactReads.ts": 1,
