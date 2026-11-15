@@ -13,7 +13,6 @@ import {
   artifactReaderLimitFailure,
   abortIfNeeded,
 } from "../../resources/index.js";
-import { abortIfNeeded } from "../ArtifactHash.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 
 /** SHA-256 marker embedded by Microsoft's apphost; the preceding UInt64 is the header offset. */
