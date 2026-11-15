@@ -118,6 +118,8 @@ export interface ElfDependencyFixtureOptions {
   readonly sectionEntrySizes?: Readonly<Record<string, number>>;
   /** Leaves DT_SYMENT out of the dynamic table. */
   readonly omitSymentTag?: boolean;
+  /** Splits the identity PT_LOAD in two halfway through the .hash table. */
+  readonly splitLoadAtHash?: boolean;
 }
 
 const defaultNeeded = (): string[] => [
@@ -403,6 +405,7 @@ interface FixtureConfig {
   readonly sectionSizes: Readonly<Record<string, number>>;
   readonly sectionEntrySizes: Readonly<Record<string, number>>;
   readonly omitSymentTag: boolean;
+  readonly splitLoadAtHash: boolean;
 }
 
 interface DependencyTables {
@@ -498,6 +501,7 @@ const fixtureConfig = (options: ElfDependencyFixtureOptions): FixtureConfig => {
     sectionSizes: options.sectionSizes ?? {},
     sectionEntrySizes: options.sectionEntrySizes ?? {},
     omitSymentTag: options.omitSymentTag === true,
+    splitLoadAtHash: options.splitLoadAtHash === true,
   };
 };
 
@@ -665,7 +669,9 @@ const layoutDependencyImage = (
   const phent = config.bits === 64 ? 56 : 32;
   const shent = config.bits === 64 ? 64 : 40;
   const programCount =
-    (config.interpreter === null ? 0 : 1) + 1 + (config.omitDynamic ? 0 : 1);
+    (config.interpreter === null ? 0 : 1) +
+    (config.splitLoadAtHash ? 2 : 1) +
+    (config.omitDynamic ? 0 : 1);
   const phoff = headerSize;
   let cursor = phoff + programCount * phent;
   const place = (size: number): number => {
@@ -807,7 +813,12 @@ const writeDependencyPrograms = (
   };
   if (config.interpreter !== null)
     add(3, 4, layout.interpOff, tables.interpBytes.length, 1);
-  add(1, 5, 0, layout.fileSize, 0x1000);
+  if (config.splitLoadAtHash) {
+    // Adjacent, identity-mapped loads: the .hash table crosses their boundary.
+    const split = layout.hashOff + 8;
+    add(1, 5, 0, split, 1);
+    add(1, 5, split, layout.fileSize - split, 1);
+  } else add(1, 5, 0, layout.fileSize, 0x1000);
   if (!config.omitDynamic)
     add(2, 6, layout.dynamicOff, layout.dynamicBytes.length, 8);
 };

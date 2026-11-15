@@ -250,6 +250,20 @@ it("falls back to PT_DYNAMIC and DT_* virtual addresses when section headers are
   expect(report.version_requirements.files[0]?.file).toBe("libc.so.6");
 });
 
+it("reads a stripped DT_HASH that crosses two adjacent PT_LOAD mappings", () => {
+  const report = parse(
+    elfDependencyFixture({ stripped: true, splitLoadAtHash: true }),
+  );
+  expect(report.coverage.status).toBe("complete");
+  expect(report.imports.map((entry) => entry.name)).toEqual([
+    "printf",
+    "memcpy",
+    "_ZSt4cout",
+    "abort",
+    "_exit",
+  ]);
+});
+
 it("counts stripped dynsym rows from DT_GNU_HASH when DT_HASH is absent", () => {
   const report = parse(
     elfDependencyFixture({ stripped: true, omitHash: true, gnuHash: true }),

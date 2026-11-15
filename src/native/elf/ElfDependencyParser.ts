@@ -516,16 +516,34 @@ const sysvSymbolCountAt = (
   return count.ok ? count.value : null;
 };
 
+/**
+ * Reads hash-table words at virtual addresses, each mapped through PT_LOAD on
+ * its own, so a table that spans adjacent consistently mapped segments stays
+ * readable to its last word.
+ */
+const mappedHashWords =
+  (
+    reader: BinaryReader,
+    mappings: readonly FileMapping[],
+    address: bigint,
+  ): ElfHashWordReader =>
+  (offset) => {
+    if (offset < 0) return err("precedes its table");
+    const at = mapAddress(mappings, address + BigInt(offset), 4);
+    return at !== null && at + 4 <= reader.bytes.length
+      ? ok(reader.u32(at))
+      : err("is not mapped by PT_LOAD");
+  };
+
 const sysvSymbolCount = (
   reader: BinaryReader,
   mappings: readonly FileMapping[],
   address: bigint,
 ): number | null => {
-  const header = mapAddress(mappings, address, 8);
-  if (header === null) return null;
-  const limit = mappedExtentEnd(mappings, address);
-  if (limit === null) return null;
-  return sysvSymbolCountAt(reader, header, limit);
+  const count = readElfHashSymbolCount(
+    mappedHashWords(reader, mappings, address),
+  );
+  return count.ok ? count.value : null;
 };
 
 // With every bucket empty the table hashes nothing, and its first-symbol
@@ -549,13 +567,13 @@ const gnuSymbolCount = (
   mappings: readonly FileMapping[],
   address: bigint,
   bits: 32 | 64,
-): number | null => {
-  const header = mapAddress(mappings, address, 16);
-  if (header === null) return null;
-  const limit = mappedExtentEnd(mappings, address);
-  if (limit === null) return null;
-  return gnuSymbolCountAt(reader, header, limit, bits);
-};
+): number | null =>
+  drainGnuHashCount(
+    readElfGnuHashSymbolCount(
+      mappedHashWords(reader, mappings, address),
+      bits === 64 ? 8 : 4,
+    ),
+  );
 
 const locateVersionTable = (
   mappings: readonly FileMapping[],
