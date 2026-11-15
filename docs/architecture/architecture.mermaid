@@ -74,6 +74,7 @@ graph TD
         WINDOWS["src/windows/<br/>Windows host boundary adapters<br/>package loader, opaque handles, owned jobs and private runtimes"]
         WINDOWS_NATIVE["native/windows/src/<br/>Node-API implementation<br/>NTFS/ReFS admission, protected DACLs and atomic Job Object assignment"]
         FILESYSTEM["src/filesystem/<br/>owned file and directory handles<br/>stable reads, staged output, caller paths"]
+        RESOURCES["src/resources/<br/>shared analysis resource owners<br/>cleanup leases that providers, process and windows hold"]
     end
 
     subgraph "Contracts Layer"
@@ -213,5 +214,6 @@ graph TD
     COMPOSITION --> RUNTIME
     RUNTIME --> DOMAIN
     PROCESS --> FILESYSTEM
+    PROCESS --> RESOURCES
     AUX --> FILESYSTEM
     APP --> FILESYSTEM

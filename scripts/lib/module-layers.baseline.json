@@ -15,8 +15,8 @@
     "hopper -> application": 2,
     "il2cpp -> application": 1,
     "native -> application": 2,
-    "process -> artifacts": 17,
-    "windows -> artifacts": 2
+    "process -> artifacts": 11,
+    "windows -> artifacts": 1
   },
   "cycles": [
     "application <-> artifacts",
