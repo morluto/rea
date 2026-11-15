@@ -831,13 +831,20 @@ caller can change the resource actually exhausted. Finite inline literal object
 spreads use iterative syntax traversal and no longer inherit a duplicate
 semantic-depth cut.
 
-Member-mutation analysis also has a fixed work allowance of 524,288 alias
-states per source. It is not a `semantic_precision` field. A source whose alias
-histories exceed it is refused with a `resource_constraint` that names the
-fixed work allowance, instead of exhausting the worker heap. Static facts the
-worker had not yet reported are not kept, because a partial mutation index
-would let later reads keep stale values. Raising `max_heap_mb`,
-`analysis_timeout_ms` or `semantic_precision` does not admit the same source.
+Member-mutation analysis also has a work allowance of 524,288 alias states
+per source, selected by the `javascript.member_mutation_alias_states` setting
+(1 to 8,388,608). Change it with `update_analysis_settings` on MCP, or with
+`REA_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES` for CLI or future REA processes;
+it applies to the next `analyze_javascript_application`, `analyze_web_bundle`
+or `import-reference-source` operation. It is not a `semantic_precision` field.
+A source whose alias histories exceed it is refused with a
+`resource_constraint` that names the setting, its effective value and source,
+instead of exhausting the worker heap. Each scheduled state retains about
+1–2 KiB of worker heap until its query finishes, so a raised allowance usually
+needs a larger `max_heap_mb` too. Static facts the worker had not yet reported
+are not kept, because a partial mutation index would let later reads keep
+stale values. Raising `max_heap_mb`, `analysis_timeout_ms` or
+`semantic_precision` alone does not admit the same source.
 
 Byte, entry, path, and graph-shape bounds are hard limits. The parse deadline is
 checked before and between bounded parsing and traversal phases; the synchronous

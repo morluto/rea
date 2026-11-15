@@ -1,3 +1,4 @@
+import type { JavaScriptMemberMutationAllowance } from "./javascript/javascriptSemanticWorkAllowance.js";
 import type { JavaScriptSemanticPrecisionInput } from "./javascript/javascriptSemanticPrecision.js";
 import {
   isBrowserNetworkRequest,
@@ -55,6 +56,7 @@ export const analyzeScript = (
   script: IncludedScript,
   accumulator: AnalysisAccumulator,
   precision?: JavaScriptSemanticPrecisionInput,
+  memberMutationAllowance?: JavaScriptMemberMutationAllowance,
 ): JavaScriptRouteSourceFacts | null => {
   const file = parseJavaScriptSource(script.source.artifact.text);
   if (file === null) {
@@ -70,6 +72,7 @@ export const analyzeScript = (
       file.program,
       undefined,
       precision,
+      memberMutationAllowance,
     ),
   );
   completeSemanticSteps(index.indexAmbientWritesSteps());

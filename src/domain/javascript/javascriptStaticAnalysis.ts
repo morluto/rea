@@ -1,3 +1,4 @@
+import type { JavaScriptMemberMutationAllowance } from "./javascriptSemanticWorkAllowance.js";
 import {
   JAVASCRIPT_SEMANTIC_PRECISION_DEFAULTS,
   type JavaScriptSemanticPrecisionInput,
@@ -86,6 +87,7 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
   source: string,
   file: ParsedJavaScriptSource,
   precision?: JavaScriptSemanticPrecisionInput,
+  memberMutationAllowance?: JavaScriptMemberMutationAllowance,
 ): Generator<void, JavaScriptStaticAnalysis> {
   const accumulator = createJavaScriptAnalysisAccumulator(source.length);
   // One definitions pass serves receiver classification and binding lookup.
@@ -93,6 +95,7 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     file.program,
     undefined,
     precision,
+    memberMutationAllowance,
   );
   const { bindings, receivers } = index;
   yield* index.indexAmbientWritesSteps();

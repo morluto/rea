@@ -37,10 +37,7 @@ import {
   WebBundleWorkerCleanup,
 } from "./WebBundleAnalysisWorker.js";
 import { WEB_BUNDLE_WORKER_LIMITS } from "./WebBundleAnalysisWorkerProtocol.js";
-import {
-  JAVASCRIPT_MEMBER_MUTATION_WORK_ALLOWANCE,
-  JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT,
-} from "../domain/javascript/javascriptSemanticWorkAllowance.js";
+import { JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT } from "../domain/javascript/javascriptSemanticWorkAllowance.js";
 import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 const makeScript = (text: string): IncludedScript => ({
@@ -174,7 +171,7 @@ const protocolWorkerProgram = (
                         ? `send({ kind: "failure", id: request.id, reason: "resource", message: "bounded result capacity" });
                  setInterval(() => {}, 1_000);`
                         : failure === "work-refusal"
-                          ? `send({ kind: "failure", id: request.id, reason: "resource", limits: ${JSON.stringify({ [JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT]: JAVASCRIPT_MEMBER_MUTATION_WORK_ALLOWANCE })}, message: "work allowance" });
+                          ? `send({ kind: "failure", id: request.id, reason: "resource", limits: { ${JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT}: request.member_mutation_allowance.alias_states, sent_source: request.member_mutation_allowance.source }, message: "work allowance" });
                  setInterval(() => {}, 1_000);`
                           : failure === "final-frame-held-pipe"
                             ? `const frame = JSON.stringify({ kind: "failure", id: request.id, reason: "output", message: "final frame from descendant" });
@@ -834,28 +831,36 @@ it("does not let a failure frame for another job replace cancellation", async ()
   }
 });
 
-it("names the fixed work allowance a worker refusal reports", async () => {
+it("sends the accepted member-mutation allowance and names its setting on refusal", async () => {
   const worker = new WebBundleAnalysisWorker(
     128,
     launcherFor({ kind: "protocol", failure: "work-refusal" }),
   );
   try {
     const error = failureOf(
-      await worker.analyze(makeScript("fetch('/work');"), 5_000),
+      await worker.analyze(
+        makeScript("fetch('/work');"),
+        5_000,
+        undefined,
+        undefined,
+        { aliasStates: 2048, source: "setting" },
+      ),
     );
     if (!(error instanceof AnalysisResourceConstraintError))
       throw new Error("Expected a worker resource constraint failure");
     expect(error).toMatchObject({
       resource: "cpu",
       retryable: false,
-      fixedAllowance: {
-        kind: "work",
-        limit: JAVASCRIPT_MEMBER_MUTATION_WORK_ALLOWANCE,
+      limit: {
+        setting: "javascript.member_mutation_alias_states",
+        effective_value: 2048,
+        source: "setting",
       },
     });
+    expect(error.fixedAllowance).toBeUndefined();
     expect(error.reportedLimits).toMatchObject({
-      [JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT]:
-        JAVASCRIPT_MEMBER_MUTATION_WORK_ALLOWANCE,
+      [JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT]: 2048,
+      sent_source: "setting",
     });
   } finally {
     await worker.close();

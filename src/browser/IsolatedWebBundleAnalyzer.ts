@@ -1,3 +1,4 @@
+import type { JavaScriptMemberMutationAllowance } from "../domain/javascript/javascriptSemanticWorkAllowance.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import {
   DEFAULT_WEB_BUNDLE_HEAP_MB,
@@ -143,6 +144,7 @@ export class IsolatedWebBundleAnalyzer {
     sourceMaps: WebBundleAnalysis["observations"]["source_maps"],
     input: AnalyzeWebBundleInput,
     signal?: AbortSignal,
+    memberMutationAllowance?: JavaScriptMemberMutationAllowance,
   ): Promise<Result<WebBundleAnalysis, AnalysisError>> {
     if (this.#closed)
       return Promise.resolve(
@@ -170,6 +172,7 @@ export class IsolatedWebBundleAnalyzer {
       sourceMaps,
       input,
       signal,
+      memberMutationAllowance,
     ).finally(() => {
       this.#running = undefined;
       this.#controller = undefined;
@@ -183,6 +186,7 @@ export class IsolatedWebBundleAnalyzer {
     sourceMaps: WebBundleAnalysis["observations"]["source_maps"],
     input: AnalyzeWebBundleInput,
     signal?: AbortSignal,
+    memberMutationAllowance?: JavaScriptMemberMutationAllowance,
   ): Promise<Result<WebBundleAnalysis, AnalysisError>> {
     const scripts = inspection.scripts.items.filter(isIncludedScript);
     const results: WebBundleScriptAnalysis[] = [];
@@ -224,6 +228,7 @@ export class IsolatedWebBundleAnalyzer {
           input.analysis_timeout_ms ?? DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS,
           deadline.signal,
           input.semantic_precision,
+          memberMutationAllowance,
         );
         if (analyzed.ok) results.push(analyzed.value);
         else {

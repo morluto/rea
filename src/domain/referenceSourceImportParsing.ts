@@ -1,3 +1,4 @@
+import type { JavaScriptMemberMutationAllowance } from "./javascript/javascriptSemanticWorkAllowance.js";
 import type { File, Node } from "@babel/types";
 import { traverseJavaScriptAst } from "./javascript/javascriptSemanticTraversal.js";
 import { readExactJavaScriptLiteral } from "./javascript/javascriptAstValues.js";
@@ -286,6 +287,7 @@ export const parseReferenceSourceImports = (
   bytes: Uint8Array,
   language: string | null,
   packageType?: JavaScriptPackageType,
+  memberMutationAllowance?: JavaScriptMemberMutationAllowance,
 ): ReferenceSourceImportParseResult => {
   if (language !== null && !PARSEABLE_REFERENCE_SOURCE_LANGUAGES.has(language))
     return { relationships: [], parse_failures: [], limitations: [] };
@@ -338,7 +340,7 @@ export const parseReferenceSourceImports = (
     path,
     relationships,
     limitations,
-    referenceSourceRequireCalls(ast, path),
+    referenceSourceRequireCalls(ast, path, memberMutationAllowance),
   );
 
   return {

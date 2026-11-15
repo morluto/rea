@@ -15,10 +15,7 @@ import type { OwnedProcessGroup } from "../../../src/process/ProcessOwnership.js
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
-import {
-  JAVASCRIPT_MEMBER_MUTATION_WORK_ALLOWANCE,
-  JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT,
-} from "../../../src/domain/javascript/javascriptSemanticWorkAllowance.js";
+import { JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT } from "../../../src/domain/javascript/javascriptSemanticWorkAllowance.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { javaScriptWorkerMemoryLimitBytes } from "../../../src/process/JavaScriptWorkerMemoryLimit.js";
@@ -760,16 +757,26 @@ it("reports the worker heap limit only when the runtime enforces V8 heap flags",
   }
 });
 
-it("names the fixed work allowance a worker refusal reports", async () => {
-  const worker = resourceFailureWorker(
-    'process.versions.bun === undefined ? require("node:v8").getHeapStatistics().heap_size_limit : null',
+it("sends the accepted member-mutation allowance and names its setting on refusal", async () => {
+  // The fixture reports the allowance the parent sent, as the real worker does.
+  const worker = new JavaScriptAnalysisWorker(
     {
-      resource: "cpu",
-      limits: {
-        [JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT]:
-          JAVASCRIPT_MEMBER_MUTATION_WORK_ALLOWANCE,
-      },
+      heapMb: 128,
+      timeoutMs: 30_000,
+      memberMutationAllowance: { aliasStates: 4096, source: "runtime" },
     },
+    (request) =>
+      spawnOwnedProviderProcess({
+        ...request,
+        arguments: [
+          "-e",
+          `process.stdout.write(JSON.stringify({ kind: "ready", heap_limit_bytes: process.versions.bun === undefined ? require("node:v8").getHeapStatistics().heap_size_limit : null }) + "\\n");
+require("node:readline").createInterface({ input: process.stdin }).once("line", (line) => {
+  const request = JSON.parse(line);
+  process.stdout.write(JSON.stringify({ kind: "failure", id: request.id, reason: "resource", resource: "cpu", limits: { ${JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT}: request.member_mutation_allowance.alias_states, sent_source: request.member_mutation_allowance.source }, message: "fixture" }) + "\\n");
+});`,
+        ],
+      }),
   );
   try {
     const result = await worker.analyze(
@@ -783,13 +790,18 @@ it("names the fixed work allowance a worker refusal reports", async () => {
     expect(error).toMatchObject({
       resource: "cpu",
       retryable: false,
-      remediationAction: undefined,
-      fixedAllowance: {
-        kind: "work",
-        limit: JAVASCRIPT_MEMBER_MUTATION_WORK_ALLOWANCE,
-        unit: "alias states",
+      reportedLimits: {
+        [JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT]: 4096,
+        sent_source: "runtime",
+      },
+      limit: {
+        setting: "javascript.member_mutation_alias_states",
+        effective_value: 4096,
+        source: "runtime",
       },
     });
+    expect(error.fixedAllowance).toBeUndefined();
+    expect(error.remediationAction).toContain("update_analysis_settings");
   } finally {
     await worker.close();
   }

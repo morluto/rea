@@ -23,6 +23,7 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
   packageType,
   purpose,
   precision,
+  memberMutationAllowance,
 ) => {
   if (!file.text.included)
     throw new TypeError("JavaScript worker requires decoded source text");
@@ -38,6 +39,7 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
       file.text.value,
       parsed,
       precision,
+      memberMutationAllowance,
     ),
   );
   if (purpose === "preload-discovery") {
@@ -75,6 +77,7 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
       moduleResolutionModeForJavaScriptReference(file.path, "static-import"),
       capacity.nodes,
       precision,
+      memberMutationAllowance,
     ),
   );
   parsed = null;

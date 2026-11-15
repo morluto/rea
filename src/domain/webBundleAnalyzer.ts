@@ -1,3 +1,4 @@
+import type { JavaScriptMemberMutationAllowance } from "./javascript/javascriptSemanticWorkAllowance.js";
 import type { JavaScriptSemanticPrecisionInput } from "./javascript/javascriptSemanticPrecision.js";
 import { analyzeScript } from "./webBundleAnalyzerInspection.js";
 import {
@@ -13,9 +14,15 @@ import {
 export const analyzeCapturedWebScript = (
   script: IncludedScript,
   precision?: JavaScriptSemanticPrecisionInput,
+  memberMutationAllowance?: JavaScriptMemberMutationAllowance,
 ): WebBundleScriptAnalysis => {
   const accumulator = createWebBundleAnalysisAccumulator();
-  const routeFacts = analyzeScript(script, accumulator, precision);
+  const routeFacts = analyzeScript(
+    script,
+    accumulator,
+    precision,
+    memberMutationAllowance,
+  );
   const failed = accumulator.failedScripts.length > 0;
   const recovered = accumulator.recoveredScripts.length > 0;
   return webBundleScriptAnalysisSchema.parse({

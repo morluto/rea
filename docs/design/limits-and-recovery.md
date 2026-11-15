@@ -188,6 +188,7 @@ cannot partially apply. Clients coordinating writes can supply
 | `regex.matching_deadline_ms`, `regex.worker_heap_request_mib`                                                   | Next search / new regex worker                                                  |
 | `capture.decoder_old_generation_mib`                                                                            | Next owned capture decoder                                                      |
 | `javascript.analysis_timeout_ms`, `javascript.max_heap_mb`                                                      | Next source analysis / new JavaScript worker                                    |
+| `javascript.member_mutation_alias_states`                                                                       | Next JavaScript application, web bundle or reference-source analysis            |
 | `wasm.command_timeout_ms`                                                                                       | Next WABT operation                                                             |
 | `native.matching_representation_bytes`                                                                          | Next `match_native_functions` request                                           |
 
