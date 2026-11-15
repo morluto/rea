@@ -201,10 +201,8 @@ const browserCspSourceSchema = z.object({
 const browserLinkMetadataSchema = z.object({
   href: z.string().nullable(),
   destination_scope: z.enum(["approved", "outside_policy", "unsupported"]),
-  context_url: z.string().nullable().optional(),
-  context_scope: z
-    .enum(["approved", "outside_policy", "unsupported"])
-    .optional(),
+  context_url: z.string().nullable(),
+  context_scope: z.enum(["approved", "outside_policy", "unsupported"]),
   rel: z.array(z.string()),
   as: z.string().nullable(),
   type: z.string().nullable(),
@@ -319,33 +317,31 @@ export const webPageInspectionSchema = z.object({
     session_storage_keys: z.array(z.string()),
     indexed_db_names: z.array(z.string()),
     cache_names: z.array(z.string()),
-    content_fingerprints: z
-      .array(
-        z.discriminatedUnion("scope", [
-          z.object({
-            ...storageFingerprintShape,
-            scope: z.enum([
-              "cookie",
-              "local_storage",
-              "session_storage",
-              "indexed_db_record",
-              "cache_entry",
-            ]),
-          }),
-          z.object({
-            ...storageFingerprintShape,
-            scope: z.literal("indexed_db_schema"),
-            projection_version: z
-              .literal(2)
-              .describe(
-                "IndexedDB schema projection including database version.",
-              ),
-          }),
-        ]),
-      )
-      .default([]),
-    fingerprint_algorithm: z.literal("sha256").default("sha256"),
-    fingerprints_complete: z.boolean().default(false),
+    content_fingerprints: z.array(
+      z.discriminatedUnion("scope", [
+        z.object({
+          ...storageFingerprintShape,
+          scope: z.enum([
+            "cookie",
+            "local_storage",
+            "session_storage",
+            "indexed_db_record",
+            "cache_entry",
+          ]),
+        }),
+        z.object({
+          ...storageFingerprintShape,
+          scope: z.literal("indexed_db_schema"),
+          projection_version: z
+            .literal(2)
+            .describe(
+              "IndexedDB schema projection including database version.",
+            ),
+        }),
+      ]),
+    ),
+    fingerprint_algorithm: z.literal("sha256"),
+    fingerprints_complete: z.boolean(),
     values_redacted: z.literal(true),
   }),
   limitations: z.array(z.string()),

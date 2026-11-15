@@ -281,8 +281,8 @@ const originalModuleEdgeSchema = z.object({
   resolved_source: z.string().nullable(),
 });
 const sourceMapMappingSchema = z.object({
-  source_index: z.int().min(0).optional(),
-  declaration_index: z.int().min(0).optional(),
+  source_index: z.int().min(0),
+  declaration_index: z.int().min(0),
   generated_line: z.int().min(1),
   generated_column: z.int().min(0),
   source: z.string().nullable(),
@@ -324,10 +324,22 @@ const sourceMapSchema = z.union([
   z.object({
     ...sourceMapContextShape,
     ...parsedSourceMapShape,
-    status: z.enum(["fetch_failed", "invalid"]),
+    status: z.literal("fetch_failed"),
     artifact: z.null(),
     /** Present only when the complete response body was read. */
     response_identity: responseIdentitySchema.exactOptional(),
+    original_sources: emptyArraySchema,
+    original_module_edges: emptyArraySchema,
+    mappings: emptyArraySchema,
+    limitation: z.string(),
+  }),
+  z.object({
+    ...sourceMapContextShape,
+    ...parsedSourceMapShape,
+    // A map is judged invalid only after its complete body was read.
+    status: z.literal("invalid"),
+    artifact: z.null(),
+    response_identity: responseIdentitySchema,
     original_sources: emptyArraySchema,
     original_module_edges: emptyArraySchema,
     mappings: emptyArraySchema,

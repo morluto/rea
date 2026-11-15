@@ -463,7 +463,7 @@ agent hint is emitted only when the resolved context matches the response URL
 before userinfo credentials are removed. Following [RFC 8288](https://www.rfc-editor.org/rfc/rfc8288.html),
 the `rel`, `anchor`, and `type` parameters use their first occurrence, and
 quoted-pair escapes are decoded as specified by [RFC 9110 §5.6.4](https://www.rfc-editor.org/rfc/rfc9110.html#section-5.6.4).
-The context fields are optional when reading older saved captures. Commas
+Commas
 inside URI targets or quoted parameters remain part of those values.
 Well-known-resource hints require an exact supported pathname; path case is
 preserved because a case variant may identify a different HTTP resource.
@@ -650,12 +650,12 @@ Source maps are not fetched by inspection. Bundle analysis fetches them only whe
 A fully read response that fails UTF-8, JSON, mapping, or structural validation
 retains `artifact: null`, empty original-source, module-edge, and mapping
 arrays, and an explicit failure limitation. Invalid content is `invalid`;
-decoder or structural capacity refusal is `fetch_failed`. Its optional
-`response_identity` records the complete body's SHA-256 digest, byte count,
+decoder or structural capacity refusal is `fetch_failed`. Its
+`response_identity`, always present on an `invalid` item, records the complete body's SHA-256 digest, byte count,
 and `fetch-response-body-bytes` representation without retaining malformed
 text or charging that text to the 32 MiB output budget. These are bytes
 delivered by Fetch after HTTP content decoding and before UTF-8 decoding, not
-HTTP wire bytes. The identity is absent when the body was not fully read. A response whose text cannot fit the existing
+HTTP wire bytes. A `fetch_failed` item omits the identity when the body was not fully read. A response whose text cannot fit the existing
 output budget is likewise `fetch_failed` with text omitted and completed-body
 identity; JSON parsing and source-map decoding are not attempted. Successful and partial maps keep their
 full text artifacts. Their original text, including an initial BOM or XSSI
