@@ -69,16 +69,13 @@ separately whether a recorded effect applies to their read.
    and sloppy `eval`, and path disjointness. No reader evaluates these
    proofs.
 
-3. **Push invalidation to caches.** Recording an effect invalidates every
-   cached value that depends on its target. Existing caches store a result
-   under the binding it was computed for (`bindingId`), even when it read
-   other bindings, and expression and capture caches have the same shape.
-   Invalidation must therefore reach dependents, not only the changed
-   target's own entry. Each cached value records the targets it read, and
-   the log invalidates through that reverse index. Until a slice adds that
-   dependency tracking for a cache, the current whole-state
-   `clearSemanticValueCaches` stays in place for it. A value-engine read that
-   consults a cache then sees the effect without asking for it.
+3. **Caches keep the whole-state clear.** Recording an effect still calls
+   `clearSemanticValueCaches`, which drops every cached value. Per-target
+   invalidation was measured and declined; see
+   [Per-target cache invalidation](#per-target-cache-invalidation). A
+   value-engine read that consults a cache therefore sees every earlier
+   effect without asking for it.
+
 4. **Completeness is explicit.** The log records which producer phases are
    complete. Before the member-mutation phase completes, a member-path query
    answers "may observe", which is the current conservative
@@ -157,17 +154,47 @@ not adopted: it adds a new precision proof for one observed pattern and is
 not needed once readers ask the effect log. It can be proposed separately
 with its own measurement.
 
+### Per-target cache invalidation
+
+The first draft of decision 3 invalidated only the cached values that
+depend on an effect's target. Existing caches store a result under the
+binding it was computed for (`bindingId`), even when it read other bindings,
+and the expression and capture caches have the same shape. Per-target
+invalidation would therefore need every cached value to record the targets
+it read, plus a reverse index from target to dependents.
+
+It was measured at the head of #11282 (effect log slice 1) on the 14 corpus bundles, with
+`clearSemanticValueCaches` instrumented locally:
+
+- Clears per bundle range from 1,340 (underscore) to 32,269 (openpgp).
+  Almost all come from the member-mutation phase, which clears once per
+  recorded effect.
+- The binding values those clears discard are few: 0 to 306 primitive and
+  36 to 1,391 caller-independent values per bundle. The expression and
+  capture caches are `WeakMap`s, so their entries were not counted.
+- Upper bound: with every clear disabled (unsound; the IR changes on all 5
+  measured bundles), CPU time fell by 9% on zip.js and isomorphic-git, 8% on
+  openpgp and 4% on rxjs, and did not change measurably on vue. Peak RSS did
+  not change. These are 2 alternating runs per bundle under a load average
+  of 9 to 11, so the smaller figures are within noise.
+
+Per-target invalidation could recover only part of that 4 to 9% bound, at
+the cost of dependency tracking in every value cache and a reverse index.
+It is declined.
+
+Clearing once per member-mutation convergence round instead of once per
+effect is also declined. Values read later in the same round would be stale,
+and there is no argument yet that the round's fixed point makes them safe.
+
 ## Consequences
 
 - A new reader cannot forget an effect kind, because it asks one question
   about the value it reads.
 - Effect proofs have one owner. A precision fix, such as a new disjointness
   proof, applies to every reader at once.
-- Once dependency tracking covers a cache, its invalidation follows its
-  dependents instead of clearing the whole state after a global site. This
-  should reduce recomputation on bundles that contain `eval`. The effect is
-  unmeasured until a slice adds that tracking, and caches without it keep the
-  whole-state clear.
+- Cache invalidation is unchanged: every recorded effect still clears the
+  whole value state. Removing every clear would save at most 9% CPU on the
+  measured bundles.
 - The log retains effect entries until the source's analysis ends. They are
   already retained today in `bindingWrites`, `memberWrites`, `escapedPaths`,
   the ambient effect lists and `opaqueEffects`. The log replaces those
