@@ -353,6 +353,16 @@ checkCounted(
   /\.bindCleanupDependencies\(/gu,
   ["src/domain/analysisErrorBase.ts"],
 );
+// A POSIX launcher's PATH search order (empty and relative entries, `..`)
+// belongs to src/process/executableSearch; callers choose only how they
+// probe each candidate.
+checkCounted(
+  "PATH split outside the executable search owner (use posixPathCandidates from src/process/executableSearch)",
+  "path-search-split",
+  files,
+  /\.split\(\s*(?:posix\.|win32\.)?(?:delimiter|pathDelimiter)\s*\)/gu,
+  ["src/process/executableSearch.ts"],
+);
 
 if (baselinesShrunk) {
   const sorted = Object.fromEntries(

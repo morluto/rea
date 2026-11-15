@@ -1,7 +1,4 @@
-import {
-  absoluteCallerPath,
-  appendCallerPath,
-} from "../filesystem/callerPath.js";
+import { appendCallerPath } from "../filesystem/callerPath.js";
 import { DEFAULT_JADX_OPERATION_TIMEOUT_MS } from "../domain/analysisResourceLimits.js";
 import {
   jadxOperationTimeoutGuidance,
@@ -14,7 +11,8 @@ import {
 } from "./JadxInterruption.js";
 import { constants } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
-import { delimiter, isAbsolute, resolve } from "node:path";
+import { isAbsolute, resolve, win32 } from "node:path";
+import { posixPathCandidates } from "../process/executableSearch.js";
 import { inspectWindowsNativeReadiness } from "../process/WindowsAuthority.js";
 import { systemWindowsNativeAuthority } from "../windows/WindowsNativeLoader.js";
 import { providerStartupTimeoutSchema } from "../config/providerStartupTimeout.js";
@@ -597,19 +595,24 @@ const resolveJava = async (
     // Resolve in the caller's directory once. The module probe and the engine
     // run in different directories, and the selected executable also owns the
     // retained session's cache identity. Empty POSIX PATH components select cwd.
-    const directories = path.split(delimiter);
-    for (const directory of windows
-      ? directories.filter((entry) => entry !== "")
-      : directories) {
+    const candidates = windows
+      ? path
+          .split(win32.delimiter)
+          .filter((entry) => entry !== "")
+          // Windows PATH commonly quotes individual entries containing spaces.
+          .map((directory) =>
+            resolve(
+              directory.startsWith('"') && directory.endsWith('"')
+                ? directory.slice(1, -1)
+                : directory,
+              executable,
+            ),
+          )
+      : posixPathCandidates(executable, path, {
+          relativeEntries: "resolve",
+        }).map(({ path: candidate }) => candidate);
+    for (const candidate of candidates) {
       throwIfJadxInterrupted(signal);
-      // Windows PATH commonly quotes individual entries containing spaces.
-      const selected =
-        windows && directory.startsWith('"') && directory.endsWith('"')
-          ? directory.slice(1, -1)
-          : directory;
-      const candidate = windows
-        ? resolve(selected, executable)
-        : absoluteCallerPath(appendCallerPath(selected, executable));
       try {
         await access(
           candidate,
