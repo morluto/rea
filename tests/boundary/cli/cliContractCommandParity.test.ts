@@ -20,7 +20,10 @@ import {
   type RegisteredCommand,
 } from "../../../src/cli/visitRegisteredCommands.js";
 import { absoluteCallerPath } from "../../../src/filesystem/callerPath.js";
-import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
+import {
+  TOOL_CONTRACTS,
+  toolContract,
+} from "../../../src/contracts/toolContracts.js";
 
 const DECIMAL_TOKEN = /^[0-9]+$/u;
 
@@ -274,6 +277,9 @@ const argvValues = (
   };
 };
 
+const screenshotExample = toolContract("compare_web_screenshots").examples[0]!
+  .input as { readonly before: unknown; readonly after: unknown };
+
 /**
  * Argv for commands whose contract rules need more than one value per
  * required field: a selector choice, a pattern grammar or a change to make.
@@ -299,6 +305,11 @@ const ARGV_SATISFYING_RULES: Readonly<
   "capture-web-screenshot": { endpoint: "http://127.0.0.1:9222" },
   "list-javascript-runtime-targets": { endpoint: "http://127.0.0.1:9229" },
   "observe-javascript-runtime": { endpoint: "http://127.0.0.1:9229" },
+  // Each side must be a self-verifying screenshot artifact.
+  "compare-web-screenshots": {
+    beforeJson: JSON.stringify(screenshotExample.before),
+    afterJson: JSON.stringify(screenshotExample.after),
+  },
 };
 
 const each = descriptions.map(
@@ -320,7 +331,6 @@ const HAND_REGISTERED_CONTRACT_COMMANDS = [
   "analyze-web-bundle",
   "compare-process-captures",
   "compare-web-captures",
-  "compare-web-screenshots",
   "cutter-command",
   "execute-rizin-command",
   "export-web-scripts",
@@ -680,7 +690,10 @@ describe("JSON decoded when contract commands run", () => {
     "%s refuses text that is not JSON before analysis",
     (_command, description) => {
       for (const parameter of description.parameters) {
-        if (parameter.runtimeJson === undefined) continue;
+        // The command reads a JSON input before admission and refuses it
+        // there; the CLI tests cover that refusal.
+        if (parameter.runtimeJson === undefined || parameter.jsonInput)
+          continue;
         const malformed = description.admit(
           argvValues(description, {
             detail: "summary",
@@ -716,7 +729,10 @@ describe("JSON decoded when contract commands run", () => {
               ...(detail === undefined
                 ? {}
                 : { detail, evidence_output: "out.json" }),
-              [parameter.key]: text,
+              // The command hands admission a JSON input already decoded.
+              [parameter.key]: parameter.jsonInput
+                ? (JSON.parse(text) as unknown)
+                : text,
             });
             const expected = description.contract.inputSchema.safeParse({
               ...description.toContractInput({
