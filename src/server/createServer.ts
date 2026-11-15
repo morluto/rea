@@ -7,7 +7,6 @@ import { registerToolFamilies } from "../contracts/toolFamilyIds.js";
 import { SCOPED_NO_TARGET_RECOVERY } from "./recoveryInstructions.js";
 import { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { parseMcpInputBudget } from "../config/mcpInputBudget.js";
-import { registerAnalysisSettingsTools } from "./registerAnalysisSettingsTools.js";
 import { serverInstructions } from "./serverInstructions.js";
 import { registerServiceTools } from "./serviceToolBindings.js";
 import { retainedDebuggerDiagnostics } from "../process/ownedDebuggerCleanupError.js";
@@ -15,7 +14,6 @@ import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { captureProviderEnvironment } from "./providerEnvironment.js";
 import { createByteEntropyService } from "../composition/binaryDiagnostics.js";
 import { registerDesktopBuildTools } from "./registerDesktopBuildTools.js";
-import { registerAnalysisViewTool } from "./registerAnalysisViewTool.js";
 import { registerBinaryDiagnosticsTools } from "./registerBinaryDiagnosticsTools.js";
 import { registerFridaTools } from "./registerFridaTools.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
@@ -607,18 +605,14 @@ export const createServer = (
           options.optionalProviderLoadFailures?.javascriptRuntimeObservation,
       }),
     application: () => {
-      registerAnalysisSettingsTools(server, analysisSettings);
-      registerAnalysisViewTool(
-        server,
-        toolLogger,
-        evidenceById,
-        recordEvidence,
-        analysisAdmission,
-        artifactResources,
-      );
       registerServiceTools(
         server,
         {
+          analysisSettings: {
+            settings: analysisSettings,
+            delivery: server.delivery,
+          },
+          analysisView: { resources: artifactResources },
           webScripts: artifactResources,
           guidance: artifactResources,
           webModuleTrace,
