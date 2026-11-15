@@ -1905,6 +1905,10 @@ it.each([
     expect(started.error.cleanup).toMatchObject({
       reason: "simulated startup stop uncertainty",
     });
+    // The returned startup failure itself names why cleanup is incomplete.
+    expect(started.error.diagnostics).toMatchObject({
+      debugger_cleanup: "stop-failed",
+    });
     expect(started.error.cleanupIncomplete).toBe(true);
     const [sessionId] = started.error.cleanupResources;
     if (sessionId === undefined)

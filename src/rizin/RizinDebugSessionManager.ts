@@ -66,6 +66,7 @@ import {
   debuggerAdmissionRecovery,
   debuggerResourceConstraintError,
   fixedDeadlineGuidance,
+  incompleteStopFacts,
   stopOwnedDebuggerProcess,
   readLinuxProcessStartTime,
   verifyOwnedInferiorsEnded,
@@ -1731,11 +1732,12 @@ export class RizinDebugSessionManager {
       operation,
       stopped,
     );
+    // The composed failure names why cleanup is incomplete at its own top level.
     const composed = analysisErrorWithCleanupDependencies(
       primary,
       cleanup,
       operation,
-    );
+    ).retainDiagnostics(incompleteStopFacts(stopped, [session.id]).diagnostics);
     return this.#sessions.retain(session, composed);
   }
 

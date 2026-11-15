@@ -24,7 +24,10 @@ import type {
   DebuggerCleanupIncompleteCode,
 } from "../domain/debuggerSessionErrors.js";
 import { parseLinuxProcessStat } from "./LinuxProcessStat.js";
-import { OwnedDebuggerCleanupError } from "./ownedDebuggerCleanupError.js";
+import {
+  OwnedDebuggerCleanupError,
+  OwnedDebuggerStopFailure,
+} from "./ownedDebuggerCleanupError.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Result of terminating one debugger process owned by this application. */
@@ -50,16 +53,6 @@ export class OwnedDebuggerDetachFailure extends Error {
   ) {
     super(message);
     this.name = "OwnedDebuggerDetachFailure";
-  }
-}
-
-/** One owned debugger whose stop could not be confirmed, naming why. */
-export class OwnedDebuggerStopFailure extends Error {
-  readonly code: DebuggerCleanupIncompleteCode;
-  constructor(stop: DebuggerCleanupIncomplete) {
-    super(stop.reason);
-    this.name = "OwnedDebuggerStopFailure";
-    this.code = stop.code;
   }
 }
 
@@ -177,6 +170,23 @@ export const debuggerResourceConstraintError = (
  * cancellation stays a cancellation with the caller's reason instead of
  * becoming a capability refusal for the target.
  */
+/**
+ * The cleanup observation and diagnostic an incomplete stop adds to any error
+ * that reports it. The code projects as `details.diagnostics.debugger_cleanup`.
+ */
+export const incompleteStopFacts = (
+  { code, reason }: DebuggerCleanupIncomplete,
+  resources: readonly string[],
+): {
+  readonly cleanup: { readonly reason: string; readonly resources: string[] };
+  readonly diagnostics: {
+    readonly debugger_cleanup: DebuggerCleanupIncompleteCode;
+  };
+} => ({
+  cleanup: { reason, resources: [...resources] },
+  diagnostics: { debugger_cleanup: code },
+});
+
 export const retainedDebuggerCleanupFailure = (
   debugger_: { readonly provider: string; readonly displayName: string },
   operation: string,
@@ -184,11 +194,13 @@ export const retainedDebuggerCleanupFailure = (
   resources: readonly string[],
   callerOptions: AnalysisErrorOptions = {},
 ): AnalysisError => {
-  const cleanup = { reason, resources: [...resources] };
-  // The code projects as `details.diagnostics.debugger_cleanup`.
+  const { cleanup, diagnostics } = incompleteStopFacts(
+    { code, reason },
+    resources,
+  );
   const options: AnalysisErrorOptions = {
     ...callerOptions,
-    diagnostics: { ...callerOptions.diagnostics, debugger_cleanup: code },
+    diagnostics: { ...callerOptions.diagnostics, ...diagnostics },
   };
   const primary = options.cause;
   if (primary instanceof AnalysisCancelledError)

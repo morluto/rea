@@ -99,9 +99,11 @@ test.each([
         command,
       });
       if (cleanupRetry)
-        expect(parseMcpToolError(stopping).error.code).toBe(
-          "cleanup_incomplete",
-        );
+        expect(parseMcpToolError(stopping).error).toMatchObject({
+          code: "cleanup_incomplete",
+          // The returned failure names why cleanup is incomplete at its top level.
+          details: { diagnostics: { debugger_cleanup: "stop-failed" } },
+        });
       else expect(stopping.isError).not.toBe(true);
 
       // The next call retries retained cleanup first, then refuses the

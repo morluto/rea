@@ -71,6 +71,7 @@ import {
   fixedDeadlineGuidance,
   readLinuxProcessStartTime,
   OwnedDebuggerDetachFailure,
+  incompleteStopFacts,
   stopOwnedDebuggerProcess,
   type OwnedDebuggerDetachResult,
   type OwnedInferiorIdentity,
@@ -892,10 +893,13 @@ export class GdbSessionManager {
           failure.bindCleanupDependencies([cleanupFailure], {
             cleanupResources: [session.id],
           });
-        const cleanup = { reason: stopped.reason, resources: [session.id] };
+        const { cleanup, diagnostics } = incompleteStopFacts(stopped, [
+          session.id,
+        ]);
         const detailsWithoutCause = {
           capturedOutput,
           cleanup,
+          diagnostics,
           ...(startupEvidence === undefined
             ? {}
             : { partialObservation: startupEvidence }),
@@ -931,7 +935,10 @@ export class GdbSessionManager {
                 ? details
                 : {
                     ...details,
-                    diagnostics: { session_stop: session.protocolError.code },
+                    diagnostics: {
+                      ...diagnostics,
+                      session_stop: session.protocolError.code,
+                    },
                   },
             ),
           ),
@@ -1722,20 +1729,15 @@ export class GdbSessionManager {
         : stop.reason,
       {
         cause,
+        ...(stopped.status === "incomplete"
+          ? incompleteStopFacts(stopped, [session.id])
+          : {}),
         diagnostics: {
           session_stop: stop.code,
           ...(stopped.status === "incomplete"
-            ? { debugger_cleanup: stopped.code }
+            ? incompleteStopFacts(stopped, [session.id]).diagnostics
             : {}),
         },
-        ...(stopped.status === "incomplete"
-          ? {
-              cleanup: {
-                reason: stopped.reason,
-                resources: [session.id],
-              },
-            }
-          : {}),
         ...(partialObservation === undefined ? {} : { partialObservation }),
       },
     );
@@ -1982,7 +1984,7 @@ export class GdbSessionManager {
             pending.reject(
               new AnalysisTimeoutError(operation, acceptedDeadline.value, {
                 cause: timeout,
-                cleanup: { reason: stopped.reason, resources: [session.id] },
+                ...incompleteStopFacts(stopped, [session.id]),
                 partialObservation: evidence,
                 ...copiedTimeoutGuidance(timeout),
               }),
@@ -1997,13 +1999,10 @@ export class GdbSessionManager {
                   `GDB command output could not be correlated and its owned process could not be confirmed stopped: ${stopped.reason}`,
                   {
                     cause: timeout,
+                    ...incompleteStopFacts(stopped, [session.id]),
                     diagnostics: {
                       session_stop: stop.code,
-                      debugger_cleanup: stopped.code,
-                    },
-                    cleanup: {
-                      reason: stopped.reason,
-                      resources: [session.id],
+                      ...incompleteStopFacts(stopped, [session.id]).diagnostics,
                     },
                     partialObservation: evidence,
                   },
@@ -2097,10 +2096,7 @@ export class GdbSessionManager {
           );
           pending.reject(
             cancelledBy("gdb_console", carriedReason(signal?.reason), {
-              cleanup: {
-                reason: stopped.reason,
-                resources: [session.id],
-              },
+              ...incompleteStopFacts(stopped, [session.id]),
               partialObservation: evidence,
             }).bindCleanupDependencies([cleanupFailure], {
               cleanupResources: [session.id],

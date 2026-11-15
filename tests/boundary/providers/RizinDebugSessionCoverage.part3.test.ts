@@ -706,6 +706,10 @@ it.skipIf(process.platform === "win32").each([false, true])(
     expect(primary.secondaryFailures[0]?.cause).toBe(reason);
     expect(result.error.cleanupIncomplete).toBe(incomplete);
     if (incomplete) {
+      // The composed failure names why cleanup is incomplete at its top level.
+      expect(result.error.diagnostics).toMatchObject({
+        debugger_cleanup: "stop-failed",
+      });
       retained = false;
       await manager.closeAll();
       expect(result.error.cleanupIncomplete).toBe(false);
