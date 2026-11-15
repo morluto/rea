@@ -1,3 +1,4 @@
+import { completeOrUnknownCoverageSchema } from "./coverage.js";
 import {
   artifactDfuCrc32PairSchema,
   artifactIntegrityClaimSchema,
@@ -174,7 +175,7 @@ export const artifactOccurrenceSchema = z.object({
   artifact_id: artifactIdSchema.nullable(),
   parent_occurrence_id: occurrenceIdSchema.nullable(),
   /** Producer coverage of this occurrence's modeled relationships. Historical omission is unknown. */
-  relationship_coverage: z.enum(["complete", "unknown"]).exactOptional(),
+  relationship_coverage: completeOrUnknownCoverageSchema.exactOptional(),
   logical_path: boundedRelativePathSchema,
   entry_kind: z.enum(["file", "directory", "symlink", "slice", "metadata"]),
   artifact_kind: artifactKindSchema,
@@ -250,7 +251,7 @@ export const artifactGraphManifestSchema = z.object({
 /** Producer-owned traversal coverage; content certainty remains on each occurrence. */
 export const artifactInventoryCoverageSchema = z.strictObject({
   scope: z.enum(["root", "container-entries"]),
-  status: z.enum(["complete", "unknown"]),
+  status: completeOrUnknownCoverageSchema,
 });
 export type ArtifactInventoryCoverage = z.infer<
   typeof artifactInventoryCoverageSchema
