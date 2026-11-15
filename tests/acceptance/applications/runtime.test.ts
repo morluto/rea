@@ -1,3 +1,4 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { fileURLToPath } from "node:url";
 
 import { Client } from "@modelcontextprotocol/client";
@@ -38,7 +39,7 @@ const expectAvailableToolInventory = async (
     throw new Error("The compiled catalog omitted binary_session");
   const status = await client.callTool(
     { name: "binary_session", arguments: {} },
-    { toolDefinition: binarySession },
+    { toolDefinition: withCanonicalOutputSchema(binarySession) },
   );
   expect(status.isError).not.toBe(true);
   const inventory = z
@@ -228,7 +229,7 @@ describe("production stdio runtime", () => {
         throw new Error("The compiled catalog omitted close_binary");
       const closed = await client.callTool(
         { name: "close_binary", arguments: {} },
-        { toolDefinition: closeBinary },
+        { toolDefinition: withCanonicalOutputSchema(closeBinary) },
       );
       expect(closed.isError).not.toBe(true);
     } finally {

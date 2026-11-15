@@ -1,3 +1,4 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -39,7 +40,7 @@ it("retains lossless field constants in MCP Evidence and pages them after the so
   if (definition === undefined) throw new Error("Member output schema missing");
   const reply = await client.callTool(
     { name: definition.name, arguments: { path, detail: "complete" } },
-    { toolDefinition: definition },
+    { toolDefinition: withCanonicalOutputSchema(definition) },
   );
   expect(reply.isError).not.toBe(true);
   const parent = parseEvidence(reply.structuredContent);
@@ -77,7 +78,7 @@ it("retains lossless field constants in MCP Evidence and pages them after the so
   ).toBe(true);
   const page = await client.callTool(
     { name: viewTool.name, arguments: request },
-    { toolDefinition: viewTool },
+    { toolDefinition: withCanonicalOutputSchema(viewTool) },
   );
   expect(page.isError).not.toBe(true);
   const view = parseEvidence(page.structuredContent).normalized_result;

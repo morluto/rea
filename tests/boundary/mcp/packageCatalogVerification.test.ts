@@ -1,3 +1,4 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { expect, it } from "vitest";
 import { z } from "zod";
 import { verifyCompleteToolCatalog } from "../../../scripts/lib/verify-package-core.mjs";
@@ -40,7 +41,7 @@ it("verifies canonical names, converted schemas and session metadata together", 
         name: "binary_session",
         arguments: {},
       },
-      { toolDefinition: sessionDefinition },
+      { toolDefinition: withCanonicalOutputSchema(sessionDefinition) },
     );
     const forwarded: unknown[][] = [];
     const client = {

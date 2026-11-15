@@ -1,4 +1,7 @@
-import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { describe, expect, it } from "vitest";
 import { connectGhidraMcp, sessionEvidence } from "./ghidraMcpHarness.js";
 import {
@@ -57,7 +60,7 @@ it("retains complete load-image facts and pages selected relocations through the
       expect(ajv.validateSchema(outputSchema)).toBe(true);
       const reply = await harness.mcp.callTool(
         { name, arguments: input },
-        { toolDefinition: definition },
+        { toolDefinition: withCanonicalOutputSchema(definition) },
       );
       expect(reply.isError).not.toBe(true);
       return sessionEvidence(harness.session, reply.structuredContent);

@@ -1,3 +1,4 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { traceSourceMap } from "../../../src/javascript/sourceMaps/TraceSourceMap.js";
 import {
   webSourceLocationArgs as args,
@@ -57,7 +58,7 @@ it("publishes valid SDK schemas and records the named module trace without a bin
   expect(ajv.validate(inputSchema, args)).toBe(true);
   const response = await client.callTool(
     { name: "trace_web_source_location", arguments: args },
-    { toolDefinition: advertised },
+    { toolDefinition: withCanonicalOutputSchema(advertised) },
   );
   expect(response.isError).not.toBe(true);
   const parsed = toolContract("trace_web_source_location").outputSchema.parse(

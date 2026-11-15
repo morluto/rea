@@ -1,3 +1,4 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, expect, it } from "vitest";
@@ -93,7 +94,7 @@ const connect = async (
   const reply = (args: Record<string, unknown>) =>
     client.callTool(
       { name: "get_evidence_bundle", arguments: args },
-      { toolDefinition },
+      { toolDefinition: withCanonicalOutputSchema(toolDefinition) },
     );
   const select = async (args: Record<string, unknown>) => {
     const result = await reply({ detail: "records", ...args });

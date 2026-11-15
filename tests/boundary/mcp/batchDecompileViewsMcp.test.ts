@@ -1,3 +1,4 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -144,7 +145,9 @@ const connect = async (
       .parse(
         await harness.mcp.callTool(
           { name, arguments: args },
-          toolDefinition === undefined ? {} : { toolDefinition },
+          toolDefinition === undefined
+            ? {}
+            : { toolDefinition: withCanonicalOutputSchema(toolDefinition) },
         ),
       );
   };

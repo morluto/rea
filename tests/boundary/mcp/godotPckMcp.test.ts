@@ -1,6 +1,7 @@
 import {
   canonicalOutputSchema,
   canonicalInputSchema,
+  withCanonicalOutputSchema,
 } from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile, unlink } from "node:fs/promises";
 import { createHash } from "node:crypto";
@@ -44,7 +45,11 @@ const viewValidators = async (client: Client) => {
   const outputSchema = canonicalOutputSchema(contract.name);
   expect(ajv.validateSchema(inputSchema)).toBe(true);
   expect(ajv.validateSchema(outputSchema)).toBe(true);
-  return { ajv, inputSchema, toolDefinition: contract };
+  return {
+    ajv,
+    inputSchema,
+    toolDefinition: withCanonicalOutputSchema(contract),
+  };
 };
 
 const retainedInventoryView =

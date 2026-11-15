@@ -1,3 +1,4 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -73,7 +74,7 @@ it.each(["compact"] as const)(
           name: "address_name",
           arguments: { address: "0x100", document: "fixture" },
         },
-        { toolDefinition: definition },
+        { toolDefinition: withCanonicalOutputSchema(definition) },
       );
       expect(result.isError).toBe(true);
       const error = parseMcpToolError(result).error;

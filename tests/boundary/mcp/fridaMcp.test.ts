@@ -234,7 +234,7 @@ it("delivers Frida status summaries with complete retained Evidence for both tru
     expect(explicit.structuredContent).toEqual(parent);
     const summary = await client.callTool(
       { name: tool.name, arguments: { session_id: id, detail: "summary" } },
-      { toolDefinition: tool },
+      { toolDefinition: withCanonicalOutputSchema(tool) },
     );
     expect(summary.isError).not.toBe(true);
     const evidence = toolContract("frida_session_status").outputSchema.parse(

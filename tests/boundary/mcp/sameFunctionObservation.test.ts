@@ -1,3 +1,4 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { afterAll, expect, it } from "vitest";
 import type { Client } from "@modelcontextprotocol/client";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
@@ -112,7 +113,7 @@ it.each(["compact"] as const)(
           right: ref(main.evidence_id),
         },
       },
-      { toolDefinition },
+      { toolDefinition: withCanonicalOutputSchema(toolDefinition) },
     );
     expect(reply.isError, JSON.stringify(reply.content)).not.toBe(true);
     const result = parseEvidence(reply.structuredContent).normalized_result;

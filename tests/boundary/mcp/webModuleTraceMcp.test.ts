@@ -1,3 +1,4 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
@@ -56,7 +57,7 @@ it("publishes valid SDK schemas and records the named module trace without a bin
   expect(ajv.validate(inputSchema, args)).toBe(true);
   const response = await client.callTool(
     { name: "trace_web_module_imports", arguments: args },
-    { toolDefinition: advertised },
+    { toolDefinition: withCanonicalOutputSchema(advertised) },
   );
   expect(response.isError).not.toBe(true);
   const parsed = toolContract("trace_web_module_imports").outputSchema.parse(

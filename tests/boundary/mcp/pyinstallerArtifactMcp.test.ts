@@ -1,3 +1,4 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { access, readFile, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
@@ -56,7 +57,7 @@ const assertMetadataQueries = async (
     );
     const reply = await client.callTool(
       { name: "inspect_analysis_view", arguments: args },
-      { toolDefinition: definition },
+      { toolDefinition: withCanonicalOutputSchema(definition) },
     );
     expect(reply.isError).not.toBe(true);
     const evidence = parseEvidence(reply.structuredContent);

@@ -1,3 +1,4 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -180,7 +181,10 @@ it.each([
         const toolDefinition = definitions.get(name);
         if (toolDefinition === undefined)
           throw new Error(`Tool ${name} was not advertised`);
-        return client.callTool({ name, arguments: args }, { toolDefinition });
+        return client.callTool(
+          { name, arguments: args },
+          { toolDefinition: withCanonicalOutputSchema(toolDefinition) },
+        );
       };
       expect(
         (
