@@ -5,7 +5,7 @@ import { ArtifactProvider } from "../../../src/artifacts/ArtifactProvider.js";
 import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
 import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
-import * as processOutput from "../../../src/process/ExecFileOutput.js";
+import * as ownedCommand from "../../../src/process/OwnedCommand.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 it.skipIf(process.platform !== "darwin").each([
@@ -62,8 +62,13 @@ it.skipIf(process.platform !== "darwin").each([
         }
         await originalClose.call(this);
       });
+    const stream = (text: string) => ({
+      text,
+      bytes: text.length,
+      observedBytes: text.length,
+    });
     const utility = vi
-      .spyOn(processOutput, "execFileOutput")
+      .spyOn(ownedCommand, "runOwnedCommand")
       .mockImplementationOnce(async () => {
         if (primary === "integrity")
           await writeFile(
@@ -71,13 +76,22 @@ it.skipIf(process.platform !== "darwin").each([
             "changed catalog bytes with a different length",
           );
         if (primary === "timeout")
-          throw Object.assign(new Error("controlled assetutil deadline"), {
-            code: "ETIMEDOUT",
-            stdout: "",
-            stderr: "assetutil timeout detail",
-            signal: "SIGTERM",
-          });
-        return { stdout: "[]", stderr: "", stdoutBytes: 2, stderrBytes: 0 };
+          throw new ownedCommand.OwnedCommandFailure(
+            "timeout",
+            "Command deadline elapsed.",
+            {
+              stdout: stream(""),
+              stderr: stream("assetutil timeout detail"),
+              exitCode: null,
+              signal: "SIGKILL",
+            },
+          );
+        return {
+          stdout: stream("[]"),
+          stderr: stream(""),
+          exitCode: 0,
+          signal: null,
+        };
       });
     const client = new ArtifactProvider(
       {},

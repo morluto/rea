@@ -1057,11 +1057,17 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
           "settles a cancelled assetutil run only after its process exits",
         ),
       ),
-      cleanup: gap(
-        "assetutil runs through execFileOutput, which has no retained or unproven cleanup outcome to report (#11509).",
+      cleanup: covered(
+        test(
+          "src/artifacts/apple/AppleAssetCatalogAnalysis.test.ts",
+          "retains an unproven assetutil process cleanup for a later retry",
+        ),
       ),
-      retry: gap(
-        "assetutil has no retained cleanup owner for a later request to retry (#11509).",
+      retry: covered(
+        test(
+          "src/artifacts/apple/AppleAssetCatalogAnalysis.test.ts",
+          "releases a retained assetutil cleanup before the next inspection launches",
+        ),
       ),
     },
   },
@@ -2057,7 +2063,4 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
  * Every stage marked as a gap above, as `providerId:stage`. This list may only
  * shrink: close a gap by naming its regression tests and removing the entry.
  */
-export const PROVIDER_LIFECYCLE_GAPS: readonly string[] = [
-  "rea-apple-application:cleanup",
-  "rea-apple-application:retry",
-];
+export const PROVIDER_LIFECYCLE_GAPS: readonly string[] = [];
