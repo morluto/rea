@@ -1005,7 +1005,7 @@ const clientConfigurationDesired = async (
     validated.value.timeoutInputs,
   );
   if (!registration.ok) throw registration.error;
-  return withInheritedGooseEnvironment(
+  return withInheritedGooseSettings(
     registration.value,
     format,
     client,
@@ -1019,19 +1019,28 @@ const clientConfigurationDesired = async (
  * Goose replaces `envs` as a whole map per layer, so a user map must carry the
  * inherited one. When the user entry declares no environment and a lower layer
  * does, setup writes no map unless a setting is requested, and then writes the
- * inherited map with the requested settings applied last.
+ * inherited map with the requested settings applied last. Other settings only a
+ * lower layer declares are left to that layer.
  */
-const withInheritedGooseEnvironment = (
-  registration: Record<string, unknown>,
+const GOOSE_INHERITABLE_SETTINGS: readonly string[] = [
+  "name",
+  "description",
+  "enabled",
+  "timeout",
+];
+
+const withInheritedGooseSettings = (
+  withoutInherited: Record<string, unknown>,
   format: ClientRegistrationDialect,
   client: SetupClient,
   parsed: ClientConfigurationDocument | undefined,
   effective: ClientConfigurationDocument | undefined,
   providerEnvironment: SetupProviderEnvironment,
 ): Record<string, unknown> => {
-  if (format !== "goose") return registration;
-  const declaresEnvironment = (
+  if (format !== "goose") return withoutInherited;
+  const declares = (
     document: ClientConfigurationDocument | undefined,
+    keys: readonly string[],
   ) => {
     const entry =
       document === undefined
@@ -1040,10 +1049,24 @@ const withInheritedGooseEnvironment = (
     return (
       typeof entry === "object" &&
       entry !== null &&
-      (Object.hasOwn(entry, "envs") || Object.hasOwn(entry, "env"))
+      keys.some((key) => Object.hasOwn(entry, key))
     );
   };
-  if (declaresEnvironment(parsed) || !declaresEnvironment(effective))
+  // A setting only a lower layer declares stays in effect: writing setup's
+  // default into the user entry would override that caller's choice.
+  const registration = Object.fromEntries(
+    Object.entries(withoutInherited).filter(
+      ([key]) =>
+        !GOOSE_INHERITABLE_SETTINGS.includes(key) ||
+        declares(parsed, [key]) ||
+        !declares(effective, [key]),
+    ),
+  );
+  const environmentKeys = ["envs", "env"];
+  if (
+    declares(parsed, environmentKeys) ||
+    !declares(effective, environmentKeys)
+  )
     return registration;
   if (Object.keys(providerEnvironment).length === 0) {
     const { envs: _inherited, ...rest } = registration;
