@@ -1,6 +1,6 @@
 import { SIMULATED_LINUX_X64 } from "../fixtures/pwntoolsHost.js";
 import { writeFile } from "node:fs/promises";
-import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
+import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 
 import { createCli } from "../../src/cli.js";
 import * as composition from "../../src/composition/binaryDiagnostics.js";
@@ -15,9 +15,6 @@ import {
 
 const exitCode = process.exitCode;
 
-beforeEach(() => {
-  // Exercise configuration admission on this host without starting Python.
-});
 afterEach(() => {
   process.exitCode = exitCode;
   vi.restoreAllMocks();
