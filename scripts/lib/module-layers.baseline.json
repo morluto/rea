@@ -1,7 +1,5 @@
 {
   "upward": {
-    "android -> application": 1,
-    "apktool -> application": 1,
     "application -> catalogDiscovery.ts": 1,
     "application -> catalogIdentity.ts": 2,
     "application -> mcpStartupPolicy.ts": 3,
