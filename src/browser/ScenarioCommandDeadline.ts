@@ -1,3 +1,4 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { createRequire } from "node:module";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import {
@@ -6,7 +7,6 @@ import {
   CDP_CLEANUP_GRACE_MS,
   CDP_DISCOVERY_RESPONSE_TIMEOUT_MS,
   DEFAULT_CDP_COMMAND_TIMEOUT_MS,
-  MAX_BROWSER_DEADLINE_MS,
   selectedCdpCommandTimeoutMs,
   type CdpCommandDeadlinePhase,
 } from "../domain/browserDeadline.js";
@@ -50,9 +50,9 @@ const scenarioCommandDeadlineRecovery = (
       ? `Browser launch and persistent-context startup exceeded its ${String(timeoutMs)} ms command_timeout_ms deadline (deadlineExpired). This is not the caller observation window, the ${String(CDP_DISCOVERY_RESPONSE_TIMEOUT_MS)} ms CDP discovery deadline, or the ${String(CDP_CLEANUP_GRACE_MS)} ms cleanup grace.`
       : cdpCommandDeadlineRecovery(timeoutMs, phase, method).userMessage;
   const increase =
-    timeoutMs < MAX_BROWSER_DEADLINE_MS
-      ? `Set command_timeout_ms in the capture-browser-scenario JSON above ${String(timeoutMs)} (integer milliseconds from 1 to ${String(MAX_BROWSER_DEADLINE_MS)}; omitted means ${String(DEFAULT_CDP_COMMAND_TIMEOUT_MS)}).`
-      : `command_timeout_ms is already at the maximum ${String(MAX_BROWSER_DEADLINE_MS)} ms; do not increase it further.`;
+    timeoutMs < MAX_NODE_TIMER_DELAY_MS
+      ? `Set command_timeout_ms in the capture-browser-scenario JSON above ${String(timeoutMs)} (integer milliseconds from 1 to ${String(MAX_NODE_TIMER_DELAY_MS)}; omitted means ${String(DEFAULT_CDP_COMMAND_TIMEOUT_MS)}).`
+      : `command_timeout_ms is already at the maximum ${String(MAX_NODE_TIMER_DELAY_MS)} ms; do not increase it further.`;
   return {
     userMessage,
     remediationAction: `${increase} ${browserDeadlineRetry} command_timeout_ms does not raise the fixed protocol, retained-event, or source byte budgets, the ${String(CDP_DISCOVERY_RESPONSE_TIMEOUT_MS)} ms CDP discovery response deadline, or the ${String(CDP_CLEANUP_GRACE_MS)} ms cleanup grace. Those have no runtime override.`,

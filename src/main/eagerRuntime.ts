@@ -18,6 +18,7 @@ import { createToolResultDelivery } from "../server/toolResult.js";
 import { createShutdown, reportMcpShutdownFailure } from "./shutdown.js";
 import { ownStdioStartupInput } from "./StdioStartupInput.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { OwnerCancellation } from "../domain/analysisErrorCore.js";
 
 /**
  * Start the long-lived MCP adapter and install idempotent shutdown handlers.
@@ -76,7 +77,7 @@ export const runEager = async (
       ...dependencies,
       registerShutdown: (handler) =>
         dependencies.registerShutdown(() => {
-          startup.abort();
+          startup.abort(OwnerCancellation.ownerClosed);
           handler();
         }),
     },
@@ -93,7 +94,7 @@ export const runEager = async (
         })
       : undefined;
   dependencies.captureShutdown?.(async () => {
-    startup.abort();
+    startup.abort(OwnerCancellation.ownerClosed);
     await shutdown.shutdown();
   });
   let ready = false;

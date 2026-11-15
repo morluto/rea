@@ -30,7 +30,6 @@ const KUNA_DOCUMENT_CODES = [
   "xref_function_hex",
   "xref_target",
   "span_short",
-  "command_not_file",
   "stop_unproven",
 ] as const;
 
