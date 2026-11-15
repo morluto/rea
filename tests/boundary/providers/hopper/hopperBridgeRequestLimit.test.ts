@@ -7,6 +7,7 @@ import { bridgeMaxRequestBytesRecovery } from "../../../../src/config/bridgeMaxR
 import { expect, it, vi } from "vitest";
 
 import { AnalysisResourceConstraintError } from "../../../../src/domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { HopperClient } from "../../../../src/hopper/HopperClient.js";
 import { waitFor } from "../../../support/testWait.js";
 
@@ -69,6 +70,10 @@ it("refuses an oversized Hopper request before the fixture receives it", async (
   if (!(refused.error instanceof AnalysisResourceConstraintError)) return;
   expect(refused.error.reportedLimits).toMatchObject({
     max_request_bytes: 8192,
+  });
+  expect(projectAnalysisError(refused.error).details).toMatchObject({
+    resource: "transport",
+    request_sent: false,
   });
   expect(refused.error.remediationAction).toBe(
     bridgeMaxRequestBytesRecovery(limit(8192), "Hopper"),

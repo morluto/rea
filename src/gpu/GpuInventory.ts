@@ -21,7 +21,7 @@ import type {
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
-  BinaryStringReadLimitFailure,
+  isBinaryStringReadLimit,
 } from "../native/metadata/BinaryContainer.js";
 import {
   readElfSectionDirectory,
@@ -288,19 +288,14 @@ export class GpuInventory {
   }
   #retainFailure(row: GpuObject, cause: unknown): void {
     if (cause instanceof GpuReportCapacityFailure) throw cause;
-    if (
-      !(cause instanceof BinaryFormatFailure) &&
-      !(cause instanceof BinaryResourceFailure) &&
-      !(cause instanceof BinaryStringReadLimitFailure)
-    )
-      throw cause;
-    row.inspection =
-      cause instanceof BinaryResourceFailure ||
-      cause instanceof BinaryStringReadLimitFailure
-        ? "capacity"
-        : cause.kind === "unsupported"
-          ? "unsupported"
-          : "malformed";
+    const capacity =
+      cause instanceof BinaryResourceFailure || isBinaryStringReadLimit(cause);
+    if (!capacity && !(cause instanceof BinaryFormatFailure)) throw cause;
+    row.inspection = capacity
+      ? "capacity"
+      : cause.kind === "unsupported"
+        ? "unsupported"
+        : "malformed";
     this.#objectLimitations(row, [cause.message]);
   }
   async #payload(

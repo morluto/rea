@@ -29,6 +29,7 @@ import {
   type DocumentContract,
   type ContractCliDocumentDescription,
   type CliContractProjection,
+  describeOperationChoices,
   type CliEvidenceDeliveryChoice,
   type CliOptionShape,
   type CliOptionValues,
@@ -346,9 +347,9 @@ const incurOptions = (description: ContractCliDescription): z.ZodType => {
         ({ key, schema }) => [key, schema] as const,
       ),
       ...description.parameters.flatMap(({ selectorOption }) =>
-        selectorOption === undefined
-          ? []
-          : [[selectorOption.key, selectorOption.schema] as const],
+        [selectorOption, selectorOption?.alternative].flatMap((option) =>
+          option === undefined ? [] : [[option.key, option.schema] as const],
+        ),
       ),
     ]),
   );
@@ -384,6 +385,7 @@ export const registerContractCommand = <
   ) => Promise<Value>,
 ): void => {
   const description = describeContractCommand(contract, projection);
+  const chosen = describeOperationChoices(description, projection);
   const positionals = [
     ...(description.sessionTarget === undefined
       ? []
@@ -420,26 +422,32 @@ export const registerContractCommand = <
       for (const { key, selectorOption } of description.parameters)
         if (selectorOption !== undefined) {
           values[key] = args?.[key];
-          values[selectorOption.valueKey] = options[selectorOption.key];
+          for (const option of [selectorOption, selectorOption.alternative])
+            if (option !== undefined)
+              values[option.valueKey] = options[option.key];
         }
+      const selected =
+        projection.operationBy === undefined
+          ? description
+          : (chosen.get(values[projection.operationBy.option]) ?? description);
       return withCommandCancellation((signal) =>
         logCliCommand(logger, description.command, async () => {
-          const admitted = description.admit(values);
+          const admitted = selected.admit(values);
           if (!admitted.ok) return projectAnalysisError(admitted.error);
-          const opening = admitOpening(description, values);
+          const opening = admitOpening(selected, values);
           if (!opening.ok) return projectAnalysisError(opening.error);
           return run(admitted.value.input as z.input<Contract["inputSchema"]>, {
             signal,
-            operation: contract.name,
-            callerInputs: description.callerInputs(values),
+            operation: selected.contract.name,
+            callerInputs: selected.callerInputs(values),
             sessionTarget:
               description.sessionTarget === undefined
                 ? undefined
                 : (values[description.sessionTarget.key] as string),
             opening: opening.value,
-            inputBinding: description.inputBinding,
+            inputBinding: selected.inputBinding,
             delivery: admitted.value.delivery,
-            cliOptions: description.cliOptionValues(
+            cliOptions: selected.cliOptionValues(
               values,
             ) as CliOptionValues<CliOptions>,
           });
