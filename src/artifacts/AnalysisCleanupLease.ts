@@ -1,5 +1,6 @@
 import type {
   AnalysisError,
+  AnalysisCleanupReleaseClaim,
   AnalysisCleanupResourceOwner,
 } from "../domain/analysisErrorBase.js";
 
@@ -92,8 +93,11 @@ export class AnalysisCleanupLease {
   }
 }
 
-/** Conjunctive cleanup binding for an error covering multiple exact owners. */
-export class AnalysisCleanupLeaseGroup {
+/**
+ * Conjunctive cleanup binding for an error covering multiple exact owners.
+ * The error reads `cleanupReleased` when asked; release is never pushed to it.
+ */
+export class AnalysisCleanupLeaseGroup implements AnalysisCleanupReleaseClaim {
   readonly #error: WeakRef<AnalysisError>;
   readonly #pending: Set<AnalysisCleanupLease>;
 
@@ -105,6 +109,7 @@ export class AnalysisCleanupLeaseGroup {
     this.#error = new WeakRef(error);
     this.#pending = new Set(owners);
     if (this.#pending.size === 0) return;
+    error.bindCleanupReleaseClaim(this);
     if (options.preserveResourceAttribution === true)
       error.bindCleanupCompletionOwner(this);
     else error.bindCleanupResourceOwner(this);
@@ -128,9 +133,12 @@ export class AnalysisCleanupLeaseGroup {
     return this.#error.deref() !== undefined;
   }
 
+  /** Every owner in the set confirmed release. */
+  get cleanupReleased(): boolean {
+    return this.#pending.size === 0;
+  }
+
   ownerReleased(owner: AnalysisCleanupLease): void {
-    if (!this.#pending.delete(owner) || this.#pending.size > 0) return;
-    this.#error.deref()?.resolveCleanup();
-    this.#pending.clear();
+    this.#pending.delete(owner);
   }
 }
