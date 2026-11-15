@@ -38,6 +38,10 @@ it.each([
   ["a method that is not a token", 'fetch(url, { method: "G ET" })'],
   ["an empty method", 'fetch(url, { method: "" })'],
   ["the CONNECT method", 'fetch(url, { method: "CONNECT" })'],
+  [
+    "the CONNECT method without a prototype",
+    'fetch(url, { __proto__: null, method: "CONNECT" })',
+  ],
   ["a lowercase TRACE method", 'fetch(url, { method: "trace" })'],
   ["a mixed-case TRACK method", 'fetch(url, { method: "Track" })'],
   [
@@ -74,6 +78,16 @@ it.each([
 });
 
 it.each([
+  [
+    "a method removed while the Request dictionary is read",
+    'fetch(url, { get cache() { delete this.method; return "default"; }, method: "CONNECT" })',
+    "fetch",
+  ],
+  [
+    "a method removed by an inherited Request dictionary getter",
+    'fetch(url, { __proto__: { get cache() { delete this.method; return "default"; } }, method: "CONNECT" })',
+    "fetch",
+  ],
   ["a plain fetch", 'fetch("https://api.example.test/x")', "fetch"],
   ["an extension method", 'fetch(url, { method: "M-SEARCH" })', "fetch"],
   ["a lowercase PATCH method", 'fetch(url, { method: "patch" })', "fetch"],

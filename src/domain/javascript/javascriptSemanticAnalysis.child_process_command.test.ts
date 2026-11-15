@@ -115,6 +115,21 @@ it.each([
 });
 
 it.each([
+  [
+    "a detached flag changed by an option getter",
+    'spawn("node", [], { get a() { this.detached = true; return 0; }, detached: 1 })',
+    "spawn",
+  ],
+  [
+    "stdio changed by an option getter",
+    'spawn("node", [], { get a() { this.stdio = "ignore"; return 0; }, stdio: "ipc" })',
+    "spawn",
+  ],
+  [
+    "cwd changed by an option getter",
+    'spawn("node", [], { get a() { this.cwd = "/"; return 0; }, cwd: 5 })',
+    "spawn",
+  ],
   ["a zero timeout", 'spawn("node", [], { timeout: 0 })', "spawn"],
   [
     "a large integer timeout",

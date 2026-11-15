@@ -1,8 +1,10 @@
 import * as t from "@babel/types";
 
 import {
+  isObjectPrototypeSetter,
+  primitiveOwnKeys,
   readExactJavaScriptLiteral,
-  staticObjectProperty,
+  staticObjectPropertyReader,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 
@@ -108,7 +110,20 @@ const fetchRefused = (node: t.Node): boolean => {
   if (init === undefined || t.isSpreadElement(init)) return false;
   const options = unwrapJavaScriptExpression(init).node;
   if (!t.isObjectExpression(options)) return false;
-  const methodMember = staticObjectProperty(options, "method");
+  // WebIDL reads the dictionary's getters before constructing the Request;
+  // those bodies may replace or delete the later method, body or headers.
+  if (
+    options.properties.some(
+      (property) =>
+        (t.isObjectMethod(property) && property.kind !== "method") ||
+        (t.isObjectProperty(property) &&
+          isObjectPrototypeSetter(property) &&
+          primitiveOwnKeys(property.value) === null),
+    )
+  )
+    return false;
+  const readOption = staticObjectPropertyReader(options);
+  const methodMember = readOption("method");
   const method =
     methodMember.status === "explicit"
       ? literalString(methodMember.value)
@@ -119,7 +134,7 @@ const fetchRefused = (node: t.Node): boolean => {
     if (!TOKEN.test(method)) return true;
     const upper = method.toUpperCase();
     if (FORBIDDEN_METHODS.has(upper)) return true;
-    const body = staticObjectProperty(options, "body");
+    const body = readOption("body");
     if (
       (upper === "GET" || upper === "HEAD") &&
       body.status === "explicit" &&
@@ -127,7 +142,7 @@ const fetchRefused = (node: t.Node): boolean => {
     )
       return true;
   }
-  const headers = staticObjectProperty(options, "headers");
+  const headers = readOption("headers");
   if (headers.status !== "explicit") return false;
   const record = unwrapJavaScriptExpression(headers.value).node;
   if (!t.isObjectExpression(record)) return false;
