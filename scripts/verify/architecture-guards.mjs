@@ -79,17 +79,16 @@ check(
 
 check("NUL-joined list key (use compositeKey)", files, /\.join\(["']\\0["']\)/);
 
-// Pushed effect invalidation (docs/adr/javascript/pushed-effect-invalidation.md),
-// slice 1: an intrinsic global read asks one owner whether global code or a
-// sloppy direct eval may have changed it, instead of combining effect checks.
+// Pushed effect invalidation (docs/adr/javascript/pushed-effect-invalidation.md).
+// Opaque-effect checks are private to javascriptSemanticOpaqueEffects.ts, so the
+// compiler keeps readers on its questions. A method read on an intrinsic
+// instance asks one owner, which checks the method, the instance's prototype
+// link and the intrinsic prototypes.
 check(
-  "reader-side global-code or introduced-name check (use isIntrinsicGlobalReference or opaqueCodeMayChangeGlobalRead)",
+  "reader-side prototype-link member check (use isIntrinsicInstanceMethodCall)",
   files,
-  /\bsemanticOpaque(?:Global|Name)MayHaveChanged\b/u,
-  [
-    "src/domain/javascript/javascriptSemanticOpaqueEffects.ts",
-    "src/domain/javascript/javascriptSemanticGlobalReference.ts",
-  ],
+  /referenceMayHaveChangedAt\([^;]*\["__proto__"\]/u,
+  ["src/domain/javascript/javascriptSemanticIntrinsicInstances.ts"],
 );
 
 check(
