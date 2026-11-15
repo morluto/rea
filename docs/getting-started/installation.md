@@ -724,6 +724,7 @@ hosted connector; see [its configuration](client-configuration.md#other-client-s
 | Zed                       | `zed`                   |
 | Amp                       | `amp`                   |
 | MCPorter                  | `mcporter`              |
+| fx                        | `fx`                    |
 
 `droid`, `dsh`, `kimi`, `qoder`, `trae`, `workbuddy`, and `zcode` require
 `rea-agents@6.5.0` or later. The 6.4.0 registry check above does not cover them.
@@ -741,7 +742,7 @@ not see those registrations. Current releases inspect, refresh and remove them
 like any other setup client. `mcporter` also requires a release after 6.9.0;
 setup never selects it from detection, because MCPorter already imports the
 registrations setup writes for other clients. Select it with
-`--client mcporter`.
+`--client mcporter`. `fx` also requires a release after 6.9.0.
 
 See [client configuration and troubleshooting](client-configuration.md) for
 configuration paths, profiles, trust policies, and schema-limit workarounds.
@@ -1304,8 +1305,8 @@ status while retaining successful client outcomes and recovery paths.
 
 User-level registration for a client that `rea setup` also supports uses that
 client's setup definition, so the same native read rules apply, and doctor,
-update and uninstall inspect, refresh and remove what it wrote. Goose, Junie,
-fx and Kilo Code are registered only by `rea mcp add` until their
+update and uninstall inspect, refresh and remove what it wrote. Goose, Junie
+and Kilo Code are registered only by `rea mcp add` until their
 native layers and path overrides are modeled; doctor, update and uninstall do
 not yet see those registrations. Gemini CLI
 registration fails without writing when Gemini's system, defaults or trusted

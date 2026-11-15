@@ -59,6 +59,11 @@ export interface SetupClient {
    * detects it, and doctor reports it only when its file holds a `rea` row.
    */
   readonly registrationApplicability?: true;
+  /**
+   * The configuration is a private profile: folder 0700, file 0600. `home` is
+   * the caller's home folder, which that folder mode must never reach.
+   */
+  readonly privateProfile?: { readonly home: string };
   /** MSIX package storage that decides which configuration the client reads. */
   readonly msixPackage?: MsixPackageView;
   /** A running client can rewrite its configuration from memory. */
@@ -84,6 +89,7 @@ export interface SetupClient {
     | "dsh"
     | "zed"
     | "amp"
+    | "fx"
     | "unsupported";
 }
 
@@ -149,6 +155,7 @@ interface ClientDefinitionBase {
   readonly discoveryPaths?: (context: ClientPathContext) => readonly string[];
   readonly sharedRegistration?: true;
   readonly registrationApplicability?: true;
+  readonly privateProfile?: true;
   readonly format: NonNullable<SetupClient["format"]>;
   readonly quitBeforeSetup?: boolean;
   readonly zcodeFallbackPath?: (context: ClientPathContext) => string;
@@ -806,6 +813,50 @@ const ampLocation = ({
 };
 
 /**
+ * fx's profile folder (`useFxHome`): a non-empty `FX_HOME` must be absolute
+ * and name neither the root nor the home folder, ignoring trailing slashes;
+ * otherwise `~/.fx`. fx refuses an invalid value, so REA does too.
+ */
+const fxLocation = ({
+  home,
+  platform,
+  env,
+}: ClientPathContext): Result<ClientLocation, ClientPathFailure> => {
+  const value = env.FX_HOME;
+  const pathApi = platform === "win32" ? win32 : posix;
+  if (!value) {
+    const directory = join(home, ".fx");
+    return ok({
+      configPath: join(directory, "mcp.json"),
+      markerPath: directory,
+    });
+  }
+  const trimmed = value.replace(/\/+$/u, "");
+  // fx opens FX_HOME as written, so `.` and `..` resolve through links on the
+  // filesystem. Refusing them keeps REA's file and its root/home check on the
+  // folder fx opens, so the private profile mode can never land on home.
+  const dotSegment = trimmed
+    .split(/[\\/]/u)
+    .some((segment) => segment === "." || segment === "..");
+  if (
+    !pathApi.isAbsolute(value) ||
+    trimmed.length === 0 ||
+    dotSegment ||
+    pathApi.parse(trimmed).root === trimmed ||
+    trimmed === home.replace(/[\\/]+$/u, "")
+  )
+    return err({
+      path: value,
+      message:
+        "FX_HOME must be an absolute path without . or .. segments, other than the root and home folders. Repair FX_HOME before configuring fx; no settings were written.",
+    });
+  return ok({
+    configPath: pathApi.join(trimmed, "mcp.json"),
+    markerPath: trimmed,
+  });
+};
+
+/**
  * FreeBuff's own profile directory (its `state.json` root, fixed under
  * `.config` on every platform). The shared `~/.agents` folder is not
  * FreeBuff-specific: REA's own skill installs create it, so it cannot
@@ -1456,6 +1507,28 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     format: "json",
   }),
   defineClient({
+    name: "fx",
+    mcpAdd: {},
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url", "args"],
+      stdio: [
+        { kind: "optional-enum", field: "type", values: ["local", "stdio"] },
+        {
+          kind: "all",
+          conditions: [
+            { kind: "missing", field: "type" },
+            { kind: "present", field: "url" },
+          ],
+        },
+      ],
+    },
+    displayName: "fx",
+    location: fxLocation,
+    privateProfile: true,
+    format: "fx",
+  }),
+  defineClient({
     name: "grok_bot",
     registrationConnection: {
       kind: "unavailable",
@@ -1626,6 +1699,9 @@ export const supportedClients = (
         ...(definition.discoveryPaths === undefined
           ? {}
           : { discoveryPaths: definition.discoveryPaths(context) }),
+        ...(definition.privateProfile === true
+          ? { privateProfile: { home } }
+          : {}),
         ...(definition.registrationApplicability === true
           ? { registrationApplicability: true }
           : {}),

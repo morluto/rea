@@ -27,6 +27,11 @@ import {
 import { dshDocument, DshCordisDocument } from "./DshCordisPatch.js";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
+import {
+  PRIVATE_PROFILE_MODES,
+  privateProfileModesCurrent,
+  securePrivateDirectory,
+} from "./ClientPrivateProfile.js";
 import { RegularFileChangedError } from "../filesystem/RegularFile.js";
 import { withClientConfigurationTransaction } from "./ClientConfigurationTransaction.js";
 import { isClientConfigurationCleanupFailure } from "./ClientConfigurationCleanup.js";
@@ -239,7 +244,11 @@ const configureClientDocument = async (
     files.value,
     resolveProviderRequestBudget,
   );
-  if (registrationCurrent(parsed, desired)) return { status: "unchanged" };
+  if (
+    registrationCurrent(parsed, desired) &&
+    (await privateProfileCurrent(client, original))
+  )
+    return { status: "unchanged" };
   return persistClientConfiguration({
     client,
     transactionPath,
@@ -373,12 +382,30 @@ const persistClientConfiguration = async ({
   }
   let publication: ClientConfigurationPublication;
   try {
-    await mkdir(dirname(client.configPath), { recursive: true });
+    await mkdir(dirname(client.configPath), {
+      recursive: true,
+      ...(client.privateProfile !== undefined
+        ? { mode: PRIVATE_PROFILE_MODES.directory }
+        : {}),
+    });
+    if (client.privateProfile !== undefined && process.platform !== "win32")
+      await securePrivateDirectory(
+        dirname(transactionPath),
+        client.privateProfile.home,
+        () => {},
+        undefined,
+      );
     publication = await ClientConfigurationPublication.write(
       transactionPath,
       serialized.value,
       original,
-      { requestedPath: client.configPath, state: snapshot?.state },
+      {
+        requestedPath: client.configPath,
+        state: snapshot?.state,
+        ...(client.privateProfile !== undefined
+          ? { requiredMode: PRIVATE_PROFILE_MODES.file }
+          : {}),
+      },
     );
   } catch (cause: unknown) {
     if (isClientConfigurationCleanupFailure(cause)) throw cause;
@@ -646,7 +673,10 @@ const inspectClientDocument = async (
     }
     if (policy.value !== undefined)
       return { status: "invalid", remediation: policy.value };
-    if (registrationCurrent(parsed, desired))
+    if (
+      registrationCurrent(parsed, desired) &&
+      (await privateProfileCurrent(client, original))
+    )
       return { status: "already_current" };
     const fallback = await readZcodeFallbackServers(client, parsed);
     if (!fallback.ok) {
@@ -884,6 +914,15 @@ const registrationCurrent = (
   ) &&
   !Object.hasOwn(parsed.legacyServers, PRODUCT_IDENTITY.mcpServerKey) &&
   !clientServerListedDisabled(parsed, PRODUCT_IDENTITY.mcpServerKey);
+
+/** A private profile with the wrong modes needs publication even when its row is current. */
+const privateProfileCurrent = async (
+  client: SetupClient,
+  original: string | undefined,
+): Promise<boolean> =>
+  client.privateProfile === undefined ||
+  (original !== undefined &&
+    (await privateProfileModesCurrent(client.configPath)));
 
 const clientConfigurationDesired = async (
   client: SetupClient,
