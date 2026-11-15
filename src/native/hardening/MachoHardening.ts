@@ -296,7 +296,7 @@ const readSliceImage = async (
       rows,
     };
   } catch (cause) {
-    if (cause instanceof BinaryFormatFailure && cause.kind === "malformed") {
+    if (cause instanceof BinaryFormatFailure && cause.kind !== "unsupported") {
       if (ref.thin) throw cause;
       return failedImage(ref, "malformed", cause.message, header);
     }

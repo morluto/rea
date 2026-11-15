@@ -81,11 +81,17 @@ const truncatedDescription = (text: string): string => {
 const mergeAllOf = (schema: Schema): Schema => {
   if (!Array.isArray(schema.allOf)) return schema;
   const { allOf, ...merged } = schema;
+  const tails = new Map<string, Schema>();
+  for (const key of TUPLE_TAIL_KEYS)
+    if (isTupleTail(merged, key)) tails.set(key, merged);
   for (const member of allOf) {
     if (!isRecord(member)) continue;
-    for (const [key, value] of Object.entries(mergeAllOf(member))) {
-      if (!Object.hasOwn(merged, key)) merged[key] = value;
-      else if (key === "required" && isStringList(merged.required)) {
+    const flattened = mergeAllOf(member);
+    for (const [key, value] of Object.entries(flattened)) {
+      if (!Object.hasOwn(merged, key)) {
+        merged[key] = value;
+        if (isTupleTail(flattened, key)) tails.set(key, flattened);
+      } else if (key === "required" && isStringList(merged.required)) {
         if (isStringList(value))
           merged.required = [...new Set([...merged.required, ...value])];
       }
@@ -95,8 +101,31 @@ const mergeAllOf = (schema: Schema): Schema => {
   // object. Hoisting its closure beside another member's properties can
   // reject names accepted by the original conjunction.
   delete merged.additionalProperties;
+  // A tuple tail applies past its own object's positions. Beside a different
+  // number of positions it would constrain elements the original did not.
+  for (const [key, owner] of tails)
+    if (tuplePositions(owner)?.length !== tuplePositions(merged)?.length)
+      delete merged[key];
   return merged;
 };
+
+/** Keywords that constrain only the elements past a tuple's positions. */
+const TUPLE_TAIL_KEYS = ["items", "additionalItems"] as const;
+
+/** Positional element schemas (2020-12 `prefixItems` or draft-07 `items`). */
+const tuplePositions = (schema: Schema): readonly unknown[] | undefined =>
+  Array.isArray(schema.prefixItems)
+    ? schema.prefixItems
+    : Array.isArray(schema.items)
+      ? schema.items
+      : undefined;
+
+/** Whether `key` constrains only the elements past `schema`'s positions. */
+const isTupleTail = (schema: Schema, key: string): boolean =>
+  (key === "additionalItems" && Array.isArray(schema.items)) ||
+  (key === "items" &&
+    Array.isArray(schema.prefixItems) &&
+    !Array.isArray(schema.items));
 
 const branchType = (branch: unknown): string | undefined =>
   isRecord(branch) && typeof branch.type === "string" ? branch.type : undefined;

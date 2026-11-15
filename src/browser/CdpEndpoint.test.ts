@@ -7,6 +7,7 @@ import { WEB_RUNTIME_LIMITS } from "../domain/webRuntime.js";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { fakeCdpSend } from "../../tests/fixtures/fakeCdpSend.js";
 import type { CdpConnection } from "./CdpConnection.js";
 import {
   discoverCdpEndpoint,
@@ -328,7 +329,7 @@ it("names the HTTP discovery document budget when that response deadline expires
 const socketDiscoveryConnection = (
   targetReply: unknown,
 ): Pick<CdpConnection, "send"> => ({
-  async send(method: string): Promise<unknown> {
+  send: fakeCdpSend((method) => {
     if (method === "Browser.getVersion")
       return {
         protocolVersion: "1.3",
@@ -339,7 +340,7 @@ const socketDiscoveryConnection = (
       };
     if (method === "Target.getTargets") return targetReply;
     throw new Error(method);
-  },
+  }),
 });
 
 it.each([
@@ -392,7 +393,7 @@ it("preserves an independent typed cancellation when the discovery deadline also
 it("preserves browser-socket sibling identities and reports malformed optional metadata", async () => {
   const discovery = await discoverCdpBrowserSocket(
     {
-      send: async (method) =>
+      send: fakeCdpSend((method) =>
         method === "Browser.getVersion"
           ? {
               protocolVersion: "1.3",
@@ -425,6 +426,7 @@ it("preserves browser-socket sibling identities and reports malformed optional m
                 },
               ],
             },
+      ),
     },
     "ws://127.0.0.1:9222/devtools/browser/fixture",
     "list_browser_targets",

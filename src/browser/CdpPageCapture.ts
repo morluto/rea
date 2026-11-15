@@ -21,8 +21,9 @@ import {
   captureResources,
   type CapturedResource,
   type DomCapture,
-  mainFrameUrl,
 } from "./CdpCaptureDocuments.js";
+import { observedFrameUrl } from "./protocol/CdpFrameTree.js";
+import { CdpMalformedReply } from "./protocol/CdpCommands.js";
 import { capturedSvgNodeKind } from "./CdpCaptureDomNamespaces.js";
 import {
   allowedSanitizedUrl,
@@ -146,7 +147,7 @@ const captureAuthorizedPage = async (
   state: CaptureState,
 ): Promise<CapturedPage> => {
   const { context, allowedOrigins, limitations } = state;
-  const { connection, sessionId, input, signal } = context;
+  const { input } = context;
   await authorizeObservationWindow(state);
   await captureJsonResponseBodies(state);
   const frameResult = await authorizedMainFrame({
@@ -156,7 +157,7 @@ const captureAuthorizedPage = async (
     allowedOrigins,
     operation: context.operation,
   });
-  const attachedUrl = mainFrameUrl(frameResult) ?? "";
+  const attachedUrl = observedFrameUrl(frameResult.root.url) ?? "";
   const frameCapture = captureFrames(
     frameResult,
     allowedOrigins,
@@ -168,11 +169,7 @@ const captureAuthorizedPage = async (
   if (captureFrame === undefined)
     throw new BrowserObservationError("inspect_web_page", "protocol_error");
   state.events.beginFinalCapture(captureFrame.frame_id);
-  const resourceCapture = captureResources(
-    await connection.send("Page.getResourceTree", {}, sessionId, signal),
-    allowedOrigins,
-    state.events.completeness,
-  );
+  const resourceCapture = await capturePageResources(state);
   const resources = stableWebResources(
     resourceCapture.items.map(publicResource),
   );
@@ -210,7 +207,7 @@ const captureAuthorizedPage = async (
     allowedOrigins,
     operation: context.operation,
   });
-  const completedUrl = mainFrameUrl(completedFrameResult) ?? "";
+  const completedUrl = observedFrameUrl(completedFrameResult.root.url) ?? "";
   assertObservedCaptureValid(state);
   if (completedUrl !== attachedUrl)
     throw new BrowserObservationError("inspect_web_page", "target_changed");
@@ -233,6 +230,28 @@ const captureAuthorizedPage = async (
     }),
     sourceMapRequests: scripts.sourceMapRequests,
   };
+};
+
+/** A malformed resource tree omits only the resource inventory, never empties it. */
+const capturePageResources = async (
+  state: CaptureState,
+): Promise<ReturnType<typeof captureResources>> => {
+  const { connection, sessionId, signal } = state.context;
+  try {
+    return captureResources(
+      await connection.send("Page.getResourceTree", {}, sessionId, signal),
+      state.allowedOrigins,
+      state.events.completeness,
+    );
+  } catch (cause: unknown) {
+    if (!(cause instanceof CdpMalformedReply)) throw cause;
+    state.events.completeness.exclude(
+      "resources",
+      "invalid_protocol_value",
+      null,
+    );
+    return { items: [] };
+  }
 };
 
 const captureJsonResponseBodies = async (

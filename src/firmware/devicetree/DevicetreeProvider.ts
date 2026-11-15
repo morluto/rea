@@ -1,3 +1,4 @@
+import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
 import {
   projectOwnedArtifactIdentityFailure,
   projectSelectedArtifactFileFailure,
@@ -18,18 +19,13 @@ import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js"
 import type { DevicetreePort } from "../../application/binaryDiagnostics/DevicetreePort.js";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
-import {
-  AnalysisInputError,
-  AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import {
   MAX_DEVICETREE_FILE_BYTES,
   type InspectDevicetreeInput,
 } from "../../domain/firmware/devicetree.js";
 import { err, ok } from "../../domain/result.js";
 import { DEVICETREE_PROVIDER } from "../../domain/investigationProviders.js";
-import { BinaryFormatFailure } from "../../native/metadata/BinaryContainer.js";
 import { DevicetreeLimitFailure, parseDevicetree } from "./DevicetreeParser.js";
 
 const OPERATION = "inspect_devicetree";
@@ -97,21 +93,8 @@ const devicetreeFailurePrimary = (
       },
       { cause, retryable: false, remediationAction: cause.message },
     );
-  if (cause instanceof BinaryFormatFailure)
-    return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(
-          OPERATION,
-          input.path,
-          cause.message,
-          { cause },
-        )
-      : new AnalysisInputError(OPERATION, { cause }, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: cause.message,
-          },
-        ]);
+  const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
+  if (formatFailure !== undefined) return formatFailure;
   const identityFailure = projectOwnedArtifactIdentityFailure(
     facts,
     OPERATION,

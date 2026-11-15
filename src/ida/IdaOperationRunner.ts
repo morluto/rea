@@ -19,8 +19,8 @@ import {
 } from "../process/RegexMatcher.js";
 import {
   AnalysisInputError,
-  AnalysisCancelledError,
   AnalysisProtocolError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import {
   functionDossierSchema,
@@ -131,9 +131,7 @@ export class IdaOperationRunner {
     args: Readonly<Record<string, JsonValue>>,
   ): Promise<JsonValue> {
     if (this.options.signal?.aborted)
-      throw new AnalysisCancelledError(tool, {
-        cause: this.options.signal.reason,
-      });
+      throw cancelledBy(tool, this.options.signal);
     const scoped =
       this.database === undefined ? args : { ...args, database: this.database };
     const result = await this.connection.call(tool, scoped, {
@@ -141,9 +139,7 @@ export class IdaOperationRunner {
     });
     this.raw.push({ tool, arguments: scoped, result });
     if (this.options.signal?.aborted)
-      throw new AnalysisCancelledError(tool, {
-        cause: this.options.signal.reason,
-      });
+      throw cancelledBy(tool, this.options.signal);
     return result;
   }
 
