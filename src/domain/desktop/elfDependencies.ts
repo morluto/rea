@@ -17,7 +17,7 @@ import {
   elfStringTableText,
   observeElfStringTableEntry,
 } from "../elfStringTable.js";
-import { keyedBy, uniqueKeyed } from "../keyedCollection.js";
+import { allKeyed, keyedBy, uniqueKeyed } from "../keyedCollection.js";
 import { err, ok, type Result } from "../result.js";
 import { resolveMappedFileOffset } from "../virtualFileMapping.js";
 
@@ -306,10 +306,8 @@ const readDependencyTables = async (
   if (!headers.ok) return headers;
   const none = { needed: [], runpath: undefined, rpath: [] };
   // The ELF gABI allows one PT_DYNAMIC; a repeat leaves the table ambiguous.
-  const dynamicProgram = uniqueKeyed(
-    keyedBy(headers.value, ({ type }) => type),
-    PT_DYNAMIC,
-  );
+  const programs = keyedBy(headers.value, ({ type }) => type);
+  const dynamicProgram = uniqueKeyed(programs, PT_DYNAMIC);
   if (!dynamicProgram.ok)
     return err(
       `ELF image declares ${String(dynamicProgram.error.ordinals.length)} PT_DYNAMIC program headers`,
@@ -328,7 +326,8 @@ const readDependencyTables = async (
     return err("ELF dynamic string table is not mapped from the file");
   if (strsz > BigInt(size))
     return err("ELF dynamic string table is not mapped from the file");
-  const loads = headers.value.filter((program) => program.type === PT_LOAD);
+  // PT_LOAD repeats by design; every segment maps file bytes.
+  const loads = allKeyed(programs, PT_LOAD);
   const stringsAt = resolveMappedFileOffset(
     loads
       .filter((segment) => segment.fileSize > 0n)

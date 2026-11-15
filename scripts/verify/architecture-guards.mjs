@@ -351,6 +351,19 @@ checkCounted(
   ["src/application/GuidanceAccess.ts"],
 );
 
+// The same first-match choice, recognized by its shape rather than the
+// table's variable name: a parser that picks the first member whose key
+// field (name, type, cmd, command or tag) equals a value, through `find`,
+// `findLast`, or `filter(...)` then `[0]`, inherits a precedence among
+// repeated declarations. Select through src/domain/keyedCollection instead.
+checkCounted(
+  "first-match lookup by key field in a parser (select through src/domain/keyedCollection)",
+  "keyed-first-match",
+  parserFiles,
+  /\.find(?:Last)?\(\s*(?:\(\s*(\w+)\s*(?::[^)]*)?\)|(\w+))\s*=>\s*(?:\1|\2)\.(?:name|type|cmd|command|tag)\s*===|\.find(?:Last)?\(\s*\(\s*\{\s*(name|type|cmd|command|tag)\b[^}]*\}\s*\)\s*=>\s*\3\s*===|\.filter\(\s*(?:\(\s*(\w+)\s*\)|(\w+))\s*=>\s*(?:\4|\5)\.(?:name|type|cmd|command|tag)\s*===[^;]*?\)\s*(?:\.map\([^;]*?\)\s*)?\[0\]/gu,
+  [],
+);
+
 if (baselinesShrunk) {
   const sorted = Object.fromEntries(
     Object.entries(baselines).map(([key, counts]) => [

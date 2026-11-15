@@ -775,7 +775,7 @@ export const parseElfUnwindRanges = (
   }
 
   // DW_EH_PE_datarel in .eh_frame is GOT-relative (LSB; i386/x86-64 psABI).
-  const gotBase = resolveGotBase(bytes, directory, named);
+  const gotBase = resolveGotBase(bytes, directory);
   datarelMissing = false;
   datarelUsed = false;
 
@@ -1114,37 +1114,39 @@ const fileRange = (section: NativeSection): FileRange | null => {
 /**
  * GOT base for `.eh_frame` DW_EH_PE_datarel values: DT_PLTGOT, then the
  * `.got.plt` address, then the `.got` address. Null when none is declared,
- * or when repeated PT_DYNAMIC headers leave the dynamic table ambiguous.
+ * or when a repeated PT_DYNAMIC header, SHT_DYNAMIC section or allocated GOT
+ * section leaves the source ambiguous.
  */
 const resolveGotBase = (
   bytes: Buffer,
   directory: ReturnType<typeof readElfDirectoryFromBuffer>,
-  named: (name: string) => readonly NativeSection[],
 ): { readonly address: bigint; readonly source: string } | null => {
-  // The ELF gABI allows one PT_DYNAMIC; with repeats, read neither rather
-  // than choosing one by position or falling back to another source.
-  const dynamicPrograms = uniqueKeyed(
+  // The ELF gABI allows one PT_DYNAMIC and one SHT_DYNAMIC section; with
+  // repeats, read neither rather than choosing one by position or falling
+  // back to another source.
+  const dynamicProgram = uniqueKeyed(
     keyedBy(directory.programs, ({ type }) => type),
     2,
   );
-  if (!dynamicPrograms.ok) return null;
-  const dynamicProgram = dynamicPrograms.value;
-  const dynamic =
-    (dynamicProgram?.type !== 2
-      ? undefined
-      : { offset: dynamicProgram.offset, fileSize: dynamicProgram.size }) ??
-    directory.sections
-      .filter(
-        (section) =>
-          section.type === SHT_DYNAMIC &&
-          section.file_backed &&
-          !section.compressed,
-      )
-      .map((section) => ({
-        offset: section.offset,
-        fileSize: section.size,
-      }))[0];
-  if (dynamic !== undefined) {
+  if (!dynamicProgram.ok) return null;
+  let dynamic: { readonly offset: bigint; readonly fileSize: bigint } | null =
+    null;
+  if (dynamicProgram.value?.type === 2)
+    dynamic = {
+      offset: dynamicProgram.value.offset,
+      fileSize: dynamicProgram.value.size,
+    };
+  else {
+    const dynamicSection = uniqueKeyed(
+      keyedBy(directory.sections, ({ type }) => type),
+      SHT_DYNAMIC,
+    );
+    if (!dynamicSection.ok) return null;
+    const section = dynamicSection.value;
+    if (section?.file_backed === true && !section.compressed)
+      dynamic = { offset: section.offset, fileSize: section.size };
+  }
+  if (dynamic !== null) {
     const start = dynamic.offset;
     const end = dynamic.offset + dynamic.fileSize;
     if (start >= 0n && end <= BigInt(bytes.length)) {
@@ -1166,12 +1168,17 @@ const resolveGotBase = (
       }
     }
   }
+  // Only an allocated section has a load address; a repeated allocated GOT
+  // section has no single base.
+  const allocated = keyedBy(
+    directory.sections.filter(({ flags }) => (flags & SHF_ALLOC) !== 0n),
+    ({ name }) => name,
+  );
   for (const name of [".got.plt", ".got"]) {
-    const section = named(name).find(
-      (candidate) => (candidate.flags & SHF_ALLOC) !== 0n,
-    );
-    if (section !== undefined && section.address !== 0n)
-      return { address: section.address, source: `the ${name} section` };
+    const section = uniqueKeyed(allocated, name);
+    if (!section.ok) return null;
+    if (section.value !== undefined && section.value.address !== 0n)
+      return { address: section.value.address, source: `the ${name} section` };
   }
   return null;
 };
