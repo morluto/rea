@@ -221,7 +221,7 @@ export const projectWebBundleView = (
       view: selected,
       ...shared,
       summary,
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     };
     return jsonValueByteLength(
       result as unknown as JsonValue,
@@ -242,7 +242,7 @@ export const projectWebBundleView = (
       items: [],
       summary,
       byte_limited: false,
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     };
     return jsonValueByteLength(
       result as unknown as JsonValue,

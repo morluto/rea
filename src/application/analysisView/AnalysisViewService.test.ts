@@ -491,6 +491,15 @@ it("never seals a view as more certain than its parent Evidence", async () => {
         { kind: "summary" },
       ),
     ];
+    // The item view returns one selected section, not the whole collection.
+    expect(views[0]).toMatchObject({
+      ok: true,
+      value: {
+        normalized_result: {
+          coverage: { examined: 1, total: 1, exhausted: true },
+        },
+      },
+    });
     for (const view of views) {
       if (!view.ok) throw view.error;
       expect(view.value.confidence).toBe(expected);
@@ -542,6 +551,14 @@ it("resolves same-session retained JavaScript Evidence without re-running analys
   if (!item.ok) throw item.error;
   expect(item.value.normalized_result).toMatchObject({
     kind: "item",
+    // An item view returns the one selected record, like every other view kind.
+    coverage: {
+      status: "complete-within-view",
+      examined: 1,
+      total: 1,
+      next_offset: null,
+      exhausted: true,
+    },
     item: {
       path: "renderer.js",
       observations: expect.arrayContaining([
