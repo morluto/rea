@@ -1,9 +1,13 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import type {
   ClientRegistrationConnectionProfile,
   ClientRegistrationProfile,
   NativeStdioIncompatibility,
 } from "./ClientRegistrationProfile.js";
-import type { ClientConfigurationFormat } from "./ClientConfigurationDocument.js";
+import type {
+  ClientConfigurationFormat,
+  ClientInlineConfiguration,
+} from "./ClientConfigurationDocument.js";
 import { dirname, isAbsolute, join, posix, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync, lstatSync, readFileSync, statSync } from "node:fs";
@@ -13,18 +17,36 @@ import {
   resolveHermesClientHome,
 } from "./HermesClientHome.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
-import { appendCallerPath } from "../filesystem/callerPath.js";
 import {
+  absoluteCallerPath,
+  appendCallerPath,
+} from "../filesystem/callerPath.js";
+import {
+  absoluteClientRoot,
+  clientPathDependence,
   absoluteXdgConfigHome,
+  type ClientRootFailure,
   vscodeUserDirectory,
   xdgConfigHomeOrDefault,
 } from "./ClientConfigRoots.js";
 import { resolveWindowsClaudeDesktopLocation } from "./ClaudeDesktopConfigLocation.js";
 import { resolveClineCliSettingsPath } from "./ClineCliLocation.js";
+import type { JunieLocationSettings } from "./JunieClientSettings.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
+import {
+  kiloDefaultLocation,
+  kiloGlobalLocation,
+  type KiloLocationContext,
+} from "./KiloClientLocation.js";
 import {
   type MsixPackageView,
   windowsAppDataRoots,
 } from "./MsixPackageStorage.js";
+import { kiloProjectLocation } from "./McpRegistrationKiloLocations.js";
+import type {
+  McpRegistrationLocation,
+  McpRegistrationLocationContext,
+} from "./McpRegistrationLocations.js";
 
 /** One supported client configuration location. */
 export interface SetupClient {
@@ -34,6 +56,8 @@ export interface SetupClient {
   readonly configPath: string;
   /** User configuration files in increasing precedence, including the write target. */
   readonly configPaths?: readonly string[];
+  /** Read-only configuration the client merges over every file layer. */
+  readonly inlineConfiguration?: ClientInlineConfiguration;
   /** Read-only Gemini scopes and trust inputs; never setup write targets. */
   readonly geminiSettings?: {
     readonly systemPath: string;
@@ -43,8 +67,12 @@ export interface SetupClient {
     readonly trustOverride?: boolean;
     readonly platform: NodeJS.Platform;
   };
+  /** Inputs deciding whether Junie loads its default user MCP location. */
+  readonly junieSettings?: JunieLocationSettings;
   /** Unresolved path evidence only; consumers must not perform I/O on it. */
   readonly configPathError?: string;
+  /** The access failure behind `configPathError`, when one was observed. */
+  readonly configPathFailure?: ConfigurationError;
   /** Same-scope fallback ZCode stops loading after its first native server. */
   readonly zcodeFallbackPath?: string;
   readonly markerPath?: string;
@@ -59,6 +87,16 @@ export interface SetupClient {
    * detects it, and doctor reports it only when its file holds a `rea` row.
    */
   readonly registrationApplicability?: true;
+  /**
+   * The configuration is a private profile: folder 0700, file 0600. `home` is
+   * the caller's home folder, which that folder mode must never reach.
+   */
+  readonly privateProfile?: { readonly home: string };
+  /**
+   * Layers before `configPath` belong to the system or an administrator: REA
+   * reads them for the effective registration but changes only `configPath`.
+   */
+  readonly readOnlyLowerLayers?: true;
   /** MSIX package storage that decides which configuration the client reads. */
   readonly msixPackage?: MsixPackageView;
   /** A running client can rewrite its configuration from memory. */
@@ -84,13 +122,16 @@ export interface SetupClient {
     | "dsh"
     | "zed"
     | "amp"
+    | "fx"
+    | "goose"
+    | "kilo"
     | "unsupported";
 }
 
-interface ClientPathFailure {
-  readonly path: string;
-  readonly message: string;
+interface ClientPathFailure extends ClientRootFailure {
   readonly msixPackage?: MsixPackageView;
+  /** The access failure that left the path unresolved, with its cause. */
+  readonly failure?: ConfigurationError;
 }
 
 type ClientPathResult = Result<string, ClientPathFailure>;
@@ -102,6 +143,27 @@ interface ClientPathContext {
   readonly home: string;
   readonly platform: NodeJS.Platform;
   readonly env: Readonly<NodeJS.ProcessEnv>;
+  readonly systemPaths?: ClientSystemPaths;
+}
+
+/**
+ * Fixed system-wide files a client reads that no environment variable moves.
+ * Omitted entries use the client's native location; a caller supplies one only
+ * to isolate the host's real file.
+ */
+export interface ClientSystemPaths {
+  readonly gooseSystemConfig?: string;
+}
+
+/**
+ * A user-scope location decided by which configuration layers exist, which
+ * only an asynchronous probe can observe.
+ */
+interface ClientLayeredLocation {
+  readonly configPath: string;
+  /** Every file layer in load order, including `configPath`. */
+  readonly configPaths: readonly string[];
+  readonly inlineConfiguration?: ClientInlineConfiguration;
 }
 
 /** One resolved configuration location and its detection evidence. */
@@ -132,14 +194,25 @@ type ClientDefinitionLocation =
  * The registration itself uses this row's location, format, profile and
  * read-scope facts, so both commands share one definition.
  */
-interface McpAddExposure {
+type McpAddExposure = {
   /** add-mcp agent aliases that select this client. */
   readonly aliases?: readonly string[];
-  /** Project documents in native precedence; absent means global-only. */
-  readonly projectPaths?: readonly [string, ...string[]];
   /** Dialect of the project document when it differs from the user one. */
   readonly projectFormat?: ClientConfigurationFormat;
-}
+} & (
+  | {
+      /** Project documents in native precedence; absent means global-only. */
+      readonly projectPaths?: readonly [string, ...string[]];
+      readonly projectLocation?: undefined;
+    }
+  | {
+      /** A project location only an asynchronous probe can decide. */
+      readonly projectLocation: (
+        context: McpRegistrationLocationContext,
+      ) => Promise<McpRegistrationLocation>;
+      readonly projectPaths?: undefined;
+    }
+);
 
 interface ClientDefinitionBase {
   readonly name: string;
@@ -149,6 +222,8 @@ interface ClientDefinitionBase {
   readonly discoveryPaths?: (context: ClientPathContext) => readonly string[];
   readonly sharedRegistration?: true;
   readonly registrationApplicability?: true;
+  readonly privateProfile?: true;
+  readonly readOnlyLowerLayers?: true;
   readonly format: NonNullable<SetupClient["format"]>;
   readonly quitBeforeSetup?: boolean;
   readonly zcodeFallbackPath?: (context: ClientPathContext) => string;
@@ -157,6 +232,19 @@ interface ClientDefinitionBase {
   readonly geminiSettings?: (
     context: ClientPathContext,
   ) => NonNullable<SetupClient["geminiSettings"]>;
+  /** Junie's location inputs, from the context and its resolved home. */
+  readonly junieSettings?: (
+    context: ClientPathContext,
+    location: ClientLocation,
+  ) => JunieLocationSettings;
+  /**
+   * The write target and layers once present layers are observed.
+   * `resolveSupportedClients` applies it; the synchronous row keeps the
+   * default target and every candidate layer.
+   */
+  readonly layeredLocation?: (
+    context: ClientPathContext,
+  ) => Promise<Result<ClientLayeredLocation, ClientPathFailure>>;
 }
 
 const traeUserDirectory = ({
@@ -629,14 +717,15 @@ const zedLocation = ({
   if (platform === "win32")
     return ok(at(join(windowsAppDataRoots(home, env).roaming, "Zed")));
   const flatpakOverride = env.FLATPAK_XDG_CONFIG_HOME;
-  if (flatpakOverride)
-    return posix.isAbsolute(flatpakOverride)
-      ? ok(at(join(flatpakOverride, "zed")))
-      : err({
-          path: flatpakOverride,
-          message:
-            "FLATPAK_XDG_CONFIG_HOME is relative, so Zed's configuration folder depends on its working directory. Set an absolute path before configuring Zed.",
-        });
+  if (flatpakOverride) {
+    const selected = absoluteClientRoot(
+      flatpakOverride,
+      "FLATPAK_XDG_CONFIG_HOME",
+      "Zed",
+      platform,
+    );
+    return selected.ok ? ok(at(join(selected.value, "zed"))) : selected;
+  }
   const native = join(absoluteXdgConfigHome({ home, env }), "zed");
   const sandboxed = join(home, ...ZED_FLATPAK_CONFIG, "zed");
   const flatpak = directoryPresent(sandboxed);
@@ -700,16 +789,18 @@ const mcporterLocation = ({
     const path = mcporterExpandHome(selected, home);
     // MCPorter applies path.resolve: `..` collapses lexically, not through
     // links. The selected file is also the evidence that MCPorter is in use.
-    return pathApi.isAbsolute(path)
+    const absolute = absoluteClientRoot(
+      path,
+      "MCPORTER_CONFIG",
+      "MCPorter",
+      platform,
+    );
+    return absolute.ok
       ? ok({
-          configPath: pathApi.resolve(path),
-          markerPath: pathApi.resolve(path),
+          configPath: pathApi.resolve(absolute.value),
+          markerPath: pathApi.resolve(absolute.value),
         })
-      : err({
-          path,
-          message:
-            "MCPORTER_CONFIG is relative, so the file MCPorter loads depends on the directory each command runs from. Set an absolute MCPORTER_CONFIG before configuring MCPorter.",
-        });
+      : absolute;
   }
   const configHome = mcporterExpandHome(
     env.XDG_CONFIG_HOME?.trim() ?? "",
@@ -806,6 +897,161 @@ const ampLocation = ({
 };
 
 /**
+ * fx's profile folder (`useFxHome`): a non-empty `FX_HOME` must be absolute
+ * and name neither the root nor the home folder, ignoring trailing slashes;
+ * otherwise `~/.fx`. fx refuses an invalid value, so REA does too.
+ */
+const fxLocation = ({
+  home,
+  platform,
+  env,
+}: ClientPathContext): Result<ClientLocation, ClientPathFailure> => {
+  const value = env.FX_HOME;
+  const pathApi = platform === "win32" ? win32 : posix;
+  if (!value) {
+    const directory = join(home, ".fx");
+    return ok({
+      configPath: join(directory, "mcp.json"),
+      markerPath: directory,
+    });
+  }
+  const trimmed = value.replace(/\/+$/u, "");
+  // fx opens FX_HOME as written, so `.` and `..` resolve through links on the
+  // filesystem. Refusing them keeps REA's file and its root/home check on the
+  // folder fx opens, so the private profile mode can never land on home.
+  const dotSegment = trimmed
+    .split(/[\\/]/u)
+    .some((segment) => segment === "." || segment === "..");
+  if (
+    !pathApi.isAbsolute(value) ||
+    trimmed.length === 0 ||
+    dotSegment ||
+    pathApi.parse(trimmed).root === trimmed ||
+    trimmed === home.replace(/[\\/]+$/u, "")
+  )
+    return err({
+      path: value,
+      message:
+        "FX_HOME must be an absolute path without . or .. segments, other than the root and home folders. Repair FX_HOME before configuring fx; no settings were written.",
+    });
+  return ok({
+    configPath: pathApi.join(trimmed, "mcp.json"),
+    markerPath: trimmed,
+  });
+};
+
+/**
+ * Junie's home: `JUNIE_HOME` for Junie CLI, else `~/.junie`. add-mcp notes the
+ * JetBrains plugin always reads `~/.junie`. Junie resolves a relative
+ * `JUNIE_HOME` against its own working directory, so REA refuses one.
+ */
+const junieLocation = ({
+  home,
+  platform,
+  env,
+}: ClientPathContext): Result<ClientLocation, ClientPathFailure> => {
+  const selected = env.JUNIE_HOME
+    ? absoluteClientRoot(env.JUNIE_HOME, "JUNIE_HOME", "Junie", platform)
+    : ok(join(home, ".junie"));
+  return selected.ok
+    ? ok({
+        configPath: join(selected.value, "mcp", "mcp.json"),
+        markerPath: selected.value,
+      })
+    : selected;
+};
+
+/**
+ * Goose's user configuration (`Paths::config_dir`): an absolute
+ * `GOOSE_PATH_ROOT` selects `<root>/config`; otherwise etcetera's app strategy,
+ * where only an absolute `XDG_CONFIG_HOME` counts.
+ */
+const gooseUserConfigPath = ({ home, platform, env }: ClientPathContext) => {
+  const pathApi = platform === "win32" ? win32 : posix;
+  const root = env.GOOSE_PATH_ROOT;
+  if (root && pathApi.isAbsolute(root))
+    return pathApi.join(root, "config", "config.yaml");
+  return platform === "win32"
+    ? join(
+        windowsAppDataRoots(home, env).roaming,
+        "Block",
+        "goose",
+        "config",
+        "config.yaml",
+      )
+    : join(absoluteXdgConfigHome({ home, env }), "goose", "config.yaml");
+};
+
+/**
+ * `GOOSE_ADDITIONAL_CONFIG_FILES`, split as Rust's `env::split_paths`: `:` on
+ * Unix; on Windows `;` outside double quotes, which are removed.
+ */
+const gooseAdditionalConfigFiles = ({
+  platform,
+  env,
+}: Pick<ClientPathContext, "platform" | "env">): string[] => {
+  const value = env.GOOSE_ADDITIONAL_CONFIG_FILES ?? "";
+  if (platform !== "win32")
+    return value.split(":").filter((path) => path.length > 0);
+  const paths: string[] = [];
+  let current = "";
+  let quoted = false;
+  for (const character of value) {
+    if (character === '"') quoted = !quoted;
+    else if (character === ";" && !quoted) {
+      paths.push(current);
+      current = "";
+    } else current += character;
+  }
+  paths.push(current);
+  return paths.filter((path) => path.length > 0);
+};
+
+/**
+ * Goose's layers in increasing precedence (`Config::default`): the system
+ * file, each `GOOSE_ADDITIONAL_CONFIG_FILES` entry, then the user file it
+ * writes. A relative additional entry follows Goose's working directory, and a
+ * Windows drive-less one its current drive, which REA cannot know.
+ */
+const gooseLocation = (
+  context: ClientPathContext,
+): Result<ClientLocation, ClientPathFailure> => {
+  const configPath = gooseUserConfigPath(context);
+  for (const path of gooseAdditionalConfigFiles(context)) {
+    const dependence = clientPathDependence(path, context.platform);
+    if (dependence === "relative")
+      return err({
+        path,
+        message: `GOOSE_ADDITIONAL_CONFIG_FILES names the relative path ${path}, which Goose resolves against its own working directory. Use absolute paths before configuring Goose.`,
+      });
+    if (dependence === "driveless")
+      return err({
+        path,
+        message: `GOOSE_ADDITIONAL_CONFIG_FILES names ${path}, which has no drive, so the file Goose reads depends on its current drive. Use a path with a drive letter or a UNC path before configuring Goose.`,
+      });
+  }
+  return ok({ configPath, markerPath: configPath });
+};
+
+/**
+ * Goose's load order: the system file, each additional file, then the user
+ * file it writes. An additional entry can name the user file too; Goose then
+ * loads it twice, and its last load decides precedence.
+ */
+const gooseConfigPaths = (context: ClientPathContext) => [
+  context.systemPaths?.gooseSystemConfig ??
+    (context.platform === "win32"
+      ? win32.join(
+          context.env.PROGRAMDATA || "C:\\ProgramData",
+          "goose",
+          "config.yaml",
+        )
+      : "/etc/goose/config.yaml"),
+  ...gooseAdditionalConfigFiles(context),
+  gooseUserConfigPath(context),
+];
+
+/**
  * FreeBuff's own profile directory (its `state.json` root, fixed under
  * `.config` on every platform). The shared `~/.agents` folder is not
  * FreeBuff-specific: REA's own skill installs create it, so it cannot
@@ -820,6 +1066,95 @@ type ClientDefinitionInput = Omit<ClientDefinitionBase, "registrationProfile"> &
   };
 
 /** Bind native identity once while retaining the original definition's literal name. */
+/**
+ * Kilo resolves its configured paths against its own working directory, which
+ * setup cannot know, so the table accepts only absolute ones.
+ */
+const kiloTableContext = (context: ClientPathContext): KiloLocationContext => ({
+  root: context,
+  path: (path) => {
+    // Normalized as rea mcp add normalizes it, so joined layer paths compare.
+    const dependence = clientPathDependence(path, context.platform);
+    if (dependence === undefined)
+      return absoluteCallerPath(path, { platform: context.platform });
+    throw new KiloPathDependenceError(path, dependence);
+  },
+});
+
+class KiloPathDependenceError extends Error {
+  constructor(
+    readonly path: string,
+    dependence: "relative" | "driveless",
+  ) {
+    super(
+      dependence === "relative"
+        ? `Kilo's configuration path ${path} is relative, so the file Kilo reads depends on its working directory. Set an absolute path before configuring Kilo.`
+        : `Kilo's configuration path ${path} has no drive, so the file Kilo reads depends on its current drive. Set a path with a drive letter or a UNC path before configuring Kilo.`,
+    );
+  }
+}
+
+const kiloPathFailure = (cause: unknown): ClientPathFailure => {
+  if (cause instanceof KiloPathDependenceError)
+    return { path: cause.path, message: cause.message };
+  throw cause;
+};
+
+const kiloLocation = (
+  context: ClientPathContext,
+): Result<ClientLocation, ClientPathFailure> => {
+  try {
+    const { configPath, markerPath } = kiloDefaultLocation(
+      kiloTableContext(context),
+    );
+    return ok({ configPath, markerPath });
+  } catch (cause: unknown) {
+    return err(kiloPathFailure(cause));
+  }
+};
+
+const kiloLayeredLocation = async (
+  context: ClientPathContext,
+): Promise<Result<ClientLayeredLocation, ClientPathFailure>> => {
+  const kilo = kiloTableContext(context);
+  try {
+    const { configPath, configPaths, inlineConfiguration } =
+      await kiloGlobalLocation(kilo);
+    return ok({
+      configPath,
+      configPaths,
+      ...(inlineConfiguration === undefined ? {} : { inlineConfiguration }),
+    });
+  } catch (cause: unknown) {
+    if (cause instanceof ConfigurationError)
+      return err({
+        path: kiloDefaultLocation(kilo).markerPath,
+        message: cause.message,
+        failure: cause,
+      });
+    return err(kiloPathFailure(cause));
+  }
+};
+
+/** Candidate layers when relative paths leave the location unresolved. */
+const kiloCandidatePaths = (context: ClientPathContext): readonly string[] => {
+  try {
+    return kiloDefaultLocation(kiloTableContext(context)).configPaths;
+  } catch (cause: unknown) {
+    kiloPathFailure(cause);
+    return [];
+  }
+};
+
+const kiloDiscoveryPaths = (context: ClientPathContext): readonly string[] => {
+  try {
+    return kiloDefaultLocation(kiloTableContext(context)).discoveryPaths;
+  } catch (cause: unknown) {
+    kiloPathFailure(cause);
+    return [];
+  }
+};
+
 const defineClient = <const Definition extends ClientDefinitionInput>(
   definition: Definition,
 ) => {
@@ -928,7 +1263,7 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
             configPath: selected.value,
             markerPath: pathApi.dirname(selected.value),
           })
-        : err({ path: "", message: selected.error.message });
+        : selected;
     },
     format: "json",
   }),
@@ -1456,6 +1791,86 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     format: "json",
   }),
   defineClient({
+    name: "fx",
+    mcpAdd: {},
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url", "args"],
+      stdio: [
+        { kind: "optional-enum", field: "type", values: ["local", "stdio"] },
+        {
+          kind: "all",
+          conditions: [
+            { kind: "missing", field: "type" },
+            { kind: "present", field: "url" },
+          ],
+        },
+      ],
+    },
+    displayName: "fx",
+    location: fxLocation,
+    privateProfile: true,
+    format: "fx",
+  }),
+  defineClient({
+    name: "junie",
+    mcpAdd: { projectPaths: [".junie/mcp/mcp.json"] },
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url"],
+      stdio: [{ kind: "present", field: "url" }],
+    },
+    displayName: "Junie",
+    location: junieLocation,
+    junieSettings: (context: ClientPathContext, { markerPath }) => ({
+      userConfigPath: join(markerPath, "config.json"),
+      ...(context.env.JUNIE_MCP_DEFAULT_LOCATIONS === undefined
+        ? {}
+        : { mcpDefaultLocations: context.env.JUNIE_MCP_DEFAULT_LOCATIONS }),
+      ...(context.env.JUNIE_CONFIG_LOCATION === undefined
+        ? {}
+        : { configLocation: context.env.JUNIE_CONFIG_LOCATION }),
+      ...(context.env.JUNIE_CONFIG_DEFAULT_LOCATIONS === undefined
+        ? {}
+        : {
+            configDefaultLocations: context.env.JUNIE_CONFIG_DEFAULT_LOCATIONS,
+          }),
+    }),
+    format: "json",
+  }),
+  defineClient({
+    name: "goose",
+    mcpAdd: {},
+    registrationConnection: {
+      kind: "flat",
+      fields: ["uri"],
+      stdio: [{ kind: "required-enum", field: "type", values: ["stdio"] }],
+    },
+    displayName: "Goose",
+    location: gooseLocation,
+    configPaths: gooseConfigPaths,
+    readOnlyLowerLayers: true,
+    format: "goose",
+  }),
+  defineClient({
+    name: "kilo",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url"],
+      stdio: [{ kind: "required-enum", field: "type", values: ["local"] }],
+    },
+    displayName: "Kilo Code",
+    mcpAdd: {
+      aliases: ["kilo", "kilocode"],
+      projectLocation: kiloProjectLocation,
+    },
+    location: kiloLocation,
+    configPaths: kiloCandidatePaths,
+    discoveryPaths: kiloDiscoveryPaths,
+    layeredLocation: kiloLayeredLocation,
+    format: "kilo",
+  }),
+  defineClient({
     name: "grok_bot",
     registrationConnection: {
       kind: "unavailable",
@@ -1576,13 +1991,27 @@ const resolveLocation = (
     : marker;
 };
 
+/**
+ * Layers in increasing precedence, ending with the writable file unless the
+ * row already places it. A file loaded more than once takes effect at its last
+ * load, so only that occurrence is kept.
+ */
+const layerLoadOrder = (
+  paths: readonly string[],
+  configPath: string,
+): readonly string[] => {
+  const ordered = paths.includes(configPath) ? paths : [...paths, configPath];
+  return ordered.filter((path, index) => ordered.lastIndexOf(path) === index);
+};
+
 /** Describe every client location that setup, doctor, or uninstall may inspect. */
 export const supportedClients = (
   home: string,
   platform: NodeJS.Platform = process.platform,
   env: ClientPathContext["env"] = process.env,
+  systemPaths: ClientSystemPaths = {},
 ): readonly SetupClient[] => {
-  const context = { home, platform, env };
+  const context = { home, platform, env, systemPaths };
   const definitions: readonly ClientDefinition[] = SUPPORTED_CLIENT_DEFINITIONS;
   return definitions.map((definition) => {
     try {
@@ -1608,12 +2037,18 @@ export const supportedClients = (
         ...(definition.geminiSettings === undefined
           ? {}
           : { geminiSettings: definition.geminiSettings(context) }),
+        ...(definition.junieSettings === undefined
+          ? {}
+          : {
+              junieSettings: definition.junieSettings(context, location.value),
+            }),
         ...(definition.configPaths === undefined
           ? {}
           : {
-              configPaths: [
-                ...new Set([...definition.configPaths(context), configPath]),
-              ],
+              configPaths: layerLoadOrder(
+                definition.configPaths(context),
+                configPath,
+              ),
             }),
         ...(definition.zcodeFallbackPath === undefined
           ? {}
@@ -1626,6 +2061,12 @@ export const supportedClients = (
         ...(definition.discoveryPaths === undefined
           ? {}
           : { discoveryPaths: definition.discoveryPaths(context) }),
+        ...(definition.privateProfile === true
+          ? { privateProfile: { home } }
+          : {}),
+        ...(definition.readOnlyLowerLayers === true
+          ? { readOnlyLowerLayers: true }
+          : {}),
         ...(definition.registrationApplicability === true
           ? { registrationApplicability: true }
           : {}),
@@ -1655,6 +2096,41 @@ export const supportedClients = (
       };
     }
   });
+};
+
+/**
+ * The client table with each layered location resolved: the rows setup,
+ * doctor, update and uninstall act on.
+ */
+export const resolveSupportedClients = async (
+  home: string,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
+  env: ClientPathContext["env"] = process.env,
+  systemPaths: ClientSystemPaths = {},
+): Promise<readonly SetupClient[]> => {
+  const context = { home, platform, env, systemPaths };
+  const definitions: readonly ClientDefinition[] = SUPPORTED_CLIENT_DEFINITIONS;
+  const rows = supportedClients(home, platform, env, systemPaths);
+  return Promise.all(
+    rows.map(async (row) => {
+      const resolve = definitions.find(
+        ({ name }) => name === row.name,
+      )?.layeredLocation;
+      if (resolve === undefined || row.configPathError !== undefined)
+        return row;
+      const location = await resolve(context);
+      return location.ok
+        ? { ...row, ...location.value }
+        : {
+            ...row,
+            configPath: location.error.path,
+            configPathError: location.error.message,
+            ...(location.error.failure === undefined
+              ? {}
+              : { configPathFailure: location.error.failure }),
+          };
+    }),
+  );
 };
 
 /** Resolved destinations and unresolved selections share one path-resolution owner. */

@@ -15,7 +15,7 @@ describe("computed Electron web preference keys", () => {
     `);
 
     expect(analysis.parse_status).toBe("partial");
-    expect(analysis.analysis_coverage?.syntax).toEqual({
+    expect(analysis.analysis_coverage.syntax).toEqual({
       status: "complete",
       error_count: 0,
     });

@@ -13,6 +13,7 @@ import {
 } from "./analysisEvidenceDelivery.js";
 import { parseCliJsonOption } from "./cliJsonOption.js";
 import { getEvidenceInputContract } from "../domain/evidenceInputContract.js";
+import { cliJsonCallerPathSchema } from "../cliJsonInput.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import { cliDecimalShape } from "./options.js";
 
@@ -611,6 +612,72 @@ export interface ContractCliDocumentDescription {
   ) => Readonly<Record<string, unknown>>;
 }
 
+/**
+ * The document field at `path` as the CLI admits it: a caller path the
+ * command resolves against the working directory, so a relative spelling is
+ * admitted where the contract requires an absolute one. Unions and wrappers
+ * keep their other branches; clones keep the source's registry metadata.
+ */
+const admitDocumentCallerPath = (
+  schema: z.ZodType,
+  path: readonly string[],
+): z.ZodType => {
+  const [head, ...tail] = path;
+  if (head === undefined) {
+    const admitted =
+      core(schema) instanceof z.ZodArray
+        ? z.array(cliJsonCallerPathSchema)
+        : cliJsonCallerPathSchema;
+    const field = admitsOmission(schema) ? admitted.optional() : admitted;
+    return schema.description === undefined
+      ? field
+      : field.describe(schema.description);
+  }
+  if (
+    schema instanceof z.ZodOptional ||
+    schema instanceof z.ZodExactOptional ||
+    schema instanceof z.ZodDefault ||
+    schema instanceof z.ZodPrefault ||
+    schema instanceof z.ZodNullable ||
+    schema instanceof z.ZodReadonly
+  )
+    return z.clone(
+      schema,
+      {
+        ...schema.def,
+        innerType: admitDocumentCallerPath(schema.unwrap() as z.ZodType, path),
+      },
+      { parent: true },
+    );
+  if (schema instanceof z.ZodUnion)
+    return z.clone(
+      schema,
+      {
+        ...schema.def,
+        options: schema.options.map((option) =>
+          admitDocumentCallerPath(option as z.ZodType, path),
+        ),
+      },
+      { parent: true },
+    );
+  if (schema instanceof z.ZodObject && Object.hasOwn(schema.shape, head))
+    return z.clone(
+      schema,
+      {
+        ...schema.def,
+        shape: {
+          ...schema.shape,
+          [head]: admitDocumentCallerPath(
+            schema.shape[head] as z.ZodType,
+            tail,
+          ),
+        },
+      },
+      { parent: true },
+    );
+  return schema;
+};
+
 /** The CLI key of a JSON input document. */
 const DOCUMENT_KEY = "inputJson";
 
@@ -646,6 +713,9 @@ export const describeContractDocumentCommand = <
       ) as never,
     );
   }
+  const callerPaths = projection.callerPaths ?? [];
+  for (const path of callerPaths)
+    admitted = admitDocumentCallerPath(admitted, path);
   const cliOptions: CliOptionShape = projection.cliOptions ?? {};
   if (Object.hasOwn(cliOptions, DOCUMENT_KEY))
     throw new Error(`${contract.name} projects two fields to one CLI key`);
@@ -656,7 +726,7 @@ export const describeContractDocumentCommand = <
     key: DOCUMENT_KEY,
     documentDescription: projection.document,
     content: getEvidenceInputContract(admitted).frameSchema,
-    callerPaths: projection.callerPaths ?? [],
+    callerPaths,
     omitted,
     cliOnlyOptions: Object.entries(cliOptions).map(([key, schema]) => ({
       key,

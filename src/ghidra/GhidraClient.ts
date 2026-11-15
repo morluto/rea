@@ -1546,13 +1546,9 @@ export class GhidraClient {
     cause?: unknown,
     cancellation?: { readonly reason: unknown },
   ): GhidraSessionError {
-    if (
-      cancellation !== undefined &&
-      !(
-        deadline.signal.aborted &&
-        cancellation.reason === deadline.signal.reason
-      )
-    )
+    // A producer that cancelled while startup's deadline still ran reports
+    // its own cancellation; once the deadline aborted, the deadline reports.
+    if (cancellation !== undefined && !deadline.signal.aborted)
       return this.#failure("cancelled", "Ghidra startup was cancelled", cause, {
         cancellation,
       });
