@@ -4,14 +4,12 @@ import {
   stableArtifactInputFailure,
   projectStableArtifactFailure,
   readerIntegrityFailure,
-} from "../../artifacts/StableArtifactFailure.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import type { StableArtifactSnapshot } from "../../artifacts/readStableArtifact.js";
-import {
+  ArtifactReaderFailure,
+  type StableArtifactSnapshot,
   artifactFilePrimaryFacts,
   artifactFileCancellationCause,
   type ArtifactFilePrimaryFacts,
-} from "../../artifacts/ArtifactFileOperation.js";
+} from "../../resources/index.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisResourceConstraintError,
@@ -23,7 +21,8 @@ import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import {
   BinaryResourceFailure,
   binaryResourceAllowance,
-} from "../metadata/BinaryContainer.js";
+} from "../../domain/binaryContainer.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 interface PeBinaryInput {
   readonly path: string;
@@ -104,7 +103,7 @@ const peBinaryFailurePrimary = <Limit extends string>(
     cause,
     diagnostics: {
       path: input.path,
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     },
   });
 };

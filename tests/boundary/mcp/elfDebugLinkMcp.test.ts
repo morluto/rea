@@ -63,7 +63,10 @@ mcpTest(
         },
         build_id: { hex: FIXTURE_BUILD_ID_HEX },
       });
-      expect(evidence.subject?.architecture).toBe("powerpc");
+      const identity = evidence.subject.identity;
+      expect(identity.kind).toBe("file");
+      if (identity.kind === "file")
+        expect(identity.architecture).toBe("powerpc");
       expect(evidence.normalized_result.verification).toBeNull();
     } finally {
       await session.close();

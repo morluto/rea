@@ -1,4 +1,4 @@
-import type { NativeSectionDirectory } from "../native/metadata/NativeSectionDirectory.js";
+import type { NativeSectionDirectory } from "../domain/native/nativeSectionDirectory.js";
 import { gpuLocation, type GpuPayloadTarget } from "./GpuObject.js";
 import { rejectGpu, type GpuSource } from "./GpuSource.js";
 

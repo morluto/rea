@@ -3,15 +3,15 @@ import {
   SUPPORTED_NODE_VERSION_PROSE,
   supportsJavaScriptRuntime,
 } from "../domain/runtimeVersion.js";
-import { hopperLauncherDiscovery } from "./HopperLauncherDiscovery.js";
+import { hopperLauncherDiscovery } from "../hopperPaths/HopperLauncherDiscovery.js";
 import { macosMajorVersion } from "../domain/macosVersion.js";
 import { LINUX_HOPPER_SETUP_HOSTS, supportsReaHost } from "./LinuxHopper.js";
 import { isDesktopBuildCheck } from "../domain/doctorProviderIds.js";
+import type { DoctorHost } from "./Doctor.js";
 import type {
   DoctorCheck,
-  DoctorHost,
   DoctorProviderInspection,
-} from "./Doctor.js";
+} from "../ports/DoctorProviderInspection.js";
 
 /** Ordered environment diagnostics consumed by the Doctor report assembler. */
 export interface DoctorDiagnostics {

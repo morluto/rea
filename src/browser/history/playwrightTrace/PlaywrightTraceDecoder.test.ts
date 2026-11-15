@@ -2,7 +2,7 @@ import { projectAnalysisError } from "../../../domain/analysisErrorProjection.js
 import { createHash } from "node:crypto";
 import { readFile, writeFile, open } from "node:fs/promises";
 import { expect, it } from "vitest";
-import { ArtifactResourceScope } from "../../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../resources/ArtifactResourceScope.js";
 import { PlaywrightTraceDecoder } from "./PlaywrightTraceDecoder.js";
 import { playwrightTraceSchema } from "../../../domain/playwrightTrace/playwrightTrace.js";
 import {

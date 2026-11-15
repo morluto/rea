@@ -94,7 +94,7 @@ it.each([
   if (!result.ok) throw result.error;
   expect(result.value).toMatchObject({
     confidence: "observed",
-    subject: { format: "elf", architecture },
+    subject: { identity: { format: "elf", architecture } },
     normalized_result: { ...report, machine },
   });
 });
@@ -277,7 +277,7 @@ it("retains a completed observation if the caller cancels while the provider com
   expect(parseEvidence(late.error.partialObservation)).toMatchObject({
     operation: "inspect_elf_debug_link",
     confidence: "observed",
-    subject: { format: "elf", architecture: "x86_64" },
+    subject: { identity: { format: "elf", architecture: "x86_64" } },
     normalized_result: report,
   });
 });

@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
-import { analysisErrorProjectionSchema } from "../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../src/domain/analysisErrorProjectionSchema.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { parseEvidenceBundle } from "../../src/domain/evidenceBundle.js";
 import { pcapResultSchemas } from "../../src/domain/pcap/pcapAnalysis.js";

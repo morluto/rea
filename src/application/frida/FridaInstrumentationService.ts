@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { constants } from "node:fs";
 import { access, stat } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
@@ -26,8 +27,8 @@ import {
   type AnalysisViewRetention,
 } from "../analysisView/AnalysisViewService.js";
 import { fridaCaptureLimitations } from "../../frida/fridaCaptureLimits.js";
-import { unknownFridaSession } from "./fridaInputErrors.js";
-import { FridaScriptLoadCancelledError } from "./FridaInstrumentationPort.js";
+import { unknownFridaSession } from "../../frida/fridaInputErrors.js";
+import { FridaScriptLoadCancelledError } from "../../ports/frida/FridaInstrumentationPort.js";
 import type {
   FridaDeviceList,
   FridaProcessList,
@@ -41,7 +42,7 @@ import type {
   FridaSessionObservation,
   FridaSessionStatus,
   StartFridaSessionInput,
-} from "./FridaInstrumentationPort.js";
+} from "../../ports/frida/FridaInstrumentationPort.js";
 
 type FridaSessionCloseResult = Awaited<
   ReturnType<FridaInstrumentationPort["closeSession"]>
@@ -454,7 +455,7 @@ const fridaEvidence = (
   script?: FridaScriptObservation,
 ): Evidence =>
   createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "frida", name: "Frida", version: null },
     {
       predicateType: "rea.frida.instrumentation-observation",

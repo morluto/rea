@@ -1,8 +1,8 @@
 import { expect, it, vi } from "vitest";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { ArtifactFileCancelled } from "../../artifacts/ArtifactFileOperation.js";
-import { completedStableArtifactObservation } from "../../artifacts/StableArtifactObservation.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
+import { ArtifactFileCancelled } from "../../resources/ArtifactFileOperation.js";
+import { completedStableArtifactObservation } from "../../resources/StableArtifactObservation.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import {
   ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
@@ -15,7 +15,7 @@ const image = elfDebugLinkFixture();
 const imageBytes: { current: Buffer } = { current: image };
 const candidateFailure: { current: unknown } = { current: undefined };
 
-vi.mock(import("../../artifacts/readStableArtifact.js"), async (original) => ({
+vi.mock(import("../../resources/index.js"), async (original) => ({
   ...(await original()),
   readStableArtifact: vi.fn(() =>
     Promise.resolve({ bytes: imageBytes.current, sha256: "ab".repeat(32) }),

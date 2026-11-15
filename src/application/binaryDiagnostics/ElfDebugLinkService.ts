@@ -1,5 +1,5 @@
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { ElfDebugLinkPort } from "./ElfDebugLinkPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { ElfDebugLinkPort } from "../../ports/binaryDiagnostics/ElfDebugLinkPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import type { Evidence } from "../../domain/evidence.js";

@@ -52,7 +52,7 @@ export async function verifyGhidraSnapshotLifecycle(
     const snapshot = parseAnalysisSnapshot(
       JSON.parse(snapshotBytes.toString("utf8")),
     );
-    assert.equal(snapshot.target.sha256, target.sha256);
+    assert.equal(snapshot.target.identity.sha256, target.sha256);
     assert.notEqual(original.procedure.name, edited.procedure.name);
     const runId = (await call("binary_session")).analysis_run.run_id;
     const api = await call("inspect_native_api", { procedure: entry });

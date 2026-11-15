@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 import type {
   ArtifactReader,
   ArtifactEntry,
-} from "../../src/artifacts/ArtifactReader.js";
+} from "../../src/resources/ArtifactReader.js";
 import {
   openRegularFile,
   type StableRegularFileDescriptor,

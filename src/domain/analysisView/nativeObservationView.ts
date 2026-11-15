@@ -1,6 +1,6 @@
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { z } from "zod";
-import { evidenceSubjectIdentity } from "../evidence.js";
+import { evidenceTargetIdentity } from "../evidence.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { jsonValueSchema } from "../jsonValue.js";
 import { analysisInputErrorFromIssues } from "../inputIssueProjection.js";
@@ -286,7 +286,7 @@ export const projectNativeObservationView = (
     digest: digestCanonicalValue(
       {
         ...context.value,
-        subject: evidenceSubjectIdentity(context.value.subject),
+        subject: evidenceTargetIdentity(context.value),
       },
       "Native source context",
     ),

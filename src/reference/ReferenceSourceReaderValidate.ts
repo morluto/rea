@@ -7,13 +7,13 @@ import {
   cancelled,
   failure,
   filesystemFailureDetail,
-  rootFilesystemFailure,
 } from "./ReferenceSourceReaderErrors.js";
 import { isPathWithinRoot } from "../domain/localPath.js";
 import type {
   ReferenceSourceFailureCode,
   ReferenceSourceResult,
 } from "./ReferenceSourceReaderTypes.js";
+import { rootFilesystemFailure } from "./ReferenceSourceFailureBuilders.js";
 
 export const bigLstat = (path: string): Promise<BigIntStats> =>
   lstat(path, { bigint: true });

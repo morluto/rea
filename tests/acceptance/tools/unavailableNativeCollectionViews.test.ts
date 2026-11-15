@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -21,7 +22,7 @@ cliTest(
       version: "1",
     };
     const load = (result: unknown) =>
-      createEvidence(undefined, provider, {
+      createEvidence(unknownTarget("not-observed"), provider, {
         operation: "inspect_native_load_image",
         parameters: {},
         result,
@@ -39,12 +40,12 @@ cliTest(
       limitations: [],
     });
     const raw = load(nativeRawLoadImageFixture());
-    const primitive = createEvidence(undefined, provider, {
+    const primitive = createEvidence(unknownTarget("not-observed"), provider, {
       operation: "procedure_callees",
       parameters: {},
       result: [],
     });
-    const graph = createEvidence(undefined, provider, {
+    const graph = createEvidence(unknownTarget("not-observed"), provider, {
       operation: "get_call_graph",
       parameters: {},
       result: { graph: {}, limitations: [] },

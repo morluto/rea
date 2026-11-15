@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { posix } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -845,10 +844,6 @@ export const registrationKey = (
       digest,
     ]),
   ]);
-
-/** Hash exact UTF-8 source text. */
-export const sha256Text = (value: string): string =>
-  createHash("sha256").update(value).digest("hex");
 
 /** Recognized route-construction call suffixes. */
 export const STATIC_ROUTE_CALL_NAMES = [

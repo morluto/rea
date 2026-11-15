@@ -1,7 +1,7 @@
 import { crc32 } from "node:zlib";
 import { expect, it } from "vitest";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
   ELF_DEBUG_LINK_CANDIDATE_BUDGET_LIMITATION,
   ELF_DEBUG_LINK_CANDIDATE_PREFIX_LIMITATION,
@@ -15,7 +15,7 @@ import {
 } from "../../domain/native/elfDebugLink.js";
 import { gnuBuildIdNote } from "./ElfNotes.fixture.js";
 import { parseElfNotes } from "./ElfNoteParser.js";
-import { readElfImage } from "../metadata/ElfImage.js";
+import { readElfImage } from "../../domain/native/elfImage.js";
 import {
   continueGnuDebuglinkCrc32,
   gnuDebuglinkCrc32,

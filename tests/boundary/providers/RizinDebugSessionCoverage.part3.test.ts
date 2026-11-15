@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { stopOwnedDebuggerProcess } from "../../../src/process/ownedDebuggerSession.js";
 import { rizinTestInferiorTty } from "./RizinTestInferiorTty.js";
@@ -234,7 +234,11 @@ it.skipIf(process.platform === "win32").each([false, true])(
       {
         stopProcess: async () =>
           incomplete
-            ? { status: "incomplete", reason: "injected stop uncertainty" }
+            ? {
+                status: "incomplete",
+                code: "stop-failed",
+                reason: "injected stop uncertainty",
+              }
             : { status: "stopped" },
       },
       { REA_DEBUGGER_COMMAND_DEADLINE_MS: "1000" },
@@ -381,7 +385,11 @@ it
     const { manager, started } = await startInjected(injected.spawnProcess, {
       stopProcess: async () =>
         retained
-          ? { status: "incomplete", reason: "owned stop pending" }
+          ? {
+              status: "incomplete",
+              code: "stop-failed",
+              reason: "owned stop pending",
+            }
           : { status: "stopped" },
     });
     if (!started.ok) throw started.error;
@@ -434,7 +442,11 @@ it.skipIf(process.platform === "win32").each([false, true])(
             injected.control.exit();
             return { status: "stopped" };
           } catch (cause) {
-            return { status: "incomplete", reason: String(cause) };
+            return {
+              status: "incomplete",
+              code: "stop-failed",
+              reason: String(cause),
+            };
           }
         },
       },
@@ -510,14 +522,7 @@ it.skipIf(process.platform === "win32").each([
   async ({ stage, incomplete }) => {
     const controller = new AbortController();
     const reason = { boundary: "final cleanup" };
-    let enterStop!: () => void;
-    const entered = new Promise<void>((resolve) => {
-      enterStop = resolve;
-    });
-    let releaseStop!: () => void;
-    const released = new Promise<void>((resolve) => {
-      releaseStop = resolve;
-    });
+    const debuggerFinalCleanup = phaseGate();
     let stopping = true;
     const injected = createInjectedProcess({
       onWrite: (_text, control) => {
@@ -534,11 +539,14 @@ it.skipIf(process.platform === "win32").each([
       {
         stopProcess: async () => {
           if (stopping) {
-            enterStop();
-            await released;
+            await debuggerFinalCleanup.hold();
           }
           return incomplete && stopping
-            ? { status: "incomplete", reason: "stop settlement pending" }
+            ? {
+                status: "incomplete",
+                code: "stop-failed",
+                reason: "stop settlement pending",
+              }
             : { status: "stopped" };
         },
       },
@@ -554,9 +562,9 @@ it.skipIf(process.platform === "win32").each([
       controller.signal,
     );
     await withVerifierCleanup(async () => {
-      await awaitAcknowledgement(entered, pending, "debugger final cleanup");
+      await debuggerFinalCleanup.reached(pending, "debugger final cleanup");
       controller.abort(reason);
-      releaseStop();
+      debuggerFinalCleanup.release();
       const result = await pending;
       expect(result.ok).toBe(false);
       if (result.ok) return;
@@ -575,7 +583,7 @@ it.skipIf(process.platform === "win32").each([
         expect(result.error.cleanupIncomplete).toBe(false);
       }
     }, [
-      releaseStop,
+      debuggerFinalCleanup.release,
       async () => {
         await pending;
       },
@@ -609,7 +617,11 @@ it.skipIf(process.platform === "win32")(
             injected.control.exit();
             return { status: "stopped" };
           } catch (cause) {
-            return { status: "incomplete", reason: String(cause) };
+            return {
+              status: "incomplete",
+              code: "stop-failed",
+              reason: String(cause),
+            };
           }
         },
       },
@@ -668,7 +680,11 @@ it.skipIf(process.platform === "win32").each([false, true])(
         stopProcess: async () => {
           controller.abort(reason);
           return incomplete && retained
-            ? { status: "incomplete", reason: "stop settlement pending" }
+            ? {
+                status: "incomplete",
+                code: "stop-failed",
+                reason: "stop settlement pending",
+              }
             : { status: "stopped" };
         },
       },
@@ -690,6 +706,10 @@ it.skipIf(process.platform === "win32").each([false, true])(
     expect(primary.secondaryFailures[0]?.cause).toBe(reason);
     expect(result.error.cleanupIncomplete).toBe(incomplete);
     if (incomplete) {
+      // The composed failure names why cleanup is incomplete at its top level.
+      expect(result.error.diagnostics).toMatchObject({
+        debugger_cleanup: "stop-failed",
+      });
       retained = false;
       await manager.closeAll();
       expect(result.error.cleanupIncomplete).toBe(false);

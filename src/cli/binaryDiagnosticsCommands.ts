@@ -18,7 +18,6 @@ import {
   createWindowsShortcutService,
   createNativeExportsService,
 } from "../composition/binaryDiagnostics.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -51,7 +50,6 @@ export const registerBinaryDiagnosticsCommands = (
     logger,
     contract("inspect_elf_notes"),
     {
-      command: CLI_COMMANDS.inspectElfNotes,
       description:
         "Inspect ELF PT_NOTE and SHT_NOTE identities without executing the image",
       positionals: ["path"],
@@ -65,7 +63,6 @@ export const registerBinaryDiagnosticsCommands = (
     logger,
     contract("inspect_elf_debug_link"),
     {
-      command: CLI_COMMANDS.inspectElfDebugLink,
       description:
         "Inspect ELF separate debug-file linkage without executing the image",
       positionals: ["path"],
@@ -84,7 +81,6 @@ export const registerBinaryDiagnosticsCommands = (
     logger,
     contract("inspect_native_initializers"),
     {
-      command: CLI_COMMANDS.inspectNativeInitializers,
       description:
         "List ELF and Mach-O initializer and finalizer functions without executing the image",
       positionals: ["path"],
@@ -110,7 +106,6 @@ export const registerBinaryDiagnosticsCommands = (
     logger,
     contract("inspect_elf_unwind_ranges"),
     {
-      command: CLI_COMMANDS.inspectElfUnwindRanges,
       description:
         "Inspect ELF unwind function ranges without executing the image",
       positionals: ["path"],
@@ -124,7 +119,6 @@ export const registerBinaryDiagnosticsCommands = (
     logger,
     contract("inspect_apple_ips"),
     {
-      command: CLI_COMMANDS.inspectAppleIps,
       description:
         "Inspect an Apple .ips crash report without executing a target",
       positionals: ["path"],
@@ -144,7 +138,6 @@ export const registerBinaryDiagnosticsCommands = (
     logger,
     contract("inspect_kernel_module"),
     {
-      command: CLI_COMMANDS.inspectKernelModule,
       description:
         "Inspect Linux kernel module metadata without executing the module",
       positionals: ["path"],
@@ -163,7 +156,6 @@ export const registerBinaryDiagnosticsCommands = (
     logger,
     contract("inspect_kernel_build_config"),
     {
-      command: CLI_COMMANDS.inspectKernelBuildConfig,
       description:
         "Inspect a Linux kernel image's version banner and embedded build config without executing it",
       positionals: ["path"],
@@ -185,7 +177,6 @@ export const registerBinaryDiagnosticsCommands = (
     logger,
     contract("inspect_pe_load_config"),
     {
-      command: CLI_COMMANDS.inspectPeLoadConfig,
       description:
         "Inspect PE TLS callbacks and load configuration without executing the image",
       positionals: ["path"],
@@ -199,7 +190,6 @@ export const registerBinaryDiagnosticsCommands = (
     logger,
     contract("inspect_binary_hardening"),
     {
-      command: CLI_COMMANDS.inspectBinaryHardening,
       description:
         "Inspect ELF, PE, and Mach-O hardening without executing the image",
       positionals: ["path"],
@@ -214,7 +204,6 @@ export const registerBinaryDiagnosticsCommands = (
     logger,
     contract("inspect_byte_entropy"),
     {
-      command: CLI_COMMANDS.inspectByteEntropy,
       description:
         "Inspect file-wide and block byte entropy without executing the file",
       positionals: ["path"],
@@ -241,7 +230,6 @@ export const registerBinaryDiagnosticsCommands = (
     logger,
     contract("inspect_pe_certificates"),
     {
-      command: CLI_COMMANDS.inspectPeCertificates,
       description:
         "Inspect PE Authenticode certificate table identities without verifying signatures",
       positionals: ["path"],
@@ -255,7 +243,6 @@ export const registerBinaryDiagnosticsCommands = (
     logger,
     contract("inspect_pe_imports"),
     {
-      command: CLI_COMMANDS.inspectPeImports,
       description:
         "Inspect PE import and delay-load table identities without executing the image",
       positionals: ["path"],
@@ -269,7 +256,6 @@ export const registerBinaryDiagnosticsCommands = (
     logger,
     contract("inspect_windows_shortcut"),
     {
-      command: CLI_COMMANDS.inspectWindowsShortcut,
       description:
         "Inspect a Windows Shell Link (.lnk) without resolving or executing the target",
       positionals: ["path"],
@@ -285,7 +271,6 @@ export const registerBinaryDiagnosticsCommands = (
     logger,
     contract("inspect_pe_resources"),
     {
-      command: CLI_COMMANDS.inspectPeResources,
       description:
         "Inspect PE resource identities, payload ranges, hashes and icon-group relationships",
       positionals: ["path"],
@@ -299,7 +284,6 @@ export const registerBinaryDiagnosticsCommands = (
     logger,
     contract("inspect_devicetree"),
     {
-      command: CLI_COMMANDS.inspectDevicetree,
       description: "Inspect a flattened devicetree blob without executing it",
       positionals: ["path"],
       callerPaths: ["path"],
@@ -321,7 +305,6 @@ export const registerBinaryDiagnosticsCommands = (
     logger,
     contract("inspect_native_exports"),
     {
-      command: CLI_COMMANDS.inspectNativeExports,
       description:
         "Inspect a PE or ELF image's export table without executing it",
       positionals: ["path"],
@@ -337,7 +320,6 @@ export const registerBinaryDiagnosticsCommands = (
     logger,
     contract("inspect_binary_layout"),
     {
-      command: CLI_COMMANDS.inspectBinaryLayout,
       description:
         "Inspect binary file/linked layout without executing the selected object",
       positionals: ["path"],
@@ -367,7 +349,6 @@ export const registerBinaryDiagnosticsCommands = (
     logger,
     contract("inspect_recorded_crash"),
     {
-      command: CLI_COMMANDS.inspectRecordedCrash,
       description:
         "Inspect supplied core registers/signals and optional debugger mapping evidence",
       positionals: ["path"],

@@ -1,6 +1,6 @@
 import { crc32 } from "node:zlib";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/index.js";
 import { readElfFixedHeader } from "../../domain/elfFixedHeader.js";
 import { elfObjectTypeName } from "../../domain/native/elfNotes.js";
 import {
@@ -24,8 +24,8 @@ import {
   type ImageSection,
   BinaryFormatFailure,
   BinaryResourceFailure,
-} from "../metadata/BinaryContainer.js";
-import { readElfImage } from "../metadata/ElfImage.js";
+} from "../../domain/binaryContainer.js";
+import { readElfImage } from "../../domain/native/elfImage.js";
 import {
   assertElfSectionNameBudget,
   elfNoteSectionNameBudget,

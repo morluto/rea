@@ -1,6 +1,6 @@
 import { BinaryTargetError } from "../domain/configurationErrors.js";
 import { RejectedRegularFileSymlink } from "../filesystem/RegularFile.js";
-import { regularFileSymlinkRecovery } from "./StableArtifactFailure.js";
+import { regularFileSymlinkRecovery } from "../resources/index.js";
 
 /** Project a selected-file admission failure without reinterpreting its path. */
 export const selectedFileTargetError = (

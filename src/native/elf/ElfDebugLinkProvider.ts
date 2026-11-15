@@ -1,24 +1,22 @@
+import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
 import {
   projectArtifactCloseFailure,
   projectOwnedArtifactIdentityFailure,
   projectSelectedArtifactFileFailure,
   projectStableArtifactFailure,
   stableArtifactInputFailure,
-} from "../../artifacts/StableArtifactFailure.js";
-import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import {
+  ArtifactReaderFailure,
   completedStableArtifactStream,
   readStableArtifact,
   streamStableArtifact,
   type StableArtifactSnapshot,
   type StableArtifactStream,
-} from "../../artifacts/readStableArtifact.js";
-import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+  ArtifactResourceScope,
+} from "../../resources/index.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { ElfDebugLinkPort } from "../../ports/binaryDiagnostics/ElfDebugLinkPort.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
@@ -34,7 +32,7 @@ import { err, ok } from "../../domain/result.js";
 import type { AnalysisPartialObservation } from "../../domain/analysisErrorBase.js";
 import { createElfDebugLinkEvidence } from "../../domain/native/elfDebugLinkEvidence.js";
 import { ELF_DEBUG_LINK_PROVIDER } from "../../domain/investigationProviders.js";
-import { BinaryResourceFailure } from "../metadata/BinaryContainer.js";
+import { BinaryResourceFailure } from "../../domain/binaryContainer.js";
 import {
   continueGnuDebuglinkCrc32,
   parseElfDebugLink,
@@ -48,11 +46,7 @@ const OPERATION = "inspect_elf_debug_link";
 type SelectedField = "path" | "candidate_path";
 
 /** Portable parser over one bounded ELF and an optional caller-selected candidate. */
-/**
- * Satisfies the application's ElfDebugLinkPort structurally; composition
- * checks the fit, so this provider does not import the application layer.
- */
-export class ElfDebugLinkProvider {
+export class ElfDebugLinkProvider implements ElfDebugLinkPort {
   readonly identity = ELF_DEBUG_LINK_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
@@ -68,10 +62,7 @@ export class ElfDebugLinkProvider {
     }
   }
 
-  async inspect(
-    input: InspectElfDebugLinkInput,
-    options?: { readonly signal?: AbortSignal },
-  ) {
+  async inspect(input: InspectElfDebugLinkInput, options?: ExecutionOptions) {
     let field: SelectedField = "path";
     let candidatePhase: CandidatePhase | undefined;
     let crc32 = 0;
