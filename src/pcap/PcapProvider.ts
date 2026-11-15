@@ -68,6 +68,7 @@ import { PcapSnapshot } from "./PcapSnapshot.js";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { ArtifactAnalysisResources } from "../process/ArtifactAnalysisResources.js";
+import { createArtifactAnalysisResources } from "../providers/artifactResourceFailure.js";
 import { readLinuxResourceLimits } from "../process/LinuxResourceLimits.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import {
@@ -284,7 +285,7 @@ export class PcapProvider {
       HOST_PLATFORM.platform,
     );
     this.launcher = options.launcher;
-    this.#resources = new ArtifactAnalysisResources(
+    this.#resources = createArtifactAnalysisResources(
       "pcap",
       "inspect_pcap_capture",
       options.artifactReader ?? readStableArtifact,

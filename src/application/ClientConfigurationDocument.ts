@@ -38,9 +38,6 @@ import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 
 export type ClientConfigurationFormat =
   | NonNullable<SetupClient["format"]>
-  | "fx"
-  | "kilo"
-  | "goose"
   | "copilot_cli_project";
 type ClientServersKey =
   | "mcp_servers"
@@ -77,6 +74,15 @@ export interface ClientConfigurationDocument {
    * still loads them, and a native entry with the same name takes precedence.
    */
   readonly legacyServers: Record<string, unknown>;
+}
+
+/**
+ * Configuration a client reads from an environment variable instead of a file.
+ * It is the client's highest-precedence layer, and REA never writes it.
+ */
+export interface ClientInlineConfiguration {
+  readonly origin: "KILO_CONFIG_CONTENT";
+  readonly parsed: ClientConfigurationDocument;
 }
 
 /** Admit source mappings without Zod's record clone dropping caller keys. */

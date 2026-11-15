@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -151,7 +152,10 @@ describe("Qwen Code client lifecycle", () => {
     ).toBe("configured");
     const entry = command[1];
     const status = (
-      await readClientRegistrationStatuses(home, entry, { environment: {} })
+      await readClientRegistrationStatuses(home, entry, {
+        platform: HOST_PLATFORM.platform,
+        environment: {},
+      })
     ).find(({ client: name }) => name === "qwen_code");
     expect(status).toMatchObject({ state: "aligned" });
   });
@@ -196,6 +200,7 @@ describe("Qwen Code profile setup", () => {
       expect(
         (
           await readClientRegistrationStatuses(home, command[1], {
+            platform: HOST_PLATFORM.platform,
             environment,
           })
         ).find(({ client: name }) => name === "qwen_code"),

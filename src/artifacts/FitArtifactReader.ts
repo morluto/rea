@@ -98,6 +98,10 @@ export class FitArtifactReader implements ArtifactReader {
         throw new ArtifactReaderFailure(
           "integrity",
           "FIT entry does not match its owning inventory",
+          {
+            integrityCheck:
+              stored === undefined ? "foreign-entry" : "entry-metadata",
+          },
         );
       const { handle } = await this.#source.read(signal);
       this.#assertOpen(signal);
@@ -241,6 +245,7 @@ export class FitArtifactReader implements ArtifactReader {
         throw new ArtifactReaderFailure(
           "integrity",
           `FIT image ${image.name} ${hash.node} ${hash.algo} does not match: declared ${hash.value.toString("hex")}, computed ${computed.toString("hex")}`,
+          { integrityCheck: "declared-digest" },
         );
     }
   }

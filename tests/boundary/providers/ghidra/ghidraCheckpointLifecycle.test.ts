@@ -13,6 +13,8 @@ import { join } from "node:path";
 import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
 import { createAnalysisProfile } from "../../../../src/domain/analysisProfile.js";
 import { GhidraClient } from "../../../../src/ghidra/GhidraClient.js";
+import type { BridgeMaxReplyBytes } from "../../../../src/config/bridgeMaxReplyBytes.js";
+import { ConfigurationError } from "../../../../src/domain/configurationErrors.js";
 import { resolveGhidraCheckpoint } from "../../../../src/ghidra/GhidraCheckpoint.js";
 import { GhidraFixtureLauncher } from "./ghidraClient.fixture.js";
 import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
@@ -73,6 +75,7 @@ const profile = createAnalysisProfile(
 );
 async function fixture(
   mode: ConstructorParameters<typeof GhidraFixtureLauncher>[0] = "checkpoint",
+  bridgeMaxReplyBytes?: BridgeMaxReplyBytes,
 ) {
   const root = await mkdtemp(join(tmpdir(), "rea-checkpoint-lifecycle-"));
   roots.push(root);
@@ -97,6 +100,7 @@ async function fixture(
     profileDigest: profile.digest,
     checkpoint: selection,
     startupTimeoutMs: 10_000,
+    ...(bridgeMaxReplyBytes === undefined ? {} : { bridgeMaxReplyBytes }),
   });
   clients.push(client);
   return { root, selection, launcher, client, targetPath, sha256 };
@@ -138,6 +142,29 @@ it.skipIf(process.platform === "win32")(
     expect(f.launcher.packedPrograms.at(-1)?.sha256).toBe(
       JSON.parse(await readFile(path, "utf8")).source.sha256,
     );
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "saves the closing checkpoint under the session's ceilings after its seed is refused",
+  async () => {
+    // A seed refused after startup (its override reset) must not refuse the
+    // closing checkpoint and leave the JVM running.
+    let seedRefused = false;
+    const f = await fixture("checkpoint", {
+      get maximumBytes(): number {
+        if (seedRefused)
+          throw new ConfigurationError("invalid bridge.max_reply_bytes seed");
+        return 1024 * 1024;
+      },
+      source: "runtime",
+    });
+    expect((await f.client.start()).ok).toBe(true);
+    seedRefused = true;
+
+    expect((await f.client.close()).ok).toBe(true);
+    expect(f.launcher.requests).toContain("checkpoint_program");
+    expect(f.launcher.requests).toContain("shutdown");
   },
 );
 

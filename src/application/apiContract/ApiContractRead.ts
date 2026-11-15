@@ -8,11 +8,11 @@ import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
 import {
   projectStableArtifactFailure,
   stableArtifactInputRecovery,
+  readerIntegrityFailure,
 } from "../../artifacts/StableArtifactFailure.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
   cancelledBy,
@@ -69,12 +69,7 @@ const readFailure = (
         carriedReason(artifactFileCancellationCause(cause)),
       );
     if (cause.reason === "integrity")
-      return new AnalysisArtifactChangedError(
-        operation,
-        input.path,
-        cause.message,
-        { cause },
-      );
+      return readerIntegrityFailure(operation, input.path, cause);
     if (cause.reason === "limit")
       return new AnalysisResourceConstraintError(
         operation,

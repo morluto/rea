@@ -1,3 +1,5 @@
+import { keyedBy, uniqueKeyed } from "../domain/keyedCollection.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type {
   InspectRpmPackageInput,
@@ -238,7 +240,6 @@ const readStrings = (
 
 // RPM header text is UTF-8. Strict decoding keeps a leading U+FEFF as text
 // and refuses invalid sequences instead of replacing them with U+FFFD.
-const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 /** Raw bytes quoted in an invalid-UTF-8 refusal; PATH_MAX covers file paths. */
 const MAX_QUOTED_RAW_BYTES = 4096;
@@ -251,7 +252,7 @@ const headerText = (
   index?: number,
 ): string => {
   try {
-    return UTF8.decode(raw);
+    return decodeStrictUtf8(raw, "preserve");
   } catch {
     const quoted = raw.subarray(0, MAX_QUOTED_RAW_BYTES);
     const position = index === undefined ? "" : `[${String(index)}]`;
@@ -1191,9 +1192,17 @@ export const parseRpmPackage = (
         offset: payloadOffset,
         field: "payload",
       });
-    const immutable = mainHeader.tags.find(
-      (entry) => entry.tag === RPM_TAG.headerImmutable,
+    // A repeated region tag would leave the immutable region ambiguous.
+    const immutableRegion = uniqueKeyed(
+      keyedBy(mainHeader.tags, (entry) => entry.tag),
+      RPM_TAG.headerImmutable,
     );
+    const immutable = immutableRegion.ok
+      ? immutableRegion.value
+      : fail(
+          `RPM main header repeats region tag ${String(RPM_TAG.headerImmutable)}, so its immutable region is ambiguous.`,
+          { field: "main region tag" },
+        );
     const provides = dependencies(
       mainHeader,
       RPM_TAG.provideName,

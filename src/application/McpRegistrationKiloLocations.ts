@@ -1,10 +1,18 @@
 import { dirname, join, relative } from "node:path";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import {
-  vscodeUserDirectory,
-  xdgConfigHomeOrDefault,
-} from "./ClientConfigRoots.js";
-import { parseClientConfiguration } from "./ClientConfigurationDocument.js";
+  directoryFiles,
+  kiloExplicitDirectory,
+  kiloExplicitFile,
+  kiloHomeDirectories,
+  kiloInlineConfiguration,
+  kiloRoot,
+  KILO_GLOBAL_FILES,
+  observedFiles,
+  type KiloConfigDirectory,
+  type KiloFileLayer,
+  type KiloLocationContext,
+} from "./KiloClientLocation.js";
 import {
   resolveKiloRegistrationWorktree,
   pathWithin,
@@ -15,168 +23,15 @@ import {
   present,
   type McpRegistrationLocationContext,
   type McpRegistrationLocation,
-  type McpRegistrationGlobalLocation,
-  type McpRegistrationInlineConfiguration,
 } from "./McpRegistrationLocations.js";
 
-/** Names from Kilo v7.8.27 loadGlobal and config-directory merge order. */
-const KILO_GLOBAL_FILES = [
-  "config.json",
-  "kilo.json",
-  "kilo.jsonc",
-  "opencode.json",
-  "opencode.jsonc",
-] as const;
-const KILO_DIRECTORY_FILES = [
-  "kilo.jsonc",
-  "kilo.json",
-  "opencode.jsonc",
-  "opencode.json",
-] as const;
-interface KiloFileLayer {
-  readonly path: string;
-  readonly authority: "global" | "project" | "readonly";
-}
-interface KiloConfigDirectory {
-  readonly path: string;
-  readonly authority: KiloFileLayer["authority"];
-}
-
-const observedFiles = async (
-  directory: string,
-  names: readonly string[],
-  authority: KiloFileLayer["authority"],
-): Promise<KiloFileLayer[]> => {
-  const files: KiloFileLayer[] = [];
-  for (const name of names) {
-    const path = join(directory, name);
-    if (await present(path)) files.push({ path, authority });
-  }
-  return files;
-};
-const kiloInline = (
+/** `rea mcp add` resolves configured paths against its working directory. */
+const kiloContext = (
   context: McpRegistrationLocationContext,
-): McpRegistrationInlineConfiguration | undefined => {
-  const text = context.environment.KILO_CONFIG_CONTENT;
-  if (!text) return undefined;
-  try {
-    return {
-      origin: "KILO_CONFIG_CONTENT",
-      parsed: parseClientConfiguration(text, "kilo"),
-    };
-  } catch (cause: unknown) {
-    throw new ConfigurationError(
-      "KILO_CONFIG_CONTENT cannot be admitted as Kilo configuration. Repair that selected inline configuration; no settings were written.",
-      { cause },
-    );
-  }
-};
-/** Kilo's Global.Path.config: xdg-basedir's config home joined with "kilo". */
-const kiloRoot = (context: McpRegistrationLocationContext): string =>
-  selectedPath(
-    join(xdgConfigHomeOrDefault(rootContext(context)), "kilo"),
-    context,
-  );
-const kiloHomeDirectories = async (
-  context: McpRegistrationLocationContext,
-): Promise<KiloConfigDirectory[]> => {
-  const directories: KiloConfigDirectory[] = [];
-  for (const name of [".kilocode", ".kilo"]) {
-    const path = selectedPath(join(context.home, name), context);
-    if (await present(path)) directories.push({ path, authority: "global" });
-  }
-  return directories;
-};
-const directoryFiles = async (
-  directories: readonly KiloConfigDirectory[],
-  custom: string | undefined,
-  planned?: KiloFileLayer,
-): Promise<KiloFileLayer[]> => {
-  const seen = new Set<string>();
-  const layers: KiloFileLayer[] = [];
-  for (const directory of directories) {
-    if (seen.has(directory.path)) continue;
-    seen.add(directory.path);
-    if (
-      !directory.path.endsWith(".kilo") &&
-      !directory.path.endsWith(".kilocode") &&
-      directory.path !== custom
-    )
-      continue;
-    if (planned !== undefined && dirname(planned.path) === directory.path)
-      layers.push(planned);
-    layers.push(
-      ...(await observedFiles(
-        directory.path,
-        KILO_DIRECTORY_FILES,
-        directory.authority,
-      )),
-    );
-  }
-  return layers;
-};
-const kiloExplicitFile = (
-  context: McpRegistrationLocationContext,
-): string | undefined =>
-  context.environment.KILO_CONFIG
-    ? selectedPath(context.environment.KILO_CONFIG, context)
-    : undefined;
-const kiloExplicitDirectory = (
-  context: McpRegistrationLocationContext,
-): string | undefined =>
-  context.environment.KILO_CONFIG_DIR
-    ? selectedPath(context.environment.KILO_CONFIG_DIR, context)
-    : undefined;
-
-export const kiloLocation = async (
-  context: McpRegistrationLocationContext,
-): Promise<McpRegistrationGlobalLocation> => {
-  const root = kiloRoot(context);
-  const layers = await observedFiles(root, KILO_GLOBAL_FILES, "global");
-  const explicit = kiloExplicitFile(context);
-  if (explicit !== undefined) {
-    await present(explicit);
-    layers.push({ path: explicit, authority: "global" });
-  }
-  const custom = kiloExplicitDirectory(context);
-  const directories: KiloConfigDirectory[] = [
-    { path: root, authority: "global" },
-    ...(await kiloHomeDirectories(context)),
-  ];
-  if (custom !== undefined)
-    directories.push({ path: custom, authority: "global" });
-  const observed = await directoryFiles(directories, custom);
-  let configPath = observed.at(-1)?.path ?? layers.at(-1)?.path;
-  if (
-    custom !== undefined &&
-    ![...layers, ...observed].some((layer) => dirname(layer.path) === custom)
-  ) {
-    await present(custom);
-    configPath = join(custom, "kilo.json");
-    layers.push(
-      ...(await directoryFiles(directories, custom, {
-        path: configPath,
-        authority: "global",
-      })),
-    );
-  } else layers.push(...observed);
-  configPath ??= join(root, "kilo.json");
-  const inlineConfiguration = kiloInline(context);
-  return {
-    configPath,
-    configPaths:
-      layers.length === 0 ? [configPath] : layers.map((layer) => layer.path),
-    ...(inlineConfiguration === undefined ? {} : { inlineConfiguration }),
-    markers: [
-      root,
-      join(
-        vscodeUserDirectory(rootContext(context)),
-        "globalStorage",
-        "kilocode.kilo-code",
-      ),
-    ],
-  };
-};
+): KiloLocationContext => ({
+  root: rootContext(context),
+  path: (path) => selectedPath(path, context),
+});
 
 const ancestorsThrough = (directory: string, root: string): string[] => {
   const directories: string[] = [];
@@ -219,9 +74,10 @@ export const kiloProjectLocation = async (
     );
   const worktree = await resolveKiloRegistrationWorktree(context);
   const active = ancestorsThrough(worktree.activeDirectory, worktree.root);
-  const root = kiloRoot(context);
+  const kilo = kiloContext(context);
+  const root = kiloRoot(kilo);
   const layers = await observedFiles(root, KILO_GLOBAL_FILES, "readonly");
-  const explicit = kiloExplicitFile(context);
+  const explicit = kiloExplicitFile(kilo);
   if (explicit !== undefined) {
     await present(explicit);
     layers.push({
@@ -253,12 +109,12 @@ export const kiloProjectLocation = async (
     );
   }
   const nativeProject = await projectDirectories(active, "project");
-  const custom = kiloExplicitDirectory(context);
+  const custom = kiloExplicitDirectory(kilo);
   const directories: KiloConfigDirectory[] = [
     { path: root, authority: "readonly" },
     ...primary,
     ...nativeProject,
-    ...(await kiloHomeDirectories(context).then((items) =>
+    ...(await kiloHomeDirectories(kilo).then((items) =>
       items.map((item) => ({ ...item, authority: "readonly" as const })),
     )),
   ];
@@ -294,7 +150,7 @@ export const kiloProjectLocation = async (
     }
     layers.push(...ordered);
   } else layers.push(...directoryLayers);
-  const inlineConfiguration = kiloInline(context);
+  const inlineConfiguration = kiloInlineConfiguration(kilo.root);
   return {
     configPath,
     configPaths: layers.map((layer) => layer.path),

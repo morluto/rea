@@ -336,6 +336,24 @@ it("parses ECMA-426 HTTP source-map prefixes while retaining exact response evid
       { artifact: null, mappings: [], original_sources: [] },
       { artifact: null, mappings: [], original_sources: [] },
     ]);
+    expect(webSourceMapsSchema.parse(result)).toEqual(result);
+    const without = (value: object, omit: string) =>
+      Object.fromEntries(Object.entries(value).filter(([key]) => key !== omit));
+    for (const omit of ["source_index", "declaration_index"])
+      expectInvalidSourceMaps({
+        ...result,
+        items: result.items.map((item) => ({
+          ...item,
+          mappings: item.mappings.map((row) => without(row, omit)),
+        })),
+      });
+    // An invalid map was read in full, so its body identity is required.
+    expectInvalidSourceMaps({
+      ...result,
+      items: result.items.map((item) =>
+        item.status === "invalid" ? without(item, "response_identity") : item,
+      ),
+    });
   } finally {
     server.closeAllConnections();
     if (server.listening)
