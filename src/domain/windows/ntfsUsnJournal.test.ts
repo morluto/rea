@@ -146,3 +146,14 @@ it.each([
     ]);
   },
 );
+
+it("rejects non-aligned V4 extent strides", () => {
+  const bytes = Buffer.alloc(104);
+  bytes.writeUInt32LE(104);
+  bytes.writeUInt16LE(4, 4);
+  bytes.writeUInt16LE(2, 60);
+  bytes.writeUInt16LE(17, 62);
+  expect([...readUsnJournal(bytes)]).toEqual([
+    { ok: false, error: { kind: "malformed", fileOffset: 0 } },
+  ]);
+});
