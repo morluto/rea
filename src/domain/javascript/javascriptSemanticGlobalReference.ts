@@ -3,7 +3,10 @@ import { electronMemberPath } from "./javascriptElectronMemberWrites.js";
 import { isUnshadowedGlobal } from "./javascriptSemanticMutationInitializers.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 import { isImportMetaUrl } from "./javascriptStaticAnalysisHelpers.js";
-import { opaqueCodeMayChangeGlobalRead } from "./javascriptSemanticEffectLog.js";
+import {
+  ambientPathMayHaveChanged,
+  opaqueCodeMayChangeGlobalRead,
+} from "./javascriptSemanticEffectLog.js";
 
 export const GLOBAL_OBJECT_NAMES = ["globalThis", "global", "window", "self"];
 
@@ -41,11 +44,12 @@ export const isUnmodifiedGlobalReference = (
 ): boolean => {
   const path: readonly [string, ...string[]] =
     typeof name === "string" ? [name] : name;
-  if (state.ambientWrites.covers(["global", ...path])) return false;
+  if (ambientPathMayHaveChanged(state, ["global", ...path])) return false;
   const namespace = globalReferenceNamespace(callee, state, path);
   return (
     namespace !== undefined &&
-    (namespace === null || !state.ambientWrites.covers(["global", namespace]))
+    (namespace === null ||
+      !ambientPathMayHaveChanged(state, ["global", namespace]))
   );
 };
 
@@ -72,4 +76,5 @@ export const isUnmodifiedImportMetaUrl = (
   node: t.Node | undefined,
   state: JavaScriptSemanticAnalysisState,
 ): boolean =>
-  isImportMetaUrl(node) && !state.ambientWrites.covers(["import-meta", "url"]);
+  isImportMetaUrl(node) &&
+  !ambientPathMayHaveChanged(state, ["import-meta", "url"]);
