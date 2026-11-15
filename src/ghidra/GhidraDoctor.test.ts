@@ -539,6 +539,39 @@ describe("Windows Ghidra temporary directory check", () => {
   });
 });
 
+const unavailableAuthority = {
+  available: false,
+  failureStage: "self-test",
+  retryable: true,
+  reason: "cleanup failed (145)",
+} as const;
+
+it.each([
+  { name: "selects", environment: { REA_GHIDRA_PROJECT_PATH: "C:\\p\\a.gpr" } },
+  { name: "omits", environment: {} },
+] as const)(
+  "reads REA_GHIDRA_PROJECT_PATH from the registration when it $name a project on Windows",
+  async ({ environment }) => {
+    const authority = vi
+      .spyOn(nativeLoader, "systemWindowsNativeAuthority")
+      .mockReturnValue(unavailableAuthority);
+    onTestFinished(() => authority.mockRestore());
+    const projected = await inspectSystemGhidraProvider(
+      { GHIDRA_INSTALL_DIR: "C:\\tools\\ghidra", ...environment },
+      inspectionResources.owner,
+      undefined,
+      "win32",
+    );
+    expect(projected.available).toBe(false);
+    const check = projected.checks.find(
+      ({ name }) => name === "existing_project",
+    );
+    if ("REA_GHIDRA_PROJECT_PATH" in environment)
+      expect(check).toMatchObject({ ok: false, code: "unsupported_host" });
+    else expect(check).toBeUndefined();
+  },
+);
+
 it("does not claim probe deletion failed when only descriptor cleanup remains", async () => {
   const projected = projectGhidraDoctorInspection(
     await inspection({ installDir: "C:\\tools\\ghidra", platform: "win32" }),
@@ -556,13 +589,6 @@ it("does not claim probe deletion failed when only descriptor cleanup remains", 
   expect(check?.detail).not.toContain("could not delete");
   expect(check?.detail).not.toContain("remains");
 });
-
-const unavailableAuthority = {
-  available: false,
-  failureStage: "self-test",
-  retryable: true,
-  reason: "cleanup failed (145)",
-} as const;
 
 it.each([
   {

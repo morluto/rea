@@ -138,11 +138,14 @@ export const inspectSystemGhidraProvider = async (
   environment: Readonly<NodeJS.ProcessEnv>,
   resourceOwner: RetainedResourceScope,
   signal?: AbortSignal,
+  /** The host whose installation is inspected; defaults to the running host. */
+  platform?: NodeJS.Platform,
 ): Promise<DoctorProviderInspection> => {
   try {
     const installation = await inspectGhidraInstallation({
       environment,
       resourceOwner,
+      ...(platform === undefined ? {} : { platform }),
       ...(signal === undefined ? {} : { signal }),
       ...(environment.GHIDRA_INSTALL_DIR === undefined
         ? {}
