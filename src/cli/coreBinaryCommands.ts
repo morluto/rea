@@ -23,9 +23,9 @@ import { ENHANCED_TOOL_CONTRACTS } from "../contracts/enhancedToolContracts.js";
 import { ELECTRON_TOOL_CONTRACTS } from "../contracts/javascript/electronToolContracts.js";
 import {
   registerContractCommand,
-  registerTargetRoutedCommand,
+  registerRoutedCommand,
   runDirectOnTarget,
-  targetRoute,
+  commandRoute,
 } from "./contractCommand.js";
 
 const decompileSelectorGuidance = `${addressOrProcedureGuidance} Alternatively, use --file-offset alone.`;
@@ -189,12 +189,12 @@ const registerOverviewCommands = (
 ): void => {
   const description = "Get an overview of an app";
   const target = "App, program, or analysis database path";
-  registerTargetRoutedCommand(
+  registerRoutedCommand(
     cli,
     logger,
     { command: CLI_COMMANDS.analyze, description },
     [
-      targetRoute(
+      commandRoute(
         contractNamed(
           ELECTRON_TOOL_CONTRACTS,
           "analyze_javascript_application",
@@ -209,11 +209,12 @@ const registerOverviewCommands = (
         // Route JavaScript targets exactly like analyze-javascript-application.
         runJavaScriptApplicationCommand(environment),
         {
-          takesTarget: isJavaScriptApplicationPath,
+          takes: async ({ path }) =>
+            typeof path === "string" && isJavaScriptApplicationPath(path),
           requirement: "the static JavaScript ASAR/directory analysis lane",
         },
       ),
-      targetRoute(
+      commandRoute(
         contractNamed(ENHANCED_TOOL_CONTRACTS, "binary_overview"),
         {
           command: CLI_COMMANDS.analyze,
