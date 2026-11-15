@@ -357,13 +357,15 @@ checkCounted(
 // `find` on a parsed section table silently keeps the first of repeated
 // declarations. Select keyed sections through src/domain/keyedCollection
 // (`uniqueKeyed`, `allKeyed`, or `firstKeyed`/`lastKeyed` with the format's
-// precedence rule). The counted sites include address-containment searches.
+// precedence rule); an address-containment test that selects nothing uses
+// `some`. GuidanceAccess looks up a guidance document's heading section by
+// its locator identity, not a parsed binary section table.
 checkCounted(
   "first-match section lookup (select through src/domain/keyedCollection)",
   "section-first-match",
   files,
   /\bsections\.find(?:Last)?\(/gu,
-  [],
+  ["src/application/GuidanceAccess.ts"],
 );
 
 if (baselinesShrunk) {
