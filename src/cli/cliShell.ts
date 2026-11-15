@@ -25,6 +25,7 @@ import {
   streamCliCommandResults,
   type CliResultOutput,
 } from "./cliResultOutput.js";
+import { augmentCliGlobalHelp } from "./cliGlobalHelp.js";
 import { completionHelpNote, createCliCompletions } from "./completions.js";
 import { excludeDeclaredSensitiveArguments } from "./explicitSensitiveArguments.js";
 import { reportUnknownMcpSubcommand } from "./mcpBuiltinCommands.js";
@@ -158,29 +159,28 @@ export const createCliShell = (options: CliShellOptions): CliInstance => {
   );
   cli.serve = (arguments_ = process.argv.slice(2), serveOptions) => {
     if (complete(arguments_, serveOptions ?? {})) return Promise.resolve();
+    const write =
+      serveOptions?.stdout ?? ((text: string) => process.stdout.write(text));
+    const stdout = (text: string) => write(augmentCliGlobalHelp(text));
+    const options = { ...serveOptions, stdout };
     const normalized = normalizeCliArguments(arguments_);
     const registration = serveMcpRegistration(
       normalized,
       environment,
       defaultRegistration,
-      serveOptions ?? {},
+      options,
     );
     if (registration !== undefined) return registration;
-    const result = serveStrict(
-      normalized,
-      serveOptions ?? {},
-      (tokens, selected) =>
-        serveDeclared(tokens, selected, (declared, declaredOptions) =>
-          reportUnknownMcpSubcommand(cli.name, declared, declaredOptions)
-            ? Promise.resolve()
-            : serve(adaptCliOutputArgumentsForIncur(declared), declaredOptions),
-        ),
+    const result = serveStrict(normalized, options, (tokens, selected) =>
+      serveDeclared(tokens, selected, (declared, declaredOptions) =>
+        reportUnknownMcpSubcommand(cli.name, declared, declaredOptions)
+          ? Promise.resolve()
+          : serve(adaptCliOutputArgumentsForIncur(declared), declaredOptions),
+      ),
     );
     const note = completionHelpNote(normalized);
     if (note === undefined) return result;
     return result.then(() => {
-      const write =
-        serveOptions?.stdout ?? ((text: string) => process.stdout.write(text));
       write(`\n${note}`);
     });
   };
