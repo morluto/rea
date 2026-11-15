@@ -1,3 +1,4 @@
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import { EvmAdmissionError } from "./EvmAdmissionError.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import type { ProviderRejectionCode } from "../domain/providerSelection.js";
@@ -72,7 +73,6 @@ import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import {
   evmFailureDialect,
-  capturedEvmOutput,
   evmReplyBudgetFailure,
   type EvmFileSizeFailureEvidence,
 } from "./EvmoleFailures.js";
@@ -675,7 +675,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
           },
         },
       );
-      const capturedOutput = capturedEvmOutput(execution);
+      const capturedOutput = capturedProviderOutput(execution);
       retainedOutput = capturedOutput;
       let reply: z.output<typeof replySchema>;
       try {

@@ -1,3 +1,4 @@
+import { capturedProviderOutput } from "../../process/capturedProviderOutput.js";
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { snapshotEnvironment } from "../../process/snapshotEnvironment.js";
@@ -14,7 +15,6 @@ import {
 import {
   pwntoolsFailureDialect,
   pwntoolsUnavailable,
-  capturedPwntoolsOutput,
   pwntoolsBudgetRecovery,
 } from "./PwntoolsFailures.js";
 import { randomUUID } from "node:crypto";
@@ -461,7 +461,7 @@ export class PwntoolsDecoder<
         options,
         failure,
       );
-      const capturedOutput = capturedPwntoolsOutput(execution);
+      const capturedOutput = capturedProviderOutput(execution);
       let reply: z.output<typeof replySchema>;
       try {
         let file;
@@ -875,7 +875,7 @@ export class PwntoolsDecoder<
           reason: cause instanceof Error ? cause.message : String(cause),
           captured_output: {
             ...(pending.diagnostics ??
-              capturedPwntoolsOutput(process.supervisor.snapshot())),
+              capturedProviderOutput(process.supervisor.snapshot())),
           },
           previous_error:
             pending.failure === undefined

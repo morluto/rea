@@ -323,6 +323,17 @@ const checkCounted = (label, key, selected, pattern, owners) => {
     );
 };
 
+// A provider failure's captured output comes from one owner,
+// capturedProviderOutput in src/process; local copies drift on byte counts
+// (retained or written) and on how output loss marks truncation.
+checkCounted(
+  "captured output copied from a process snapshot (use capturedProviderOutput from src/process/capturedProviderOutput)",
+  "captured-output-copy",
+  files,
+  /\bstdout: [\w.]+\.stdout\.text\b/gu,
+  ["src/process/capturedProviderOutput.ts"],
+);
+
 // Coverage status has one vocabulary, coverageStatusSchema in
 // src/domain/coverage.ts. A local enum that contains "complete" either copies
 // it or drops `unknown`, which forces an unknown producer to pick a side.
