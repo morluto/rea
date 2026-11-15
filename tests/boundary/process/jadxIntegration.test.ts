@@ -1084,6 +1084,12 @@ it.each(["tool-error", "frame-overflow", "body-error", "heap-decoy"])(
         _tag: "AnalysisResourceConstraintError",
         reason: expect.stringContaining("MCP frame exceeds"),
       });
+      // The refusal is built after finalization, so it keeps the output
+      // the transport retained.
+      expect(outcome.error).toHaveProperty(
+        "capturedOutput",
+        expect.objectContaining({ truncated: expect.any(Boolean) }),
+      );
       // A fixed frame ceiling, not an output defect: recovery names it.
       expect(outcome.error).toHaveProperty("fixedAllowance", {
         name: "The JADX frame allowance of 8388608 bytes",
