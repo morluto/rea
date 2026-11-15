@@ -82,9 +82,6 @@
     "src/gdb/GdbSessionManager.ts": 1,
     "src/process/ownedDebuggerSession.ts": 1
   },
-  "parser-format-failure-class": {
-    "src/domain/evidenceFormat.ts": 1
-  },
   "parser-json-parse": {
     "src/android/JadxProtocol.ts": 2,
     "src/android/JadxWorkspaceRoot.ts": 1,
