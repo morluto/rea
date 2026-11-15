@@ -706,6 +706,10 @@ it.each([
     { code: true, website: true, package: false },
   ],
   [
+    "website/public/index.html",
+    { code: false, docs: true, website: true, package: false },
+  ],
+  [
     "website/locales/zh-CN/messages.po",
     { code: false, website: true, package: false },
   ],

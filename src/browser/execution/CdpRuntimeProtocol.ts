@@ -2,28 +2,6 @@ import { z } from "zod";
 import { cdpResourceColumnSchema } from "../../domain/cdpObservationSchemas.js";
 
 const integer = z.int().min(0);
-const range = z.object({
-  startOffset: integer,
-  endOffset: integer,
-  count: integer,
-});
-/** CDP precise coverage preserves every nested producer range. */
-export const preciseCoverageSchema = z.object({
-  timestamp: z.number().min(0),
-  result: z.array(
-    z.object({
-      scriptId: z.string().min(1),
-      url: z.string(),
-      functions: z.array(
-        z.object({
-          functionName: z.string(),
-          isBlockCoverage: z.boolean(),
-          ranges: z.array(range),
-        }),
-      ),
-    }),
-  ),
-});
 /** The full reported synchronous and embedded asynchronous stack is retained. */
 export const runtimeStackSchema = z.object({
   callFrames: z.array(
@@ -53,13 +31,4 @@ export const runtimeListenersSchema = z.object({
       columnNumber: cdpResourceColumnSchema,
     }),
   ),
-});
-/** Runtime document IDs; frame URLs are interpreted by CdpCaptureDocuments. */
-export const runtimeFrameTreeSchema = z.object({
-  frameTree: z.object({
-    frame: z.object({
-      id: z.string().min(1),
-      loaderId: z.string().optional(),
-    }),
-  }),
 });

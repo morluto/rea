@@ -25,16 +25,14 @@ import {
   type UnknownRecord,
 } from "./CdpCaptureValues.js";
 import {
-  mainFrameUrl,
   observeCdpFrameUrl,
-  observeMainFrameUrl,
   classifyCdpFrameUrl,
 } from "./CdpCaptureDocuments.js";
 import {
   selectCdpFrameIdentity,
-  cdpFrameRecordFacts,
   cdpFrameEventFacts,
 } from "./CdpFrameIdentity.js";
+import { observedFrameUrl } from "./protocol/CdpFrameTree.js";
 import { cdpTargetEventMatches } from "./CdpTargetEvents.js";
 
 import {
@@ -83,9 +81,9 @@ export const observeCdpSession = async (
     allowedOrigins,
     operation: "observe_web_session",
   });
-  const initialUrl = mainFrameUrl(initial) ?? "";
-  const mainFrameId = frameId(initial);
-  if (mainFrameId === undefined)
+  const initialUrl = observedFrameUrl(initial.root.url) ?? "";
+  const mainFrameId = initial.root.facts.frameId;
+  if (mainFrameId === null)
     throw new BrowserObservationError("inspect_web_page", "protocol_error");
   const capture = new TimelineCapture(allowedOrigins, mainFrameId, initialUrl);
   let removeListener = (): void => {};
@@ -807,14 +805,14 @@ const captureFinalUrl = async (
   allowedOrigins: ReadonlySet<string>,
 ): Promise<EndReason> => {
   if (capture.scopeExcluded) return "target_left_scope";
-  const result = await context.connection.send(
+  const tree = await context.connection.send(
     "Page.getFrameTree",
     {},
     context.sessionId,
     context.signal,
   );
   if (capture.scopeExcluded) return "target_left_scope";
-  const observation = observeMainFrameUrl(result);
+  const observation = tree.root.url;
   const facts = classifyCdpFrameUrl(observation, allowedOrigins);
   if (observation.kind !== "observed") capture.invalidateFinalUrl();
   if (facts.scope === "outside_policy" || facts.scope === "unsupported") {
@@ -824,11 +822,6 @@ const captureFinalUrl = async (
   if (facts.url !== undefined) capture.setFinalUrl(facts.url);
   return "window_elapsed";
 };
-
-const frameId = (result: unknown): string | undefined =>
-  cdpFrameRecordFacts(
-    recordValue(recordValue(recordValue(result)?.frameTree)?.frame),
-  ).frameId ?? undefined;
 
 const hasNoComparableProducerTimestamp = (method: string): boolean =>
   method === "Page.frameRequestedNavigation" ||

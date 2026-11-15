@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { compareCountedBaseline } from "./counted-baseline.mjs";
 
 // Architecture guards for the strict-identity / best-effort-inference split.
 // - Composite dedup keys must not NUL-join variable-length or free-form
@@ -162,6 +163,14 @@ check(
   ],
 );
 
+// Mach-O load-command codes have one table; a local copy drifts from it.
+check(
+  "local Mach-O load-command code (import LC from src/domain/apple/machoLoadCommandCodes)",
+  files,
+  /\bLC_[A-Z0-9_]+\s*=\s*(?:0x[0-9a-f]+|\d+)\b/iu,
+  ["src/domain/apple/machoLoadCommandCodes.ts"],
+);
+
 // Counted baselines record the remaining copies of a pattern that has one
 // owner. A file may not gain copies and a baseline may not grow; when copies
 // are removed, `--shrink-baselines` lowers the recorded counts (and never
@@ -174,44 +183,47 @@ const baselines = JSON.parse(await readFile(baselinePath, "utf8"));
 const shrinkBaselines = process.argv.includes("--shrink-baselines");
 let baselinesShrunk = false;
 const checkCounted = (label, key, selected, pattern, owners) => {
-  const baseline = baselines[key] ?? {};
   const counts = new Map();
   for (const file of selected) {
     if (owners.includes(file.path)) continue;
     const count = file.content.match(pattern)?.length ?? 0;
     if (count > 0) counts.set(file.path, count);
   }
-  const grown = [];
-  const stale = [];
-  for (const [path, count] of counts) {
-    const allowed = baseline[path] ?? 0;
-    if (count > allowed)
-      grown.push(`  ${path}: ${count} (baseline ${allowed})`);
-  }
-  for (const [path, allowed] of Object.entries(baseline)) {
-    const count = counts.get(path) ?? 0;
-    if (count < allowed) stale.push({ path, count, allowed });
-  }
-  if (grown.length > 0)
-    failures.push(`${label}; new copies are not allowed:\n${grown.join("\n")}`);
-  if (stale.length === 0) return;
-  if (shrinkBaselines) {
-    for (const { path, count } of stale)
-      if (count === 0) delete baseline[path];
-      else baseline[path] = count;
-    baselines[key] = baseline;
-    baselinesShrunk = true;
-    return;
-  }
-  failures.push(
-    `${label}; copies were removed, so lower the baseline with \`node scripts/verify/architecture-guards.mjs --shrink-baselines\`:\n${stale
+  const compared = compareCountedBaseline(
+    counts,
+    baselines[key] ?? {},
+    shrinkBaselines,
+  );
+  const lines = (differences) =>
+    differences
       .map(
         ({ path, count, allowed }) =>
           `  ${path}: ${count} (baseline ${allowed})`,
       )
-      .join("\n")}`,
-  );
+      .join("\n");
+  if (compared.grown.length > 0)
+    failures.push(
+      `${label}; new copies are not allowed:\n${lines(compared.grown)}`,
+    );
+  if (compared.baseline !== (baselines[key] ?? {})) {
+    baselines[key] = compared.baseline;
+    baselinesShrunk = true;
+  }
+  if (compared.stale.length > 0)
+    failures.push(
+      `${label}; copies were removed, so lower the baseline with \`node scripts/verify/architecture-guards.mjs --shrink-baselines\`:\n${lines(compared.stale)}`,
+    );
 };
+
+// Cancellation reasons are required by `cancelledBy` in analysisErrorCore; a
+// direct construction can omit or replace the caller's reason.
+checkCounted(
+  "direct AnalysisCancelledError construction (use cancelledBy from src/domain/analysisErrorCore)",
+  "analysis-cancelled-constructor",
+  files,
+  /new AnalysisCancelledError\(/gu,
+  ["src/domain/analysisErrorCore.ts"],
+);
 
 // Byte-format parsers read untrusted input. Bounds, truncation and failure
 // kind belong to BinaryReader (src/native/metadata/BinaryContainer.ts) and
@@ -277,6 +289,17 @@ checkCounted(
   parserFiles,
   /throw new (?:Error|TypeError|RangeError)\(/gu,
   [],
+);
+
+// A per-format failure class restates the ParseFailure algebra under its own
+// spelling and needs its own catch-site translation; parsers throw a
+// ParseFailureError (or a subclass of it) instead.
+checkCounted(
+  "per-format failure class extending Error (throw a ParseFailureError from src/domain/parseFailure)",
+  "parser-format-failure-class",
+  files,
+  /class \w*(?:Format|Parse)(?:Failure|Error) extends Error\b/gu,
+  ["src/domain/parseFailure.ts"],
 );
 
 // JSON.parse keeps the last of repeated member names without saying so; a

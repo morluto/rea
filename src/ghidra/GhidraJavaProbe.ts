@@ -9,7 +9,7 @@ import {
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { randomUUID } from "node:crypto";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { cancelledBy, carriedReason } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
@@ -235,17 +235,20 @@ const observeGhidraJava = async (
     ) {
       primary =
         inspectionCancellation ??
-        new AnalysisCancelledError("ghidra:java", {
-          cause: commandFailure.cancellation.reason,
-          ...(output === undefined ? {} : { capturedOutput: output }),
-          ...(interpreted?.ok === true
-            ? {
-                diagnostics: {
-                  java_observation: jsonValueSchema.parse(interpreted.value),
-                },
-              }
-            : {}),
-        });
+        cancelledBy(
+          "ghidra:java",
+          carriedReason(commandFailure.cancellation.reason),
+          {
+            ...(output === undefined ? {} : { capturedOutput: output }),
+            ...(interpreted?.ok === true
+              ? {
+                  diagnostics: {
+                    java_observation: jsonValueSchema.parse(interpreted.value),
+                  },
+                }
+              : {}),
+          },
+        );
     } else if (inspectionCancellation !== undefined) {
       primary = inspectionCancellation;
     } else if (

@@ -1,7 +1,7 @@
 import { SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
 import {
-  AnalysisCancelledError,
   AnalysisTimeoutError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { currentAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
@@ -82,9 +82,7 @@ export class JebMcpDeadline {
             cause: this.#deadline.signal.reason,
             ...jebMcpTimeoutGuidance(this.phase, this.timeoutMs, this.source),
           })
-        : new AnalysisCancelledError(operation, {
-            cause: this.#deadline.signal.reason,
-          });
+        : cancelledBy(operation, this.#deadline.signal);
     }
     if (cause instanceof SdkError && cause.code === SdkErrorCode.RequestTimeout)
       return new AnalysisTimeoutError(operation, this.timeoutMs, {

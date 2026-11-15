@@ -10,7 +10,7 @@ import { ModelHeaderReader } from "./ModelHeaderReader.js";
 import {
   MODEL_HEADER_BYTES,
   MODEL_JSON_NESTING,
-  ModelFormatFailure,
+  modelCapacityFailure,
   ModelReportBudget,
   rejectModel,
   rejectPickle,
@@ -73,10 +73,9 @@ class HeaderJson {
     this.#space();
     this.budget.charge(64);
     if (depth > MODEL_JSON_NESTING)
-      throw new ModelFormatFailure(
-        "capacity",
-        `Safetensors JSON nesting exceeds ${String(MODEL_JSON_NESTING)} levels`,
+      throw modelCapacityFailure(
         "json-nesting",
+        `Safetensors JSON nesting exceeds ${String(MODEL_JSON_NESTING)} levels`,
       );
     const c = this.text[this.#position];
     if (c === '"') return this.#string();
@@ -190,10 +189,9 @@ const integersOf = (value: HeaderValue | undefined): bigint[] => {
 };
 const exactOffset = (value: bigint): number => {
   if (value > BigInt(Number.MAX_SAFE_INTEGER))
-    throw new ModelFormatFailure(
-      "capacity",
-      "Safetensors data offset exceeds exact host offset precision",
+    throw modelCapacityFailure(
       "exact-offset",
+      "Safetensors data offset exceeds exact host offset precision",
     );
   return Number(value);
 };
