@@ -1,24 +1,36 @@
 import {
-  AnalysisError,
+  ProviderOwnedAnalysisError,
+  providerErrorTag,
   type AnalysisContinuingCallerGuidance,
   type AnalysisErrorOptions,
   type AnalysisErrorOwnPresentation,
-} from "./analysisErrorBase.js";
+  type ProviderRequestFailure,
+} from "../domain/analysisErrorBase.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import {
   providerRetryAction,
   type HopperProcessProviderState,
   type ProviderFailureStage,
-} from "./providerOperationHealth.js";
+} from "../domain/providerOperationHealth.js";
 import {
   dialogTimeoutFromDiagnostic,
   hopperStartupFailure,
   invalidDialogTimeoutMessage,
   type HopperStartupFailureCode,
   type HopperStartupFailureDiagnostic,
-} from "./hopperStartupFailure.js";
+} from "./HopperStartupFailure.js";
 
 /** Base class for failures produced specifically by the Hopper provider. */
-export abstract class HopperError extends AnalysisError {}
+export abstract class HopperError extends ProviderOwnedAnalysisError {}
+
+/** The Hopper request a failure answered, as recorded by the client. */
+const hopperRequestFacts = (
+  operation: string | undefined,
+  requestId: number | undefined,
+): Readonly<Record<string, JsonValue>> => ({
+  ...(operation === undefined ? {} : { operation }),
+  ...(requestId === undefined ? {} : { request_id: requestId }),
+});
 
 /** Observed launcher outcome; a helper exit does not establish GUI lifetime. */
 export type HopperLauncherOutcome = {
@@ -61,7 +73,7 @@ const HOPPER_APPLE_EVENTS_AUTHORIZATION_REMEDIATION =
   "Allow the application that starts REA under System Settings > Privacy & Security > Automation. If the client lacks the com.apple.security.automation.apple-events entitlement, ask the client developer to add it or start REA from a client macOS can authorize, such as Terminal. Retrying from the same unauthorized client will not succeed until authorization changes.";
 
 export class HopperTimeoutError extends HopperError {
-  readonly _tag = "HopperTimeoutError";
+  readonly _tag = providerErrorTag("HopperTimeoutError");
 
   constructor(
     readonly timeoutMs: number,
@@ -85,6 +97,22 @@ export class HopperTimeoutError extends HopperError {
           }
         : options,
     );
+  }
+
+  override providerRequest(): ProviderRequestFailure {
+    return {
+      facts: hopperRequestFacts(this.operation, this.requestId),
+      reattribute: (operation, options) =>
+        new HopperTimeoutError(
+          this.timeoutMs,
+          operation,
+          this.requestId,
+          this.providerState,
+          this.stage,
+          this.launcherOutcome,
+          options,
+        ),
+    };
   }
 
   override ownPresentation(): AnalysisErrorOwnPresentation {
@@ -133,7 +161,7 @@ export class HopperTimeoutError extends HopperError {
 
 /** The caller cancelled a Hopper operation before it completed. */
 export class HopperCancelledError extends HopperError {
-  readonly _tag = "HopperCancelledError";
+  readonly _tag = providerErrorTag("HopperCancelledError");
 
   constructor(
     ...parameters:
@@ -177,7 +205,7 @@ export const hopperCancelledBySignal = (
 
 /** Hopper returned bytes or JSON that do not satisfy the NDJSON RPC contract. */
 export class HopperProtocolError extends HopperError {
-  readonly _tag = "HopperProtocolError";
+  readonly _tag = providerErrorTag("HopperProtocolError");
 
   override ownPresentation(): AnalysisErrorOwnPresentation {
     return { code: "unreadable_output", category: "execution_failure" };
@@ -199,7 +227,7 @@ export interface HopperRemoteErrorContext extends AnalysisErrorOptions {
 }
 
 export class HopperRemoteError extends HopperError {
-  readonly _tag = "HopperRemoteError";
+  readonly _tag = providerErrorTag("HopperRemoteError");
   readonly diagnosticType: HopperDiagnosticType;
   readonly operation: string | undefined;
   readonly requestId: number | undefined;
@@ -213,6 +241,23 @@ export class HopperRemoteError extends HopperError {
     this.diagnosticType = context.diagnosticType ?? "remote";
     this.operation = context.operation;
     this.requestId = context.requestId;
+  }
+
+  override providerRequest(): ProviderRequestFailure {
+    return {
+      facts: {
+        ...hopperRequestFacts(this.operation, this.requestId),
+        provider_code: this.code,
+        diagnostic_type: this.diagnosticType,
+      },
+      reattribute: (operation, options) =>
+        new HopperRemoteError(this.code, this.safeMessage, {
+          ...options,
+          operation,
+          requestId: this.requestId,
+          diagnosticType: this.diagnosticType,
+        }),
+    };
   }
 
   override ownPresentation(): AnalysisErrorOwnPresentation {
@@ -250,7 +295,7 @@ export interface HopperProcessErrorContext extends AnalysisErrorOptions {
 }
 
 export class HopperProcessError extends HopperError {
-  readonly _tag = "HopperProcessError";
+  readonly _tag = providerErrorTag("HopperProcessError");
   readonly failureCode: HopperStartupFailureCode | undefined;
   override readonly userMessage: string | undefined;
   readonly providerState: HopperProcessProviderState;
@@ -289,6 +334,30 @@ export class HopperProcessError extends HopperError {
     this.failureCode = failure?.code;
     this.providerState =
       context.providerState ?? (exitCode === null ? "unknown" : "exited");
+  }
+
+  override get providerWide(): boolean {
+    return true;
+  }
+
+  override providerRequest(): ProviderRequestFailure {
+    return {
+      facts: hopperRequestFacts(this.operation, this.requestId),
+      reattribute: (operation, options) =>
+        new HopperProcessError(this.exitCode, {
+          ...options,
+          operation,
+          requestId: this.requestId,
+          providerState: this.providerState,
+          stage: this.stage,
+          ...(this.diagnostic === undefined
+            ? {}
+            : { diagnostic: this.diagnostic }),
+          ...(this.launcherFailure === undefined
+            ? {}
+            : { launcherFailure: this.launcherFailure }),
+        }),
+    };
   }
 
   override ownPresentation(): AnalysisErrorOwnPresentation {
@@ -417,7 +486,7 @@ export const hopperAppleEventsAuthorizationDenied = (
 
 /** Hopper or the repository bridge could not be started. */
 export class HopperStartError extends HopperError {
-  readonly _tag = "HopperStartError";
+  readonly _tag = providerErrorTag("HopperStartError");
   override readonly userMessage: string | undefined;
   readonly ownerRunId: string | undefined;
   readonly launcherFailure: HopperLauncherOutcome | undefined;
@@ -436,6 +505,10 @@ export class HopperStartError extends HopperError {
     this.ownerRunId = options?.ownerRunId;
     this.launcherFailure = options?.launcherFailure;
     this.launchRejection = options?.launchRejection;
+  }
+
+  override get providerWide(): boolean {
+    return true;
   }
 
   override ownPresentation(): AnalysisErrorOwnPresentation {

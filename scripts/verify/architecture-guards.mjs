@@ -166,13 +166,13 @@ check(
   ],
 );
 
-// Provider errors carry their own presentation (AnalysisError.ownPresentation);
-// the domain presenter reads it and never imports a provider's error types.
+// Hopper's error types live with the Hopper adapter. Shared layers read the
+// provider-neutral facts every AnalysisError carries (ownPresentation,
+// providerWide, providerRequest) and never import a provider's error types.
 check(
-  "domain import of Hopper error types (implement ownPresentation in the error's module)",
-  files.filter((file) => file.path.startsWith("src/domain/")),
-  /from "\.{1,2}\/(?:[\w-]+\/)*hopperErrors\.js"/u,
-  ["src/domain/hopperErrors.ts"],
+  "import of Hopper error types outside src/hopper (use the provider-neutral AnalysisError facts)",
+  files.filter((file) => !file.path.startsWith("src/hopper/")),
+  /from "\.{1,2}\/(?:[\w-]+\/)*HopperErrors\.js"/u,
 );
 
 // Mach-O load-command codes have one table; a local copy drifts from it.

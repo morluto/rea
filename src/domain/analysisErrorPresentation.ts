@@ -40,6 +40,8 @@ import {
   type AnalysisContinuingCallerGuidance,
   type AnalysisError,
   type AnalysisErrorTag,
+  domainErrorTag,
+  ProviderOwnedAnalysisError,
 } from "./analysisErrorBase.js";
 import type { AnalysisErrorProjection } from "./analysisErrorProjection.js";
 
@@ -344,7 +346,11 @@ export const analysisErrorCategory = (
     (error.reason === "already-exists" || error.reason === "constraint")
   )
     return "invalid_input";
-  return STATIC_ERROR_CATEGORIES[error._tag] ?? "execution_failure";
+  const tag = domainErrorTag(error);
+  return (
+    (tag === undefined ? undefined : STATIC_ERROR_CATEGORIES[tag]) ??
+    "execution_failure"
+  );
 };
 
 const browserErrorCategory = (
@@ -587,21 +593,22 @@ const timeoutUserMessage = (error: AnalysisTimeoutError): string =>
 const timeoutRemediation = (error: AnalysisTimeoutError): string =>
   `Inspect any partial Evidence, provider diagnostics and reported session/provider cleanup state for ${error.operation}. Reduce the request if supported, or resolve the reported provider condition before retrying. Do not repeat the unchanged call or retry while work or cleanup may still be active.`;
 
-const UNREADABLE_OUTPUT_TAGS: ReadonlySet<AnalysisErrorTag> = new Set([
+const UNREADABLE_OUTPUT_TAGS: ReadonlySet<string> = new Set<AnalysisErrorTag>([
   "AnalysisProtocolError",
   "AnalysisOutputError",
 ]);
-const UNSUPPORTED_PROVIDER_TAGS: ReadonlySet<AnalysisErrorTag> = new Set([
-  "AnalysisCapabilityUnavailableError",
-  "ProviderSelectionError",
-]);
-const CANCELLED_TAGS: ReadonlySet<AnalysisErrorTag> = new Set([
+const UNSUPPORTED_PROVIDER_TAGS: ReadonlySet<string> =
+  new Set<AnalysisErrorTag>([
+    "AnalysisCapabilityUnavailableError",
+    "ProviderSelectionError",
+  ]);
+const CANCELLED_TAGS: ReadonlySet<string> = new Set<AnalysisErrorTag>([
   "AnalysisCancelledError",
 ]);
-const TIMEOUT_TAGS: ReadonlySet<AnalysisErrorTag> = new Set([
+const TIMEOUT_TAGS: ReadonlySet<string> = new Set<AnalysisErrorTag>([
   "AnalysisTimeoutError",
 ]);
-const ADAPTER_FAILURE_TAGS: ReadonlySet<AnalysisErrorTag> = new Set([
+const ADAPTER_FAILURE_TAGS: ReadonlySet<string> = new Set<AnalysisErrorTag>([
   "ProviderAdapterError",
 ]);
 
@@ -704,18 +711,18 @@ const KNOWN_ERROR_TAGS = {
   EvidenceIntegrityError: true,
   EvidenceFileError: true,
   UnknownRegistryError: true,
-  HopperTimeoutError: true,
-  HopperCancelledError: true,
-  HopperProtocolError: true,
-  HopperRemoteError: true,
-  HopperProcessError: true,
-  HopperStartError: true,
   ConfigurationError: true,
   NoBinaryOpenError: true,
   BinaryTargetError: true,
 } as const satisfies Readonly<Record<AnalysisErrorTag, true>>;
 
-export const assertKnownAnalysisErrorTag = (tag: AnalysisErrorTag): void => {
-  if (KNOWN_ERROR_TAGS[tag] !== true)
+/**
+ * Accept a domain error the shared tables present, or a provider-owned error
+ * that presents itself.
+ */
+export const assertKnownAnalysisError = (error: AnalysisError): void => {
+  if (error instanceof ProviderOwnedAnalysisError) return;
+  const tag = domainErrorTag(error);
+  if (tag === undefined || KNOWN_ERROR_TAGS[tag] !== true)
     throw new TypeError("Unknown analysis error tag");
 };

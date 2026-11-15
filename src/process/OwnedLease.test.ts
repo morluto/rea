@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { HopperStartError } from "../domain/hopperErrors.js";
+import { HopperStartError } from "../hopper/HopperErrors.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 // Unix socket paths have a short platform limit; the canonical system temp path can exceed it.
@@ -76,7 +76,8 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-const { acquireLinuxHopperApplicationLease } = await import("./HopperLease.js");
+const { acquireLinuxHopperApplicationLease } =
+  await import("../hopper/HopperLease.js");
 const { acquireOwnedLease } = await import("./OwnedLease.js");
 const { HopperApplicationLauncher } =
   await import("../hopper/BridgeLauncher.js");

@@ -33,7 +33,10 @@ import {
 } from "../process/ExecFileOutput.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { waitForAbortableDelay } from "../process/ProviderDeadline.js";
-import { acquireHopperReleaseCacheLease } from "../process/HopperLease.js";
+import {
+  acquireHopperReleaseCacheLease,
+  hopperLeaseMessage,
+} from "../process/HopperLease.js";
 import type { OwnedLease } from "../process/OwnedLease.js";
 import {
   downloadHopperPackage,
@@ -434,6 +437,12 @@ export class LinuxHopperPublisher {
         launcherSha256: digest,
         runId,
         resources,
+        failure: (failure, cause) =>
+          new HopperReleaseError(
+            "verification_unavailable",
+            hopperLeaseMessage(failure),
+            { cause },
+          ),
       });
       if (acquired.acquired) return acquired.lease;
       const remaining = deadline - performance.now();

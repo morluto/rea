@@ -11,11 +11,14 @@ import {
   HopperProtocolError,
   HopperRemoteError,
   HopperTimeoutError,
-} from "../domain/hopperErrors.js";
+} from "./HopperErrors.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import type { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import { err, type Result } from "../domain/result.js";
 
-type HopperRequestResult = Result<JsonValue, HopperError>;
+/** A request oversize refusal is reported before the request reaches Hopper. */
+type HopperRequestFailure = HopperError | AnalysisResourceConstraintError;
+type HopperRequestResult = Result<JsonValue, HopperRequestFailure>;
 
 /** Node timer ceiling; larger deadlines would be clamped instead of honored. */
 const MAX_TIMEOUT_MS = 2_147_483_647;
@@ -383,9 +386,9 @@ export class HopperRequestQueue {
 }
 
 const withRequestContext = (
-  error: HopperError,
+  error: HopperRequestFailure,
   entry: QueuedRequest,
-): HopperError => {
+): HopperRequestFailure => {
   if (error instanceof HopperProcessError)
     return new HopperProcessError(error.exitCode, {
       ...error,

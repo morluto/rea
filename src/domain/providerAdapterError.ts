@@ -24,4 +24,8 @@ export class ProviderAdapterError extends AnalysisError {
     this.userMessage = options.userMessage;
     this.remediationAction = options.remediationAction;
   }
+
+  override get providerWide(): boolean {
+    return true;
+  }
 }

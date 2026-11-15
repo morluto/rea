@@ -12,7 +12,7 @@ import {
   UNRETAINED_EVIDENCE_EXPORT_GUIDANCE,
   analysisErrorRemediationAction,
   analysisErrorUserMessage,
-  assertKnownAnalysisErrorTag,
+  assertKnownAnalysisError,
   hasAnalysisContinuingCallerGuidance,
 } from "./analysisErrorPresentation.js";
 import {
@@ -42,6 +42,7 @@ import { ProviderAdapterError } from "./providerAdapterError.js";
 import { ProviderSelectionError } from "./providerSelectionError.js";
 import { UnknownRegistryError } from "./unknownRegistryError.js";
 import {
+  domainErrorTag,
   primaryAnalysisError,
   resolvedAnalysisError,
   sourcePublicationRecoveryOf,
@@ -391,9 +392,9 @@ const projectError = (
     owner = owner.cleanupPrimary
   )
     cleanupReport = owner.cleanupReport;
-  assertKnownAnalysisErrorTag(error._tag);
+  assertKnownAnalysisError(error);
   const primary = primaryAnalysisError(error);
-  assertKnownAnalysisErrorTag(primary._tag);
+  assertKnownAnalysisError(primary);
   const underlyingCode = underlyingErrorCode(primary);
   const code = error.cleanupIncomplete ? "cleanup_incomplete" : underlyingCode;
   const primaryDetails = errorDetails(primary);
@@ -585,7 +586,10 @@ const underlyingErrorCode = (
   if (error instanceof UnknownRegistryError)
     return unknownRegistryCode(error.reason);
   if (error._tag === "ProcessCaptureError") return processCaptureCode(error);
-  return staticErrorCode(error._tag);
+  const tag = domainErrorTag(error);
+  if (tag === undefined)
+    throw new TypeError(`Unpresented provider error: ${error._tag}`);
+  return staticErrorCode(tag);
 };
 
 const BROWSER_ERROR_CODES: Readonly<
@@ -649,17 +653,7 @@ const processCaptureCode = (
   return "process_capture_failed";
 };
 
-/** Errors that present themselves through `ownPresentation`. */
-type OwnPresentedErrorTag =
-  | "HopperTimeoutError"
-  | "HopperCancelledError"
-  | "HopperProtocolError"
-  | "HopperRemoteError"
-  | "HopperProcessError"
-  | "HopperStartError";
-
 type SpecializedErrorTag =
-  | OwnPresentedErrorTag
   | "ArtifactOperationError"
   | "BinaryTargetError"
   | "BrowserObservationError"
@@ -701,12 +695,6 @@ const staticErrorCode = (
     case "ProcessCaptureError":
     case "ProviderSelectionError":
     case "UnknownRegistryError":
-    case "HopperTimeoutError":
-    case "HopperCancelledError":
-    case "HopperProtocolError":
-    case "HopperRemoteError":
-    case "HopperProcessError":
-    case "HopperStartError":
       throw new TypeError(`Unhandled specialized analysis error: ${tag}`);
     default:
       return STATIC_ERROR_CODES[tag];
