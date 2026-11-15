@@ -1,6 +1,7 @@
 import { javaScriptSemanticPrecisionSchema } from "./javascriptSemanticPrecision.js";
 import { z } from "zod";
 import { javaScriptSemanticResourceLimitSchema } from "./javascriptSemanticValueTypes.js";
+import { javaScriptRefusedPhaseSchema } from "./javascriptSemanticWorkAllowance.js";
 
 /** Independent observations from one inert static pass; no runtime completeness claim. */
 export const javaScriptStaticCoverageSchema = z.strictObject({
@@ -34,11 +35,8 @@ export const javaScriptStaticCoverageSchema = z.strictObject({
     semantic_resource_limits: z.array(javaScriptSemanticResourceLimitSchema),
     semantic_precision: javaScriptSemanticPrecisionSchema.optional(),
     electron_call_paths_limited: z.boolean(),
-    /**
-     * The analysis phase whose work allowance refused this source. Facts that
-     * depend on it were not examined; syntax facts remain.
-     */
-    refused_phase: z.literal("member-mutations").exactOptional(),
+    /** The analysis phase whose work allowance refused this source. */
+    refused_phase: javaScriptRefusedPhaseSchema.exactOptional(),
   }),
   applicability: z.strictObject({ electron: z.enum(["observed", "unknown"]) }),
   unexamined_reason: z.string().min(1).exactOptional(),

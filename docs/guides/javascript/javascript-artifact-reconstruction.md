@@ -849,7 +849,11 @@ source map directives and vendor markers. Its `analysis_coverage.examination`
 is `not-examined` with `refused_phase: "member-mutations"` and an
 `unexamined_reason`, and findings that read mutation facts are not reported,
 because a partial mutation index would let later reads keep stale values; their
-absence is not evidence of absence. `import-reference-source` keeps a refused
+absence is not evidence of absence. In `analyze_web_bundle`, a refused script
+still counts as parsed and keeps its parse status and text-level inferences
+such as vendor and bundle-runtime markers; its routes, endpoints and edges are
+not reported, and its `javascript_analysis` unknown carries the setting,
+remediation and `refused_phase: "member-mutations"`. `import-reference-source` keeps a refused
 file's declaration-level imports and records that its CommonJS require calls
 were not examined. Raising `max_heap_mb`, `analysis_timeout_ms` or
 `semantic_precision` alone does not admit the same source.

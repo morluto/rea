@@ -10,7 +10,10 @@ import {
 } from "../domain/webBundleAnalysis.js";
 import { buildCapturedWebBundleAnalysis } from "../domain/webBundleAnalyzerResult.js";
 import { isIncludedScript } from "../domain/webBundleAnalyzerState.js";
-import type { WebBundleScriptAnalysis } from "../domain/webBundleScriptAnalysis.js";
+import {
+  unavailableWebScriptRecovery,
+  type WebBundleScriptAnalysis,
+} from "../domain/webBundleScriptAnalysis.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCapabilityUnavailableError,
@@ -245,23 +248,7 @@ export class IsolatedWebBundleAnalyzer {
                   : error instanceof AnalysisResourceConstraintError
                     ? "resource_constraint"
                     : "worker_failure",
-              detail:
-                error instanceof AnalysisResourceConstraintError &&
-                error.reportedLimits !== null
-                  ? `${error.userMessage ?? error.reason} Reported limits: ${JSON.stringify(error.reportedLimits)}`
-                  : (error.userMessage ?? error.message),
-              // A setting-bound refusal keeps its structured recovery.
-              // Only a registered setting's limit facts are parsed here.
-              ...(error instanceof AnalysisResourceConstraintError &&
-              error.limit !== undefined &&
-              "setting" in error.limit
-                ? {
-                    limit: error.limit,
-                    ...(error.remediationAction === undefined
-                      ? {}
-                      : { remediation: error.remediationAction }),
-                  }
-                : {}),
+              ...unavailableWebScriptRecovery(error),
             },
           );
           if (error.cleanupIncomplete) {

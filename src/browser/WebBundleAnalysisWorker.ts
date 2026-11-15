@@ -59,6 +59,7 @@ import { javaScriptRuntime } from "../domain/runtimeVersion.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { IncludedScript } from "../domain/webBundleAnalyzerState.js";
 import {
+  unavailableWebScriptRecovery,
   webBundleScriptAnalysisSchema,
   type WebBundleScriptAnalysis,
 } from "../domain/webBundleScriptAnalysis.js";
@@ -477,7 +478,12 @@ export class WebBundleAnalysisWorker {
           artifactFailure = true;
           throw cause;
         });
-      const facts = this.#validateCompletedResult(stored, descriptor, script);
+      const facts = this.#validateCompletedResult(
+        stored,
+        descriptor,
+        script,
+        memberMutationAllowance,
+      );
       this.#retainedResultBytes += descriptor.bytes;
       completed = facts;
       result = ok(facts);
@@ -490,6 +496,7 @@ export class WebBundleAnalysisWorker {
             snapshot,
             resultDescriptor,
             script,
+            memberMutationAllowance,
           );
           this.#retainedResultBytes += resultDescriptor.bytes;
         } catch {
@@ -930,6 +937,7 @@ export class WebBundleAnalysisWorker {
     stored: StableArtifactSnapshot,
     descriptor: WebBundleResultDescriptor,
     script: IncludedScript,
+    memberMutationAllowance: JavaScriptMemberMutationAllowance,
   ): WebBundleScriptAnalysis {
     if (
       stored.bytes.length !== descriptor.bytes ||
@@ -942,12 +950,27 @@ export class WebBundleAnalysisWorker {
     const parsed = safeParseUtf8Json(stored.bytes);
     if (!parsed.ok) throw parsed.cause;
     const facts = webBundleScriptAnalysisSchema.parse(parsed.value);
-    if (facts.status !== "analyzed" || facts.script_key !== script.script_key)
+    if (facts.script_key !== script.script_key)
       throw new AnalysisOutputError(
         OPERATION,
         "Web analyzer facts name another script",
       );
-    return facts;
+    if (facts.status === "analyzed") return facts;
+    if (facts.partial === undefined)
+      throw new AnalysisOutputError(
+        OPERATION,
+        "Web analyzer returned an unavailable result without partial facts",
+      );
+    // The refusal and its recovery come from the allowance this host sent.
+    return {
+      status: "unavailable",
+      script_key: facts.script_key,
+      reason: "resource_constraint",
+      ...unavailableWebScriptRecovery(
+        javaScriptMemberMutationRefusal(OPERATION, memberMutationAllowance),
+      ),
+      partial: facts.partial,
+    };
   }
 
   #reset(): void {

@@ -16,6 +16,12 @@ export const JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES_ENVIRONMENT =
 export const JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT =
   "javascript_member_mutation_alias_state_limit";
 
+/**
+ * The analysis phase a work allowance refused. Facts that depend on it were
+ * not examined; syntax facts gathered before it remain.
+ */
+export const javaScriptRefusedPhaseSchema = z.literal("member-mutations");
+
 /** The effective allowance for one operation and where it came from. */
 export interface JavaScriptMemberMutationAllowance {
   readonly aliasStates: number;

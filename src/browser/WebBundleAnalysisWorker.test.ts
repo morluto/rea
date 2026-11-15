@@ -37,7 +37,10 @@ import {
   WebBundleWorkerCleanup,
 } from "./WebBundleAnalysisWorker.js";
 import { WEB_BUNDLE_WORKER_LIMITS } from "./WebBundleAnalysisWorkerProtocol.js";
-import { JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT } from "../domain/javascript/javascriptSemanticWorkAllowance.js";
+import {
+  JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT,
+  javaScriptMemberMutationRefusal,
+} from "../domain/javascript/javascriptSemanticWorkAllowance.js";
 import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 const makeScript = (text: string): IncludedScript => ({
@@ -67,7 +70,7 @@ const sourceWorkerProgram = (
 ): string => `
   const { serveWebBundleAnalysisWorker } = await import(${JSON.stringify(new URL("./WebBundleAnalysisWorkerServer.ts", import.meta.url).href)});
   const { analyzeCapturedWebScript } = await import(${JSON.stringify(new URL("../domain/webBundleAnalyzer.ts", import.meta.url).href)});
-  const analyze = (script) => {
+  const analyze = (script, precision, allowance) => {
     if (${JSON.stringify(hangMarker)} !== undefined && script.source.artifact.text === ${JSON.stringify(hangMarker)}) {
       for (;;) {}
     }
@@ -77,7 +80,7 @@ const sourceWorkerProgram = (
     }
     if (${JSON.stringify(stderrMarker)} !== undefined)
       process.stderr.write(${JSON.stringify(stderrMarker)} + "\\n");
-    return analyzeCapturedWebScript(script);
+    return analyzeCapturedWebScript(script, precision, allowance);
   };
   await serveWebBundleAnalysisWorker(analyze);
 `;
@@ -448,6 +451,60 @@ it("retains failed helper cleanup without caller cancellation", async () => {
     expect(error.cleanupIncomplete).toBe(false);
   } finally {
     prepare.mockRestore();
+    await worker.close();
+  }
+});
+
+it("keeps a refused script's syntax facts and states the allowance the host sent", async () => {
+  // Four conditional self-selections before one member write (#8294); the
+  // Map lookup makes the analyzer index member mutations.
+  const source = [
+    "/* __webpack_require__ */ function probe(input, env) { var m; if (env.first) m = env.first.info;",
+    ...Array.from(
+      { length: 4 },
+      (_, index) =>
+        `if (/case${String(index)}/.test(input)) m = m[${String(index % 2)}];`,
+    ),
+    "m[1] = input.length; var c = new Map(); c.get('k'); fetch('/refused'); return m; }",
+  ].join(" ");
+  const script = makeScript(source);
+  const allowance = { aliasStates: 8, source: "runtime" } as const;
+  const worker = new WebBundleAnalysisWorker(
+    WEB_BUNDLE_WORKER_LIMITS.heapMb,
+    launcherFor({ kind: "source" }),
+  );
+  try {
+    const result = await worker.analyze(
+      script,
+      10_000,
+      undefined,
+      undefined,
+      allowance,
+    );
+    if (!result.ok) throw result.error.error;
+    const refusal = javaScriptMemberMutationRefusal(
+      "analyze_web_bundle",
+      allowance,
+    );
+    expect(result.value).toEqual({
+      status: "unavailable",
+      script_key: script.script_key,
+      reason: "resource_constraint",
+      detail: expect.stringContaining("more than 8 alias states"),
+      limit: refusal.limit,
+      remediation: refusal.remediationAction,
+      partial: {
+        refused_phase: "member-mutations",
+        parse_status: "parsed",
+        inferences: [
+          expect.objectContaining({
+            kind: "bundle_runtime",
+            value: "webpack",
+          }),
+        ],
+      },
+    });
+  } finally {
     await worker.close();
   }
 });
