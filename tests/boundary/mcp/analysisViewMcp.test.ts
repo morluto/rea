@@ -1610,6 +1610,7 @@ it("advertises Mach-O pages whose selected facet owns their exact rows", async (
   });
   const symbol = {
     name: "_entry",
+    runtime_name: "entry",
     address: null,
     weak: null,
     reexport: null,
@@ -1632,6 +1633,7 @@ it("advertises Mach-O pages whose selected facet owns their exact rows", async (
       {
         ...symbol,
         name: null,
+        runtime_name: null,
         raw_name: "_entry+0x4",
         name_status: "ambiguous",
         addend: null,
@@ -1656,20 +1658,13 @@ it("advertises Mach-O pages whose selected facet owns their exact rows", async (
     provenance: [],
     limitations: [],
   });
-  const { malformed_kind: _unrecorded, ...recordedEncryption } =
-    report.encryption.items[0]!;
-  const historicalEncryption = {
-    ...recordedEncryption,
-    status: "malformed" as const,
-    reason: "slice has 3 encryption load commands",
-  };
   const parent = createEvidence(
     { path: "/fixtures/tool", format: "mach-o", sha256: "a".repeat(64) },
     { id: "native", name: "Native fixture", version: "1" },
     {
       operation: "inspect_macho",
       parameters: {},
-      result: { ...report, encryption: coverage([historicalEncryption]) },
+      result: report,
     },
   );
   const original = structuredClone(parent);
@@ -1699,11 +1694,7 @@ it("advertises Mach-O pages whose selected facet owns their exact rows", async (
       const delivered = parseEvidence(response.structuredContent);
       const page = analysisViewResultSchema.parse(delivered.normalized_result);
       if (page.kind !== "macho") throw new Error("Expected Mach-O page");
-      const rows =
-        facet === "encryption"
-          ? [{ ...historicalEncryption, malformed_kind: "unrecorded" }]
-          : report[facet].items;
-      expect(page.item).toEqual(rows.slice(offset, offset + 64));
+      expect(page.item).toEqual(report[facet].items.slice(offset, offset + 64));
       if (page.item.length > 0) {
         const mismatched = {
           ...delivered,

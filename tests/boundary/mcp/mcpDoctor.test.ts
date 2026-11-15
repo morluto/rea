@@ -1,3 +1,4 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../../../src/domain/analysisResourceLimits.js";
 import { contractsForToolFamilies } from "../../../src/contracts/toolFamilies.js";
 import {
   HOT_TOOL_NAMES,
@@ -33,7 +34,6 @@ import { ok } from "../../../src/domain/result.js";
 import {
   resolveMcpStartupBudgets,
   MCP_PHASE_BUDGET_FLOOR_MS,
-  MCP_PHASE_BUDGET_MAXIMUM_MS,
 } from "../../../src/config/mcpStartupBudgets.js";
 import {
   mcpDoctorDeadlineRecovery,
@@ -951,7 +951,7 @@ describe("production MCP doctor request-flow deadline", () => {
       "REA_MCP_INITIALIZE_BUDGET_MS",
       "REA_MCP_DOCTOR_DEADLINE_MS",
     ]);
-    const budgetRange = `from ${String(MCP_PHASE_BUDGET_FLOOR_MS)} to ${String(MCP_PHASE_BUDGET_MAXIMUM_MS)} ms`;
+    const budgetRange = `from ${String(MCP_PHASE_BUDGET_FLOOR_MS)} to ${String(MAX_NODE_TIMER_DELAY_MS)} ms`;
     expect(result.checks[0]?.detail).toContain("REA_MCP_INITIALIZE_BUDGET_MS");
     expect(result.checks[0]?.detail).toContain(budgetRange);
     expect(result.checks[1]?.detail).toContain("REA_MCP_DOCTOR_DEADLINE_MS");
