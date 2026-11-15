@@ -84,3 +84,23 @@ it("refuses a drive-relative Windows CLINE_DATA_DIR", () => {
       .configPathError,
   ).toContain("CLINE_DATA_DIR is relative");
 });
+
+it.each(["\\cline", "/cline"])(
+  "refuses a drive-less Windows CLINE_DATA_DIR %s that follows Cline's current drive",
+  (value) => {
+    const client = cline("C:\\Users\\x", "win32", { CLINE_DATA_DIR: value });
+    expect(client.configPathError).toBe(
+      "CLINE_DATA_DIR has no drive, so the location Cline CLI reads depends on its current drive. Set CLINE_DATA_DIR to a path with a drive letter or a UNC path before configuring Cline CLI.",
+    );
+  },
+);
+
+it("selects a UNC Windows CLINE_DATA_DIR", () => {
+  const client = cline("C:\\Users\\x", "win32", {
+    CLINE_DATA_DIR: "\\\\server\\share\\cline",
+  });
+  expect(client.configPathError).toBeUndefined();
+  expect(client.configPath).toBe(
+    "\\\\server\\share\\cline\\settings\\cline_mcp_settings.json",
+  );
+});

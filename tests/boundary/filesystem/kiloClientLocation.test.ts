@@ -199,6 +199,16 @@ it("refuses a relative Kilo configuration path instead of guessing its folder", 
   }
 });
 
+it.each(["\\kilo.json", "/kilo.json"])(
+  "refuses a drive-less Windows KILO_CONFIG %s that follows Kilo's current drive",
+  (value) => {
+    const row = supportedClients("C:\\Users\\x", "win32", {
+      KILO_CONFIG: value,
+    }).find(({ name }) => name === "kilo");
+    expect(row?.configPathError).toContain("has no drive");
+  },
+);
+
 it("lets doctor and uninstall act on the Kilo layer rea mcp add wrote", async () => {
   const home = await createTestTempDirectory("rea-kilo-lifecycle-");
   const legacy = join(home, ".kilocode");

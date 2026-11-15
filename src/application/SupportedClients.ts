@@ -22,6 +22,7 @@ import {
 } from "../filesystem/callerPath.js";
 import {
   absoluteClientRoot,
+  clientPathDependence,
   absoluteXdgConfigHome,
   type ClientRootFailure,
   vscodeUserDirectory,
@@ -1055,22 +1056,28 @@ const kiloTableContext = (context: ClientPathContext): KiloLocationContext => ({
   root: context,
   path: (path) => {
     // Normalized as rea mcp add normalizes it, so joined layer paths compare.
-    if ((context.platform === "win32" ? win32 : posix).isAbsolute(path))
+    const dependence = clientPathDependence(path, context.platform);
+    if (dependence === undefined)
       return absoluteCallerPath(path, { platform: context.platform });
-    throw new KiloRelativePathError(path);
+    throw new KiloPathDependenceError(path, dependence);
   },
 });
 
-class KiloRelativePathError extends Error {
-  constructor(readonly path: string) {
+class KiloPathDependenceError extends Error {
+  constructor(
+    readonly path: string,
+    dependence: "relative" | "driveless",
+  ) {
     super(
-      `Kilo's configuration path ${path} is relative, so the file Kilo reads depends on its working directory. Set an absolute path before configuring Kilo.`,
+      dependence === "relative"
+        ? `Kilo's configuration path ${path} is relative, so the file Kilo reads depends on its working directory. Set an absolute path before configuring Kilo.`
+        : `Kilo's configuration path ${path} has no drive, so the file Kilo reads depends on its current drive. Set a path with a drive letter or a UNC path before configuring Kilo.`,
     );
   }
 }
 
 const kiloPathFailure = (cause: unknown): ClientPathFailure => {
-  if (cause instanceof KiloRelativePathError)
+  if (cause instanceof KiloPathDependenceError)
     return { path: cause.path, message: cause.message };
   throw cause;
 };
