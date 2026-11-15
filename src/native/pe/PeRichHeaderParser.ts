@@ -1,6 +1,5 @@
 import { setImmediate } from "node:timers/promises";
 import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
   PE_RICH_HEADER_ABSENT_LIMITATION,
   PE_RICH_HEADER_ENTRY_BYTES,
@@ -12,8 +11,22 @@ import {
   type PeRichHeaderEntry,
   type PeRichHeaderRecord,
 } from "../../domain/native/peRichHeader.js";
-import { BinaryReader } from "../metadata/BinaryContainer.js";
+import {
+  BinaryReader,
+  BinaryResourceFailure,
+} from "../metadata/BinaryContainer.js";
 import { readPeHeaders } from "./PeResourceLayout.js";
+
+/** The caller's Rich header entry budget; consumers branch on the class, not on prose. */
+export class PeRichHeaderEntryLimitFailure extends BinaryResourceFailure {
+  constructor(
+    readonly allowance: number,
+    message: string,
+  ) {
+    super("structure", allowance, message);
+    this.name = "PeRichHeaderEntryLimitFailure";
+  }
+}
 
 const DOS_HEADER_BYTES = 0x40;
 const E_LFANEW_OFFSET = 0x3c;
@@ -135,10 +148,9 @@ const richRecord = async (
     };
   const count = span / PE_RICH_HEADER_ENTRY_BYTES;
   if (count > input.max_entries)
-    throw new ArtifactReaderFailure(
-      "limit",
+    throw new PeRichHeaderEntryLimitFailure(
+      input.max_entries,
       `PE Rich header holds ${String(count)} entries, over the ${String(input.max_entries)}-entry budget.`,
-      { boundary: "capacity" },
     );
   const decode = (at: number): number => (reader.u32(at) ^ key) >>> 0;
   const entries: PeRichHeaderEntry[] = [];
