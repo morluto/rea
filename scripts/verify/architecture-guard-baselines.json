@@ -546,5 +546,16 @@
     "src/sqlite/SqliteDatabaseProvider.ts": 8,
     "src/sqlite/SqliteDatabaseWorkerExecution.ts": 2,
     "src/wasm/WabtArtifactProvider.ts": 1
+  },
+  "hand-caught-configuration-error": {
+    "src/application/binary/BinarySession.ts": 3,
+    "src/application/McpClientRegistration.ts": 1,
+    "src/application/McpRegistrationCatalog.ts": 1,
+    "src/application/McpRegistrationGit.ts": 1,
+    "src/application/SetupClientConfiguration.ts": 3,
+    "src/application/Uninstall.ts": 2,
+    "src/application/WebScriptExportService.ts": 1,
+    "src/ghidra/GhidraProviderClient.ts": 1,
+    "src/ida/IdaConfiguration.ts": 1
   }
 }
