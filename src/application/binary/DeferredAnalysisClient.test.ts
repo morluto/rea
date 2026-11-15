@@ -17,6 +17,7 @@ import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { resolvedAnalysisError } from "../../domain/analysisErrorBase.js";
 import { err, ok } from "../../domain/result.js";
+import { releaseOwnedCleanup } from "../../../tests/support/cleanupRelease.js";
 
 const identity = { id: "controlled", name: "Controlled client", version: "1" };
 
@@ -521,7 +522,7 @@ it("retains a failed prerequisite owner without creating a native client", async
         close: async () => {
           releases++;
           if (denied) throw cleanup;
-          cleanup.resolveCleanup();
+          releaseOwnedCleanup(cleanup);
         },
       },
       "controlled prerequisite",
@@ -567,7 +568,7 @@ it("retries only unresolved prerequisite and native owners across mixed cleanup 
         close: async () => {
           prerequisites++;
           if (denyPrerequisite) throw prerequisiteFailure;
-          prerequisiteFailure.resolveCleanup();
+          releaseOwnedCleanup(prerequisiteFailure);
         },
       },
       "mixed prerequisite",

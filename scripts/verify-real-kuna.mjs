@@ -10,16 +10,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import {
-  mkdir,
-  mkdtemp,
-  readFile,
-  readdir,
-  rm,
-  stat,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs, promisify } from "node:util";
@@ -52,6 +43,7 @@ import {
   completeVerifierRun,
   createVerifierRun,
 } from "./lib/verifier-run.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 const exec = promisify(execFile);
 const { values } = parseArgs({
@@ -94,7 +86,12 @@ const resourceScope = {
     }),
   run: (operation) => inspectionResources.run(operation),
 };
-const workspace = await mkdtemp(join(tmpdir(), "rea-kuna-lane-"));
+// Kuna children cache under the root; a plain root admits them on every host.
+const workspaceFixture = await VerifierFixture.open({
+  prefix: "rea-kuna-lane-",
+  private: false,
+});
+const workspace = workspaceFixture.path;
 const cacheRoot = join(workspace, "cache");
 // A server retains its workspace until both provider and transport cleanup
 // have positively completed, even if later lineage observation is empty.
@@ -844,7 +841,7 @@ try {
 }
 if (cleanupComplete)
   try {
-    await rm(workspace, { recursive: true, force: true });
+    await workspaceFixture.release();
   } catch (cause) {
     cleanupComplete = false;
     failures.push(cause);

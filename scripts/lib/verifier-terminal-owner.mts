@@ -40,7 +40,7 @@ export interface VerifierTerminalOptions {
   readonly signal?: AbortSignal;
 }
 
-export interface VerifierTerminalDependencies {
+interface VerifierTerminalDependencies {
   readonly loadPty?: () => Promise<typeof import("@lydell/node-pty")>;
   readonly cleanupProcessGroup?: typeof cleanupOwnedProcessGroup;
 }
@@ -59,7 +59,7 @@ type TerminalFailureReason =
   | "unsupported_platform";
 
 /** Expected terminal failures retain the decoded output observed at failure. */
-export class VerifierTerminalFailure extends Error {
+class VerifierTerminalFailure extends Error {
   readonly _tag = "VerifierTerminalFailure";
 
   constructor(
@@ -74,7 +74,7 @@ export class VerifierTerminalFailure extends Error {
 }
 
 /** The adopted owner remains the exact authority for retrying this release. */
-export class VerifierTerminalCleanupFailure extends Error {
+class VerifierTerminalCleanupFailure extends Error {
   readonly _tag = "VerifierTerminalCleanupFailure";
   readonly reason = "cleanup_incomplete";
 

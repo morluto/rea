@@ -29,6 +29,8 @@ OUTPUT_DRAIN_BYTES_PER_PASS = 1024 * 1024
 OUTPUT_EOF_WAIT_SECONDS = 1.0
 OUTPUT_READER_JOIN_SECONDS = 0.5
 LISTENER_NAME = "rea-native-call-observation"
+# Mach exception type; LLDB reports it with its code and the trap address as stop data.
+MACH_EXC_BREAKPOINT = 6
 
 
 def _can_retain_trace(current_bytes, current_frames, event_bytes, event_frames, limits):
@@ -489,19 +491,61 @@ def breakpoint_hit(frame, location, internal_dict):
     return context["outcome"] is not None
 
 
+def _breakpoint_trap_address(thread):
+    """Trap address of a Mach EXC_BREAKPOINT stop, or None for any other stop."""
+    if (
+        thread.GetStopReason() != lldb.eStopReasonException
+        or thread.GetStopReasonDataCount() < 3
+        or thread.GetStopReasonDataAtIndex(0) != MACH_EXC_BREAKPOINT
+    ):
+        return None
+    return thread.GetStopReasonDataAtIndex(2)
+
+
+def _requests_at(context, address):
+    """Request indices with an LLDB location at one load address."""
+    return [
+        index
+        for index, breakpoints in enumerate(context["created"])
+        if any(breakpoint.FindLocationByAddress(address).IsValid() for breakpoint in breakpoints)
+    ]
+
+
 def _handle_stop(context, other_stops):
-    """Retain non-breakpoint stop observations; callbacks already capture hits."""
+    """Record hits LLDB reported as exceptions and retain every other stop.
+
+    LLDB can report a requested breakpoint's own trap as EXC_BREAKPOINT without
+    running its callback (observed on arm64 macOS under host load); a trap at a
+    requested location with the frame still on it is that request's hit. A
+    signal or exception stop with the frame on a requested location may precede
+    the trap, which LLDB then steps over on resume, or follow a recorded hit, so
+    it is counted as unattributed rather than recorded; so is any other
+    breakpoint trap, which may be a hit LLDB did not attribute.
+    """
     for thread in context["process"]:
-        if thread.GetStopReason() in (lldb.eStopReasonSignal, lldb.eStopReasonException):
-            stop_description = thread.GetStopDescription(256)
-            journal = context.get("observation_journal")
-            if journal is not None and not journal.append(
-                {"kind": "other-stop", "reason": stop_description}
-            ):
-                return _resource_limit(context, "trace_bytes")
-            other_stops.append(stop_description)
-            if len(other_stops) >= context["config"]["capture_limits"]["other_stops"]:
-                return "stop-limit"
+        if thread.GetStopReason() not in (lldb.eStopReasonSignal, lldb.eStopReasonException):
+            continue
+        frame = thread.GetFrameAtIndex(0)
+        pc = frame.GetPC()
+        requests = _requests_at(context, pc)
+        trap = _breakpoint_trap_address(thread)
+        if trap == pc and requests:
+            for index in requests:
+                outcome = _handle_breakpoint(context, frame, index)
+                if outcome is not None:
+                    return outcome
+            continue
+        if trap is not None or requests:
+            context["unattributed_breakpoint_stops"] += 1
+        stop_description = thread.GetStopDescription(256)
+        journal = context.get("observation_journal")
+        if journal is not None and not journal.append(
+            {"kind": "other-stop", "reason": stop_description}
+        ):
+            return _resource_limit(context, "trace_bytes")
+        other_stops.append(stop_description)
+        if len(other_stops) >= context["config"]["capture_limits"]["other_stops"]:
+            return "stop-limit"
     return None
 
 
@@ -781,6 +825,8 @@ def trace(debugger, config):
             "config": config,
             "started": started,
             "breakpoint_index": breakpoint_index,
+            "created": created,
+            "unattributed_breakpoint_stops": 0,
             "retained_frames": 0,
             "retained_trace_bytes": 0,
             "observation_journal": observation_journal,
@@ -884,6 +930,7 @@ def trace(debugger, config):
                 "stable": launch_identity_stable,
             },
             "other_stops": other_stops,
+            "unattributed_breakpoint_stops": context["unattributed_breakpoint_stops"],
         }
 
     finally:

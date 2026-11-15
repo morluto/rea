@@ -1,6 +1,7 @@
 import { projectCliAnalysisResult } from "../../../../src/cli/projectCliAnalysisResult.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { minimalElfImage } from "../../../fixtures/nativeHeaders.js";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 
 import { describe, expect, it } from "vitest";
@@ -30,7 +31,7 @@ import {
 } from "../../../../src/domain/zipPackageFormat.js";
 
 const { runProviderAnalysis } = createDirectAnalysis({});
-const elf = Uint8Array.from([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1, 0]);
+const elf = Uint8Array.from(minimalElfImage());
 
 const stageHapEntries = [
   { path: "module.json", content: '{"module":{"name":"entry"}}' },

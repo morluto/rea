@@ -1,4 +1,5 @@
 import spawn from "cross-spawn";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { spawn as spawnWindows } from "node:child_process";
 import { win32 } from "node:path";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
@@ -18,7 +19,7 @@ import { UpdateCommandProgress } from "./UpdateCommandProgress.js";
 import type { UpdateOutput } from "./Update.js";
 import { withoutPackageRunnerIdentity } from "./ClientRegistrationIdentity.js";
 
-export const UPDATE_COMMAND_OUTPUT_BYTES = 4 * 1024 * 1024;
+const UPDATE_COMMAND_OUTPUT_BYTES = 4 * 1024 * 1024;
 const UPDATE_PROBE_TIMEOUT_MS = 10_000;
 
 /** The runner owns whether the process started; callers need not infer it from text. */
@@ -119,13 +120,16 @@ const runUpdateProcess = async (
   const [executable, ...args] = command;
   if (executable === undefined)
     return commandFailure("No executable supplied.", "launch");
+  // Spawning is host-bound: the child runs on this host's platform.
+  const { platform } = HOST_PLATFORM;
   const environment = snapshotEnvironment(
-    withoutPackageRunnerIdentity(selectedEnvironment),
+    withoutPackageRunnerIdentity(selectedEnvironment, platform),
+    platform,
   );
   let selectedExecutable = executable;
   let selectedArguments = args;
   let windowsVerbatimArguments = false;
-  if (process.platform === "win32") {
+  if (platform === "win32") {
     if (
       !win32.isAbsolute(executable) &&
       !/[\\/]/u.test(executable) &&
@@ -171,7 +175,7 @@ const runUpdateProcess = async (
     return commandFailure("Update command cancelled before launch.");
   let child;
   try {
-    child = (process.platform === "win32" ? spawnWindows : spawn)(
+    child = (platform === "win32" ? spawnWindows : spawn)(
       selectedExecutable,
       selectedArguments,
       {

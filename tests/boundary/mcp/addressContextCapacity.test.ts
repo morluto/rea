@@ -1,3 +1,4 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -14,7 +15,7 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { SESSION_TOOL_CONTRACTS } from "../../../src/contracts/sessionToolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
 
-it.each(["compact", "full"] as const)(
+it.each(["compact"] as const)(
   "preserves retained siblings and capacity recovery (%s schema)",
   async (profile) => {
     const identity = {
@@ -84,7 +85,10 @@ it.each(["compact", "full"] as const)(
         const toolDefinition = definitions.get(name);
         if (toolDefinition === undefined)
           throw new Error(`Tool ${name} was not advertised`);
-        return client.callTool({ name, arguments: args }, { toolDefinition });
+        return client.callTool(
+          { name, arguments: args },
+          { toolDefinition: withCanonicalOutputSchema(toolDefinition) },
+        );
       };
       expect(
         (

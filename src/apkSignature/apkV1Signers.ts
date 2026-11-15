@@ -5,6 +5,7 @@
  * hands every certificate to the shared certificate owner.
  */
 import { inflateRawSync } from "node:zlib";
+import { hostRangeErrorKind } from "../domain/parseFailure.js";
 
 import type { ApkSignatureResult } from "../domain/apkSignature/apkSignatureReport.js";
 import {
@@ -105,7 +106,7 @@ export const decodeV1Signer = (
       data = inflateRawSync(stored.value.data, { maxOutputLength: limit });
     } catch (cause: unknown) {
       return fail(
-        cause instanceof RangeError
+        hostRangeErrorKind(cause) === "host-capacity"
           ? `signature block inflates past the ${String(limit)}-byte bound`
           : "signature block deflate stream is damaged",
       );

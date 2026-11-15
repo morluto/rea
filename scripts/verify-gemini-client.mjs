@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
@@ -24,6 +23,7 @@ import {
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { createGeminiModelFixture } from "./verify/clients/gemini-model-fixture.mjs";
 import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 const { geminiUnsupportedLiteral } = await importVerifierSource(
   new URL("./lib/gemini-schema-literals.mts", import.meta.url).href,
@@ -34,8 +34,6 @@ const repo = fileURLToPath(new URL("..", import.meta.url));
 const runtimeRoot = process.env.REA_VERIFY_RUNTIME_ROOT ?? repo;
 const command = process.env.REA_VERIFY_GEMINI_COMMAND ?? "gemini";
 const mode = process.argv[2] ?? "call";
-const schemaProfile = process.env.REA_VERIFY_GEMINI_SCHEMA_PROFILE ?? "full";
-assert(["full", "compact"].includes(schemaProfile));
 // npm installs of Gemini CLI provide a JavaScript entry point; on Windows only a gemini.cmd shim reaches
 // PATH, which Node does not spawn without a shell, so a selected .js entry runs under this Node. It is
 // resolved once, because the preflight runs from the caller's directory and the client from the workspace.
@@ -49,7 +47,9 @@ assert(
   "Usage: verify-gemini-client.mjs [chat|call]",
 );
 const verifier = createVerifierRun();
-const lab = await mkdtemp(join(tmpdir(), "rea-gemini-client-"));
+const { path: lab } = await VerifierFixture.keepArtifacts({
+  prefix: "rea-gemini-client-",
+});
 const account = join(lab, "account");
 const profile = join(lab, "selected profile");
 const workspace = join(lab, "workspace");
@@ -97,7 +97,6 @@ await withVerifierCleanup(async () => {
       GEMINI_CLI_NO_RELAUNCH: "1",
       GEMINI_CLI_TRUST_WORKSPACE: "true",
       REA_PROCESS_RUN_ID: verifier.run_id,
-      REA_MCP_INPUT_SCHEMA_PROFILE: schemaProfile,
     };
     try {
       clientVersion = (
@@ -415,7 +414,6 @@ await withVerifierCleanup(async () => {
       client: "Gemini CLI",
       clientVersion,
       mode,
-      schemaProfile,
       schemasChecked,
       examplesChecked,
       passed,

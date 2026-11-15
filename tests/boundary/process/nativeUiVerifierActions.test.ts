@@ -26,7 +26,7 @@ export const execFile=Object.assign(()=>{}, {[promisify.custom]:async (file,args
  if(args?.includes('capture-native-ui-scenario')){if(process.env.MODE!=='drop CLI')count++;return {stdout:JSON.stringify({normalized_result:captured()})};}
  return {stdout:'{"v":"slash/producer"}\\n{"v":1.0}\\n'};
 }});
-export const spawn=(_command,args)=>{const child=new EventEmitter();child.exitCode=null;child.kill=()=>{child.exitCode=0;child.emit('exit',0);return true;};void writeFile(args[args.indexOf('--stdout')+1],JSON.stringify({pid:424242,window_id:7})+'\\n');return child;};
+export const spawn=(_command,args)=>{const child=new EventEmitter();child.exitCode=null;child.signalCode=null;globalThis.reaOpenChild=child;child.kill=()=>{child.exitCode=0;child.emit('exit',0);return true;};void writeFile(args[args.indexOf('--stdout')+1],JSON.stringify({pid:424242,window_id:7})+'\\n');return child;};
 export const parseBinaryTarget=async path=>({ok:true,value:{path,sha256:'a'.repeat(64)}});
 export const observeProcessStartIdentity=async()=>({state:'readable',identity:'authored-process-identity'});
 export const observeNativeUi=async(target,operation)=>{
@@ -42,7 +42,7 @@ export const artifactMcpResult=async(_client,name)=>{if(name==='observe_native_u
         join(directory, "hook.mjs"),
         `
 import {registerHooks} from 'node:module';import {pathToFileURL} from 'node:url';
-Object.defineProperty(process,'platform',{value:'darwin'});process.kill=()=>true;
+Object.defineProperty(process,'platform',{value:'darwin'});process.kill=()=>{const open=globalThis.reaOpenChild;if(open?.exitCode===null){open.exitCode=0;queueMicrotask(()=>open.emit('exit',0,null));}return true;};
 registerHooks({resolve(specifier,context,next){if(context.parentURL?.endsWith('/scripts/verify-native-ui.mjs')&&['node:child_process','../dist/application/BinaryTargetResolver.js','../dist/native/NativeUiObservation.js','./lib/artifact-e2e.mjs','../dist/process/ProcessOwnershipObservation.js'].includes(specifier))return {shortCircuit:true,url:pathToFileURL(process.env.RECORDING).href};return next(specifier,context);}});
 `,
       );

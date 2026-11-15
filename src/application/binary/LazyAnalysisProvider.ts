@@ -1,6 +1,6 @@
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { cancelledBy } from "../../domain/analysisErrorCore.js";
 import { DeferredAnalysisClient } from "../../providers/DeferredAnalysisClient.js";
 import type {
   AnalysisClient,
@@ -50,10 +50,7 @@ export class LazyAnalysisProvider implements AnalysisProvider {
   ): AnalysisClient {
     return new DeferredAnalysisClient(async (signal) => {
       const provider = await this.#load();
-      if (signal.aborted)
-        throw new AnalysisCancelledError("create_analysis_client", {
-          cause: signal.reason,
-        });
+      if (signal.aborted) throw cancelledBy("create_analysis_client", signal);
       return provider.createClient(target, profile, context);
     }, this.#providerIdentity.id);
   }

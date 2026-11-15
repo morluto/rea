@@ -169,7 +169,6 @@ describe.skipIf(process.platform !== "darwin")(
           ).toBe(false);
         }
       },
-      60_000,
     );
   },
 );

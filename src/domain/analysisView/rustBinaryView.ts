@@ -189,7 +189,7 @@ export const projectRustBinaryView = (
       view,
       ...shared,
       summary,
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   if (metadata === null)
     return ok({

@@ -16,9 +16,10 @@ import {
   nativeUiResultSchema,
 } from "../domain/native/nativeUiObservation.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -159,9 +160,27 @@ const observeWithHelper = async (
     );
   if (!input.screenshot && !input.accessibility)
     return err(
-      new AnalysisInputError(operation, {
-        cause: new Error("Enable screenshot or accessibility capture"),
-      }),
+      new AnalysisInputError(
+        operation,
+        {
+          userMessage:
+            "Enable screenshot or accessibility capture; both cannot be disabled.",
+          remediationAction:
+            "Set screenshot or accessibility to true, then retry.",
+        },
+        [
+          {
+            path: ["screenshot"],
+            reason: "invalid_value",
+            message: "Enable screenshot or accessibility capture",
+          },
+          {
+            path: ["accessibility"],
+            reason: "invalid_value",
+            message: "Enable screenshot or accessibility capture",
+          },
+        ],
+      ),
     );
   const steps = input.steps;
   const interruption = options.interruption;
@@ -260,7 +279,7 @@ const observeWithHelper = async (
           ? ((signal.aborted && cause.cause === signal.reason
               ? interruption.error(operation)
               : undefined) ??
-              new AnalysisCancelledError(operation, { cause: cause.cause }))
+              cancelledBy(operation, carriedReason(cause.cause)))
           : new ProviderAdapterError("native-macos", operation, {
               cause,
               diagnostics: {
