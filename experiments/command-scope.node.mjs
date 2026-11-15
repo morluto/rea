@@ -19,7 +19,7 @@ test("retains cancellation and the native preparation owner through cleanup retr
   const result = await withCommands(
     async (run, selected) => {
       signal = selected;
-      await run("selected-tool", []);
+      await run(process.execPath, []);
     },
     {
       prepareOwnership: async (selected) => {

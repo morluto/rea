@@ -6,6 +6,56 @@ import { fileURLToPath } from "node:url";
 import { basename, dirname } from "node:path";
 import { withCommands } from "./command-scope.mjs";
 
+test("unwraps a Windows executable selection before invoking the command owner", async () => {
+  const commands = [];
+  const result = await withCommands(
+    (run) => run("C:\\tools\\adb.exe", ["version"], { environment: {} }),
+    {
+      platform: "win32",
+      prepareOwnership: async () => {},
+      runCommand: async (input) => {
+        commands.push(input.command);
+        return {
+          stdout: { text: "selected" },
+          stderr: { text: "" },
+          exitCode: 0,
+        };
+      },
+    },
+  );
+  assert.deepEqual(commands, ["C:\\tools\\adb.exe"]);
+  assert.equal(result.stdout, "selected");
+});
+
+for (const [environment, kind] of [
+  [{ PATH: "", PATHEXT: ".EXE" }, "not_found"],
+  [{ PATH: "", PATHEXT: ".EXE;C:\\bad" }, "invalid_extension"],
+]) {
+  test(`refuses Windows ${kind} before preparation or launch`, async () => {
+    let preparations = 0;
+    let launches = 0;
+    await assert.rejects(
+      withCommands((run) => run("adb", [], { environment }), {
+        platform: "win32",
+        prepareOwnership: async () => {
+          preparations++;
+        },
+        runCommand: async () => {
+          launches++;
+          throw new Error("must not launch");
+        },
+      }),
+      (error) => {
+        assert.equal(error.cause.kind, kind);
+        assert.match(error.message, /PATH\/PATHEXT/u);
+        return true;
+      },
+    );
+    assert.equal(preparations, 0);
+    assert.equal(launches, 0);
+  });
+}
+
 test("resolves bare commands from the captured selected environment", async () => {
   const environment = {
     ...process.env,
@@ -55,8 +105,17 @@ test("refuses incomplete output instead of accepting a truncated result", async 
 test("propagates SIGINT as cancellation without forced termination", async () => {
   const module = new URL("./command-scope.mjs", import.meta.url).href;
   const code = `import {withCommands} from ${JSON.stringify(module)};
+import {OwnedCommandFailure} from './dist/process/OwnedCommand.js';
+import {isProcessOwnershipInspectionCancellation} from './dist/process/ProcessInspectionCancellation.js';
 try { await withCommands(async run => { process.stdout.write('ready\\n'); await run(process.execPath,['-e','setInterval(()=>{},1000)']); }); }
-catch (error) { process.stdout.write(error.reason+'\\n'); process.exitCode=error.reason==='cancelled'?0:1; }`;
+catch (error) {
+  const failures = error instanceof AggregateError ? error.errors : [error];
+  const cancelled = failures.find(failure => failure instanceof OwnedCommandFailure && failure.reason === 'cancelled');
+  const valid = cancelled !== undefined && failures.every(failure => failure === cancelled ||
+    (isProcessOwnershipInspectionCancellation(failure) && failure.reason === cancelled.cancellation.reason));
+  process.stdout.write(valid ? 'cancelled\\n' : String(error)+'\\n');
+  process.exitCode=valid?0:1;
+}`;
   const child = spawn(process.execPath, ["--input-type=module", "-e", code], {
     cwd: fileURLToPath(new URL("..", import.meta.url)),
     stdio: ["ignore", "pipe", "pipe"],

@@ -7,6 +7,7 @@ import { prepareProcessOwnershipInspection } from "../dist/process/ProcessOwners
 import { resolveWindowsProviderExecutable } from "../dist/process/WindowsProviderExecutable.js";
 import { snapshotEnvironment } from "../dist/process/snapshotEnvironment.js";
 import { retainOwnedCommandCleanup } from "../dist/providers/OwnedCommandCleanup.js";
+import { HOST_PLATFORM } from "../dist/platform/HostPlatform.js";
 
 /** Settle every retained command before dependent resources can be reconciled. */
 export async function settleCommandOwners(
@@ -52,6 +53,7 @@ export async function withCommands(
   {
     runCommand = runOwnedCommand,
     prepareOwnership = prepareProcessOwnershipInspection,
+    platform = HOST_PLATFORM.platform,
   } = {},
 ) {
   const controller = new AbortController();
@@ -76,13 +78,22 @@ export async function withCommands(
   process.on("SIGINT", abort);
   process.on("SIGTERM", abort);
   const run = async (command, args, options = {}) => {
-    const environment = snapshotEnvironment(options.environment ?? process.env);
-    const selectedCommand =
-      process.platform === "win32"
-        ? resolveWindowsProviderExecutable(command, environment, {
-            cwd: options.cwd,
-          })
-        : command;
+    const environment = snapshotEnvironment(
+      options.environment ?? process.env,
+      platform,
+    );
+    let selectedCommand = command;
+    if (platform === "win32") {
+      const selected = resolveWindowsProviderExecutable(command, environment, {
+        cwd: options.cwd,
+      });
+      if (!selected.ok)
+        throw new Error(
+          `Experiment executable lookup failed for ${command}: ${selected.error.kind}. Select an absolute executable or correct PATH/PATHEXT.`,
+          { cause: selected.error },
+        );
+      selectedCommand = selected.value;
+    }
     try {
       await prepareOwnership(controller.signal);
     } catch (cause) {
