@@ -10,6 +10,9 @@ import {
 } from "../../domain/internalInvariant.js";
 import { analyzeInterfaceBuilderBundle } from "./InterfaceBuilderAnalysis.js";
 import { inspectBundleKeyedArchive } from "./KeyedArchiveReader.js";
+import { ArtifactProvider } from "../ArtifactProvider.js";
+import { DeferredAnalysisClient } from "../../providers/DeferredAnalysisClient.js";
+import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 
 /**
@@ -82,3 +85,44 @@ it("rethrows an invariant violation instead of listing an invalid Interface Buil
 
   expect(rejected).toBeInstanceOf(InternalInvariantError);
 });
+
+it.each([
+  ["inspect_keyed_archive", { path: "Model.plist" }],
+  ["decode_interface_builder", {}],
+] as const)(
+  "reports an invariant violation in %s as an adapter failure, not an artifact read",
+  async (operation, parameters) => {
+    const bundle = await createTestTempDirectory("rea-artifact-invariant-");
+    const infoPlist = join(bundle, "Info.plist");
+    await writeFile(infoPlist, '<?xml version="1.0"?><plist><dict/></plist>');
+    await writeFile(join(bundle, "Model.plist"), archive);
+    await writeFile(join(bundle, "Panel.nib"), archive);
+    const provider = new ArtifactProvider({}, "darwin");
+    // The deferred client is the adapter boundary every composed provider uses.
+    const client = new DeferredAnalysisClient(
+      () =>
+        Promise.resolve(
+          provider.createBundleResourceClient({
+            callerPath: bundle,
+            canonicalPath: bundle,
+            infoPlistPath: infoPlist,
+            layout: "root",
+            executableSha256: null,
+          }),
+        ),
+      provider.identity().id,
+    );
+    try {
+      expect((await client.execute(operation, parameters)).ok).toBe(true);
+
+      decoder.broken = true;
+      const result = await client.execute(operation, parameters);
+      if (result.ok)
+        throw new Error("Expected the defect to fail the operation");
+      expect(result.error).toBeInstanceOf(ProviderAdapterError);
+      expect(result.error.cause).toBeInstanceOf(InternalInvariantError);
+    } finally {
+      await client.close();
+    }
+  },
+);
