@@ -911,7 +911,11 @@ loads `/etc/goose/config.yaml` (`%PROGRAMDATA%\goose\config.yaml` on Windows)
 and each `GOOSE_ADDITIONAL_CONFIG_FILES` entry beneath the user file, merging
 each extension one field deep. Doctor reports the effective registration across
 those layers, for example `enabled: false` from a lower layer. Setup, update and
-uninstall change only the user file. A relative additional entry depends on
+uninstall change only the user file; a `timeout`, `enabled`, `name`,
+`description` or environment map only a lower layer sets is left to that layer
+rather than overridden with setup's default. Lower layers are read where Goose
+reads them, even when another user, such as an administrator, owns them. A
+relative additional entry depends on
 Goose's working directory, so REA refuses it. Goose reads its configuration at
 startup; restart it after setup.
 
