@@ -1,4 +1,3 @@
-import { Utf8NdjsonDecodingError } from "../process/Utf8NdjsonLineBuffer.js";
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { randomBytes, randomUUID } from "node:crypto";
 import { access } from "node:fs/promises";
@@ -170,20 +169,10 @@ export class HopperClient {
   #startupAttempt: HopperStartupAttempt | undefined;
   #closePromise: Promise<Result<null, AnalysisError>> | undefined;
   readonly #onSocketData = (chunk: Buffer): void => {
-    try {
-      this.#responses.push(chunk);
-    } catch (cause: unknown) {
-      if (!(cause instanceof Utf8NdjsonDecodingError)) throw cause;
-      this.#abortProtocol("Hopper bridge response is not valid UTF-8", cause);
-    }
+    this.#responses.push(chunk);
   };
   readonly #onSocketEnd = (): void => {
-    try {
-      this.#responses.finish();
-    } catch (cause: unknown) {
-      if (!(cause instanceof Utf8NdjsonDecodingError)) throw cause;
-      this.#abortProtocol("Hopper bridge response is not valid UTF-8", cause);
-    }
+    this.#responses.finish();
   };
   readonly #onSocketError = (): void => {
     const error = new HopperProcessError(null, {

@@ -45,7 +45,10 @@ import {
   sourceMapLimitFailure,
   type SourceMapLeaf,
 } from "../javascript/sourceMaps/SourceMapFormat.js";
-import type { ParseFailureError } from "../domain/parseFailure.js";
+import {
+  malformedInput,
+  type ParseFailureError,
+} from "../domain/parseFailure.js";
 import { selectedBrowserDeadlineMs } from "../domain/browserDeadline.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -342,13 +345,6 @@ class SourceMapSizeLimitError extends Error {
       `Source-map response exceeded its retained budget. ${sourceMapLimitRecovery("fetch_bytes", maxBytes)}`,
     );
     this.name = "SourceMapSizeLimitError";
-  }
-}
-
-class SourceMapEncodingError extends Error {
-  constructor(readonly responseIdentity: ResponseIdentity) {
-    super("Source-map response is not valid UTF-8.");
-    this.name = "SourceMapEncodingError";
   }
 }
 
@@ -694,9 +690,17 @@ const fetchOne = async (
       fetchedUrl,
     );
     completedResponseIdentity = body.responseIdentity;
+    if (!body.text.ok)
+      return emptySourceMapItem(
+        request,
+        "invalid",
+        body.text.error.message,
+        effectiveUrl,
+        body.responseIdentity,
+      );
     return normalizeSourceMap(
       request,
-      body.text,
+      body.text.value,
       body.responseIdentity,
       fetchedUrl,
       {
@@ -738,14 +742,6 @@ const fetchOne = async (
       !(signal.reason instanceof SourceMapDeadlineError)
     )
       throw cause;
-    if (cause instanceof SourceMapEncodingError)
-      return emptySourceMapItem(
-        request,
-        "invalid",
-        cause.message,
-        effectiveUrl,
-        cause.responseIdentity,
-      );
     return emptySourceMapItem(
       request,
       "fetch_failed",
@@ -840,10 +836,14 @@ const readBoundedText = async (
   maxBytes: number,
   signal: AbortSignal | undefined,
   resource: string,
-): Promise<{ text: string; responseIdentity: ResponseIdentity }> => {
+): Promise<{
+  /** The UTF-8 text, or why the bytes are not UTF-8. */
+  text: Result<string, ParseFailureError<"malformed">>;
+  responseIdentity: ResponseIdentity;
+}> => {
   if (response.body === null)
     return {
-      text: "",
+      text: ok(""),
       responseIdentity: {
         sha256: createHash("sha256").digest("hex"),
         bytes: 0,
@@ -935,13 +935,24 @@ const readBoundedText = async (
   };
   try {
     return {
-      text: new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-        joined,
+      text: ok(
+        new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+          joined,
+        ),
       ),
       responseIdentity,
     };
-  } catch {
-    throw new SourceMapEncodingError(responseIdentity);
+  } catch (cause: unknown) {
+    return {
+      text: err(
+        malformedInput(
+          "source-map",
+          "Source-map response is not valid UTF-8.",
+          { cause },
+        ),
+      ),
+      responseIdentity,
+    };
   }
 };
 

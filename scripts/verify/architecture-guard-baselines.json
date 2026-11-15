@@ -179,12 +179,8 @@
     "src/wasm/WabtFailures.ts": 1
   },
   "parser-format-failure-class": {
-    "src/artifacts/apple/MachoLoadCommandReader.ts": 1,
-    "src/browser/WebSourceMapFetcher.ts": 1,
-    "src/domain/managed/managedApplicationGraph.ts": 1,
     "src/domain/propertyListXmlText.ts": 1,
-    "src/kuna/KunaDocumentError.ts": 1,
-    "src/process/Utf8NdjsonLineBuffer.ts": 1
+    "src/kuna/KunaDocumentError.ts": 1
   },
   "parser-json-parse": {
     "src/android/JadxProtocol.ts": 2,
