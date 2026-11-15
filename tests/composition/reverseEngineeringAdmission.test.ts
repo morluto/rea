@@ -297,6 +297,7 @@ it.each([
       expect(result).toMatchObject({ ok: false, error: { _tag: tag } });
       if (result.ok) return;
       if (code === "cancelled") expect(result.error.cause).toBe(reason);
+      else if (code === "EACCES") expect(result.error.cause).toBe(failure);
       else expect(result.error.cause).toMatchObject({ cause: failure });
       if (code === "EACCES") {
         expect(result.error).toMatchObject({

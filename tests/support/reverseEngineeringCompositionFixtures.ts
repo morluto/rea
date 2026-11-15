@@ -55,17 +55,15 @@ export const ownedFailure = (
     options,
   );
 
-/** A launcher's refusal to start the command, as the owned supervisor reports it. */
-export const ownedLaunchRefusal = (
-  code: string,
-  command = "provider",
-): OwnedCommandFailure =>
-  ownedFailure("process", null, {
-    cause: Object.assign(new Error(`spawn ${command} ${code}`), {
-      code,
-      syscall: `spawn ${command}`,
-      path: command,
-    }),
+/**
+ * A launcher's refusal to start the command. The owned supervisor rethrows
+ * the launcher's spawn error unchanged.
+ */
+export const ownedLaunchRefusal = (code: string, command = "provider"): Error =>
+  Object.assign(new Error(`spawn ${command} ${code}`), {
+    code,
+    syscall: `spawn ${command}`,
+    path: command,
   });
 
 /** Repair guidance for a test-built command profile. */

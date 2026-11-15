@@ -358,10 +358,13 @@ it("marks signal-terminated provider commands as unknown completion", async () =
     runOwned: async () => {
       invocation += 1;
       if (invocation === 1)
-        return ownedOutput("partial output", "", {
-          exitCode: null,
-          signal: "SIGKILL",
-        });
+        throw ownedFailure(
+          "process",
+          ownedOutput("partial output", "", {
+            exitCode: null,
+            signal: "SIGKILL",
+          }),
+        );
       return ownedOutput("ordinary partial output", "ordinary diagnostic", {
         exitCode: 2,
       });
@@ -1010,8 +1013,12 @@ it("marks signal-terminated provider output incomplete", async () => {
   const path = join(directory, "fixture.bin");
   await writeFile(path, "fixture");
   const service = new ReverseEngineeringService({
-    runOwned: async () =>
-      ownedOutput("partial", "", { exitCode: null, signal: "SIGSEGV" }),
+    runOwned: async () => {
+      throw ownedFailure(
+        "process",
+        ownedOutput("partial", "", { exitCode: null, signal: "SIGSEGV" }),
+      );
+    },
   });
 
   try {
