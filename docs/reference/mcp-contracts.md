@@ -89,10 +89,9 @@ managed method page with
 `view: {"kind":"managed-members","collection":"methods","offset":0,"limit":64}`.
 `view: {"kind":"summary"}` has no facet. These are examples, not all supported
 families; use the producer and its guide for collection-specific fields and
-selection. The full input schema exposes accepted variants, while the default
-compact profile can omit nested shapes and parameter descriptions. Refreshing
-the same compact catalog does not restore those missing shapes; do not invent
-selectors from an opaque object declaration.
+selection. The compact input schema can omit nested shapes and parameter
+descriptions. Refreshing the catalog does not restore those missing shapes; do
+not invent selectors from an opaque object declaration.
 
 Text pages use UTF-16 code units; row pages count the selected retained
 collection. Source coverage and retained-page coverage remain distinct. A
@@ -2084,33 +2083,32 @@ rejects. The MCP handler still validates every call with the canonical
 contract. The Gemini CLI verifier checks the outgoing
 `parametersJsonSchema` and canonical contract examples against that declaration
 using a loopback model fixture; it does not establish live Google API or
-OpenCode client behavior. Set `REA_VERIFY_GEMINI_SCHEMA_PROFILE=compact` to
-verify the compact advertisement through the same client boundary.
+OpenCode client behavior.
 
 ### Compact input schema profile
 
 Some function-calling providers reject a request while any single tool's
 `parameters` schema exceeds a literal serialized size cap; Moonshot clients
 such as kimi-cli have reported failures with the full catalog attached
-([#1484](https://github.com/morluto/rea/issues/1484)). Setting the server's
-`REA_MCP_INPUT_SCHEMA_PROFILE` environment variable to `compact` (the default)
-renders every advertised input schema within a 13,312-byte budget, measured to sit below
+([#1484](https://github.com/morluto/rea/issues/1484)). REA therefore renders
+every advertised input schema within a 13,312-byte budget, measured to sit below
 Moonshot's observed cap (community measurements: a 13.7 KB schema is accepted
-while a ~15 KB one is rejected). The setting is read at startup; restart the
-server to apply changes, as with `REA_MCP_MAX_RESPONSE_BYTES`. Explicitly select
-`full` to retain complete advertised input guidance and nested validation detail.
-Existing explicit profile choices are preserved. Compact presentation
+while a ~15 KB one is rejected). This compact presentation is the only input
+advertisement. `REA_MCP_INPUT_SCHEMA_PROFILE` accepts only `compact`; the former
+`full` profile was removed, and a registration that still selects it fails at
+startup with a configuration error naming the setting. Remove the setting, or
+set it to `compact`. Compact presentation
 also reduces schemas whose expanded JSON tree exceeds ten levels, the limit
 reported by strict-depth MCP clients in [#2813](https://github.com/morluto/rea/issues/2813).
-WorkBuddy/CodeBuddy gateways have also rejected full REA catalogs with an
-opaque `11133` error while accepting the compact profile
+WorkBuddy/CodeBuddy gateways have also rejected uncompacted REA catalogs with
+an opaque `11133` error while accepting the compact profile
 ([#2999](https://github.com/morluto/rea/issues/2999)); compatibility depends on
 the selected gateway and model. That report used ZCode through a gateway to a
 Kimi-K3 backend, not the WorkBuddy MCP client. Set the profile on REA's
 registration in the actual MCP host; the host's name alone does not identify
 the downstream model or its schema constraints.
 
-The compact profile also projects every advertised input schema into the
+The compact presentation also projects every advertised input schema into the
 portable advertised dialect declared in `src/contracts/advertisedDialect.ts`:
 the subset of JSON Schema that the clients and gateways REA has met accept,
 with one rule per observed rejection (for example strict gateways in
@@ -2170,11 +2168,10 @@ dialect checker, keep them valid JSON Schema that still accepts every
 canonical example. Client verification
 also checks provider-facing sizes and canonical examples after conversion by
 the actual Kimi Code CLI; local captures do not establish Moonshot acceptance.
-The SDK catalog test checks that full-profile schemas retain nested ADB extra,
-managed selection, and WASM timeout and detail restrictions. Path-contract tests
-check full-profile local-path rules. Compact MCP workflow tests verify canonical
-rejection of invalid inputs before provider work, independent of how much detail
-the selected advertisement retains.
+The SDK catalog test checks that the canonical input schemas retain nested ADB
+extra, managed selection, and WASM timeout and detail restrictions. Compact MCP
+workflow tests verify canonical rejection of invalid inputs before provider
+work, independent of how much detail the advertisement retains.
 
 <a id="hotcold-catalog-discovery"></a>
 
@@ -2307,8 +2304,8 @@ preserved. This keeps every tool and validation rule in discovery and does not
 change the SDK's catalog invalidation or availability checks.
 
 The server identity's tool-schema digest includes the selected output-schema
-profile and the advertised form that profile produces. `full`, `compact`, and
-`off` therefore have distinct identities. The `compact` digest covers the
+profile and the advertised form that profile produces. `compact` and `off`
+therefore have distinct identities. The `compact` digest covers the
 bounded schemas clients receive; `off` keeps the canonical output contracts in
 the digest while advertising nothing.
 
@@ -2319,9 +2316,9 @@ validation, and complete output schemas were about 92% of a default
 `tools/list` (4.3 of 4.6 MB). Some clients also reject a large `tools/list`
 frame or HTTP SSE event before they load any tools (the measured pi-web-ui
 failure is in [#2512](https://github.com/morluto/rea/issues/2512)). Select
-`compact` to bound every advertised output schema to 4,096 bytes, or `full`
-for complete output schemas when an MCP client should validate results. Every
-profile keeps the same named canonical tool contract for server-side result
+`compact` to bound every advertised output schema to 4,096 bytes. The former
+`full` output profile was removed; a registration that still selects it fails
+at startup with a configuration error naming the setting. Both profiles keep the same named canonical tool contract for server-side result
 validation and still returns complete `structuredContent` and text results;
 the MCP specification does not require an output schema for
 `structuredContent`.
@@ -2339,12 +2336,7 @@ within the budget, so the advertised form is self-contained and omits the
 canonical contract's content-bound `$id`. The projection only widens: a valid
 canonical result still satisfies the advertised schema, but a client validating
 against it can accept a result the canonical contract rejects. REA still
-validates every result before delivery. On catalogs large enough that full
-input schemas alone approach the frame limit, keep the input profile at its
-`compact` default as well; with full input schemas the advertisement is
-dominated by the input side.
-The full input profile has no one-megabyte catalog-frame guarantee, including
-when output schemas are omitted.
+validates every result before delivery.
 
 Only client-side schema discovery and validation are reduced or omitted, so
 hosts using these profiles should rely on REA's validation and retain their

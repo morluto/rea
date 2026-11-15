@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { AnalysisTimeoutError } from "../domain/analysisErrorCore.js";
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import {
@@ -68,12 +69,22 @@ describe("translateNativeCommandFailure", () => {
       retryable: true,
     });
     expect(projected.message).toContain("1 ms");
-    expect(projected.remediation.action).toContain(
-      "REA_SWIFTC_COMPILE_TIMEOUT_MS",
-    );
-    expect(projected.remediation.action).not.toContain(
-      "native_command_timeout_ms",
-    );
+    const limit = {
+      control_kind: "environment",
+      environment: "REA_SWIFTC_COMPILE_TIMEOUT_MS",
+      effective_value: 1,
+      unit: "ms",
+      minimum: 1,
+      maximum: MAX_NODE_TIMER_DELAY_MS,
+      default_value: 120_000,
+      applies_at: "next_startup",
+    };
+    expect(projected.details?.limit).toEqual(limit);
+    // A one-invocation caller's next invocation reads it without a restart.
+    expect(projectAnalysisError(error, "invocation").details?.limit).toEqual({
+      ...limit,
+      applies_at: "next_invocation",
+    });
   });
 
   it("does not infer a compiler timeout duration when it was not reported", () => {
@@ -104,22 +115,22 @@ describe("translateNativeCommandFailure", () => {
       }),
       new ArtifactResourceScope(),
       60_000,
-      {
-        timeoutRecovery: {
-          userMessage: "native command deadline",
-          remediationAction: "native_command_timeout_ms",
-        },
-      },
     );
 
     expect(error).toBeInstanceOf(AnalysisTimeoutError);
     if (!(error instanceof AnalysisTimeoutError)) return;
     expect(error.timeoutMs).toBe(60_000);
-    const projected = projectAnalysisError(error);
-    expect(projected.remediation.action).toContain("native_command_timeout_ms");
-    expect(projected.remediation.action).not.toContain(
-      "REA_SWIFTC_COMPILE_TIMEOUT_MS",
-    );
+    expect(projectAnalysisError(error).details?.limit).toEqual({
+      control_kind: "parameter",
+      parameter: "native_command_timeout_ms",
+      cli_flag: "--native-command-timeout-ms",
+      effective_value: 60_000,
+      unit: "ms",
+      minimum: 1,
+      maximum: MAX_NODE_TIMER_DELAY_MS,
+      default_value: 60_000,
+      applies_at: "next_call",
+    });
   });
 
   it("keeps compiler exit failures distinct from deadlines", () => {

@@ -21,11 +21,8 @@ afterAll(() => schemaValidation.clear());
 
 it.each([
   { profile: "compact", state: "supported" },
-  { profile: "full", state: "supported" },
   { profile: "compact", state: "unknown" },
-  { profile: "full", state: "unknown" },
   { profile: "compact", state: "unavailable" },
-  { profile: "full", state: "unavailable" },
 ] as const)(
   "reports $state value flow without a resolver in $profile MCP",
   async ({ profile, state }) => {

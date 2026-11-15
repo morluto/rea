@@ -80,7 +80,6 @@ cliTest(
     await writeFile(rightPath, rightBytes);
     const { call } = await connectLocalToolsMcp({
       REA_MCP_TOOL_FAMILIES: "session,artifact,application",
-      REA_MCP_INPUT_SCHEMA_PROFILE: "full",
     });
     const left = await inspect(call, leftPath),
       right = await inspect(call, rightPath);

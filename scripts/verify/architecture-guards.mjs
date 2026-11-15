@@ -5,6 +5,7 @@ import { recordPredicateCounts } from "./record-predicate-guard.mjs";
 import {
   compareCountedBaseline,
   recordLoweredBaseline,
+  reconcileBaselineFile,
 } from "./counted-baseline.mjs";
 import { localCompletenessEnumCount } from "./completeness-enum-guard.mjs";
 import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
@@ -269,7 +270,8 @@ const baselinePath = join(
   root,
   "scripts/verify/architecture-guard-baselines.json",
 );
-const baselines = JSON.parse(await readFile(baselinePath, "utf8"));
+const baselineText = await readFile(baselinePath, "utf8");
+const baselines = JSON.parse(baselineText);
 const shrinkBaselines = process.argv.includes("--shrink-baselines");
 let baselinesShrunk = false;
 const checkCounted = (label, key, selected, pattern, owners) => {
@@ -534,6 +536,20 @@ checkCounted(
   [],
 );
 
+// Raw JSON Schema keywords and `x-rea-*` markers in `.meta()` bypass the
+// canonical Zod checks and reach every JSON Schema projection, including the
+// advertised one. Presentation facts are typed annotations
+// (src/domain/schemaAnnotations); constraints belong in Zod checks, or in a
+// src/domain/schemaConstraints helper that adds the check and its keyword
+// together.
+checkCounted(
+  "raw JSON Schema keyword or x-rea marker in Zod .meta() (use a typed annotation from src/domain/schemaAnnotations, a Zod check, or a src/domain/schemaConstraints helper)",
+  "raw-json-schema-meta",
+  files,
+  /\.meta\(\s*\{\s*"?(?:x-rea-[\w-]+|\$ref|not|allOf|anyOf|oneOf|if|then|else|dependentRequired|dependentSchemas|dependencies|uniqueItems|(?:min|max)(?:Length|Items|Properties|imum)|exclusive(?:Min|Max)imum|multipleOf|type|const|enum|format|pattern|patternProperties|properties|required|additionalProperties|items|prefixItems|contains|content(?:MediaType|Encoding|Schema)|propertyNames)"?\s*:/gu,
+  ["src/domain/schemaConstraints.ts"],
+);
+
 // A RangeError can mean a stack overflow, a host string or buffer limit, a
 // raw read or write past a buffer, or whatever its thrower intended. Only
 // known host limits are classified; parsers throw a ParseFailureError.
@@ -672,20 +688,22 @@ checkCounted(
   [],
 );
 
-if (baselinesShrunk) {
-  const sorted = Object.fromEntries(
-    Object.entries(baselines).map(([key, counts]) => [
-      key,
-      Object.fromEntries(
-        Object.entries(counts).sort(([left], [right]) =>
-          left < right ? -1 : left > right ? 1 : 0,
-        ),
-      ),
-    ]),
+const baselineFile = reconcileBaselineFile(
+  baselineText,
+  baselines,
+  shrinkBaselines,
+);
+if (baselineFile.action === "write") {
+  await writeFile(baselinePath, baselineFile.text);
+  console.log(
+    baselinesShrunk
+      ? `Lowered counted baselines in ${relative(root, baselinePath)}.`
+      : `Rewrote ${relative(root, baselinePath)} in its sorted form.`,
   );
-  await writeFile(baselinePath, `${JSON.stringify(sorted, null, 2)}\n`);
-  console.log(`Lowered counted baselines in ${relative(root, baselinePath)}.`);
-}
+} else if (baselineFile.action === "reject")
+  failures.push(
+    `${relative(root, baselinePath)} is not in its written form (each guard's paths sorted by code unit); rewrite it with \`node scripts/verify/architecture-guards.mjs --shrink-baselines\`.`,
+  );
 
 if (failures.length > 0) {
   console.error(`Architecture guards failed:\n\n${failures.join("\n\n")}\n`);

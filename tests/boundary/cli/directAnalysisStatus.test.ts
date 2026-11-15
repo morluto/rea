@@ -127,7 +127,6 @@ it.each(["capabilities", "providers"])(
             readConfiguration: () =>
               parseConfig({
                 REA_MCP_TOOL_FAMILIES: " session,session ",
-                REA_MCP_INPUT_SCHEMA_PROFILE: "full",
                 REA_MCP_OUTPUT_SCHEMA_PROFILE: "compact",
               }),
             createBinarySession: () => session,

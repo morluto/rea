@@ -1,3 +1,4 @@
+import { canonicalInputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { expect, it, onTestFinished } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
 
@@ -90,8 +91,10 @@ it.each([
     );
     if (tool === undefined) throw new Error("Missing AOT tool");
     const ajv = new Ajv2020({ strict: false, validateFormats: false });
-    expect(ajv.validateSchema(tool.inputSchema)).toBe(true);
-    expect(ajv.validate(tool.inputSchema, { path, abi: label })).toBe(true);
+    expect(ajv.validateSchema(canonicalInputSchema(tool.name))).toBe(true);
+    expect(
+      ajv.validate(canonicalInputSchema(tool.name), { path, abi: label }),
+    ).toBe(true);
   },
 );
 
@@ -213,7 +216,7 @@ it("advertises and enforces the same Unicode selector grammar through MCP", asyn
   const harness = await createApplicationMcpHarness({
     serverOptions: {
       flutterAnalysis: fakeProvider(),
-      environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
+      environment: { ...process.env },
     },
   });
   onTestFinished(harness.close);
@@ -222,7 +225,7 @@ it("advertises and enforces the same Unicode selector grammar through MCP", asyn
   );
   if (tool === undefined) throw new Error("Missing AOT tool");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
-  expect(ajv.validateSchema(tool.inputSchema)).toBe(true);
+  expect(ajv.validateSchema(canonicalInputSchema(tool.name))).toBe(true);
   for (const abi of [
     "😀".repeat(1010),
     "l".repeat(1010),
@@ -232,7 +235,9 @@ it("advertises and enforces the same Unicode selector grammar through MCP", asyn
     ),
   ]) {
     const arguments_ = { path: "/fixture.apk", abi };
-    expect(ajv.validate(tool.inputSchema, arguments_)).toBe(true);
+    expect(ajv.validate(canonicalInputSchema(tool.name), arguments_)).toBe(
+      true,
+    );
     expect(
       (
         await harness.client.callTool({
@@ -251,7 +256,9 @@ it("advertises and enforces the same Unicode selector grammar through MCP", asyn
     ),
   ] as const) {
     const arguments_ = { path: "/fixture.apk", abi };
-    expect(ajv.validate(tool.inputSchema, arguments_)).toBe(false);
+    expect(ajv.validate(canonicalInputSchema(tool.name), arguments_)).toBe(
+      false,
+    );
     const refused = await harness.client.callTool({
       name: "inspect_dart_aot",
       arguments: arguments_,

@@ -145,7 +145,7 @@ export class ProgressiveToolCatalog {
           },
           {
             remediationAction:
-              "Reduce limit or request fewer exact names, then retry. For one oversized input contract, reconnect with REA_MCP_INPUT_SCHEMA_PROFILE=compact.",
+              "Reduce limit or request fewer exact names, then retry.",
           },
         ),
         false,
