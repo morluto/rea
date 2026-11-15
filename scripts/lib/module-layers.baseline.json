@@ -39,6 +39,7 @@
     "process -> artifacts": 20,
     "providers -> application": 4,
     "python -> application": 2,
+    "rpm -> application": 2,
     "rust -> application": 2,
     "signals -> application": 2,
     "sqlite -> application": 2,
