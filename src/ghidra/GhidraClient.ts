@@ -1,4 +1,5 @@
 import { ghidraAsciiLiteralCandidate } from "./GhidraLiteralSearch.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import {
   fileSnapshotPartialObservationSchema,
   type FileSnapshotPartialObservation,
@@ -1002,6 +1003,14 @@ export class GhidraClient {
   async #startWithin(
     deadline: ProviderStartupDeadline,
   ): Promise<GhidraStartResult> {
+    // Admit the reply ceiling before acquiring anything: an invalid launch
+    // seed is a configuration refusal, not a failure after Ghidra started.
+    try {
+      this.#wire.admitReplyLimit();
+    } catch (cause: unknown) {
+      if (!(cause instanceof ConfigurationError)) throw cause;
+      return err(this.#failure("admission", cause.message, cause));
+    }
     let packedProgram: GhidraPackedProgram | undefined;
     try {
       packedProgram = await this.#checkpoint?.acquire(

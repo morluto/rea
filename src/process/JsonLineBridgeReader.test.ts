@@ -4,6 +4,7 @@ import {
   ghidraReplyEnvelope,
   type GhidraRemoteError,
 } from "../ghidra/protocol.js";
+import { hopperReplyEnvelope } from "../hopper/protocol.js";
 import {
   JsonLineBridgeReader,
   type JsonLineBridgeFailure,
@@ -76,6 +77,28 @@ describe("JSON-line bridge reader", () => {
     reader.push(Buffer.from('{"id":0,"ok":false}\n'));
 
     expect(failures).toMatchObject([{ kind: "envelope" }]);
+  });
+
+  it("refuses a schema-valid success on the reserved id without delivering it", () => {
+    // Hopper's envelope admits id 0, so the reader's own reserved-id check
+    // is what keeps this success from reaching a request.
+    const delivered: unknown[] = [];
+    const failures: JsonLineBridgeFailure[] = [];
+    let rejected = false;
+    const reader = new JsonLineBridgeReader({
+      envelope: hopperReplyEnvelope,
+      maxReplyBytes: () => 1024,
+      deliver: (message) => (delivered.push(message), true),
+      wasSent: () => true,
+      rejectInFlight: () => (rejected = true),
+      fail: (failure) => failures.push(failure),
+    });
+
+    reader.push(Buffer.from('{"id":0,"result":null}\n'));
+
+    expect(delivered).toEqual([]);
+    expect(rejected).toBe(false);
+    expect(failures).toEqual([{ kind: "unknown_id", id: 0 }]);
   });
 
   it("ignores a late reply for a sent id and fails on an id never sent", () => {
