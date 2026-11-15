@@ -467,6 +467,52 @@ describe("Apple asset catalog and Interface Builder concurrency", () => {
   );
 });
 
+it.skipIf(process.platform === "win32")(
+  "reports an assetutil that cannot be launched as unavailable",
+  async () => {
+    const bundle = await createTestTempDirectory("rea-assetutil-launch-");
+    await mkdir(join(bundle, "Contents", "Resources"), { recursive: true });
+    await writeFile(
+      join(bundle, "Contents", "Resources", "Assets.car"),
+      "catalog",
+    );
+    const missing = join(
+      await createTestTempDirectory("rea-assetutil-missing-"),
+      "assetutil",
+    );
+    const realExecFileOutput = processOutput.execFileOutput;
+    const spy = vi
+      .spyOn(processOutput, "execFileOutput")
+      .mockImplementation((_command, args, options) =>
+        realExecFileOutput(missing, args, options),
+      );
+    try {
+      await expect(
+        analyzeAppleAssetCatalogs({
+          environment: {},
+          bundlePath: bundle,
+          targetSha256: "a".repeat(64),
+          analyzeInterfaceBuilder: async () =>
+            ({
+              graph: { nodes: [], truncated: false, coverage: [] },
+            }) as unknown as Awaited<
+              ReturnType<typeof analyzeInterfaceBuilderBundle>
+            >,
+          platform: "darwin",
+        }),
+      ).rejects.toMatchObject({
+        _tag: "AnalysisCapabilityUnavailableError",
+        reason: "macOS assetutil is unavailable",
+        cause: { code: "ENOENT" },
+        diagnostics: { catalog_path: "Contents/Resources/Assets.car" },
+      });
+      expect(spy).toHaveBeenCalledOnce();
+    } finally {
+      spy.mockRestore();
+    }
+  },
+);
+
 it("joins the Interface Builder cleanup failure to a catalog defect", async () => {
   const bundle = await createTestTempDirectory("rea-asset-catalog-defect-");
   await mkdir(join(bundle, "Contents", "Resources"), { recursive: true });

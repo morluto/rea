@@ -187,8 +187,11 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     },
   },
   "aioquic-qlog-json": historicalCapture(
-    gap(
-      "Successful qlog decoding is covered at the parser; no regression completes it through the decoder child.",
+    covered(
+      test(
+        "tests/acceptance/tools/qlogCapture.test.ts",
+        "runs built CLI and real stdio SDK with exact evidence parity, selection, retained references and strict schemas",
+      ),
     ),
   ),
   "apk-signature": inProcess(
@@ -821,8 +824,11 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     },
   },
   "mitmproxy-native-tnetstring": historicalCapture(
-    gap(
-      "The decoder tests bind mitmproxy configuration but no regression completes a mitmproxy capture.",
+    covered(
+      test(
+        "tests/boundary/browser/historicalCaptureWideNumbers.test.ts",
+        "retains every exclusion in a wide native-number reply through the owned decoder",
+      ),
     ),
   ),
   "model-artifact": inProcess(
@@ -1032,8 +1038,11 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
   "rea-apple-application": {
     ownership: "process",
     stages: {
-      launch: gap(
-        "No regression for an assetutil or Interface Builder tool launch failure.",
+      launch: covered(
+        test(
+          "src/artifacts/apple/AppleAssetCatalogAnalysis.test.ts",
+          "reports an assetutil that cannot be launched as unavailable",
+        ),
       ),
       handshake: ONE_SHOT,
       operation: covered(
@@ -1048,8 +1057,12 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
           "settles a cancelled assetutil run only after its process exits",
         ),
       ),
-      cleanup: gap("No regression for failed assetutil process cleanup."),
-      retry: gap("No regression for assetutil cleanup retry."),
+      cleanup: gap(
+        "assetutil runs through execFileOutput, which has no retained or unproven cleanup outcome to report (#11509).",
+      ),
+      retry: gap(
+        "assetutil has no retained cleanup owner for a later request to retry (#11509).",
+      ),
     },
   },
   "rea-apple-ips": inProcess(
@@ -1286,11 +1299,21 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
   "rea-javascript-application": {
     ownership: "process",
     stages: {
-      launch: gap(
-        "No regression for a JavaScript analysis worker process that fails to launch.",
+      launch: covered(
+        test(
+          "src/javascript/analysis/JavaScriptAnalysisWorker.startup.test.ts",
+          "reports a JavaScript worker that fails to launch and launches a fresh worker on the next analysis",
+        ),
       ),
-      handshake: gap(
-        "No regression for a late or invalid worker admission frame from the provider side.",
+      handshake: covered(
+        test(
+          "src/javascript/analysis/JavaScriptAnalysisWorker.startup.test.ts",
+          "refuses a worker that emits facts before its ready frame and stops it",
+        ),
+        test(
+          "src/javascript/analysis/JavaScriptAnalysisWorker.startup.test.ts",
+          "times out a worker whose ready frame never arrives and stops it",
+        ),
       ),
       operation: covered(
         test(
@@ -1821,8 +1844,11 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
   sqlite: {
     ownership: "process",
     stages: {
-      launch: gap(
-        "No regression for a SQLite worker process that fails to launch.",
+      launch: covered(
+        test(
+          "tests/boundary/sqlite/sqliteDatabaseProvider.test.ts",
+          "reports a SQLite worker that fails to launch and removes its snapshot before the next inspection",
+        ),
       ),
       handshake: notApplicable(
         "The SQLite worker writes one reply per request; there is no handshake.",
@@ -2004,18 +2030,12 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
  * shrink: close a gap by naming its regression tests and removing the entry.
  */
 export const PROVIDER_LIFECYCLE_GAPS: readonly string[] = [
-  "aioquic-qlog-json:operation",
-  "mitmproxy-native-tnetstring:operation",
   "rea-apple-application:cleanup",
-  "rea-apple-application:launch",
   "rea-apple-application:retry",
   "rea-dotnet-workflows:cancel",
   "rea-harmony-application:cancel",
   "rea-javascript-application-workflows:cancel",
-  "rea-javascript-application:handshake",
-  "rea-javascript-application:launch",
   "rea-javascript-runtime-reconciliation:cancel",
   "rea-pe-certificates:operation",
   "rea-v8-code-cache:cancel",
-  "sqlite:launch",
 ];
