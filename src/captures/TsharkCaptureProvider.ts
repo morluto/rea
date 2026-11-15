@@ -19,6 +19,10 @@ import {
   type LinuxResourceLimits,
 } from "../process/LinuxResourceLimits.js";
 import { parsePacketOutput } from "./parsePacketOutput.js";
+import {
+  capturePacketJsonExpansionError,
+  resolveCapturePacketJsonExpansion,
+} from "../config/capturePacketJsonExpansion.js";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { access, mkdir, writeFile } from "node:fs/promises";
@@ -335,6 +339,8 @@ export class TsharkCaptureProvider implements PacketCapturePort {
           }),
         );
       } else {
+        const expansion = resolveCapturePacketJsonExpansion(this.environment);
+        if (!expansion.ok) throw expansion.error;
         const selected = await this.#resources.readSelectedArtifact({
           path: input.path,
           maximumBytes: limits.input_bytes,
@@ -386,10 +392,28 @@ export class TsharkCaptureProvider implements PacketCapturePort {
         resourcePath = "path" in input ? input.path : command;
         // TShark resolves `-e` aliases before emitting canonical field names;
         // the command arguments, not output names, own field selection.
-        const matchingPackets = parsePacketOutput(
+        const parsedPackets = await parsePacketOutput(
           output.stdout.text,
           input.packet_limit,
+          {
+            outputBytes: limits.output_bytes,
+            expansionBytes: expansion.value.maximumBytes,
+          },
         );
+        if (!parsedPackets.ok) {
+          const failure = parsedPackets.error;
+          if (failure.kind === "expansion")
+            throw capturePacketJsonExpansionError(
+              operation,
+              expansion.value,
+              capturedOutput,
+            );
+          throw new AnalysisOutputError(operation, failure.reason, {
+            ...(failure.cause === undefined ? {} : { cause: failure.cause }),
+            ...(capturedOutput === undefined ? {} : { capturedOutput }),
+          });
+        }
+        const matchingPackets = parsedPackets.value;
         const start = Math.min(input.match_offset, matchingPackets.length);
         const end =
           input.match_limit === null

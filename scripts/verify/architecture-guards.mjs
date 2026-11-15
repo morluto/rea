@@ -166,6 +166,32 @@ check(
   ],
 );
 
+// Node clamps a timer delay above the signed 32-bit bound to 1 ms. Durations
+// use MAX_NODE_TIMER_DELAY_MS or timerDurationMsSchema from their one owner.
+// The allowed files bound signed 32-bit integers that are not timer delays.
+check(
+  "signed 32-bit bound literal (use MAX_NODE_TIMER_DELAY_MS or timerDurationMsSchema from src/domain/analysisResourceLimits for durations)",
+  files,
+  /\b2_?147_?483_?647\b/u,
+  [
+    "src/domain/analysisResourceLimits.ts",
+    // JADX MCP `limit` argument: a Java int, not a duration.
+    "src/android/JadxAnalysis.ts",
+    // JVM `-XX:ActiveProcessorCount`: a Java int processor count.
+    "src/android/JadxConfiguration.ts",
+    // TShark `-c` packet count: a C int, not a duration.
+    "src/domain/captures/packetCapture.ts",
+    // DEX static `int` value range.
+    "src/domain/android/androidAnalysis.ts",
+    // Signed 32-bit bitmask operand range.
+    "src/domain/javascript/javascriptSemanticResources.ts",
+    // Recorded crash pid, signal number and code fields.
+    "src/domain/native/recordedCrash.ts",
+    // Java int parsing for Ghidra launch properties.
+    "src/ghidra/GhidraInstallationPolicy.ts",
+  ],
+);
+
 // Mach-O load-command codes have one table; a local copy drifts from it.
 check(
   "local Mach-O load-command code (import LC from src/domain/apple/machoLoadCommandCodes)",
@@ -235,6 +261,27 @@ checkCounted(
   files,
   /Date\.now\(\)\s*\+/gu,
   [],
+);
+
+// `tshark -T json` has one envelope reader, src/pcap/TsharkJsonPackets.ts,
+// which owns malformed JSON, the packet array and each packet's layers.
+checkCounted(
+  "local tshark JSON envelope read (use parseTsharkJsonPackets or readTsharkJsonPackets from src/pcap/TsharkJsonPackets)",
+  "tshark-json-envelope",
+  files,
+  /\b_source\s*\.\s*layers\b/gu,
+  ["src/pcap/TsharkJsonPackets.ts"],
+);
+
+// GDB MI result records have one parser, src/gdb/GdbMiRecord.ts, which
+// returns typed records and typed failures. A regex over `\^done` accepts a
+// malformed record by its prefix.
+checkCounted(
+  "GDB MI result record regex (use parseGdbMiResultRecord or parseGdbMiDoneRecord from src/gdb/GdbMiRecord)",
+  "gdb-mi-record-regex",
+  files,
+  /\\\^\(?(?:\?:)?(?:done|running|connected|error|exit)\b/gu,
+  ["src/gdb/GdbMiRecord.ts"],
 );
 
 // Byte-format parsers read untrusted input. Bounds, truncation and failure
