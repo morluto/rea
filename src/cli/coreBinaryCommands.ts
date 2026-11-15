@@ -298,10 +298,8 @@ const registerDecompileCommand = (
           },
         },
       },
-      omit: {
-        ...noDocument,
-        detail: "The CLI returns complete pseudocode Evidence",
-      },
+      evidenceDelivery: true,
+      omit: noDocument,
       fields: {
         procedure: {
           name: "address",

@@ -19,9 +19,9 @@ import { nativeInstructionInputSchema } from "../domain/native/nativeInstruction
 import { functionInstructionInputSchema } from "./functionInstructionContract.js";
 import { HOPPER_MEMORY_TOOL_DEFINITIONS } from "./hopperMemoryContracts.js";
 import { nativeSearchInput } from "../domain/native/nativeSearch.js";
+import { decompileAnalysisSchema } from "../domain/analysisView/procedurePseudocodeSchemas.js";
 
-export const decompileAnalysisSelection = z
-  .enum(["independent_fresh"])
+export const decompileAnalysisSelection = decompileAnalysisSchema
   .optional()
   .describe(
     "Request a new independent decompile, bypassing project and snapshot results. Use only when the routed provider's procedure_pseudo_code capability declares independent_decompile; otherwise the request is refused. This may use different analysis context.",
