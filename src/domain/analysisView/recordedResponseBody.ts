@@ -12,6 +12,12 @@ export interface RecordedResponseBody {
   readonly bodyCut?: true;
 }
 
+/** Source admission is separate from the body fields consumed by replay. */
+export interface RecordedResponseBodyRead extends RecordedResponseBody {
+  /** A declared body could not be associated with its retained HAR bytes. */
+  readonly sourceUnavailable?: true;
+}
+
 const responseDeclarationSchema = z.object({
   response: z.object({
     status: z.unknown().optional(),
@@ -101,7 +107,7 @@ export const readRecordedResponseBody = (
   declaration: RecordedResponseDeclaration = readRecordedResponseDeclaration(
     record.reported,
   ),
-): RecordedResponseBody => {
+): RecordedResponseBodyRead => {
   const content = declaration?.content;
   if (content == null) return { bodyText: null };
   const bodyCoordinates = [
@@ -148,7 +154,7 @@ export const readRecordedResponseBody = (
     binary.content_base64 === null ||
     !sameHarBase64(text, binary.content_base64)
   )
-    return { bodyText: null };
+    return { bodyText: null, sourceUnavailable: true };
   return decodeRetainedBase64(binary.content_base64, limitBytes);
 };
 
