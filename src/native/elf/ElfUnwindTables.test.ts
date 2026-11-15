@@ -822,8 +822,13 @@ it.each([
         header: "match",
         datarel: "dynamic",
         dynamicPrograms: 1,
+        dynamicSection: false,
       }),
     );
+    expect(report.ranges.map((range) => range.start)).toEqual([
+      address(UNWIND_FN_A),
+      address(UNWIND_FN_B),
+    ]);
     expect(report.coverage.status).toBe("complete");
     expect(report.limitations).toContain(
       "DW_EH_PE_datarel .eh_frame values were resolved against the GOT base from DT_PLTGOT.",

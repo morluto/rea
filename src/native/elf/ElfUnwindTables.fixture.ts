@@ -87,6 +87,11 @@ export interface ElfUnwindFixtureOptions {
    * section's bytes (with `datarel: "dynamic"`).
    */
   readonly dynamicPrograms?: number;
+  /**
+   * When false, `.dynamic` is SHT_PROGBITS, so only PT_DYNAMIC headers
+   * declare the dynamic table.
+   */
+  readonly dynamicSection?: boolean;
   /** `.symtab` and `.dynsym` each under 65536 entries, together over it. */
   readonly symbolCap?: boolean;
   /** Second FDE stores a raw zero pcrel LSDA pointer (no LSDA). */
@@ -714,7 +719,7 @@ const addOptionalSections = (
     writeWord(dynamic, width / 2, UNWIND_GOT_VA, bits, little);
     sections.push({
       name: ".dynamic",
-      type: 6,
+      type: options.dynamicSection === false ? 1 : 6,
       flags: 3,
       address: UNWIND_GOT_VA - 0x100,
       bytes: dynamic,

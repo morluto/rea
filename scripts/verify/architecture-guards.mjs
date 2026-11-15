@@ -7,6 +7,7 @@ import {
   compareCountedBaseline,
   recordLoweredBaseline,
 } from "./counted-baseline.mjs";
+import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
 
 // Architecture guards for the strict-identity / best-effort-inference split.
 // - Composite dedup keys must not NUL-join variable-length or free-form
@@ -189,7 +190,10 @@ const checkCounted = (label, key, selected, pattern, owners) => {
   const counts = new Map();
   for (const file of selected) {
     if (owners.includes(file.path)) continue;
-    const count = file.content.match(pattern)?.length ?? 0;
+    const count =
+      typeof pattern === "function"
+        ? pattern(file.content)
+        : (file.content.match(pattern)?.length ?? 0);
     if (count > 0) counts.set(file.path, count);
   }
   const compared = compareCountedBaseline(
@@ -352,15 +356,13 @@ checkCounted(
 );
 
 // The same first-match choice, recognized by its shape rather than the
-// table's variable name: a parser that picks the first member whose key
-// field (name, type, cmd, command or tag) equals a value, through `find`,
-// `findLast`, or `filter(...)` then `[0]`, inherits a precedence among
-// repeated declarations. Select through src/domain/keyedCollection instead.
+// table's variable name (see keyed-first-match.mjs). Select through
+// src/domain/keyedCollection instead.
 checkCounted(
   "first-match lookup by key field in a parser (select through src/domain/keyedCollection)",
   "keyed-first-match",
   parserFiles,
-  /\.find(?:Last)?\(\s*(?:\(\s*(\w+)\s*(?::[^)]*)?\)|(\w+))\s*=>\s*(?:\1|\2)\.(?:name|type|cmd|command|tag)\s*===|\.find(?:Last)?\(\s*\(\s*\{\s*(name|type|cmd|command|tag)\b[^}]*\}\s*\)\s*=>\s*\3\s*===|\.filter\(\s*(?:\(\s*(\w+)\s*\)|(\w+))\s*=>\s*(?:\4|\5)\.(?:name|type|cmd|command|tag)\s*===[^;]*?\)\s*(?:\.map\([^;]*?\)\s*)?\[0\]/gu,
+  countKeyedFirstMatches,
   [],
 );
 
