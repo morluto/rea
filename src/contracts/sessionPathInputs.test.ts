@@ -11,6 +11,8 @@ import {
 } from "./sessionLifecycleInputs.js";
 import { importEvidenceBundleInputSchema } from "./sessionToolSchemas.js";
 import { binarySessionInputSchema } from "./sessionStatusContract.js";
+import { pcapInputSchemas } from "../domain/pcap/pcapAnalysis.js";
+import { RIZIN_DEBUG_TOOL_CONTRACTS } from "./rizinDebugToolContracts.js";
 
 type PathCase = {
   readonly name: string;
@@ -19,6 +21,11 @@ type PathCase = {
   readonly absolute: string;
   readonly omitted?: () => boolean;
 };
+
+const rizinDebugContract = RIZIN_DEBUG_TOOL_CONTRACTS.find(
+  (contract) => contract.name === "start_rizin_debug_session",
+);
+const rizinDebugInputSchema = rizinDebugContract?.inputSchema;
 
 const cases: readonly PathCase[] = [
   {
@@ -137,6 +144,35 @@ const cases: readonly PathCase[] = [
     absolute: "/opt/rea/dist/main.js",
     omitted: () => binarySessionInputSchema.safeParse({}).success,
   },
+  {
+    name: "inspect pcap capture",
+    accepts: (path) =>
+      pcapInputSchemas.inspect_pcap_capture.safeParse({ path }).success,
+    relative: ["capture.pcap", "relative/capture.pcap"],
+    absolute: "/tmp/capture.pcap",
+  },
+  {
+    name: "start rizin debug session path",
+    accepts: (path) =>
+      rizinDebugInputSchema !== undefined &&
+      rizinDebugInputSchema.safeParse({
+        path,
+        inferior_tty: "/dev/pts/7",
+      }).success,
+    relative: ["program", "relative/program"],
+    absolute: "/tmp/program",
+  },
+  {
+    name: "start rizin debug session inferior tty",
+    accepts: (inferior_tty) =>
+      rizinDebugInputSchema !== undefined &&
+      rizinDebugInputSchema.safeParse({
+        path: "/tmp/program",
+        inferior_tty,
+      }).success,
+    relative: ["pts/7", "relative/pts/7"],
+    absolute: "/dev/pts/7",
+  },
 ];
 
 it.each(cases)("$name requires an absolute local path", (pathCase) => {
@@ -177,6 +213,7 @@ describe.runIf(process.platform === "win32")(
       [closeBinaryInputSchema, { snapshot_path: "C:\\rea\\analysis.json" }],
       [closeBinaryInputSchema, { snapshot_path: "C:/rea/analysis.json" }],
       [exportEvidenceBundleInputSchema, { path: "C:/rea/bundle.json" }],
+      [pcapInputSchemas.inspect_pcap_capture, { path: "C:/rea/capture.pcap" }],
     ])("accepts %o", (schema, input) => {
       expect(schema.safeParse(input).success).toBe(true);
     });

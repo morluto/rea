@@ -12,6 +12,7 @@ import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { bindCliEvidenceCallerPath } from "./cliEvidenceCallerPath.js";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
 
 /** Expose the same explicit pcap requests through one-shot CLI commands. */
 export const registerPcapCommands = (
@@ -63,7 +64,7 @@ export const registerPcapCommands = (
         CLI_COMMANDS.inspectPcapCapture,
         "inspect_pcap_capture",
         {
-          path: args.path,
+          path: absoluteCallerPath(args.path),
         },
         args.path,
       ),

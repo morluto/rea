@@ -114,6 +114,11 @@ it("advertises exact valid pcap schemas and records inline evidence through MCP"
     arguments: { path: "/captures/session.pcap" },
   });
   expect(inspected.isError).not.toBe(true);
+  const relative = await client.callTool({
+    name: "inspect_pcap_capture",
+    arguments: { path: "relative-session.pcap" },
+  });
+  expect(relative.isError).toBe(true);
   const text = (inspected.content as { readonly text?: string }[])
     .map((part) => part.text ?? "")
     .join("");

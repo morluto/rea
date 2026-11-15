@@ -5,6 +5,7 @@ import { expectConfigurationRefusal, serveCli } from "./cliServeHarness.js";
 it.each([
   ["inspect-pcap-client"],
   ["inspect-pcap-capture", "/nonexistent/capture.pcap"],
+  ["inspect-pcap-capture", "relative-capture.pcap"],
 ])("%s names the missing Wireshark tool to configure", async (...argv) => {
   const result = await serveCli([...argv, "--json"], {
     REA_TSHARK_COMMAND: "/nonexistent/tshark",
