@@ -5,6 +5,7 @@ import { safeParseJson } from "./safeJson.js";
 import { jsonStringByteLength } from "./jsonStringByteLength.js";
 import { jsonValueByteLength } from "./jsonValueByteLength.js";
 import { err, ok, type Result } from "./result.js";
+import { strictUtf8Decoder } from "./strictUtf8.js";
 
 const jsonValueTypeSchema = z.enum([
   "object",
@@ -85,9 +86,7 @@ export const inferJsonShape = (
     text =
       typeof source === "string"
         ? source
-        : new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-            source,
-          );
+        : strictUtf8Decoder("preserve").decode(source);
   } catch {
     return err({ kind: "invalid-json" });
   }
