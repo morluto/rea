@@ -143,7 +143,7 @@ describe("inspection branch diagnostics", () => {
           operation: "inspect_web_page",
           issues: [
             {
-              path: ["cdp_endpoint"],
+              path: ["endpoint"],
               reason: "invalid_value",
               message: owner.message,
             },
@@ -283,7 +283,8 @@ describe("browser correction facts", () => {
           operation: "inspect_web_page",
           issues: expect.arrayContaining([
             {
-              path: ["include_storage_fingerprints"],
+              // Projected from its contract, so the issue names the CLI key.
+              path: ["includeStorageFingerprints"],
               reason: "invalid_value",
               message: owner.message,
             },

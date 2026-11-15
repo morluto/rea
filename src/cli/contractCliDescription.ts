@@ -37,7 +37,8 @@ export interface ProjectedContract<Name extends string = string> {
   readonly name: Name;
   readonly inputSchema:
     | z.ZodObject
-    | z.ZodDiscriminatedUnion<readonly z.ZodObject[]>;
+    | z.ZodDiscriminatedUnion<readonly z.ZodObject[]>
+    | z.ZodUnion<readonly z.ZodObject[]>;
 }
 
 /** A contract whose whole input a CLI command takes as one JSON document. */
@@ -785,6 +786,34 @@ const projectObjectConstraints = (
  * fields the CLI never supplies, may differ, and they admit any branch's
  * value here. The delivery is then checked against the whole union.
  */
+/**
+ * A boolean whose `true` and `false` literals each select one input branch,
+ * such as whether to capture script sources, is one flag. Omission takes the
+ * default of the branch that admits it; the contract selects the branch when
+ * it admits the input.
+ */
+const branchSelectingFlag = (
+  branches: readonly (z.ZodType | undefined)[],
+): z.ZodType | undefined => {
+  const values = branches.map((branch) => {
+    const value = branch === undefined ? undefined : core(branch);
+    return value instanceof z.ZodLiteral && value.values.size === 1
+      ? [...value.values][0]
+      : undefined;
+  });
+  if (
+    values.some((value) => typeof value !== "boolean") ||
+    new Set(values).size !== 2
+  )
+    return undefined;
+  const omissions = branches.filter((branch) => admitsOmission(branch!));
+  if (omissions.length > 1) return undefined;
+  const flag = z.boolean();
+  return omissions.length === 0
+    ? flag
+    : flag.default(omissions[0]!.parse(undefined) as boolean);
+};
+
 const inputFields = (
   contract: ProjectedContract,
   unprojectedFields: ReadonlySet<string>,
@@ -801,6 +830,8 @@ const inputFields = (
       const branches = shapes.map((shape) => shape[field]);
       const [first] = branches;
       if (branches.every((branch) => branch === first)) return [field, first!];
+      const selector = branchSelectingFlag(branches);
+      if (selector !== undefined) return [field, selector];
       if (
         !unprojectedFields.has(field) ||
         branches.some((branch) => branch === undefined)
