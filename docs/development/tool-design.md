@@ -324,8 +324,8 @@ as evidence about the input. Readers report bounds failures at the read site;
 host error codes alone cannot distinguish a read from a write or allocation.
 `scripts/verify/architecture-guards.mjs` counts the remaining raw `Buffer` and
 `DataView` reads, plain `Error` throws in parser folders, plain `JSON.parse`
-of parser input, and direct `instanceof RangeError` checks against
-`scripts/verify/architecture-guard-baselines.json`. A
+of parser input, and direct `instanceof RangeError` checks against their
+per-guard baselines in `scripts/verify/baselines/`. A
 file may not exceed its count; after removing copies, run
 `node scripts/verify/architecture-guards.mjs --shrink-baselines`.
 

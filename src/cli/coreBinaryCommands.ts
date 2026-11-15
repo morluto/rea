@@ -8,7 +8,6 @@ import {
   addressOrProcedureGuidance,
   equalSelectorGuidance,
   requiredSelectorGuidance,
-  resolveCliAnalysisSelector,
 } from "./analysisSelector.js";
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -32,10 +31,7 @@ import { localPathStringSchema } from "../domain/localPath.js";
 import type { ExecutableFormatHint } from "../domain/dosCom.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { registerDecompileDirectoryCommand } from "./decompileDirectoryCommand.js";
-import {
-  decompileAnalysisSelection,
-  OFFICIAL_TOOL_CONTRACTS,
-} from "../contracts/officialToolContracts.js";
+import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/officialToolContracts.js";
 import { ENHANCED_TOOL_CONTRACTS } from "../contracts/enhancedToolContracts.js";
 import {
   registerContractCommand,
@@ -60,15 +56,12 @@ export const registerCoreBinaryCommands = (
   runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
   environment: Readonly<Record<string, string | undefined>>,
 ): void => {
+  const run = runDirectOnTarget(runDirectAnalysis, logger);
   registerOverviewCommands(cli, logger, runDirectAnalysis, environment);
-  registerDecompileCommand(cli, logger, runDirectAnalysis);
-  registerDecompileDirectoryCommand(cli, logger, runDirectAnalysis);
-  registerSearchCommand(cli, logger, runDirectAnalysis);
-  registerContractBinaryCommands(
-    cli,
-    logger,
-    runDirectOnTarget(runDirectAnalysis, logger),
-  );
+  registerDecompileCommand(cli, logger, run);
+  registerDecompileDirectoryCommand(cli, logger, run);
+  registerSearchCommand(cli, logger, run);
+  registerContractBinaryCommands(cli, logger, run);
 };
 
 /** The CLI has no Hopper document selection; it opens one target per call. */
@@ -309,67 +302,43 @@ const registerOverviewCommands = (
 const registerDecompileCommand = (
   cli: CliInstance,
   logger: Logger,
-  runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
+  run: ReturnType<typeof runDirectOnTarget>,
 ): void => {
-  cli.command(CLI_COMMANDS.decompile, {
-    description: `Read one part of an app as code. ${decompileSelectorGuidance} Equal positional and --procedure values are accepted; conflicts fail. With Ghidra, a space-qualified address such as ram:0x... avoids file-offset fallback; inspect-native-load-image reports the observed default space.`,
-    args: z.object({
-      path: localPathStringSchema.describe("App or program path"),
-      address: z
-        .string()
-        .min(1)
-        .optional()
-        .describe(`Procedure name or address. ${decompileSelectorGuidance}`),
-    }),
-    options: z.object({
-      procedure: z
-        .string()
-        .min(1)
-        .optional()
-        .describe(
-          `Procedure name or address; use --procedure=<value> for leading dashes. ${decompileSelectorGuidance}`,
-        ),
-      "file-offset": z
-        .string()
-        .regex(/^0x[0-9a-fA-F]+$/u)
-        .optional()
-        .describe(
-          `Ghidra source-file byte offset; mapped internally to an analysis address. ${decompileSelectorGuidance}`,
-        ),
-      analysis: decompileAnalysisSelection,
-      snapshot: snapshotSelectionOption,
-      ...nativeOpenOptionFields,
-    }),
-    run: ({ args, options }) =>
-      logCliCommand(logger, "decompile", () =>
-        runDirectAnalysis(
-          args.path,
-          "procedure_pseudo_code",
-          {
-            procedure: resolveCliAnalysisSelector(
-              args.address,
-              options["file-offset"] === undefined
-                ? options.procedure
-                : resolveCliAnalysisSelector(
-                    options.procedure,
-                    `file-offset:${options["file-offset"]}`,
-                    "file-offset",
-                    "procedure_pseudo_code",
-                  ),
-              options["file-offset"] === undefined
-                ? "procedure"
-                : "file-offset",
-              "procedure_pseudo_code",
-              "native",
-            ),
-            ...(options.analysis === undefined
-              ? {}
-              : { analysis: options.analysis }),
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(OFFICIAL_TOOL_CONTRACTS, "procedure_pseudo_code"),
+    {
+      command: CLI_COMMANDS.decompile,
+      description: `Read one part of an app as code. ${decompileSelectorGuidance} Equal positional and --procedure values are accepted; conflicts fail. With Ghidra, a space-qualified address such as ram:0x... avoids file-offset fallback; inspect-native-load-image reports the observed default space.`,
+      sessionTarget: program,
+      positionals: ["procedure"],
+      selectorOptions: {
+        procedure: {
+          name: "procedure",
+          description: `Procedure name or address; use --procedure=<value> for leading dashes. ${decompileSelectorGuidance}`,
+          kind: "native",
+          alternative: {
+            name: "file-offset",
+            description: `Ghidra source-file byte offset; mapped internally to an analysis address. ${decompileSelectorGuidance}`,
+            schema: z.string().regex(/^0x[0-9a-fA-F]+$/u),
+            selects: (offset) => `file-offset:${offset}`,
           },
-          directAnalysisOptionsFromCli(logger, options),
-        ).then(projectCliAnalysisResult),
-      ),
-  });
+        },
+      },
+      omit: {
+        ...noDocument,
+        detail: "The CLI returns complete pseudocode Evidence",
+      },
+      fields: {
+        procedure: {
+          name: "address",
+          description: `Procedure name or address. ${decompileSelectorGuidance}`,
+        },
+      },
+    },
+    run,
+  );
 };
 
 /** Select static JavaScript analysis only when no binary-analysis option applies. */
@@ -407,60 +376,55 @@ const isJavaScriptApplicationPath = async (path: string): Promise<boolean> => {
 const registerSearchCommand = (
   cli: CliInstance,
   logger: Logger,
-  runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
+  run: ReturnType<typeof runDirectOnTarget>,
 ): void => {
-  cli.command(CLI_COMMANDS.search, {
-    description: `Search every analyzed string or procedure name. ${patternSelectorGuidance} ${equalSelectorGuidance}`,
-    args: z.object({
-      path: localPathStringSchema.describe("App or program path"),
-      pattern: z
-        .string()
-        .min(1)
-        .optional()
-        .describe(`Literal text or regex pattern. ${patternSelectorGuidance}`),
-    }),
-    options: z.object({
-      pattern: z
-        .string()
-        .min(1)
-        .optional()
-        .describe(
-          `Complete literal text or regex pattern; use --pattern=<value> for leading dashes. ${patternSelectorGuidance}`,
-        ),
-      kind: z
-        .enum(["strings", "procedures"])
-        .default("strings")
-        .describe("Analyzed item kind to search"),
-      mode: z
-        .enum(["literal", "regex"])
-        .default("literal")
-        .describe("Interpret the pattern as literal text or a regex"),
-      caseSensitive: z
-        .boolean()
-        .default(false)
-        .describe("Match the pattern with exact letter case"),
-      snapshot: snapshotSelectionOption,
-      ...nativeOpenOptionFields,
-    }),
-    run: ({ args, options }) =>
-      logCliCommand(logger, "search", () =>
-        runDirectAnalysis(
-          args.path,
-          options.kind === "strings" ? "search_strings" : "search_procedures",
-          {
-            pattern: resolveCliAnalysisSelector(
-              args.pattern,
-              options.pattern,
-              "pattern",
-              options.kind === "strings"
-                ? "search_strings"
-                : "search_procedures",
-            ),
-            mode: options.mode,
-            case_sensitive: options.caseSensitive,
-          },
-          directAnalysisOptionsFromCli(logger, options),
-        ).then(projectCliAnalysisResult),
-      ),
-  });
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(OFFICIAL_TOOL_CONTRACTS, "search_strings"),
+    {
+      command: CLI_COMMANDS.search,
+      description: `Search every analyzed string or procedure name. ${patternSelectorGuidance} ${equalSelectorGuidance}`,
+      sessionTarget: program,
+      positionals: ["pattern"],
+      selectorOptions: {
+        pattern: {
+          name: "pattern",
+          description: `Complete literal text or regex pattern; use --pattern=<value> for leading dashes. ${patternSelectorGuidance}`,
+        },
+      },
+      cliOptions: {
+        kind: z
+          .enum(["strings", "procedures"])
+          .default("strings")
+          .describe("Analyzed item kind to search"),
+      },
+      operationBy: {
+        option: "kind",
+        contracts: {
+          procedures: contractNamed(
+            OFFICIAL_TOOL_CONTRACTS,
+            "search_procedures",
+          ),
+        },
+      },
+      omit: {
+        ...noDocument,
+        detail: "The CLI returns the complete inventory matches",
+      },
+      fields: {
+        pattern: {
+          description: `Literal text or regex pattern. ${patternSelectorGuidance}`,
+        },
+        mode: {
+          description: "Interpret the pattern as literal text or a regex",
+        },
+        case_sensitive: {
+          name: "caseSensitive",
+          description: "Match the pattern with exact letter case",
+        },
+      },
+    },
+    run,
+  );
 };

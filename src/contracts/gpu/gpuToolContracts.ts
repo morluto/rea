@@ -13,6 +13,7 @@ import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 export const GPU_TOOL_CONTRACTS = [
   {
     name: "inspect_gpu_code_objects",
+    availability: "standalone",
     ...toolContractMetadata("inspect_gpu_code_objects"),
     kind: "artifact-provider",
     requiresActiveTarget: true,

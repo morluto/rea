@@ -921,6 +921,46 @@ describe("managed application graph coverage", () => {
       }
     }
   });
+
+  it("reports an unavailable source as unknown, not partial", () => {
+    const bytes = buildManagedPeFixture();
+    const binary = managedPeFixtureTarget(bytes, "/fixture/ManagedInterop.exe");
+    const members = inspectManagedMembersBytes(bytes, binary);
+    const evidence = (state: "partial" | "unavailable") =>
+      createEvidence(binary, MANAGED_STATIC_PROVIDER, {
+        operation: "inspect_managed_members",
+        parameters: {},
+        result: { ...members, coverage: { state, issues: [] } },
+        rawResult: null,
+        limitations: members.limitations,
+      });
+    const project = (state: "partial" | "unavailable") => {
+      const projection = projectManagedApplicationGraphEvidence({
+        managed_members: evidence(state),
+      });
+      if (!projection.ok) throw new Error("projection failed");
+      return managedApplicationGraphResultSchema.parse(
+        parseEvidence(projection.value).normalized_result,
+      );
+    };
+
+    const unavailable = project("unavailable");
+    expect(unavailable.coverage).toEqual({ status: "unknown" });
+    expect(unavailable.graph.coverage).toEqual({
+      status: "unknown",
+      truncated: false,
+      omitted_count: null,
+      limits: [],
+    });
+    expect(unavailable.limitations).toContainEqual(
+      expect.stringMatching(/managed Evidence record is unavailable/iu),
+    );
+    expect(unavailable.limitations).not.toContainEqual(
+      expect.stringMatching(/partial coverage/iu),
+    );
+    // A known gap alone stays partial.
+    expect(project("partial").coverage).toEqual({ status: "partial" });
+  });
 });
 
 describe("managed application graph type selection", () => {

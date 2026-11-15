@@ -1,5 +1,13 @@
+import { Budget } from "../domain/budget.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
-import { javaScriptSemanticWorkAllowance } from "../domain/javascript/javascriptSemanticWorkAllowance.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
+import {
+  DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
+  javaScriptMemberMutationAllowanceField,
+  javaScriptMemberMutationRefusal,
+  reportsJavaScriptMemberMutationRefusal,
+  type JavaScriptMemberMutationAllowance,
+} from "../domain/javascript/javascriptSemanticWorkAllowance.js";
 import {
   retainProcessInspectionCleanup,
   processInspectionCancellationError,
@@ -53,6 +61,7 @@ import { javaScriptRuntime } from "../domain/runtimeVersion.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { IncludedScript } from "../domain/webBundleAnalyzerState.js";
 import {
+  unavailableWebScriptRecovery,
   webBundleScriptAnalysisSchema,
   type WebBundleScriptAnalysis,
 } from "../domain/webBundleScriptAnalysis.js";
@@ -90,24 +99,34 @@ import {
 const OPERATION = "analyze_web_bundle";
 
 /**
- * A worker resource refusal. A reported fixed work allowance is deterministic
- * for the same script; any other refusal is measured memory exhaustion.
+ * A worker resource refusal. The member-mutation allowance is deterministic
+ * for the same script and names its setting; any other refusal is measured
+ * memory exhaustion.
  */
 const webBundleResourceFailure = (
   frame: Extract<WebBundleWorkerMessage, { readonly kind: "failure" }>,
-  resultBudgetBytes: number,
+  job: WebBundleActiveJob,
   capturedOutput?: AnalysisErrorOptions["capturedOutput"],
 ): AnalysisResourceConstraintError => {
-  const limits = { ...frame.limits, result_budget_bytes: resultBudgetBytes };
-  const fixed = javaScriptSemanticWorkAllowance(frame.limits);
+  const limits = {
+    ...frame.limits,
+    result_budget_bytes: job.resultBudgetBytes,
+  };
+  if (reportsJavaScriptMemberMutationRefusal(frame.limits))
+    return javaScriptMemberMutationRefusal(
+      OPERATION,
+      job.memberMutationAllowance,
+      limits,
+      capturedOutput,
+    );
   return new AnalysisResourceConstraintError(
     OPERATION,
-    fixed === undefined ? "memory" : "cpu",
+    "memory",
     frame.message,
     limits,
     {
       ...(capturedOutput === undefined ? {} : { capturedOutput }),
-      ...(fixed ?? { measuredExhaustion: true }),
+      measuredExhaustion: true,
     },
   );
 };
@@ -140,7 +159,7 @@ type WebBundleObservedFailure =
         WebBundleWorkerMessage,
         { readonly kind: "failure" }
       >;
-      readonly resultBudgetBytes: number;
+      readonly job: WebBundleActiveJob;
     }
   | {
       readonly kind: "exit";
@@ -153,6 +172,7 @@ type WebBundleObservedFailure =
 type WebBundleActiveJob = {
   readonly id: string;
   readonly resultBudgetBytes: number;
+  readonly memberMutationAllowance: JavaScriptMemberMutationAllowance;
 };
 
 export interface WebBundleScriptAnalysisFailure {
@@ -175,7 +195,7 @@ export class WebBundleAnalysisWorker {
   #activeJob: WebBundleActiveJob | undefined;
   #activeTerminalResponseObserved = false;
   readonly #frameSignal = new WorkerFrameSignal();
-  #retainedResultBytes = 0;
+  readonly #retainedResult = new Budget(WEB_BUNDLE_WORKER_LIMITS.resultBytes);
   #ready = false;
   readonly #stdout = (chunk: Buffer | string): void => {
     if (this.#activeDeadline?.interruption !== undefined) return;
@@ -311,6 +331,7 @@ export class WebBundleAnalysisWorker {
     timeoutMs: number,
     signal?: AbortSignal,
     precision?: JavaScriptSemanticPrecisionInput,
+    memberMutationAllowance: JavaScriptMemberMutationAllowance = DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
   ): Promise<Result<WebBundleScriptAnalysis, WebBundleScriptAnalysisFailure>> {
     let deadline: ProviderStartupDeadline | undefined;
     const id = randomUUID();
@@ -385,6 +406,9 @@ export class WebBundleAnalysisWorker {
       const request = webBundleWorkerRequestSchema.parse({
         kind: "analyze",
         ...(precision === undefined ? {} : { semantic_precision: precision }),
+        member_mutation_allowance: javaScriptMemberMutationAllowanceField(
+          memberMutationAllowance,
+        ),
         id,
         source,
         result_budget_bytes: resultBudget,
@@ -393,7 +417,12 @@ export class WebBundleAnalysisWorker {
       const stdin = supervisor.launch.process.stdin;
       if (stdin === null || stdin === undefined)
         throw new TypeError("Web analyzer request stream is unavailable");
-      this.#activeJob = { id, resultBudgetBytes: resultBudget };
+      const job: WebBundleActiveJob = {
+        id,
+        resultBudgetBytes: resultBudget,
+        memberMutationAllowance,
+      };
+      this.#activeJob = job;
       this.#activeTerminalResponseObserved = false;
       await new Promise<void>((resolve, reject) =>
         stdin.write(frame, (error) =>
@@ -411,7 +440,7 @@ export class WebBundleAnalysisWorker {
       } while (response.kind === "phase");
       if (response.kind === "failure") {
         if (response.reason === "resource")
-          throw webBundleResourceFailure(response, resultBudget);
+          throw webBundleResourceFailure(response, job);
         throw new AnalysisOutputError(
           OPERATION,
           `Web script analysis failed (${response.reason}): ${response.message}`,
@@ -451,8 +480,16 @@ export class WebBundleAnalysisWorker {
           artifactFailure = true;
           throw cause;
         });
-      const facts = this.#validateCompletedResult(stored, descriptor, script);
-      this.#retainedResultBytes += descriptor.bytes;
+      const facts = this.#validateCompletedResult(
+        stored,
+        descriptor,
+        script,
+        memberMutationAllowance,
+      );
+      // The descriptor was admitted against this remainder before the read.
+      this.#retainedResult.charge(descriptor.bytes, () =>
+        invariantViolation("Admitted web analysis result no longer fits"),
+      );
       completed = facts;
       result = ok(facts);
     } catch (cause) {
@@ -460,12 +497,15 @@ export class WebBundleAnalysisWorker {
       const snapshot = completedStableArtifact(cause);
       if (snapshot !== undefined && resultDescriptor !== undefined) {
         try {
-          completed = this.#validateCompletedResult(
+          const validated = this.#validateCompletedResult(
             snapshot,
             resultDescriptor,
             script,
+            memberMutationAllowance,
           );
-          this.#retainedResultBytes += resultDescriptor.bytes;
+          // Retain the completed facts only when they fit what remains.
+          if (this.#retainedResult.tryCharge(resultDescriptor.bytes))
+            completed = validated;
         } catch {
           // The physical read completed, but only validated facts are retained.
         }
@@ -583,8 +623,7 @@ export class WebBundleAnalysisWorker {
   #admittedResultBudget():
     | { readonly ok: true; readonly bytes: number }
     | { readonly ok: false; readonly error: AnalysisResourceConstraintError } {
-    const fixedRemaining =
-      WEB_BUNDLE_WORKER_LIMITS.resultBytes - this.#retainedResultBytes;
+    const fixedRemaining = this.#retainedResult.remaining;
     const hostCapacity = Math.max(
       0,
       Math.floor(
@@ -803,7 +842,7 @@ export class WebBundleAnalysisWorker {
     this.#latchFailure({
       kind: "frame",
       frame,
-      resultBudgetBytes: this.#activeJob.resultBudgetBytes,
+      job: this.#activeJob,
     });
   }
 
@@ -837,11 +876,7 @@ export class WebBundleAnalysisWorker {
         );
       case "frame":
         return failure.frame.reason === "resource"
-          ? webBundleResourceFailure(
-              failure.frame,
-              failure.resultBudgetBytes,
-              capturedOutput,
-            )
+          ? webBundleResourceFailure(failure.frame, failure.job, capturedOutput)
           : new AnalysisOutputError(
               OPERATION,
               `Web script analysis failed (${failure.frame.reason}): ${failure.frame.message}`,
@@ -908,6 +943,7 @@ export class WebBundleAnalysisWorker {
     stored: StableArtifactSnapshot,
     descriptor: WebBundleResultDescriptor,
     script: IncludedScript,
+    memberMutationAllowance: JavaScriptMemberMutationAllowance,
   ): WebBundleScriptAnalysis {
     if (
       stored.bytes.length !== descriptor.bytes ||
@@ -920,12 +956,27 @@ export class WebBundleAnalysisWorker {
     const parsed = safeParseUtf8Json(stored.bytes);
     if (!parsed.ok) throw parsed.cause;
     const facts = webBundleScriptAnalysisSchema.parse(parsed.value);
-    if (facts.status !== "analyzed" || facts.script_key !== script.script_key)
+    if (facts.script_key !== script.script_key)
       throw new AnalysisOutputError(
         OPERATION,
         "Web analyzer facts name another script",
       );
-    return facts;
+    if (facts.status === "analyzed") return facts;
+    if (facts.partial === undefined)
+      throw new AnalysisOutputError(
+        OPERATION,
+        "Web analyzer returned an unavailable result without partial facts",
+      );
+    // The refusal and its recovery come from the allowance this host sent.
+    return {
+      status: "unavailable",
+      script_key: facts.script_key,
+      reason: "resource_constraint",
+      ...unavailableWebScriptRecovery(
+        javaScriptMemberMutationRefusal(OPERATION, memberMutationAllowance),
+      ),
+      partial: facts.partial,
+    };
   }
 
   #reset(): void {

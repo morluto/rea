@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
@@ -23,6 +24,7 @@ import {
   snapshotBindingMismatch,
   snapshotMatchesProfile,
   snapshotTarget,
+  snapshotTargetIdentity,
   parseAnalysisSnapshot,
   immutableAnalysisSnapshot,
   type AnalysisSnapshot,
@@ -46,6 +48,7 @@ import {
   snapshotReplayBinding,
   type SnapshotReplayBinding,
 } from "./AnalysisSnapshotReplayBinding.js";
+import { sameTargetIdentity } from "../../domain/targetIdentity.js";
 import { createInvestigationEvidenceClosureChecker } from "../investigation/InvestigationEvidence.js";
 
 const RELATIONSHIP_OPERATIONS: ReadonlySet<AnalysisOperation> = new Set([
@@ -170,7 +173,7 @@ export const isSnapshotCacheable = (
 /** Windows Ghidra must admit the selected source through its native snapshot owner. */
 export const requiresNativeSourceAdmissionBeforeReplay = (
   providerId: string | undefined,
-): boolean => process.platform === "win32" && providerId === "ghidra";
+): boolean => HOST_PLATFORM.platform === "win32" && providerId === "ghidra";
 
 /** Limitation that marks every observation replayed from a snapshot. */
 const SNAPSHOT_REPLAY_LIMITATION =
@@ -225,7 +228,10 @@ export class AnalysisSnapshotCache {
     snapshot = immutableAnalysisSnapshot(snapshot);
     if (
       (this.#target !== undefined &&
-        JSON.stringify(this.#target) !== JSON.stringify(snapshot.target)) ||
+        !sameTargetIdentity(
+          snapshotTargetIdentity(this.#target),
+          snapshotTargetIdentity(snapshot.target),
+        )) ||
       (this.#binding !== undefined &&
         !snapshotMatchesProfile(
           this.#binding,

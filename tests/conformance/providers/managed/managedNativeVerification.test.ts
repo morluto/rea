@@ -912,6 +912,66 @@ it("retains every observed native candidate", () => {
   expect(result.pinvoke_imports[0]?.candidates).toHaveLength(2);
 });
 
+it("reports coverage unknown when the managed boundary inspection is unavailable", () => {
+  const withManagedCoverage = (
+    state: "partial" | "unavailable",
+    nativeObservations: ReturnType<typeof nativeEvidenceWithExports>[],
+  ) => {
+    const input = exampleInput();
+    const managed = input.managed_boundaries;
+    const normalized = managedNativeBoundaryInspectionSchema.parse(
+      managed.normalized_result,
+    );
+    return verifyManagedNativeVerificationSource(
+      readFixtureSource({
+        ...input,
+        managed_boundaries: createEvidence(undefined, managed.provider, {
+          operation: managed.operation,
+          parameters: managed.parameters,
+          result: {
+            ...normalized,
+            ...(state === "unavailable"
+              ? { module_refs: [], pinvoke_imports: [] }
+              : {}),
+            coverage: { ...normalized.coverage, state },
+          },
+          rawResult: null,
+        }),
+        native_observations: nativeObservations,
+      }),
+    );
+  };
+  const exhaustive = nativeEvidenceWithExports(["open_native"]);
+  const macho = inspectMachoSchema.parse(exhaustive.normalized_result);
+  const partialExports = createEvidence(
+    exhaustive.subject === null
+      ? undefined
+      : {
+          path: exhaustive.subject.local_path,
+          sha256: exhaustive.subject.digest.sha256,
+          format: exhaustive.subject.format,
+        },
+    exhaustive.provider,
+    {
+      operation: exhaustive.operation,
+      parameters: exhaustive.parameters,
+      result: { ...macho, exports: { ...macho.exports, exhaustive: false } },
+      rawResult: null,
+    },
+  );
+
+  // Nothing was read on the managed side, so the result is unknown, and
+  // unknown wins beside the known gap of non-exhaustive native exports.
+  for (const native of [exhaustive, partialExports])
+    expect(withManagedCoverage("unavailable", [native]).coverage).toEqual({
+      status: "unknown",
+    });
+  // A partial inspection is a known gap.
+  expect(withManagedCoverage("partial", [exhaustive]).coverage).toEqual({
+    status: "partial",
+  });
+});
+
 describe("managed/native verification result algebra", () => {
   it("rejects states without their required native match", () => {
     const result = verifyManagedNativeVerificationSource(

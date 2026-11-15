@@ -7,7 +7,10 @@ import type { CdpReceivedEvent } from "../CdpConnection.js";
 import { runtimeStackSchema } from "./CdpRuntimeProtocol.js";
 import type { CdpRuntimeSources } from "./CdpRuntimeSources.js";
 import { sanitizeRuntimeInitiator } from "./CdpRuntimeInitiator.js";
-import { assertRuntimeRetention } from "./CdpRuntimeRetention.js";
+import {
+  assertRuntimeRetention,
+  RuntimeRetention,
+} from "./CdpRuntimeRetention.js";
 
 type RuntimeRequestSources = Pick<
   CdpRuntimeSources,
@@ -25,9 +28,14 @@ type RuntimeRequestSources = Pick<
 export class CdpRuntimeRequests {
   readonly items: WebExecution["requests"] = [];
   excluded = 0;
-  #bytes = 0;
+  readonly #retention: RuntimeRetention;
   #failure: AnalysisError | undefined;
-  constructor(readonly sources: RuntimeRequestSources) {}
+  constructor(readonly sources: RuntimeRequestSources) {
+    this.#retention = new RuntimeRetention(
+      sources.session.operation,
+      "requests",
+    );
+  }
 
   /** Retain only armed-window requests from the selected main frame and selected origins. */
   ingest(event: CdpReceivedEvent): void {
@@ -98,12 +106,7 @@ export class CdpRuntimeRequests {
         async_parent_ids: parents,
         causal_attribution: "unknown",
       };
-      this.#bytes += Buffer.byteLength(JSON.stringify(retained));
-      assertRuntimeRetention(
-        this.sources.session.operation,
-        "requests",
-        this.#bytes,
-      );
+      this.#retention.charge(Buffer.byteLength(JSON.stringify(retained)));
       this.items.push(retained);
     } catch (cause: unknown) {
       this.#failure =

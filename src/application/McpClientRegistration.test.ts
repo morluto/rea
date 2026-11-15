@@ -13,7 +13,7 @@ import { join, sep } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import { ok } from "../domain/result.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 let resources: ArtifactResourceScope;
@@ -660,24 +660,16 @@ describe("Registration cancellation with independent failures", () => {
 describe("Registration cancellation and sibling outcomes", () => {
   it("cancels queued registration after the existing transaction settles", async () => {
     const { path } = await settingsFixture("{}");
-    let unblock!: () => void;
-    let entered!: () => void;
-    const blocked = new Promise<void>((resolve) => {
-      unblock = resolve;
-    });
-    const admitted = new Promise<void>((resolve) => {
-      entered = resolve;
-    });
-    const first = withClientConfigurationTransaction(path, async () => {
-      entered();
-      await blocked;
-    });
+    const transaction = phaseGate();
+    const first = withClientConfigurationTransaction(path, () =>
+      transaction.hold(),
+    );
     try {
-      await awaitAcknowledgement(admitted, first, "registration transaction");
+      await transaction.reached(first, "registration transaction");
       const controller = new AbortController();
       const queued = register(path, launcher, controller.signal);
       controller.abort("queued cancellation");
-      unblock();
+      transaction.release();
       await first;
       expect(await queued).toMatchObject({
         ok: false,
@@ -685,7 +677,7 @@ describe("Registration cancellation and sibling outcomes", () => {
       });
       expect(await readFile(path, "utf8")).toBe("{}");
     } finally {
-      unblock();
+      transaction.release();
       await first;
     }
   });
