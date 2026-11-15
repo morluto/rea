@@ -33,7 +33,7 @@ beforeEach(clearClientLocationEnvironment);
 afterEach(() => vi.unstubAllEnvs());
 
 const getClients = (home: string) =>
-  supportedClients(home).filter(({ name }) =>
+  supportedClients(home, HOST_PLATFORM.platform).filter(({ name }) =>
     [
       "opencode",
       "antigravity",
@@ -57,7 +57,9 @@ describe("additional client configuration dialects", () => {
     if (CURRENT_ENTRYPOINT_PATH === undefined)
       throw new Error("test runner entrypoint is unavailable");
     const home = await createTestTempDirectory("rea-relative-uninstall-");
-    const cursor = supportedClients(home).find(({ name }) => name === "cursor");
+    const cursor = supportedClients(home, HOST_PLATFORM.platform).find(
+      ({ name }) => name === "cursor",
+    );
     if (cursor === undefined) throw new Error("missing Cursor client");
     await mkdir(cursor.markerPath ?? home, { recursive: true });
     const relativeScript = relative(process.cwd(), CURRENT_ENTRYPOINT_PATH);
@@ -323,7 +325,9 @@ it.each([
     expectedComment,
   }) => {
     const home = await createTestTempDirectory("rea-cursor-jsonc-remove-");
-    const client = supportedClients(home).find(({ name }) => name === "cursor");
+    const client = supportedClients(home, HOST_PLATFORM.platform).find(
+      ({ name }) => name === "cursor",
+    );
     if (client === undefined) throw new Error("missing Cursor client");
     await mkdir(client.markerPath ?? home, { recursive: true });
 

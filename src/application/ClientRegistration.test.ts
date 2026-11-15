@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { expect, it } from "vitest";
 
 import {
@@ -215,6 +216,7 @@ it.each([
         name: "goose",
         registrationProfile: supportedClientRegistrationProfile("goose"),
       },
+      HOST_PLATFORM.platform,
     );
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Null Goose env alias was admitted");
