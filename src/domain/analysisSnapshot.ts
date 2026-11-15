@@ -10,6 +10,10 @@ import {
   compositeKey,
 } from "./unicodeCodePointOrder.js";
 import { localPathStringSchema } from "./localPath.js";
+import {
+  sameTargetIdentity,
+  type FileTargetIdentity,
+} from "./targetIdentity.js";
 
 import {
   analysisProfileSchema,
@@ -475,26 +479,35 @@ export const snapshotBinding = (
     analysis_profile: profile,
   });
 
+/** The target identity a persisted snapshot target names. */
+export const snapshotTargetIdentity = (
+  target: AnalysisSnapshotTarget,
+): FileTargetIdentity => ({
+  kind: "file",
+  sha256: target.sha256,
+  format: target.format,
+  architecture: target.architecture,
+  selection:
+    target.format === "raw-binary" || target.format === "gamecube-dol"
+      ? { kind: "entry-point", entry_point: target.entry_point }
+      : target.format === "esp-flash-image"
+        ? {
+            kind: "esp-flash",
+            flash_offset: target.flash_offset,
+            partition_table_offset: target.partition_table_offset,
+          }
+        : null,
+});
+
 /** Compare an open binary with the immutable target identity in a snapshot. */
 export const snapshotMatchesTarget = (
   snapshot: AnalysisSnapshotTarget,
   target: BinaryTarget,
 ): boolean =>
-  snapshot.sha256 === target.sha256 &&
-  snapshot.kind === target.kind &&
-  snapshot.format === target.format &&
-  snapshot.architecture === (target.architecture ?? null) &&
-  (snapshot.format !== "raw-binary" ||
-    (target.format === "raw-binary" &&
-      snapshot.entry_point === target.entryPoint)) &&
-  (snapshot.format !== "gamecube-dol" ||
-    (target.format === "gamecube-dol" &&
-      snapshot.entry_point === target.entryPoint)) &&
-  (snapshot.format !== "esp-flash-image" ||
-    (target.format === "esp-flash-image" &&
-      snapshot.flash_offset === target.espFlash.flashOffset &&
-      snapshot.partition_table_offset ===
-        target.espFlash.partitionTableOffset));
+  sameTargetIdentity(
+    snapshotTargetIdentity(snapshot),
+    snapshotTargetIdentity(snapshotTarget(target)),
+  );
 
 /** Compare a snapshot binding with the selected concrete analysis profile. */
 export const snapshotMatchesProfile = (
