@@ -17,6 +17,7 @@ import {
   schemaLiteralValues,
 } from "./jsonSchemaKeywords.js";
 import { digestCanonicalValue } from "../domain/canonicalDigest.js";
+import { shareOutputDefinitions } from "./outputSchemaDefinitions.js";
 import { getEvidenceInputContract } from "../domain/evidenceInputContract.js";
 import { isRecord } from "../domain/isRecord.js";
 
@@ -157,11 +158,13 @@ export const toolOutputSchemaWithMetadata = <Contract extends ToolContract>(
       contract.outputSchema,
       "output",
       (project) => (options) => {
-        const shared = presentOutputJsonSchema(
-          project({
-            ...options,
-            libraryOptions: { reused: "ref", ...options.libraryOptions },
-          }),
+        const shared = shareOutputDefinitions(
+          presentOutputJsonSchema(
+            project({
+              ...options,
+              libraryOptions: { reused: "ref", ...options.libraryOptions },
+            }),
+          ),
         );
         // An explicit ID owns the reference base. Relative external references
         // also depend on that base, so leave those projections unchanged.
@@ -177,6 +180,15 @@ export const toolOutputSchemaWithMetadata = <Contract extends ToolContract>(
       },
     ),
   );
+
+/** Return the advertised output JSON Schema registered on MCP for a target. */
+export const advertisedOutputJsonSchema = <Contract extends ToolContract>(
+  contract: Contract,
+  target: Parameters<JsonSchemaProjection>[0]["target"] = "draft-2020-12",
+): Record<string, unknown> =>
+  toolOutputSchemaWithMetadata(contract)["~standard"].jsonSchema.output({
+    target,
+  }) as Record<string, unknown>;
 
 /**
  * Apply a wire-presentation transform to one schema's advertised input

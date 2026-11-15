@@ -1,4 +1,5 @@
 import { snapshotEnvironment } from "../../process/snapshotEnvironment.js";
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -104,7 +105,10 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
     const pending = await this.#retire();
     if (pending !== undefined) return err(pending);
     // Capture configuration after queue/cleanup admission; later requests may select updates.
-    const environment = snapshotEnvironment(this.environment);
+    const environment = snapshotEnvironment(
+      this.environment,
+      HOST_PLATFORM.platform,
+    );
     let root: string | undefined;
     let tree: SafeOutputTree | undefined;
     let failed: { readonly cause: unknown } | undefined;

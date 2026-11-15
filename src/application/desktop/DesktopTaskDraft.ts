@@ -7,8 +7,8 @@ import {
   type WithholdSelection,
 } from "../../domain/desktop/appWithheld.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import { draftTaskFiles } from "../../domain/desktop/appTaskDraft.js";
 import { draftNotes } from "../../domain/desktop/appTaskDraftNotes.js";
@@ -159,8 +159,7 @@ const draft = async (
       .filter((home) => isWithinAny(home, paths) && held(home))
       .sort(),
   } as unknown as JsonValue;
-  if (signal?.aborted === true)
-    throw new AnalysisCancelledError(OPERATION, { cause: signal.reason });
+  if (signal?.aborted === true) throw cancelledBy(OPERATION, signal);
   return createEvidence(undefined, DESKTOP_PROVIDER, {
     predicateType: "rea.desktop-application-task-draft",
     operation: OPERATION,

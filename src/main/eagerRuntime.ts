@@ -1,4 +1,5 @@
 import { AnalysisSettings } from "../application/AnalysisSettings.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 
 import type { AppConfig } from "../config/types.js";
@@ -29,7 +30,10 @@ export const runEager = async (
   dependencies: RuntimeDependencies,
   selectedConfig?: AppConfig,
 ): Promise<number> => {
-  const environment = snapshotEnvironment(dependencies.env);
+  const environment = snapshotEnvironment(
+    dependencies.env,
+    HOST_PLATFORM.platform,
+  );
   const config =
     selectedConfig === undefined
       ? parseConfig(environment)

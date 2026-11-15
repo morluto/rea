@@ -1,4 +1,5 @@
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { launchRegexMatchingLimitation } from "../process/RegexMatcher.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import {
@@ -91,7 +92,7 @@ export class IdaProvider implements AnalysisProviderCandidate {
       environment: Readonly<NodeJS.ProcessEnv>,
     ) => IdaMcpConnection = createIdaMcpConnection,
   ) {
-    this.environment = snapshotEnvironment(environment);
+    this.environment = snapshotEnvironment(environment, HOST_PLATFORM.platform);
   }
 
   identity() {

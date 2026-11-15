@@ -3,6 +3,7 @@ import {
   type ProviderFailureDialect,
 } from "../providers/classifyProviderFailure.js";
 import { PCAP_PROVIDER_IDENTITY } from "./PcapProviderIdentity.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { PCAP_HTTP_URI_FIELDS } from "./PcapHttpUri.js";
 import {
   type ExecutionOptions,
@@ -278,7 +279,10 @@ export class PcapProvider {
   >();
 
   constructor(options: PcapProviderOptions = {}) {
-    this.environment = snapshotEnvironment(options.environment ?? process.env);
+    this.environment = snapshotEnvironment(
+      options.environment ?? process.env,
+      HOST_PLATFORM.platform,
+    );
     this.launcher = options.launcher;
     this.#resources = new ArtifactAnalysisResources(
       "pcap",
