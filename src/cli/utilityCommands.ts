@@ -21,22 +21,19 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import { safeParseJson } from "../domain/safeJson.js";
-import {
-  nativeUiObservationInputSchema,
-  nativeUiScenarioInputSchema,
-} from "../domain/native/nativeUiObservation.js";
-import {
-  nativeCommandTimeoutField,
-  nativeUiDeadlineField,
-} from "../domain/native/nativeDeadlines.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { isCliOperationFailure, logCliCommand } from "../cliLogging.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
-import { swiftSymbolsSchema } from "../contracts/native/nativeToolContracts.js";
 import { localPathStringSchema } from "../domain/localPath.js";
+import { nativeCommandTimeoutField } from "../domain/native/nativeDeadlines.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { registerNativeCallCommands } from "./nativeCallCommands.js";
+import { toolContract } from "../contracts/toolContracts.js";
+import {
+  registerContractCommand,
+  runOnSessionTarget,
+} from "./contractCommand.js";
 
 export const registerUtilityCommands = (
   cli: CliInstance,
@@ -45,51 +42,13 @@ export const registerUtilityCommands = (
   analysis: Pick<DirectAnalysis, "runProviderAnalysis" | "runSessionStatus">,
 ): void => {
   const { runProviderAnalysis } = analysis;
+  const run = runOnSessionTarget(runProviderAnalysis, logger);
   registerCapabilityCommands(cli, logger, analysis);
   registerNativeCommands(cli, logger, runProviderAnalysis);
   registerNativeCallCommands(cli, logger, runProviderAnalysis);
-  registerNativeUiCommands(cli, logger, runProviderAnalysis);
+  registerNativeUiCommands(cli, logger, run);
   registerReferenceSourceCommand(cli, logger, environment);
 };
-
-// Decimal tokens only; shared fields own their bounds and defaults.
-const nativeUiScopeFields = nativeUiObservationInputSchema.shape;
-const nativeUiScopeOptions = {
-  pid: cliDecimalField(
-    nativeUiScopeFields.pid.describe("Existing application PID"),
-  ),
-  windowId: cliDecimalField(
-    nativeUiScopeFields.window_id.describe(
-      "Exact selected application window ID",
-    ),
-  ),
-  screenshot: nativeUiScopeFields.screenshot,
-  accessibility: nativeUiScopeFields.accessibility,
-  maxNodes: cliDecimalField(
-    nativeUiScopeFields.max_nodes.describe(
-      "Maximum accessibility nodes per capture",
-    ),
-  ),
-  nativeUiDeadlineMs: cliDecimalField(nativeUiDeadlineField),
-};
-
-const nativeUiScope = (options: {
-  readonly pid: number;
-  readonly windowId: number;
-  readonly screenshot: boolean;
-  readonly accessibility: boolean;
-  readonly maxNodes: number;
-  readonly nativeUiDeadlineMs?: number | undefined;
-}) => ({
-  pid: options.pid,
-  window_id: options.windowId,
-  screenshot: options.screenshot,
-  accessibility: options.accessibility,
-  max_nodes: options.maxNodes,
-  ...(options.nativeUiDeadlineMs === undefined
-    ? {}
-    : { native_ui_deadline_ms: options.nativeUiDeadlineMs }),
-});
 
 /**
  * Passive observation and active scenarios have different input contracts.
@@ -99,79 +58,48 @@ const nativeUiScope = (options: {
 const registerNativeUiCommands = (
   cli: CliInstance,
   logger: Logger,
-  runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
+  run: ReturnType<typeof runOnSessionTarget>,
 ): void => {
-  const pathArgument = z.object({
-    path: localPathStringSchema.describe("Local native executable or app path"),
-  });
-  cli.command(CLI_COMMANDS.observeNativeUi, {
-    description:
-      "Observe one already-running native application window by PID and window ID",
-    args: pathArgument,
-    options: z.object(nativeUiScopeOptions),
-    run: ({ args, options }) =>
-      logCliCommand(logger, CLI_COMMANDS.observeNativeUi, () =>
-        runProviderAnalysis(
-          args.path,
-          "observe_native_ui",
-          nativeUiScope(options),
-          logger,
-        ).then(projectCliAnalysisResult),
-      ),
-  });
-  const operation = "capture_native_ui_scenario";
-  cli.command(CLI_COMMANDS.captureNativeUiScenario, {
-    description:
-      "Run declarative AX actions or waits in one exact native application window",
-    args: pathArgument,
-    options: z.object({
-      ...nativeUiScopeOptions,
-      steps: z
-        .string()
-        .describe(
-          "Required JSON array of one or more declarative AX actions or waits",
-        ),
-    }),
-    run: ({ args, options }) =>
-      logCliCommand(logger, CLI_COMMANDS.captureNativeUiScenario, async () => {
-        const parameters = nativeUiScope(options);
-        const decoded = safeParseJson(options.steps);
-        if (!decoded.ok)
-          return invalidNativeUiScenarioInput(operation, [
-            { path: ["steps"], reason: "invalid_format", expected: "JSON" },
-          ]);
-        const parsed = nativeUiScenarioInputSchema.safeParse({
-          ...parameters,
-          steps: decoded.value,
-        });
-        if (!parsed.success)
-          return invalidNativeUiScenarioInput(
-            operation,
-            projectInputIssues(parsed.error.issues, {
-              ...parameters,
-              steps: decoded.value,
-            }),
-          );
-        const { native_ui_deadline_ms: deadline, ...scenario } = parsed.data;
-        return runProviderAnalysis(
-          args.path,
-          operation,
-          deadline === undefined
-            ? scenario
-            : { ...scenario, native_ui_deadline_ms: deadline },
-          logger,
-        ).then(projectCliAnalysisResult);
-      }),
-  });
+  const sessionTarget = { description: "Local native executable or app path" };
+  const fields = {
+    pid: { description: "Existing application PID" },
+    window_id: { description: "Exact selected application window ID" },
+    max_nodes: { description: "Maximum accessibility nodes per capture" },
+  } as const;
+  registerContractCommand(
+    cli,
+    logger,
+    toolContract("observe_native_ui"),
+    {
+      command: CLI_COMMANDS.observeNativeUi,
+      description:
+        "Observe one already-running native application window by PID and window ID",
+      sessionTarget,
+      fields,
+    },
+    run,
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    toolContract("capture_native_ui_scenario"),
+    {
+      command: CLI_COMMANDS.captureNativeUiScenario,
+      description:
+        "Run declarative AX actions or waits in one exact native application window",
+      sessionTarget,
+      runtimeJson: { steps: "steps must be valid JSON" },
+      fields: {
+        ...fields,
+        steps: {
+          description:
+            "Required JSON array of one or more declarative AX actions or waits",
+        },
+      },
+    },
+    run,
+  );
 };
-
-const invalidNativeUiScenarioInput = (
-  operation: string,
-  issues: ConstructorParameters<typeof AnalysisInputError>[2],
-) => ({
-  error: "Application workflow failed",
-  ...projectAnalysisError(new AnalysisInputError(operation, undefined, issues)),
-});
 
 const registerCapabilityCommands = (
   cli: CliInstance,
@@ -197,32 +125,38 @@ const registerNativeCommands = (
   logger: Logger,
   runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
 ): void => {
+  const run = runOnSessionTarget(runProviderAnalysis, logger);
+  const machoTarget = { description: "Mach-O or app path" };
+  registerContractCommand(
+    cli,
+    logger,
+    toolContract("inspect_macho"),
+    {
+      command: CLI_COMMANDS.inspectMacho,
+      description: "Run inspect_macho without launching Hopper",
+      sessionTarget: machoTarget,
+      omit: { detail: "The CLI returns the complete inspection Evidence" },
+    },
+    run,
+  );
   for (const [command, tool] of [
-    [CLI_COMMANDS.inspectMacho, "inspect_macho"],
     [CLI_COMMANDS.inspectSignature, "inspect_signature"],
     [CLI_COMMANDS.listArchitectures, "list_architectures"],
-  ] as const) {
-    cli.command(command, {
-      description: `Run ${tool} without launching Hopper`,
-      args: z.object({
-        path: localPathStringSchema.describe("Mach-O or app path"),
-      }),
-      options: z.object({
-        nativeCommandTimeoutMs: cliDecimalField(nativeCommandTimeoutField),
-      }),
-      run: ({ args, options }) =>
-        logCliCommand(logger, command, () =>
-          runProviderAnalysis(
-            args.path,
-            tool,
-            options.nativeCommandTimeoutMs === undefined
-              ? {}
-              : { native_command_timeout_ms: options.nativeCommandTimeoutMs },
-            logger,
-          ).then(projectCliAnalysisResult),
-        ),
-    });
-  }
+  ] as const)
+    registerContractCommand(
+      cli,
+      logger,
+      toolContract(tool),
+      {
+        command,
+        description: `Run ${tool} without launching Hopper`,
+        sessionTarget: machoTarget,
+      },
+      run,
+    );
+  // inspect_plist reports a plist the target itself selects under the
+  // contract's `path` field, which this command spells --relative-path, so
+  // it keeps its own option until that producer names the target apart.
   cli.command(CLI_COMMANDS.inspectPlist, {
     description: "Parse app plist metadata without launching Hopper",
     args: z.object({
@@ -253,32 +187,23 @@ const registerNativeCommands = (
         ).then(projectCliAnalysisResult),
       ),
   });
-  cli.command(CLI_COMMANDS.demangleSwift, {
-    description: "Demangle Swift symbols without Hopper",
-    args: z.object({
-      path: localPathStringSchema.describe(
-        "Artifact path used for evidence identity",
-      ),
-      symbols: swiftSymbolsSchema.describe("Swift mangled symbols to demangle"),
-    }),
-    options: z.object({
-      nativeCommandTimeoutMs: cliDecimalField(nativeCommandTimeoutField),
-    }),
-    run: ({ args, options }) =>
-      logCliCommand(logger, "demangle-swift", () =>
-        runProviderAnalysis(
-          args.path,
-          "demangle_swift",
-          {
-            symbols: args.symbols,
-            ...(options.nativeCommandTimeoutMs === undefined
-              ? {}
-              : { native_command_timeout_ms: options.nativeCommandTimeoutMs }),
-          },
-          logger,
-        ).then(projectCliAnalysisResult),
-      ),
-  });
+  registerContractCommand(
+    cli,
+    logger,
+    toolContract("demangle_swift"),
+    {
+      command: CLI_COMMANDS.demangleSwift,
+      description: "Demangle Swift symbols without Hopper",
+      sessionTarget: {
+        description: "Artifact path used for evidence identity",
+      },
+      positionals: ["symbols"],
+      fields: {
+        symbols: { description: "Swift mangled symbols to demangle" },
+      },
+    },
+    run,
+  );
 };
 
 const referenceSourceExcludePathsSchema = z.object({
