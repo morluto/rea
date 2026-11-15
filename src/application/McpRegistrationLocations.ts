@@ -5,7 +5,6 @@ import { ConfigurationError } from "../domain/configurationErrors.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import {
   absoluteXdgConfigHome,
-  vscodeUserDirectory,
   type ClientRootContext,
 } from "./ClientConfigRoots.js";
 import { windowsAppDataRoots } from "./MsixPackageStorage.js";
