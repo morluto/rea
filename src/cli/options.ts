@@ -13,7 +13,7 @@ import {
 import { analysisProviderSelectorSchema } from "../domain/providerSelection.js";
 import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
 import type { Logger } from "pino";
-import { toolContract } from "../contracts/toolContracts.js";
+import { OPEN_BINARY_TOOL_CONTRACT } from "../contracts/sessionToolContracts.js";
 import type { CliSessionTarget } from "./contractCliDescription.js";
 
 /** Decimal integer argv text. Leading zeros stay decimal; `0x` and exponent spellings do not. */
@@ -219,7 +219,7 @@ export const nativeTarget = (
 ): CliSessionTarget => ({
   description,
   open: {
-    contract: toolContract("open_binary"),
+    contract: OPEN_BINARY_TOOL_CONTRACT,
     fields: {
       ...(snapshot === undefined
         ? {}
