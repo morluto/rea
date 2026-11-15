@@ -112,6 +112,66 @@ it("reuses one real owned analyzer while retaining distinct source identities an
   }
 });
 
+it("applies a changed member-mutation allowance to the next analysis on the same scope", async () => {
+  const scope = new ArtifactResourceScope();
+  // Four conditional self-selections before one member write (#8294).
+  const file = source(
+    "allowance.js",
+    [
+      "function probe(input, env) { var m; if (env.first) m = env.first.info;",
+      ...Array.from(
+        { length: 4 },
+        (_, index) =>
+          `if (/case${String(index)}/.test(input)) m = m[${String(index % 2)}];`,
+      ),
+      "m[1] = input.length; return m; } module.exports = probe;",
+    ].join(" "),
+  );
+  try {
+    for (const allowance of [
+      undefined,
+      { aliasStates: 8, source: "runtime" } as const,
+      undefined,
+    ]) {
+      const worker = await createJavaScriptSourceAnalysis(
+        {
+          heapMb: 128,
+          timeoutMs: 30_000,
+          ...(allowance === undefined
+            ? {}
+            : { memberMutationAllowance: allowance }),
+        },
+        1,
+        { scope },
+      );
+      try {
+        const result = await worker.analyze(file, {
+          nodes: 100,
+          unknowns: 100,
+        });
+        if (allowance === undefined) {
+          if (!result.ok) throw result.error.error;
+          continue;
+        }
+        expect(result.ok).toBe(false);
+        if (result.ok)
+          throw new Error("Expected the lowered allowance to refuse");
+        expect(result.error.error).toMatchObject({
+          limit: {
+            setting: "javascript.member_mutation_alias_states",
+            effective_value: 8,
+            source: "runtime",
+          },
+        });
+      } finally {
+        await worker.close();
+      }
+    }
+  } finally {
+    await scope.close();
+  }
+});
+
 it("recovers finite primitive alternatives after changing precision on the same scope", async () => {
   const scope = new ArtifactResourceScope();
   const expression = Array.from(
