@@ -28,6 +28,7 @@ for (const { command, limit, recovery, cliFlag } of [
     command: "inspect-wasm-artifact",
     limit: 8 * 1024 * 1024,
     recovery: "max_input_bytes",
+    cliFlag: "--max-input-bytes",
   },
 ] as readonly {
   readonly command: string;

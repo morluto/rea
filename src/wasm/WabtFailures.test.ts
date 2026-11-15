@@ -250,6 +250,13 @@ it.each([false, true])(
     if (!cleanup) {
       expect(projected.remediation.action).toContain("max_input_bytes");
       expect(projected.remediation.action).not.toContain("evidence reply");
+      expect(projected.remediation.action).not.toContain("--");
+      expect(projected.details?.limit).toMatchObject({
+        control_kind: "parameter",
+        parameter: "max_input_bytes",
+        effective_value: WASM_RESOURCE_DEFAULTS.inputBytes,
+        default_value: WASM_RESOURCE_DEFAULTS.inputBytes,
+      });
     }
     expect(
       wabtFailure(cause, "artifact", "selected.wasm").cleanupResources,
