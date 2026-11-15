@@ -65,11 +65,11 @@ import {
   confirmExternalApplicationExit,
   type HopperOwnedResources,
 } from "./HopperCleanup.js";
+import { HOPPER_SHUTDOWN_TIMEOUT_MS } from "./HopperSessionValues.js";
 import {
   parseHopperServerInfo,
-  HOPPER_SHUTDOWN_TIMEOUT_MS,
   type HopperServerInfo,
-} from "./HopperSessionValues.js";
+} from "./HopperReplyContracts.js";
 import { connectHopperSocketOnce } from "./HopperSocketConnection.js";
 import {
   hopperLauncherFailureDiagnostic,

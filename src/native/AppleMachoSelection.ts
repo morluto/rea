@@ -224,6 +224,7 @@ export const parseMachoLayout = (
     binds: [],
     rebases: [],
     chained: null,
+    dyldInfo: false,
     baseAddress: undefined,
   };
   const framing = new MachoLoadCommandCursor(table);
@@ -297,6 +298,8 @@ interface LayoutState {
   readonly binds: FixupCommands["binds"][number][];
   readonly rebases: FixupCommands["rebases"][number][];
   chained: FixupCommands["chained"];
+  /** Whether an LC_DYLD_INFO or LC_DYLD_INFO_ONLY command was read. */
+  dyldInfo: boolean;
   baseAddress: bigint | undefined;
 }
 
@@ -393,12 +396,25 @@ const collectFixupCommand = (
       throw malformedInput("macho", "Fixup data exceeds the Mach-O slice");
     return { offset, size: length };
   };
+  // An image has one fixup table of each kind; with a repeat, neither table
+  // is the image's, so the slice is refused rather than read by position.
   if (kind === LC.DYLD_CHAINED_FIXUPS) {
     if (size < 16)
       throw truncatedInput("macho", "Truncated chained-fixups command");
+    if (state.chained !== null)
+      throw malformedInput(
+        "macho",
+        "Mach-O slice declares more than one LC_DYLD_CHAINED_FIXUPS command",
+      );
     state.chained = range(cursor + 8);
   } else if (kind === LC.DYLD_INFO || kind === LC.DYLD_INFO_ONLY) {
     if (size < 48) throw truncatedInput("macho", "Truncated dyld-info command");
+    if (state.dyldInfo)
+      throw malformedInput(
+        "macho",
+        "Mach-O slice declares more than one LC_DYLD_INFO or LC_DYLD_INFO_ONLY command",
+      );
+    state.dyldInfo = true;
     const rebase = range(cursor + 8);
     if (rebase.size > 0) state.rebases.push(rebase);
     for (const [at, stream] of [

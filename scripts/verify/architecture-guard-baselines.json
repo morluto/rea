@@ -266,7 +266,6 @@
     "src/artifacts/nodeSea/NodeSeaBlob.ts": 4,
     "src/artifacts/nodeSea/NodeSeaLocation.ts": 2,
     "src/artifacts/pyinstaller/CArchiveLayout.ts": 8,
-    "src/artifacts/pyinstaller/MarshalSubset.ts": 2,
     "src/artifacts/pyinstaller/PyzArchive.ts": 1,
     "src/browser/PngVisualDiff.ts": 7,
     "src/domain/apkSignature/apkSignatureSchemes.ts": 1,
@@ -303,6 +302,7 @@
     "src/domain/peOptionalHeader.ts": 12,
     "src/domain/peSectionHeader.ts": 5,
     "src/domain/pngHeader.ts": 4,
+    "src/domain/python/marshalReader.ts": 4,
     "src/domain/python/pythonBytecodeIdentity.ts": 1,
     "src/domain/riscvIsaDeclaration.ts": 1,
     "src/domain/uimageFormat.ts": 10,
@@ -376,7 +376,6 @@
     "src/native/pwntools/RecordedCrashSourceBindings.ts": 6,
     "src/native/windows/WindowsShortcutParser.ts": 49,
     "src/pcap/PcapDnsWire.ts": 5,
-    "src/python/PythonPycParser.ts": 9,
     "src/v8/V8CodeCacheParser.ts": 1
   },
   "range-error-interpretation": {
@@ -414,12 +413,9 @@
     "src/kuna/KunaProjectCache.ts": 1,
     "src/native/CommandRunner.ts": 1,
     "src/native/LldbCallTracer.ts": 1,
-    "src/pcap/PcapProvider.ts": 3,
-    "src/pcap/PcapSnapshot.ts": 1,
     "src/process/DarwinHelperCache.ts": 1,
     "src/process/DarwinProcessRunTokenReader.ts": 1,
     "src/process/OwnedDebuggerSessionRegistry.ts": 1,
-    "src/process/OwnedWorkerRuntime.ts": 4,
     "src/providers/AnalysisClientFailure.ts": 1,
     "src/server/environment/serveEnvironment.ts": 1,
     "src/sqlite/SqliteDatabaseProvider.ts": 2
@@ -545,5 +541,11 @@
     "src/sqlite/SqliteDatabaseProvider.ts": 8,
     "src/sqlite/SqliteDatabaseWorkerExecution.ts": 2,
     "src/wasm/WabtArtifactProvider.ts": 1
+  },
+  "keyed-first-match": {
+    "src/artifacts/fit/FitStructure.ts": 1,
+    "src/domain/apkSignature/apkV1SignatureBlock.ts": 1,
+    "src/native/MachoArchitectureSelection.ts": 2,
+    "src/native/NativeMachoInspection.ts": 1
   }
 }
