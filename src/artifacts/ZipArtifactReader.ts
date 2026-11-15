@@ -1,5 +1,16 @@
 import { OwnerCancellation } from "../domain/analysisErrorCore.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
+import {
+  assertArtifactReadActive,
+  ArtifactReaderFailure,
+  copyArtifactEntry,
+  sameArtifactEntry,
+  type ArtifactEntry,
+  type ArtifactReader,
+  type ArtifactReaderTraversal,
+  type ArtifactTraversalOptions,
+  ArtifactFileSource,
+  artifactReaderLimitFailure,
+} from "../resources/index.js";
 import type { FileHandle } from "node:fs/promises";
 import { Duplex, PassThrough, type Readable } from "node:stream";
 import { once } from "node:events";
@@ -33,30 +44,19 @@ import {
 } from "@zip.js/zip.js";
 
 import {
-  ArtifactReaderFailure,
-  copyArtifactEntry,
-  sameArtifactEntry,
-  type ArtifactEntry,
-  type ArtifactReader,
-  type ArtifactReaderTraversal,
-  type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
-import {
   accountZipMemberRegion,
   type ZipLocalRecord,
   type ZipMemberRegionAccount,
-} from "./ZipMemberRegion.js";
+} from "../domain/zip/zipMemberRegion.js";
 import type { ZipPackageFormat } from "../domain/zipPackageFormat.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
-import { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
+import { decodeZipCp437 } from "../domain/zip/zipEntryText.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
 
-const ZIP_UTF8_DECODER = new TextDecoder("utf-8", {
-  fatal: true,
-  ignoreBOM: true,
-});
+const ZIP_UTF8_DECODER = strictUtf8Decoder("preserve");
 
 /** Fixed method-93 decoder window: 2^27 bytes, matching the ELF/GPU decoders. */
 const ZIP_ZSTANDARD_WINDOW_LOG_MAX = 27;
@@ -141,7 +141,8 @@ class NodeFileReader extends Reader<string> {
   ): Promise<Uint8Array> {
     await this.verify();
     const handle = this.#handle;
-    if (handle === undefined) throw new Error("ZIP reader is not initialized");
+    if (handle === undefined)
+      throw invariantViolation("ZIP reader is not initialized");
     const readBytes = Math.min(length, this.size - index);
     // A central-directory offset can point past EOF. Type that malformed ZIP
     // read before a negative size reaches Buffer.alloc and becomes an I/O error.
@@ -163,6 +164,7 @@ class NodeFileReader extends Reader<string> {
       throw new ArtifactReaderFailure(
         "integrity",
         `ZIP source ended before its admitted extent: ${this.path}`,
+        { integrityCheck: "read-coverage" },
       );
     await this.verify();
     return bytes;
@@ -285,6 +287,7 @@ export class ZipArtifactReader implements ArtifactReader {
           throw new ArtifactReaderFailure(
             "integrity",
             `ZIP member identity changed during enumeration: ${entry.filename}`,
+            { integrityCheck: "entry-metadata" },
           );
         if (stored === undefined)
           this.#entries.set(metadata.adapterKey, {
@@ -323,6 +326,10 @@ export class ZipArtifactReader implements ArtifactReader {
         new ArtifactReaderFailure(
           "integrity",
           "ZIP entry metadata does not match this reader's inventory",
+          {
+            integrityCheck:
+              stored === undefined ? "foreign-entry" : "entry-metadata",
+          },
         ),
       );
     const source = stored.source;
@@ -491,25 +498,8 @@ export const decodeZipEntryText = (
   if (type !== "filename") return undefined;
   if (encoding === "utf-8")
     return decodeStrictZipUtf8(bytes, "ZIP filename is not valid UTF-8");
-  return encoding === "cp437" ? decodeCp437(bytes) : undefined;
+  return encoding === "cp437" ? decodeZipCp437(bytes) : undefined;
 };
-
-/** CP437 characters for bytes 0x80-0xFF. */
-const CP437_HIGH_HALF =
-  "ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜ¢£¥₧ƒáíóúñÑªº¿⌐¬½¼¡«»░▒▓│┤╡╢╖╕╣║╗╝╜╛┐└┴┬├─┼╞╟╚╔╩╦╠═╬╧╨╤╥╙╘╒╓╫╪┘┌█▄▌▐▀αßΓπΣσµτΦΘΩδ∞φε∩≡±≥≤⌠⌡÷≈°∙·√ⁿ²■\u00A0";
-
-/**
- * Decode a legacy ZIP name with the Unicode CP437 mapping, which Python's
- * zipfile also uses: bytes below 0x80 are ASCII. zip.js shows 0x01-0x1F and
- * 0x7F as IBM PC display glyphs, which turns the macOS folder icon file
- * `Icon\r` into `Icon♪`.
- */
-const decodeCp437 = (bytes: Uint8Array): string =>
-  Array.from(bytes, (byte) =>
-    byte < 0x80
-      ? String.fromCharCode(byte)
-      : CP437_HIGH_HALF.charAt(byte - 0x80),
-  ).join("");
 
 /** An entry's name, from a valid Unicode Path extra field when it has one. */
 export const zipEntryPath = (entry: Entry): string => {

@@ -1,5 +1,9 @@
+import {
+  capturedProviderOutput,
+  providerResultDiagnostics,
+} from "../process/capturedProviderOutput.js";
 import { EvmAdmissionError } from "./EvmAdmissionError.js";
-import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { HOST_PLATFORM, type HostPlatform } from "../platform/HostPlatform.js";
 import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -15,26 +19,22 @@ import {
   createAnalysisExecution,
   type ExecutionOptions,
   type ProviderAvailability,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import type {
   EvmInterfaceExecution,
   EvmInterfacePort,
-} from "../application/evm/EvmInterfacePort.js";
+} from "../ports/evm/EvmInterfacePort.js";
 import {
   completedStableArtifact,
   readStableArtifact,
-} from "../artifacts/readStableArtifact.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import {
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
-import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
+} from "../resources/index.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import {
   OwnedCommandFailure,
   ownedCommandResources,
@@ -72,7 +72,6 @@ import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import {
   evmFailureDialect,
-  capturedEvmOutput,
   evmReplyBudgetFailure,
   type EvmFileSizeFailureEvidence,
 } from "./EvmoleFailures.js";
@@ -123,8 +122,9 @@ interface EvmLimiterProbeFileSystem {
 }
 
 interface EvmLimiterProbeOptions {
-  readonly platform?: NodeJS.Platform;
-  readonly arch?: string;
+  /** The host the limiter would run on; it decides whether EVM analysis is supported. */
+  readonly platform: NodeJS.Platform;
+  readonly arch: string;
   readonly fs?: EvmLimiterProbeFileSystem;
   readonly signal?: AbortSignal;
 }
@@ -142,9 +142,9 @@ type EvmLimiterUnavailable = EvmLimiterSelection & {
 /** Select and validate the exact limiter using the same owner check at discovery and admission. */
 const selectEvmLimiter = async (
   environment: Readonly<NodeJS.ProcessEnv>,
-  probes?: {
-    readonly platform?: NodeJS.Platform;
-    readonly arch?: string;
+  probes: {
+    readonly platform: NodeJS.Platform;
+    readonly arch: string;
     readonly fs?: EvmLimiterProbeFileSystem;
   },
   signal?: AbortSignal,
@@ -154,8 +154,7 @@ const selectEvmLimiter = async (
     if (signal?.aborted) throw cancelledBy(operation, signal);
   };
   throwIfAborted();
-  const platform = probes?.platform ?? process.platform;
-  const arch = probes?.arch ?? process.arch;
+  const { platform, arch } = probes;
   if (!evmHostSupported(platform, arch)) return undefined;
 
   const path =
@@ -166,7 +165,7 @@ const selectEvmLimiter = async (
       throw new EvmAdmissionError("prlimit_not_absolute", {
         setting: "REA_EVM_PRLIMIT_COMMAND",
       });
-    const fs = probes?.fs ?? { access, stat };
+    const fs = probes.fs ?? { access, stat };
     await fs.access(path, constants.X_OK);
     throwIfAborted();
     if (!(await fs.stat(path)).isFile())
@@ -217,12 +216,12 @@ const selectEvmLimiter = async (
 /** Fresh, process-free observation of the limiter prerequisite used by EVM execution. */
 export const evmLimiterAvailability = async (
   environment: Readonly<NodeJS.ProcessEnv>,
-  probes?: EvmLimiterProbeOptions,
+  probes: EvmLimiterProbeOptions,
 ): Promise<ProviderAvailability | undefined> => {
   const selected = await selectEvmLimiter(
     environment,
     probes,
-    probes?.signal,
+    probes.signal,
     "binary_session",
   );
   if (selected === undefined) return undefined;
@@ -440,6 +439,8 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
     readonly createRuntime: () => Promise<
       Pick<PrivateRuntimeRoot, "path" | "close">
     > = () => PrivateRuntimeRoot.create({ prefix: "rea-evm-interface-" }),
+    /** The host the worker runs on; selects the supported-host gate and environment rules. */
+    readonly host: HostPlatform = HOST_PLATFORM,
   ) {}
 
   /** Bind recovered interface candidates to both original carrier and decoded byte identity. */
@@ -452,7 +453,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
       if (this.#closing) return err(this.#closedError());
       const environment = snapshotEnvironment(
         this.environment,
-        HOST_PLATFORM.platform,
+        this.host.platform,
       );
       try {
         return await this.#resources.run(() =>
@@ -545,7 +546,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
     try {
       if (options?.signal?.aborted)
         throw cancelledBy(OPERATION, options.signal);
-      if (!evmHostSupported(process.platform, process.arch))
+      if (!evmHostSupported(this.host.platform, this.host.architecture))
         throw new AnalysisCapabilityUnavailableError(
           EVMOLE_PROVIDER_IDENTITY.id,
           OPERATION,
@@ -554,7 +555,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
         );
       const selectedLimiter = await selectEvmLimiter(
         environment,
-        undefined,
+        { platform: this.host.platform, arch: this.host.architecture },
         options?.signal,
       );
       if (selectedLimiter === undefined)
@@ -675,7 +676,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
           },
         },
       );
-      const capturedOutput = capturedEvmOutput(execution);
+      const capturedOutput = capturedProviderOutput(execution);
       retainedOutput = capturedOutput;
       let reply: z.output<typeof replySchema>;
       try {
@@ -823,11 +824,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
         functions: projectEvmoleFunctions(reply.raw),
         discovery_completeness: "unknown",
         runtime_execution: "not-performed",
-        diagnostics: {
-          stdout: execution.stdout.text,
-          stderr: execution.stderr.text,
-          truncated: capturedOutput.truncated,
-        },
+        diagnostics: providerResultDiagnostics(capturedOutput),
         limitations,
       });
       if (!validated.success)

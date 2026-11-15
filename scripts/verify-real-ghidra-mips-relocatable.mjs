@@ -2,8 +2,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -21,6 +20,8 @@ import {
 } from "../tests/conformance/ghidra/mips-relocatable-checks.mjs";
 import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { requireLaneToolchain } from "../tests/conformance/ghidra/fixture-toolchain.mjs";
 
 // Optional cross-target lane for ET_REL objects. No tool acquisition, no
 // linking and no target execution.
@@ -48,7 +49,19 @@ if (installation.status !== "available")
 const execute = promisify(execFile);
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const run = createVerifierRun();
-const workspace = await mkdtemp(join(tmpdir(), "rea-mips-rel-proof-"));
+// Refuse a host without the fixture toolchain before allocating anything.
+await requireLaneToolchain("mips-relocatable");
+const workspaceFixture = await VerifierFixture.open({
+  prefix: "rea-mips-rel-proof-",
+  // Ghidra children use the workspace as TMPDIR; a plain root admits them on every host.
+  private: false,
+});
+const workspace = workspaceFixture.path;
+// A failed run keeps its workspace for diagnosis; the fixture records why.
+const retainWorkspace = (message, options) => {
+  workspaceFixture.retain(message);
+  return new Error(message, options);
+};
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const env = {
@@ -220,7 +233,7 @@ async function verifyFixture(byteOrder, kernelModule) {
     assert.equal(parameters.mips_elf.type, 1);
     assert.equal(
       parameters.mips_support_lane,
-      "elf32-rel-o32-arch32r2-standard-v1",
+      "elf32-rel-o32-arch32r2-standard",
     );
     assert.equal(
       parameters.mips_soft_float_storage,
@@ -320,14 +333,14 @@ if (
   completed.process_lineage.status !== "verified" ||
   completed.process_lineage.descendants.length !== 0
 )
-  throw new Error(
+  throw retainWorkspace(
     `Cleanup unverified; retained diagnostic workspace: ${workspace}`,
     { cause: primaryFailure },
   );
 if (primaryFailure !== undefined)
-  throw new Error(
+  throw retainWorkspace(
     `MIPS relocatable verification failed; retained workspace: ${workspace}`,
     { cause: primaryFailure },
   );
-await rm(workspace, { recursive: true, force: true });
+await workspaceFixture.release();
 console.log(JSON.stringify({ ...completed, fixtures: reports }, null, 2));

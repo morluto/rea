@@ -3,7 +3,7 @@ import { Cli } from "incur";
 import { resolve } from "node:path";
 import { expect, it, vi } from "vitest";
 
-import type { BrowserScenarioCapturePort } from "../../src/application/BrowserScenarioCapturePort.js";
+import type { BrowserScenarioCapturePort } from "../../src/ports/BrowserScenarioCapturePort.js";
 import { createBrowserScenarioEvidence } from "../../src/application/BrowserScenarioEvidence.js";
 import type { BrowserScenarioSessionPort } from "../../src/browser/BrowserScenarioSessionPort.js";
 import { PlaywrightBrowserScenarioProvider } from "../../src/browser/PlaywrightBrowserScenarioProvider.js";

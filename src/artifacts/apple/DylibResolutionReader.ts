@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import type { BigIntStats } from "node:fs";
 import { lstat, readlink, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, sep } from "node:path";
@@ -19,7 +20,10 @@ import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.
 import {
   ArtifactReaderFailure,
   type ArtifactReaderTraversal,
-} from "../ArtifactReader.js";
+  ArtifactResourceScope,
+  assertArtifactReadActive,
+  targetDigestChangedFailure,
+} from "../../resources/index.js";
 import { ArtifactTraversalObservation } from "../ArtifactTraversalObservation.js";
 import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import { consumeWithOrderedReads } from "../OrderedReads.js";
@@ -27,11 +31,10 @@ import {
   DylibFileAccess,
   classifyDylibReadFailure,
 } from "./DylibFileAccess.js";
-import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
-import { assertArtifactReadActive } from "../ArtifactFileOperation.js";
 
 const OPERATION = "trace_dylib_resolution";
-const WINDOWS = process.platform === "win32";
+// Resolution reads paths on this host's filesystem.
+const WINDOWS = HOST_PLATFORM.platform === "win32";
 /** Concurrent four-byte magic reads while enumerating bundle roots. */
 const MAGIC_READ_CONCURRENCY = 8;
 
@@ -207,9 +210,10 @@ export const traceDylibResolution = async (options: {
         digests.get(target) ??
         (await files.sha256(join(root, target), undefined));
       if (targetDigest !== options.targetSha256)
-        throw new ArtifactReaderFailure(
-          "integrity",
-          `Active target digest changed: expected ${options.targetSha256}, observed ${targetDigest}`,
+        throw targetDigestChangedFailure(
+          "target",
+          options.targetSha256,
+          targetDigest,
         );
       assertArtifactReadActive(options.signal);
       return dylibResolutionResultSchema.parse({

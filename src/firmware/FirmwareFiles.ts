@@ -27,15 +27,15 @@ import {
 } from "./FirmwareFailures.js";
 import type { FirmwareDeadline } from "./FirmwareDeadline.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
-import type { SafeOutputTree } from "../artifacts/SafeOutputTree.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
+  type SafeOutputTree,
+  readArtifactFileChunks,
+  ArtifactResourceScope,
   withArtifactRegularFile,
   assertArtifactReadActive,
   mapArtifactFileFailure,
   artifactSelectedPathErrno,
-} from "../artifacts/ArtifactFileOperation.js";
-import { readArtifactFileChunks } from "../artifacts/readArtifactFileChunks.js";
+} from "../resources/index.js";
 import { decodeDirectoryEntryName } from "../filesystem/decodeDirectoryEntryName.js";
 import { NonRegularFileReadError } from "../filesystem/RegularFile.js";
 import { observedSymlinkTarget } from "../domain/symlinkTarget.js";

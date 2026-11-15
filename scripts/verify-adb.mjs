@@ -1,13 +1,16 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, stat } from "node:fs/promises";
 import { join, posix } from "node:path";
 import { promisify } from "node:util";
 
 import { AdbDeviceAnalysisService } from "../dist/application/adb/AdbDeviceAnalysisService.js";
 import { createAdbDeviceAnalysisProvider } from "../dist/composition/adb.js";
 import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 const execFileAsync = promisify(execFile);
 const options = parseArguments(process.argv.slice(2));
@@ -279,8 +282,12 @@ try {
     }
 
     if (pullCandidate !== null) {
-      const directory = await mkdtemp(join(tmpdir(), "rea-adb-verify-"));
-      try {
+      const directoryFixture = await VerifierFixture.open({
+        prefix: "rea-adb-verify-",
+        private: false,
+      });
+      const directory = directoryFixture.path;
+      await withVerifierFixture(directoryFixture, async () => {
         const pull = await run("pull_adb_package", {
           serial,
           package: pullCandidate,
@@ -309,15 +316,17 @@ try {
             );
           }
         }
-      } finally {
-        await rm(directory, { recursive: true, force: true });
-      }
+      });
     }
 
     // File transfer: push one lane-owned file, verify both digests, pull it
     // back, then clean up the device copy through the same fixed argv surface.
-    const transferRoot = await mkdtemp(join(tmpdir(), "rea-adb-transfer-"));
-    try {
+    const transferRootFixture = await VerifierFixture.open({
+      prefix: "rea-adb-transfer-",
+      private: false,
+    });
+    const transferRoot = transferRootFixture.path;
+    await withVerifierFixture(transferRootFixture, async () => {
       const payload = join(transferRoot, "rea-verify.txt");
       const payloadBytes = "rea adb transfer verification\n";
       await import("node:fs/promises").then((fs) =>
@@ -331,8 +340,12 @@ try {
         devicePath: deviceTarget,
         outputDirectory: transferRoot,
       });
-      const screenRoot = await mkdtemp(join(tmpdir(), "rea-adb-screen-"));
-      try {
+      const screenRootFixture = await VerifierFixture.open({
+        prefix: "rea-adb-screen-",
+        private: false,
+      });
+      const screenRoot = screenRootFixture.path;
+      await withVerifierFixture(screenRootFixture, async () => {
         const screen = await run("capture_adb_screen", {
           serial,
           output_directory: screenRoot,
@@ -343,9 +356,7 @@ try {
             screen.width !== null && screen.height !== null && screen.bytes > 0,
             `${screen.width}x${screen.height}, ${screen.bytes} bytes`,
           );
-      } finally {
-        await rm(screenRoot, { recursive: true, force: true });
-      }
+      });
       if (options.pull !== null) {
         const details = await run("inspect_adb_package", {
           serial,
@@ -358,9 +369,7 @@ try {
             `versionCode=${String(details.version_code)}`,
           );
       }
-    } finally {
-      await rm(transferRoot, { recursive: true, force: true });
-    }
+    });
   }
 } catch (cause) {
   verifierFailed = true;

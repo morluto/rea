@@ -4,7 +4,7 @@ import {
   productionMcpDoctorArguments,
   splitIncurBuiltinArguments,
 } from "../../../src/cliBuiltinArguments.js";
-import { DEFAULT_INFO_LOGGING_COMMANDS } from "../../../src/cliCommandNames.js";
+import { DEFAULT_INFO_LOGGING_COMMANDS } from "../../../src/contracts/cliCommandNames.js";
 import { parseLogLevel } from "../../../src/config/processStart.js";
 import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 

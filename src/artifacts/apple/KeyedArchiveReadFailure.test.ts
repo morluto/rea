@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
-} from "../ArtifactReader.js";
+} from "../../resources/ArtifactReader.js";
 import {
   DirectoryArtifactEntryAccessDenied,
   DirectoryArtifactReader,

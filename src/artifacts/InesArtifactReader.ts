@@ -1,5 +1,16 @@
 import { ParseFailureError } from "../domain/parseFailure.js";
-import { artifactOperationCause } from "./ArtifactFileOperation.js";
+import {
+  artifactOperationCause,
+  ArtifactReaderFailure,
+  copyArtifactEntry,
+  assertProducedEntry,
+  type ArtifactEntry,
+  type ArtifactReader,
+  type ArtifactTraversalOptions,
+  readArtifactFileChunks,
+  streamChunkToBuffer,
+  abortIfNeeded,
+} from "../resources/index.js";
 import { readFileHandlePrefix } from "../filesystem/readFileHandlePrefix.js";
 import { Readable } from "node:stream";
 import {
@@ -13,18 +24,7 @@ import {
   assertStableRegularFileIdentity,
   type StableRegularFileDescriptor,
 } from "../filesystem/RegularFile.js";
-import { readArtifactFileChunks } from "./readArtifactFileChunks.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import {
-  ArtifactReaderFailure,
-  copyArtifactEntry,
-  sameArtifactEntry,
-  type ArtifactEntry,
-  type ArtifactReader,
-  type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
-import { abortIfNeeded } from "./ArtifactHash.js";
-import { streamChunkToBuffer } from "./StreamBytes.js";
 
 export const INES_LIMITATION =
   "iNES and NES 2.0 file regions are observed; header mapper, RAM/NVRAM, timing, console and expansion-device values are declarations. Mapper execution, CPU bank mappings, CHR-RAM contents, miscellaneous ROM boundaries, 6502 analysis and emulator behavior are not observed. Trailing bytes are retained without interpretation. UNIF is unsupported.";
@@ -90,16 +90,22 @@ export class InesArtifactReader implements ArtifactReader {
   async open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {
     abortIfNeeded(signal);
     const produced = this.#entries.get(entry.adapterKey);
-    if (produced === undefined || !sameArtifactEntry(entry, produced))
-      throw new ArtifactReaderFailure(
-        "integrity",
-        "iNES region does not match this reader's inventory",
-      );
+    assertProducedEntry(
+      entry,
+      produced,
+      "iNES region does not match this reader's inventory",
+    );
     await this.#verifySource(signal);
     const offset = produced.byteOffset;
     const size = produced.declaredSize;
     if (offset === null || size === null || size <= 0)
-      throw new ArtifactReaderFailure("integrity", "Invalid iNES region range");
+      throw new ArtifactReaderFailure(
+        "integrity",
+        "Invalid iNES region range",
+        {
+          integrityCheck: "layout-consistency",
+        },
+      );
     const stream = readArtifactFileChunks(this.source.handle, {
       start: offset,
       end: offset + size - 1,
@@ -120,6 +126,7 @@ export class InesArtifactReader implements ArtifactReader {
             throw new ArtifactReaderFailure(
               "integrity",
               "Truncated iNES region",
+              { integrityCheck: "read-coverage" },
             );
           await verify();
         } catch (cause: unknown) {
@@ -142,7 +149,13 @@ export class InesArtifactReader implements ArtifactReader {
     abortIfNeeded(signal);
     const layout = this.#layout;
     if (layout === undefined || this.#entries.size !== layout.regions.length)
-      throw new ArtifactReaderFailure("integrity", "Incomplete iNES inventory");
+      throw new ArtifactReaderFailure(
+        "integrity",
+        "Incomplete iNES inventory",
+        {
+          integrityCheck: "reconstruction",
+        },
+      );
     await this.#verifySource(signal);
     if (
       observed.region_order.length !== layout.regions.length ||
@@ -155,6 +168,7 @@ export class InesArtifactReader implements ArtifactReader {
       throw new ArtifactReaderFailure(
         "integrity",
         "iNES reconstruction differs from the source",
+        { integrityCheck: "reconstruction" },
       );
     return {
       header: layout.header,
@@ -190,7 +204,7 @@ export class InesArtifactReader implements ArtifactReader {
         throw new ArtifactReaderFailure(
           "integrity",
           "iNES source changed during reading",
-          { cause: cause.cause ?? cause },
+          { cause: cause.cause ?? cause, integrityCheck: "container-identity" },
         );
       throw artifactOperationCause(cause);
     }

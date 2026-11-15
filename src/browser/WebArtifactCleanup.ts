@@ -1,10 +1,10 @@
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import type { WebScriptArtifactPort } from "../application/WebScriptArtifactPort.js";
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+} from "../resources/index.js";
+import type { WebScriptArtifactPort } from "../ports/WebScriptArtifactPort.js";
 import { LocalWebScriptArtifacts } from "./assets/LocalWebScriptArtifacts.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";

@@ -12,21 +12,19 @@ import type {
 } from "../domain/artifactFormatMetadata.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import {
-  ArtifactPathRegistry,
-  normalizeArtifactPath,
-} from "./ArtifactPaths.js";
-import {
+  assertArtifactReadActive,
   ArtifactReaderFailure,
   copyArtifactEntry,
-  sameArtifactEntry,
+  assertProducedEntry,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+  ArtifactResourceScope,
+  ArtifactPathRegistry,
+  normalizeArtifactPath,
+  ArtifactFileSource,
+} from "../resources/index.js";
 import { ownArtifactStream } from "./OwnedArtifactStream.js";
 import type { DenoStandaloneAdmission } from "./deno/DenoStandaloneAdmission.js";
 import {
@@ -138,11 +136,11 @@ export class DenoStandaloneArtifactReader implements ArtifactReader {
     return this.#scope.run(async () => {
       this.#assertOpen(signal);
       const stored = this.#entries.get(entry.adapterKey);
-      if (stored === undefined || !sameArtifactEntry(entry, stored))
-        throw new ArtifactReaderFailure(
-          "integrity",
-          "Deno compile entry does not match its owning inventory",
-        );
+      assertProducedEntry(
+        entry,
+        stored,
+        "Deno compile entry does not match its owning inventory",
+      );
       const { handle } = await this.#source.readSelectedPath(signal);
       this.#assertOpen(signal);
       if (stored.byteOffset === null || stored.declaredSize === null)

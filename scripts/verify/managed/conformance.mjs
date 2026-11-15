@@ -1,12 +1,10 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import assert from "node:assert/strict";
 
 import { inspectManagedArtifactBytes } from "../../../dist/dotnet/ManagedArtifactInspector.js";
 import { inspectManagedMembersBytes } from "../../../dist/dotnet/ManagedMemberInspector.js";
 import { inspectManagedNativeBoundariesBytes } from "../../../dist/dotnet/ManagedNativeBoundaryInspector.js";
-import { compareManagedMemberPaths } from "../../../dist/application/managed/ManagedMemberComparisonService.js";
+import { executeManagedMemberComparison } from "../../../dist/application/managed/ManagedMemberComparisonService.js";
+import { createDirectAnalysis } from "../../../dist/composition/directAnalysis.js";
 import { executeManagedNativeBoundaries } from "../../../dist/application/managed/ManagedNativeVerificationService.js";
 import { importManagedReconstructionEvidence } from "../../../dist/application/managed/ManagedReconstructionService.js";
 import { projectManagedApplicationGraphEvidence } from "../../../dist/application/managed/ManagedApplicationGraphService.js";
@@ -25,9 +23,32 @@ import {
   completeVerifierRun,
   createVerifierRun,
 } from "../../lib/verifier-run.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "../../lib/verifier-fixture.mjs";
 
 const verifierRun = createVerifierRun();
-const workspace = await mkdtemp(join(tmpdir(), "rea-managed-conformance-"));
+const { runManagedProviderEvidence } = createDirectAnalysis({});
+
+/** Compare two paths as compare-managed-members composes its inspections. */
+const compareManagedPaths = async (leftPath, rightPath) => {
+  const [left, right] = [
+    await runManagedProviderEvidence(leftPath, "inspect_managed_members", {}),
+    await runManagedProviderEvidence(rightPath, "inspect_managed_members", {}),
+  ];
+  assert.equal(left.ok && right.ok, true);
+  const compared = executeManagedMemberComparison({
+    left: left.value,
+    right: right.value,
+  });
+  assert.equal(compared.ok, true);
+  return compared.value.evidence;
+};
+const workspaceFixture = await VerifierFixture.open({
+  prefix: "rea-managed-conformance-",
+});
+const workspace = workspaceFixture.path;
 let completionReportInput;
 let finalReport;
 const {
@@ -42,7 +63,7 @@ const {
   defaultIlBody,
 });
 
-try {
+await withVerifierFixture(workspaceFixture, async () => {
   const modern = await fixture("modern-anycpu.exe", {
     references: ["System.Runtime"],
     resourceData: Buffer.from("source-owned managed resource"),
@@ -291,12 +312,8 @@ try {
       { name: "RenamedSemanticSlice", body: defaultIlBody },
     ],
   });
-  const comparison = await compareManagedMemberPaths({
-    leftPath: left.path,
-    rightPath: right.path,
-  });
-  assert.equal(comparison.ok, true);
-  const comparisonResult = comparison.value.normalized_result;
+  const comparison = await compareManagedPaths(left.path, right.path);
+  const comparisonResult = comparison.normalized_result;
   assert.equal(
     comparisonResult.algorithm.name_matching,
     "exact-signature-fallback",
@@ -318,13 +335,12 @@ try {
   const unavailableBodyRight = await fixture("partial-body-right.exe", {
     methods: [{ name: "PartialBodyTarget", body: defaultIlBody }],
   });
-  const partialBodyComparison = await compareManagedMemberPaths({
-    leftPath: unavailableBodyLeft.path,
-    rightPath: unavailableBodyRight.path,
-  });
-  assert.equal(partialBodyComparison.ok, true);
+  const partialBodyComparison = await compareManagedPaths(
+    unavailableBodyLeft.path,
+    unavailableBodyRight.path,
+  );
   const partialBodyMethod =
-    partialBodyComparison.value.normalized_result.methods.find(
+    partialBodyComparison.normalized_result.methods.find(
       ({ left }) => left?.name === "PartialBodyTarget",
     );
   assert.equal(partialBodyMethod?.status, "unknown");
@@ -403,9 +419,7 @@ try {
       configured: false,
     },
   };
-} finally {
-  await rm(workspace, { recursive: true, force: true });
-}
+});
 finalReport.completionReport = createManagedCompletionReport(
   completionReportInput,
   await completeVerifierRun(verifierRun),

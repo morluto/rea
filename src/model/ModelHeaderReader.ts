@@ -1,12 +1,15 @@
 import { createHash } from "node:crypto";
 import type { FileHandle } from "node:fs/promises";
-import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  assertArtifactReadActive,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import {
   modelCapacityFailure,
   MODEL_HEADER_BYTES,
   rejectModel,
 } from "./ModelFormat.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
 
 /** Sequential prefix reader. Read-ahead is permitted only inside a parser-proven header extent. */
 export class ModelHeaderReader {
@@ -26,7 +29,7 @@ export class ModelHeaderReader {
   /** Safetensors declares JSON bytes separately from its fixed length prefix. */
   excludeSafetensorsLengthPrefix(): void {
     if (this.position !== 8)
-      throw new TypeError(
+      throw invariantViolation(
         "Safetensors header budget must follow its eight-byte length prefix",
       );
     this.#headerPrefixBytes = 8;
@@ -91,6 +94,7 @@ export class ModelHeaderReader {
           throw new ArtifactReaderFailure(
             "integrity",
             "Model header ended before its admitted file extent",
+            { integrityCheck: "read-coverage" },
           );
         this.#hash.update(next.subarray(offset, offset + result.bytesRead));
         offset += result.bytesRead;
@@ -140,6 +144,7 @@ export class ModelHeaderReader {
         throw new ArtifactReaderFailure(
           "integrity",
           "Model ended before its admitted extent during full-file hashing",
+          { integrityCheck: "read-coverage" },
         );
       this.#hash.update(buffer.subarray(0, bytesRead));
       position += bytesRead;

@@ -1,3 +1,10 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
+import {
+  ArtifactReaderFailure,
+  readerIntegrityFailure,
+  readStableArtifact,
+} from "../resources/index.js";
 import {
   classifyProviderFailure,
   type ProviderFailureDialect,
@@ -13,8 +20,12 @@ import {
   packetFieldsCatalogSchema,
 } from "../domain/captures/packetFields.js";
 import {
+  isParseLimit,
+  parseLimitConstraint,
+} from "../domain/parseFailureAnalysisError.js";
+import {
   parseFieldDiscovery,
-  FieldDiscoveryBudgetError,
+  FIELD_GLOSSARY_FORMAT,
   FIELD_RECORD_BUDGET,
 } from "./parseFieldDiscovery.js";
 import {
@@ -35,16 +46,17 @@ import {
   createAnalysisExecution,
   type AnalysisExecution,
   type ExecutionOptions,
-} from "../application/AnalysisProvider.js";
-import type { PacketCapturePort } from "../application/captures/PacketCaptureService.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+} from "../ports/AnalysisProvider.js";
+import type { PacketCapturePort } from "../ports/captures/PacketCapturePort.js";
 import {
   ARTIFACT_PRODUCER_LIMITATION,
   ArtifactAnalysisResources,
-  artifactCommandOutput,
   type ArtifactAnalysisRuntime,
 } from "../process/ArtifactAnalysisResources.js";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+import {
+  artifactResourceDialect,
+  createArtifactAnalysisResources,
+} from "../providers/artifactResourceFailure.js";
 import {
   assertArtifactCommandPath,
   selectArtifactCommandPath,
@@ -57,7 +69,6 @@ import {
   AnalysisArtifactChangedError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
-  AnalysisResourceConstraintError,
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
@@ -101,11 +112,11 @@ export class TsharkCaptureProvider implements PacketCapturePort {
     readonly launcher?: Launcher,
     readonly createRuntime: () => Promise<ArtifactAnalysisRuntime> = () =>
       PrivateRuntimeRoot.create({ prefix: "rea-tshark-" }),
-    readonly platform: NodeJS.Platform = process.platform,
+    readonly platform: NodeJS.Platform = HOST_PLATFORM.platform,
     readonly readArtifact: typeof readStableArtifact = readStableArtifact,
     readonly readLimits: typeof readLinuxResourceLimits = readLinuxResourceLimits,
   ) {
-    this.#resources = new ArtifactAnalysisResources(
+    this.#resources = createArtifactAnalysisResources(
       TSHARK_PROVIDER_IDENTITY.id,
       OPERATION,
       readArtifact,
@@ -240,7 +251,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
             ...(this.launcher === undefined ? {} : { launcher: this.launcher }),
           },
         );
-        capturedOutput = artifactCommandOutput(output);
+        capturedOutput = capturedProviderOutput(output);
         await assertArtifactCommandPath(selectedCommand, operation, {
           capturedOutput,
         });
@@ -519,27 +530,28 @@ export class TsharkCaptureProvider implements PacketCapturePort {
       operation,
       "producer_limits",
     );
+    // A post-run identity read reports what the resources own about it.
+    if (phase === "integrity")
+      return artifactResourceDialect(this.#resources, {
+        kind: "integrity",
+        operation,
+        path,
+        capturedOutput: observedOutput,
+      });
     return {
       providerId: TSHARK_PROVIDER_IDENTITY.id,
       operation,
       recognise: (cause) =>
-        cause instanceof FieldDiscoveryBudgetError
-          ? new AnalysisResourceConstraintError(
-              operation,
-              "memory",
-              cause.message,
-              { record_budget_bytes: FIELD_RECORD_BUDGET },
-              {
-                cause,
-                ...(observedOutput === undefined
-                  ? {}
-                  : { capturedOutput: observedOutput }),
-                ...fixedAllowanceOptions(
-                  "The packet-field discovery record allowance",
-                  "capture",
-                ),
-              },
-            )
+        isParseLimit(cause, FIELD_GLOSSARY_FORMAT)
+          ? parseLimitConstraint(operation, "memory", cause, {
+              ...(observedOutput === undefined
+                ? {}
+                : { capturedOutput: observedOutput }),
+              ...fixedAllowanceOptions(
+                "The packet-field discovery record allowance",
+                "capture",
+              ),
+            })
           : undefined,
       command: () => command,
       // The retained workspace owns a command's unresolved cleanup and reports
@@ -563,13 +575,6 @@ export class TsharkCaptureProvider implements PacketCapturePort {
             cause,
             workspacePath,
           );
-        if (phase === "integrity")
-          return this.#resources.integrityFailure(
-            cause,
-            path,
-            observedOutput,
-            operation,
-          );
         if (phase === "configuration")
           return new AnalysisCapabilityUnavailableError(
             TSHARK_PROVIDER_IDENTITY.id,
@@ -587,9 +592,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
           cause instanceof ArtifactReaderFailure &&
           cause.reason === "integrity"
         )
-          return new AnalysisArtifactChangedError(operation, path, reason, {
-            cause,
-          });
+          return readerIntegrityFailure(operation, path, cause);
         return new AnalysisOutputError(operation, reason, {
           cause,
           ...(observedOutput === undefined

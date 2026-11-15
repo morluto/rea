@@ -19,8 +19,7 @@ import {
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
 import { findDotnetBundleHeader } from "./dotnet/DotnetBundle.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
-import { abortIfNeeded } from "./ArtifactHash.js";
+import { ArtifactReaderFailure, abortIfNeeded } from "../resources/index.js";
 import { locateGodotPck, type GodotPckLocation } from "./GodotPckLocation.js";
 import {
   locateNodeSea,
@@ -64,6 +63,7 @@ export class ArtifactEmbeddedFormatProbes {
       throw new ArtifactReaderFailure(
         "integrity",
         `Root artifact changed before inventory: ${path}`,
+        { integrityCheck: "container-identity" },
       );
     const reusable =
       previous !== undefined &&

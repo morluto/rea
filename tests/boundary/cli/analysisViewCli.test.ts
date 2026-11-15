@@ -7,10 +7,8 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import {
-  analysisCliErrorEnvelopeSchema,
-  analysisErrorProjectionSchema,
-} from "../../../src/contracts/errorSchemas.js";
+import { analysisCliErrorEnvelopeSchema } from "../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 
 import { expect } from "vitest";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
@@ -86,6 +84,41 @@ cliTest(
       procedure_address: null,
       item: { text: "😀" },
       coverage: { next_offset: 3 },
+    });
+  },
+);
+
+cliTest(
+  "summarizes an independent fresh decompile with the analysis it selected",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-fresh-pseudocode-view-");
+    const parent = createEvidence(
+      { path: "/fixtures/program", format: "elf", sha256: "a".repeat(64) },
+      { id: "fixture", name: "Fixture", version: "1" },
+      {
+        operation: "procedure_pseudo_code",
+        parameters: { procedure: "main", analysis: "independent_fresh" },
+        result: "int main(void) { return 0; }",
+      },
+    );
+    const request = join(root, "request.json");
+    await writeFile(
+      request,
+      JSON.stringify({
+        source: { kind: "inline", evidence: parent },
+        view: { kind: "summary" },
+      }),
+    );
+    const response = await cli.run({
+      arguments: ["inspect-analysis-view", request, "--json"],
+    });
+    expect(response.exitCode, response.stdout).toBe(0);
+    expect(parseEvidence(response.json).normalized_result).toMatchObject({
+      kind: "summary",
+      summary: {
+        selection: { procedure: "main", analysis: "independent_fresh" },
+        pseudocode: { available: true, code_units: 28 },
+      },
     });
   },
 );
@@ -223,6 +256,19 @@ cliTest(
       expect(rejected.exitCode).toBe(1);
       expect(rejected.json).toMatchObject({ code: expectedCode });
       expect(rejected.json).not.toHaveProperty("evidence_id");
+      // The service names the field it refuses; option spellings belong to
+      // the CLI layer.
+      if (source.kind === "inline")
+        expect(rejected.json).toMatchObject({
+          details: {
+            issues: [
+              {
+                path: ["source", "kind"],
+                message: expect.not.stringContaining("--"),
+              },
+            ],
+          },
+        });
     }
     for (const [contents, expectedCode, freshProcess] of [
       [JSON.stringify(parent), "invalid_request", false],

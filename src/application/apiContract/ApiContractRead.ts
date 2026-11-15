@@ -1,18 +1,16 @@
 import {
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
-import {
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+  readStableArtifact,
   projectStableArtifactFailure,
   stableArtifactInputRecovery,
-} from "../../artifacts/StableArtifactFailure.js";
+  readerIntegrityFailure,
+} from "../../resources/index.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
   cancelledBy,
@@ -69,12 +67,7 @@ const readFailure = (
         carriedReason(artifactFileCancellationCause(cause)),
       );
     if (cause.reason === "integrity")
-      return new AnalysisArtifactChangedError(
-        operation,
-        input.path,
-        cause.message,
-        { cause },
-      );
+      return readerIntegrityFailure(operation, input.path, cause);
     if (cause.reason === "limit")
       return new AnalysisResourceConstraintError(
         operation,

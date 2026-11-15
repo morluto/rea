@@ -96,13 +96,9 @@ try {
     advertised.filter((tool) => tool.name === "inspect_recorded_crash").length,
     1,
   );
-  const catalog = await verifyCompleteToolCatalog(
-    basic.client,
-    {
-      timeout: 90_000,
-    },
-    environment,
-  );
+  const catalog = await verifyCompleteToolCatalog(basic.client, {
+    timeout: 90_000,
+  });
   for (const name of [
     "inspect_binary_layout",
     "inspect_recorded_crash",

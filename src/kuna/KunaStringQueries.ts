@@ -1,3 +1,4 @@
+import { readRuntimeSetting } from "../config/runtimeAnalysisSettings.js";
 import type { RegexConfigurationSnapshot } from "../process/RegexMatcher.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
@@ -118,6 +119,12 @@ export class KunaStringQueries {
       return this.#load(installation, operation, signal);
     }
     if (this.#pending === undefined) {
+      // Read the deadline in the requesting operation's snapshot; a malformed
+      // launch seed without an override is refused here as a value.
+      const deadline = readRuntimeSetting(() =>
+        kunaProjectDeadline(installation.configuration),
+      );
+      if (!deadline.ok) return deadline;
       const pending = this.work.start<KunaStringInventory>(
         (producerSignal) =>
           this.work.scan(
@@ -136,7 +143,7 @@ export class KunaStringQueries {
                 "any",
                 "--no-xrefs",
               ],
-              deadline: kunaProjectDeadline(installation.configuration),
+              deadline: deadline.value,
             },
             new KunaStringInventoryReader(),
             producerSignal,

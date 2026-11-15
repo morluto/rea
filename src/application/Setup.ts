@@ -32,13 +32,13 @@ import {
   type AnalysisCleanupObservation,
 } from "../domain/analysisErrorBase.js";
 import { setupCleanupError, setupCleanupReason } from "./SetupCleanupOwner.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisCancelledError,
   cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
-import { assertSetupActive } from "./SetupCancellation.js";
+import { assertSetupActive } from "../domain/setupCancellation.js";
 import type {
   SetupSkillInstallError,
   SkillInstallResult,
@@ -128,11 +128,11 @@ export const runSetup = async (
   if (threw) {
     if (cleanup === undefined) throw primaryFailure;
     if (primaryFailure instanceof AnalysisError)
-      throw analysisErrorWithCleanupFailure(
+      throw analysisErrorWithCleanupDependencies(
         primaryFailure,
         cleanup,
         "setup",
-      ).bindCleanupDependencies([primaryFailure, cleanup]);
+      );
     throw new AggregateError(
       [primaryFailure, cleanup],
       "Setup and resource cleanup failed.",
@@ -166,11 +166,7 @@ export const runSetup = async (
       diagnostics: { setup_result: jsonValueSchema.parse(result) },
     });
     if (cleanup !== undefined)
-      throw analysisErrorWithCleanupFailure(
-        cancelled,
-        cleanup,
-        "setup",
-      ).bindCleanupDependencies([cancelled, cleanup]);
+      throw analysisErrorWithCleanupDependencies(cancelled, cleanup, "setup");
     throw cancelled;
   }
   if (cleanup === undefined) return result;

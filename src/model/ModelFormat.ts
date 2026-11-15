@@ -1,3 +1,4 @@
+import { Budget } from "../domain/budget.js";
 import {
   malformedInput,
   ParseFailureError,
@@ -117,13 +118,13 @@ export const modelCapacityReportedLimits = (
 
 /** Charge representation growth before retaining rows or decoding long strings. */
 export class ModelReportBudget {
-  #remaining = MODEL_REPORT_BYTES;
+  readonly #bytes = new Budget(MODEL_REPORT_BYTES);
   charge(bytes: number): void {
-    if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > this.#remaining)
-      throw modelCapacityFailure(
+    this.#bytes.charge(bytes, () =>
+      modelCapacityFailure(
         "representation-bytes",
         "Model facts exceed the 32 MiB retained representation budget. This release has no runtime override.",
-      );
-    this.#remaining -= bytes;
+      ),
+    );
   }
 }

@@ -2,7 +2,7 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished } from "vitest";
 
 import type { ApktoolResourceAnalysisPort } from "../../../src/application/apktool/ApktoolResourceAnalysisPort.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import type { ApktoolRequest } from "../../../src/domain/apktool/apktoolResourceAnalysis.js";
 import { ok } from "../../../src/domain/result.js";
@@ -86,7 +86,7 @@ it("advertises exact valid Apktool schemas and records inline evidence through M
     { kind: "session", session },
     {
       apktoolAnalysis: provider,
-      environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
+      environment: { ...process.env },
     },
   );
   onTestFinished(() => server.close());

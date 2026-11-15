@@ -1,10 +1,11 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { inspectAddressContext } from "../../../src/application/AnalysisContextQueries.js";
 import {
   AnalysisCapabilityUnavailableError,
@@ -101,7 +102,7 @@ const createContextRecoverySession = () => {
   }));
 };
 
-it.each(["compact", "full"] as const)(
+it.each(["compact"] as const)(
   "offers a conditional containing-function comment route (%s)",
   async (profile) => {
     const directory = await createTestTempDirectory("rea-context-comment-");
@@ -238,9 +239,7 @@ it.each(["compact", "full"] as const)(
 it.each([
   ["compact", false, "comment"],
   ["compact", true, "comment"],
-  ["full", false, "comment"],
-  ["full", true, "comment"],
-  ["full", false, "list_bookmarks"],
+  ["compact", false, "list_bookmarks"],
 ] as const)(
   "preserves a local input refusal alongside successful facets (%s, conforms=%s, operation=%s)",
   async (profile, conforms, rejectedOperation) => {
@@ -324,7 +323,7 @@ it.each([
           name: "inspect_address_context",
           arguments: { address: "0x401001", document: "fixture" },
         },
-        { toolDefinition: contextDefinition },
+        { toolDefinition: withCanonicalOutputSchema(contextDefinition) },
       );
       expect(response.isError).not.toBe(true);
       const contract = SESSION_TOOL_CONTRACTS.find(

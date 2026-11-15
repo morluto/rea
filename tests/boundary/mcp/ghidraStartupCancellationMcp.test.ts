@@ -2,6 +2,7 @@ import { access } from "node:fs/promises";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
+import { phaseArrival, phaseGate } from "../../support/lifecycleHarness.js";
 
 import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
@@ -12,8 +13,6 @@ import { GhidraProvider } from "../../../src/ghidra/GhidraProvider.js";
 import type { GhidraProviderClientFactory } from "../../../src/ghidra/GhidraProviderClient.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { createDeferred } from "../../fixtures/binarySession.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 import { GhidraFixtureLauncher } from "../providers/ghidra/ghidraClient.fixture.js";
 import { waitFor } from "../../support/testWait.js";
@@ -21,9 +20,8 @@ import { waitFor } from "../../support/testWait.js";
 it.each([0, 1])(
   "releases cancelled MCP startup caller %s while its peer completes and stays warm",
   async (cancelledIndex) => {
-    const entered = createDeferred<void>();
-    const admitted = [createDeferred<void>(), createDeferred<void>()];
-    const gate = createDeferred<void>();
+    const ghidraStartup = phaseGate();
+    const admitted = [phaseArrival(), phaseArrival()];
     const fixture = new GhidraFixtureLauncher();
     const roots = fixture.runtimeRoots;
     const children = fixture.processes;
@@ -40,8 +38,7 @@ it.each([0, 1])(
         launcher: {
           async launch(launch, launchOptions) {
             producerSignal = launchOptions?.signal;
-            entered.resolve();
-            await gate.promise;
+            await ghidraStartup.hold();
             return fixture.launch(launch);
           },
         },
@@ -51,7 +48,7 @@ it.each([0, 1])(
         start: (signal, progress) => {
           const index = startCount++;
           const pending = raw.start(signal, progress);
-          admitted[index]?.resolve();
+          admitted[index]?.arrive();
           return pending.then((result) => {
             startResults[index] = result;
             return result;
@@ -111,17 +108,9 @@ it.each([0, 1])(
               (cause: unknown) => ({ ok: false as const, cause }),
             ),
         );
-        await awaitAcknowledgement(
-          admitted[index]!.promise,
-          calls[index]!,
-          "MCP caller admission",
-        );
+        await admitted[index]!.reached(calls[index]!, "MCP caller admission");
       }
-      await awaitAcknowledgement(
-        entered.promise,
-        Promise.race(calls),
-        "Ghidra startup",
-      );
+      await ghidraStartup.reached(Promise.race(calls), "Ghidra startup");
       controllers[cancelledIndex]?.abort();
       await waitFor(() =>
         expect(startResults[cancelledIndex]).toMatchObject({
@@ -133,7 +122,7 @@ it.each([0, 1])(
       expect(producerSignal?.aborted).toBe(false);
       expect(children).toHaveLength(0);
       expect(queryCount).toBe(0);
-      gate.resolve();
+      ghidraStartup.release();
       const staying = await calls[1 - cancelledIndex];
       if (staying === undefined || !staying.ok)
         throw new Error("Live MCP peer did not complete", { cause: staying });
@@ -147,7 +136,7 @@ it.each([0, 1])(
       expect(children).toHaveLength(1);
     } finally {
       for (const controller of controllers) controller.abort();
-      gate.resolve();
+      ghidraStartup.release();
       await Promise.allSettled(calls);
       await mcp.close();
       await server.close();

@@ -1,7 +1,11 @@
 import { MAX_NODE_TIMER_DELAY_MS } from "./analysisResourceLimits.js";
+import type { AnalysisControlLimit } from "./analysisSettings.js";
+import { analysisSettingLimitSchema } from "./analysisSettingDefinitions.js";
 import { javaScriptSemanticPrecisionSchema } from "./javascript/javascriptSemanticPrecision.js";
+import { javaScriptRefusedPhaseSchema } from "./javascript/javascriptSemanticWorkAllowance.js";
 import { fetchedSourceMapLimitsSchema } from "./sourceMapLimits.js";
 import { z } from "zod";
+import { knownCoverageStatusSchema, coverageStatusSchema } from "./coverage.js";
 import { browserExclusionSchema } from "./browserCompleteness.js";
 import { webPageInspectionSchema } from "./browserObservationSchemas.js";
 import { javaScriptRouteInventorySchema } from "./javascript/javascriptRouteInventory.js";
@@ -155,7 +159,7 @@ const webBundleHeapRange = (): string =>
 
 const webBundleHeapIncrease = (heapMb: number): string =>
   heapMb < MAX_WEB_BUNDLE_HEAP_MB
-    ? `Increase max_heap_mb above ${String(heapMb)} (integer MiB from ${String(MIN_WEB_BUNDLE_HEAP_MB)} to ${String(MAX_WEB_BUNDLE_HEAP_MB)}; omitted means ${String(DEFAULT_WEB_BUNDLE_HEAP_MB)}), or use --max-heap-mb on the CLI.`
+    ? `Increase max_heap_mb above ${String(heapMb)} (integer MiB from ${String(MIN_WEB_BUNDLE_HEAP_MB)} to ${String(MAX_WEB_BUNDLE_HEAP_MB)}; omitted means ${String(DEFAULT_WEB_BUNDLE_HEAP_MB)}).`
     : `max_heap_mb is already at the maximum ${String(MAX_WEB_BUNDLE_HEAP_MB)} MiB; do not increase it further.`;
 
 const webBundleHeapDoesNotRaise =
@@ -177,6 +181,26 @@ export const webBundleHeapExhaustedReason = (
         : `Owned web analyzer ran out of memory before its ${String(exhaustion.processMemoryLimitBytes)}-byte process commit limit was reported as reached. That configured limit is max_heap_mb ${String(exhaustion.heapMb)} MiB plus a 512 MiB Bun runtime reserve (${range}). Bun ignores the V8 old-space flag, so this exit is not V8 old-space exhaustion.`;
   }
 };
+
+/**
+ * The per-call control of an exhaustion that a larger `max_heap_mb` raises,
+ * or undefined when that allowance did not stop the analyzer.
+ */
+export const webBundleHeapLimit = (
+  exhaustion: WebBundleMemoryExhaustion,
+): AnalysisControlLimit | undefined =>
+  exhaustion.kind === "bun-allocation"
+    ? undefined
+    : {
+        control_kind: "parameter",
+        parameter: "max_heap_mb",
+        effective_value: exhaustion.heapMb,
+        unit: "MiB",
+        minimum: MIN_WEB_BUNDLE_HEAP_MB,
+        maximum: MAX_WEB_BUNDLE_HEAP_MB,
+        default_value: DEFAULT_WEB_BUNDLE_HEAP_MB,
+        applies_at: "next_call",
+      };
 
 export const webBundleHeapExhaustedRemediation = (
   exhaustion: WebBundleMemoryExhaustion,
@@ -281,8 +305,8 @@ const originalModuleEdgeSchema = z.object({
   resolved_source: z.string().nullable(),
 });
 const sourceMapMappingSchema = z.object({
-  source_index: z.int().min(0).optional(),
-  declaration_index: z.int().min(0).optional(),
+  source_index: z.int().min(0),
+  declaration_index: z.int().min(0),
   generated_line: z.int().min(1),
   generated_column: z.int().min(0),
   source: z.string().nullable(),
@@ -293,8 +317,8 @@ const sourceMapMappingSchema = z.object({
 const sourceMapContextShape = {
   script_key: z.string(),
   declared_url: z.string(),
-  // Older saved observations omit this field; current fetches emit string/null.
-  effective_url: z.string().nullable().optional(),
+  // Null when no response was observed within the approved origins.
+  effective_url: z.string().nullable(),
 };
 const parsedSourceMapShape = {
   artifact: webTextArtifactSchema,
@@ -324,10 +348,22 @@ const sourceMapSchema = z.union([
   z.object({
     ...sourceMapContextShape,
     ...parsedSourceMapShape,
-    status: z.enum(["fetch_failed", "invalid"]),
+    status: z.literal("fetch_failed"),
     artifact: z.null(),
-    /** Older observations omit this; completed bytes need it only when text is absent. */
+    /** Present only when the complete response body was read. */
     response_identity: responseIdentitySchema.exactOptional(),
+    original_sources: emptyArraySchema,
+    original_module_edges: emptyArraySchema,
+    mappings: emptyArraySchema,
+    limitation: z.string(),
+  }),
+  z.object({
+    ...sourceMapContextShape,
+    ...parsedSourceMapShape,
+    // A map is judged invalid only after its complete body was read.
+    status: z.literal("invalid"),
+    artifact: z.null(),
+    response_identity: responseIdentitySchema,
     original_sources: emptyArraySchema,
     original_module_edges: emptyArraySchema,
     mappings: emptyArraySchema,
@@ -436,9 +472,8 @@ export const webBundleAnalysisSchema = z.object({
   route_inventory: javaScriptRouteInventorySchema.exactOptional(),
   capture: z.object({
     target_url: z.string(),
-    // Older saved observations omit this field; current analyses retain the
-    // validated HTTP(S) target origin or null when no browser origin exists.
-    target_origin: recordedBrowserOriginSchema.nullable().optional(),
+    // The validated HTTP(S) target origin, or null when no browser origin exists.
+    target_origin: recordedBrowserOriginSchema.nullable(),
     scripts_observed: z.int().min(0),
     scripts_analyzed: z.int().min(0),
     source_artifacts: z.array(webTextArtifactSummarySchema),
@@ -480,10 +515,9 @@ export const webBundleAnalysisSchema = z.object({
             "Statically known own property names from the declared schema projection; a partial list may omit unresolved members.",
           ),
         schema_property_names_coverage: z
-          .enum(["complete", "partial", "unknown", "not_present"])
-          .optional()
+          .enum([...coverageStatusSchema.options, "not_present"])
           .describe(
-            "Coverage of the schema property-name projection. Missing means unknown for historical observations. Not a schema-validity result.",
+            "Coverage of the schema property-name projection. Not a schema-validity result.",
           ),
         trust: z.literal("page-declared-untrusted"),
         location: sourceLocationSchema,
@@ -509,10 +543,19 @@ export const webBundleAnalysisSchema = z.object({
       dimension: z.string(),
       reason: z.string(),
       affected_script_keys: z.array(z.string()),
+      /** The setting that bounded these scripts, and how to change it. */
+      limit: analysisSettingLimitSchema.exactOptional(),
+      remediation: z.string().exactOptional(),
+      /**
+       * The phase a work allowance refused for these scripts. Their parse
+       * status and text inferences remain; findings that read the phase's
+       * facts were not examined.
+       */
+      refused_phase: javaScriptRefusedPhaseSchema.exactOptional(),
     }),
   ),
   completeness: z.object({
-    status: z.enum(["complete", "partial"]),
+    status: knownCoverageStatusSchema,
     parsed_scripts: z.int().min(0),
     parse_failures: z.int().min(0),
     visited_ast_nodes: z.int().min(0),

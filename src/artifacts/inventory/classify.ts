@@ -1,5 +1,11 @@
 import { ParseFailureError } from "../../domain/parseFailure.js";
-import { artifactOperationCause } from "../ArtifactFileOperation.js";
+import {
+  artifactOperationCause,
+  ArtifactReaderFailure,
+  openRootArtifact,
+  releaseRootArtifact,
+  abortIfNeeded,
+} from "../../resources/index.js";
 import {
   nesContainerFormat,
   parseInesLayout,
@@ -39,7 +45,6 @@ import type { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { decodeNodeSeaBlob } from "../nodeSea/NodeSeaBlob.js";
 import { readNodeSeaBlob } from "../nodeSea/NodeSeaLocation.js";
 import { classifyArtifactContent } from "./ArtifactGraphConstruction.js";
-import { abortIfNeeded } from "../ArtifactHash.js";
 import { claimsExecutableHeader } from "../../domain/binaryTarget.js";
 import { createArtifactClassificationProbe } from "../ArtifactClassificationProbe.js";
 import type { ArtifactOccurrence } from "../../domain/artifactGraph.js";
@@ -49,13 +54,10 @@ import {
   zipRootPackageFormat,
 } from "../../domain/zipPackageFormat.js";
 import { artifactFormatDescriptor } from "../artifactFormats.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
-import type { HashResult } from "../ArtifactHash.js";
 import {
-  hashStableRootArtifactHandle,
-  openRootArtifact,
-  releaseRootArtifact,
-} from "./hashStableRootArtifact.js";
+  classifyStableRootArtifactHandle,
+  type HashResult,
+} from "../ArtifactHash.js";
 import type { ArtifactInventoryOptions } from "./types.js";
 import { readMachoHeaderPrefixFacts } from "../../domain/apple/machoContainer.js";
 import { hasDiskImageSignature } from "../../domain/apple/diskImageFormat.js";
@@ -107,6 +109,7 @@ export const classifyAndHashRootForInventory = async (
     throw new ArtifactReaderFailure(
       "integrity",
       `Root artifact changed before inventory: ${path}`,
+      { integrityCheck: "container-identity" },
     );
   }
   if (directory && options.expectedRootSha256 !== undefined)
@@ -114,6 +117,7 @@ export const classifyAndHashRootForInventory = async (
       "integrity",
       `Artifact root changed after target admission: expected an admitted file at ${path}, observed a directory`,
       {
+        integrityCheck: "container-identity",
         userMessage:
           "The opened file was replaced by a directory. Select the intended artifact and reopen it before retrying.",
       },
@@ -144,6 +148,7 @@ export const classifyAndHashRootForInventory = async (
       throw new ArtifactReaderFailure(
         "integrity",
         `Root artifact changed before inventory: ${path}`,
+        { integrityCheck: "container-identity" },
       );
     // Prior probe state can prove replacement without interpreting any bytes.
     const probes = new ArtifactEmbeddedFormatProbes(
@@ -156,7 +161,7 @@ export const classifyAndHashRootForInventory = async (
     const admittedDigest =
       options.expectedRootSha256 === undefined
         ? undefined
-        : await hashStableRootArtifactHandle(
+        : await classifyStableRootArtifactHandle(
             path,
             handle,
             initial,
@@ -182,7 +187,7 @@ export const classifyAndHashRootForInventory = async (
       typeof classified === "string" ? classified : classified.kind;
     const digest =
       admittedDigest ??
-      (await hashStableRootArtifactHandle(
+      (await classifyStableRootArtifactHandle(
         path,
         handle,
         initial,
@@ -322,7 +327,7 @@ const classifyRootFormat = async (
       throw new ArtifactReaderFailure(
         "integrity",
         `Root artifact changed during classification: ${path}`,
-        { cause: cause.cause ?? cause },
+        { cause: cause.cause ?? cause, integrityCheck: "container-identity" },
       );
     throw artifactOperationCause(cause);
   }
@@ -580,6 +585,7 @@ export const assertAdmittedRootDigest = (
       "integrity",
       `Artifact root changed after target admission at ${path}: expected ${expected}, observed ${observed}`,
       {
+        integrityCheck: "container-identity",
         userMessage:
           "The artifact changed after it was opened. Reopen the selected artifact, then retry.",
       },

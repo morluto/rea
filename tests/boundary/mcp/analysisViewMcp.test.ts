@@ -1,3 +1,8 @@
+import {
+  canonicalInputSchema,
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
 import { API_SURFACE_EXAMPLE } from "../../../src/contracts/analysisViewApiSurfaceExample.js";
@@ -87,7 +92,6 @@ const connect = async (
       // These schema conformance cases exercise full nested constraints.
       environment: {
         ...process.env,
-        REA_MCP_INPUT_SCHEMA_PROFILE: "full",
         REA_MCP_MAX_INPUT_ELEMENTS:
           maximumInputElements === undefined
             ? process.env.REA_MCP_MAX_INPUT_ELEMENTS
@@ -343,7 +347,11 @@ it("advertises typed module references and preserves portable/retained Evidence 
   );
   const recorded = session.recordEvidence(parent);
   if (!recorded.ok) throw recorded.error;
-  const { ajv, inputSchema, toolDefinition } = await advertisedMcpToolSchemas(
+  const {
+    ajv,
+    canonicalInputSchema: inputSchema,
+    toolDefinition,
+  } = await advertisedMcpToolSchemas(
     client,
     "inspect_analysis_view",
     schemaValidation.assertions,
@@ -591,7 +599,11 @@ it("advertises exact schemas and projects one layout section from retained Evide
     inspect: () => Promise.resolve(ok(layout)),
   });
   const { client, session } = await connect(service);
-  const { ajv, inputSchema, toolDefinition } = await advertisedMcpToolSchemas(
+  const {
+    ajv,
+    canonicalInputSchema: inputSchema,
+    toolDefinition,
+  } = await advertisedMcpToolSchemas(
     client,
     "inspect_analysis_view",
     schemaValidation.assertions,
@@ -976,11 +988,12 @@ it("delivers a bounded native dossier view over MCP without a Ghidra provider or
   const advertised = (await client.listTools()).tools.find(
     (tool) => tool.name === "inspect_analysis_view",
   );
-  if (advertised?.outputSchema === undefined)
-    throw new Error("missing view schemas");
+  if (advertised === undefined) throw new Error("missing view schemas");
   const ajv = schemaValidation.assertions;
-  const inputSchema: Record<string, unknown> = advertised.inputSchema;
-  const outputSchema: Record<string, unknown> = advertised.outputSchema;
+  const inputSchema = canonicalInputSchema(advertised.name);
+  const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+    advertised.name,
+  );
   const arguments_ = {
     source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
     view: { kind: "native", facet: "pseudocode", offset: 0, limit: 500 },
@@ -993,7 +1006,7 @@ it("delivers a bounded native dossier view over MCP without a Ghidra provider or
   ).toBe(true);
   const response = await client.callTool(
     { name: "inspect_analysis_view", arguments: arguments_ },
-    { toolDefinition: advertised },
+    { toolDefinition: withCanonicalOutputSchema(advertised) },
   );
   expect(response.isError).not.toBe(true);
   const parsed = toolContract("inspect_analysis_view").outputSchema.parse(
@@ -1726,7 +1739,11 @@ it("advertises Mach-O pages whose selected facet owns their exact rows", async (
 it("extracts an environment state identically from retained, portable and file MCP Evidence", async () => {
   // Full inline capture conformance explicitly selects its transport allowance.
   const { client, session } = await connect(undefined, undefined, 8_192);
-  const { ajv, inputSchema, toolDefinition } = await advertisedMcpToolSchemas(
+  const {
+    ajv,
+    canonicalInputSchema: inputSchema,
+    toolDefinition,
+  } = await advertisedMcpToolSchemas(
     client,
     "inspect_analysis_view",
     schemaValidation.assertions,
@@ -1803,7 +1820,11 @@ it("extracts an environment state identically from retained, portable and file M
 
 it("reports environment coverage identically from retained, portable and file MCP Evidence", async () => {
   const { client, session } = await connect(undefined, undefined, 8_192);
-  const { ajv, inputSchema, toolDefinition } = await advertisedMcpToolSchemas(
+  const {
+    ajv,
+    canonicalInputSchema: inputSchema,
+    toolDefinition,
+  } = await advertisedMcpToolSchemas(
     client,
     "inspect_analysis_view",
     schemaValidation.assertions,
@@ -1913,7 +1934,11 @@ it("accounts for every safe HTTP method in environment state and coverage", asyn
 
 it("projects an environment manifest identically from retained, portable and file MCP Evidence", async () => {
   const { client, session } = await connect(undefined, undefined, 8_192);
-  const { ajv, inputSchema, toolDefinition } = await advertisedMcpToolSchemas(
+  const {
+    ajv,
+    canonicalInputSchema: inputSchema,
+    toolDefinition,
+  } = await advertisedMcpToolSchemas(
     client,
     "inspect_analysis_view",
     schemaValidation.assertions,

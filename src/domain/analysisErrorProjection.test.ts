@@ -8,6 +8,7 @@ import {
   AnalysisCancelledError,
   AnalysisTimeoutError,
   AnalysisResourceConstraintError,
+  AnalysisArtifactChangedError,
 } from "./analysisErrorCore.js";
 import { ArtifactOperationError } from "./artifactOperationError.js";
 import {
@@ -35,13 +36,14 @@ import { UnknownRegistryError } from "./unknownRegistryError.js";
 import {
   childFailureDiagnostics,
   projectAnalysisError,
+  projectAnalysisErrorWithoutPartialObservation,
 } from "./analysisErrorProjection.js";
 import {
   analysisErrorRemediationAction,
   analysisErrorUserMessage,
 } from "./analysisErrorPresentation.js";
 import { ProviderSelectionError } from "./providerSelectionError.js";
-import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "./analysisErrorProjectionSchema.js";
 import { nativeCallPartialObservationSchema } from "./native/nativeCallPartialObservation.js";
 import { analysisSettingLimit } from "./analysisSettingDefinitions.js";
 import { redactExplicitFailure } from "./explicitSensitiveFailure.js";
@@ -49,6 +51,7 @@ import { redactExplicitText } from "./explicitSensitiveValues.js";
 import { analysisErrorWithCleanupFailure } from "./analysisErrorCleanup.js";
 import type { AnalysisCallerLifetime } from "./analysisErrorBase.js";
 import { ProviderCleanupError } from "./providerCleanupError.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 it("projects nested workflow-publication recovery for the actual caller lifetime", () => {
   const child = new UnknownRegistryError(
@@ -1514,6 +1517,24 @@ it("does not offer entry-policy retries for integrity refusals without a declare
   expect(native.remediation.action).not.toContain("record-and-continue");
 });
 
+it.each([undefined, false, true])(
+  "projects whether a refused request was sent (%s) and omits an unknown value",
+  (requestSent) => {
+    const details = projectAnalysisError(
+      new AnalysisResourceConstraintError(
+        "cutter_command",
+        "transport",
+        "Cutter request exceeds its frame limit",
+        { max_request_bytes: 8192 },
+        requestSent === undefined ? {} : { requestSent },
+      ),
+    ).details;
+    if (requestSent === undefined)
+      expect(details).not.toHaveProperty("request_sent");
+    else expect(details).toMatchObject({ request_sent: requestSent });
+  },
+);
+
 it("preserves ordinary configuration recovery and projects a producer-owned session repair", () => {
   const settings = [{ setting: "REA_EXAMPLE", constraint: "must be positive" }];
   const original = projectAnalysisError(
@@ -1759,7 +1780,7 @@ describe("analysis error projection: Hopper caller lifetime", () => {
       diagnostics: { primary_error: continuingPrimary },
     });
 
-    cleanup.resolveCleanup();
+    releaseOwnedCleanup(cleanup);
     expect(
       projectAnalysisError(composed, "invocation").details?.cleanup_history,
     ).toMatchObject({ primary_error: invocationPrimary });
@@ -1812,7 +1833,7 @@ describe("analysis error projection: composed failures for a caller lifetime", (
       `Only this request stopped. ${continuingOnly.userMessage}`,
     );
     // After cleanup resolves, history keeps the composition-time snapshot.
-    cleanup.resolveCleanup();
+    releaseOwnedCleanup(cleanup);
     for (const lifetime of ["continuing", "invocation"] as const)
       expect(child(lifetime)?.cleanup_history).toMatchObject({
         primary_error: projectAnalysisError(primary, lifetime),
@@ -1851,6 +1872,21 @@ describe("analysis error projection: composed failures for a caller lifetime", (
     );
   });
 
+  it("keeps the named integrity check when redaction rebuilds an artifact change", () => {
+    const error = new AnalysisArtifactChangedError(
+      "inspect_artifact",
+      "/target/secret-token.bin",
+      "member changed",
+      { integrityCheck: "member-identity" },
+    );
+    const redacted = redactExplicitFailure(error, ["secret-token"]);
+    expect(redacted).not.toBe(error);
+    expect(projectAnalysisError(redacted)).toMatchObject({
+      code: "artifact_changed",
+      details: { integrity_check: "member-identity" },
+    });
+  });
+
   it("keeps continuing guidance through redaction and redacts its text", () => {
     const guidance = {
       userMessage: "The session for secret-token remains usable.",
@@ -1874,5 +1910,61 @@ describe("analysis error projection: composed failures for a caller lifetime", (
       message: "Only this request stopped.",
       remediation: { action: "Rerun with a longer launch deadline." },
     });
+  });
+});
+
+describe("analysis error projection: composite argument observations", () => {
+  const left = { kind: "retained-evidence", evidence_id: "left" } as const;
+  const right = { kind: "retained-evidence", evidence_id: "right" } as const;
+  const own = { kind: "retained-evidence", evidence_id: "comparison" } as const;
+
+  it("keeps each argument's observation beside the failure's own partial", () => {
+    const failure = new AnalysisCancelledError("compare_managed_members", {
+      partialObservation: own,
+    })
+      .retainArgumentObservation("left", left)
+      .retainArgumentObservation("right", right)
+      .retainArgumentObservation("left", right);
+
+    expect(projectAnalysisError(failure).details).toMatchObject({
+      partial_observation: own,
+      argument_observations: [
+        { argument: "left", observation: left },
+        { argument: "right", observation: right },
+      ],
+    });
+    expect(
+      projectAnalysisErrorWithoutPartialObservation(failure).details,
+    ).not.toHaveProperty("argument_observations");
+    expect(
+      projectAnalysisError(
+        new AnalysisCancelledError("compare_managed_members"),
+      ).details,
+    ).not.toHaveProperty("argument_observations");
+  });
+
+  it("reads an inner failure's argument observations through cleanup before and after it settles", () => {
+    const primary = new AnalysisInputError(
+      "compare_managed_members",
+    ).retainArgumentObservation("left", left);
+    const cleanup = new ProviderCleanupError("fixture", ["fixture-file"], {});
+    const composed = analysisErrorWithCleanupFailure(
+      primary,
+      cleanup,
+    ).bindCleanupDependencies([cleanup]);
+    const expected = [{ argument: "left", observation: left }];
+
+    expect(projectAnalysisError(composed).details).toMatchObject({
+      cleanup: "incomplete",
+      argument_observations: expected,
+    });
+    expect(
+      projectAnalysisErrorWithoutPartialObservation(composed).details,
+    ).not.toHaveProperty("argument_observations");
+
+    releaseOwnedCleanup(cleanup);
+    expect(
+      projectAnalysisError(composed).details?.argument_observations,
+    ).toEqual(expected);
   });
 });

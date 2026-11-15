@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { chmod, mkdir, open, rm, rmdir } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import {
@@ -12,9 +13,9 @@ import { join } from "node:path";
 import {
   ArtifactFileCleanupFailure,
   withArtifactFileHandle,
-} from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 
 import { safeParseJson } from "../domain/safeJson.js";
 
@@ -99,7 +100,7 @@ export const acquireOwnedLease = async (input: {
     .slice(0, 32);
   const resources = input.resources ?? new ArtifactResourceScope();
   const owner = { runId: input.runId, processId: process.pid };
-  if (process.platform === "win32") {
+  if (HOST_PLATFORM.platform === "win32") {
     // A named pipe disappears with its last handle, so no stale pipe needs
     // recovery. A pipe that vanished between bind and owner lookup is retried.
     const pipePath = `\\\\.\\pipe\\rea-lease-${key}`;

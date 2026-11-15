@@ -13,7 +13,7 @@ import {
   runProviderAnalysis,
 } from "../../src/application/DirectAnalysis.js";
 import type { DirectAnalysisDependencies } from "../../src/application/DirectAnalysisDependencies.js";
-import { createAnalysisExecution } from "../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../src/ports/AnalysisProvider.js";
 import { createAnalysisExecutionEvidence } from "../../src/domain/analysisObservation.js";
 import { createEvidence } from "../../src/domain/evidence.js";
 import { parseConfig } from "../../src/config/parseConfig.js";

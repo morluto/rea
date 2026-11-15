@@ -27,3 +27,17 @@ export function recordLoweredBaseline(
     readonly lowered: boolean;
   },
 ): boolean;
+
+/** One guard's baseline file text: paths in code-unit order. */
+export function serializeCountedBaseline(
+  counts: Readonly<Record<string, number>>,
+): string;
+
+/** Leave, rewrite, delete or reject one guard's baseline file read as `text`. */
+export function reconcileBaselineFile(
+  text: string | undefined,
+  counts: Readonly<Record<string, number>> | undefined,
+  shrink: boolean,
+):
+  | { readonly action: "none" | "reject" | "delete" }
+  | { readonly action: "write"; readonly text: string };

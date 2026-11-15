@@ -1,3 +1,4 @@
+import { readRuntimeSetting } from "../config/runtimeAnalysisSettings.js";
 import { bindProcessInspectionCancellations } from "../providers/OwnedCommandCleanup.js";
 import {
   filterGhidraLiteralCandidates,
@@ -19,8 +20,8 @@ import {
 } from "../domain/analysisResourceLimits.js";
 import { z } from "zod";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { artifactFilePrimaryFacts } from "../artifacts/ArtifactFileOperation.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import { artifactFilePrimaryFacts } from "../resources/index.js";
 import { fileURLToPath } from "node:url";
 import { GHIDRA_BRIDGE_SOURCES } from "./GhidraBridgeSources.js";
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
@@ -36,7 +37,7 @@ import {
   type AnalysisClientContext,
   type AnalysisOperation,
   type ExecutionOptions,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import type { AppConfig } from "../config/types.js";
 import {
   ghidraSeedCommitmentSchema,
@@ -516,7 +517,7 @@ export const createGhidraProviderClient = (input: {
     committedProfile.parameters,
     project !== undefined &&
       committedProfile.parameters.import_mode ===
-        "existing-project-private-copy-v1",
+        "existing-project-private-copy",
   );
   if (mipsProfileMismatch !== null)
     return err(ghidraProfileConflict("open_binary", mipsProfileMismatch));
@@ -585,8 +586,7 @@ export const createGhidraProviderClient = (input: {
         ]
       : []),
     ...(target.architecture === "mips" ? (target.mips.limitations ?? []) : []),
-    ...(committedProfile.parameters.mips_abi_basis ===
-    "inferred-o32-assumption-v1"
+    ...(committedProfile.parameters.mips_abi_basis === "inferred-o32-assumption"
       ? [
           "The ELF header declares no ABI field and no ABI flags record was observed; o32 calling conventions are an analysis assumption of this lane, not a declared fact.",
           "Floating-point ABI semantics are unverified for this recordless legacy admission.",
@@ -616,17 +616,18 @@ export const createGhidraProviderClient = (input: {
       }),
     );
   // An invalid decompile seed is refused only by operations that use it.
-  let launcherDecompileTimeout: number | undefined;
-  try {
-    launcherDecompileTimeout = config.ghidraDecompileTimeoutSeconds;
-  } catch (cause: unknown) {
-    if (!(cause instanceof ConfigurationError)) throw cause;
-  }
+  const decompileTimeout = readRuntimeSetting(
+    () => config.ghidraDecompileTimeoutSeconds,
+  );
+  const launcherDecompileTimeout = decompileTimeout.ok
+    ? decompileTimeout.value
+    : undefined;
   const client = clientFactory({
     ...(checkpoint.data === undefined ? {} : { checkpoint: checkpoint.data }),
     startupTimeoutMs: config.ghidraStartupTimeoutMs,
     readStartupTimeoutMs: () => config.ghidraStartupTimeoutMs,
     bridgeMaxRequestBytes: config.bridgeMaxRequestBytes,
+    bridgeMaxReplyBytes: config.bridgeMaxReplyBytes,
     platform: installation.platform,
     ...(project === undefined ? {} : { existingProject: true }),
     launcher: new GhidraHeadlessLauncher({
@@ -829,11 +830,11 @@ export const createGhidraProviderClient = (input: {
     const closed = await client.close();
     return closed.ok
       ? extensionFailure
-      : analysisErrorWithCleanupFailure(
+      : analysisErrorWithCleanupDependencies(
           extensionFailure,
           closed.error,
           operation,
-        ).bindCleanupDependencies([extensionFailure, closed.error]);
+        );
   };
   const startSession = async (
     operation: AnalysisOperation,
@@ -1055,13 +1056,9 @@ export const createGhidraProviderClient = (input: {
             }
           : {}),
       });
-      let operationLimits: ReturnType<typeof selectLimits>;
-      try {
-        operationLimits = selectLimits();
-      } catch (cause: unknown) {
-        if (cause instanceof ConfigurationError) return err(cause);
-        throw cause;
-      }
+      const admittedLimits = readRuntimeSetting(selectLimits);
+      if (!admittedLimits.ok) return admittedLimits;
+      const operationLimits = admittedLimits.value;
       // A report binds before any query runs. The client shares one startup
       // attempt, so `callTool` reuses this launch; a restart is checked again.
       const started = await startSession(operation, options);
@@ -1200,12 +1197,7 @@ export const createGhidraProviderClient = (input: {
       if (retained === undefined) return closed;
       return closed.ok
         ? err(retained)
-        : err(
-            analysisErrorWithCleanupFailure(
-              closed.error,
-              retained,
-            ).bindCleanupDependencies([closed.error, retained]),
-          );
+        : err(analysisErrorWithCleanupDependencies(closed.error, retained));
     },
   });
 };
@@ -1333,11 +1325,11 @@ const projectSessionError = (
   );
   return failure.cleanupFailure === undefined
     ? primary
-    : analysisErrorWithCleanupFailure(
+    : analysisErrorWithCleanupDependencies(
         primary,
         failure.cleanupFailure,
         operation,
-      ).bindCleanupDependencies([primary, failure.cleanupFailure]);
+      );
 };
 
 const projectPrimarySessionError = (
@@ -1354,6 +1346,9 @@ const projectPrimarySessionError = (
       ? {}
       : { partialObservation: failure.partialObservation }),
   };
+  // A refused setting (for example the reply ceiling admitted before launch)
+  // is already the caller-facing refusal with its setting and allowed values.
+  if (failure.cause instanceof ConfigurationError) return failure.cause;
   if (failure.kind === "checkpoint") {
     if (failure.cause instanceof AnalysisError)
       return analysisClientFailureForOperation(
@@ -1412,7 +1407,7 @@ const projectPrimarySessionError = (
       operation,
       physicalCause.path,
       physicalCause.reason,
-      context,
+      { ...context, integrityCheck: physicalCause.integrityCheck },
     );
   if (
     failure.kind === "admission" &&
@@ -2043,7 +2038,7 @@ export const ghidraStartupTimeoutGuidance = (
       ? `Large projects can need longer: ${raise}. Existing-project mode does not run auto-analysis, so analyzer settings do not shorten this startup. ${retry}${client}`
       : source === "owned-checkpoint"
         ? `Checkpoint startup can need longer: ${raise}. Restoring a saved Program skips auto-analysis; initial analysis and its first checkpoint must complete once. ${retry} Keep REA_GHIDRA_CHECKPOINT_DIR to recover the last successful save. Analyzer overrides require explicitly disabling checkpoint mode.${client}`
-        : `Large binaries can need longer: ${raise}; REA_GHIDRA_DISABLED_ANALYZERS can skip selected expensive analyzers with reduced coverage. ${retry} ${reopen} repeats import from scratch; for repeated work on the same native ELF, PE or Mach-O binary on a POSIX host, analyze it once into a Ghidra project and set REA_GHIDRA_PROJECT_PATH to reuse that analysis.${client}`;
+        : `Large binaries can need longer: ${raise}; REA_GHIDRA_DISABLED_ANALYZERS can skip selected expensive analyzers with reduced coverage. ${retry} ${reopen} repeats import from scratch; --snapshot reuses cached query results, not the analyzed Ghidra Program. For repeated work on supported native ELF, PE or Mach-O binaries on Linux/macOS, opt into REA_GHIDRA_CHECKPOINT_DIR to save completed analysis automatically, or select an analyzed project with REA_GHIDRA_PROJECT_PATH. Checkpoint mode excludes analysis overrides; use a project already analyzed with the desired settings for customized analysis. Changing startup mode requires a new REA invocation or an MCP server restart. Initial analysis must still complete once.${client}`;
   };
   return {
     limit: analysisSettingLimit(
