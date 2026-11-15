@@ -68,6 +68,7 @@ import {
 } from "./AppleSwiftNominalTypes.js";
 import { inspectObjcClassImportBindings } from "./AppleObjcClassImportBindings.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Decode validated little-endian 64-bit Apple Objective-C metadata without loading target code. */
 export function* decodeAppleDispatchMetadataSteps(
@@ -559,7 +560,7 @@ const appleDispatchMetadataPrimaryFailure = (
     cause,
     diagnostics: {
       target_path: path,
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     },
   });
 };
