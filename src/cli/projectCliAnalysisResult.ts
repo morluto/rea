@@ -132,7 +132,8 @@ export const cliResultControlsIn = (
 ): Record<string, string> => {
   const controls: Record<string, string> = {};
   const pending: unknown[] = [output];
-  for (let value = pending.pop(); value !== undefined; value = pending.pop()) {
+  while (pending.length > 0) {
+    const value = pending.pop();
     if (Array.isArray(value)) {
       for (const item of value) pending.push(item);
       continue;

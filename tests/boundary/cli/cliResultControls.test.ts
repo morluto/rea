@@ -1,6 +1,6 @@
 import { Writable } from "node:stream";
 
-import { Cli } from "incur";
+import { Cli, Formatter } from "incur";
 import { expect, it } from "vitest";
 import { z } from "zod";
 
@@ -41,6 +41,8 @@ const partialResult = () => ({
   },
   // A control this command takes no flag for keeps only its field.
   unbound: { limit: deadlineParameterLimit("other_timeout_ms", 1, 2) },
+  // An omitted optional value that JSON output skips ends nothing.
+  trailing: undefined,
 });
 
 const binding = {
@@ -103,7 +105,7 @@ it("records the controls of a contract command's result and returns the result u
 const written = async (
   argv: readonly string[],
   cliControls?: Readonly<Record<string, string>>,
-): Promise<unknown> => {
+): Promise<{ readonly text: string; readonly collected: number }> => {
   const chunks: Buffer[] = [];
   const destination = new Writable({
     write(chunk: Buffer, _encoding, callback) {
@@ -116,23 +118,32 @@ const written = async (
     destination,
   );
   if (output === undefined) throw new Error("Missing output surface");
-  expect(
-    await output.write(partialResult(), {
-      command: "fixture",
-      duration: "0ms",
-      format: argv.includes("yaml") ? "yaml" : "json",
-      forceOutput: true,
-      ...(cliControls === undefined ? {} : { cliControls }),
-    }),
-  ).toBe(true);
-  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  const format = argv[argv.indexOf("--format") + 1] ?? "json";
+  let collected = 0;
+  // The ordinary command path: no forced output, controls collected on demand.
+  const handled = await output.write(partialResult(), {
+    command: "fixture",
+    duration: "0ms",
+    format,
+    collectCliControls: () => {
+      collected += 1;
+      return cliControls;
+    },
+  });
+  return {
+    text: handled ? Buffer.concat(chunks).toString("utf8") : "",
+    collected,
+  };
 };
 
+const cliControls = { worker_timeout_ms: "--worker-timeout-ms" };
+
 it("renders the flags in the full-output envelope, outside the result", async () => {
-  const cliControls = { worker_timeout_ms: "--worker-timeout-ms" };
-  expect(
-    await written(["--format", "json", "--full-output"], cliControls),
-  ).toEqual({
+  const full = await written(
+    ["--format", "json", "--full-output"],
+    cliControls,
+  );
+  expect(JSON.parse(full.text)).toEqual({
     ok: true,
     data: partialResult(),
     meta: {
@@ -141,13 +152,41 @@ it("renders the flags in the full-output envelope, outside the result", async ()
       cli_controls: cliControls,
     },
   });
-  // The bare result is the record itself, so it gains nothing.
-  expect(await written(["--format", "json"], cliControls)).toEqual(
-    partialResult(),
-  );
-  expect(await written(["--format", "json", "--full-output"])).toEqual({
+  expect(full.collected).toBe(1);
+  // The bare result is the record itself: it gains nothing, and the result
+  // is not walked for controls nothing will show.
+  const bare = await written(["--format", "json"], cliControls);
+  expect(JSON.parse(bare.text)).toEqual(partialResult());
+  expect(bare.collected).toBe(0);
+  expect(
+    JSON.parse((await written(["--format", "json", "--full-output"])).text),
+  ).toEqual({
     ok: true,
     data: partialResult(),
     meta: { command: "fixture", duration: "0ms" },
   });
 });
+
+it.each(["yaml", "toon"] as const)(
+  "keeps the requested %s format when the envelope shows the flags",
+  async (format) => {
+    const { text } = await written(
+      ["--format", format, "--full-output"],
+      cliControls,
+    );
+    expect(text).toBe(
+      `${Formatter.format(
+        {
+          ok: true,
+          data: partialResult(),
+          meta: {
+            command: "fixture",
+            duration: "0ms",
+            cli_controls: cliControls,
+          },
+        },
+        format,
+      )}\n`,
+    );
+  },
+);

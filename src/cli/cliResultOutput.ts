@@ -68,8 +68,13 @@ export interface CliResultOutputMetadata {
   readonly forceOutput?: boolean;
   /** The producer owns a failure document whose complete facts must survive filtering. */
   readonly failure?: boolean;
-  /** Flags of the per-call controls the result records, by contract field. */
+  /**
+   * Flags of the per-call controls the result records, by contract field,
+   * collected only when a full-output envelope will show them.
+   */
   readonly cliControls?: CliResultControls | undefined;
+  /** Collects `cliControls` on demand. */
+  readonly collectCliControls?: () => CliResultControls | undefined;
 }
 
 /** The full-output envelope's metadata: the CLI's presentation, not the result. */
@@ -147,7 +152,7 @@ const wrapCommand = (
               format: context.format,
               renderOutput: context.agent || inheritedPolicy !== "agent-only",
               duration: `${Math.round(performance.now() - started)}ms`,
-              cliControls: cliResultControls(),
+              collectCliControls: cliResultControls,
             }))
           )
             return value;
@@ -265,8 +270,16 @@ export const createCliResultOutput = (
       !((format === "csv" || format === "tsv") && metadata.format === "json")
     )
       return false;
+    // Only the full-output envelope shows the result's control flags, so the
+    // result is read for them only then.
+    const cliControls = options.fullOutput
+      ? metadata.collectCliControls?.()
+      : undefined;
     try {
-      return await writeResult(value, metadata);
+      return await writeResult(
+        value,
+        cliControls === undefined ? metadata : { ...metadata, cliControls },
+      );
     } catch (cause: unknown) {
       if (await recoverFormattingFailure(cause)) return true;
       throw cause;
@@ -641,6 +654,10 @@ export const createCliResultOutput = (
       Array.isArray(selected)
         ? normalizeJsonArrayValues(selected)
         : selected;
+    // A full-output envelope that shows the result's control flags is written
+    // here in every format; Incur's envelope cannot carry them.
+    const ownsControlEnvelope =
+      options.fullOutput && metadata.cliControls !== undefined;
     const ownsSuccessfulTokenWindow =
       operationFailure === undefined &&
       options.tokenWindow &&
@@ -661,7 +678,7 @@ export const createCliResultOutput = (
       !ownsSuccessfulTokenWindow &&
       !(options.tokenCount && options.fullOutput) &&
       // Incur's own envelope cannot carry the result's control flags.
-      !(options.fullOutput && metadata.cliControls !== undefined)
+      !ownsControlEnvelope
     )
       return false;
     if (format === "jsonl") {
@@ -832,7 +849,8 @@ export const createCliResultOutput = (
     // document from Incur's error formatter.
     const formattedText =
       format === "md" ||
-      (metadata.forceOutput === true && format !== "json") ||
+      ((metadata.forceOutput === true || ownsControlEnvelope) &&
+        format !== "json") ||
       ((operationFailure !== undefined || ownsFilteredOutput) &&
         format !== "json")
         ? formatCliOutput(document, format)

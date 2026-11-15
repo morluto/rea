@@ -356,7 +356,9 @@ const projectCliResult = <Output>(
   output: Output,
   binding: Parameters<typeof projectCliInputFields>[1],
 ): Output => {
-  recordCliResultControls(cliResultControlsIn(output, binding));
+  // A command without flags has no control to render.
+  if (Object.keys(binding.flags).length > 0)
+    recordCliResultControls(() => cliResultControlsIn(output, binding));
   return projectCliInputFields(output, binding);
 };
 

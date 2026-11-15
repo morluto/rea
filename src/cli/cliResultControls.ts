@@ -9,7 +9,8 @@ import { AsyncLocalStorage } from "node:async_hooks";
 export type CliResultControls = Readonly<Record<string, string>>;
 
 interface ControlsContext {
-  controls?: CliResultControls;
+  /** Collects the controls on demand: only a full-output envelope shows them. */
+  collect?: () => CliResultControls;
 }
 const invocation = new AsyncLocalStorage<ControlsContext>();
 
@@ -17,12 +18,20 @@ const invocation = new AsyncLocalStorage<ControlsContext>();
 export const withCliResultControls = <Value>(run: () => Value): Value =>
   invocation.run({}, run);
 
-export const recordCliResultControls = (controls: CliResultControls): void => {
+export const recordCliResultControls = (
+  collect: () => CliResultControls,
+): void => {
   const context = invocation.getStore();
-  if (context !== undefined && Object.keys(controls).length > 0)
-    context.controls = controls;
+  if (context !== undefined) context.collect = collect;
 };
 
-/** The controls this invocation's result recorded, if any. */
-export const cliResultControls = (): CliResultControls | undefined =>
-  invocation.getStore()?.controls;
+/**
+ * This invocation's recorded controls, or undefined when its result records
+ * none. The result is read only when this is called.
+ */
+export const cliResultControls = (): CliResultControls | undefined => {
+  const controls = invocation.getStore()?.collect?.();
+  return controls === undefined || Object.keys(controls).length === 0
+    ? undefined
+    : controls;
+};
