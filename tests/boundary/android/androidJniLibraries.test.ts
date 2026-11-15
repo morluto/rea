@@ -239,6 +239,36 @@ it("preserves declared capacity metadata without presenting unread bytes as veri
   }
 });
 
+it("names the reader check when a selected library fails an integrity check", async () => {
+  const source = await fixture();
+  const originalEntries = ZipArtifactReader.prototype.entries;
+  const entries = vi
+    .spyOn(ZipArtifactReader.prototype, "entries")
+    .mockImplementation(async function* (this: ZipArtifactReader, signal) {
+      for await (const entry of originalEntries.call(this, signal))
+        yield { ...entry, declaredSize: (entry.declaredSize ?? 0) + 1 };
+    });
+  try {
+    const result = await read(source);
+    const failure = result.libraries[0]?.failure;
+    // The reader refuses an entry whose metadata differs from what it produced.
+    expect(failure).toMatchObject({
+      kind: "integrity",
+      integrity_check: "entry-metadata",
+    });
+    // The checkpoint schema retains the check across Evidence boundaries.
+    expect(
+      androidJniLibraryCheckpointSchema.parse({
+        scan_state: "completed",
+        libraries: result.libraries,
+        inventory: result.inventory,
+      }).libraries[0]?.failure,
+    ).toEqual(failure);
+  } finally {
+    entries.mockRestore();
+  }
+});
+
 it("retains the live reader after failed close and gates the next read on its cleanup retry", async () => {
   const source = await fixture();
   const originalClose = ZipArtifactReader.prototype.close;

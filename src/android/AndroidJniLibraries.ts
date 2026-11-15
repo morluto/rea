@@ -207,6 +207,10 @@ export const readAndroidJniLibraries = async (input: {
                       : "io",
                   message:
                     cause instanceof Error ? cause.message : String(cause),
+                  ...(cause instanceof ArtifactReaderFailure &&
+                  cause.integrityCheck !== undefined
+                    ? { integrity_check: cause.integrityCheck }
+                    : {}),
                 },
               };
             }
