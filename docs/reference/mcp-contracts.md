@@ -1023,8 +1023,10 @@ it, or with another revision, as an integrity mismatch whose recovery is to
 recreate the observations with the current release; re-exporting an earlier
 bundle does not update its format or identities. Revision 2 names the subject
 by its target identity, `subject.identity` (`kind: "file"`, `sha256`, `format`,
-`architecture` and `selection`: the raw or DOL entry point or the ESP flash
-offsets that select what was analysed, otherwise `null`), and the Evidence ID
+`architecture` and `selection`: the raw or DOL entry point, the ESP flash
+offsets, or the universal Mach-O slice (`offset`, `size`, and the FAT
+`cpu_type` and `cpu_subtype`, `null` when the FAT table was not admitted) that
+select what was analysed, otherwise `null`), and the Evidence ID
 commits to that identity; `subject.name` and `subject.local_path` are display
 facts outside the ID. The subject has no separate `digest`, `format` or
 `architecture` members; read them from `subject.identity`. Every record has a
