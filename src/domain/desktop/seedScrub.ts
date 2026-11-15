@@ -16,6 +16,7 @@ import {
   isTextualFormat,
   textSyntaxFormat,
 } from "./stateFormats.js";
+import { strictUtf8Decoder } from "../strictUtf8.js";
 
 /** What the export ships for one seed. */
 export interface SeedScrub {
@@ -380,10 +381,7 @@ const seedText = (bytes: Buffer, { home, format }: Seed) => {
       : { ...utf16, format: textSyntaxFormat(home, utf16.text) };
   }
   try {
-    const text = new TextDecoder("utf-8", {
-      fatal: true,
-      ignoreBOM: true,
-    }).decode(bytes);
+    const text = strictUtf8Decoder("preserve").decode(bytes);
     return {
       // The byte-order mark is kept, as Python's utf-8 codec keeps it.
       text,
