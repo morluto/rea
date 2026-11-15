@@ -6,8 +6,7 @@ import { semanticPatternPropertyReadSources } from "./javascriptSemanticIteratio
 import {
   createSemanticOpaqueGlobalObserver,
   indexSemanticOpaqueEffects,
-  semanticOpaqueBindingEffects,
-  semanticBindingCanBeRebound,
+  semanticOpaqueReferenceEffects,
   opaqueCodeMayRebindBinding,
 } from "./javascriptSemanticOpaqueEffects.js";
 import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticReceiverFacts.js";
@@ -288,15 +287,9 @@ const visitSemanticReferenceEffectsAtSite = (
     });
   };
   if (binding !== undefined) {
-    if (semanticBindingCanBeRebound(binding))
-      for (const node of semanticOpaqueBindingEffects(binding, state))
-        if (!retain("binding-write", node)) return metadata;
-    for (const node of semanticOpaqueBindingEffects(
-      binding,
-      state,
-      "reference",
-    ))
-      if (!retain("escape", node, [])) return metadata;
+    for (const { kind, node } of semanticOpaqueReferenceEffects(binding, state))
+      if (!retain(kind, node, kind === "escape" ? [] : undefined))
+        return metadata;
     for (const node of state.bindingWrites.get(binding.bindingId) ?? [])
       if (!retain("binding-write", node)) return metadata;
     // The mutation producer also queries its growing facts during convergence.
