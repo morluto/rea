@@ -2415,7 +2415,7 @@ export const describeContractCommand = <
             ? []
             : [
                 [
-                  member === undefined ? field : `${field}.${member}`,
+                  member === undefined ? field : [field, ...member].join("."),
                   `--${kebabCase(key)}`,
                 ],
               ],

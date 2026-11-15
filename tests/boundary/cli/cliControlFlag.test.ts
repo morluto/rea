@@ -3,6 +3,7 @@ import { expect, it } from "vitest";
 import { z } from "zod";
 
 import { registerContractCommand } from "../../../src/cli/contractCommand.js";
+import { describeContractCommand } from "../../../src/cli/contractCliDescription.js";
 import { projectCliInputFields } from "../../../src/cli/projectCliAnalysisResult.js";
 import type { CliInstance } from "../../../src/cli/types.js";
 import { AnalysisTimeoutError } from "../../../src/domain/analysisErrorCore.js";
@@ -57,12 +58,19 @@ it("names the service's per-call control by field over MCP and by flag on the CL
   if (command === undefined) throw new Error("command is not registered");
   const parse = (key: "args" | "options", value: unknown) =>
     (Reflect.get(command, key) as { parse(v: unknown): unknown }).parse(value);
-  const output = (await (
-    Reflect.get(command, "run") as (value: unknown) => Promise<unknown>
-  )({
-    args: parse("args", { path: "fixture.bin" }),
-    options: parse("options", { workerTimeoutMs: 5 }),
-  })) as ReturnType<typeof deadlineFailure>;
+  // A failed command sets the shared worker's exit status.
+  const previousExitCode = process.exitCode;
+  let output: ReturnType<typeof deadlineFailure>;
+  try {
+    output = (await (
+      Reflect.get(command, "run") as (value: unknown) => Promise<unknown>
+    )({
+      args: parse("args", { path: "fixture.bin" }),
+      options: parse("options", { workerTimeoutMs: 5 }),
+    })) as ReturnType<typeof deadlineFailure>;
+  } finally {
+    process.exitCode = previousExitCode;
+  }
   expect(output.details?.limit).toEqual({
     ...(mcp.details?.limit as object),
     cli_flag: "--worker-timeout-ms",
@@ -94,4 +102,56 @@ it("names a member control by its member flag, else by its field's flag", () => 
   expect(projectCliInputFields(unbound, binding)).toBe(unbound);
   const success = { details: { limit: { parameter: "producer_limits" } } };
   expect(projectCliInputFields(success, binding)).toBe(success);
+});
+
+it("binds a nested flattened member to its own flag", () => {
+  const description = describeContractCommand(
+    {
+      name: "inspect_nested_fixture",
+      inputSchema: z.strictObject({
+        path: z.string(),
+        protobuf: z
+          .strictObject({
+            schema: z
+              .strictObject({ message_type: z.string().optional() })
+              .optional(),
+          })
+          .optional(),
+      }),
+    },
+    {
+      command: "inspect-nested-fixture",
+      description: "Nested fixture",
+      positionals: ["path"],
+      flatten: {
+        protobuf: {
+          schema: {
+            flatten: {
+              message_type: {
+                name: "protobufMessage",
+                description: "Message type",
+              },
+            },
+          },
+        },
+      },
+    },
+  );
+  expect(description.inputBinding.flags).toEqual({
+    "protobuf.schema.message_type": "--protobuf-message",
+  });
+  expect(
+    projectCliInputFields(
+      {
+        code: "resource_limit_exceeded",
+        details: {
+          limit: {
+            control_kind: "parameter",
+            parameter: "protobuf.schema.message_type",
+          },
+        },
+      },
+      description.inputBinding,
+    ),
+  ).toMatchObject({ details: { limit: { cli_flag: "--protobuf-message" } } });
 });
