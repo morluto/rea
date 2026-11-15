@@ -65,7 +65,7 @@ import {
   bindArtifactFileCleanup,
 } from "../artifacts/ArtifactFileOperation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import {
   analysisClientFailureContext,
   analysisClientFailureForOperation,
@@ -546,11 +546,11 @@ export class IdaSessionClient implements AnalysisClient {
         { operation, cause: artifactFailure },
       );
       bindArtifactFileCleanup(artifactFailure, cleanup);
-      failure = analysisErrorWithCleanupFailure(
+      failure = analysisErrorWithCleanupDependencies(
         failure,
         cleanup,
         operation,
-      ).bindCleanupDependencies([cleanup]);
+      );
     }
     // Only operation calls made after target identity/readiness validation can
     // become partial Evidence. The failing call itself is absent from `raw`

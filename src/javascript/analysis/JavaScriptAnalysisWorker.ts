@@ -1,7 +1,7 @@
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import {
   retainProcessInspectionCleanup,
   processInspectionCancellationError,
@@ -694,11 +694,11 @@ export class JavaScriptAnalysisWorker {
           ? runtime.reason
           : this.#failure(runtime.reason, "worker close", undefined);
       if (inspectionError !== undefined)
-        throw analysisErrorWithCleanupFailure(
+        throw analysisErrorWithCleanupDependencies(
           runtimeError,
           inspectionError,
           OPERATION,
-        ).bindCleanupDependencies([runtimeError, inspectionError]);
+        );
       throw runtimeError;
     }
     if (inspectionError !== undefined) throw inspectionError;
