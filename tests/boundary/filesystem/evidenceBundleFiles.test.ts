@@ -425,7 +425,7 @@ it.each([
     const reason = new Error("stop bundle import");
     try {
       const pending = read(path, controller.signal);
-      await reader.firstRead;
+      await reader.reached(pending, "first file read");
       controller.abort(reason);
       reader.release();
       const result = await pending;
