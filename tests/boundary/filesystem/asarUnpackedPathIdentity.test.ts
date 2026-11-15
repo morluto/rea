@@ -6,7 +6,7 @@ import { AsarArtifactReader } from "../../../src/artifacts/AsarArtifactReader.js
 import {
   ArtifactEntryContentUnavailable,
   type ArtifactEntry,
-} from "../../../src/artifacts/ArtifactReader.js";
+} from "../../../src/resources/index.js";
 import { inventoryArtifact } from "../../fixtures/artifactInventory.js";
 import { asarHeaderBytes } from "../../fixtures/asarHeader.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
