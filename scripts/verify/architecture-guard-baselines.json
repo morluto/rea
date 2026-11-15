@@ -387,7 +387,5 @@
   "wall-clock-deadline": {
     "src/browser/PlaywrightScenarioRequest.ts": 1
   },
-  "abort-error-name": {
-    "src/server/http/listenHttpServer.ts": 1
-  }
+  "abort-error-name": {}
 }
