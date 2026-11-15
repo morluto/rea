@@ -129,6 +129,10 @@ outcome, approach, and evidence. Report only checks that actually ran as execute
 distinguish source-derived conclusions, proposed checks, and unavailable coverage.
 Address actionable automated review findings and explain disagreements.
 
+Before submitting or updating a PR, perform the
+[CI-completeness audit](CONTRIBUTING.md#development-feedback-and-pr-verification),
+including stacked bases and current-head test reports rather than check counts.
+
 Leave the template's **Author readiness** declarations unchecked for the human
 owner to complete. Never attest to human review on their behalf. Draft status
 is optional; preserve the PR's current draft status unless the user asks to change

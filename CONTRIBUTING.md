@@ -355,6 +355,16 @@ rather than the generated pages.
 
 ## Development feedback and PR verification
 
+Before submitting a PR, audit its intended base branch's workflow triggers,
+required checks, changed-path classification, and selected test/provider matrix.
+Include stacked PRs targeting feature branches. After submission and each push,
+check the current head's actual job steps and test reports against that plan;
+a green review or metadata check does not establish test coverage. Distinguish
+queued, pending, skipped, cancelled, missing, and successful jobs, and explain
+meaningful skips. Preserve required coverage when correcting admission gaps;
+use the existing scoped lanes rather than forcing unrelated full qualification.
+Record unfinished hosted verification before declaring technical readiness.
+
 For routine merges, wait for the required checks to pass for the current PR
 revision. Administrators retain an override for deliberate maintainer recovery.
 If `main` is broken, prioritize a focused repair before updating affected PRs.
