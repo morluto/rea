@@ -84,7 +84,10 @@ it("refuses wrong initial digest and a changed selected file even after a return
         undefined,
         run,
       ),
-    ).rejects.toMatchObject({ reason: "integrity" });
+    ).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "container-identity",
+    });
     expect(run).not.toHaveBeenCalled();
     await expect(
       withNativeMachoSource(f, scope, undefined, async () => {
@@ -111,7 +114,10 @@ it("refuses a path replacement during the producer callback", async () => {
         await writeFile(f.path, f.bytes);
         return "result";
       }),
-    ).rejects.toMatchObject({ reason: "integrity" });
+    ).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "container-identity",
+    });
   } finally {
     await scope.close();
     await rm(f.root, { recursive: true, force: true });

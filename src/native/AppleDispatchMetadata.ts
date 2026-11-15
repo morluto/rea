@@ -76,7 +76,7 @@ export function* decodeAppleDispatchMetadataSteps(
   provenance: { path: string; sha256: string },
   architecture = "arm64",
   objcClassImportAddresses?: readonly string[],
-  objcClassImportAddressesComplete = true,
+  objcClassImportAddressesComplete?: boolean,
   admittedSlice?: AdmittedMachoSlice,
 ): Generator<void, ObjcSwiftMetadata, void> {
   const selected = selectMachoSlice(bytes, {
@@ -362,6 +362,7 @@ const inputBudgetExceeded = (
 export interface AppleDispatchMetadataOptions {
   readonly signal?: AbortSignal | undefined;
   readonly objcClassImportAddresses?: readonly string[] | undefined;
+  /** Whether the addresses cover every class-label row; omitted is unknown. */
   readonly objcClassImportAddressesComplete?: boolean | undefined;
   /** Caller-selected input budget; the default applies when omitted. */
   readonly maxInputBytes?: number | undefined;
@@ -421,7 +422,7 @@ export const inspectAppleDispatchMetadata = async (
     { path: target.path, sha256: digest },
     target.architecture,
     options.objcClassImportAddresses,
-    options.objcClassImportAddressesComplete ?? true,
+    options.objcClassImportAddressesComplete,
     target.format === "mach-o-universal" ? target.universalSlice : undefined,
   );
   let next = steps.next();

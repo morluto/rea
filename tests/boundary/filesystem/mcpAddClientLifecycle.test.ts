@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import {
   chmod,
   copyFile,
@@ -127,6 +128,7 @@ it.each([
     // Update selects it, and setup refreshes it to the current launcher.
     await expect(
       existingMaintenanceScope(home, command[1] ?? "", environment, {
+        platform: HOST_PLATFORM.platform,
         systemPaths,
       }),
     ).resolves.toMatchObject({ clients: [client] });
@@ -517,6 +519,7 @@ it("reports a Junie registration Junie would not load in doctor and setup", asyn
     home,
     command[1] ?? "",
     environment,
+    { platform: HOST_PLATFORM.platform },
   );
   expect(scope.clients).not.toContain("junie");
   expect(scope.unresolved).toEqual([

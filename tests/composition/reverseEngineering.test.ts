@@ -21,6 +21,7 @@ import { createReverseEngineeringService } from "../../src/composition/reverseEn
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { AnalysisCancelledError } from "../../src/domain/analysisErrorCore.js";
 import { rizinCommandLimitations } from "../../src/rizin/RizinCommand.js";
+import { objdumpCommandLimitations } from "../../src/objdump/ObjdumpCommand.js";
 
 it.each(["objdump", "rizin"] as const)(
   "recovers a bounded %s capture after the caller raises output admission",
@@ -612,14 +613,34 @@ it("passes decoder and map inputs to Rizin before the path and records them", as
       expect.arrayContaining([...rizinCommandLimitations(input)]),
     );
     // Command validity stays unverified independently of decoder/map inputs.
-    expect(rizinCommandLimitations(input)).toHaveLength(3);
+    expect(rizinCommandLimitations(input)).toHaveLength(4);
     expect(
       rizinCommandLimitations({ path, command: "pi 1", asm_bits: 16 }),
-    ).toHaveLength(2);
+    ).toHaveLength(3);
     expect(
       rizinCommandLimitations({ path, command: "pi 1", base_address: "0x0" }),
-    ).toHaveLength(2);
-    expect(rizinCommandLimitations({ path, command: "pi 1" })).toHaveLength(1);
+    ).toHaveLength(3);
+    expect(rizinCommandLimitations({ path, command: "pi 1" })).toHaveLength(2);
+    expect(
+      objdumpCommandLimitations({ operation: "architectures" }),
+    ).toHaveLength(1);
+    expect(objdumpCommandLimitations({ path, operation: "symbols" })).toEqual(
+      [],
+    );
+    expect(
+      objdumpCommandLimitations({
+        path,
+        operation: "disassemble",
+        symbol: "main",
+      }),
+    ).toHaveLength(1);
+    expect(
+      objdumpCommandLimitations({
+        path,
+        operation: "dwarf",
+        follow_debug_links: true,
+      }),
+    ).toHaveLength(1);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -749,6 +770,9 @@ it("retains partial Evidence when a provider command times out", async () => {
       );
       const projected = projectAnalysisError(result.error);
       expect(projected.message).toContain("command_timeout_ms");
+      // The deadline names the provider whose command it bounded.
+      expect(projected.message).toContain("rizin command");
+      expect(projected.message).not.toContain("objdump");
       expect(projected.message).toContain("120000 ms");
       expect(projected.remediation.action).toContain("120000");
     }

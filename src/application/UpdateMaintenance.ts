@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 
 import { currentClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
@@ -115,6 +114,8 @@ const unavailableMaintenance = (
 
 /** Where maintenance reads: the caller's resource scope and system layers. */
 export interface MaintenanceInputs {
+  /** The platform whose client layout and environment identity apply. */
+  readonly platform: NodeJS.Platform;
   readonly resources?: ArtifactResourceScope;
   /** System configuration files; tests point them inside their own home. */
   readonly systemPaths?: ClientSystemPaths;
@@ -125,12 +126,13 @@ export const existingMaintenanceScope = async (
   home: string,
   entryPoint: string,
   environment: Readonly<NodeJS.ProcessEnv>,
-  { resources, systemPaths }: MaintenanceInputs = {},
+  { platform, resources, systemPaths }: MaintenanceInputs,
 ): Promise<MaintenanceScope> => {
   const registrations = await readClientRegistrationInspections(
     home,
     entryPoint,
     {
+      platform,
       environment,
       // A registration REA wrote must be refreshed even when the product
       // profile is absent, so maintenance reads ownership evidence instead of
@@ -167,7 +169,7 @@ export const existingMaintenanceScope = async (
     // preflights it. When the conflict involves only provider settings setup
     // discovers, alignment is unknown here, not aligned or refused.
     const refusal = await clientRefreshRefusal(client, settings, command, {
-      platform: HOST_PLATFORM.platform,
+      platform,
       currentCommandPath: entryPoint,
       ...(resources === undefined ? {} : { resources }),
     });
@@ -192,7 +194,7 @@ export const existingMaintenanceScope = async (
   const skills = await existingSkillDestinations(
     home,
     environment,
-    process.platform,
+    platform,
     resources,
   );
   return {
@@ -210,7 +212,7 @@ export const planIntegrationMaintenance = async (
   entryPoint: string,
   environment: Readonly<NodeJS.ProcessEnv>,
   execute: (command: readonly string[]) => Promise<Result<string, string>>,
-  inputs: MaintenanceInputs = {},
+  inputs: MaintenanceInputs,
 ): Promise<IntegrationMaintenance> => {
   const { resources } = inputs;
   let scope: MaintenanceScope | undefined;

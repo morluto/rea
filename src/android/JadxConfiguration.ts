@@ -1,3 +1,4 @@
+import type { HostPlatform } from "../platform/HostPlatform.js";
 import {
   absoluteCallerPath,
   appendCallerPath,
@@ -17,7 +18,7 @@ import {
 } from "./JadxInterruption.js";
 import { constants } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
-import { isAbsolute } from "node:path";
+import { isAbsolute, posix, win32 } from "node:path";
 import {
   posixPathCandidates,
   windowsPathCandidates,
@@ -175,6 +176,8 @@ class JadxConfigurationFailure extends Error {
 export const inspectJadxAvailability = async (
   environment: Readonly<Record<string, string | undefined>>,
   options: JadxJavaProbeOptions & {
+    /** The host whose process-ownership controls and Java layout apply. */
+    readonly host: HostPlatform;
     /** Admitted runtime override; omission retains launch configuration. */
     readonly operationTimeoutMs?: number | undefined;
   },
@@ -186,6 +189,7 @@ export const inspectJadxAvailability = async (
     );
     const configuration = await readJadxConfigurationInputs(
       environment,
+      options.host,
       options.signal,
     );
     await validateJadxConfigurationContents(
@@ -246,10 +250,11 @@ export const resolveJadxOperationTimeout = (
 export const resolveJadxConfigurationInputs = async (
   environment: Readonly<Record<string, string | undefined>>,
   operation: AndroidOperation,
+  host: HostPlatform,
   signal?: AbortSignal,
 ): Promise<JadxConfiguration> => {
   try {
-    return await readJadxConfigurationInputs(environment, signal);
+    return await readJadxConfigurationInputs(environment, host, signal);
   } catch (cause) {
     if (!(cause instanceof JadxConfigurationFailure)) throw cause;
     throw projectConfigurationFailure(operation, cause);
@@ -276,12 +281,13 @@ export const validateJadxConfiguration = async (
 
 const readJadxConfigurationInputs = async (
   environment: Readonly<Record<string, string | undefined>>,
+  host: HostPlatform,
   signal?: AbortSignal,
 ): Promise<JadxConfiguration> => {
   throwIfJadxInterrupted(signal);
-  requireSupportedHost();
+  requireSupportedHost(host);
   const jar = await resolveJar(environment);
-  const java = await resolveJava(environment, signal);
+  const java = await resolveJava(environment, host.platform, signal);
   await requireJavaHomeExecutable(environment.JAVA_HOME, java);
   throwIfJadxInterrupted(signal);
   return { jar, java, jvmArguments: resolveJvmArguments(environment) };
@@ -491,33 +497,34 @@ const archiveCancellation = (
     : cancelledBy(operation, carriedReason(reason), { diagnostics });
 };
 
-const requireSupportedHost = (): void => {
-  if (process.platform === "linux" || process.platform === "darwin") return;
-  if (process.platform === "win32" && process.arch === "x64") {
-    const loaded = systemWindowsNativeAuthority();
+const requireSupportedHost = (host: HostPlatform): void => {
+  const { platform, architecture } = host;
+  if (platform === "linux" || platform === "darwin") return;
+  if (platform === "win32" && architecture === "x64") {
+    const loaded = systemWindowsNativeAuthority(host);
     if (loaded.available) {
       if (loaded.authority.inspection.protocolStdin === true) return;
       throw configurationFailure(
         "runtime_missing",
         "The bundled Windows native artifact lacks owned protocol stdin; use a matching current Windows x64 REA package.",
         {
-          platform: process.platform,
-          architecture: process.arch,
+          platform: platform,
+          architecture: architecture,
           phase: "process-ownership",
           owned_protocol_stdin: false,
         },
         "windows_native_artifact",
       );
     }
-    const readiness = inspectWindowsNativeReadiness(process.platform, loaded);
+    const readiness = inspectWindowsNativeReadiness(platform, loaded);
     throw configurationFailure(
       readiness.available ? "runtime_unavailable" : readiness.code,
       readiness.available
         ? "Windows native readiness disagreed with the native loader result."
         : readiness.reason,
       {
-        platform: process.platform,
-        architecture: process.arch,
+        platform: platform,
+        architecture: architecture,
         phase: "process-ownership",
         owned_protocol_stdin: false,
         ...(readiness.available
@@ -538,8 +545,8 @@ const requireSupportedHost = (): void => {
   }
   throw configurationFailure(
     "unsupported_host",
-    `Android JADX subprocess ownership is unsupported on ${process.platform}/${process.arch}; use Linux, macOS, or Windows x64 with its bundled native controls.`,
-    { platform: process.platform },
+    `Android JADX subprocess ownership is unsupported on ${platform}/${architecture}; use Linux, macOS, or Windows x64 with its bundled native controls.`,
+    { platform: platform },
     "unsupported_host",
   );
 };
@@ -588,11 +595,12 @@ const resolveJar = async (
 
 const resolveJava = async (
   environment: Readonly<Record<string, string | undefined>>,
+  platform: NodeJS.Platform,
   signal?: AbortSignal,
 ): Promise<string> => {
-  const executable = process.platform === "win32" ? "java.exe" : "java";
+  const windows = platform === "win32";
+  const executable = windows ? "java.exe" : "java";
   if (environment.JAVA_HOME === undefined) {
-    const windows = process.platform === "win32";
     // Resolve in the caller's directory once. The module probe and the engine
     // run in different directories, and the selected executable also owns the
     // retained session's cache identity. Empty POSIX PATH components select
@@ -643,8 +651,13 @@ const resolveJava = async (
       "java_runtime",
     );
   }
-  if (isAbsolute(environment.JAVA_HOME))
-    return appendCallerPath(environment.JAVA_HOME, `bin/${executable}`);
+  // JAVA_HOME follows the same host path rules as the PATH search above.
+  if ((windows ? win32 : posix).isAbsolute(environment.JAVA_HOME))
+    return appendCallerPath(
+      environment.JAVA_HOME,
+      `bin/${executable}`,
+      platform,
+    );
   throw configurationFailure(
     "open_options_invalid",
     "JAVA_HOME must select an existing JDK by absolute path; omit it to use java on PATH.",

@@ -299,6 +299,7 @@ const NON_ZIP_FORMATS = {
         throw new ArtifactReaderFailure(
           "integrity",
           "iNES inventory requires its admitted source descriptor",
+          { integrityCheck: "inventory-node" },
         );
       return new InesArtifactReader(path, source);
     },

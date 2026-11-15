@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../src/platform/HostPlatform.js";
 import { UpdateCommandRunner } from "../../src/application/UpdateCommandRunner.js";
 import { mkdir, readFile, rm, writeFile, access } from "node:fs/promises";
 import { delimiter, dirname, join, relative, resolve } from "node:path";
@@ -49,6 +50,7 @@ afterEach(async () => {
 
 /** Keep Goose's system layer inside the temporary home. */
 const isolated = () => ({
+  platform: HOST_PLATFORM.platform,
   systemPaths: { gooseSystemConfig: join(home, "goose-system.yaml") },
 });
 
@@ -97,6 +99,42 @@ const action = {
   backupPath: "/test/.codex/config.toml.rea.backup",
   commands: ["rea mcp"],
 };
+
+describe("caller-selected maintenance platform", () => {
+  it("reads client locations for the selected platform", async () => {
+    const other = HOST_PLATFORM.platform === "linux" ? "darwin" : "linux";
+    const desktop = (platform: NodeJS.Platform): string => {
+      const client = supportedClients(home, platform).find(
+        ({ name }) => name === "claude_desktop",
+      );
+      if (client === undefined) throw new Error("Missing Claude Desktop");
+      return client.configPath;
+    };
+    // Each platform keeps Claude Desktop's file in its own location.
+    expect(desktop(other)).not.toBe(desktop(HOST_PLATFORM.platform));
+    const path = desktop(other);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(
+      path,
+      JSON.stringify({
+        mcpServers: {
+          rea: { command: process.execPath, args: [entryPoint, "mcp"] },
+        },
+      }),
+    );
+    const scope = (platform: NodeJS.Platform) =>
+      existingMaintenanceScope(home, entryPoint, process.env, {
+        ...isolated(),
+        platform,
+      });
+    await expect(scope(other)).resolves.toMatchObject({
+      clients: expect.arrayContaining(["claude_desktop"]),
+    });
+    expect((await scope(HOST_PLATFORM.platform)).clients).not.toContain(
+      "claude_desktop",
+    );
+  });
+});
 
 describe("OMP integration maintenance", () => {
   it("refreshes an OMP entry that enabledServers forces on", async () => {
@@ -327,6 +365,7 @@ describe("registration ownership in maintenance", () => {
     );
     expect(
       await readClientRegistrationInspections(home, entryPoint, {
+        platform: HOST_PLATFORM.platform,
         environment: process.env,
       }),
     ).toEqual(

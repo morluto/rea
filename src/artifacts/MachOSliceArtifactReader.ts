@@ -22,7 +22,7 @@ import { readMachoImage, type ReadAt } from "./apple/MachoLoadCommandReader.js";
 import {
   ArtifactReaderFailure,
   copyArtifactEntry,
-  sameArtifactEntry,
+  assertProducedEntry,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactReaderTraversal,
@@ -381,15 +381,11 @@ export class MachOSliceArtifactReader implements ArtifactReader {
         }),
       );
     const produced = this.#entries.get(entry.adapterKey);
-    if (produced === undefined || !sameArtifactEntry(entry, produced))
-      throw new ArtifactReaderFailure(
-        "integrity",
-        "Mach-O slice entry metadata does not match this reader's inventory",
-        {
-          integrityCheck:
-            produced === undefined ? "foreign-entry" : "entry-metadata",
-        },
-      );
+    assertProducedEntry(
+      entry,
+      produced,
+      "Mach-O slice entry metadata does not match this reader's inventory",
+    );
     const offset = produced.byteOffset;
     const size = produced.declaredSize;
     if (

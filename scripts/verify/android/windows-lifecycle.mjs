@@ -7,6 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { resolveJadxConfigurationInputs } from "../../../dist/android/JadxConfiguration.js";
+import { HOST_PLATFORM } from "../../../dist/platform/HostPlatform.js";
 import { validateVerifierJadxConfiguration } from "../../lib/jadx-configuration-inspection.mjs";
 import { verifyWindowsGuardianIsolation } from "./windows-guardian-isolation.mjs";
 import {
@@ -39,6 +40,7 @@ async function verifyJavaSelection(environment) {
   const selected = await resolveJadxConfigurationInputs(
     environment,
     "inspect_android_package",
+    HOST_PLATFORM,
   );
   await validateVerifierJadxConfiguration(
     selected,
@@ -70,6 +72,7 @@ async function verifyJavaSelection(environment) {
     const onPath = await resolveJadxConfigurationInputs(
       pathEnvironment,
       "inspect_android_package",
+      HOST_PLATFORM,
     );
     await validateVerifierJadxConfiguration(
       onPath,
