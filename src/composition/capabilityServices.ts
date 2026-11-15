@@ -257,8 +257,9 @@ const modules = {
     apkSignatureModule.create(environment, options.apkSignature),
   ),
   evmInterface: service(
-    ({ environment, options }) =>
-      options.evmInterface ?? evmInterfaceModule.create(environment),
+    ({ environment, options, platform, arch }) =>
+      options.evmInterface ??
+      evmInterfaceModule.create(environment, { platform, architecture: arch }),
     ({ environment, options, platform, arch }) => ({
       hostUnsupported: {
         evmInterface: outsideHost(
@@ -277,7 +278,7 @@ const modules = {
         : {
             probes: {
               evmLimiterAvailability: (signal: AbortSignal) =>
-                evmLimiterAvailability(environment, { signal }),
+                evmLimiterAvailability(environment, { platform, arch, signal }),
             },
           }),
     }),
@@ -525,8 +526,9 @@ const modules = {
     }),
   ),
   signalRecording: service(
-    ({ environment, options }) =>
-      options.signalRecording ?? createSignalRecordingService(environment),
+    ({ environment, options, platform }) =>
+      options.signalRecording ??
+      createSignalRecordingService(environment, platform),
     ({ environment, options, platform }) => ({
       hostUnsupported: {
         signalRecording: outsideHost(

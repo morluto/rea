@@ -1,4 +1,4 @@
-import { SIMULATED_LINUX_X64 } from "../fixtures/pwntoolsHost.js";
+import { SIMULATED_LINUX_X64 } from "../fixtures/simulatedHost.js";
 import { writeFile } from "node:fs/promises";
 import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 
