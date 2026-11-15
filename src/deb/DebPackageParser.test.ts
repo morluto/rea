@@ -695,3 +695,32 @@ it("accepts the few PAX and GNU headers a real entry uses", () => {
     "usr/share/a",
   );
 });
+
+it("applies PAX owner records over the fixed header fields", () => {
+  const report = parse(
+    debPackageFixture({
+      dataEntries: [
+        { name: "./", type: "5", mode: 0o755, content: "" },
+        {
+          name: "./PaxHeaders/owned",
+          type: "x",
+          content: Buffer.concat([
+            paxRecord("uid", "3000000"),
+            paxRecord("gid", "3000001"),
+            paxRecord("uname", "a-very-long-user-name-beyond-32-bytes"),
+            paxRecord("gname", "builders"),
+          ]),
+        },
+        { name: "./usr/share/owned", content: "", uname: "trunc", gname: "x" },
+      ],
+    }),
+  );
+  expect(
+    report.data_entries.find((entry) => entry.path === "usr/share/owned"),
+  ).toMatchObject({
+    uid: 3000000,
+    gid: 3000001,
+    user: "a-very-long-user-name-beyond-32-bytes",
+    group: "builders",
+  });
+});

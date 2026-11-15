@@ -168,6 +168,15 @@ export const undecodableTarNamesLimitation = (count: number): string =>
  */
 const MAX_TAR_EXTENSION_HEADERS = 8;
 
+/** The PAX record keys this reader applies to the following entry. */
+const PAX_KEYS = ["path", "linkpath", "uid", "gid", "uname", "gname"] as const;
+
+const paxId = (value: string | undefined): number | undefined => {
+  if (value === undefined || !/^[0-9]+$/u.test(value)) return undefined;
+  const id = Number(value);
+  return Number.isSafeInteger(id) ? id : undefined;
+};
+
 const pad512 = (size: number): number =>
   Math.ceil(size / TAR_BLOCK) * TAR_BLOCK;
 
@@ -385,7 +394,7 @@ const parseTar = (
   let longlink: string | null = null;
   // Only the PAX keys this reader uses are kept, so a run of headers with
   // fresh keys cannot grow or repeatedly copy an object.
-  const pax: { path?: string; linkpath?: string } = {};
+  const pax: Partial<Record<(typeof PAX_KEYS)[number], string>> = {};
   let extensionHeaders = 0;
   const paxUndecodable = new Set<string>();
   while (offset + TAR_BLOCK <= bytes.length) {
@@ -465,7 +474,7 @@ const parseTar = (
     }
     if (typeFlag === 120 || typeFlag === 103) {
       const parsed = parsePax(payload);
-      for (const key of ["path", "linkpath"] as const) {
+      for (const key of PAX_KEYS) {
         const value = parsed.fields[key];
         if (value === undefined) continue;
         pax[key] = value;
@@ -506,10 +515,16 @@ const parseTar = (
           : longlinkUndecodable;
     if (nameUndecodable || linkUndecodable) undecodableNames += 1;
     const mode = parseOctal(ascii(header.subarray(100, 108)));
-    const uid = parseTarNumber(header.subarray(108, 116));
-    const gid = parseTarNumber(header.subarray(116, 124));
-    const user = nonempty(trimField(ascii(header.subarray(265, 297))));
-    const group = nonempty(trimField(ascii(header.subarray(297, 329))));
+    // PAX owner records override the fixed fields, which can hold shortened
+    // or fallback values.
+    const uid = paxId(pax.uid) ?? parseTarNumber(header.subarray(108, 116));
+    const gid = paxId(pax.gid) ?? parseTarNumber(header.subarray(116, 124));
+    const user = nonempty(
+      pax.uname ?? trimField(ascii(header.subarray(265, 297))),
+    );
+    const group = nonempty(
+      pax.gname ?? trimField(ascii(header.subarray(297, 329))),
+    );
     const type = tarType(typeFlag);
     entries.push({
       path: path.length === 0 ? "." : path,
@@ -527,8 +542,7 @@ const parseTar = (
     longlink = null;
     longnameUndecodable = false;
     longlinkUndecodable = false;
-    delete pax.path;
-    delete pax.linkpath;
+    for (const key of PAX_KEYS) delete pax[key];
     extensionHeaders = 0;
     paxUndecodable.clear();
     offset = dataStart + pad512(size);
