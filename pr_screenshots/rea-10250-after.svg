@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="620" viewBox="0 0 1280 620" role="img" aria-labelledby="title desc">
+  <title id="title">After: REA CLI help advertises CSV and TSV with constraints</title>
+  <desc id="desc">The global format help line includes CSV and TSV and explains that they require a selected row collection and columns.</desc>
+  <rect width="1280" height="620" fill="#101722"/>
+  <rect x="44" y="38" width="1192" height="544" rx="18" fill="#182231" stroke="#34445a" stroke-width="2"/>
+  <circle cx="78" cy="75" r="8" fill="#ff6b6b"/>
+  <circle cx="105" cy="75" r="8" fill="#ffd166"/>
+  <circle cx="132" cy="75" r="8" fill="#06d6a0"/>
+  <text x="170" y="83" fill="#b7c5d8" font-family="Arial, sans-serif" font-size="22">REA CLI help • issue #10250</text>
+  <text x="84" y="145" fill="#8ea4bd" font-family="Menlo, Consolas, monospace" font-size="22">$ rea inspect-analysis-view --help</text>
+  <text x="84" y="210" fill="#d9e2ef" font-family="Menlo, Consolas, monospace" font-size="22">Global Options:</text>
+  <text x="84" y="258" fill="#9ff0c9" font-family="Menlo, Consolas, monospace" font-size="22">  --format &lt;toon|json|yaml|md|jsonl|csv|tsv&gt;</text>
+  <text x="112" y="294" fill="#9ff0c9" font-family="Menlo, Consolas, monospace" font-size="22">Output format (CSV/TSV require --filter-output and --columns)</text>
+  <rect x="84" y="350" width="1112" height="102" rx="12" fill="#173a32" stroke="#39b98a"/>
+  <text x="112" y="392" fill="#b8f4d7" font-family="Arial, sans-serif" font-size="24">Discoverability fixed; runtime export behavior unchanged.</text>
+  <text x="84" y="525" fill="#8ea4bd" font-family="Arial, sans-serif" font-size="20">Verified with the built CLI and the CLI boundary test suite.</text>
+</svg>

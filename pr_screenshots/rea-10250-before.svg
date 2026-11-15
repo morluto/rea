@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="620" viewBox="0 0 1280 620" role="img" aria-labelledby="title desc">
+  <title id="title">Before: REA CLI help omits CSV and TSV</title>
+  <desc id="desc">The global format help line lists only toon, json, yaml, md and jsonl even though REA supports CSV and TSV row exports.</desc>
+  <rect width="1280" height="620" fill="#101722"/>
+  <rect x="44" y="38" width="1192" height="544" rx="18" fill="#182231" stroke="#34445a" stroke-width="2"/>
+  <circle cx="78" cy="75" r="8" fill="#ff6b6b"/>
+  <circle cx="105" cy="75" r="8" fill="#ffd166"/>
+  <circle cx="132" cy="75" r="8" fill="#06d6a0"/>
+  <text x="170" y="83" fill="#b7c5d8" font-family="Arial, sans-serif" font-size="22">REA CLI help • issue #10250</text>
+  <text x="84" y="145" fill="#8ea4bd" font-family="Menlo, Consolas, monospace" font-size="22">$ rea inspect-analysis-view --help</text>
+  <text x="84" y="210" fill="#d9e2ef" font-family="Menlo, Consolas, monospace" font-size="22">Global Options:</text>
+  <text x="84" y="258" fill="#ff9b9b" font-family="Menlo, Consolas, monospace" font-size="22">  --format &lt;toon|json|yaml|md|jsonl&gt;  Output format</text>
+  <rect x="84" y="315" width="1112" height="102" rx="12" fill="#3b2028" stroke="#a94b5d"/>
+  <text x="112" y="357" fill="#ffb3bd" font-family="Arial, sans-serif" font-size="24">CSV and TSV are supported by REA,</text>
+  <text x="112" y="390" fill="#ffb3bd" font-family="Arial, sans-serif" font-size="24">but hidden from the global --format help.</text>
+  <text x="84" y="505" fill="#8ea4bd" font-family="Arial, sans-serif" font-size="20">Observed in the published 6.9.0 help output; export behavior already works.</text>
+</svg>

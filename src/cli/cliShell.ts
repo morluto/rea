@@ -4,8 +4,10 @@ import type { FridaInstrumentationPort } from "../application/frida/FridaInstrum
 import { currentClientRegistrationCommand } from "../application/ClientRegistrationIdentity.js";
 import {
   adaptCliOutputArgumentsForIncur,
+  hasCliHelpFlag,
   normalizeCliArguments,
 } from "../cliBuiltinArguments.js";
+import { rewriteCliHelpOutput } from "../cliOutput.js";
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { parseLogLevel } from "../config/processStart.js";
 import { parseClientRegistrationCommand } from "../domain/clientRegistrationCommand.js";
@@ -49,6 +51,24 @@ export interface CliShellOptions {
   readonly resultOutput?: CliResultOutput | undefined;
   readonly fridaInstrumentation?: FridaInstrumentationPort | undefined;
 }
+
+/** Patch only help text while preserving the caller's output and exit hooks. */
+const adaptCliHelpOutput = <T extends object>(
+  arguments_: readonly string[],
+  options: T & {
+    readonly stdout?: ((text: string) => void) | undefined;
+  },
+): T & {
+  readonly stdout?: ((text: string) => void) | undefined;
+} => {
+  if (!hasCliHelpFlag(arguments_)) return options;
+  const write =
+    options.stdout ?? ((text: string) => process.stdout.write(text));
+  return {
+    ...options,
+    stdout: (text: string) => write(rewriteCliHelpOutput(text)),
+  };
+};
 
 /** Run each registrar, creating analysis once for those that declare it. */
 const registerCommands = (
@@ -159,7 +179,7 @@ export const createCliShell = (options: CliShellOptions): CliInstance => {
       normalized,
       environment,
       defaultRegistration,
-      serveOptions ?? {},
+      adaptCliHelpOutput(normalized, serveOptions ?? {}),
     );
     if (registration !== undefined) return registration;
     const result = serveStrict(
@@ -169,7 +189,10 @@ export const createCliShell = (options: CliShellOptions): CliInstance => {
         serveDeclared(tokens, selected, (declared, declaredOptions) =>
           reportUnknownMcpSubcommand(cli.name, declared, declaredOptions)
             ? Promise.resolve()
-            : serve(adaptCliOutputArgumentsForIncur(declared), declaredOptions),
+            : serve(
+                adaptCliOutputArgumentsForIncur(declared),
+                adaptCliHelpOutput(declared, declaredOptions),
+              ),
         ),
     );
     const note = completionHelpNote(normalized);

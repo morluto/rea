@@ -211,3 +211,17 @@ registerHooks({ resolve(specifier, context, next) {
     },
   );
 });
+
+describe("CLI help output adaptation", () => {
+  it("advertises REA-owned CSV and TSV formats in root help", async () => {
+    const cli = createCliShell({
+      selectedEnvironment: ENVIRONMENT,
+      registrations: [],
+    });
+    const result = await serveInProcessCli(cli, ["--help"]);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "--format <toon|json|yaml|md|jsonl|csv|tsv>  Output format (CSV/TSV require --filter-output and --columns)",
+    );
+  });
+});

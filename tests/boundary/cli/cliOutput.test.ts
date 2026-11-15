@@ -10,6 +10,7 @@ import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 import {
   normalizeCliArguments,
   adaptCliOutputArgumentsForIncur,
+  hasCliHelpFlag,
 } from "../../../src/cliBuiltinArguments.js";
 import {
   renderCliOutputArgumentError,
@@ -17,7 +18,23 @@ import {
   renderEmptyFilteredCliOutput,
   renderVersionReport,
   parseCliOutputArguments,
+  rewriteCliHelpOutput,
 } from "../../../src/cliOutput.js";
+
+describe("CLI help format advertisement", () => {
+  it("advertises REA's delimited formats in framework help", () => {
+    const before =
+      "Global Options:\n  --format <toon|json|yaml|md|jsonl>  Output format\n";
+    expect(rewriteCliHelpOutput(before)).toBe(
+      "Global Options:\n  --format <toon|json|yaml|md|jsonl|csv|tsv>  Output format (CSV/TSV require --filter-output and --columns)\n",
+    );
+    expect(rewriteCliHelpOutput("no format help here\n")).toBe(
+      "no format help here\n",
+    );
+    expect(hasCliHelpFlag(["inspect-analysis-view", "--help"])).toBe(true);
+    expect(hasCliHelpFlag(["rows", "--", "--help"])).toBe(false);
+  });
+});
 
 describe("CLI output argument boundary", () => {
   it("requires an exact row selector and explicit columns for delimited formats", () => {

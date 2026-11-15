@@ -16,6 +16,20 @@ export const OUTPUT_SWITCHES: ReadonlySet<string> = new Set([
   "--timings",
 ]);
 
+/** Whether the caller requested framework help before the `--` boundary. */
+export const hasCliHelpFlag = (arguments_: readonly string[]): boolean => {
+  let optionsEnded = false;
+  for (const argument of arguments_) {
+    if (argument === "--") {
+      optionsEnded = true;
+      continue;
+    }
+    if (!optionsEnded && (argument === "--help" || argument === "-h"))
+      return true;
+  }
+  return false;
+};
+
 /** Valueless flags Incur removes from every position before command parsing. */
 export const INCUR_BUILTIN_FLAGS: ReadonlySet<string> = new Set([
   "--full-output",
