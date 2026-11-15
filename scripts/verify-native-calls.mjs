@@ -247,6 +247,8 @@ const checkHardenedRuntime = async (directory, binary) => {
     '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>com.apple.security.get-task-allow</key><true/></dict></plist>',
   );
   await exec("/bin/cp", [binary, allowed]);
+  // The copy keeps its UUID, but LLDB finds its DWARF only in an adjacent dSYM.
+  await exec("/bin/cp", ["-R", `${binary}.dSYM`, `${allowed}.dSYM`]);
   await exec("/usr/bin/xcrun", [
     "codesign",
     "-f",
