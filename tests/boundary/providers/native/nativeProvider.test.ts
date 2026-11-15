@@ -2078,12 +2078,16 @@ it("reports the selected command deadline when preparation times out", async () 
       cause: failure,
     });
     const projected = projectAnalysisError(primaryAnalysisError(result.error));
-    expect(projected.message).toContain("of 1500 ms");
-    expect(projected.message).toContain("native_command_timeout_ms");
-    expect(projected.remediation.action).toContain("above 1500");
-    expect(projected.remediation.action).not.toContain("above 60000");
-    expect(projected.remediation.action).toContain(
-      `${String(NATIVE_COMMAND_OUTPUT_BUDGET_BYTES)}-byte command output allowance`,
+    expect(projected.details).toMatchObject({
+      operation: "demangle_swift",
+      timeout_ms: 1_500,
+    });
+    // The setting and the fixed output allowance exist only in this prose.
+    expect(projected.remediation.action).toMatch(
+      new RegExp(
+        `^Increase native_command_timeout_ms above 1500 .*The ${String(NATIVE_COMMAND_OUTPUT_BUDGET_BYTES)}-byte command output allowance`,
+        "u",
+      ),
     );
     releaseOwnedCleanup(marker);
     expect(result.error.cleanupIncomplete).toBe(false);
@@ -2132,12 +2136,10 @@ it("projects an ownership-helper compile timeout independently from the command 
       category: "timeout",
       retryable: true,
     });
-    expect(projected.message).toContain("of 1 ms");
-    expect(projected.remediation.action).toContain(
-      "REA_SWIFTC_COMPILE_TIMEOUT_MS",
-    );
-    expect(projected.remediation.action).not.toContain(
-      "native_command_timeout_ms",
+    expect(projected.details).toMatchObject({ timeout_ms: 1 });
+    // The compile-timeout setting exists only in this prose.
+    expect(projected.remediation.action).toMatch(
+      /^The effective REA_SWIFTC_COMPILE_TIMEOUT_MS value is 1 ms/u,
     );
   } finally {
     await client.close();

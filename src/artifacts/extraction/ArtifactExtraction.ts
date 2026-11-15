@@ -187,7 +187,7 @@ export const materializeArtifactInventoryInScope = async (
         throw new ArtifactReaderFailure(
           "integrity",
           `Inventoried source changed: ${sourcePath}`,
-          { cause },
+          { cause, integrityCheck: "container-identity" },
         );
       throw cause;
     }
@@ -288,6 +288,7 @@ export const materializeArtifactInventoryInScope = async (
       throw new ArtifactReaderFailure(
         "integrity",
         `Selected occurrence has no inventory node: ${occurrence.occurrence_id}`,
+        { integrityCheck: "inventory-node" },
       );
     return { occurrence, node };
   });
@@ -493,6 +494,7 @@ const writeSelectedEntries = async ({
       throw new ArtifactReaderFailure(
         "integrity",
         `Regular artifact entry is missing from inventory: ${path}`,
+        { integrityCheck: "inventory-node" },
       );
     }
     queue.next += 1;
@@ -526,6 +528,7 @@ const writeSelectedEntries = async ({
     throw new ArtifactReaderFailure(
       "integrity",
       `Inventoried regular artifact entries were not materialized: ${[...expected.keys()].sort(compareUnicodeCodePoints).join(", ")}`,
+      { integrityCheck: "traversal-coverage" },
     );
 };
 
@@ -750,7 +753,7 @@ const createReader = async (
         throw new ArtifactReaderFailure(
           "integrity",
           `Inventoried source changed: ${path}`,
-          { cause },
+          { cause, integrityCheck: "container-identity" },
         );
       throw cause;
     }

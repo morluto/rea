@@ -1,3 +1,4 @@
+import { readRuntimeSetting } from "../config/runtimeAnalysisSettings.js";
 import { bindProcessInspectionCancellations } from "../providers/OwnedCommandCleanup.js";
 import {
   filterGhidraLiteralCandidates,
@@ -616,17 +617,18 @@ export const createGhidraProviderClient = (input: {
       }),
     );
   // An invalid decompile seed is refused only by operations that use it.
-  let launcherDecompileTimeout: number | undefined;
-  try {
-    launcherDecompileTimeout = config.ghidraDecompileTimeoutSeconds;
-  } catch (cause: unknown) {
-    if (!(cause instanceof ConfigurationError)) throw cause;
-  }
+  const decompileTimeout = readRuntimeSetting(
+    () => config.ghidraDecompileTimeoutSeconds,
+  );
+  const launcherDecompileTimeout = decompileTimeout.ok
+    ? decompileTimeout.value
+    : undefined;
   const client = clientFactory({
     ...(checkpoint.data === undefined ? {} : { checkpoint: checkpoint.data }),
     startupTimeoutMs: config.ghidraStartupTimeoutMs,
     readStartupTimeoutMs: () => config.ghidraStartupTimeoutMs,
     bridgeMaxRequestBytes: config.bridgeMaxRequestBytes,
+    bridgeMaxReplyBytes: config.bridgeMaxReplyBytes,
     platform: installation.platform,
     ...(project === undefined ? {} : { existingProject: true }),
     launcher: new GhidraHeadlessLauncher({
@@ -1055,13 +1057,9 @@ export const createGhidraProviderClient = (input: {
             }
           : {}),
       });
-      let operationLimits: ReturnType<typeof selectLimits>;
-      try {
-        operationLimits = selectLimits();
-      } catch (cause: unknown) {
-        if (cause instanceof ConfigurationError) return err(cause);
-        throw cause;
-      }
+      const admittedLimits = readRuntimeSetting(selectLimits);
+      if (!admittedLimits.ok) return admittedLimits;
+      const operationLimits = admittedLimits.value;
       // A report binds before any query runs. The client shares one startup
       // attempt, so `callTool` reuses this launch; a restart is checked again.
       const started = await startSession(operation, options);
@@ -1354,6 +1352,9 @@ const projectPrimarySessionError = (
       ? {}
       : { partialObservation: failure.partialObservation }),
   };
+  // A refused setting (for example the reply ceiling admitted before launch)
+  // is already the caller-facing refusal with its setting and allowed values.
+  if (failure.cause instanceof ConfigurationError) return failure.cause;
   if (failure.kind === "checkpoint") {
     if (failure.cause instanceof AnalysisError)
       return analysisClientFailureForOperation(

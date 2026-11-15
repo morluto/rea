@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
@@ -699,8 +700,8 @@ export const systemDoctorHost = (
     options.signal === undefined
       ? controller.signal
       : AbortSignal.any([options.signal, controller.signal]);
-  const platform = options.platform ?? process.platform;
-  const architecture = options.architecture ?? process.arch;
+  const platform = options.platform ?? HOST_PLATFORM.platform;
+  const architecture = options.architecture ?? HOST_PLATFORM.architecture;
   const environment = options.environment ?? process.env;
   const nativeConfiguration = inspectNativeAnalysisConfiguration(
     snapshotEnvironment(environment, platform),

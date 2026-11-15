@@ -32,7 +32,8 @@ export interface ArtifactAdmissionLimit {
  * or place an entry outside the artifact, entries that do not reassemble into
  * the source, an inventory node or verified state a later read relies on
  * that is missing, output bytes that do not read back as written, or an
- * output tree used after commit or whose cleanup could not be verified.
+ * output tree used after commit or whose cleanup could not be verified,
+ * or a verification traversal that did not reproduce every inventoried entry.
  */
 export type ArtifactIntegrityCheck =
   | "foreign-entry"
@@ -49,7 +50,8 @@ export type ArtifactIntegrityCheck =
   | "reconstruction"
   | "inventory-node"
   | "output-readback"
-  | "output-lifecycle";
+  | "output-lifecycle"
+  | "traversal-coverage";
 
 /** Artifact inventory or extraction failed a typed safety boundary. */
 export class ArtifactOperationError extends AnalysisError {

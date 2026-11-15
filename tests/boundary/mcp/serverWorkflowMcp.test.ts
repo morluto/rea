@@ -1,3 +1,7 @@
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -11,11 +15,8 @@ import type {
 } from "../../../src/application/AnalysisProvider.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/config/mcpInputSchemaProfile.js";
-import {
-  describeAdvertisedTool,
-  presentAdvertisedInput,
-} from "../../../src/contracts/compactInputSchema.js";
+import { advertisedToolPresentation } from "../../../src/config/mcpOutputSchemaProfile.js";
+import { advertiseTool } from "../../../src/contracts/advertisedTool.js";
 import { advertisedInputJsonSchema } from "../../../src/contracts/toolSchemaMetadata.js";
 import {
   TOOL_CONTRACTS,
@@ -133,12 +134,12 @@ it("advertises the complete currently available inventory with a session", async
   );
   if (sessionTool === undefined)
     throw new Error("Missing advertised binary_session tool");
-  // Validate this reply with its current advertised schema. The SDK otherwise
+  // Validate this reply with its canonical output schema. The SDK otherwise
   // builds output validators for the entire catalog on the first cached call.
   const status = structured(
     await client.callTool(
       { name: "binary_session", arguments: {} },
-      { toolDefinition: sessionTool },
+      { toolDefinition: withCanonicalOutputSchema(sessionTool) },
     ),
   );
   const inventory = expandToolAvailability(
@@ -173,15 +174,16 @@ it("advertises the complete currently available inventory with a session", async
     // to the end of the contract description.
     if (contract === undefined) continue;
     expect(tool.description, tool.name).toBe(
-      describeAdvertisedTool(
-        contract.description,
-        presentAdvertisedInput(advertisedInputJsonSchema(contract), {
-          budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
-        }).guidance,
-      ),
+      advertiseTool(
+        {
+          description: contract.description,
+          inputSchema: advertisedInputJsonSchema(contract),
+        },
+        advertisedToolPresentation("off"),
+      ).description,
     );
     expect(tool.annotations, tool.name).toEqual(contract?.annotations);
     expect(tool.inputSchema, tool.name).toBeDefined();
-    expect(tool.outputSchema, tool.name).toBeDefined();
+    expect(canonicalOutputSchema(tool.name), tool.name).toBeDefined();
   }
 });

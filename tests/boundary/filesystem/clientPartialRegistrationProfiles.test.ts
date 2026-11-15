@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
@@ -70,6 +71,7 @@ it.each(["codebuddy", "workbuddy"] as const)(
     expect(
       (
         await readClientRegistrationStatuses(home, undefined, {
+          platform: HOST_PLATFORM.platform,
           environment,
           selectedClientIds: [name],
         })

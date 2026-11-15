@@ -241,8 +241,8 @@ export interface KunaProjectRequest {
   readonly targetSha256: string;
   readonly signal?: AbortSignal;
   readonly onStatus?: (status: KunaExportStatus) => void;
-  /** Deadline accepted by the session that started this export. */
-  readonly deadline?: KunaDeadline;
+  /** Deadline accepted by the operation that started this export. */
+  readonly deadline: KunaDeadline;
 }
 
 /** One build whose process tree REA could not prove stopped. */
@@ -1082,7 +1082,7 @@ export class KunaProjectCache {
       copyResources,
       retainFailedFileClose: (owner, resource) =>
         this.#retainHashFile(owner, key, staging, resource),
-      ...(request.deadline === undefined ? {} : { deadline: request.deadline }),
+      deadline: request.deadline,
     });
     if (outcome.kind === "retained") {
       const retained: RetainedProcess = {

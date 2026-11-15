@@ -388,7 +388,11 @@ name can select different nested owners. Such disjoint selected owners cannot
 establish a member pair or added/removed status even when both inventories are
 complete. Missing nominal identities cannot establish selected membership.
 Incomplete selected inventories or missing identities leave aggregate agreement
-unknown and coverage partial; known observed member pairs remain available.
+unknown, and the comparison's `coverage.status` is then `unknown`; known
+observed member pairs remain available. A side whose member inspection is
+`unavailable` also makes the comparison `unknown`, even beside a known gap on
+the other side. `partial` is reserved for known gaps such as a different
+selected scope or an unequal method-row page.
 Complete empty selected inventories agree even if their unmatched request names
 differ. Whole-assembly and selected
 inventories remain distinct scopes, and each source retains its exact request.
@@ -484,8 +488,15 @@ under different enclosing types and different overload signatures stay distinct.
 This is nominal metadata identity, not assembly resolution or runtime binding.
 Edges without a resolved identity, unresolved/cyclic type scopes,
 TypeSpec owners and unresolved MethodSpec instantiations retain unknown target
-equivalence. Valid MethodSpecs combine the base member identity with the
-resolved instantiation signature, preserving generic argument distinctions.
+equivalence. The exception is a target the left and right sides reach under the
+same caller and target tokens of the same authenticated artifact, with both
+producers reporting `target_row_resolved: true`: those parsed facts establish
+the same metadata row without a nominal identity. Missing historical row
+resolution, malformed or wrong-kind references, undecoded signatures and
+unresolved TypeSpec operands stay unknown. This fact describes metadata
+resolution, not runtime binding. Valid
+MethodSpecs combine the base member identity with the resolved instantiation
+signature, preserving generic argument distinctions.
 
 Names and semantic labels do not establish durable member identity. Comparison
 preserves observed differences, structural inferences, and unknowns separately.
@@ -679,7 +690,9 @@ Windows name decorations are static inferred candidates;
 exact spelling still suppresses decoration and no runtime binding is proven.
 The mapping follows [Microsoft's charset guidance](https://learn.microsoft.com/en-us/dotnet/standard/native-interop/charset).
 Partial input coverage records a residual question even when no unresolved
-individual boundary was produced. Selected literal inventories likewise remain
+individual boundary was produced. An unavailable boundary inspection read no
+P/Invoke declarations, so the verification's `coverage.status` is `unknown`,
+even beside non-exhaustive native exports. Selected literal inventories likewise remain
 partial when unknown MethodDef ownership can hide a selected body.
 
 Metadata tokens are not native addresses. Native body mapping for C++/CLI,
@@ -716,6 +729,11 @@ type selection. Limitations name each counted class, and graph coverage is
 `partial` with `omitted_count` equal to the omitted sites when nothing else is
 incomplete. A missing `calls` edge is therefore not evidence that a method is
 never called.
+
+A supplied inspection whose parser coverage is `unavailable` examined nothing,
+so the graph cannot tell what it omits: the result's `coverage.status` and the
+graph coverage are then `unknown`, even beside a known gap in another source.
+`partial` is reserved for known gaps.
 
 ## Evidence record shape
 

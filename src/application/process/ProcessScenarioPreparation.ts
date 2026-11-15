@@ -22,8 +22,8 @@ export type ResolvedProcessScenario = Omit<ProcessScenario, "dry_run">;
  */
 export const prepareProcessScenarioPlan = async (
   scenario: ProcessScenario,
-  environment: Readonly<Record<string, string | undefined>> = process.env,
-  platform: NodeJS.Platform = process.platform,
+  environment: Readonly<Record<string, string | undefined>>,
+  platform: NodeJS.Platform,
   signal?: AbortSignal,
 ): Promise<Result<ResolvedProcessScenario, AnalysisError>> => {
   if (signal?.aborted === true)

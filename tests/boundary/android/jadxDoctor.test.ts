@@ -1,3 +1,7 @@
+import {
+  HOST_PLATFORM,
+  type HostPlatform,
+} from "../../../src/platform/HostPlatform.js";
 import { createInspectionResources } from "../../fixtures/inspectionResources.js";
 import { chmod, mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -17,7 +21,8 @@ const inspectionOwner = () => {
 };
 const inspectJadxProvider = (
   environment: Parameters<typeof inspectProvider>[0],
-) => inspectProvider(environment, inspectionOwner());
+  host: HostPlatform = HOST_PLATFORM,
+) => inspectProvider(environment, inspectionOwner(), host);
 
 const it = test.skipIf(process.platform === "win32");
 
@@ -334,54 +339,26 @@ it("guides JAR replacement when the JAR misses bridge classes", async () => {
 });
 
 it("remediates an unsupported host with platform guidance", async () => {
-  const originalPlatform = process.platform;
-  Object.defineProperty(process, "platform", {
-    value: "sunos",
-    configurable: true,
-  });
-  try {
-    const inspection = await inspectJadxProvider({
-      REA_JADX_MCP_JAR: "/opt/jadx-headless-mcp.jar",
-    });
+  const inspection = await inspectJadxProvider(
+    { REA_JADX_MCP_JAR: "/opt/jadx-headless-mcp.jar" },
+    { platform: "sunos", architecture: "x64" },
+  );
 
-    expect(inspection.checks[0]?.code).toBe("unsupported_host");
-    expect(inspection.checks[0]?.remediation).toContain("Linux");
-  } finally {
-    Object.defineProperty(process, "platform", {
-      value: originalPlatform,
-      configurable: true,
-    });
-  }
+  expect(inspection.checks[0]?.code).toBe("unsupported_host");
+  expect(inspection.checks[0]?.remediation).toContain("Linux");
 });
 
 it("guides Windows native package correction when process ownership is unavailable", async () => {
-  const originalPlatform = process.platform;
-  const originalArch = process.arch;
-  Object.defineProperty(process, "platform", {
-    value: "win32",
-    configurable: true,
-  });
-  Object.defineProperty(process, "arch", { value: "x64", configurable: true });
-  try {
-    const inspection = await inspectJadxProvider({
-      REA_JADX_MCP_JAR: "/opt/jadx-headless-mcp.jar",
-    });
+  const inspection = await inspectJadxProvider(
+    { REA_JADX_MCP_JAR: "/opt/jadx-headless-mcp.jar" },
+    { platform: "win32", architecture: "x64" },
+  );
 
-    expect(inspection.checks[0]?.code).toBe("runtime_missing");
-    expect(inspection.checks[0]?.remediation).toContain(
-      "Windows x64 REA package",
-    );
-    expect(inspection.checks[0]?.remediation).not.toContain("JAVA_HOME");
-  } finally {
-    Object.defineProperty(process, "platform", {
-      value: originalPlatform,
-      configurable: true,
-    });
-    Object.defineProperty(process, "arch", {
-      value: originalArch,
-      configurable: true,
-    });
-  }
+  expect(inspection.checks[0]?.code).toBe("runtime_missing");
+  expect(inspection.checks[0]?.remediation).toContain(
+    "Windows x64 REA package",
+  );
+  expect(inspection.checks[0]?.remediation).not.toContain("JAVA_HOME");
 });
 
 it("guides Java probe correction when the module listing is unparseable", async () => {
@@ -420,30 +397,13 @@ const createFakeJdk = async (root: string, major = "21"): Promise<string> => {
 };
 
 it("classifies missing Windows native artifacts as missing dependencies", async () => {
-  const originalPlatform = process.platform;
-  const originalArch = process.arch;
-  Object.defineProperty(process, "platform", {
-    value: "win32",
-    configurable: true,
-  });
-  Object.defineProperty(process, "arch", { value: "x64", configurable: true });
-  try {
-    const inspection = await inspectJadxProvider({
-      REA_JADX_MCP_JAR: "/opt/jadx-headless-mcp.jar",
-    });
+  const inspection = await inspectJadxProvider(
+    { REA_JADX_MCP_JAR: "/opt/jadx-headless-mcp.jar" },
+    { platform: "win32", architecture: "x64" },
+  );
 
-    expect(inspection.checks[0]?.code).toBe("runtime_missing");
-    expect(inspection.checks[0]?.classification).toBe("missing_dependency");
-  } finally {
-    Object.defineProperty(process, "platform", {
-      value: originalPlatform,
-      configurable: true,
-    });
-    Object.defineProperty(process, "arch", {
-      value: originalArch,
-      configurable: true,
-    });
-  }
+  expect(inspection.checks[0]?.code).toBe("runtime_missing");
+  expect(inspection.checks[0]?.classification).toBe("missing_dependency");
 });
 
 it("classifies malformed JAVA_HOME as configuration drift", async () => {

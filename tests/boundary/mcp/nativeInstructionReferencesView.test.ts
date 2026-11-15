@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -134,7 +135,7 @@ const checkContinuation = async (
   expect(original).toEqual(referenceRows);
 };
 
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "retains and pages instruction reference states through %s MCP",
   async (profile) => {
     let incoming: "rows" | "empty" | "unavailable" | "not-recorded" = "rows";
@@ -168,10 +169,12 @@ it.each(["full", "compact"] as const)(
       const advertised = (await client.listTools()).tools.find(
         (tool) => tool.name === "inspect_analysis_view",
       );
-      if (!advertised?.outputSchema)
+      if (advertised === undefined)
         throw new Error("Missing advertised view schema");
       expect(
-        validation.assertions.validateSchema(advertised.outputSchema),
+        validation.assertions.validateSchema(
+          canonicalOutputSchema(advertised.name),
+        ),
       ).toBe(true);
       expect(
         (

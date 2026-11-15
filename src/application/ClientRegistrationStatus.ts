@@ -1,5 +1,4 @@
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
-import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { readClientPolicyBlock } from "./GeminiClientSettings.js";
 import {
   inlineRegistrationOrigins,
@@ -108,7 +107,7 @@ export type UnhealthyClientRegistrationStatus = Exclude<
 >;
 
 interface ClientRegistrationReadOptions {
-  readonly platform?: NodeJS.Platform;
+  readonly platform: NodeJS.Platform;
   readonly environment?: NodeJS.ProcessEnv;
   readonly systemPaths?: ClientSystemPaths;
   readonly resources?: ArtifactResourceScope;
@@ -149,7 +148,7 @@ export interface ClientRegistrationInspection {
 export const readClientRegistrationStatuses = async (
   home: string,
   currentCommandPath: string | undefined = CURRENT_ENTRYPOINT_PATH,
-  options: ClientRegistrationReadOptions = {},
+  options: ClientRegistrationReadOptions,
 ): Promise<readonly ClientRegistrationStatus[]> =>
   (
     await readClientRegistrationInspections(home, currentCommandPath, options)
@@ -161,12 +160,12 @@ export const readClientRegistrationStatuses = async (
 export const readClientRegistrationInspections = async (
   home: string,
   currentCommandPath: string | undefined = CURRENT_ENTRYPOINT_PATH,
-  options: ClientRegistrationReadOptions = {},
+  options: ClientRegistrationReadOptions,
 ): Promise<readonly ClientRegistrationInspection[]> => {
   const inspections: ClientRegistrationInspection[] = [];
   for (const client of await resolveSupportedClients(
     home,
-    options.platform ?? HOST_PLATFORM.platform,
+    options.platform,
     options.environment,
     options.systemPaths,
   )) {

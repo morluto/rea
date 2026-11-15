@@ -13,6 +13,15 @@ export const LINUX_SYSTEM_PS_LOCATIONS = [
   "/run/current-system/sw/bin/ps",
 ] as const;
 
+/**
+ * Arguments of the `ps` run that inventories the process table for ownership
+ * checks. The selected `ps` path is its argv[0].
+ */
+export const PROCESS_INVENTORY_PS_ARGUMENTS = [
+  "-axo",
+  "pid=,ppid=,pgid=,uid=,stat=,command=",
+] as const;
+
 /** The `ps` REA runs to inspect the process table, and where it came from. */
 export type SystemPs =
   | { readonly command: string; readonly source: "system" }

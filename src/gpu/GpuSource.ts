@@ -80,6 +80,7 @@ export class GpuFileSource implements GpuSource {
         throw new ArtifactReaderFailure(
           "integrity",
           "GPU source was truncated during inspection",
+          { integrityCheck: "read-coverage" },
         );
       position += result.bytesRead;
       this.bytesRead += result.bytesRead;

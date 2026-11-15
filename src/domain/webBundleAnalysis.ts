@@ -1,5 +1,7 @@
 import { MAX_NODE_TIMER_DELAY_MS } from "./analysisResourceLimits.js";
+import { analysisSettingLimitSchema } from "./analysisSettingDefinitions.js";
 import { javaScriptSemanticPrecisionSchema } from "./javascript/javascriptSemanticPrecision.js";
+import { javaScriptRefusedPhaseSchema } from "./javascript/javascriptSemanticWorkAllowance.js";
 import { fetchedSourceMapLimitsSchema } from "./sourceMapLimits.js";
 import { z } from "zod";
 import { browserExclusionSchema } from "./browserCompleteness.js";
@@ -519,6 +521,15 @@ export const webBundleAnalysisSchema = z.object({
       dimension: z.string(),
       reason: z.string(),
       affected_script_keys: z.array(z.string()),
+      /** The setting that bounded these scripts, and how to change it. */
+      limit: analysisSettingLimitSchema.exactOptional(),
+      remediation: z.string().exactOptional(),
+      /**
+       * The phase a work allowance refused for these scripts. Their parse
+       * status and text inferences remain; findings that read the phase's
+       * facts were not examined.
+       */
+      refused_phase: javaScriptRefusedPhaseSchema.exactOptional(),
     }),
   ),
   completeness: z.object({

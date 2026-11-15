@@ -4,7 +4,6 @@ import {
   kunaProjectDeadline,
   readKunaConfiguration,
 } from "../kuna/KunaConfiguration.js";
-import { acceptedExportDeadline } from "../kuna/KunaProjectExport.js";
 
 it("keeps the deadline a failed export accepted after the override is reset", () => {
   const environment = {
@@ -38,6 +37,5 @@ it("keeps the deadline a failed export accepted after the override is reset", ()
   expect(() => kunaProjectDeadline(configuration)).toThrow(
     /no runtime override is active/,
   );
-  expect(acceptedExportDeadline(configuration, accepted)).toEqual(accepted);
   expect(accepted).toMatchObject({ ms: 5000, source: "runtime" });
 });

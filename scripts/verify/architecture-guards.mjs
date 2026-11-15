@@ -1,14 +1,15 @@
-import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { readFile, readdir, writeFile } from "node:fs/promises";
+import { readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { recordPredicateCounts } from "./record-predicate-guard.mjs";
 import {
   compareCountedBaseline,
   recordLoweredBaseline,
+  reconcileBaselineFile,
 } from "./counted-baseline.mjs";
+import { localCompletenessEnumCount } from "./completeness-enum-guard.mjs";
 import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
+import { localLimitErrorClassCount } from "./limit-class-guard.mjs";
 
 // Architecture guards for the strict-identity / best-effort-inference split.
 // - Composite dedup keys must not NUL-join variable-length or free-form
@@ -60,6 +61,14 @@ const check = (label, selected, pattern, allow = []) => {
       `${label}:\n${offenders.map((file) => `  ${file.path}`).join("\n")}`,
     );
 };
+
+// Completeness is a claim its producer establishes from examined input. A
+// fallback or default of `true` turns an unstated claim into a complete one.
+check(
+  "completeness defaulted to true (leave it unknown or require the producer to state it)",
+  files,
+  /\b(?:complete|exhaustive|\w+Complete|\w+Exhaustive|\w+_complete|\w+_exhaustive)\w*\s*(?:\?\?\s*true\b|(?::\s*boolean\s*)?=\s*true\s*[,)])/u,
+);
 
 // Prerequisite inspection lifetime is an application contract shared by adapters.
 check(
@@ -257,15 +266,31 @@ check(
 // Counted baselines record the remaining copies of a pattern that has one
 // owner. A file may not gain copies and a baseline may not grow; when copies
 // are removed, `--shrink-baselines` lowers the recorded counts (and never
-// raises them) so the next removal cannot be undone silently.
-const baselinePath = join(
-  root,
-  "scripts/verify/architecture-guard-baselines.json",
+// raises them) so the next removal cannot be undone silently. Each guard's
+// baseline is its own file, scripts/verify/baselines/<key>.json, so changes
+// to different guards never edit the same file.
+const baselineDirectory = join(root, "scripts/verify/baselines");
+const baselineTexts = new Map();
+for (const name of await readdir(baselineDirectory)) {
+  if (!name.endsWith(".json")) {
+    failures.push(
+      `${relative(root, join(baselineDirectory, name))} is not a guard baseline; only <guard-key>.json files belong in ${relative(root, baselineDirectory)}.`,
+    );
+    continue;
+  }
+  baselineTexts.set(
+    name.slice(0, -".json".length),
+    await readFile(join(baselineDirectory, name), "utf8"),
+  );
+}
+const baselines = Object.fromEntries(
+  [...baselineTexts].map(([key, text]) => [key, JSON.parse(text)]),
 );
-const baselines = JSON.parse(await readFile(baselinePath, "utf8"));
+const checkedBaselineKeys = new Set();
 const shrinkBaselines = process.argv.includes("--shrink-baselines");
 let baselinesShrunk = false;
 const checkCounted = (label, key, selected, pattern, owners) => {
+  checkedBaselineKeys.add(key);
   const counts = new Map();
   for (const file of selected) {
     if (owners.includes(file.path)) continue;
@@ -298,6 +323,17 @@ const checkCounted = (label, key, selected, pattern, owners) => {
     );
 };
 
+// Coverage status has one vocabulary, coverageStatusSchema in
+// src/domain/coverage.ts. A local enum that contains "complete" either copies
+// it or drops `unknown`, which forces an unknown producer to pick a side.
+checkCounted(
+  "local completeness enum (use coverageStatusSchema from src/domain/coverage)",
+  "local-completeness-enum",
+  files,
+  localCompletenessEnumCount,
+  ["src/domain/coverage.ts"],
+);
+
 // Cancellation reasons are required by `cancelledBy` in analysisErrorCore; a
 // direct construction can omit or replace the caller's reason.
 checkCounted(
@@ -306,6 +342,44 @@ checkCounted(
   files,
   /new AnalysisCancelledError\(/gu,
   ["src/domain/analysisErrorCore.ts"],
+);
+
+// A limit a parser stopped at is a ParseFailureError<"limit"> (decodeLimit in
+// src/domain/parseFailure); a refusal is an AnalysisRefusal. A local limit
+// class on plain Error hides the limit's name and maximum from both; a limit
+// subclass of BinaryResourceFailure keeps a second limit field beside the
+// allowance its LimitRef already names. The environment-state extraction's private retention stop is control flow that
+// its own entry point catches and turns into `null`; it is never reported.
+checkCounted(
+  "local limit class (use decodeLimit from src/domain/parseFailure, a named BinaryResourceFailure allowance, or an AnalysisRefusal)",
+  "local-limit-error-class",
+  files,
+  localLimitErrorClassCount,
+  ["src/domain/analysisView/EnvironmentStateExtraction.ts"],
+);
+
+// A resource allowance is charged and refunded through `Budget` in
+// src/domain/budget, which refuses malformed or oversized charges without
+// changing the remainder. Hand-written `remaining -=` / `retained +=`
+// arithmetic repeats that admission and drifts (charge-then-check, no
+// safe-integer check).
+checkCounted(
+  "hand-written budget arithmetic (use Budget from src/domain/budget)",
+  "budget-arithmetic",
+  files,
+  /this\.#?\w*(?:[Rr]emaining|[Rr]etained|[Uu]sed)\w*\s*[-+]=/gu,
+  ["src/domain/budget.ts"],
+);
+
+// A slice to a named maximum drops items; boundedList in src/domain/boundedList
+// keeps the count of what it dropped beside the retained items, so a consumer
+// can say that more exist and how many.
+checkCounted(
+  "slice to a named maximum (use boundedList or BoundedListCollector from src/domain/boundedList so the omitted count travels with the items)",
+  "constant-maximum-slice",
+  files,
+  /\.slice\(\s*0\s*,\s*[A-Z][A-Z0-9_]*\s*\)/gu,
+  ["src/domain/boundedList.ts"],
 );
 
 // A deadline is a monotonic budget owned by `Deadline` in src/domain/deadline;
@@ -375,6 +449,17 @@ checkCounted(
   files,
   /\\\^\(?(?:\?:)?(?:done|running|connected|error|exit)\b/gu,
   ["src/gdb/GdbMiRecord.ts"],
+);
+
+// A runtime setting view throws the ConfigurationError of a malformed launch
+// seed; readRuntimeSetting in src/config/runtimeAnalysisSettings.ts returns it
+// as a Result. Catching it by hand mixes it into each site's own failures.
+checkCounted(
+  "hand-caught ConfigurationError (read runtime settings with readRuntimeSetting from src/config/runtimeAnalysisSettings)",
+  "hand-caught-configuration-error",
+  files,
+  /\bcause instanceof ConfigurationError\b/gu,
+  ["src/config/runtimeAnalysisSettings.ts"],
 );
 
 // Byte-format parsers read untrusted input. Bounds, truncation and failure
@@ -504,6 +589,20 @@ checkCounted(
   [],
 );
 
+// Raw JSON Schema keywords and `x-rea-*` markers in `.meta()` bypass the
+// canonical Zod checks and reach every JSON Schema projection, including the
+// advertised one. Presentation facts are typed annotations
+// (src/domain/schemaAnnotations); constraints belong in Zod checks, or in a
+// src/domain/schemaConstraints helper that adds the check and its keyword
+// together.
+checkCounted(
+  "raw JSON Schema keyword or x-rea marker in Zod .meta() (use a typed annotation from src/domain/schemaAnnotations, a Zod check, or a src/domain/schemaConstraints helper)",
+  "raw-json-schema-meta",
+  files,
+  /\.meta\(\s*\{\s*"?(?:x-rea-[\w-]+|\$ref|not|allOf|anyOf|oneOf|if|then|else|dependentRequired|dependentSchemas|dependencies|uniqueItems|(?:min|max)(?:Length|Items|Properties|imum)|exclusive(?:Min|Max)imum|multipleOf|type|const|enum|format|pattern|patternProperties|properties|required|additionalProperties|items|prefixItems|contains|content(?:MediaType|Encoding|Schema)|propertyNames)"?\s*:/gu,
+  ["src/domain/schemaConstraints.ts"],
+);
+
 // A RangeError can mean a stack overflow, a host string or buffer limit, a
 // raw read or write past a buffer, or whatever its thrower intended. Only
 // known host limits are classified; parsers throw a ParseFailureError.
@@ -554,6 +653,39 @@ checkCounted(
   files,
   /\bprocess\.arch\b/gu,
   ["src/platform/HostPlatform.ts"],
+);
+
+// Tests select a platform or architecture by injecting it (a parameter, a
+// `host` option, or a mock of src/platform/HostPlatform). Redefining
+// process.platform or process.arch stops exercising its branch once the module
+// under test takes the host from HostPlatform, and still passes. Each module
+// migration switches its tests to injection and lowers this baseline.
+const listTestFiles = async (dir) => {
+  const output = [];
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) output.push(...(await listTestFiles(path)));
+    else if (/\.(?:test|spec|fixture)\.ts$/u.test(entry.name))
+      output.push(path);
+  }
+  return output;
+};
+const testFiles = await Promise.all(
+  [
+    ...(await listTestFiles(join(root, "src"))),
+    ...(await listFiles(join(root, "tests"))),
+    ...(await listTestFiles(join(root, "tests"))),
+  ].map(async (path) => ({
+    path: relative(root, path).split(sep).join("/"),
+    content: await readFile(path, "utf8"),
+  })),
+);
+checkCounted(
+  "test redefines process.platform or process.arch (inject the platform: pass it as a parameter or host option, or mock src/platform/HostPlatform)",
+  "test-host-platform-stub",
+  testFiles,
+  /\b(?:defineProperty|spyOn)\(\s*(?:globalThis\.)?process\s*,\s*["'`](?:platform|arch)["'`]/gu,
+  [],
 );
 
 // `find` on a parsed section, program-header or load-command table silently
@@ -609,42 +741,34 @@ checkCounted(
   [],
 );
 
-if (baselinesShrunk) {
-  const sorted = Object.fromEntries(
-    Object.entries(baselines).map(([key, counts]) => [
-      key,
-      Object.fromEntries(
-        Object.entries(counts).sort(([left], [right]) =>
-          left < right ? -1 : left > right ? 1 : 0,
-        ),
-      ),
-    ]),
+for (const key of baselineTexts.keys())
+  if (!checkedBaselineKeys.has(key))
+    failures.push(
+      `${relative(root, join(baselineDirectory, `${key}.json`))} names no counted guard; delete it or restore its guard.`,
+    );
+for (const key of checkedBaselineKeys) {
+  const path = join(baselineDirectory, `${key}.json`);
+  const shown = relative(root, path);
+  const baselineFile = reconcileBaselineFile(
+    baselineTexts.get(key),
+    baselines[key],
+    shrinkBaselines,
   );
-  await writeFile(baselinePath, `${JSON.stringify(sorted, null, 2)}\n`);
-  console.log(`Lowered counted baselines in ${relative(root, baselinePath)}.`);
+  if (baselineFile.action === "write") {
+    await writeFile(path, baselineFile.text);
+    console.log(`Rewrote ${shown}.`);
+  } else if (baselineFile.action === "delete") {
+    await rm(path);
+    console.log(`Removed ${shown}; its guard has no remaining copies.`);
+  } else if (baselineFile.action === "reject")
+    failures.push(
+      `${shown} is not in its written form (paths sorted by code unit); rewrite it with \`node scripts/verify/architecture-guards.mjs --shrink-baselines\`.`,
+    );
 }
+if (baselinesShrunk) console.log("Lowered counted baselines.");
 
 if (failures.length > 0) {
   console.error(`Architecture guards failed:\n\n${failures.join("\n\n")}\n`);
   process.exit(1);
-}
-// CI runs this file before `npm ci`. The numeric-limit parser needs
-// typescript6, so that check waits until dependencies exist. `npm run lint`
-// runs it after install.
-const typescript6 = new URL(
-  "../../node_modules/typescript6/package.json",
-  import.meta.url,
-);
-if (!existsSync(typescript6)) {
-  console.log(
-    "Numeric REA_ limit check waits until dependencies are installed.",
-  );
-} else {
-  const numericLimits = spawnSync(
-    process.execPath,
-    [fileURLToPath(new URL("./rea-numeric-limits.mjs", import.meta.url))],
-    { stdio: "inherit" },
-  );
-  if (numericLimits.status !== 0) process.exit(numericLimits.status ?? 1);
 }
 console.log(`Architecture guards passed across ${files.length} source files.`);

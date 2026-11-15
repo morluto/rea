@@ -109,6 +109,7 @@ import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { silentLogger } from "../logger.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
 import {
   createFunctionCoordinateContext,
@@ -616,6 +617,35 @@ describe("Ghidra provider", () => {
   });
 });
 
+describe("Ghidra Xtensa ELF support", () => {
+  it("admits parsed Xtensa targets through profile selection", async () => {
+    const parsed = parseExecutableHeader(elf(1, 1, 94), "x64");
+    if (!parsed.ok) throw new Error("Expected valid Xtensa ELF target");
+    const target: BinaryTarget = {
+      path: "/tmp/esp32s3.elf",
+      sha256: "a".repeat(64),
+      kind: "executable",
+      ...parsed.value,
+    };
+    const ghidra = provider();
+    expect(ghidra.inspectTargetSupport(target)).toMatchObject({
+      status: "supported",
+    });
+    const resolved = await ghidra.resolveAnalysisProfile(target);
+    expect(resolved.ok && resolved.value).toMatchObject({
+      profile: {
+        parameters: {
+          target_format: "elf",
+          architecture: "xtensa",
+          loader: "auto-from-header",
+          language_id: "auto-from-header",
+          compiler_spec_id: "auto-default",
+        },
+      },
+    });
+  });
+});
+
 describe("Ghidra raw-binary profile", () => {
   it("admits raw 6502 on Windows and binds its 16-bit language without mutation authority", async () => {
     const ghidra = provider(installationHost("win32"));
@@ -748,6 +778,7 @@ describe("Ghidra Mach-O slice support", () => {
         "riscv",
         "powerpc",
         "hexagon",
+        "xtensa",
         "6502",
         "m68k",
       ]),
@@ -4732,6 +4763,42 @@ it.each([
     );
   },
 );
+
+it("keeps a refused setting's configuration error through the provider boundary", async () => {
+  const refusal = new ConfigurationError("invalid bridge reply ceiling", {
+    settings: [
+      {
+        setting: "REA_BRIDGE_MAX_REPLY_BYTES",
+        constraint: "a positive decimal integer",
+      },
+    ],
+  });
+  const failure = new GhidraSessionError(
+    "admission",
+    refusal.message,
+    {},
+    { cause: refusal },
+  );
+  const ghidra = provider(installationHost(), () => ({
+    start: async () => err(failure),
+    callTool: async () => err(failure),
+    close: async () => ok(null),
+  }));
+  onTestFinished(async () => {
+    await ghidra.closeOwnedResources();
+  });
+  const target = executableTarget("elf", "x86_64");
+  const profile = await ghidra.resolveAnalysisProfile(target);
+  if (!profile.ok || profile.value.profile === null)
+    throw new Error("Expected profile");
+
+  const result = await ghidra
+    .createClient(target, profile.value.profile)
+    .execute("list_documents", {});
+
+  expect(result.ok ? undefined : result.error).toBe(refusal);
+  expect(projectAnalysisError(refusal).code).toBe("configuration_invalid");
+});
 
 describe("Ghidra startup deadline for a finished invocation", () => {
   const startupLimit = {

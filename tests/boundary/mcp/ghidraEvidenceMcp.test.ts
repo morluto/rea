@@ -1,3 +1,4 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -339,7 +340,7 @@ const connectNamingMcp = async (name: string) => {
     if (toolDefinition === undefined) throw new Error(`Missing ${tool}`);
     return harness.mcp.callTool(
       { name: tool, arguments: arguments_ },
-      { toolDefinition },
+      { toolDefinition: withCanonicalOutputSchema(toolDefinition) },
     );
   };
   return { harness, requests, bridge, call };
