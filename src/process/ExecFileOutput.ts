@@ -1,4 +1,5 @@
 import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
+import { isAbortOf } from "./SignalAbort.js";
 import {
   execFile,
   spawn,
@@ -241,8 +242,9 @@ export const execFileBytes = (
           },
           (error, stdout, stderr) =>
             complete(
-              error?.name === "AbortError" && error.code === "ABORT_ERR"
-                ? new ExecFileOutputCancelledError(error.cause)
+              // execFile's own abort for the caller's signal carries its reason.
+              isAbortOf(error, signal)
+                ? new ExecFileOutputCancelledError(signal.reason)
                 : error,
               stdout,
               stderr,
