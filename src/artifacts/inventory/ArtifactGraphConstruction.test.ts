@@ -14,7 +14,6 @@ import {
   resolveOccurrenceParents,
 } from "./ArtifactGraphConstruction.js";
 import { createArtifactClassificationProbe } from "../ArtifactClassificationProbe.js";
-import { createAsarHeaderSignatureProbe } from "../AsarHeader.js";
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
@@ -43,6 +42,7 @@ import {
 } from "../../../tests/fixtures/espImage.js";
 import { devicetreeFixture } from "../../domain/firmware/devicetree.fixture.js";
 import { fitFixture } from "../fit/FitImage.fixture.js";
+import { createAsarHeaderSignatureProbe } from "../../resources/index.js";
 
 it("joins only observed PE signature bytes across stream chunks", () => {
   const bytes = pe(0x8664, 8190);
