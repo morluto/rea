@@ -824,6 +824,38 @@ MCP settings for long native investigations.
 Setup, doctor's alignment report, foreign-registration refusal, and uninstall
 removal are covered by `tests/acceptance/setup/clineClientSetup.test.ts`.
 
+## Cline VS Code extension, Kiro, Mastra Code, Zed and Amp
+
+Setup, doctor, update, uninstall and `rea mcp add` share one definition for each
+of these clients. Setup offers a client when its directory exists.
+
+| Client                  | `--client`     | User configuration                                                                                                              | Server table      |
+| ----------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| Cline VS Code extension | `cline_vscode` | `<VS Code user directory>/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`                                | `mcpServers`      |
+| Kiro                    | `kiro`         | `~/.kiro/settings/mcp.json`, shared by the IDE and CLI                                                                          | `mcpServers`      |
+| Mastra Code             | `mastracode`   | `~/.mastracode/mcp.json`                                                                                                        | `mcpServers`      |
+| Zed                     | `zed`          | `~/.config/zed/settings.json` on macOS, `%APPDATA%\Zed\settings.json` on Windows, `$XDG_CONFIG_HOME/zed/settings.json` on Linux | `context_servers` |
+| Amp                     | `amp`          | `~/.config/amp/settings.json`, or `settings.jsonc` when that is the only one                                                    | `amp.mcpServers`  |
+
+The Cline extension keeps a separate settings file in each editor that runs
+it. `cline_vscode_insiders`, `cline_vscodium`, `cline_cursor` and
+`cline_windsurf` manage the same file under that editor's user directory
+(`Code - Insiders`, `VSCodium`, `Cursor` or `Windsurf` in place of `Code`), and
+setup offers each where that editor's Cline settings folder exists.
+`VSCODE_APPDATA` applies to all of them; `VSCODE_PORTABLE` only to VS Code.
+`rea mcp add --agent cline` keeps add-mcp's meaning, VS Code. A same-named server in a Kiro,
+Mastra Code, Zed or Amp project file overrides the user registration; doctor
+reports the user file. Mastra Code keeps enabled state outside `mcp.json`, and
+Amp's managed settings and `amp.mcpPermissions` can block a server; doctor
+cannot observe either. When both Amp settings files exist, Amp does not
+document which it reads, so REA refuses to choose; merge them into one file.
+On Linux, `FLATPAK_XDG_CONFIG_HOME` selects Zed's folder as Zed itself does,
+and a Flathub Zed's `~/.var/app/dev.zed.Zed/config/zed` is used when only that
+folder exists; with both it and the native folder present, REA cannot tell which
+Zed you use and refuses. Zed's comments and formatting are preserved. These
+locations follow each client's documentation and source; no installed client
+was run to verify loading.
+
 ## WorkBuddy
 
 For [WorkBuddy](https://www.workbuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/MCP-Guide), setup writes `mcpServers.rea` into the

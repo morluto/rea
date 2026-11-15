@@ -109,6 +109,24 @@ it("advertises portable ADB serial syntax while retaining canonical Unicode-whit
     expect(adbSerialSchema.safeParse(serial).success).toBe(false);
 });
 
+it.each(["display_id", "window_id", "max_nodes"])(
+  "retains Java integer bounds for %s independently of timer limits",
+  (field) => {
+    const scope = { serial: "emulator-5554", package: "com.example.app" };
+    expect(
+      adbUiInputSchemas.inspect_adb_ui.safeParse({
+        ...scope,
+        [field]: 2 ** 31 - 1,
+      }).success,
+    ).toBe(true);
+    for (const value of [2 ** 31, -1, 1.5])
+      expect(
+        adbUiInputSchemas.inspect_adb_ui.safeParse({ ...scope, [field]: value })
+          .success,
+      ).toBe(false);
+  },
+);
+
 it("keeps every public UI input advertisement portable without weakening its canonical parser", () => {
   for (const contract of ADB_UI_TOOL_CONTRACTS) {
     const advertised = advertisedInputJsonSchema(contract);

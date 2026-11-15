@@ -268,10 +268,15 @@ refusal, cancellation, deadline, output or memory limit, resource signal, exit
 status with the owner's stop state, or stream failure) together with the
 retained output and whether it was truncated. `classifyProviderOutcome` maps
 that outcome to a typed error once; a provider supplies only its settings,
-recovery text and a dialect for what an exit or launch refusal means. The
-`rea/provider-failure-classifier` lint rule keeps new `(cause: unknown) =>
-AnalysisError` functions out of `src/`; existing ones are counted in a baseline
-that may only shrink.
+recovery text and a dialect for what an exit or launch refusal means.
+`classifyProviderFailure` in `src/providers/classifyProviderFailure.ts` is the
+one entry for a raw failure: typed analysis errors pass through, command
+outcomes go to `classifyProviderOutcome`, selected-file failures go to the
+shared stable-artifact projections, and only what none of them recognises
+reaches the provider's `unclassified` report. A provider supplies a dialect,
+not a classifier. The `rea/provider-failure-classifier` lint rule keeps new
+`(cause: unknown) => AnalysisError` functions out of `src/` except in that
+owner; existing ones are counted in a baseline that may only shrink.
 
 A completed read can establish byte identity even when decoding or format
 validation fails. State which representation a digest identifies, such as file

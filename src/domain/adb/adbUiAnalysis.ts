@@ -5,7 +5,10 @@ import {
   adbSerialSchema,
 } from "./adbIdentity.js";
 
-const coordinate = z.number().int().min(-2147483648).max(2147483647);
+// Android coordinates, identities and counters use Java signed integers,
+// independently of Node's timer range.
+const coordinate = z.int32();
+const nonnegativeJavaInt = z.int32().nonnegative();
 // A single string cannot fit a 16 KiB JSON request if its UTF-16 length already
 // exceeds that budget. The adapter checks aggregate encoded bytes before base64.
 const requestText = z.string().max(16 * 1024);
@@ -37,13 +40,11 @@ const scope = {
   package: adbPackageNameSchema.describe(
     "Package whose accessible UI is selected",
   ),
-  display_id: z.number().int().nonnegative().max(2147483647).default(0),
-  window_id: z.number().int().nonnegative().max(2147483647).optional(),
+  display_id: nonnegativeJavaInt.default(0),
+  window_id: nonnegativeJavaInt.optional(),
   max_nodes: z
-    .number()
-    .int()
+    .int32()
     .min(1)
-    .max(2147483647)
     .default(500)
     .describe(
       "Runner capture budget; transport capacity can produce partial coverage sooner",
@@ -59,8 +60,8 @@ const scope = {
     ),
 };
 const page = {
-  offset: z.number().int().nonnegative().max(2147483647).default(0),
-  limit: z.number().int().min(1).max(2147483647).default(50),
+  offset: nonnegativeJavaInt.default(0),
+  limit: z.int32().min(1).default(50),
 };
 const direction = z.enum(["up", "down", "left", "right"]);
 const percent = z.number().positive().max(1).default(0.75);
@@ -85,8 +86,8 @@ export const adbUiActionSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("drag"), destination_id: identifier }),
   z.strictObject({
     kind: z.literal("key_event"),
-    key_code: z.number().int().nonnegative().max(2147483647),
-    meta_state: z.number().int().nonnegative().max(2147483647).default(0),
+    key_code: nonnegativeJavaInt,
+    meta_state: nonnegativeJavaInt.default(0),
   }),
 ]);
 
