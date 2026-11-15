@@ -1,3 +1,8 @@
+import {
+  ParseFailureError,
+  malformedInput,
+  truncatedInput,
+} from "../domain/parseFailure.js";
 import { readFatContainerHeader } from "../domain/apple/machoContainer.js";
 import { describe, expect, it } from "vitest";
 
@@ -52,7 +57,7 @@ it.each([
     const bytes = Buffer.alloc(headerSize - 1);
     bytes.writeUInt32BE(magic);
     expect(() => parseMachoLayout(bytes, "unrecognized")).toThrow(
-      new RangeError("Truncated Mach-O header"),
+      truncatedInput("macho", "Truncated Mach-O header"),
     );
   },
 );
@@ -228,7 +233,7 @@ describe("Mach-O metadata span mapping", () => {
       // Dyld fixup segment ordinals retain the original command order.
       expect(layout.segments).toHaveLength(1);
       expect(layout.baseAddress).toBe(0n);
-      expect(() => layout.offset(0x1000n)).toThrow(RangeError);
+      expect(() => layout.offset(0x1000n)).toThrow(ParseFailureError);
       expect(readMachoMetadataImage(bytes).mappings).toEqual([]);
     },
   );
@@ -257,8 +262,8 @@ describe("Mach-O metadata span mapping", () => {
     opcodes.copy(bytes, 400);
     const layout = parseMachoLayout(bytes, "arm64");
     expect(layout.offset(0x2008n, 8)).toBe(264);
-    expect(() => layout.offset(8n, 8)).toThrow(RangeError);
-    expect(() => layout.offset(0x1000n, 8)).toThrow(RangeError);
+    expect(() => layout.offset(8n, 8)).toThrow(ParseFailureError);
+    expect(() => layout.offset(0x1000n, 8)).toThrow(ParseFailureError);
     const fixups = parsePointerFixups(
       bytes,
       layout.fixups,
@@ -283,7 +288,7 @@ describe("Mach-O metadata span mapping", () => {
       "arm64",
     );
     expect(layout.offset(0x1100n, 4)).toBe(256);
-    expect(() => layout.offset(0x1100n, 8)).toThrow(RangeError);
+    expect(() => layout.offset(0x1100n, 8)).toThrow(ParseFailureError);
   });
 
   it("maps adjacent ranges and duplicate aliases with the same file translation", () => {
@@ -306,7 +311,7 @@ describe("Mach-O metadata span mapping", () => {
       ]),
       "arm64",
     );
-    expect(() => layout.offset(0x1080n, 8)).toThrow(RangeError);
+    expect(() => layout.offset(0x1080n, 8)).toThrow(ParseFailureError);
   });
 
   it.each([-1, 0.5, Number.POSITIVE_INFINITY])(
@@ -316,7 +321,7 @@ describe("Mach-O metadata span mapping", () => {
         mappingImage([mappingSegment(0x1000n, 0, 512)]),
         "arm64",
       );
-      expect(() => layout.offset(0x1000n, size)).toThrow(RangeError);
+      expect(() => layout.offset(0x1000n, size)).toThrow(ParseFailureError);
     },
   );
 
@@ -607,6 +612,43 @@ describe("native Mach-O fixup load command boundaries", () => {
     },
   );
 
+  it.each<[string, readonly [number, number], RegExp]>([
+    [
+      "LC_DYLD_CHAINED_FIXUPS",
+      [LC.DYLD_CHAINED_FIXUPS, LC.DYLD_CHAINED_FIXUPS],
+      /more than one LC_DYLD_CHAINED_FIXUPS/u,
+    ],
+    [
+      "LC_DYLD_INFO and LC_DYLD_INFO_ONLY",
+      [LC.DYLD_INFO, LC.DYLD_INFO_ONLY],
+      /more than one LC_DYLD_INFO/u,
+    ],
+  ])(
+    "refuses repeated %s fixup tables instead of reading one by position",
+    (_name, kinds, message) => {
+      const commands = kinds.map((kind, index) => {
+        const command = Buffer.alloc(kind === LC.DYLD_CHAINED_FIXUPS ? 16 : 48);
+        command.writeUInt32LE(kind, 0);
+        command.writeUInt32LE(command.length, 4);
+        // Distinct empty ranges, so neither repeat is a byte-identical copy.
+        command.writeUInt32LE(index * 8, 8);
+        return command;
+      });
+      const thrown = (() => {
+        try {
+          parseMachoLayout(Buffer.from(machoImage({ commands })), "arm64");
+          return undefined;
+        } catch (cause: unknown) {
+          return cause;
+        }
+      })();
+      expect(thrown).toBeInstanceOf(ParseFailureError);
+      expect(thrown).toMatchObject({
+        failure: { kind: "malformed", detail: expect.stringMatching(message) },
+      });
+    },
+  );
+
   it("preserves valid library identity and rejects install names outside the command", () => {
     const original = dylibCommand(LC.LOAD_DYLIB, "/usr/lib/libobjc.A.dylib");
     const layout = parseMachoLayout(
@@ -710,7 +752,8 @@ it.each([0, 129])(
         ? new TypeError(
             "Universal Mach-O metadata needs the admitted slice (FAT header byte order: big-endian)",
           )
-        : new RangeError(
+        : malformedInput(
+            "macho",
             "Malformed FAT architecture table (FAT header byte order: big-endian)",
           ),
     );

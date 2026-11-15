@@ -3,7 +3,12 @@ import { existsSync } from "node:fs";
 import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { compareCountedBaseline } from "./counted-baseline.mjs";
+import { recordPredicateCounts } from "./record-predicate-guard.mjs";
+import {
+  compareCountedBaseline,
+  recordLoweredBaseline,
+} from "./counted-baseline.mjs";
+import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
 
 // Architecture guards for the strict-identity / best-effort-inference split.
 // - Composite dedup keys must not NUL-join variable-length or free-form
@@ -163,6 +168,84 @@ check(
   ],
 );
 
+// "Non-null object other than an array" has one owner: src/domain/isRecord.ts.
+// A local predicate with that body, under any name, is a copy. The listed files
+// still hold one and may only be removed from the list; a listed file that no
+// longer matches fails so the list shrinks with the code.
+const RECORD_PREDICATE_COPIES = [
+  // Exported under a module-specific name; importers still use that name.
+  "src/browser/history/CaptureRedaction.ts",
+  "src/contracts/compactJsonSchema.ts",
+  "src/domain/analysisView/environmentStateRules.ts",
+  // Owned by the advertised-schema workstream.
+  "src/contracts/inputSchemaPresentation.ts",
+  // Narrows a protocol-specific parameter type, not unknown.
+  "src/browser/execution/CdpRuntimeInitiator.ts",
+  // Named `object`, which also spells the typeof result in these files.
+  "src/pcap/PcapDnsWire.ts",
+  "src/pcap/PcapOutput.ts",
+];
+const mismatchedRecordCopies = files.filter(({ path, content }) => {
+  if (path === "src/domain/isRecord.ts") return false;
+  const { named, bodies } = recordPredicateCounts(content);
+  return (
+    named !== 0 || bodies !== (RECORD_PREDICATE_COPIES.includes(path) ? 1 : 0)
+  );
+});
+const pathsWithRecordCopies = new Set(files.map(({ path }) => path));
+const missingRecordCopies = RECORD_PREDICATE_COPIES.filter(
+  (path) => !pathsWithRecordCopies.has(path),
+);
+if (mismatchedRecordCopies.length > 0)
+  failures.push(
+    `local non-array record predicate count changed (import isRecord and update the baseline):\n${mismatchedRecordCopies.map(({ path }) => `  ${path}`).join("\n")}`,
+  );
+if (missingRecordCopies.length > 0)
+  failures.push(
+    `record predicate baseline references missing files; remove those entries:\n${missingRecordCopies.map((path) => `  ${path}`).join("\n")}`,
+  );
+
+// Node clamps a timer delay above the signed 32-bit bound to 1 ms. Durations
+// use MAX_NODE_TIMER_DELAY_MS or timerDurationMsSchema from their one owner.
+// The allowed files bound signed 32-bit integers that are not timer delays.
+check(
+  "signed 32-bit bound literal (use MAX_NODE_TIMER_DELAY_MS or timerDurationMsSchema from src/domain/analysisResourceLimits for durations)",
+  files,
+  /\b2_?147_?483_?647\b/u,
+  [
+    "src/domain/analysisResourceLimits.ts",
+    // JADX MCP `limit` argument: a Java int, not a duration.
+    "src/android/JadxAnalysis.ts",
+    // JVM `-XX:ActiveProcessorCount`: a Java int processor count.
+    "src/android/JadxConfiguration.ts",
+    // TShark `-c` packet count: a C int, not a duration.
+    "src/domain/captures/packetCapture.ts",
+    // DEX static `int` value range.
+    "src/domain/android/androidAnalysis.ts",
+    // Signed 32-bit bitmask operand range.
+    "src/domain/javascript/javascriptSemanticResources.ts",
+    // Recorded crash pid, signal number and code fields.
+    "src/domain/native/recordedCrash.ts",
+    // Java int parsing for Ghidra launch properties.
+    "src/ghidra/GhidraInstallationPolicy.ts",
+  ],
+);
+
+// Native inventory results parse once against their named fact contract
+// (docs/adr/native/typed-operation-facts.md). Hopper's reply table and the
+// advertised output schemas own their own protocol and catalog contracts.
+check(
+  "native inventory rows parsed outside their fact contract (use executeFact or a contract from src/domain/native/nativeOperationFacts)",
+  files,
+  /\bnativeInventoryRowsSchemas\b|z\.array\(\s*addressedValueSchema\b|\baddressedValueSchema\s*\.\s*(?:safeParse|parse|pick)\b/,
+  [
+    "src/domain/native/nativeInventory.ts",
+    "src/domain/native/nativeOperationFacts.ts",
+    "src/hopper/HopperReplyContracts.ts",
+    "src/contracts/toolOutputSchemaGroups.ts",
+  ],
+);
+
 // Mach-O load-command codes have one table; a local copy drifts from it.
 check(
   "local Mach-O load-command code (import LC from src/domain/apple/machoLoadCommandCodes)",
@@ -186,7 +269,10 @@ const checkCounted = (label, key, selected, pattern, owners) => {
   const counts = new Map();
   for (const file of selected) {
     if (owners.includes(file.path)) continue;
-    const count = file.content.match(pattern)?.length ?? 0;
+    const count =
+      typeof pattern === "function"
+        ? pattern(file.content)
+        : (file.content.match(pattern)?.length ?? 0);
     if (count > 0) counts.set(file.path, count);
   }
   const compared = compareCountedBaseline(
@@ -205,10 +291,7 @@ const checkCounted = (label, key, selected, pattern, owners) => {
     failures.push(
       `${label}; new copies are not allowed:\n${lines(compared.grown)}`,
     );
-  if (compared.baseline !== (baselines[key] ?? {})) {
-    baselines[key] = compared.baseline;
-    baselinesShrunk = true;
-  }
+  if (recordLoweredBaseline(baselines, key, compared)) baselinesShrunk = true;
   if (compared.stale.length > 0)
     failures.push(
       `${label}; copies were removed, so lower the baseline with \`node scripts/verify/architecture-guards.mjs --shrink-baselines\`:\n${lines(compared.stale)}`,
@@ -223,6 +306,62 @@ checkCounted(
   files,
   /new AnalysisCancelledError\(/gu,
   ["src/domain/analysisErrorCore.ts"],
+);
+
+// A deadline is a monotonic budget owned by `Deadline` in src/domain/deadline;
+// a wall-clock sum moves with clock changes and has no finalize phase. The
+// remaining copy converts a monotonic budget for a browser page, which can
+// only read its own wall clock.
+checkCounted(
+  "wall-clock deadline computation (use Deadline from src/domain/deadline)",
+  "wall-clock-deadline",
+  files,
+  /Date\.now\(\)\s*\+/gu,
+  [],
+);
+
+// `tshark -T json` has one envelope reader, src/pcap/TsharkJsonPackets.ts,
+// which owns malformed JSON, the packet array and each packet's layers.
+checkCounted(
+  "local tshark JSON envelope read (use parseTsharkJsonPackets or readTsharkJsonPackets from src/pcap/TsharkJsonPackets)",
+  "tshark-json-envelope",
+  files,
+  /\b_source\s*\.\s*layers\b/gu,
+  ["src/pcap/TsharkJsonPackets.ts"],
+);
+
+// Turning a completed result into a cancellation after cleanup is the
+// finalization precedence that runOwned owns (src/providers/runOwned.ts).
+checkCounted(
+  "completed result reclassified by a hand-read abort signal (finalize through runOwned in src/providers/runOwned)",
+  "completed-abort-reclassification",
+  files,
+  /\.ok\s*&&\s*(?:isAborted\(|[\w.?]*signal\??\.aborted)/gu,
+  ["src/providers/runOwned.ts"],
+);
+
+// An abort reason names who ended the work: a typed `CallerAbort` at the CLI,
+// MCP and HTTP adapters, or an `OwnerCancellation` when REA closes an owner.
+// A bare `.abort()` leaves an anonymous platform AbortError as the cause.
+// Playwright's `route.abort(errorCode)` takes a network error code instead;
+// its call sites pass that code explicitly so the scan stays receiver-independent.
+checkCounted(
+  "AbortController.abort() without a reason (pass a CallerAbort or OwnerCancellation from src/domain/analysisErrorCore)",
+  "abort-without-reason",
+  files,
+  /\.abort\(\s*\)/gu,
+  [],
+);
+
+// GDB MI result records have one parser, src/gdb/GdbMiRecord.ts, which
+// returns typed records and typed failures. A regex over `\^done` accepts a
+// malformed record by its prefix.
+checkCounted(
+  "GDB MI result record regex (use parseGdbMiResultRecord or parseGdbMiDoneRecord from src/gdb/GdbMiRecord)",
+  "gdb-mi-record-regex",
+  files,
+  /\\\^\(?(?:\?:)?(?:done|running|connected|error|exit)\b/gu,
+  ["src/gdb/GdbMiRecord.ts"],
 );
 
 // Byte-format parsers read untrusted input. Bounds, truncation and failure
@@ -310,6 +449,80 @@ checkCounted(
   "parser-json-parse",
   parserFiles,
   /JSON\.parse\(/gu,
+  [],
+);
+
+// A RangeError can mean a stack overflow, a host string or buffer limit, a
+// raw read or write past a buffer, or whatever its thrower intended. Only
+// known host limits are classified; parsers throw a ParseFailureError.
+checkCounted(
+  "direct RangeError interpretation (use hostRangeErrorKind or parseFailureFromCause from src/domain/parseFailure)",
+  "range-error-interpretation",
+  files,
+  /instanceof RangeError/gu,
+  ["src/domain/parseFailure.ts"],
+);
+
+// Cleanup completion is recorded by the owning lease and read by errors when
+// asked. Pushing it with resolveCleanup() and composing dependency sets with
+// bindCleanupDependencies() are being replaced, so neither may spread.
+checkCounted(
+  "resolveCleanup() push outside the error base (release the owning AnalysisCleanupLease instead)",
+  "cleanup-resolve-push",
+  files,
+  /\.resolveCleanup\(/gu,
+  ["src/domain/analysisErrorBase.ts"],
+);
+checkCounted(
+  "bindCleanupDependencies() composition outside the error base (compose through runOwned or copy lease claims)",
+  "cleanup-dependency-binding",
+  files,
+  /\.bindCleanupDependencies\(/gu,
+  ["src/domain/analysisErrorBase.ts"],
+);
+
+// The running host is read once by src/platform/HostPlatform; composition
+// takes it from there and passes the platform or architecture on as a
+// required parameter. An ambient read elsewhere mixes the host REA runs on
+// with the host a caller asked about, and cannot be selected by a test.
+checkCounted(
+  "ambient process.platform read (take HOST_PLATFORM from src/platform/HostPlatform at composition and pass the platform as a parameter)",
+  "ambient-host-platform",
+  files,
+  /\bprocess\.platform\b/gu,
+  ["src/platform/HostPlatform.ts"],
+);
+checkCounted(
+  "ambient process.arch read (take HOST_PLATFORM from src/platform/HostPlatform at composition and pass the architecture as a parameter)",
+  "ambient-host-architecture",
+  files,
+  /\bprocess\.arch\b/gu,
+  ["src/platform/HostPlatform.ts"],
+);
+
+// `find` on a parsed section, program-header or load-command table silently
+// keeps the first of repeated declarations. Select keyed entries through
+// src/domain/keyedCollection (`uniqueKeyed`, `allKeyed`, or
+// `firstKeyed`/`lastKeyed` with the format's precedence rule); an
+// address-containment test that selects nothing uses `some`. GuidanceAccess
+// looks up a guidance document's heading section by its locator identity,
+// not a parsed binary section table.
+checkCounted(
+  "first-match section, program or command lookup (select through src/domain/keyedCollection)",
+  "section-first-match",
+  files,
+  /\b(?:sections|programs|commands)\.find(?:Last)?\(/gu,
+  ["src/application/GuidanceAccess.ts"],
+);
+
+// The same first-match choice, recognized by its shape rather than the
+// table's variable name (see keyed-first-match.mjs). Select through
+// src/domain/keyedCollection instead.
+checkCounted(
+  "first-match lookup by key field in a parser (select through src/domain/keyedCollection)",
+  "keyed-first-match",
+  parserFiles,
+  countKeyedFirstMatches,
   [],
 );
 

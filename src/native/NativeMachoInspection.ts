@@ -1,3 +1,4 @@
+import { parseFailureFromCause } from "../domain/parseFailure.js";
 import { LC } from "../domain/apple/machoLoadCommandCodes.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { EvidenceLocation } from "../domain/evidence.js";
@@ -12,6 +13,7 @@ import {
 } from "../domain/native/nativeInspection.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { machoRuntimeSymbolName } from "../domain/native/machoSymbolName.js";
+import { keyedBy, uniqueKeyed } from "../domain/keyedCollection.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   NATIVE_COMMAND_OUTPUT_BUDGET_BYTES,
@@ -113,9 +115,15 @@ const readChainedImportNames = async (
   size: number | null,
 ): Promise<Result<readonly (string | null)[], string> | undefined> => {
   if (context.readSliceRange === undefined) return undefined;
-  const fields = binary.commands.find(
-    ({ command }) => command === LC.DYLD_CHAINED_FIXUPS,
-  )?.fixedFields;
+  const chainedFixups = uniqueKeyed(
+    keyedBy(binary.commands, ({ command }) => command),
+    LC.DYLD_CHAINED_FIXUPS,
+  );
+  if (!chainedFixups.ok)
+    return err(
+      `the slice declares ${String(chainedFixups.error.ordinals.length)} LC_DYLD_CHAINED_FIXUPS commands`,
+    );
+  const fields = chainedFixups.value?.fixedFields;
   const at = fields?.dataoff;
   const length = fields?.datasize;
   if (at === undefined || length === undefined)
@@ -132,7 +140,8 @@ const readChainedImportNames = async (
       ),
     );
   } catch (cause) {
-    if (cause instanceof RangeError) return err(cause.message);
+    const failure = parseFailureFromCause(cause);
+    if (failure !== undefined) return err(failure.message);
     throw cause;
   }
 };

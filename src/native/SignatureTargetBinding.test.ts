@@ -698,6 +698,13 @@ for (const ownerIndex of [0, 1])
       expect(resolvedAnalysisError(result.error)).toMatchObject({
         _tag: "AnalysisCancelledError",
         cause: reason,
+        // The completed binding is not an observation; it stays as diagnostics.
+        diagnostics: {
+          snapshot_binding: {
+            identity: expect.any(String),
+            snapshot_path: expect.stringContaining("target.bin"),
+          },
+        },
       });
     });
 

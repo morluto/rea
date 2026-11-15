@@ -1,6 +1,6 @@
 import type { AppConfig } from "../config/types.js";
 import { z } from "zod";
-import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
+import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
 import {
   createAnalysisExecution,
   type AnalysisClient,
@@ -270,8 +270,8 @@ export class IdaSessionClient implements AnalysisClient {
       () => undefined,
     );
     const result = await waitForAbortable(call, options?.signal);
-    return result === ABORTED
-      ? err(cancelledBy(operation, carriedReason(options?.signal?.reason)))
+    return result instanceof AbortedWait
+      ? err(cancelledBy(operation, result))
       : result;
   }
 

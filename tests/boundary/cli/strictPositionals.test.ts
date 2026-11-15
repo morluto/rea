@@ -44,6 +44,7 @@ it("rejects surplus public CLI inputs before importing and retains the one-path 
   await writeFile(
     path,
     JSON.stringify({
+      evidence_format: 1,
       artifacts: [],
       captures: [],
       environments: [],

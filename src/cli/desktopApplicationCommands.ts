@@ -1,67 +1,47 @@
-import { localPathStringSchema } from "../domain/localPath.js";
-import { inspectDesktopApplicationInputSchema } from "../domain/desktopApplication.js";
-import {
-  analysisEvidenceDeliveryOptions,
-  deliverCliAnalysisEvidence,
-} from "./analysisEvidenceDelivery.js";
-import { z } from "incur";
 import type { Logger } from "pino";
-import type { CliInstance } from "./types.js";
-import { createDesktopApplicationService } from "../composition/desktop.js";
-import { absoluteCallerPath } from "../filesystem/callerPath.js";
+
 import { CLI_COMMANDS } from "../cliCommandNames.js";
-import { logCliCommand } from "../cliLogging.js";
-import { withCommandCancellation } from "./commandCancellation.js";
-import { cliDecimalField } from "./options.js";
+import { createDesktopApplicationService } from "../composition/desktop.js";
+import { DESKTOP_APPLICATION_TOOL_CONTRACTS } from "../contracts/desktopApplicationToolContracts.js";
+import { contractNamed } from "./contractCliDescription.js";
+import {
+  deliverWithService,
+  registerContractCommand,
+} from "./contractCommand.js";
+import type { CliInstance } from "./types.js";
 
 /** One-shot complete Evidence can be saved and queried with inspect-analysis-view. */
 export const registerDesktopApplicationCommands = (
   cli: CliInstance,
   logger: Logger,
 ): void => {
-  cli.command(CLI_COMMANDS.inspectDesktopApplication, {
-    description:
-      "Identify desktop runtime candidates from bounded directory and header observations",
-    args: z.object({
-      path: localPathStringSchema.describe("Local installation directory"),
-    }),
-    options: z.object({
-      // Decimal tokens only: numeric coercion would read "0x1" as 1 and
-      // "1e1" as 10. The shared fields keep their bounds and defaults.
-      max_entries: cliDecimalField(
-        inspectDesktopApplicationInputSchema.shape.max_entries,
-      ).describe(
-        "Maximum directory entries to examine; exhaustion leaves partial coverage",
-      ),
-      ...analysisEvidenceDeliveryOptions,
-      max_probe_bytes: cliDecimalField(
-        inspectDesktopApplicationInputSchema.shape.max_probe_bytes,
-      ).describe("Maximum total bytes read from selected file ranges"),
-    }),
-    run: ({ args, options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(
-          logger,
-          CLI_COMMANDS.inspectDesktopApplication,
-          async () => {
-            const { detail, evidence_output, ...limits } = options;
-            const service = createDesktopApplicationService();
-            return deliverCliAnalysisEvidence({
-              callerInputPath: args.path,
-              run: () =>
-                service.inspect(
-                  { path: absoluteCallerPath(args.path), ...limits },
-                  { signal },
-                ),
-              service,
-              providerId: "rea-artifact-graph",
-              operation: "inspect_desktop_application",
-              signal,
-              detail,
-              evidenceOutput: evidence_output,
-            });
-          },
-        ),
-      ),
-  });
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(
+      DESKTOP_APPLICATION_TOOL_CONTRACTS,
+      "inspect_desktop_application",
+    ),
+    {
+      command: CLI_COMMANDS.inspectDesktopApplication,
+      description:
+        "Identify desktop runtime candidates from bounded directory and header observations",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      evidenceDelivery: true,
+      fields: {
+        path: { description: "Local installation directory" },
+        max_entries: {
+          name: "max_entries",
+          description:
+            "Maximum directory entries to examine; exhaustion leaves partial coverage",
+        },
+        max_probe_bytes: {
+          name: "max_probe_bytes",
+          description: "Maximum total bytes read from selected file ranges",
+        },
+      },
+    },
+    deliverWithService(createDesktopApplicationService, "rea-artifact-graph"),
+  );
 };

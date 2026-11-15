@@ -1,10 +1,8 @@
 import { expect, it } from "vitest";
 
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
-import {
-  SharedStartupAttempt,
-  STARTUP_OWNER_CLOSED,
-} from "./SharedStartupAttempt.js";
+import { OwnerCancellation } from "../domain/analysisErrorCore.js";
+import { SharedStartupAttempt } from "./SharedStartupAttempt.js";
 
 it("keeps shared startup running for an interested peer and returns the departing caller's reason", async () => {
   const completed = createDeferred<string>();
@@ -57,7 +55,7 @@ it("distinguishes provider closure from a caller's cancellation", async () => {
   const controller = new AbortController();
   const waiting = attempt.wait(controller.signal);
   attempt.close();
-  expect(attempt.signal.reason).toBe(STARTUP_OWNER_CLOSED);
+  expect(attempt.signal.reason).toBe(OwnerCancellation.startupOwnerClosed);
   expect(controller.signal.aborted).toBe(false);
   cleanup.resolve("provider stopped");
   await expect(waiting).resolves.toEqual({
@@ -97,11 +95,11 @@ it.each(["caller", "owner"])(
     } else {
       attempt.close();
       expect(attempt.signal.aborted).toBe(true);
-      expect(attempt.signal.reason).toBe(STARTUP_OWNER_CLOSED);
+      expect(attempt.signal.reason).toBe(OwnerCancellation.startupOwnerClosed);
       controller.abort(reason);
     }
     expect(attempt.signal.reason).toBe(
-      first === "caller" ? reason : STARTUP_OWNER_CLOSED,
+      first === "caller" ? reason : OwnerCancellation.startupOwnerClosed,
     );
     expect(attempt.settled).toBe(false);
     completed.resolve("finalized");

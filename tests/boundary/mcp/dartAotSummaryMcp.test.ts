@@ -213,6 +213,7 @@ it("preserves null snapshot facts and pool lower bounds after exhaustion, reject
       sections: [],
     },
     string_pool: {
+      policy: {},
       coverage: "partial",
       package_uris: ["package:opaque/a.dart"],
       package_uri_count_at_least: 1000,

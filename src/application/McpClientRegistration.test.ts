@@ -21,6 +21,7 @@ beforeEach(() => {
 });
 import { OwnedStagedOutput } from "../filesystem/OwnedStagedOutput.js";
 import {
+  mcpClientRegistrationWritten,
   registerMcpClient,
   registerMcpClients,
 } from "./McpClientRegistration.js";
@@ -534,6 +535,13 @@ describe("Registration cancellation and mixed outcomes", () => {
       _tag: "AnalysisCancelledError",
       diagnostics: { configured: true },
     });
+    // Callers that warn about written settings still see this write.
+    expect(mcpClientRegistrationWritten(result)).toBe(true);
+    expect(
+      mcpClientRegistrationWritten(
+        await register(path, launcher, before.signal),
+      ),
+    ).toBe(false);
     expect(JSON.parse(await readFile(path, "utf8"))).toEqual({
       "amp.mcpServers": { rea: launcher },
     });

@@ -1082,8 +1082,7 @@ const domValueLengthsComparable = (
   after: WebPageInspection["dom"],
 ): boolean =>
   (before.nodes.length === 0 && after.nodes.length === 0) ||
-  (before.node_value_length_unit !== undefined &&
-    before.node_value_length_unit === after.node_value_length_unit);
+  before.node_value_length_unit === after.node_value_length_unit;
 
 /** Compare parsed node facts without serializing or copying the inventories. */
 const domNodesDiffer = (
