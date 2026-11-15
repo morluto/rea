@@ -1,3 +1,4 @@
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import {
   retainProcessInspectionCleanup,
   processInspectionCancellationError,
@@ -390,6 +391,7 @@ export class WebBundleAnalysisWorker {
             "memory",
             response.message,
             { result_budget_bytes: resultBudget },
+            { measuredExhaustion: true },
           );
         throw new AnalysisOutputError(
           OPERATION,
@@ -414,6 +416,7 @@ export class WebBundleAnalysisWorker {
           "memory",
           "Completed script facts exceed the host's remaining reserved result capacity",
           { result_budget_bytes: resultBudget },
+          { measuredExhaustion: true },
         );
       const stored = await this.#files
         .run(() =>
@@ -624,6 +627,11 @@ export class WebBundleAnalysisWorker {
                 "worker transfer budget",
               ),
               { source_bytes: WEB_BUNDLE_WORKER_LIMITS.sourceBytes },
+              fixedAllowanceOptions(
+                "The web-bundle worker transfer allowance",
+                "bytes",
+                { limit: WEB_BUNDLE_WORKER_LIMITS.sourceBytes, unit: "bytes" },
+              ),
             );
           await handle.writeFile(chunk);
           bytes += chunk.length;
@@ -826,7 +834,7 @@ export class WebBundleAnalysisWorker {
               {
                 result_budget_bytes: failure.resultBudgetBytes,
               },
-              { capturedOutput },
+              { capturedOutput, measuredExhaustion: true },
             )
           : new AnalysisOutputError(
               OPERATION,

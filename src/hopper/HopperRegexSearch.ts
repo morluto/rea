@@ -2,17 +2,13 @@ import { z } from "zod";
 
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import {
-  AnalysisOutputError,
-  cancelledBy,
-  OwnerCancellation,
-} from "../domain/analysisErrorCore.js";
-import { nativeInventoryRowsSchemas } from "../domain/native/nativeInventory.js";
+import { cancelledBy, OwnerCancellation } from "../domain/analysisErrorCore.js";
 import { HopperRemoteError } from "../domain/hopperErrors.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { nativeSearchInput } from "../domain/native/nativeSearch.js";
 import type { HopperClient } from "./HopperClient.js";
+import { parseHopperReply } from "./HopperReplyContracts.js";
 import {
   DEFAULT_REGEX_MATCHING_DEADLINE,
   type RegexMatchingDeadline,
@@ -113,19 +109,12 @@ export class HopperRegexSearch {
       return err(
         analysisClientFailureForOperation(inventory.error, "hopper", operation),
       );
-    const rows = inventory.value;
-    const schema =
+    const parsed =
       operation === "search_strings"
-        ? nativeInventoryRowsSchemas.strings
-        : nativeInventoryRowsSchemas.names;
-    const parsed = schema.safeParse(rows);
-    if (!parsed.success || !Array.isArray(rows))
-      return err(
-        new AnalysisOutputError(
-          operation,
-          "Hopper search inventory is malformed",
-        ),
-      );
+        ? parseHopperReply("list_strings", inventory.value, operation)
+        : parseHopperReply("list_procedures", inventory.value, operation);
+    if (!parsed.ok) return parsed;
+    const rows: readonly (typeof parsed.value)[number][] = parsed.value;
     if (options.signal?.aborted)
       return err(cancelledBy(operation, options.signal));
     await options.progress
@@ -142,7 +131,7 @@ export class HopperRegexSearch {
       operation,
       pattern: input.data.pattern,
       caseSensitive: input.data.case_sensitive,
-      values: parsed.data.map((item) => item.value),
+      values: rows.map((item) => item.value),
       signal: options.signal,
       deadline: this.deadline,
       heapRequest: this.heapRequest,
