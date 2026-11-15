@@ -1,5 +1,5 @@
 import { isProcessOwnershipInspectionCancellation } from "../ProcessInspectionCancellation.js";
-import { systemPsCommand } from "../systemPs.js";
+import { resolveSystemPs } from "../systemPs.js";
 import { processInspectionCancellations } from "../ProcessInspectionCleanup.js";
 import type { ProcessCaptureResourceScope } from "./ProcessCaptureLifecycle.js";
 import {
@@ -138,7 +138,7 @@ const readPsRowsRaw = async (
   signal: AbortSignal,
 ): Promise<readonly ProcessRow[]> => {
   const { stdout } = await execFileOutput(
-    systemPsCommand(process.platform),
+    (await resolveSystemPs(process.platform)).command,
     ["-axo", "pid=,ppid=,pgid=,sess=,command="],
     { signal, stopSignal: "SIGTERM" },
   );

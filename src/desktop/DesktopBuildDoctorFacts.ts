@@ -18,6 +18,7 @@ import {
 import { DESKTOP_EXPORT_FRAMEWORK_VERSION } from "../domain/desktop/appExport.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { execFileOutputFailure } from "../process/ExecFileOutput.js";
+import { describeSystemPs, resolveSystemPs } from "../process/systemPs.js";
 import { agentEnvInterpreter } from "./AgentEnvComputerHelper.js";
 import {
   agentEnvReportedVersion,
@@ -187,12 +188,21 @@ const settingCommand = async (
     : { status: "invalid", value };
 };
 
-/** procps `ps` accepts `-p`; busybox's does not. */
+/**
+ * Probe the `ps` REA's process supervisor selects: a fixed system location
+ * first, REA's PATH only as the fallback. procps `ps` accepts `-p`; busybox's
+ * does not.
+ */
 const psFact = async (
   input: DesktopBuildFactsInput,
 ): Promise<DesktopBuildFacts["ps"]> => {
-  const ps = await programOnPath("ps", input.environment);
-  if (ps === undefined) return { found: false, detail: "No ps is on PATH." };
+  const selected = await resolveSystemPs(process.platform);
+  const ps =
+    selected.source === "system"
+      ? selected.command
+      : await programOnPath("ps", input.environment);
+  if (ps === undefined)
+    return { found: false, detail: `No ${describeSystemPs(selected)}.` };
   const probe = await attempt(input, ps, [
     "-o",
     "pid=",

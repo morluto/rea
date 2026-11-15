@@ -1,15 +1,71 @@
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 
 import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
 } from "./ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "./ProcessOwnership.js";
+import {
+  LINUX_SYSTEM_PS_LOCATIONS,
+  describeSystemPs,
+  resolveSystemPs,
+} from "./systemPs.js";
 import { waitFor } from "../../tests/support/testWait.js";
 
 afterEach(() => vi.unstubAllEnvs());
+
+const present =
+  (...paths: readonly string[]) =>
+  async (path: string): Promise<boolean> =>
+    paths.includes(path);
+
+it("selects Linux ps from the first fixed system location before REA's PATH", async () => {
+  await expect(
+    resolveSystemPs("linux", {
+      isExecutable: present(...LINUX_SYSTEM_PS_LOCATIONS),
+    }),
+  ).resolves.toEqual({ command: "/bin/ps", source: "system" });
+  await expect(
+    resolveSystemPs("linux", { isExecutable: present("/usr/bin/ps") }),
+  ).resolves.toEqual({ command: "/usr/bin/ps", source: "system" });
+  await expect(
+    resolveSystemPs("linux", {
+      isExecutable: present("/run/current-system/sw/bin/ps"),
+    }),
+  ).resolves.toEqual({
+    command: "/run/current-system/sw/bin/ps",
+    source: "system",
+  });
+  await expect(
+    resolveSystemPs("linux", { isExecutable: present() }),
+  ).resolves.toEqual({
+    command: "ps",
+    source: "path",
+  });
+});
+
+it("runs /bin/ps on macOS and keeps PATH on other ps platforms", async () => {
+  await expect(
+    resolveSystemPs("darwin", { isExecutable: present() }),
+  ).resolves.toEqual({
+    command: "/bin/ps",
+    source: "system",
+  });
+  await expect(
+    resolveSystemPs("freebsd", { isExecutable: present("/bin/ps") }),
+  ).resolves.toEqual({ command: "ps", source: "path" });
+});
+
+it("names which ps ran, and the fixed locations checked before PATH", () => {
+  expect(describeSystemPs({ command: "/usr/bin/ps", source: "system" })).toBe(
+    "ps at /usr/bin/ps",
+  );
+  expect(describeSystemPs({ command: "ps", source: "path" })).toBe(
+    `ps from REA's PATH (none of ${LINUX_SYSTEM_PS_LOCATIONS.join(", ")} is executable)`,
+  );
+});
 
 it.runIf(process.platform === "darwin")(
   "confirms owned cleanup on macOS when REA's own PATH cannot find ps",
@@ -29,6 +85,16 @@ it.runIf(process.platform === "darwin")(
       cwd: tmpdir(),
       hostEnvironment: process.env,
     });
+    let stopped = false;
+    // A failed wait or assertion must still release the fixture group.
+    onTestFinished(() => {
+      if (stopped) return;
+      try {
+        process.kill(-launch.ownership.processGroupId, "SIGKILL");
+      } catch {
+        // The group already exited.
+      }
+    });
     const supervisor = new ProviderProcessSupervisor({
       ...launch,
       ownsProcessLifetime: true,
@@ -38,13 +104,11 @@ it.runIf(process.platform === "darwin")(
     await waitFor(() =>
       expect(supervisor.snapshot().stdout.text).toContain("descendant"),
     );
-    const stopped = await supervisor.stop({
+    const result = await supervisor.stop({
       terminationGraceMs: 100,
       killGraceMs: 500,
     });
-    // An unconfirmed cleanup leaves the fixture group alive; stop it here.
-    if (stopped.status === "incomplete")
-      process.kill(-launch.ownership.processGroupId, "SIGKILL");
-    expect(stopped.status).not.toBe("incomplete");
+    stopped = result.status !== "incomplete";
+    expect(result.status).not.toBe("incomplete");
   },
 );
