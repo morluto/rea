@@ -328,16 +328,27 @@ export class DirectoryArtifactReader implements ArtifactReader {
     }
   }
 
+  /** Open an entry only against the file state captured when it was enumerated. */
   async #openFile(
     entry: ArtifactEntry,
     signal?: AbortSignal,
-  ): Promise<OwnedFileHandle<FileHandle>> {
+  ): Promise<{
+    readonly owner: OwnedFileHandle<FileHandle>;
+    readonly identity: CapturedSourceIdentity;
+  }> {
     abortIfNeeded(signal);
     await this.#validateRoot();
     if (entry.kind !== "file")
       throw new ArtifactReaderFailure(
         "format",
         "Only regular files can be opened",
+      );
+    const identity = entry.sourceIdentity;
+    if (identity === undefined)
+      throw new ArtifactReaderFailure(
+        "integrity",
+        `Directory entry has no captured file state: ${entry.path}`,
+        { integrityCheck: "entry-metadata" },
       );
     const fileHandle = await open(
       entry.adapterKey,
@@ -359,7 +370,7 @@ export class DirectoryArtifactReader implements ArtifactReader {
         });
       if (
         !observed.isFile() ||
-        !sameArtifactSourceIdentity(entry.sourceIdentity, observed)
+        !sameArtifactSourceIdentity(identity, observed)
       ) {
         throw new ArtifactReaderFailure(
           "integrity",
@@ -368,7 +379,7 @@ export class DirectoryArtifactReader implements ArtifactReader {
         );
       }
       abortIfNeeded(signal);
-      return owner;
+      return { owner, identity };
     } catch (cause: unknown) {
       try {
         await this.#closeFile(owner);
@@ -410,7 +421,7 @@ export class DirectoryArtifactReader implements ArtifactReader {
     inspect: (file: FileHandle) => Promise<Value>,
     signal?: AbortSignal,
   ): Promise<Value> {
-    const owner = await this.#openFile(entry, signal);
+    const { owner, identity } = await this.#openFile(entry, signal);
     try {
       const value = await withOwnedFileHandle(
         entry.adapterKey,
@@ -445,8 +456,8 @@ export class DirectoryArtifactReader implements ArtifactReader {
           if (
             !opened.isFile() ||
             !named.isFile() ||
-            !sameArtifactSourceIdentity(entry.sourceIdentity, opened) ||
-            !sameArtifactSourceIdentity(entry.sourceIdentity, named)
+            !sameArtifactSourceIdentity(identity, opened) ||
+            !sameArtifactSourceIdentity(identity, named)
           )
             throw new ArtifactReaderFailure(
               "integrity",
@@ -486,11 +497,12 @@ export class DirectoryArtifactReader implements ArtifactReader {
   }
 
   async open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {
-    const owner = await this.#openFile(entry, signal);
+    const { owner, identity } = await this.#openFile(entry, signal);
     const source = Readable.from(
       mapStableFileRead(
         owner.handle,
         entry,
+        identity,
         () => this.#validateRoot(),
         signal,
       ),
@@ -665,21 +677,18 @@ const entryOpenFailure = (
 const failureMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
 
+type CapturedSourceIdentity = NonNullable<ArtifactEntry["sourceIdentity"]>;
+
 const mapStableFileRead = async function* (
   handle: FileHandle,
   entry: ArtifactEntry,
+  identity: CapturedSourceIdentity,
   validateRoot: () => Promise<void>,
   signal?: AbortSignal,
 ): AsyncGenerator<Buffer> {
   let bytes = 0n;
+  const expectedBytes = identity.size;
   try {
-    const expectedBytes = entry.sourceIdentity?.size;
-    if (expectedBytes === undefined)
-      throw new ArtifactReaderFailure(
-        "integrity",
-        `Directory entry has no captured file state: ${entry.path}`,
-        { integrityCheck: "entry-metadata" },
-      );
     for await (const chunk of readArtifactFileChunks(handle, {
       // Include one extra byte so a growing file cannot make this read unbounded.
       end: expectedBytes,
@@ -699,8 +708,8 @@ const mapStableFileRead = async function* (
     if (
       !opened.isFile() ||
       !current.isFile() ||
-      !sameArtifactSourceIdentity(entry.sourceIdentity, opened) ||
-      !sameArtifactSourceIdentity(entry.sourceIdentity, current) ||
+      !sameArtifactSourceIdentity(identity, opened) ||
+      !sameArtifactSourceIdentity(identity, current) ||
       bytes !== expectedBytes
     )
       throw new ArtifactReaderFailure(

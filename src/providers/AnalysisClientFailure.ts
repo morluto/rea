@@ -256,7 +256,7 @@ export const analysisClientFailureForOperation = (
       operation,
       cause.path,
       cause.reason,
-      context,
+      { ...context, integrityCheck: cause.integrityCheck },
     );
   else if (cause instanceof AnalysisResourceConstraintError)
     result = reattributedResourceConstraint(operation, cause, context);

@@ -7,6 +7,7 @@ import {
   AnalysisOutputError,
   AnalysisTimeoutError,
   AnalysisResourceConstraintError,
+  AnalysisArtifactChangedError,
 } from "../domain/analysisErrorCore.js";
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -211,4 +212,21 @@ it.each([
   expect(projectAnalysisError(again).details?.secondary_failures).toHaveLength(
     2,
   );
+});
+
+it("keeps the named integrity check when an artifact change changes operation", () => {
+  const attributed = analysisClientFailureForOperation(
+    new AnalysisArtifactChangedError(
+      "inspect_artifact",
+      "/target.app",
+      "member changed",
+      { integrityCheck: "member-identity" },
+    ),
+    "ghidra",
+    "binary_overview",
+  );
+  expect(projectAnalysisError(attributed)).toMatchObject({
+    code: "artifact_changed",
+    details: { integrity_check: "member-identity" },
+  });
 });
