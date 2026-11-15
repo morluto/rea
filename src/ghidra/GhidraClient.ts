@@ -17,6 +17,7 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { NativeValueFlowLimits } from "../domain/native/nativeValueFlow.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import {
   providerRetryAction,
   type ProviderOperationHealth,
@@ -163,7 +164,8 @@ export class GhidraClient {
     | { readonly path: string; readonly disposition: "publish" | "discard" }
     | undefined;
   #checkpointRestore: GhidraPackedProgram | undefined;
-  readonly #cleanupFailures = new Set<AnalysisError>();
+  /** Reported by every cleanup failure until a close releases everything. */
+  #cleanupRelease = new AnalysisCleanupRelease();
   #targetAdmission: JsonValue | undefined;
   #token: string | undefined;
   // Retain authentication identities for diagnostics from late request settlement.
@@ -894,8 +896,7 @@ export class GhidraClient {
         ];
       },
     });
-    this.#cleanupFailures.add(failure);
-    return failure;
+    return this.#cleanupRelease.bind(failure);
   }
 
   /** Observed failures that prevent a retained session from being reused. */
@@ -1436,8 +1437,8 @@ export class GhidraClient {
       this.#runId = undefined;
       this.#responseLines.reset();
       if (forcedStopFailure !== undefined) throw forcedStopFailure.cause;
-      for (const failure of this.#cleanupFailures) failure.resolveCleanup();
-      this.#cleanupFailures.clear();
+      this.#cleanupRelease.confirm();
+      this.#cleanupRelease = new AnalysisCleanupRelease();
     } finally {
       this.#closing = false;
     }
