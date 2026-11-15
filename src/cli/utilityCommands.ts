@@ -1,5 +1,4 @@
 import { contractNamed } from "./contractCliDescription.js";
-import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
 import { cliDecimalField } from "./options.js";
 
@@ -26,7 +25,6 @@ import { PRODUCT_IDENTITY } from "../identity.js";
 import { isCliOperationFailure, logCliCommand } from "../cliLogging.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { localPathStringSchema } from "../domain/localPath.js";
-import { nativeCommandTimeoutField } from "../domain/native/nativeDeadlines.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { registerNativeCallCommands } from "./nativeCallCommands.js";
@@ -155,39 +153,24 @@ const registerNativeCommands = (
       },
       run,
     );
-  // inspect_plist reports a plist the target itself selects under the
-  // contract's `path` field, which this command spells --relative-path, so
-  // it keeps its own option until that producer names the target apart.
-  cli.command(CLI_COMMANDS.inspectPlist, {
-    description: "Parse app plist metadata without launching Hopper",
-    args: z.object({
-      path: localPathStringSchema.describe("App or Mach-O path"),
-    }),
-    options: z.object({
-      relativePath: localPathStringSchema
-        .optional()
-        .describe(
-          "Plist path relative to the app root, or an absolute path (default: the bundle's Info.plist)",
-        ),
-      nativeCommandTimeoutMs: cliDecimalField(nativeCommandTimeoutField),
-    }),
-    run: ({ args, options }) =>
-      logCliCommand(logger, "inspect-plist", () =>
-        runProviderAnalysis(
-          args.path,
-          "inspect_plist",
-          {
-            ...(options.relativePath === undefined
-              ? {}
-              : { path: options.relativePath }),
-            ...(options.nativeCommandTimeoutMs === undefined
-              ? {}
-              : { native_command_timeout_ms: options.nativeCommandTimeoutMs }),
-          },
-          logger,
-        ).then(projectCliAnalysisResult),
-      ),
-  });
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(NATIVE_TOOL_CONTRACTS, "inspect_plist"),
+    {
+      command: CLI_COMMANDS.inspectPlist,
+      description: "Parse app plist metadata without launching Hopper",
+      sessionTarget: { description: "App, Mach-O or plist path" },
+      fields: {
+        path: {
+          name: "relativePath",
+          description:
+            "Plist path relative to the app root, or an absolute path (default: the bundle's Info.plist)",
+        },
+      },
+    },
+    run,
+  );
   registerContractCommand(
     cli,
     logger,
