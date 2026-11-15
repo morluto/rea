@@ -340,6 +340,33 @@ it("reports partial coverage when debian-binary is empty", () => {
   expect(report.coverage.status).toBe("partial");
 });
 
+it("counts a hardlinked md5sums path as present in the inventory", () => {
+  const sum = "d41d8cd98f00b204e9800998ecf8427e";
+  const report = parse(
+    debPackageFixture({
+      md5sums: `${sum}  usr/bin/hello\n${sum}  usr/bin/hello-link\n`,
+      dataEntries: [
+        { name: "./", type: "5", mode: 0o755, content: "" },
+        { name: "./usr/", type: "5", mode: 0o755, content: "" },
+        { name: "./usr/bin/", type: "5", mode: 0o755, content: "" },
+        { name: "./usr/bin/hello", content: "", mode: 0o755 },
+        {
+          name: "./usr/bin/hello-link",
+          type: "1",
+          mode: 0o755,
+          linkname: "./usr/bin/hello",
+        },
+      ],
+    }),
+  );
+  expect(report.md5sums_cross_check).toEqual({
+    listed: 2,
+    present: 2,
+    missing_from_inventory: 0,
+    missing_from_md5sums: 0,
+  });
+});
+
 it("flags extra ar members without treating them as control or data", () => {
   const report = parse(
     debPackageFixture({

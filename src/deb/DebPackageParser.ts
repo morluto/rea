@@ -780,7 +780,7 @@ export const parseDebPackage = (
     const listed = md5Paths(listedFile(controlTar.files, "md5sums").text);
     const inventory = new Set(
       (dataTar?.entries ?? [])
-        .filter((entry) => entry.type === "file")
+        .filter((entry) => entry.type === "file" || entry.type === "hardlink")
         .map((entry) => logicalTarPath(entry.path)),
     );
     let present = 0;
