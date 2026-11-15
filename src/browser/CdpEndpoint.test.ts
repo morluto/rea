@@ -364,6 +364,25 @@ it.each([
   });
 });
 
+it("reports a malformed browser-socket version as an invalid endpoint response", async () => {
+  await expect(
+    discoverCdpBrowserSocket(
+      {
+        send: fakeCdpSend((method) =>
+          method === "Browser.getVersion"
+            ? { protocolVersion: "", product: "fixture" }
+            : { targetInfos: [] },
+        ),
+      },
+      "ws://127.0.0.1:9222/devtools/browser/fixture",
+      "list_browser_targets",
+    ),
+  ).rejects.toMatchObject({
+    reason: "invalid_endpoint_response",
+    detail: expect.stringContaining("CDP Browser.getVersion"),
+  });
+});
+
 it("retains an explicitly empty browser-socket target inventory", async () => {
   await expect(
     discoverCdpBrowserSocket(

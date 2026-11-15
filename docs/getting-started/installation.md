@@ -1283,6 +1283,10 @@ workspace settings exclude `rea`, leave it off a nonempty allowlist, or define
 a different `rea` entry with higher precedence. On Windows, registration refuses
 to write a Claude Desktop MSIX configuration the running app could overwrite,
 or any file this process's MSIX AppData redirection would divert.
+Because `rea mcp add` writes without an approval step, after it changes Claude
+Desktop's configuration it prints a notice on stderr: a running Claude Desktop
+can rewrite the file from memory and drop the registration, so quit it fully,
+rerun `rea mcp add`, then start it again. The JSON report is unchanged.
 
 `--no-global` writes only project-level settings. A selection containing Amp or
 another client without project storage fails before any writes; select those

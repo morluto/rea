@@ -3,7 +3,7 @@ import { expect, it } from "vitest";
 import {
   classifyLaunchFailure,
   classifyLaunchFailureCode,
-  executableLaunchRefusalOf,
+  launcherRefusalOf,
 } from "./launchFailure.js";
 
 it.each([
@@ -48,18 +48,25 @@ it.each([
       executable: "C:\\tools\\tool.exe",
     },
   ],
-])("names the executable a %s refusal identifies", (_, fields, expected) => {
+  [
+    "bare Node spawn",
+    { code: "ENOTDIR", syscall: "spawn" },
+    { kind: "missing", code: "ENOTDIR", executable: undefined },
+  ],
+  [
+    "Node spawn naming another path",
+    { code: "ENOENT", syscall: "spawn /other", path: "/tool" },
+    { kind: "missing", code: "ENOENT", executable: undefined },
+  ],
+])("reads a %s refusal and the executable it names", (_, fields, expected) => {
   expect(
-    executableLaunchRefusalOf(Object.assign(new Error("refused"), fields)),
+    launcherRefusalOf(Object.assign(new Error("refused"), fields)),
   ).toEqual(expected);
 });
 
 it.each([
   ["an errno without a launcher", { code: "EPERM" }],
-  [
-    "a spawn syscall naming another path",
-    { code: "ENOENT", syscall: "spawn /other", path: "/tool" },
-  ],
+  ["a file read errno", { code: "ENOENT", syscall: "open", path: "/tool" }],
   [
     "a Windows host-control rejection",
     {
@@ -72,8 +79,8 @@ it.each([
     "a launcher error whose errno is not a refusal",
     { code: "EAGAIN", syscall: "spawn /tool", path: "/tool" },
   ],
-])("does not read %s as an executable refusal", (_, fields) => {
+])("does not read %s as a launcher refusal", (_, fields) => {
   expect(
-    executableLaunchRefusalOf(Object.assign(new Error("refused"), fields)),
+    launcherRefusalOf(Object.assign(new Error("refused"), fields)),
   ).toBeUndefined();
 });
