@@ -336,6 +336,24 @@ checkCounted(
   ["src/domain/parseFailure.ts"],
 );
 
+// Cleanup completion is recorded by the owning lease and read by errors when
+// asked. Pushing it with resolveCleanup() and composing dependency sets with
+// bindCleanupDependencies() are being replaced, so neither may spread.
+checkCounted(
+  "resolveCleanup() push outside the error base (release the owning AnalysisCleanupLease instead)",
+  "cleanup-resolve-push",
+  files,
+  /\.resolveCleanup\(/gu,
+  ["src/domain/analysisErrorBase.ts"],
+);
+checkCounted(
+  "bindCleanupDependencies() composition outside the error base (compose through runOwned or copy lease claims)",
+  "cleanup-dependency-binding",
+  files,
+  /\.bindCleanupDependencies\(/gu,
+  ["src/domain/analysisErrorBase.ts"],
+);
+
 if (baselinesShrunk) {
   const sorted = Object.fromEntries(
     Object.entries(baselines).map(([key, counts]) => [
