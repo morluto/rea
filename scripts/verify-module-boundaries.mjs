@@ -109,7 +109,16 @@ if (selected.length === 0) {
   const facts = layerGraphFacts(resolvedImports, checkedFiles);
   if (printLayerBaseline) {
     console.log(
-      JSON.stringify({ upward: facts.upward, cycles: facts.cycles }, null, 2),
+      JSON.stringify(
+        {
+          upward: facts.upward,
+          cycles: facts.cycles,
+          crossProvider: facts.crossProvider,
+          entry: facts.entry,
+        },
+        null,
+        2,
+      ),
     );
   }
   const { failures, lowerable } = compareLayerBaseline(facts, baseline);

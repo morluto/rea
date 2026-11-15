@@ -1,19 +1,17 @@
 import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
 import type { WebArtifactAcquisition as Acquisition } from "../../domain/webArtifactAcquisition.js";
 import { z } from "zod";
-import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
-import { stableArtifactInputRecovery } from "../../artifacts/StableArtifactFailure.js";
 import {
+  ArtifactReaderFailure,
+  stableArtifactInputRecovery,
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
   bindArtifactFileCleanup,
   type ArtifactFilePrimaryFacts,
-} from "../../resources/ArtifactFileOperation.js";
-import type { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
-import {
+  type ArtifactResourceScope,
   completedStableArtifact,
   readStableArtifact,
-} from "../../resources/readStableArtifact.js";
+} from "../../resources/index.js";
 import {
   AnalysisError,
   primaryAnalysisError,

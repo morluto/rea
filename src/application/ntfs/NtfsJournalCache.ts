@@ -1,6 +1,8 @@
 import type { BigIntStats } from "node:fs";
-import type { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
-import type { StableArtifactSnapshot } from "../../resources/readStableArtifact.js";
+import type {
+  ArtifactResourceScope,
+  StableArtifactSnapshot,
+} from "../../resources/index.js";
 import type { MftIndex } from "../../domain/windows/ntfsMft.js";
 import { createUsnMftCorrelator } from "../../domain/windows/ntfsJournalCorrelation.js";
 

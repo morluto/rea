@@ -6,18 +6,14 @@ import {
   projectStableArtifactFailure,
   stableArtifactInputFailure,
   projectArtifactCloseFailure,
-} from "../../artifacts/StableArtifactFailure.js";
-import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
-import {
+  ArtifactReaderFailure,
   type StableArtifactSnapshot,
   readStableArtifact,
-} from "../../resources/readStableArtifact.js";
-import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   assertArtifactReadActive,
-} from "../../resources/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
+  ArtifactResourceScope,
+} from "../../resources/index.js";
 import type { NativeExportsPort } from "../../ports/binaryDiagnostics/NativeExportsPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { ResourceConstraintRecovery } from "../../domain/analysisErrorCore.js";

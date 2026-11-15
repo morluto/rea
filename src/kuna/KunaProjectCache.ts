@@ -28,9 +28,11 @@ import writeFileAtomic from "write-file-atomic";
 import { z } from "zod";
 import { utcDateTimeSchema } from "../domain/offsetDateTime.js";
 
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
-import { bindArtifactFileCleanup } from "../resources/ArtifactFileOperation.js";
-import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
+import {
+  ArtifactResourceScope,
+  bindArtifactFileCleanup,
+  AnalysisCleanupLease,
+} from "../resources/index.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {

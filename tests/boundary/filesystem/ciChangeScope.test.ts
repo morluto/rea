@@ -1327,7 +1327,7 @@ it.each([
     { code: true, agentenv: true, runtime: true, package: false },
   ],
   [
-    "src/artifacts/SafeOutputTree.ts",
+    "src/resources/SafeOutputTree.ts",
     { code: true, agentenv: true, runtime: true },
   ],
   [

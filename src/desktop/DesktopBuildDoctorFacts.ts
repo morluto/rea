@@ -24,11 +24,11 @@ import { PRODUCT_IDENTITY } from "../identity.js";
 import { execFileOutputFailure } from "../process/ExecFileOutput.js";
 import { describeSystemPs, resolveSystemPs } from "../process/systemPs.js";
 import { agentEnvInterpreter } from "./AgentEnvComputerHelper.js";
-import { ArtifactFileCleanupFailure } from "../resources/ArtifactFileOperation.js";
 import {
+  ArtifactFileCleanupFailure,
   AnalysisCleanupLeaseGroup,
   type AnalysisCleanupLease,
-} from "../resources/AnalysisCleanupLease.js";
+} from "../resources/index.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   agentEnvReportedVersion,

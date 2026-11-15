@@ -89,15 +89,15 @@ import {
   type NativeLoadImageObservation,
   type NativeLoadImagePartialObservation,
 } from "../domain/native/nativeLoadImage.js";
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
   bindArtifactFileCleanup,
   withArtifactRegularFile,
-} from "../resources/ArtifactFileOperation.js";
-import { readArtifactFileChunks } from "../artifacts/readArtifactFileChunks.js";
+} from "../resources/index.js";
+import { readArtifactFileChunks } from "../resources/index.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import {
   assertRegularFileActive,

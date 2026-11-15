@@ -1,10 +1,10 @@
 import { ok, err, type Result } from "../domain/result.js";
-import type {
-  ArtifactEntry,
-  ArtifactTraversalOmission,
-} from "../resources/ArtifactReader.js";
+import {
+  type ArtifactEntry,
+  type ArtifactTraversalOmission,
+  assertArtifactReadActive,
+} from "../resources/index.js";
 import { DirectoryArtifactTraversalLimit } from "../artifacts/DirectoryArtifactReader.js";
-import { assertArtifactReadActive } from "../resources/ArtifactFileOperation.js";
 import { classifyAndroidStringsTable } from "../domain/apktool/apktoolResourceAnalysis.js";
 import type { ApktoolWorkspace } from "./ApktoolWorkspace.js";
 

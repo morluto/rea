@@ -5,7 +5,7 @@ import {
 import {
   type StableArtifactSnapshot,
   completedStableArtifact,
-} from "../resources/readStableArtifact.js";
+} from "./readStableArtifact.js";
 
 /** Completed file identity survives finalization; it does not establish decoded content. */
 export const completedStableArtifactObservation = (

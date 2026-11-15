@@ -26,10 +26,12 @@ import {
   bindRegularFileCleanup,
   regularFileCleanupLeases,
 } from "../process/RegularFileRead.js";
-import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
-import type { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
-import { fileAccessFailureReason } from "../resources/TextFileWrite.js";
+import {
+  type ArtifactResourceScope,
+  ArtifactReaderFailure,
+  type AnalysisCleanupLease,
+  fileAccessFailureReason,
+} from "../resources/index.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 
 // The JSON read owner records the exact leases it binds; consumers never

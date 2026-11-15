@@ -12,10 +12,10 @@ import {
   type ArtifactReader,
   type ArtifactReaderTraversal,
   type ArtifactTraversalOptions,
-} from "../resources/ArtifactReader.js";
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+  ArtifactResourceScope,
+  assertArtifactReadActive,
+} from "../resources/index.js";
 import { ownArtifactStream } from "./OwnedArtifactStream.js";
-import { assertArtifactReadActive } from "../resources/ArtifactFileOperation.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import {
   createFitDigest,

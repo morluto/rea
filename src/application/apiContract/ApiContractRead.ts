@@ -1,15 +1,13 @@
 import {
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
-} from "../../resources/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
-import { readStableArtifact } from "../../resources/readStableArtifact.js";
-import {
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+  readStableArtifact,
   projectStableArtifactFailure,
   stableArtifactInputRecovery,
   readerIntegrityFailure,
-} from "../../artifacts/StableArtifactFailure.js";
+} from "../../resources/index.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,

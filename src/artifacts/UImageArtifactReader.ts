@@ -9,16 +9,16 @@ import type {
   UImageMetadata,
 } from "../domain/artifactFormatMetadata.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
-import { assertArtifactReadActive } from "../resources/ArtifactFileOperation.js";
 import {
+  assertArtifactReadActive,
   ArtifactReaderFailure,
   copyArtifactEntry,
   assertProducedEntry,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
-} from "../resources/ArtifactReader.js";
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+  ArtifactResourceScope,
+} from "../resources/index.js";
 import { ownArtifactStream } from "./OwnedArtifactStream.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";

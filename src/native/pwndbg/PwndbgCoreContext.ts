@@ -2,7 +2,11 @@ import { classifyProviderFailure } from "../../providers/classifyProviderFailure
 import {
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
-} from "../../resources/ArtifactFileOperation.js";
+  completedStableArtifact,
+  readStableArtifact,
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+} from "../../resources/index.js";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import { access, mkdir, stat, writeFile } from "node:fs/promises";
 import { constants, type Stats } from "node:fs";
@@ -24,12 +28,6 @@ import {
   recordedCrashDebuggerSchema,
   type RecordedCrash,
 } from "../../domain/native/recordedCrash.js";
-import {
-  completedStableArtifact,
-  readStableArtifact,
-} from "../../resources/readStableArtifact.js";
-import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";

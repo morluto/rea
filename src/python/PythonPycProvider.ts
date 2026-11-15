@@ -5,17 +5,13 @@ import {
   projectStableArtifactFailure,
   stableArtifactInputFailure,
   projectArtifactCloseFailure,
-} from "../artifacts/StableArtifactFailure.js";
-import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
-} from "../resources/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
-import {
+  ArtifactReaderFailure,
   type StableArtifactSnapshot,
   readStableArtifact,
-} from "../resources/readStableArtifact.js";
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+  ArtifactResourceScope,
+} from "../resources/index.js";
 import type { PythonPycPort } from "../ports/python/PythonPycPort.js";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";

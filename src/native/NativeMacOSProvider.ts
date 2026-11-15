@@ -1,4 +1,15 @@
-import { readerIntegrityFailure } from "../artifacts/StableArtifactFailure.js";
+import {
+  readerIntegrityFailure,
+  bindArtifactFileCleanup,
+  artifactFileCompletion,
+  artifactFilePrimaryFacts,
+  artifactFileCancellationCause,
+  ArtifactFileCleanupFailure,
+  type ArtifactFilePrimaryFacts,
+  AnalysisCleanupLeaseGroup,
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { withArtifactTargetIdentity } from "../artifacts/withArtifactTargetIdentity.js";
 import {
@@ -17,14 +28,6 @@ import {
   type NativePlistSelection,
   resolveBundleResourcePlistSelection,
 } from "./NativePlistSource.js";
-import {
-  bindArtifactFileCleanup,
-  artifactFileCompletion,
-  artifactFilePrimaryFacts,
-  artifactFileCancellationCause,
-  ArtifactFileCleanupFailure,
-  type ArtifactFilePrimaryFacts,
-} from "../resources/ArtifactFileOperation.js";
 import { readMachoEncryption } from "../artifacts/apple/MachoEncryptionReader.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import {
@@ -46,7 +49,6 @@ import { observeNativeCalls } from "./NativeCallObservation.js";
 import { realpath, symlink } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
-import { AnalysisCleanupLeaseGroup } from "../resources/AnalysisCleanupLease.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 
 import { z } from "zod";
@@ -149,8 +151,6 @@ import {
 } from "./NativeMachoInspection.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   withNativeMachoSource,

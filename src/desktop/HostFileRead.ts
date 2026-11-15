@@ -2,12 +2,12 @@ import { stat } from "node:fs/promises";
 
 import type { LibraryFileProbe } from "../domain/desktop/libraryPackages.js";
 
-import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import {
+  AnalysisCleanupLease,
   ArtifactFileCancelled,
   ArtifactFileCleanupFailure,
   artifactOperationCause,
-} from "../resources/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import {
   RegularFileCleanupFailure,
   RegularFileCancelled,

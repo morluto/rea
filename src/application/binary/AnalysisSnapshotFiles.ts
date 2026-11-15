@@ -22,9 +22,11 @@ import {
   cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import { readJsonObjectMembersFile } from "../JsonFiles.js";
-import { writeTextFile } from "../../resources/TextFileWrite.js";
+import {
+  writeTextFile,
+  type ArtifactResourceScope,
+} from "../../resources/index.js";
 import type { JsonObjectMemberReader } from "../JsonInputFile.js";
-import type { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 
 type SnapshotFailure = EvidenceFileError | EvidenceIntegrityError;
 const READ_OPERATION = "open_binary";

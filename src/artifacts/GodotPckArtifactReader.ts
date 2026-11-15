@@ -8,8 +8,10 @@ import { readGodotPckHeaderFacts } from "../domain/godotPckFormat.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
 import type { FileHandle } from "node:fs/promises";
 import { setImmediate } from "node:timers/promises";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
-import { assertArtifactReadActive } from "../resources/ArtifactFileOperation.js";
+import {
+  ArtifactReaderFailure,
+  assertArtifactReadActive,
+} from "../resources/index.js";
 import {
   locateGodotPck,
   type GodotPckAdmission,

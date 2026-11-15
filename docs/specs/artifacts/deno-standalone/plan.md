@@ -23,7 +23,7 @@ section placement:
   specifier, redirect and remote tables, and the npm snapshot length.
 - `DenoVirtualFs.ts` walks directories, files and symlinks into safe logical
   paths with indexed fallbacks, using `ArtifactPathRegistry.conflicts` in
-  `src/artifacts/ArtifactPaths.ts` to avoid occupied paths.
+  `src/resources/ArtifactPaths.ts` to avoid occupied paths.
 - `DenoStandaloneAdmission.ts` binds the located carrier to the admitted file.
 
 `src/artifacts/DenoStandaloneArtifactReader.ts` projects members, metadata,

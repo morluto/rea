@@ -5,19 +5,15 @@ import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import {
   AnalysisCleanupLeaseGroup,
   type AnalysisCleanupLease,
-} from "../../resources/AnalysisCleanupLease.js";
-import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
-import {
+  ArtifactReaderFailure,
   stableArtifactInputRecovery,
   readerIntegrityFailure,
-} from "../../artifacts/StableArtifactFailure.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
-import {
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
   artifactSelectedPathErrno,
-} from "../../resources/ArtifactFileOperation.js";
+} from "../../resources/index.js";
+import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,

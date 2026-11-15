@@ -2,12 +2,12 @@ import { FLUTTER_PROVIDER_IDENTITY } from "./FlutterProviderIdentity.js";
 import {
   artifactFileCancellationCause,
   assertArtifactReadActive,
-} from "../resources/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
-import {
+  ArtifactResourceScope,
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../resources/AnalysisCleanupLease.js";
+  ArtifactReaderFailure,
+  type ArtifactEntry,
+} from "../resources/index.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
@@ -50,10 +50,6 @@ import {
 } from "../domain/analysisErrorBase.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
-import {
-  ArtifactReaderFailure,
-  type ArtifactEntry,
-} from "../resources/ArtifactReader.js";
 import { ZipArtifactReader } from "../artifacts/ZipArtifactReader.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import {

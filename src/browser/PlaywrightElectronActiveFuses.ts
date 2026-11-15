@@ -1,6 +1,8 @@
-import { assertArtifactReadActive } from "../resources/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+import {
+  assertArtifactReadActive,
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+} from "../resources/index.js";
 import { electronFuseFailure } from "../electron/ElectronFuseFailures.js";
 import { basename, dirname } from "node:path";
 

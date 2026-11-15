@@ -2,9 +2,9 @@ import {
   ArtifactResourceRetryFailure,
   type ArtifactResourceOwner,
   type ArtifactResourceScope,
-} from "../resources/ArtifactResourceScope.js";
-import type { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
+  type AnalysisCleanupLease,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
 import {
   RegularFileCleanupFailure,

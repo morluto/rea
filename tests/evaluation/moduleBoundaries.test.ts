@@ -665,6 +665,8 @@ describe("layer baseline ratchet", () => {
     expect(await recorded(root)).toEqual({
       upward: { "native -> application": 1 },
       cycles: [],
+      crossProvider: {},
+      entry: {},
     });
     expect(run(root).status).toBe(0);
   });
@@ -697,5 +699,70 @@ describe("layer baseline ratchet", () => {
       upward: { "native -> application": 1 },
       cycles: [],
     });
+  });
+
+  /**
+   * A tree with one import of another provider folder, one composition import
+   * past ghidra's entry files (beside an import of a declared one) and one
+   * import of a toolkit file past src/resources/index.ts.
+   */
+  const providerTree = async (baseline: object) => {
+    const root = await createTestTempDirectory("rea-provider-boundaries-");
+    const files: Record<string, string> = {
+      "src/native/Reader.ts": "export type R = 1;\n",
+      "src/gpu/Probe.ts":
+        'import type { R } from "../native/Reader.js";\nexport type G = R;\n',
+      "src/ghidra/Doctor.ts": "export type D = 1;\n",
+      "src/ghidra/GhidraDoctor.ts": 'export type { D } from "./Doctor.js";\n',
+      "src/composition/ghidra.ts":
+        'import type { D } from "../ghidra/Doctor.js";\nimport type { D as E } from "../ghidra/GhidraDoctor.js";\nexport type C = D | E;\n',
+      "src/resources/Scope.ts": "export type S = 1;\n",
+      "src/resources/index.ts": 'export type { S } from "./Scope.js";\n',
+      "src/process/Lease.ts":
+        'import type { S } from "../resources/Scope.js";\nexport type L = S;\n',
+    };
+    for (const [path, source] of Object.entries(files)) {
+      await mkdir(dirname(join(root, path)), { recursive: true });
+      await writeFile(join(root, path), source);
+    }
+    await mkdir(join(root, "scripts", "lib"), { recursive: true });
+    await writeFile(
+      join(root, baselineFile),
+      `${JSON.stringify({ upward: {}, cycles: [], ...baseline }, null, 2)}\n`,
+    );
+    return root;
+  };
+
+  it("fails on provider boundary imports the baseline does not record", async () => {
+    const root = await providerTree({});
+    const result = run(root, "--shrink-layer-baseline");
+    expect(result.status).toBe(1);
+    for (const finding of [
+      "cross-provider import gpu -> native: 1 imports, baseline 0",
+      "import past the entry file composition -> ghidra: 1 imports, baseline 0",
+      "import past the entry file process -> resources: 1 imports, baseline 0",
+    ])
+      expect(result.stderr).toContain(finding);
+    expect(await recorded(root)).toEqual({ upward: {}, cycles: [] });
+  });
+
+  it("lowers stale provider boundary counts when asked and then passes", async () => {
+    const root = await providerTree({
+      crossProvider: { "gpu -> native": 2, "go -> native": 1 },
+      entry: { "composition -> ghidra": 3, "process -> resources": 1 },
+    });
+    const stale = run(root);
+    expect(stale.status).toBe(1);
+    expect(stale.stderr).toContain(
+      "cross-provider import gpu -> native: 1, baseline 2",
+    );
+    expect(run(root, "--shrink-layer-baseline").status).toBe(0);
+    expect(await recorded(root)).toEqual({
+      upward: {},
+      cycles: [],
+      crossProvider: { "gpu -> native": 1 },
+      entry: { "composition -> ghidra": 1, "process -> resources": 1 },
+    });
+    expect(run(root).status).toBe(0);
   });
 });

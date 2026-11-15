@@ -8,9 +8,11 @@ import { parseAsarListingAdmission } from "../../config/asarListingAdmission.js"
 import { resolveJavaScriptMemberMutationAllowance } from "../../config/javascriptMemberMutationAllowance.js";
 import { z } from "zod";
 
-import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+} from "../../resources/index.js";
 import { translateArtifactFailure } from "../../artifacts/ArtifactOperationFailure.js";
-import type { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import {
   analyzeJavaScriptApplicationInputSchema,
   type JavaScriptApplicationAnalysisResult,

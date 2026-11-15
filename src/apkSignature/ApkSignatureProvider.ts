@@ -7,13 +7,13 @@ import type {
   ApkSignatureExecution,
   ApkSignaturePort,
 } from "../ports/apkSignature/ApkSignaturePort.js";
-import { readStableArtifact } from "../resources/readStableArtifact.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
+  readStableArtifact,
+  ArtifactReaderFailure,
   assertArtifactReadActive,
   bindArtifactFileCleanup,
-} from "../resources/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+  ArtifactResourceScope,
+} from "../resources/index.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {

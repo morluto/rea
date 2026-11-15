@@ -1,5 +1,7 @@
-import { assertArtifactReadActive } from "../../resources/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
+import {
+  assertArtifactReadActive,
+  ArtifactReaderFailure,
+} from "../../resources/index.js";
 import {
   type BinaryHardeningImage,
   type BinaryHardeningRow,

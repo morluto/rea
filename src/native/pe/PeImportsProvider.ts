@@ -2,13 +2,11 @@ import { projectPeBinaryFailure } from "./PeBinaryFailure.js";
 import {
   projectArtifactCloseFailure,
   imageFileSizeRemediation,
-} from "../../artifacts/StableArtifactFailure.js";
-import {
   type StableArtifactSnapshot,
   readStableArtifact,
-} from "../../resources/readStableArtifact.js";
-import { assertArtifactReadActive } from "../../resources/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
+  assertArtifactReadActive,
+  ArtifactResourceScope,
+} from "../../resources/index.js";
 import type { PeImportsPort } from "../../ports/binaryDiagnostics/PeImportsPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";

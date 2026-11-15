@@ -32,7 +32,7 @@ import { err, ok, type Result } from "../../domain/result.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../../resources/AnalysisCleanupLease.js";
+} from "../../resources/index.js";
 import type {
   WebModuleResolutionBatch,
   WebModuleResolutionObservation,

@@ -11,9 +11,7 @@
   "cycles": [
     "application <-> artifacts",
     "application <-> dotnet",
-    "artifacts <-> firmware",
     "artifacts <-> gpu",
-    "artifacts <-> javascript",
     "artifacts <-> native",
     "cli <-> cli.ts",
     "cli <-> cliBrowserScenarioCommands.ts",
@@ -21,5 +19,44 @@
     "cli <-> cliObservationOptions.ts",
     "cli <-> cliOutput.ts",
     "main <-> server"
-  ]
+  ],
+  "crossProvider": {
+    "android -> artifacts": 2,
+    "android -> native": 1,
+    "apktool -> artifacts": 2,
+    "artifacts -> dotnet": 3,
+    "artifacts -> firmware": 1,
+    "artifacts -> gpu": 1,
+    "artifacts -> javascript": 2,
+    "artifacts -> native": 8,
+    "browser -> artifacts": 6,
+    "browser -> electron": 5,
+    "browser -> javascript": 2,
+    "captures -> pcap": 2,
+    "desktop -> browser": 1,
+    "desktop -> electron": 1,
+    "electron -> artifacts": 2,
+    "firmware -> native": 1,
+    "flutter -> artifacts": 1,
+    "go -> native": 6,
+    "gpu -> artifacts": 1,
+    "gpu -> native": 14,
+    "il2cpp -> ghidra": 1,
+    "il2cpp -> native": 7,
+    "inspector -> browser": 10,
+    "kuna -> artifacts": 1,
+    "kuna -> native": 2,
+    "model -> artifacts": 1,
+    "native -> artifacts": 11,
+    "python -> native": 1,
+    "rust -> native": 3
+  },
+  "entry": {
+    "application -> artifacts": 11,
+    "application -> browser": 2,
+    "application -> desktop": 41,
+    "application -> dotnet": 3,
+    "application -> frida": 2,
+    "application -> reference": 8
+  }
 }

@@ -22,25 +22,21 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { StringDecoder } from "node:string_decoder";
 import { getHeapStatistics } from "node:v8";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import {
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../resources/AnalysisCleanupLease.js";
-import {
   artifactFileCompletion,
   ArtifactFileCleanupFailure,
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
   assertArtifactReadActive,
   withArtifactFileHandle,
-} from "../resources/ArtifactFileOperation.js";
-import {
   completedStableArtifact,
   readStableArtifact,
-} from "../resources/readStableArtifact.js";
-import type { StableArtifactSnapshot } from "../resources/readStableArtifact.js";
+  type StableArtifactSnapshot,
+} from "../resources/index.js";
 import {
   AnalysisError,
   type AnalysisErrorOptions,

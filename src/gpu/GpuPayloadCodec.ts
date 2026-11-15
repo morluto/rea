@@ -1,7 +1,7 @@
 import { nodeCodecResult } from "../compression/NodeCodecResult.js";
 import { constants, inflate, zstdDecompress } from "node:zlib";
 import { promisify } from "node:util";
-import { assertArtifactReadActive } from "../resources/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../resources/index.js";
 import { decodeLz4Block } from "./Lz4Block.js";
 import { rejectGpu } from "./GpuSource.js";
 const unzip = promisify(inflate);
