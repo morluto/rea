@@ -15,7 +15,7 @@ import type {
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import type { WebModuleResolutionPort } from "../../application/WebModulePorts.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import {
   AnalysisCancelledError,
@@ -302,11 +302,11 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
       return err(
         result.ok
           ? cleanupError
-          : analysisErrorWithCleanupFailure(
+          : analysisErrorWithCleanupDependencies(
               result.error,
               cleanupError,
               OPERATION,
-            ).bindCleanupDependencies([result.error, cleanupError]),
+            ),
       );
 
     return result;

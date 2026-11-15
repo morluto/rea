@@ -39,7 +39,7 @@ import {
   AnalysisOutputError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { jsonParts, bufferedJsonParts } from "../domain/jsonSerialization.js";
 import { safeParseUtf8Json } from "../domain/safeJson.js";
@@ -946,11 +946,7 @@ export class WebBundleAnalysisWorker {
     new AnalysisCleanupLeaseGroup(cleanup, [this.#cleanup]);
     return primary === undefined
       ? cleanup
-      : analysisErrorWithCleanupFailure(
-          primary,
-          cleanup,
-          OPERATION,
-        ).bindCleanupDependencies([primary, cleanup]);
+      : analysisErrorWithCleanupDependencies(primary, cleanup, OPERATION);
   }
 
   async close(): Promise<void> {
