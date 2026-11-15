@@ -547,5 +547,6 @@
     "src/sqlite/SqliteDatabaseProvider.ts": 8,
     "src/sqlite/SqliteDatabaseWorkerExecution.ts": 2,
     "src/wasm/WabtArtifactProvider.ts": 1
-  }
+  },
+  "macho-load-command-literal": {}
 }

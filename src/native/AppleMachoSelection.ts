@@ -236,12 +236,12 @@ export const parseMachoLayout = (
       kind: frame.value.command,
       size: frame.value.size,
     };
-    if (command.kind === 1)
+    if (command.kind === LC.SEGMENT)
       throw malformedInput(
         "macho",
         "Mach-O segment command does not match the header width",
       );
-    if (command.kind === 0x19) collectSegment(bytes, command, state);
+    if (command.kind === LC.SEGMENT_64) collectSegment(bytes, command, state);
     else collectFixupCommand(bytes, command, state);
   }
   const complete = framing.finish();

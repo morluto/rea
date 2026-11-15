@@ -64,10 +64,10 @@ const CPU_TYPE_ARM64 = 0x0100000c;
 /** loader.h command codes and their device platform identities. */
 const VERSION_MIN_PLATFORMS: ReadonlyMap<number, MachoVersionMinPlatform> =
   new Map([
-    [0x24, 1], // LC_VERSION_MIN_MACOSX
-    [0x25, 2], // LC_VERSION_MIN_IPHONEOS
-    [0x2f, 3], // LC_VERSION_MIN_TVOS
-    [0x30, 4], // LC_VERSION_MIN_WATCHOS
+    [LC.VERSION_MIN_MACOSX, 1],
+    [LC.VERSION_MIN_IPHONEOS, 2],
+    [LC.VERSION_MIN_TVOS, 3],
+    [LC.VERSION_MIN_WATCHOS, 4],
   ]);
 
 const LAZY_INFO_HEADER_BYTES = 24;
