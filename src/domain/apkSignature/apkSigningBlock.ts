@@ -28,7 +28,17 @@ const ZIP64_ENTRIES_SENTINEL = 0xffff;
 /** "APK Sig Block 42" — the 16-byte block magic (JAR/APK signing block spec). */
 const BLOCK_MAGIC = "APK Sig Block 42";
 /** A single pair is at least 12 bytes (uint64 length + uint32 id); cap the count. */
-const MAX_PAIRS = 4096;
+export const APK_SIGNING_BLOCK_MAX_PAIRS = 4096;
+
+/** Validate one size-prefixed pair without reading or allocating its value. */
+export const apkSigningPairEnd = (
+  length: bigint,
+  offset: number,
+  end: number,
+): number | undefined => {
+  if (length < 4n || length > BigInt(end - offset - 8)) return undefined;
+  return offset + 8 + Number(length);
+};
 
 /** Well-known APK Signing Block pair IDs. */
 export const APK_BLOCK_ID = {
@@ -348,17 +358,21 @@ export const locateApkSigningBlock = (
   const pairsEnd = cdOffset - 24; // stop before trailing size + magic
   while (cursor < pairsEnd) {
     const length = u64(dv, cursor);
-    if (length === null || length < 4 || cursor + 8 + length > pairsEnd + 0)
+    const next =
+      length === null
+        ? undefined
+        : apkSigningPairEnd(BigInt(length), cursor, pairsEnd);
+    if (length === null || next === undefined)
       return err({
         kind: "malformed-block",
         offset: cursor,
         detail: "pair length out of range",
       });
-    if (pairs.length >= MAX_PAIRS)
+    if (pairs.length >= APK_SIGNING_BLOCK_MAX_PAIRS)
       return err({
         kind: "budget-exceeded",
         resource: "signing-block-pairs",
-        limit: MAX_PAIRS,
+        limit: APK_SIGNING_BLOCK_MAX_PAIRS,
       });
     const id = dv.getUint32(cursor + 8, true);
     const valueStart = cursor + 12;
@@ -366,7 +380,7 @@ export const locateApkSigningBlock = (
       id,
       value: bytes.subarray(valueStart, valueStart + (length - 4)),
     });
-    cursor += 8 + length;
+    cursor = next;
   }
   return ok({ blockStart, pairs });
 };

@@ -5,6 +5,7 @@ import {
   unsupportedInput,
 } from "../domain/parseFailure.js";
 import type { Segment } from "./AppleMachoSelection.js";
+import { readLeb128, type Leb128Read } from "../domain/leb128.js";
 import { issue } from "./AppleDispatchDecodeFacts.js";
 import type { DecodeIssue } from "./AppleDispatchDecodeFacts.js";
 import { decodeMachoName, type MachoName } from "./AppleMachoNames.js";
@@ -887,6 +888,16 @@ const chainedFixups = (
   };
 };
 
+/** Mach-O opcode operands are 64-bit, and padding may extend their encoding. */
+const MACHO_ULEB = { signed: false, bits: 64, padding: true } as const;
+const MACHO_SLEB = { signed: true, bits: 64, padding: true } as const;
+
+/** The offset after the last byte read, including an overflowing byte. */
+const consumedEnd = (read: Leb128Read): number =>
+  "failure" in read
+    ? read.at + (read.failure === "overflow" ? 1 : 0)
+    : read.next;
+
 const uleb = (
   bytes: Buffer,
   cursor: { at: number },
@@ -894,28 +905,29 @@ const uleb = (
   stream: "bind" | "rebase" = "bind",
   rebaseWork?: { workRemaining: number },
 ): bigint => {
-  let value = 0n;
-  let shift = 0;
-  for (;;) {
-    if (cursor.at >= end)
-      throw truncatedInput("macho", `Truncated ${stream} opcode operand`);
-    if (rebaseWork !== undefined) {
-      if (rebaseWork.workRemaining === 0)
-        throw malformedInput(
-          "macho",
-          "Legacy rebase parsing exceeded the source-derived work budget",
-        );
-      rebaseWork.workRemaining--;
-    }
-    const byte = bytes[cursor.at++] ?? 0;
-    const slice = byte & 0x7f;
-    if ((shift === 63 && slice > 1) || (shift === 64 && slice !== 0))
-      throw malformedInput("macho", `Oversized ${stream} opcode operand`);
-    if (shift < 64) value |= BigInt(slice) << BigInt(shift);
-    // Padding may extend the encoding, but never the represented integer.
-    shift = Math.min(64, shift + 7);
-    if ((byte & 0x80) === 0) return value;
+  const start = cursor.at;
+  // A rebase operand reads no further than its remaining work allows, so a
+  // padded operand cannot be rescanned past the budget by a later stream.
+  const bound =
+    rebaseWork === undefined
+      ? end
+      : Math.min(end, start + rebaseWork.workRemaining);
+  const read = readLeb128(bytes, start, bound, MACHO_ULEB);
+  cursor.at = consumedEnd(read);
+  if (rebaseWork !== undefined) {
+    // Each byte read is charged, including those of a failed operand.
+    rebaseWork.workRemaining -= cursor.at - start;
+    if ("failure" in read && read.failure === "truncated" && read.at < end)
+      throw malformedInput(
+        "macho",
+        "Legacy rebase parsing exceeded the source-derived work budget",
+      );
   }
+  if ("failure" in read)
+    throw read.failure === "truncated"
+      ? truncatedInput("macho", `Truncated ${stream} opcode operand`)
+      : malformedInput("macho", `Oversized ${stream} opcode operand`);
+  return read.value;
 };
 
 interface RebaseFacts {
@@ -1176,26 +1188,13 @@ function* parseLegacyRebasesSteps(
 }
 
 const sleb = (bytes: Buffer, cursor: { at: number }, end: number): bigint => {
-  let value = 0n;
-  let shift = 0;
-  let byte = 0;
-  do {
-    if (cursor.at >= end)
-      throw truncatedInput("macho", "Truncated bind opcode operand");
-    byte = bytes[cursor.at++] ?? 0;
-    const slice = byte & 0x7f;
-    if (
-      (shift === 63 && slice !== 0 && slice !== 0x7f) ||
-      (shift === 64 && slice !== (value < 0n ? 0x7f : 0))
-    )
-      throw malformedInput("macho", "Oversized bind opcode operand");
-    if (shift < 64)
-      value = BigInt.asIntN(64, value | (BigInt(slice) << BigInt(shift)));
-    shift = Math.min(64, shift + 7);
-  } while ((byte & 0x80) !== 0);
-  return shift < 64 && (byte & 0x40) !== 0
-    ? value - (1n << BigInt(shift))
-    : value;
+  const read = readLeb128(bytes, cursor.at, end, MACHO_SLEB);
+  cursor.at = consumedEnd(read);
+  if ("failure" in read)
+    throw read.failure === "truncated"
+      ? truncatedInput("macho", "Truncated bind opcode operand")
+      : malformedInput("macho", "Oversized bind opcode operand");
+  return read.value;
 };
 
 /** Registers of the `LC_DYLD_INFO` bind state machine. */

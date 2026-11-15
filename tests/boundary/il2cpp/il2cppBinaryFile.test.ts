@@ -1977,6 +1977,7 @@ it("keeps a capacity refusal while naming a generic row a refusal", () => {
                 "native-type-text-capacity",
                 "budget",
                 1,
+                "bytes",
               );
             tableChecked = bytes === 3 * minimumGenericRow;
           },

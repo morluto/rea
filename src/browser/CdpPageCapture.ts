@@ -19,11 +19,16 @@ import {
   captureDom,
   captureFrames,
   captureResources,
+  emptyDomCapture,
+  excludeDocumentEvidence,
   type CapturedResource,
   type DomCapture,
 } from "./CdpCaptureDocuments.js";
 import { observedFrameUrl } from "./protocol/CdpFrameTree.js";
-import { CdpMalformedReply } from "./protocol/CdpCommands.js";
+import {
+  CdpMalformedReply,
+  type CdpCommandResult,
+} from "./protocol/CdpCommands.js";
 import { capturedSvgNodeKind } from "./CdpCaptureDomNamespaces.js";
 import {
   allowedSanitizedUrl,
@@ -267,9 +272,11 @@ const captureJsonResponseBodies = async (
       state.events.responseBodyUnavailable(candidate);
       continue;
     }
-    let result: unknown;
+    let reply: Awaited<
+      ReturnType<typeof optionalCdpCommand<"Network.getResponseBody">>
+    >;
     try {
-      result = await optionalCdpCommand(
+      reply = await optionalCdpCommand(
         state.context,
         "Network.getResponseBody",
         { requestId: candidate.requestId },
@@ -289,8 +296,11 @@ const captureJsonResponseBodies = async (
       );
       continue;
     }
-    if (result !== undefined) {
-      state.events.ingestResponseBody(candidate, result);
+    if (reply.ok || reply.error._tag === "CdpMalformedReply") {
+      state.events.ingestResponseBody(
+        candidate,
+        reply.ok ? reply.value : "malformed",
+      );
       continue;
     }
     for (const remaining of requests.slice(index))
@@ -331,16 +341,28 @@ const authorizeObservationWindow = async (
 
 const capturePageDom = async (state: CaptureState): Promise<DomCapture> => {
   const { context, allowedOrigins } = state;
-  const result = await context.connection.send(
-    "DOMSnapshot.captureSnapshot",
-    {
-      computedStyles: [],
-      includePaintOrder: false,
-      includeDOMRects: false,
-    },
-    context.sessionId,
-    context.signal,
-  );
+  let result: CdpCommandResult<"DOMSnapshot.captureSnapshot">;
+  try {
+    result = await context.connection.send(
+      "DOMSnapshot.captureSnapshot",
+      {
+        computedStyles: [],
+        includePaintOrder: false,
+        includeDOMRects: false,
+      },
+      context.sessionId,
+      context.signal,
+    );
+  } catch (cause: unknown) {
+    // A malformed snapshot leaves the DOM and its derived metadata unknown.
+    if (!(cause instanceof CdpMalformedReply)) throw cause;
+    excludeDocumentEvidence(
+      state.events.completeness,
+      "invalid_protocol_value",
+      null,
+    );
+    return emptyDomCapture;
+  }
   const capture = captureDom(
     result,
     allowedOrigins,
@@ -464,17 +486,23 @@ const accessibilityForFrames = async (
   frames: readonly { readonly frame_id: string }[],
 ): Promise<ReturnType<typeof captureAccessibility>> => {
   const { context, limitations, events } = state;
-  const results: unknown[] = [];
+  const results: CdpCommandResult<"Accessibility.getFullAXTree">[] = [];
   let unavailable = false;
   for (const frame of frames) {
-    const result = await optionalCdpCommand(
+    const reply = await optionalCdpCommand(
       context,
       "Accessibility.getFullAXTree",
       { frameId: frame.frame_id },
       limitations,
     );
-    if (result === undefined) unavailable = true;
-    else results.push(result);
+    if (reply.ok) results.push(reply.value);
+    else if (reply.error._tag === "CdpCommandUnavailable") unavailable = true;
+    else
+      events.completeness.exclude(
+        "accessibility",
+        "invalid_protocol_value",
+        null,
+      );
   }
   if (unavailable) events.completeness.unavailable("accessibility");
   const capture = captureAccessibility(results, {

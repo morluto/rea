@@ -199,13 +199,13 @@ const failurePrimary = (
   if (identityFailure !== undefined) return identityFailure;
   if (
     cause instanceof ElfPointerRelocationFailure &&
-    cause.reason === "native-index-capacity"
+    cause.failure.kind === "limit"
   )
     return new AnalysisResourceConstraintError(
       OPERATION,
       "capacity",
       `Selected artifact ${input.path}: ${cause.message}`,
-      { boundary: "structure" },
+      { boundary: "structure", maximum: cause.failure.limit.maximum },
       {
         cause,
         ...fixedAllowanceOptions(
