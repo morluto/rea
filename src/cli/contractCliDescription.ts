@@ -45,6 +45,11 @@ export interface ProjectedContract<Name extends string = string> {
     | z.ZodObject
     | z.ZodDiscriminatedUnion<readonly z.ZodObject[]>
     | z.ZodUnion<readonly z.ZodObject[]>;
+  /**
+   * The result schema. It declares which result positions are controls REA
+   * recorded; without it the CLI renders no result controls.
+   */
+  readonly outputSchema?: z.ZodType;
 }
 
 /** A contract whose whole input a CLI command takes as one JSON document. */

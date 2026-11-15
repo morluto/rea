@@ -1,3 +1,6 @@
+import type { z } from "zod";
+
+import { recordedControlSchemas } from "../domain/analysisSettingDefinitions.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
 
@@ -120,32 +123,85 @@ const flaggedLimit = (
     : { ...limit, cli_flag: flag };
 };
 
+/** Wrappers whose value is their inner schema's value. */
+const WRAPPER_TYPES = new Set([
+  "optional",
+  "nonoptional",
+  "nullable",
+  "default",
+  "prefault",
+  "readonly",
+  "catch",
+]);
+
+/**
+ * The schema nodes of a value, following the result schema: each position
+ * the schema declares a recorded control yields that value. Positions the
+ * schema leaves open (records, unknown JSON, lazy or custom types) are not
+ * entered, so captured content cannot supply a control.
+ */
+const recordedControlValues = (
+  output: unknown,
+  schema: z.ZodType,
+): unknown[] => {
+  const found: unknown[] = [];
+  const pending: [unknown, z.ZodType][] = [[output, schema]];
+  while (pending.length > 0) {
+    const [value, node] = pending.pop()!;
+    if (value === undefined) continue;
+    if (recordedControlSchemas.has(node)) {
+      if (node.safeParse(value).success) found.push(value);
+      continue;
+    }
+    const def = node._zod.def as unknown as Record<string, unknown> & {
+      readonly type: string;
+    };
+    if (WRAPPER_TYPES.has(def.type)) {
+      pending.push([value, def.innerType as z.ZodType]);
+    } else if (def.type === "pipe") {
+      pending.push([value, def.out as z.ZodType]);
+    } else if (def.type === "union") {
+      // The first option the value satisfies is the one the producer used.
+      const option = (def.options as z.ZodType[]).find(
+        (candidate) => candidate.safeParse(value).success,
+      );
+      if (option !== undefined) pending.push([value, option]);
+    } else if (def.type === "array" && Array.isArray(value)) {
+      for (const item of value) pending.push([item, def.element as z.ZodType]);
+    } else if (
+      def.type === "object" &&
+      value !== null &&
+      typeof value === "object" &&
+      !Array.isArray(value)
+    ) {
+      const shape = def.shape as Record<string, z.ZodType>;
+      const record = value as Record<string, unknown>;
+      for (const [key, field] of Object.entries(shape))
+        if (Object.hasOwn(record, key)) pending.push([record[key], field]);
+    }
+  }
+  return found;
+};
+
 /**
  * Each per-call control a result records by contract field (a `limit` in a
  * partial result's unknowns, coverage or retained Evidence), with the option
- * that sets it on this command. The result is read, never changed: the CLI
- * renders these flags in its own envelope.
+ * that sets it on this command. Only positions the command's output schema
+ * declares as recorded controls count. The result is read, never changed:
+ * the CLI renders these flags in its own envelope.
  */
 export const cliResultControlsIn = (
   output: unknown,
+  schema: z.ZodType,
   binding: CliInputFieldBinding,
 ): Record<string, string> => {
   const controls: Record<string, string> = {};
-  const pending: unknown[] = [output];
-  while (pending.length > 0) {
-    const value = pending.pop();
-    if (Array.isArray(value)) {
-      for (const item of value) pending.push(item);
-      continue;
-    }
-    if (value === null || typeof value !== "object") continue;
-    const record = value as Record<string, JsonValue>;
-    const parameter = limitParameter(record);
+  for (const value of recordedControlValues(output, schema)) {
+    const parameter = limitParameter(value as JsonValue);
     const flag =
       parameter === undefined ? undefined : cliFlagFor(parameter, binding);
     if (parameter !== undefined && flag !== undefined)
       controls[parameter] = flag;
-    for (const item of Object.values(record)) pending.push(item);
   }
   return controls;
 };

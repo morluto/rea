@@ -354,11 +354,15 @@ export const runDirectOnTarget =
  */
 const projectCliResult = <Output>(
   output: Output,
+  outputSchema: z.ZodType | undefined,
   binding: Parameters<typeof projectCliInputFields>[1],
 ): Output => {
-  // A command without flags has no control to render.
-  if (Object.keys(binding.flags).length > 0)
-    recordCliResultControls(() => cliResultControlsIn(output, binding));
+  // A command without flags, or without a result schema that declares
+  // recorded controls, has no control to render.
+  if (outputSchema !== undefined && Object.keys(binding.flags).length > 0)
+    recordCliResultControls(() =>
+      cliResultControlsIn(output, outputSchema, binding),
+    );
   return projectCliInputFields(output, binding);
 };
 
@@ -696,6 +700,7 @@ export const registerContractCommand = <
                 ) as CliOptionValues<CliOptions>,
               },
             ),
+            selected.contract.outputSchema,
             selected.inputBinding,
           );
         }),
@@ -973,6 +978,7 @@ export const registerRoutedCommand = (
                 withCliOnlyDefaults(description, values),
               ),
             }),
+            description.contract.outputSchema,
             description.inputBinding,
           );
         }),

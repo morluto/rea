@@ -649,6 +649,23 @@ export const analysisResultLimitSchema = z.union([
   analysisSettingLimitSchema,
   analysisParameterLimitSchema,
 ]);
+
+/**
+ * The schemas whose values are controls a result records itself. A result
+ * schema that places one of these instances (directly, optional, in an array
+ * or in a union) declares that position as REA's own control reference, so
+ * an adapter can name its option. Values elsewhere, such as captured file
+ * content that happens to look like a limit, are never read as controls.
+ */
+export const recordedControlSchemas = z.registry<{
+  readonly recordedControl: true;
+}>();
+recordedControlSchemas.add(analysisSettingLimitSchema, {
+  recordedControl: true,
+});
+recordedControlSchemas.add(analysisParameterLimitSchema, {
+  recordedControl: true,
+});
 export const analysisSettingDefinition = (
   id: AnalysisSettingId,
 ): SettingDefinition => ANALYSIS_SETTINGS[id];

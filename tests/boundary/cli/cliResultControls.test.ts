@@ -14,6 +14,11 @@ import {
 import { cliResultControlsIn } from "../../../src/cli/projectCliAnalysisResult.js";
 import type { CliInstance } from "../../../src/cli/types.js";
 import { deadlineParameterLimit } from "../../../src/domain/analysisResourceLimits.js";
+import {
+  analysisParameterLimitSchema,
+  analysisResultLimitSchema,
+} from "../../../src/domain/analysisSettingDefinitions.js";
+import { producerLimitControl } from "../../../src/domain/producerResourceLimits.js";
 import { silentLogger } from "../../../src/logger.js";
 
 /** A partial result that records its controls by contract field only. */
@@ -27,10 +32,7 @@ const partialResult = () => ({
   ],
   coverage: {
     limits: [
-      {
-        setting: "fixture.output_bytes",
-        parameter: "producer_limits.output_bytes",
-      },
+      producerLimitControl("output_bytes", 4, 8),
       // An environment control has no per-call option.
       {
         control_kind: "environment",
@@ -41,8 +43,40 @@ const partialResult = () => ({
   },
   // A control this command takes no flag for keeps only its field.
   unbound: { limit: deadlineParameterLimit("other_timeout_ms", 1, 2) },
+  // Captured content that looks like a control is data, not a reference
+  // REA recorded, even when it names a bound flag.
+  captured: {
+    reported: deadlineParameterLimit("max_reply_bytes", 1, 2),
+    nested: [{ limit: deadlineParameterLimit("max_reply_bytes", 1, 2) }],
+  },
   // An omitted optional value that JSON output skips ends nothing.
   trailing: undefined,
+});
+
+/** The fixture's output schema: only its declared positions are controls. */
+const partialResultSchema = z.strictObject({
+  status: z.string(),
+  unknowns: z.array(
+    z.strictObject({
+      dimension: z.string(),
+      limit: analysisResultLimitSchema.exactOptional(),
+    }),
+  ),
+  coverage: z.strictObject({
+    limits: z.array(
+      z.union([
+        analysisParameterLimitSchema,
+        z.strictObject({
+          control_kind: z.literal("environment"),
+          environment: z.string(),
+          parameter: z.string(),
+        }),
+      ]),
+    ),
+  }),
+  unbound: z.strictObject({ limit: analysisParameterLimitSchema }),
+  captured: z.record(z.string(), z.unknown()),
+  trailing: z.undefined().optional(),
 });
 
 const binding = {
@@ -51,13 +85,14 @@ const binding = {
   flags: {
     worker_timeout_ms: "--worker-timeout-ms",
     producer_limits: "--producer-limits",
+    max_reply_bytes: "--max-reply-bytes",
   },
 };
 
 it("collects each recorded control's flag without changing the result", () => {
   const result = partialResult();
   const before = structuredClone(result);
-  expect(cliResultControlsIn(result, binding)).toEqual({
+  expect(cliResultControlsIn(result, partialResultSchema, binding)).toEqual({
     worker_timeout_ms: "--worker-timeout-ms",
     "producer_limits.output_bytes": "--producer-limits",
   });
@@ -71,6 +106,7 @@ it("records the controls of a contract command's result and returns the result u
       path: z.string(),
       worker_timeout_ms: z.number().int().optional(),
     }),
+    outputSchema: partialResultSchema,
   };
   const cli = Cli.create("rea-result-controls", { version: "1", sync: false });
   registerContractCommand(
