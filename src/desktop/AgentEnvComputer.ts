@@ -20,12 +20,24 @@ import {
   readHomeFiles,
   writeHomeFiles,
 } from "./ComputerHomeFiles.js";
-import { drawnScreenshot } from "./DrawnScreenshot.js";
+import { DRAWN_WAIT_MS, drawnScreenshot } from "./DrawnScreenshot.js";
 import { awaitHttpReply, type HttpReply } from "./HttpReply.js";
 
 const READY_TIMEOUT_MS = 180_000;
 const REQUEST_TIMEOUT_MS = 120_000;
-const PROGRESS_MS = 5_000;
+
+/** How long a computer's first screenshot waits for the desktop to draw, and how often its start reports progress. */
+export interface ComputerStartTiming {
+  readonly drawnWaitMs: number;
+  readonly progressMs: number;
+}
+
+/** The shipped start timing; only tests shorten it. */
+export const COMPUTER_START_TIMING: ComputerStartTiming = {
+  drawnWaitMs: DRAWN_WAIT_MS,
+  progressMs: 5_000,
+};
+
 const RECORDINGS = ".agentenv-recordings";
 /** A control route's answer: readiness, or a recording's manifest, near 1.5 MB for a day of 15 s segments. */
 const CONTROL_RESPONSE_BYTES = 4 * 1024 * 1024;
@@ -252,6 +264,7 @@ const progressHeartbeat = (
   helper: ComputerHelper,
   phase: { readonly name: string },
   progress: ((message: string) => void) | undefined,
+  intervalMs: number,
 ) => {
   if (progress === undefined) return undefined;
   const startedAt = Date.now();
@@ -265,7 +278,7 @@ const progressHeartbeat = (
     progress(
       `${phase.name} (${String(Math.round((Date.now() - startedAt) / 1000))} s)${line === undefined || line === "" ? "" : `: ${line}`}`,
     );
-  }, PROGRESS_MS);
+  }, intervalMs);
 };
 
 const connectDriver = async (
@@ -341,14 +354,25 @@ export class AgentEnvComputer {
     helper: ComputerHelper,
     signal: AbortSignal,
     progress?: (message: string) => void,
+    timing: ComputerStartTiming = COMPUTER_START_TIMING,
   ): Promise<{
     readonly computer: AgentEnvComputer;
     readonly frame: DriverResult;
   }> {
     const phase = { name: "agentenv is deploying the computer" };
-    const heartbeat = progressHeartbeat(helper, phase, progress);
+    const heartbeat = progressHeartbeat(
+      helper,
+      phase,
+      progress,
+      timing.progressMs,
+    );
     try {
-      return await AgentEnvComputer.#connect(helper, signal, phase);
+      return await AgentEnvComputer.#connect(
+        helper,
+        signal,
+        phase,
+        timing.drawnWaitMs,
+      );
     } finally {
       clearInterval(heartbeat);
     }
@@ -358,6 +382,7 @@ export class AgentEnvComputer {
     helper: ComputerHelper,
     signal: AbortSignal,
     phase: { name: string },
+    drawnWaitMs: number,
   ): ReturnType<typeof AgentEnvComputer.connect> {
     const handshake = await helper.handshake(signal);
     if (handshake === undefined || "error" in handshake)
@@ -389,6 +414,7 @@ export class AgentEnvComputer {
       const frame = await drawnScreenshot(
         (retry) => computer.callTool("computer_screenshot", {}, retry),
         signal,
+        drawnWaitMs,
       );
       return { computer, frame };
     } catch (cause: unknown) {

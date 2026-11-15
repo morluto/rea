@@ -101,10 +101,9 @@ complete decoded manifest. Component, filter, data and metadata `location` value
 use one-based lines/columns and UTF-16 offsets into that manifest. A component's
 `declaration_index` preserves its original declaration ordinal, including gaps.
 
-`declaration_coverage` distinguishes complete, partial and unknown observations.
-Historical Evidence omits newly introduced fields and defaults coverage to
-`unknown`; omission never establishes absence. Current records contain the fields,
-with null for absent or unresolved scalar declarations. The inventory retains at
+`declaration_coverage` distinguishes complete and partial observations. Every
+record contains the declaration fields, with null for absent or unresolved scalar
+declarations. The inventory retains at
 most 32 filters and 64 nested action/category/data/metadata records per component,
 and shares a 1 MiB structured-value copy budget across components. Omitted values
 or unsupported filter constructs mark coverage partial and include a limitation;
@@ -783,5 +782,4 @@ means the producer did not establish instruction coverage. Using-node totals
 and coverage do not imply complete instruction evidence.
 `direct_invokes_coverage` reports counts of using nodes with complete, partial,
 or unknown positions, plus the number of retained instruction sites. This
-aggregate makes position truncation visible without scanning every caller;
-older retained Evidence may omit it, which means the aggregate was unexamined.
+aggregate makes position truncation visible without scanning every caller.

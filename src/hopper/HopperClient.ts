@@ -1,4 +1,3 @@
-import { Utf8NdjsonDecodingError } from "../process/Utf8NdjsonLineBuffer.js";
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { randomBytes, randomUUID } from "node:crypto";
 import { access } from "node:fs/promises";
@@ -9,7 +8,10 @@ import writeFileAtomic from "write-file-atomic";
 
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { analysisClientFailureContext } from "../providers/AnalysisClientFailure.js";
-import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCapabilityUnavailableError,
+  OwnerCancellation,
+} from "../domain/analysisErrorCore.js";
 import {
   hopperCancelledBySignal,
   type HopperCancelledError,
@@ -47,11 +49,8 @@ import {
 } from "../process/ProviderDeadline.js";
 import { redactCapturedTransportCredential } from "../process/ProviderDiagnosticRedaction.js";
 import { ProviderRunLineage } from "../process/ProviderRunLineage.js";
-import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
-import {
-  SharedStartupAttempt,
-  STARTUP_OWNER_CLOSED,
-} from "../process/SharedStartupAttempt.js";
+import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
+import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
 import {
   type ProviderProcessDiagnostic,
   ProviderProcessSupervisor,
@@ -170,20 +169,10 @@ export class HopperClient {
   #startupAttempt: HopperStartupAttempt | undefined;
   #closePromise: Promise<Result<null, AnalysisError>> | undefined;
   readonly #onSocketData = (chunk: Buffer): void => {
-    try {
-      this.#responses.push(chunk);
-    } catch (cause: unknown) {
-      if (!(cause instanceof Utf8NdjsonDecodingError)) throw cause;
-      this.#abortProtocol("Hopper bridge response is not valid UTF-8", cause);
-    }
+    this.#responses.push(chunk);
   };
   readonly #onSocketEnd = (): void => {
-    try {
-      this.#responses.finish();
-    } catch (cause: unknown) {
-      if (!(cause instanceof Utf8NdjsonDecodingError)) throw cause;
-      this.#abortProtocol("Hopper bridge response is not valid UTF-8", cause);
-    }
+    this.#responses.finish();
   };
   readonly #onSocketError = (): void => {
     const error = new HopperProcessError(null, {
@@ -389,7 +378,7 @@ export class HopperClient {
       return Promise.resolve(err(hopperCancelledBySignal(signal)));
     if (this.#closePromise !== undefined)
       return waitForAbortable(this.#closePromise, signal).then((closed) =>
-        closed === ABORTED
+        closed instanceof AbortedWait
           ? err(hopperCancelledBySignal(signal))
           : closed.ok
             ? this.start(signal)
@@ -437,7 +426,7 @@ export class HopperClient {
     signal?: AbortSignal,
   ): Promise<HopperStartupResult> {
     const waited = await waitForAbortable(attempt.promise, signal);
-    if (waited === ABORTED || (waited.ok && isAborted(signal)))
+    if (waited instanceof AbortedWait || (waited.ok && isAborted(signal)))
       return err(hopperCancelledBySignal(signal));
     if (waited.ok || waited.error.cleanupIncomplete) return waited;
     return this.start(signal);
@@ -779,7 +768,7 @@ export class HopperClient {
       return;
     const controller = new AbortController();
     const timer = setTimeout(
-      () => controller.abort(),
+      () => controller.abort(OwnerCancellation.deadlineElapsed),
       HOPPER_SHUTDOWN_TIMEOUT_MS,
     );
     this.#closing = true;
@@ -975,7 +964,7 @@ export class HopperClient {
   async #startupInterruption(
     deadline: ProviderStartupDeadline,
   ): Promise<HopperCancelledError | HopperTimeoutError | HopperProtocolError> {
-    if (deadline.signal.reason === STARTUP_OWNER_CLOSED)
+    if (deadline.signal.reason === OwnerCancellation.startupOwnerClosed)
       return new HopperProtocolError("Hopper session closed during startup");
     if (deadline.interruption === "cancelled")
       return hopperCancelledBySignal(deadline.signal);

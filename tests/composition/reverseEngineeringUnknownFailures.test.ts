@@ -6,6 +6,7 @@ import { expect, it, vi } from "vitest";
 import { ReverseEngineeringService } from "../../src/application/reverse/ReverseEngineeringService.js";
 import { analysisErrorProjectionSchema } from "../../src/contracts/errorSchemas.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
+import { ok } from "../../src/domain/result.js";
 import { OwnedCommandFailure } from "../../src/process/OwnedCommand.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
@@ -35,7 +36,7 @@ it.each([false, true])(
       identity: { id: "fixture", name: "fixture", version: null },
     };
     const service = new ReverseEngineeringService({
-      commands: { objdump: () => profile, rizin: () => profile },
+      commands: { objdump: () => ok(profile), rizin: () => ok(profile) },
       runOwned: async () => {
         if (cancel) controller.abort(abortReason);
         throw owned;
@@ -70,7 +71,7 @@ it("keeps the owned producer cancellation reason authoritative", async () => {
     identity: { id: "fixture", name: "fixture", version: null },
   };
   const service = new ReverseEngineeringService({
-    commands: { objdump: () => profile, rizin: () => profile },
+    commands: { objdump: () => ok(profile), rizin: () => ok(profile) },
     runOwned: async () => {
       controller.abort(abortReason);
       throw new OwnedCommandFailure("cancelled", "owned process cancelled");
@@ -110,16 +111,22 @@ it.each([
           : stat,
       run,
       commands: {
-        objdump: () => ({
-          executable: "unused-objdump",
-          arguments: [path],
-          identity: { id: "test.objdump", name: "Test objdump", version: null },
-        }),
-        rizin: () => ({
-          executable: "unused-rizin",
-          arguments: [path],
-          identity: { id: "test.rizin", name: "Test Rizin", version: null },
-        }),
+        objdump: () =>
+          ok({
+            executable: "unused-objdump",
+            arguments: [path],
+            identity: {
+              id: "test.objdump",
+              name: "Test objdump",
+              version: null,
+            },
+          }),
+        rizin: () =>
+          ok({
+            executable: "unused-rizin",
+            arguments: [path],
+            identity: { id: "test.rizin", name: "Test Rizin", version: null },
+          }),
       },
     });
 

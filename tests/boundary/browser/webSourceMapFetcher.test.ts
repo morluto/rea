@@ -109,7 +109,7 @@ it.each(["regular", "indexed"])(
         })),
       );
       expect(webSourceMapsSchema.parse(result)).toEqual(result);
-      const historical = {
+      expectInvalidSourceMaps({
         ...result,
         items: [
           {
@@ -119,8 +119,21 @@ it.each(["regular", "indexed"])(
             ),
           },
         ],
-      };
-      expect(webSourceMapsSchema.parse(historical)).toEqual(historical);
+      });
+      for (const omit of ["source_index", "declaration_index"] as const)
+        expectInvalidSourceMaps({
+          ...result,
+          items: [
+            {
+              ...item,
+              original_sources: item.original_sources.map((source) =>
+                Object.fromEntries(
+                  Object.entries(source).filter(([key]) => key !== omit),
+                ),
+              ),
+            },
+          ],
+        });
       expectInvalidSourceMaps({
         ...result,
         items: [

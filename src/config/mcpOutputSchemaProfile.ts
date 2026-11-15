@@ -22,6 +22,16 @@ export type McpOutputSchemaProfile = z.infer<
   typeof mcpOutputSchemaProfileSchema
 >;
 
+/**
+ * Resolve the selected advertisement at the configuration boundary. No model
+ * API reads an output schema; MCP client validators re-check what REA already
+ * validates, and complete output schemas were about 92% of `tools/list`. They
+ * are therefore omitted unless a caller selects `compact` or `full`.
+ */
+export const resolveMcpOutputSchemaProfile = (
+  profile: McpOutputSchemaProfile | undefined,
+): McpOutputSchemaProfile => profile ?? "off";
+
 /** Resolve the compact output advertisement, preserving every other choice. */
 export const compactPresentationForMcpOutputSchemaProfile = (
   profile: McpOutputSchemaProfile | undefined,
@@ -31,7 +41,7 @@ export const compactPresentationForMcpOutputSchemaProfile = (
     : undefined;
 
 const profileConstraint =
-  'REA_MCP_OUTPUT_SCHEMA_PROFILE must be "full" (default), "compact", or "off". The compact profile advertises every output schema within a 4,096-byte budget; the off profile omits output schemas. Both keep canonical server-side validation and complete structured content.';
+  'REA_MCP_OUTPUT_SCHEMA_PROFILE must be "off" (default), "compact", or "full". The off profile omits output schemas; compact advertises every output schema within a 4,096-byte budget; full advertises complete output schemas. All keep canonical server-side validation and complete structured content.';
 
 /** Parse the output schema advertisement selection at server composition. */
 export const parseMcpOutputSchemaProfile = (

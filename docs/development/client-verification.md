@@ -15,7 +15,9 @@ not establish live model-service acceptance.
 
 `rea mcp doctor --json` starts the production MCP adapter with the current runtime
 executable and environment. A healthy result establishes that adapter's
-initialization, discovery and target-free request flow; it does not verify a
+initialization, discovery and target-free request flow, with the request-flow
+reply validated against the canonical `binary_session` output contract whatever
+output schema profile the server lists. It does not verify a
 client's configured launcher or its inherited environment. Test the generated
 registration through the actual client, including a reduced `PATH` when checking
 desktop or service startup. Record the client version and launch environment

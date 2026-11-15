@@ -293,8 +293,11 @@ rendered declarations. `src/contracts/advertisedDialect.ts` owns the portable
 advertised dialect: the keyword allowlist, size and depth limits, and the regex
 grammar that compiles in V8, Python, RE2 and Rust. `advertisedDialect.test.ts`
 lists every input, output and catalog profile combination and compares the
-violation counts with `advertisedDialectBaseline.ts`, which may only shrink;
-the packaged catalog check applies the same rules to the default profiles.
+violation counts with `advertisedDialectBaseline.ts`, which may only shrink,
+except when a runtime analysis setting adds its `update_analysis_settings`
+branch, or a fix restores a contract declaration the presentation had lost and
+the PR names it; the packaged catalog check applies the same rules to the
+default profiles.
 Advertised patterns, input and output, are enforced at zero:
 `portablePattern.ts` re-emits each one exactly, widens it, or omits it, and the
 presentation drops any enclosing `not` or `if` and turns `oneOf` into `anyOf`
@@ -785,6 +788,12 @@ controlled production seam for interleavings that cannot be reproduced reliably.
 | Cleanup fails after success or primary failure                                          | Public output retains the completed observation or primary diagnostic, remaining resources, and owner recovery action. Restore the denied resource and verify the owning cleanup retry.                                                                                                   |
 | Cleanup owners recover after an error was returned                                      | Retain the original child and aggregate errors and project them after each owner releases. A successful peer stays released; the aggregate remains incomplete until all owners release. Preserve the first cause even when rejection is `undefined`.                                      |
 | Target exits without an acknowledgement, or transport disappears while it stays alive   | Positive owned exit proof resolves target lifetime; other resources still need cleanup. Lost transport alone does not prove exit. Verify unrelated/attached targets survive and same-connection recovery works when supported.                                                            |
+
+Owners that finalize through `runOwned` inherit the precedence rows above from
+`src/providers/runOwned.lifecycle.test.ts`, which runs each scenario over a
+table of adopter shapes (partial or diagnostics record, publication, lease).
+Add a shape to that table instead of repeating those cases per provider; a
+provider's own tests cover how its work and close reach `runOwned`.
 
 Shared process-supervision controls separate leader exit from output closure.
 Cover output during held or failed cleanup, bounded retention and drain timeout,

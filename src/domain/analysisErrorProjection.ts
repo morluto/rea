@@ -845,6 +845,9 @@ const artifactStateErrorDetails = (
       operation: error.operation,
       reason: error.reason,
       ...(error.reason === "path-limit" ? { boundary: "filesystem-path" } : {}),
+      ...(error.detectedKind === undefined
+        ? {}
+        : { detected_kind: error.detectedKind }),
       ...(error.systemCode === undefined
         ? {}
         : { system_code: error.systemCode }),

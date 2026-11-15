@@ -55,10 +55,11 @@ import {
 } from "../domain/analysisErrorBase.js";
 import {
   AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
@@ -68,6 +69,7 @@ import {
   packetCaptureSchema,
 } from "../domain/captures/packetCapture.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { finalizedResult, runOwned } from "../providers/runOwned.js";
 import {
   runOwnedCommand,
   OwnedCommandFailure,
@@ -156,9 +158,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
     let result: Result<AnalysisExecution, AnalysisError>;
     try {
       if (options?.signal?.aborted)
-        throw new AnalysisCancelledError(operation, {
-          cause: options.signal.reason,
-        });
+        throw cancelledBy(operation, options.signal);
       await this.#resources.release();
       if (!tsharkHostSupported(this.platform))
         throw new Error(
@@ -483,17 +483,21 @@ export class TsharkCaptureProvider implements PacketCapturePort {
         ),
       );
     }
-    return this.#resources.finish(
-      result,
-      (execution) =>
-        createAnalysisExecutionEvidence(
-          operation,
-          input,
-          execution,
-          "observed",
-        ),
-      operation,
-      options?.signal,
+    const completed = result;
+    return finalizedResult(
+      await runOwned(async () => completed, {
+        providerId: this.#resources.providerId,
+        operation,
+        signal: options?.signal,
+        close: () => this.#resources.release(),
+        partial: (execution) =>
+          createAnalysisExecutionEvidence(
+            operation,
+            input,
+            execution,
+            "observed",
+          ),
+      }),
     );
   }
   /** This provider's dialect for the shared provider failure classifier. */

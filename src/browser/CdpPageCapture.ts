@@ -3,7 +3,10 @@ import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import type { ProgressReporter } from "../application/ProgressReporter.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  OwnerCancellation,
+} from "../domain/analysisErrorCore.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import { stableWebResources } from "../domain/webInventory.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
@@ -437,7 +440,7 @@ const capturePageDom = async (state: CaptureState): Promise<DomCapture> => {
       step = capture.next(await Promise.all(pending));
     } catch (cause: unknown) {
       // Stop and settle this bounded batch before the session can be detached.
-      pendingController.abort();
+      pendingController.abort(OwnerCancellation.noLongerNeeded);
       await Promise.allSettled(pending);
       throw cause;
     }

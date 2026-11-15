@@ -146,7 +146,7 @@ export interface TsharkFields {
   readonly endpointCount: number;
   readonly dnsQueries: {
     query: string;
-    query_labels_hex?: string[] | null;
+    query_labels_hex: string[] | null;
     response_addresses: string[];
     response_address_count: number;
   }[];
