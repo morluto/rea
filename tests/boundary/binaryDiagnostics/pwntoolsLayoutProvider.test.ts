@@ -80,7 +80,7 @@ it.runIf(!unsupportedHost).each([
     expect(result.error.message).toContain(
       failure === "EFBIG"
         ? "exact write failure cause is unknown"
-        : "exact signal cause is unknown",
+        : "exact cause is not independently established",
     );
     if (scenario !== "reported")
       expect(result.error.message).toContain("limit report unavailable");
@@ -400,7 +400,7 @@ it.runIf(!unsupportedHost).each(["cancelled", "output-limit", "process"])(
           scenario === "cancelled"
             ? "AnalysisCancelledError"
             : scenario === "output-limit"
-              ? "AnalysisOutputError"
+              ? "AnalysisResourceConstraintError"
               : "ProviderAdapterError",
         ...(scenario === "process"
           ? {

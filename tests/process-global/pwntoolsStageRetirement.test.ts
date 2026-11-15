@@ -362,7 +362,7 @@ it.runIf(supportedHost)(
       code: "cleanup_incomplete",
       details: {
         captured_output: { truncated: true },
-        diagnostics: { primary_error: { code: "unreadable_output" } },
+        diagnostics: { primary_error: { code: "resource_constraint" } },
         partial_observation: {
           artifact: { path },
           diagnostics: { stdout: "basic diagnostic" },
