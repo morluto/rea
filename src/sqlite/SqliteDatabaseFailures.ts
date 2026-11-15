@@ -1,5 +1,8 @@
+import {
+  deadlineParameterLimit,
+  MAX_NODE_TIMER_DELAY_MS,
+} from "../domain/analysisResourceLimits.js";
 import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
-import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import {
   ArtifactReaderFailure,
   stableArtifactInputFailure,
@@ -212,9 +215,14 @@ const ownedCommandFailure = (
       ? new AnalysisTimeoutError(operation, workerTimeoutMs, {
           ...options,
           userMessage: `The SQLite worker reached its ${String(workerTimeoutMs)} ms server/provider deadline (worker_timeout_ms). This is not a whole-inspection or MCP client deadline.`,
+          limit: deadlineParameterLimit(
+            "worker_timeout_ms",
+            workerTimeoutMs,
+            DEFAULT_SQLITE_WORKER_TIMEOUT_MS,
+          ),
           remediationAction: `${
             workerTimeoutMs < MAX_NODE_TIMER_DELAY_MS
-              ? `Increase worker_timeout_ms above ${String(workerTimeoutMs)} (integer milliseconds, maximum ${String(MAX_NODE_TIMER_DELAY_MS)}), or use rea inspect-sqlite-database <path> --worker-timeout-ms <milliseconds> on the CLI.`
+              ? `Increase worker_timeout_ms above ${String(workerTimeoutMs)} (integer milliseconds, maximum ${String(MAX_NODE_TIMER_DELAY_MS)}).`
               : `worker_timeout_ms is already at the maximum supported ${String(MAX_NODE_TIMER_DELAY_MS)} ms; no higher worker deadline is supported. Report the blocker or narrow the question with caller approval.`
           } This per-call setting needs no server restart. It covers worker startup, queries and reply writing, not snapshot acquisition or final reply reads/cleanup. Allow client headroom for the whole call; increasing only the client deadline does not change the worker budget. Keep the selected database/WAL and requested facts; narrow table/columns/schema_scope/row_limit only if the question permits it. Byte and heap safety limits remain fixed. Resolve incomplete cleanup before retrying; do not repeat the unchanged failed call.`,
         })

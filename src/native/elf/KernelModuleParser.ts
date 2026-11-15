@@ -5,17 +5,16 @@ import { allKeyed, firstKeyed, keyedBy } from "../../domain/keyedCollection.js";
 import { elfObjectTypeName } from "../../domain/native/elfNotes.js";
 import {
   KERNEL_MODULE_VERSION_ENTRY_BYTES,
-  DEFAULT_KERNEL_MODULE_KEY_BYTES,
+  kernelModuleModinfoLimit,
   MAX_KERNEL_MODULE_RAW_BYTES,
   MAX_KERNEL_MODULE_SECTION_NAME_BYTES,
-  DEFAULT_KERNEL_MODULE_VALUE_BYTES,
-  MAX_INSPECT_KERNEL_MODULE_FILE_BYTES,
   MODULE_SIGNATURE_INFO_BYTES,
   MODULE_SIGNATURE_MAGIC,
   MODULE_SIGNATURE_PKCS7_ID_TYPE,
   type KernelModule,
   type InspectKernelModuleInput,
 } from "../../domain/native/kernelModule.js";
+import type { AnalysisParameterLimit } from "../../domain/analysisSettings.js";
 import type {
   ImageSection,
   BinaryContainer,
@@ -247,24 +246,17 @@ const parseModinfo = (
     if (!terminated) break;
     at = end + 1;
   }
-  for (const [field, selected, required, defaultBytes] of [
-    [
-      "key",
-      input.max_modinfo_key_bytes,
-      largestKeyBytes,
-      DEFAULT_KERNEL_MODULE_KEY_BYTES,
-    ],
-    [
-      "value",
-      input.max_modinfo_value_bytes,
-      largestValueBytes,
-      DEFAULT_KERNEL_MODULE_VALUE_BYTES,
-    ],
+  const omissionLimits: AnalysisParameterLimit[] = [];
+  for (const [field, selected, required] of [
+    ["key", input.max_modinfo_key_bytes, largestKeyBytes],
+    ["value", input.max_modinfo_value_bytes, largestValueBytes],
   ] as const) {
-    if (required > selected)
+    if (required > selected) {
+      omissionLimits.push(kernelModuleModinfoLimit(field, selected));
       use.limitations.push(
-        `.modinfo ${field} text exceeds max_modinfo_${field}_bytes=${String(selected)} bytes (request budget; default ${String(defaultBytes)}, minimum 1, maximum ${String(MAX_INSPECT_KERNEL_MODULE_FILE_BYTES)}). Omitted fields keep their source range and digest; omission does not establish malformed syntax. Retry inspect_kernel_module with max_modinfo_${field}_bytes at least ${String(required)}, or --max-modinfo-${field}-bytes on the CLI. Applies on the next call without a REA restart; input, entry and raw-hex budgets do not change.`,
+        `.modinfo ${field} text exceeds max_modinfo_${field}_bytes=${String(selected)} bytes. Omitted fields keep their source range and digest; omission does not establish malformed syntax. Retry inspect_kernel_module with max_modinfo_${field}_bytes at least ${String(required)}; modinfo.omission_limits records the control. Applies on the next call without a REA restart; input, entry and raw-hex budgets do not change.`,
       );
+    }
   }
   return {
     status: "present",
@@ -272,6 +264,7 @@ const parseModinfo = (
     sha256: sha256(stored),
     entries,
     reason: null,
+    ...(omissionLimits.length === 0 ? {} : { omission_limits: omissionLimits }),
   };
 };
 

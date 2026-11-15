@@ -1917,13 +1917,21 @@ it("bounds the excerpt when cleanup also fails after the output budget", () => {
   ).toMatchObject({
     code: "cleanup_incomplete",
     details: {
+      // The typed output refusal stays the primary: its control is the
+      // composite's limit, and its bounded excerpt is retained once.
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_output_bytes",
+        effective_value: WASM_RESOURCE_DEFAULTS.outputBytes,
+      },
+      captured_output: { stdout: "(module", stderr: "w".repeat(4096) },
       diagnostics: {
-        previous_error: {
-          failure_kind: "output-limit",
-          message: `WABT output exceeded the ${String(WASM_RESOURCE_DEFAULTS.outputBytes)}-byte output budget`,
-          max_output_bytes: WASM_RESOURCE_DEFAULTS.outputBytes,
+        primary_error: {
+          code: "resource_constraint",
+          message: expect.stringContaining(
+            `WABT output exceeded the ${String(WASM_RESOURCE_DEFAULTS.outputBytes)}-byte output budget`,
+          ),
         },
-        captured_output: { stdout: "(module", stderr: "w".repeat(4096) },
       },
     },
   });

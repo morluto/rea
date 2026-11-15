@@ -1,17 +1,15 @@
+import {
+  deadlineParameterLimit,
+  MAX_NODE_TIMER_DELAY_MS,
+} from "../domain/analysisResourceLimits.js";
 import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
-import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import type { EvmWorkerLimits } from "./EvmWorkerLimits.js";
-import type {
-  AnalysisCapturedOutput,
-  AnalysisErrorOptions,
-} from "../domain/analysisErrorBase.js";
-import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
+import type { AnalysisErrorOptions } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
-import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { ProviderOutcomeContext } from "../process/classifyProviderOutcome.js";
 import type { ProviderFailureDialect } from "../providers/classifyProviderFailure.js";
 import {
@@ -53,7 +51,7 @@ export const evmReplyBudgetFailure = (
 const evmTimeoutRecovery = (timeoutMs: number): string =>
   `${
     timeoutMs < MAX_NODE_TIMER_DELAY_MS
-      ? `Increase timeout_ms above ${String(timeoutMs)} (integer milliseconds, maximum ${String(MAX_NODE_TIMER_DELAY_MS)}), or use rea inspect-evm-interface <path> <encoding> --timeout-ms <milliseconds> on the CLI.`
+      ? `Increase timeout_ms above ${String(timeoutMs)} (integer milliseconds, maximum ${String(MAX_NODE_TIMER_DELAY_MS)}).`
       : `timeout_ms is already at the maximum supported ${String(MAX_NODE_TIMER_DELAY_MS)} ms; no higher worker deadline is supported. Report this blocker or select another suitable complete carrier with caller approval.`
   } This is a per-call setting; no server restart is needed. It covers the owned EVMole worker command, not carrier acquisition or final reply reads. Allow the MCP client deadline to cover acquisition, the worker, reply reads, cleanup and delivery; increasing only that client deadline does not change this budget. Separate producer_limits control carrier/reply/diagnostic bytes, address-space/file bytes and CPU seconds; timeout_ms does not raise them. The 256 MiB worker heap stays independent. Resolve any incomplete cleanup before retrying; do not repeat the unchanged failed call.`;
 
@@ -99,28 +97,6 @@ export const evmFailureDialect = (
     providerId: EVMOLE_PROVIDER_IDENTITY.id,
     operation: OPERATION,
     command: () => evmCommandContext(resolved),
-    commandCleanup: (failure) =>
-      new ProviderCleanupError(
-        EVMOLE_PROVIDER_IDENTITY.id,
-        failure.resources,
-        {
-          reason: failure.cleanupFailure,
-          ...(failure.snapshot === null
-            ? {}
-            : {
-                captured_output: {
-                  ...capturedProviderOutput(failure.snapshot),
-                },
-              }),
-          previous_error: {
-            failure_kind: failure.reason,
-            message: failure.message,
-            exit_code: failure.snapshot?.exitCode ?? null,
-            signal: failure.snapshot?.signal ?? null,
-          },
-        },
-        { operation: OPERATION, cause: failure },
-      ),
     ...(phase === "artifact-read"
       ? {
           file: {
@@ -173,6 +149,11 @@ const evmCommandContext = (
       ms: timeoutMs,
       userMessage: `The EVMole worker reached its ${String(timeoutMs)} ms server/provider deadline (timeout_ms). This is not a carrier-read or MCP client deadline. Omitted timeout_ms uses ${String(DEFAULT_EVM_TIMEOUT_MS)} ms.`,
       remediationAction: evmTimeoutRecovery(timeoutMs),
+      limit: deadlineParameterLimit(
+        "timeout_ms",
+        timeoutMs,
+        DEFAULT_EVM_TIMEOUT_MS,
+      ),
     },
     outputLimit: {
       limits: {
