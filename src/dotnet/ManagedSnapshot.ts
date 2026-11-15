@@ -13,7 +13,7 @@ import {
   bindRegularFileCleanup,
   withRegularFileCompletion,
   type RegularFileReadOptions,
-} from "../application/RegularFileRead.js";
+} from "../process/RegularFileRead.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";

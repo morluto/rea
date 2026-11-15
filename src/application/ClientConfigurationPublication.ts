@@ -13,7 +13,7 @@ import {
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
 import type { RegularFileOperationOutcome } from "../filesystem/OwnedRegularFile.js";
-import { readRegularFileTextSnapshot } from "./RegularFileRead.js";
+import { readRegularFileTextSnapshot } from "../process/RegularFileRead.js";
 import { ClientConfigurationPublicationFailure } from "./ClientConfigurationCleanup.js";
 import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";

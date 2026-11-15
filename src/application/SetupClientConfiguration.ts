@@ -69,7 +69,7 @@ import {
   readRegularFileText,
   readRegularFileTextSnapshot,
   InvalidUtf8FileError,
-} from "./RegularFileRead.js";
+} from "../process/RegularFileRead.js";
 import {
   preserveCurrentRecoveryBackup,
   selectCurrentRecoveryBackup,

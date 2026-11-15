@@ -18,7 +18,7 @@ import { safeParseJson } from "../domain/safeJson.js";
 import {
   readRegularFileText,
   RetainedRegularFileCleanupFailure,
-} from "../application/RegularFileRead.js";
+} from "../process/RegularFileRead.js";
 import { DESKTOP_EXPORT_FRAMEWORK_VERSION } from "../domain/desktop/appExport.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { execFileOutputFailure } from "../process/ExecFileOutput.js";

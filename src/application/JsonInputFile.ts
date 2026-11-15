@@ -30,7 +30,7 @@ import {
   RegularFileReadFailure,
   withRegularFile,
   type RegularFileReadOptions,
-} from "./RegularFileRead.js";
+} from "../process/RegularFileRead.js";
 import {
   JSON_BYTE_ORDER_MARK_MESSAGE,
   JSON_INPUT_RESOURCE_REMEDIATION,

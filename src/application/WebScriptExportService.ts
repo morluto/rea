@@ -38,7 +38,7 @@ import {
   readRegularFile,
   RegularFileReadFailure,
   retryRegularFileCleanup,
-} from "./RegularFileRead.js";
+} from "../process/RegularFileRead.js";
 import {
   NonRegularFileReadError,
   RegularFileChangedError,

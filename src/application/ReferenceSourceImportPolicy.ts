@@ -13,7 +13,7 @@ import {
   readRegularFileText,
   RegularFileReadFailure,
   retryRegularFileCleanup,
-} from "./RegularFileRead.js";
+} from "../process/RegularFileRead.js";
 
 import { err, ok, type Result } from "../domain/result.js";
 import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";

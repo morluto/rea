@@ -5,7 +5,7 @@ import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
-import { RetainedRegularFileCleanupFailure } from "../RegularFileRead.js";
+import { RetainedRegularFileCleanupFailure } from "../../process/RegularFileRead.js";
 import { desktopOperationFailure } from "./DesktopCaptureRefusals.js";
 
 describe("desktopOperationFailure", () => {

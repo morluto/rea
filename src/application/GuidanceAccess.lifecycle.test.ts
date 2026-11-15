@@ -6,7 +6,7 @@ import {
 } from "../../tests/support/lifecycleHarness.js";
 import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
-import { RetainedRegularFileCleanupFailure } from "./RegularFileRead.js";
+import { RetainedRegularFileCleanupFailure } from "../process/RegularFileRead.js";
 import { MANAGED_SKILL_FILES } from "./SetupSkill.js";
 import {
   readGuidanceSectionWithReader,

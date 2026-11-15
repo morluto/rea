@@ -22,7 +22,7 @@ import { prepareReferenceSourceImport } from "../../../src/application/Reference
 import {
   readRegularFileText,
   RegularFileReadFailure,
-} from "../../../src/application/RegularFileRead.js";
+} from "../../../src/process/RegularFileRead.js";
 import { importReferenceSource } from "../../support/referenceSourceResourceScope.js";
 import { parseReferenceSourceEntries } from "../../../src/application/ReferenceSourceImportEntries.js";
 import type { ReferenceSourceRead } from "../../../src/reference/ReferenceSourceReaderTypes.js";
