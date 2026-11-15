@@ -330,9 +330,7 @@
     "src/kuna/KunaProjectCache.ts": 1,
     "src/native/CommandRunner.ts": 1,
     "src/native/LldbCallTracer.ts": 1,
-    "src/process/OwnedDebuggerSessionRegistry.ts": 1,
     "src/providers/AnalysisClientFailure.ts": 1,
-    "src/server/environment/serveEnvironment.ts": 1,
     "src/sqlite/SqliteDatabaseProvider.ts": 2
   },
   "cleanup-dependency-binding": {
