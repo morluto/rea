@@ -10,7 +10,6 @@ import {
   evidenceSubjectTarget,
   type Evidence,
   type EvidenceSubjectTarget,
-  evidenceFileTarget,
 } from "../../domain/evidence.js";
 import {
   managedApplicationGraphReferenceInputSchema,
@@ -92,11 +91,10 @@ const createManagedApplicationGraphEvidence = (
 const subjectTarget = (
   input: ParsedManagedGraphInput,
 ): EvidenceSubjectTarget | undefined => {
-  const subject =
-    input.artifact?.evidence.subject ??
-    input.members?.evidence.subject ??
-    input.boundaries?.evidence.subject;
-  return evidenceFileTarget({ subject })?.format === "pe"
-    ? evidenceSubjectTarget(subject)
-    : undefined;
+  // Every subject is present; an unknown one names no file, so the first
+  // file subject among the inputs is the graph's target.
+  const target = [input.artifact, input.members, input.boundaries]
+    .map((source) => evidenceSubjectTarget(source?.evidence.subject))
+    .find((candidate) => candidate !== undefined);
+  return target?.format === "pe" ? target : undefined;
 };

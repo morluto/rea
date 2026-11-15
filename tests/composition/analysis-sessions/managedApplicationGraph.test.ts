@@ -352,6 +352,29 @@ it("preserves only a managed graph's matching subject in feature traces", () => 
   });
 });
 
+it("names the graph after a later file subject when the artifact subject is unknown", () => {
+  const { artifactEvidence, memberEvidence } = createManagedInteropEvidence();
+  const unboundArtifact = createEvidence(
+    unknownTarget("not-observed"),
+    artifactEvidence.provider,
+    {
+      operation: artifactEvidence.operation,
+      parameters: artifactEvidence.parameters,
+      result: artifactEvidence.normalized_result,
+      rawResult: null,
+      limitations: artifactEvidence.limitations,
+    },
+  );
+  const projected = projectManagedApplicationGraphEvidence({
+    managed_artifact: unboundArtifact,
+    managed_members: memberEvidence,
+  });
+  if (!projected.ok) throw projected.error;
+  expect(parseEvidence(projected.value).subject).toEqual(
+    memberEvidence.subject,
+  );
+});
+
 describe("managed application graph request", () => {
   it("accepts any nonempty set of inline sources and rejects duplicates", () => {
     const evidence = MANAGED_APPLICATION_GRAPH_EXAMPLE.managed_members;
