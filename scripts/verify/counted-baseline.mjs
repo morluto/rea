@@ -57,3 +57,15 @@ export const serializeCountedBaselines = (baselines) =>
     null,
     2,
   )}\n`;
+
+/**
+ * What the guard does with the baseline file it read as `text`, given the
+ * baselines after comparison: nothing when the file is already in its written
+ * form; otherwise `write` that form when shrinking (even if no count was
+ * lowered), or `reject` the file so a hand edit is fixed in its own change.
+ */
+export const reconcileBaselineFile = (text, baselines, shrink) => {
+  const written = serializeCountedBaselines(baselines);
+  if (written === text) return { action: "none" };
+  return shrink ? { action: "write", text: written } : { action: "reject" };
+};

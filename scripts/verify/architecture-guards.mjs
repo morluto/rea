@@ -7,7 +7,7 @@ import { recordPredicateCounts } from "./record-predicate-guard.mjs";
 import {
   compareCountedBaseline,
   recordLoweredBaseline,
-  serializeCountedBaselines,
+  reconcileBaselineFile,
 } from "./counted-baseline.mjs";
 import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
 
@@ -663,20 +663,22 @@ checkCounted(
   [],
 );
 
-const canonicalBaselines = serializeCountedBaselines(baselines);
-if (canonicalBaselines !== baselineText) {
-  if (shrinkBaselines) {
-    await writeFile(baselinePath, canonicalBaselines);
-    console.log(
-      baselinesShrunk
-        ? `Lowered counted baselines in ${relative(root, baselinePath)}.`
-        : `Rewrote ${relative(root, baselinePath)} in its sorted form.`,
-    );
-  } else
-    failures.push(
-      `${relative(root, baselinePath)} is not in its written form (each guard's paths sorted by code unit); rewrite it with \`node scripts/verify/architecture-guards.mjs --shrink-baselines\`.`,
-    );
-}
+const baselineFile = reconcileBaselineFile(
+  baselineText,
+  baselines,
+  shrinkBaselines,
+);
+if (baselineFile.action === "write") {
+  await writeFile(baselinePath, baselineFile.text);
+  console.log(
+    baselinesShrunk
+      ? `Lowered counted baselines in ${relative(root, baselinePath)}.`
+      : `Rewrote ${relative(root, baselinePath)} in its sorted form.`,
+  );
+} else if (baselineFile.action === "reject")
+  failures.push(
+    `${relative(root, baselinePath)} is not in its written form (each guard's paths sorted by code unit); rewrite it with \`node scripts/verify/architecture-guards.mjs --shrink-baselines\`.`,
+  );
 
 if (failures.length > 0) {
   console.error(`Architecture guards failed:\n\n${failures.join("\n\n")}\n`);

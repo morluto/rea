@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 
 import {
   compareCountedBaseline,
+  reconcileBaselineFile,
   recordLoweredBaseline,
   serializeCountedBaselines,
 } from "../../../scripts/verify/counted-baseline.mjs";
@@ -107,4 +108,28 @@ it("writes each guard's paths in code-unit order and keeps guard order", () => {
       2,
     )}\n`,
   );
+});
+
+it("rejects an unsorted baseline file unless shrinking, which rewrites it", () => {
+  const baselines = { guard: { "src/a.ts": 1, "src/b.ts": 2 } };
+  const written = serializeCountedBaselines(baselines);
+  const unsorted = `${JSON.stringify(
+    { guard: { "src/b.ts": 2, "src/a.ts": 1 } },
+    null,
+    2,
+  )}\n`;
+  expect(reconcileBaselineFile(written, baselines, false)).toEqual({
+    action: "none",
+  });
+  expect(reconcileBaselineFile(written, baselines, true)).toEqual({
+    action: "none",
+  });
+  expect(reconcileBaselineFile(unsorted, baselines, false)).toEqual({
+    action: "reject",
+  });
+  // No count was lowered; shrinking still writes the sorted form.
+  expect(reconcileBaselineFile(unsorted, baselines, true)).toEqual({
+    action: "write",
+    text: written,
+  });
 });
