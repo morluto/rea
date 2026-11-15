@@ -211,6 +211,9 @@ export class JavaScriptAnalysisWorker {
       supervisorOptions: {
         captureStdout: false,
         maxDiagnosticBytes: 256 * 1024,
+        // V8's heap report is observed as output streams, so a retention
+        // budget or a stack trace that overflowed it cannot hide it.
+        runtime: "v8",
         onDiagnostic: (event) => this.#observeProcessDiagnostic(event),
       },
       onInputFailure: (cause) => this.#latchInputFailure(cause),
@@ -1072,11 +1075,8 @@ export class JavaScriptAnalysisWorker {
     }
     if (
       event.type === "output" &&
-      event.stream === "stderr" &&
       this.#primaryFailure?.kind === "exit" &&
-      /heap out of memory|heap limit|allocation failed/iu.test(
-        this.#runtime.supervisor?.snapshot().stderr.text ?? "",
-      )
+      this.#runtime.supervisor?.snapshot().runtimeExhaustion !== undefined
     ) {
       this.#primaryFailure = { ...this.#primaryFailure, heapExhaustion: true };
       this.#frameSignal.wake("failure");
@@ -1087,16 +1087,11 @@ export class JavaScriptAnalysisWorker {
           kind: "exit",
           code: event.code,
           signal: event.signal,
-          heapExhaustion:
-            /heap out of memory|heap limit|allocation failed/iu.test(
-              event.snapshot.stderr.text,
-            ),
+          heapExhaustion: event.snapshot.runtimeExhaustion !== undefined,
         };
       else if (
         this.#primaryFailure.kind === "exit" &&
-        /heap out of memory|heap limit|allocation failed/iu.test(
-          event.snapshot.stderr.text,
-        )
+        event.snapshot.runtimeExhaustion !== undefined
       ) {
         this.#primaryFailure = {
           ...this.#primaryFailure,

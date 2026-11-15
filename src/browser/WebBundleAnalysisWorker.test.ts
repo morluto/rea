@@ -143,7 +143,7 @@ const protocolWorkerProgram = (
     const request = JSON.parse(line);
     ${
       failure === "heap-exit"
-        ? `process.stderr.write("allocation failed\\n", () => process.exit(7));`
+        ? `process.stderr.write("FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory\\n", () => process.exit(7));`
         : failure === "zero-exit-held-pipe"
           ? `const program = "setTimeout(() => process.exit(0), 300);";
            spawn(process.execPath, ["-e", program], { stdio: ["ignore", "inherit", "inherit"] });
