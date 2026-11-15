@@ -8,6 +8,7 @@ import {
   AnalysisResourceConstraintError,
 } from "../analysisErrorCore.js";
 import { allKeyed, keyedBy, uniqueKeyed } from "../keyedCollection.js";
+import { decodeLimit, ParseFailureError } from "../parseFailure.js";
 import type { NativeMetadataRecovery } from "./nativeMetadataRecovery.js";
 import {
   NativeAotAdmissionError,
@@ -121,29 +122,55 @@ export class NativeAotSnapshotIdentityError extends Error {
   }
 }
 
+const NATIVE_AOT_FORMAT = "native-aot-pe";
+
+/** Limit names of the two hydration budgets, as `decodeLimit` reports them. */
+const NATIVE_AOT_BUDGET_LIMIT = {
+  work: "work-units",
+  "working-memory": "working-memory-bytes",
+} as const;
+
 /** Hydration stops by throwing; other scans record truncation and continue. */
-class NativeAotParserBudgetError extends Error {
-  readonly code = "parser_budget" as const;
-
-  constructor(readonly budget: "work" | "working-memory") {
-    super(budget);
-    this.name = "NativeAotParserBudgetError";
-  }
-}
-
 const parserBudgetExhausted = (
-  budget: NativeAotParserBudgetError["budget"],
+  budget: NativeAotParserBudget,
+  kind: keyof typeof NATIVE_AOT_BUDGET_LIMIT,
 ): never => {
-  throw new NativeAotParserBudgetError(budget);
+  const maximum =
+    kind === "work"
+      ? budget.limits.workUnits
+      : budget.limits.workingMemoryBytes;
+  throw decodeLimit(
+    NATIVE_AOT_FORMAT,
+    `NativeAOT hydration stopped at its ${String(maximum)} ${kind === "work" ? "work-unit" : "working-memory byte"} budget`,
+    { name: NATIVE_AOT_BUDGET_LIMIT[kind], maximum },
+  );
+};
+
+/** Which hydration budget a cause reports, if it is one. */
+const exhaustedParserBudget = (
+  cause: unknown,
+): keyof typeof NATIVE_AOT_BUDGET_LIMIT | undefined => {
+  if (
+    !(cause instanceof ParseFailureError) ||
+    cause.failure.kind !== "limit" ||
+    cause.failure.format !== NATIVE_AOT_FORMAT
+  )
+    return undefined;
+  const { name } = cause.failure.limit;
+  if (name === NATIVE_AOT_BUDGET_LIMIT.work) return "work";
+  if (name === NATIVE_AOT_BUDGET_LIMIT["working-memory"])
+    return "working-memory";
+  return undefined;
 };
 
 const nativeAotHydrationFailure = (
   cause: unknown,
   budget: NativeAotParserBudget,
 ): NativeAotHydrationFacts => {
-  if (cause instanceof NativeAotParserBudgetError)
+  const exhausted = exhaustedParserBudget(cause);
+  if (exhausted !== undefined)
     return nativeAotHydrationFacts(
-      cause.budget === "work" ? "work_budget" : "working_memory_budget",
+      exhausted === "work" ? "work_budget" : "working_memory_budget",
     );
   if (
     cause instanceof NativeAotAdmissionError &&
@@ -1079,7 +1106,7 @@ const hydrate = (
     budget.limits.workingMemoryBytes - budget.workingMemoryBytes,
   );
   if (!budget.reserveWorkingMemory(initialCapacity))
-    parserBudgetExhausted("working-memory");
+    parserBudgetExhausted(budget, "working-memory");
   let output = Buffer.alloc(initialCapacity);
   let outputLength = 0;
   let cursor = 4;
@@ -1110,7 +1137,7 @@ const hydrate = (
         ),
       );
       if (!budget.reserveWorkingMemory(capacity))
-        parserBudgetExhausted("working-memory");
+        parserBudgetExhausted(budget, "working-memory");
       const expanded = Buffer.allocUnsafe(capacity);
       output.copy(expanded, 0, 0, outputLength);
       budget.releaseWorkingMemory(output.byteLength);
@@ -1120,15 +1147,16 @@ const hydrate = (
     return output.subarray(start, required);
   };
   const append = (chunk: Buffer): void => {
-    if (!budget.consumeWork(chunk.length)) parserBudgetExhausted("work");
+    if (!budget.consumeWork(chunk.length))
+      parserBudgetExhausted(budget, "work");
     chunk.copy(reserveOutput(chunk.length));
   };
   const appendZero = (length: number): void => {
-    if (!budget.consumeWork(length)) parserBudgetExhausted("work");
+    if (!budget.consumeWork(length)) parserBudgetExhausted(budget, "work");
     reserveOutput(length).fill(0);
   };
   const appendRel = (target: bigint): void => {
-    if (!budget.consumeWork(4)) parserBudgetExhausted("work");
+    if (!budget.consumeWork(4)) parserBudgetExhausted(budget, "work");
     const delta = target - (base + BigInt(outputLength));
     if (delta < -0x80000000n || delta > 0x7fffffffn)
       throw new NativeAotAdmissionError({
@@ -1138,7 +1166,7 @@ const hydrate = (
     reserveOutput(4).writeInt32LE(Number(delta), 0);
   };
   const appendPtr = (target: bigint): void => {
-    if (!budget.consumeWork(8)) parserBudgetExhausted("work");
+    if (!budget.consumeWork(8)) parserBudgetExhausted(budget, "work");
     // writeBigUInt64LE throws RangeError outside the unsigned 64-bit domain.
     // That is a malformed fixup, not an unexpected parser failure.
     if (target < 0n || target > 0xffffffffffffffffn)
@@ -1160,7 +1188,7 @@ const hydrate = (
   };
   try {
     while (cursor < first.length) {
-      if (!budget.consumeWork(1)) parserBudgetExhausted("work");
+      if (!budget.consumeWork(1)) parserBudgetExhausted(budget, "work");
       const encoded = first[cursor];
       if (encoded === undefined) break;
       cursor++;
@@ -1199,7 +1227,8 @@ const hydrate = (
           appendPtr(readFixup(payload));
           break;
         case 4:
-          if (!budget.consumeWork(payload * 4)) parserBudgetExhausted("work");
+          if (!budget.consumeWork(payload * 4))
+            parserBudgetExhausted(budget, "work");
           if (
             payload > Math.floor((first.length - cursor) / 4) ||
             payload > Math.floor((outputLimit - outputLength) / 4)
@@ -1224,7 +1253,8 @@ const hydrate = (
           }
           break;
         case 5:
-          if (!budget.consumeWork(payload * 4)) parserBudgetExhausted("work");
+          if (!budget.consumeWork(payload * 4))
+            parserBudgetExhausted(budget, "work");
           if (
             payload > Math.floor((first.length - cursor) / 4) ||
             payload > Math.floor((outputLimit - outputLength) / 8)
