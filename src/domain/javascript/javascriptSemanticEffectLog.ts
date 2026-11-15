@@ -489,6 +489,42 @@ export const bindingMemberEffectMayPrecede = (
       semanticEffectTiming(read, effect.node, state) !== "after",
   );
 
+/**
+ * Whether an assignment to `binding` recorded as a reference initializer
+ * (a pattern or other non-ordinary write) may run before `read`.
+ */
+export const bindingAssignmentMayPrecede = (
+  state: JavaScriptSemanticAnalysisState,
+  binding: JavaScriptSemanticBindingState,
+  read: t.Node,
+): boolean =>
+  binding.referenceInitializers.some(
+    ({ assignment, node }) =>
+      assignment && semanticEffectTiming(read, node, state) !== "after",
+  );
+
+/** The initializers of `binding` that may run before `read`. */
+export const bindingInitializersMayPrecede = (
+  state: JavaScriptSemanticAnalysisState,
+  binding: JavaScriptSemanticBindingState,
+  read: t.Node,
+): JavaScriptSemanticBindingState["initializers"] =>
+  binding.initializers.filter(
+    ({ node }) => semanticEffectTiming(read, node, state) !== "after",
+  );
+
+/** Whether a recorded write to `<owner>.prototype` may run before `read`. */
+export const prototypeMutationMayPrecede = (
+  state: JavaScriptSemanticAnalysisState,
+  owner: string,
+  read: t.Node,
+): boolean =>
+  state.prototypeMutationSites.some(
+    (effect) =>
+      effect.owner === owner &&
+      semanticEffectTiming(read, effect.node, state) !== "after",
+  );
+
 /** The sources recorded member writes assigned into `binding`'s object. */
 export function* semanticMemberWriteSources(
   binding: JavaScriptSemanticBindingState,
