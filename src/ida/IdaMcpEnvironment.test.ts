@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { createIdaMcpConnection } from "./IdaMcpConnection.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { idaConnectionDependencies } from "../../tests/support/idaConnectionDependencies.js";
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -58,6 +59,7 @@ input.on('line', (line) => {
         timeoutMs: 5000,
       },
       selected,
+      idaConnectionDependencies(),
     );
     environment.REA_SELECTED_CONTEXT = "mutated-after-construction";
     try {
@@ -105,7 +107,7 @@ input.on('line', (line) => {
       timeoutMs: 5000,
     },
     {},
-    { maxStdioMessageBytes: 4096 },
+    idaConnectionDependencies({ maxStdioMessageBytes: 4096 }),
   );
   try {
     expect(await connection.connect()).toEqual(["large"]);
