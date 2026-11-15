@@ -1,4 +1,8 @@
 import type { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisService.js";
+import type { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
+import { inspectAndroidJniBindings } from "../application/android/AndroidJniInspection.js";
+import { inspectAndroidPackage } from "../application/android/AndroidPackageInspection.js";
+import { inspectAndroidSymbol } from "../application/android/AndroidSymbolInspection.js";
 import type { AnalysisViewRetention } from "../application/analysisView/AnalysisViewService.js";
 import type { ApkSignatureService } from "../application/apkSignature/ApkSignatureService.js";
 import type { ApktoolResourceAnalysisService } from "../application/apktool/ApktoolResourceAnalysisService.js";
@@ -307,6 +311,44 @@ const SERVICE_TOOL_BINDINGS = {
         inspectDartAot(service, input, retention, options),
     },
   })) satisfies Bind<FlutterBuildAnalysisService>,
+  androidAnalysis: ((service, retention) => ({
+    ...contractServiceBindings(service, [
+      "search_android_classes",
+      "trace_android_references",
+    ]),
+    inspect_android_package: {
+      admission: "sdk",
+      run: (input, options) =>
+        inspectAndroidPackage(service, input, retention, options),
+    },
+    inspect_android_jni_bindings: {
+      admission: "sdk",
+      run: (input, options) =>
+        inspectAndroidJniBindings(service, input, retention, options),
+    },
+    inspect_android_class: {
+      admission: "sdk",
+      run: (input, options) =>
+        inspectAndroidSymbol(
+          service,
+          "inspect_android_class",
+          input,
+          retention,
+          options,
+        ),
+    },
+    inspect_android_method: {
+      admission: "sdk",
+      run: (input, options) =>
+        inspectAndroidSymbol(
+          service,
+          "inspect_android_method",
+          input,
+          retention,
+          options,
+        ),
+    },
+  })) satisfies Bind<AndroidAnalysisService>,
   apktoolAnalysis: ((service) =>
     contractServiceBindings(service, [
       "inspect_apktool_client",

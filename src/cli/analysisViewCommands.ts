@@ -1,7 +1,7 @@
 import { z } from "incur";
 
 import { inspectAnalysisView } from "../application/analysisView/AnalysisViewService.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/index.js";
 import { ANALYSIS_VIEW_PROVIDER } from "../domain/investigationProviders.js";
 import { inspectEvidenceBundleCommand } from "../application/EvidenceBundleCommands.js";
 import { ANALYSIS_VIEW_TOOL_CONTRACTS } from "../contracts/analysisViewToolContracts.js";

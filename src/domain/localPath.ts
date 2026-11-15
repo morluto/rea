@@ -1,6 +1,10 @@
 import { isAbsolute, relative, sep } from "node:path";
 import { z } from "zod";
 
+// Declared layer exception (scripts/lib/module-layers.mjs LAYER_EXCEPTIONS):
+// which paths are absolute is a fact about the running host's path rules.
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+
 import { rejectUnpairedSurrogates } from "./stringPatterns.js";
 
 /**
@@ -38,7 +42,7 @@ export const windowsAbsolutePathPattern =
 
 /** A caller-selected path that is absolute on the host running REA. */
 export const absoluteLocalPathStringSchema = localPathStringSchema.regex(
-  process.platform === "win32" ? windowsAbsolutePathPattern : /^\//u,
+  HOST_PLATFORM.platform === "win32" ? windowsAbsolutePathPattern : /^\//u,
   "must be an absolute local filesystem path",
 );
 

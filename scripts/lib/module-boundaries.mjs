@@ -3,6 +3,7 @@ import { isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { readImportSpecifiers } from "./import-specifiers.mjs";
+import { isLayerException } from "./module-layers.mjs";
 
 const PURE_LAYERS = new Set(["domain", "contracts"]);
 const MIGRATED_PROVIDER_ROOTS = new Set([
@@ -125,7 +126,7 @@ const failedBoundary = (file, target, typeOnly) => {
       /^src\/(?:cli|main)\./u.test(target))
   )
     return "artifact-acquisition";
-  if (PURE_LAYERS.has(layer)) {
+  if (PURE_LAYERS.has(layer) && !isLayerException(file, target)) {
     if (
       (/^src\/[^/]+\//u.test(target) && !PURE_LAYERS.has(targetLayer)) ||
       /^src\/(?:cli|main)\./u.test(target)

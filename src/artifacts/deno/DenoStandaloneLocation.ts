@@ -38,10 +38,10 @@ import {
   readMachoContainer,
   readSliceCommandTable,
   type ReadAt,
-} from "../apple/MachoLoadCommandReader.js";
+} from "../../domain/apple/machoLoadCommandReader.js";
 import { abortIfNeeded } from "../ArtifactHash.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
-import { locatePeResourcePayloads } from "../../native/pe/PeResourceLayout.js";
+import { ArtifactReaderFailure } from "../../resources/index.js";
+import { locatePeResourcePayloads } from "../pe/PeResourceLayout.js";
 import { DENO_SECTION_MAGIC } from "./DenoSectionLayout.js";
 
 const CPU_TYPE_ARM64 = 0x0100000c;

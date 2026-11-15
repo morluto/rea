@@ -33,9 +33,9 @@ import {
   MAX_BINARY_HARDENING_SYMBOL_SCAN_BYTES,
   MAX_BINARY_HARDENING_TABLE_ENTRIES,
 } from "../../domain/native/binaryHardening.js";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
-import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
-import { readMachoEncryption } from "../../artifacts/apple/MachoEncryptionReader.js";
+import { assertArtifactReadActive } from "../../resources/index.js";
+import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
+import { readMachoEncryption } from "../../domain/apple/machoEncryptionReader.js";
 import {
   frameLoadCommands,
   readMachoContainer,
@@ -43,7 +43,7 @@ import {
   type MachoLoadCommand,
   type MachoSliceHeader,
   type ReadAt,
-} from "../../artifacts/apple/MachoLoadCommandReader.js";
+} from "../../domain/apple/machoLoadCommandReader.js";
 
 const MH_EXECUTE = 0x2;
 const MH_DYLIB = 0x6;

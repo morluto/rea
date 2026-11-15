@@ -1,13 +1,16 @@
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import {
   processInspectionCancellationError,
   retainProcessInspectionCleanup,
 } from "../providers/OwnedCommandCleanup.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import {
+  type ArtifactResourceScope,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import {
   selectArtifactCommandPath,
   type ArtifactCommandPath,
 } from "../process/ArtifactCommandPath.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   FIRMWARE_TOOL_REQUIREMENTS,
   type FirmwareEngineName,
@@ -57,19 +60,6 @@ export type FirmwareLauncher = (
   options: OwnedProviderProcessSpawnOptions,
 ) => Promise<SpawnedOwnedProviderProcess>;
 
-/** Captured tool output for one finished firmware command, including byte coverage. */
-const capturedFirmwareOutput = (
-  snapshot: ProviderProcessSnapshot,
-): AnalysisCapturedOutput => ({
-  stdout: snapshot.stdout.text,
-  stderr: snapshot.stderr.text,
-  stdout_bytes: snapshot.stdout.bytes,
-  stderr_bytes: snapshot.stderr.bytes,
-  exit_code: snapshot.exitCode ?? null,
-  signal: snapshot.signal ?? null,
-  truncated: snapshot.diagnosticTruncated === true,
-});
-
 /** Refuse an unmet host or tool requirement, which another target cannot satisfy. */
 export const firmwareToolUnavailable = (
   engine: string,
@@ -112,12 +102,14 @@ export const resolveFirmwareCommand = async (
   engine: FirmwareEngineName,
   operation: string,
   files: FirmwareFileAccess,
+  /** The host the engine runs on; firmware engines are admitted on Linux only. */
+  platform: NodeJS.Platform,
   signal?: AbortSignal,
 ) => {
   const variable = FIRMWARE_TOOL_REQUIREMENTS[engine].commandEnvironment;
   const configured = environment[variable];
   if (
-    !firmwareHostSupported(process.platform) ||
+    !firmwareHostSupported(platform) ||
     configured === undefined ||
     !isAbsolute(configured)
   )
@@ -326,7 +318,7 @@ export const runFirmwareCommand = async (context: {
         snapshot.signal,
         fileSizeBytes,
         fileSizeAdjustable,
-        capturedFirmwareOutput(snapshot),
+        capturedProviderOutput(snapshot),
       );
       if (signalLimit !== undefined) return signalLimit;
       return new ProviderAdapterError(engine, operation, {
@@ -440,7 +432,7 @@ export const runFirmwareCommand = async (context: {
       {
         operation,
         cleanupPrimary: failure,
-        capturedOutput: capturedFirmwareOutput(snapshot),
+        capturedOutput: capturedProviderOutput(snapshot),
       },
     );
   }

@@ -15,7 +15,7 @@ import { err, ok } from "../domain/result.js";
 import {
   createAnalysisExecution,
   type AnalysisOperationPort,
-} from "./AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import {
   AnalysisCancelledError,
   AnalysisResourceConstraintError,
@@ -875,7 +875,9 @@ it.each([
 it("shares temporary provider state only within a single completed workflow", async () => {
   const owner = {};
   const scopes: Array<
-    NonNullable<import("./AnalysisProvider.js").ExecutionOptions["workScope"]>
+    NonNullable<
+      import("../ports/AnalysisProvider.js").ExecutionOptions["workScope"]
+    >
   > = [];
   const provider = { id: "fixture", name: "Fixture", version: "1" };
   const analysis: AnalysisOperationPort = {
@@ -906,7 +908,7 @@ it("shares temporary provider state only within a single completed workflow", as
 
 it("clears workflow state when its callback throws", async () => {
   const owner = {};
-  let captured: import("./AnalysisProvider.js").ExecutionOptions["workScope"];
+  let captured: import("../ports/AnalysisProvider.js").ExecutionOptions["workScope"];
   const analysis: AnalysisOperationPort = {
     execute: async (_operation, _parameters, options) => {
       captured = options?.workScope;

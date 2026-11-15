@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { open } from "node:fs/promises";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   HopperCancelledError,

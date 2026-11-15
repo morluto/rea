@@ -15,7 +15,7 @@ import {
 } from "../../domain/analysisErrorBase.js";
 import { EvidenceFileError } from "../../domain/evidenceErrors.js";
 import { RECREATE_EVIDENCE_GUIDANCE } from "../../domain/evidenceFormat.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import type {

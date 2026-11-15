@@ -1,7 +1,7 @@
 import type { z } from "zod";
 import { requireAuthenticationHeadroom } from "../JsonAuthenticationHeadroom.js";
 import { authenticateEvidenceBundleValue } from "../EvidenceBundleFiles.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../../resources/index.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisInputError,

@@ -3,9 +3,9 @@ import type { FileHandle } from "node:fs/promises";
 import {
   ArtifactReaderFailure,
   artifactFixedLimitFailure,
-} from "./ArtifactReader.js";
+  assertArtifactReadActive,
+} from "../resources/index.js";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import { setImmediate } from "node:timers/promises";
 import {
   hasWxapkgEncryptedMagic,

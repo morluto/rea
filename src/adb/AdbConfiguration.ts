@@ -16,7 +16,7 @@ import {
   execFileOutputFailure,
   spawnCapacityExhausted,
 } from "../process/ExecFileOutput.js";
-import type { ProviderAvailability } from "../application/AnalysisProvider.js";
+import type { ProviderAvailability } from "../ports/AnalysisProvider.js";
 import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -52,7 +52,7 @@ export interface AdbBinarySelection {
  */
 export const resolveAdbBinary = async (
   environment: Readonly<Record<string, string | undefined>>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
   signal?: AbortSignal,
 ): Promise<AdbBinarySelection> => {
   const selectedEnvironment = snapshotEnvironment(environment, platform);

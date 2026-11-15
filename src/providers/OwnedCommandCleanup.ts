@@ -10,12 +10,14 @@ import {
   processInspectionCancellations,
   type ProcessInspectionFailure,
 } from "../process/ProcessInspectionCleanup.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import {
+  type ArtifactResourceScope,
+  AnalysisCleanupLease,
+} from "../resources/index.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";

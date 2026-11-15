@@ -703,7 +703,7 @@ it("rejects GDB commands queued before closeAll when their turn arrives", async 
     error: {
       _tag: "AnalysisCapabilityUnavailableError",
       operation: "gdb_console",
-      reason: expect.stringContaining("REA is shutting down"),
+      diagnostics: { session_stop: "server-shutdown" },
     },
   });
   await closing;
@@ -740,7 +740,7 @@ it("rejects GDB commands queued behind a session close", async () => {
     error: {
       _tag: "AnalysisCapabilityUnavailableError",
       operation: "gdb_console",
-      reason: expect.stringContaining("close_gdb_session started releasing"),
+      diagnostics: { session_stop: "close-requested" },
     },
   });
   expect(commands.some((command) => command.includes('"run"'))).toBe(false);
@@ -793,7 +793,7 @@ it.each(["close", "retryCleanupFailures"] as const)(
       error: {
         _tag: "AnalysisCapabilityUnavailableError",
         operation: "gdb_console",
-        reason: expect.stringContaining("close_gdb_session started releasing"),
+        diagnostics: { session_stop: "close-requested" },
       },
     };
     // Finish the barrier before assertions so a regression cannot strand teardown.
@@ -1003,12 +1003,9 @@ it("reports invalid UTF-8 in retained GDB MI status", async () => {
   });
 });
 
-it.each([
-  ["error", "GDB stdin stream failed: simulated stdin failure"],
-  ["close", "GDB stdin stream closed unexpectedly."],
-] as const)(
+it.each(["error", "close"] as const)(
   "fails pending GDB commands when stdin emits %s",
-  async (event, message) => {
+  async (event) => {
     const fake = createFakeSpawner((child, token, command) => {
       if (!command.includes("held-command"))
         child.stdout.write(`${token}^done\n`);
@@ -1045,8 +1042,18 @@ it.each([
     }
     const failed = settled.result;
     expect(failed.ok).toBe(false);
-    if (!failed.ok) expect(failed.error.message).toContain(message);
-    expect(manager.status(started.value.session_id)?.state).toBe("closed");
+    if (!failed.ok) {
+      expect(failed.error.diagnostics).toEqual({
+        session_stop: "input-stream-failure",
+      });
+      // The stream's own error stays in the diagnosis.
+      if (event === "error")
+        expect(failed.error.message).toContain("simulated stdin failure");
+    }
+    expect(manager.status(started.value.session_id)).toMatchObject({
+      state: "closed",
+      closed_reason_code: "input-stream-failure",
+    });
   },
 );
 
@@ -2145,11 +2152,34 @@ it("reports an MI stream failure when the child has no stdin pipe", async () => 
   expect(started.ok).toBe(false);
   if (!started.ok) {
     expect(started.error._tag).toBe("AnalysisCapabilityUnavailableError");
-    expect(started.error.message).toContain("input stream is closed");
+    expect(started.error.diagnostics).toEqual({
+      session_stop: "input-stream-failure",
+    });
   }
   expect(fake.children[0]?.exitCode).toBeNull();
   expect(fake.children[0]?.killSignals).toEqual(["SIGTERM"]);
   expect(fake.children[0]?.signalCode).toBe("SIGTERM");
+});
+
+it("keeps the stop code on a startup stream failure whose cleanup is incomplete", async () => {
+  const fake = createFakeSpawner(undefined, { stdinEnabled: false });
+  const manager = managerWithFakeSpawner(fake.spawnProcess, {
+    stopProcess: async () => ({
+      status: "incomplete",
+      reason: "simulated startup stop uncertainty",
+    }),
+  });
+
+  const started = await manager.start();
+
+  expect(started).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisCapabilityUnavailableError",
+      cleanupIncomplete: true,
+      diagnostics: { session_stop: "input-stream-failure" },
+    },
+  });
 });
 
 it("preserves the protocol failure when owned-process stop is confirmed", async () => {
@@ -2172,6 +2202,7 @@ it("preserves the protocol failure when owned-process stop is confirmed", async 
     error: {
       _tag: "AnalysisCapabilityUnavailableError",
       message: expect.stringContaining("injected MI stdin write failure"),
+      diagnostics: { session_stop: "input-stream-failure" },
     },
   });
 });
@@ -2314,15 +2345,20 @@ it("rejects the command queued behind a timed-out GDB request", async () => {
   const queued = manager.execute(started.value.session_id, "after-timeout");
   const firstResult = await first;
   expect(firstResult.ok).toBe(false);
+  // The timed-out command's own failure names why the session stopped.
   if (!firstResult.ok)
-    expect(firstResult.error._tag).toBe("AnalysisCapabilityUnavailableError");
+    expect(firstResult.error).toMatchObject({
+      _tag: "AnalysisCapabilityUnavailableError",
+      cleanupIncomplete: true,
+      diagnostics: { session_stop: "command-deadline" },
+    });
   const rejected = await queued;
 
   expect(rejected.ok).toBe(false);
   if (!rejected.ok)
     expect(rejected.error).toMatchObject({
       _tag: "AnalysisCapabilityUnavailableError",
-      reason: expect.stringContaining("timed out"),
+      diagnostics: { session_stop: "command-deadline" },
     });
 });
 
@@ -3831,7 +3867,7 @@ process.stdin.on('data', (chunk) => {
     ok: false,
     error: {
       _tag: "AnalysisCapabilityUnavailableError",
-      reason: expect.stringContaining("MI line exceeding the 16777216 byte"),
+      diagnostics: { session_stop: "output-correlation-failure" },
       cleanupIncomplete: true,
       cleanup: { resources: [started.value.session_id] },
       partialObservation: {
@@ -3872,7 +3908,7 @@ process.stdin.on('data', (chunk) => {
     ok: false,
     error: {
       _tag: "AnalysisCapabilityUnavailableError",
-      reason: expect.stringContaining("MI line exceeding the 16777216 byte"),
+      diagnostics: { session_stop: "output-correlation-failure" },
       cleanupIncomplete: true,
       cleanup: { resources: [started.value.session_id] },
       partialObservation: {
@@ -4074,8 +4110,11 @@ it.each(["incomplete", "rejected"] as const)(
 
     expect(failed.ok).toBe(false);
     if (!failed.ok) {
+      expect(failed.error.diagnostics).toEqual({
+        session_stop: "input-stream-failure",
+      });
       expect(failed.error.message).toContain(
-        "GDB stdin write failed: simulated protocol write failure",
+        "simulated protocol write failure",
       );
       expect(failed.error.message).toContain(
         "simulated protocol stop uncertainty",
@@ -4102,7 +4141,7 @@ it.each(["incomplete", "rejected"] as const)(
       ok: false,
       error: {
         _tag: "AnalysisCapabilityUnavailableError",
-        reason: expect.stringContaining("GDB stdin write failed"),
+        diagnostics: { session_stop: "input-stream-failure" },
       },
     });
     expect((await manager.retryCleanupFailures()).ok).toBe(false);
@@ -4115,7 +4154,7 @@ it.each(["incomplete", "rejected"] as const)(
     // cleanup until close_gdb_session releases it.
     expect(manager.status(started.value.session_id)).toMatchObject({
       state: "closed",
-      closed_reason: expect.stringContaining("GDB stdin write failed"),
+      closed_reason_code: "input-stream-failure",
     });
     expect((await manager.close(started.value.session_id)).ok).toBe(true);
     expect(manager.status(started.value.session_id)).toBeUndefined();

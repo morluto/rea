@@ -1,4 +1,4 @@
-import { BinaryReader } from "../native/metadata/BinaryContainer.js";
+import { BinaryReader } from "../domain/binaryContainer.js";
 import {
   apkSigningPairEnd,
   APK_SIGNING_BLOCK_MAX_PAIRS,

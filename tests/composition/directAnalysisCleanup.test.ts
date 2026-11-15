@@ -57,7 +57,7 @@ import {
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { BinarySession } from "../../src/application/binary/BinarySession.js";
 import { InvestigationRecords } from "../../src/application/investigation/InvestigationRecords.js";
-import { AnalysisCleanupLease } from "../../src/artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../src/resources/AnalysisCleanupLease.js";
 
 const cleanupError = new ProviderCleanupError(
   "fixture",
