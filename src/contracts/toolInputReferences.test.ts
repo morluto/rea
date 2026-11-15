@@ -5,7 +5,10 @@ import { z } from "zod";
 
 import { applicationFeatureSeedSchema } from "../domain/javascript/javascriptFeatureTraceSchemas.js";
 import { ADVERTISED_INPUT_SCHEMA_MAX_BYTES } from "./advertisedDialect.js";
-import { presentAdvertisedInputSchema } from "./compactInputSchema.js";
+import {
+  presentAdvertisedInput,
+  presentAdvertisedInputSchema,
+} from "./compactInputSchema.js";
 import { presentInputJsonSchema } from "./inputSchemaPresentation.js";
 import { toolContract } from "./toolContracts.js";
 import {
@@ -125,7 +128,7 @@ describe("advertised object dependencies", () => {
   ] as const)(
     "presents object-group dependencies as guidance without unsupported dialect keywords (%s)",
     (dialect, dependencyKeyword) => {
-      const advertised = presentInputJsonSchema(
+      const canonical = presentInputJsonSchema(
         {
           $schema:
             dialect === "draft-07"
@@ -138,16 +141,15 @@ describe("advertised object dependencies", () => {
         },
         () => undefined,
       );
-      expect(advertised.$schema).toBe(
-        dialect === "draft-07"
-          ? "http://json-schema.org/draft-07/schema#"
-          : "https://json-schema.org/draft/2020-12/schema",
-      );
-      expect(advertised).not.toHaveProperty("dependencies");
-      expect(advertised).not.toHaveProperty("dependentRequired");
-      expect(advertised.description).toContain(
-        "When body is provided, also provide url.",
-      );
+      // The registered schema keeps the canonical keyword; the listed schema
+      // states it in the tool guidance instead.
+      expect(canonical).toHaveProperty([dependencyKeyword, "body"], ["url"]);
+      const { schema, guidance } = presentAdvertisedInput(canonical, {
+        budgetBytes: ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
+      });
+      expect(schema).not.toHaveProperty("dependencies");
+      expect(schema).not.toHaveProperty("dependentRequired");
+      expect(guidance).toContain("When body is provided, also provide url.");
     },
   );
 });

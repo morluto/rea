@@ -293,26 +293,28 @@ it("keeps SDK-converted and canonical schemas valid and accepting canonical exam
   expect(checkedCanonicalRestrictions).toBe(true);
 });
 
-it("states dependency keywords as prose in the canonical and compact schemas", async () => {
+it("states dependency keywords as prose in the listed tool description", async () => {
   const compact = compactServer();
   registerCatalog(compact);
   const compactTools = await listToolsThroughTransport(compact);
   const sqlite = canonicalTools().find(
     ({ name }) => name === "inspect_sqlite_database",
   );
-  expect(sqlite?.inputSchema.description).toContain(
-    "When row_limit is provided, also provide table.",
+  // The registered schema keeps the canonical keyword.
+  expect(sqlite?.inputSchema).toHaveProperty(
+    ["dependentRequired", "row_limit"],
+    ["table"],
   );
-  expect(sqlite?.inputSchema.description).toContain(
-    "When schema_scope is selected_table, also provide table.",
-  );
-  // Compact moves the sentence to the tool description, which Codex keeps
+  // The listed tool description carries the sentences, which Codex keeps
   // when it strips descriptions inside a schema above 5,000 bytes.
   const compactSqlite = compactTools.find(
     ({ name }) => name === "inspect_sqlite_database",
   );
   expect(compactSqlite?.description).toContain(
     "When schema_scope is selected_table, also provide table.",
+  );
+  expect(compactSqlite?.description).toContain(
+    "When row_limit is provided, also provide table.",
   );
   expect(JSON.stringify(compactSqlite?.inputSchema)).not.toContain(
     "also provide",

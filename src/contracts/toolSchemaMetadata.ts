@@ -6,10 +6,8 @@ import { z } from "zod";
 
 import type { ToolContract } from "./toolContractTypes.js";
 import { advertisedInputExamples } from "./advertisedInputExamples.js";
-import {
-  presentInputJsonSchema,
-  presentOutputJsonSchema,
-} from "./inputSchemaPresentation.js";
+import { presentInputJsonSchema } from "./inputSchemaPresentation.js";
+import { presentOutputJsonSchema } from "./outputSchemaPresentation.js";
 import {
   schemaArrays,
   schemaChildren,
