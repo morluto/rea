@@ -26,7 +26,7 @@ const plan = (files: readonly string[], sources: Record<string, string>) =>
   });
 
 const selectedFiles = (result: ReturnType<typeof plan>) =>
-  result.groups.flat().toSorted();
+  (result.mode === "selected" ? result.files : []).toSorted();
 
 it("follows test and verifier imports and directory scans, not production importers", () => {
   const sources = {
@@ -65,6 +65,37 @@ it("selects a leaf adapter's tests by its name and directory across test project
   expect(selectedFiles(plan(["src/adb/AdbProvider.ts"], sources))).toEqual([
     "tests/boundary/providers/adb/adbBugreport.test.ts",
   ]);
+});
+
+it("selects tests that start the built runtime beside a changed presentation owner", () => {
+  const sources = {
+    "src/server/Core.ts": "",
+    "src/server/recovery.ts": "",
+    "src/domain/Value.ts": "",
+    "tests/support/launch.ts": 'spawn("scripts/rea.mjs", ["mcp"]);',
+    "tests/fixtures/client.ts": 'import "../support/launch.js";',
+    // Starts the built server and imports a sibling of the changed owner.
+    "tests/boundary/mcp/direct.test.ts":
+      'import "../../../src/server/recovery.js"; resolve("dist/main.js");',
+    "tests/boundary/mcp/helper.test.ts":
+      'import "../../fixtures/client.js"; import "../../../src/server/recovery.js";',
+    // Starts it but imports nothing from that owner, or imports it in process.
+    "tests/boundary/mcp/unrelated.test.ts":
+      'import "../../fixtures/client.js"; import "../../../src/domain/Value.js";',
+    "tests/boundary/mcp/inProcess.test.ts":
+      'import "../../../src/server/recovery.js";',
+    // A package's own dist/ subpath is not the built runtime.
+    "tests/boundary/mcp/ajv.test.ts":
+      'import { Ajv2020 } from "ajv/dist/2020.js"; import "../../../src/server/recovery.js";',
+  };
+  expect(selectedFiles(plan(["src/server/Core.ts"], sources))).toEqual([
+    "tests/boundary/mcp/direct.test.ts",
+    "tests/boundary/mcp/helper.test.ts",
+  ]);
+  // Other owners keep import tracing only.
+  expect(plan(["src/domain/Value.ts"], sources)).toMatchObject({
+    reason: "Affected tests: 1 imports",
+  });
 });
 
 it("lets checker-only inputs and prose select nothing by themselves", () => {
@@ -170,54 +201,59 @@ it("traces shared script modules to their tests and falls back for other consume
   });
 });
 
-it("parses only well-formed plans and derives one shard per selected group", () => {
+it("parses only well-formed plans and derives the selected shard count", () => {
   const selected = {
-    version: 2,
+    version: 3,
     mode: "selected",
     reason: "Affected tests: 2 changed",
-    groups: [["src/a.test.ts"], ["tests/b.test.ts"]],
+    files: ["src/a.test.ts", "tests/b.test.ts"],
+    shards: 2,
   };
   expect(
     testShards("fast", parseTestSelection(JSON.stringify(selected))),
   ).toEqual(["1/2", "2/2"]);
-  const full = { version: 2, mode: "full", reason: "Shared", groups: [] };
+  const full = { version: 3, mode: "full", reason: "Shared" };
   expect(testShards("fast", parseTestSelection(full))).toHaveLength(12);
   expect(testShards("full", parseTestSelection(full))).toHaveLength(6);
   for (const value of [
     "",
     "null",
+    { ...selected, version: 2 },
     { ...selected, mode: "candidate" },
-    { ...selected, groups: [[]] },
-    { ...selected, groups: [["src/a.ts"]] },
-    { ...selected, groups: [["/abs/a.test.ts"]] },
-    { ...selected, groups: [["src/a.test.ts"], ["src/a.test.ts"]] },
+    { ...selected, files: [] },
+    { ...selected, files: ["src/a.ts"] },
+    { ...selected, files: ["/abs/a.test.ts"] },
+    { ...selected, files: ["src/a.test.ts", "src/a.test.ts"] },
+    // More shards than files, or than one selection uses.
+    { ...selected, shards: 3 },
+    { ...selected, shards: 0 },
     {
       ...selected,
-      groups: Array.from({ length: 5 }, (_, i) => [`src/${i}.test.ts`]),
+      files: Array.from({ length: 5 }, (_, i) => `src/${i}.test.ts`),
+      shards: 5,
     },
+    { ...full, shards: 1 },
   ])
     expect(() => parseTestSelection(value)).toThrow(
       /Invalid portable test selection plan|JSON/u,
     );
 });
 
-it("runs only a group the plan defines", async () => {
+it("runs only a shard the plan defines", async () => {
   const group = fileURLToPath(
     new URL("../../scripts/ci/test-group.mjs", import.meta.url),
   );
   const selection = JSON.stringify({
-    version: 2,
+    version: 3,
     mode: "selected",
     reason: "Affected tests: 1 changed",
-    groups: [["src/a.test.ts"]],
+    files: ["src/a.test.ts"],
+    shards: 1,
   });
   for (const [shard, environment] of [
     ["2/2", selection],
     ["1/2", selection],
-    [
-      "1/1",
-      JSON.stringify({ version: 2, mode: "full", reason: "x", groups: [] }),
-    ],
+    ["1/1", JSON.stringify({ version: 3, mode: "full", reason: "x" })],
     ["1/1", ""],
   ] as const)
     await expect(

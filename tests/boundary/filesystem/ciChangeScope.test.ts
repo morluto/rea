@@ -458,7 +458,7 @@ it("selects the tests a pull request affects and runs everything when it cannot 
     "tests/conformance/named.test.ts",
   ];
   expect(await runPlanScript(directory, base, head)).toMatchObject({
-    testSelection: { version: 2, mode: "selected", groups: [selected] },
+    testSelection: { version: 3, mode: "selected", files: selected, shards: 1 },
     testShards: ["1/1"],
   });
   const output = await readFile(join(directory, "scope-output"), "utf8");
@@ -469,7 +469,7 @@ it("selects the tests a pull request affects and runs everything when it cannot 
   expect(
     await runPlanScript(directory, base, head, "pull_request", true),
   ).toMatchObject({
-    testSelection: { mode: "full", groups: [] },
+    testSelection: { version: 3, mode: "full" },
     testShards: ["1/6", "2/6", "3/6", "4/6", "5/6", "6/6"],
   });
   expect(await classify(directory, base, head, "push")).toMatchObject({
