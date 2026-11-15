@@ -32,36 +32,39 @@ vi.mock("../../domain/binaryContainer.js", async (importOriginal) => {
  * once instead of running for minutes. Null leaves the tables unwrapped.
  */
 const sectionTable = vi.hoisted(() => ({ readsLeft: null as number | null }));
-vi.mock("../../domain/native/nativeSectionDirectory.js", async (importOriginal) => {
-  const actual =
-    await importOriginal<
-      typeof import("../../domain/native/nativeSectionDirectory.js")
-    >();
-  return {
-    ...actual,
-    readElfDirectoryFromBuffer: (
-      ...args: Parameters<typeof actual.readElfDirectoryFromBuffer>
-    ) => {
-      const directory = actual.readElfDirectoryFromBuffer(...args);
-      if (sectionTable.readsLeft === null) return directory;
-      const sections = new Proxy(directory.sections, {
-        get(target, key, receiver) {
-          if (
-            sectionTable.readsLeft !== null &&
-            typeof key === "string" &&
-            /^\d+$/u.test(key)
-          ) {
-            if (sectionTable.readsLeft === 0)
-              throw new Error("ELF section table read allowance exhausted");
-            sectionTable.readsLeft -= 1;
-          }
-          return Reflect.get(target, key, receiver) as unknown;
-        },
-      });
-      return { ...directory, sections };
-    },
-  };
-});
+vi.mock(
+  "../../domain/native/nativeSectionDirectory.js",
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import("../../domain/native/nativeSectionDirectory.js")
+      >();
+    return {
+      ...actual,
+      readElfDirectoryFromBuffer: (
+        ...args: Parameters<typeof actual.readElfDirectoryFromBuffer>
+      ) => {
+        const directory = actual.readElfDirectoryFromBuffer(...args);
+        if (sectionTable.readsLeft === null) return directory;
+        const sections = new Proxy(directory.sections, {
+          get(target, key, receiver) {
+            if (
+              sectionTable.readsLeft !== null &&
+              typeof key === "string" &&
+              /^\d+$/u.test(key)
+            ) {
+              if (sectionTable.readsLeft === 0)
+                throw new Error("ELF section table read allowance exhausted");
+              sectionTable.readsLeft -= 1;
+            }
+            return Reflect.get(target, key, receiver) as unknown;
+          },
+        });
+        return { ...directory, sections };
+      },
+    };
+  },
+);
 import {
   elf32RelativeInitializers,
   elf64PieInitializers,
