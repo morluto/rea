@@ -205,8 +205,6 @@
     "src/browser/PlaywrightScenarioRequest.ts": 1
   },
   "cleanup-resolve-push": {
-    "src/android/JadxProvider.ts": 2,
-    "src/application/binary/BinarySession.ts": 1,
     "src/application/desktop/DesktopBuildComputers.ts": 1,
     "src/application/desktop/DesktopRemoteTaskReaders.ts": 1,
     "src/application/desktop/DesktopTaskReaderCleanup.ts": 1,
