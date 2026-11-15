@@ -3,11 +3,7 @@ import assert from "node:assert/strict";
 import { isOwnershipPsExecution } from "../../lib/ownership-ps-trace.mjs";
 
 /** Parse execution/thread facts once; only an observed Node ps caller owns inventory reads. */
-export const collectOwnershipTraceFacts = ({
-  traces,
-  nodeExecutable,
-  psExecutables,
-}) => {
+export const collectOwnershipTraceFacts = ({ traces, nodeExecutable }) => {
   const processGroups = new Map();
   const findGroup = (pid) => {
     const parent = processGroups.get(pid);
@@ -85,7 +81,7 @@ export const collectOwnershipTraceFacts = ({
         path: match[1],
         line,
         succeeded: line.endsWith(" = 0"),
-        ownershipInventory: isOwnershipPsExecution(line, psExecutables),
+        ownershipInventory: isOwnershipPsExecution(line),
       });
     }
   }
