@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { createHash } from "node:crypto";
 import {
   decodeLimit,
@@ -478,7 +479,7 @@ const decodeSelectedArchive = (
           cause,
           remediationAction: keyedArchiveKindRemediation(
             cause.fileKind,
-            input.platform ?? process.platform,
+            input.platform ?? HOST_PLATFORM.platform,
           ),
         },
       );

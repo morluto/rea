@@ -433,12 +433,7 @@ describe("Apple asset catalog and Interface Builder concurrency", () => {
       const ready = join(work, "ready");
       const exited = join(work, "exited");
       const script = `const fs=require("node:fs");process.on("SIGTERM",()=>{setTimeout(()=>{fs.writeFileSync(process.argv[2],"exited");process.exit(0)},500)});fs.writeFileSync(process.argv[1],"ready");setInterval(()=>{},1000);`;
-      const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
       const realExecFileOutput = processOutput.execFileOutput;
-      Object.defineProperty(process, "platform", {
-        ...platform,
-        value: "darwin",
-      });
       const spy = vi
         .spyOn(processOutput, "execFileOutput")
         .mockImplementation((_command, _args, options) =>
@@ -457,6 +452,7 @@ describe("Apple asset catalog and Interface Builder concurrency", () => {
           targetSha256: "a".repeat(64),
           signal: controller.signal,
           analyzeInterfaceBuilder: async () => emptyGraph,
+          platform: "darwin",
         }).catch((cause: unknown) => cause);
         await waitFor(() => expect(access(ready)).resolves.toBeUndefined());
         controller.abort("stop asset inspection");
@@ -466,7 +462,6 @@ describe("Apple asset catalog and Interface Builder concurrency", () => {
         controller.abort("stop asset inspection");
         await settled;
         spy.mockRestore();
-        Object.defineProperty(process, "platform", platform);
       }
     },
   );
