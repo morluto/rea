@@ -20,6 +20,9 @@ it.each([
 it.each([
   // Every match is kept, so no precedence is chosen.
   "rows.filter((row) => row.type === PT_LOAD)",
+  // `[0]` indexes each mapped value, not the filtered result.
+  "rows.filter((row) => row.type === TYPE).map((row) => parse(row)[0])",
+  "rows.filter((row) => row.type === TYPE && row.parts[0]).map(parse)",
   // A condition search, not a lookup by key.
   "segments.find((segment) => segment.fileoff === 0n)",
   "named(name).find((candidate) => (candidate.flags & SHF_ALLOC) !== 0n)",

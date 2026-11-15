@@ -12,19 +12,64 @@ const PLAIN = String.raw`\(?\s*(\w+)\s*(?::[^)=]*)?\)?\s*=>\s*\1\.${KEY}\s*===`;
 const DESTRUCTURED = String.raw`\(\s*\{[^}]*?\b(${KEY})\b(?!\s*:)[^}]*\}\s*(?::[^)]*)?\)\s*=>\s*\1\s*===`;
 const FIND = String.raw`\.find(?:Last)?\(\s*`;
 const FILTER = String.raw`\.filter\(\s*`;
-// The rest of the filter call, an optional `.map(...)`, then `[0]`.
-const FIRST = String.raw`[^;]*?\)\s*(?:\.map\([^;]*?\)\s*)?\[0\]`;
 
-const PATTERNS = [
+const FIND_PATTERNS = [
   new RegExp(FIND + PLAIN, "gu"),
   new RegExp(FIND + DESTRUCTURED, "gu"),
-  new RegExp(FILTER + PLAIN + FIRST, "gu"),
-  new RegExp(FILTER + DESTRUCTURED + FIRST, "gu"),
 ];
+const FILTER_PATTERNS = [
+  new RegExp(FILTER + PLAIN, "gu"),
+  new RegExp(FILTER + DESTRUCTURED, "gu"),
+];
+
+/** Index just past the parenthesis that closes the one at `open`, or -1. */
+const closingParen = (content, open) => {
+  let depth = 0;
+  for (let index = open; index < content.length; index += 1) {
+    const character = content[index];
+    if (character === "(") depth += 1;
+    else if (character === ")") {
+      depth -= 1;
+      if (depth === 0) return index + 1;
+    }
+  }
+  return -1;
+};
+
+const skipSpace = (content, index) => {
+  while (index < content.length && /\s/u.test(content[index])) index += 1;
+  return index;
+};
+
+// Whether the `filter(` call opening at `open` is closed, optionally followed
+// by one `.map(...)`, and then indexed with `[0]`. Matching the parentheses
+// keeps a `[0]` inside the predicate or the map callback from counting.
+const indexesFirstResult = (content, open) => {
+  let end = closingParen(content, open);
+  if (end < 0) return false;
+  end = skipSpace(content, end);
+  if (content.startsWith(".map(", end)) {
+    end = closingParen(content, end + ".map".length);
+    if (end < 0) return false;
+    end = skipSpace(content, end);
+  }
+  return content.startsWith("[0]", end);
+};
+
+const count = (content, pattern, accept) =>
+  [...content.matchAll(pattern)].filter(accept).length;
 
 /** Number of first-match lookups by key field in `content`. */
 export const countKeyedFirstMatches = (content) =>
-  PATTERNS.reduce(
-    (count, pattern) => count + (content.match(pattern)?.length ?? 0),
+  FIND_PATTERNS.reduce(
+    (total, pattern) => total + count(content, pattern, () => true),
+    0,
+  ) +
+  FILTER_PATTERNS.reduce(
+    (total, pattern) =>
+      total +
+      count(content, pattern, (match) =>
+        indexesFirstResult(content, match.index + ".filter".length),
+      ),
     0,
   );
