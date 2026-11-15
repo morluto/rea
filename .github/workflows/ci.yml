@@ -798,6 +798,7 @@ jobs:
           tests/boundary/providers/hopper/hopperClient.helperFailure.test.ts
           tests/boundary/providers/hopper/bridgeBootstrapCleanup.test.ts
           tests/boundary/providers/hopper/bridgeTargetLease.integration.test.ts
+          tests/boundary/cli/hopperLaunchFailureCli.test.ts
           tests/acceptance/artifactDmgAttachmentRecoveryCli.test.ts
           tests/boundary/providers/native/nativeDmgArtifactReader.test.ts
           tests/process-global/dmgCancellationReason.test.ts
