@@ -30,7 +30,7 @@ registration, and every command reads that row:
   read-scope facts, so `mcp add` does not keep a second definition of a table
   client.
 - **Locations that depend on observed layers use one asynchronous hook.**
-  `mcpAdd.layeredLocation` returns the write target and every layer in load
+  A row's `layeredLocation` returns the write target and every layer in load
   order once present files are observed. `resolveSupportedClients` applies it
   for setup, doctor, update and uninstall, and `mcp add` resolves Kilo's user
   scope through the same location owner; the synchronous row keeps the default
