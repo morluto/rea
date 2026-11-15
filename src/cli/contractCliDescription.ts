@@ -585,6 +585,11 @@ export interface CliDocumentProjection<
   readonly omit?: { readonly [Key in Field]?: string };
   /** Options no contract field owns, keyed by their CLI key. */
   readonly cliOptions?: CliOptions;
+  /**
+   * The operation runs on the target an MCP session holds open. The CLI takes
+   * it as the `path` positional before the document.
+   */
+  readonly sessionTarget?: CliSessionTarget;
 }
 
 /** A complete, framework-neutral CLI command whose input is one JSON document. */
@@ -605,6 +610,10 @@ export interface ContractCliDocumentDescription {
   readonly callerPaths: readonly (readonly string[])[];
   /** Contract fields the command does not admit, with the reason. */
   readonly omitted: Readonly<Record<string, string>>;
+  /** The session target positional, taken before the document, if any. */
+  readonly sessionTarget:
+    | { readonly key: string; readonly schema: z.ZodType }
+    | undefined;
   readonly cliOnlyOptions: readonly CliOnlyOption[];
   /** The parsed values of the projection's CLI-only options. */
   readonly cliOptionValues: (
@@ -717,7 +726,11 @@ export const describeContractDocumentCommand = <
   for (const path of callerPaths)
     admitted = admitDocumentCallerPath(admitted, path);
   const cliOptions: CliOptionShape = projection.cliOptions ?? {};
-  if (Object.hasOwn(cliOptions, DOCUMENT_KEY))
+  if (
+    Object.hasOwn(cliOptions, DOCUMENT_KEY) ||
+    (projection.sessionTarget !== undefined &&
+      Object.hasOwn(cliOptions, SESSION_TARGET_KEY))
+  )
     throw new Error(`${contract.name} projects two fields to one CLI key`);
   return {
     command: projection.command,
@@ -728,6 +741,15 @@ export const describeContractDocumentCommand = <
     content: getEvidenceInputContract(admitted).frameSchema,
     callerPaths,
     omitted,
+    sessionTarget:
+      projection.sessionTarget === undefined
+        ? undefined
+        : {
+            key: SESSION_TARGET_KEY,
+            schema: localPathStringSchema.describe(
+              projection.sessionTarget.description,
+            ),
+          },
     cliOnlyOptions: Object.entries(cliOptions).map(([key, schema]) => ({
       key,
       description: schema.description,
