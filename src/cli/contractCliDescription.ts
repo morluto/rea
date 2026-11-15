@@ -97,8 +97,9 @@ export interface CliContractProjection<
   readonly jsonText?: readonly Field[];
   /**
    * Structured fields taken as JSON text that is decoded when the command
-   * runs, each with its refusal when the text is not JSON. The decoded input
-   * is then admitted by the contract input before any target is opened.
+   * runs, each with its refusal when the text is not JSON. A required field
+   * is a required option. The decoded input is then admitted by the
+   * contract input before any target is opened.
    */
   readonly runtimeJson?: { readonly [Key in Field]?: string };
   /**
@@ -1257,9 +1258,9 @@ export const describeContractCommand = <
     const key = projected?.name ?? camelCase(field);
     let schema: z.ZodType;
     if (runtimeJson !== undefined) {
-      if (!admitsOmission(declared))
-        throw new Error(`${contract.name}.${field} is required on the CLI`);
-      schema = z.string().optional();
+      // Argv requires the text of a required field; the contract admits
+      // what it decodes to.
+      schema = admitsOmission(declared) ? z.string().optional() : z.string();
       if (declared.description !== undefined && !viewSelection)
         schema = schema.describe(declared.description);
     } else if (nullFlag !== undefined) {
