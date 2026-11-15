@@ -514,6 +514,7 @@ export class LldbCallTracer implements NativeCallTracer {
           { reason: entry.reason },
           { operation: OPERATION, cause: failure },
         );
+      marker.bindCleanupReleaseClaim(entry.owner.cleanupRelease);
       this.#resolverCleanup.set(entry.owner, marker);
     }
   }
@@ -580,7 +581,7 @@ export class LldbCallTracer implements NativeCallTracer {
         unresolved.push(marker);
         continue;
       }
-      marker.resolveCleanup();
+      // The marker reads the supervisor's release of this stop.
       this.#resolverCleanup.delete(owner);
     }
     if (unresolved.length === 0) return undefined;

@@ -1,7 +1,7 @@
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { EvidenceBundleExportReceipt } from "../domain/investigationLifecycle.js";
 import { jsonValueValidationIssue } from "../domain/jsonValue.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { requireAuthenticationHeadroom } from "./JsonAuthenticationHeadroom.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { resemblesAnalysisSnapshot } from "../domain/analysisSnapshot.js";
@@ -87,11 +87,11 @@ export const readComparisonEvidenceBundles = async (
   if (!left.ok) {
     if (!right.ok && right.error.cleanupIncomplete)
       return err(
-        analysisErrorWithCleanupFailure(
+        analysisErrorWithCleanupDependencies(
           left.error,
           right.error,
           operation,
-        ).bindCleanupDependencies([left.error, right.error]),
+        ),
       );
     return left;
   }

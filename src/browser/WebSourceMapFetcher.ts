@@ -56,6 +56,7 @@ import {
 import { selectedBrowserDeadlineMs } from "../domain/browserDeadline.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import {
   selectedSourceMapLimits,
   sourceMapLimitRecovery,
@@ -341,6 +342,8 @@ class SourceMapResponseCleanup extends Error {
   readonly failure: AnalysisError;
   readonly completion: Promise<void>;
   #resource: { url: string; body: ReadableStream<Uint8Array> } | undefined;
+  /** Confirmed once the reader's cancellation completes and its lock is released. */
+  readonly #released = new AnalysisCleanupRelease();
 
   get cleanupResources(): readonly string[] {
     return this.#resource === undefined ? [] : [this.#resource.url];
@@ -374,7 +377,7 @@ class SourceMapResponseCleanup extends Error {
             cleanup,
             userMessage: cause instanceof Error ? cause.message : String(cause),
           });
-    this.failure.bindCleanupResourceOwner(this);
+    this.#released.bind(this.failure.bindCleanupResourceOwner(this));
     const failed = (cause: unknown): void => {
       reason = `Source-map response cancellation failed: ${cause instanceof Error ? cause.message : String(cause)}`;
       this.failure.retainSecondaryFailure(
@@ -410,7 +413,7 @@ class SourceMapResponseCleanup extends Error {
           reader.releaseLock();
           reason = "Source-map response cancellation completed.";
           this.#resource = undefined;
-          this.failure.resolveCleanup();
+          this.#released.confirm();
         } catch (cause: unknown) {
           failed(cause);
         }
@@ -432,6 +435,8 @@ class SourceMapPendingFetch extends Error {
   readonly failure: AnalysisError;
   readonly settled: Promise<void>;
   #resource: { url: string; response?: Response } | undefined;
+  /** Confirmed once the late response and any body it carries are released. */
+  readonly #released = new AnalysisCleanupRelease();
 
   get cleanupResources(): readonly string[] {
     return this.#resource === undefined ? [] : [this.#resource.url];
@@ -460,10 +465,10 @@ class SourceMapPendingFetch extends Error {
             carriedReason(sourceMapCallerReason(reason)),
             { cleanup },
           );
-    this.failure.bindCleanupResourceOwner(this);
+    this.#released.bind(this.failure.bindCleanupResourceOwner(this));
     const finished = (): void => {
       this.#resource = undefined;
-      this.failure.resolveCleanup();
+      this.#released.confirm();
     };
     this.settled = promise.then(
       async (response) => {

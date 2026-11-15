@@ -515,23 +515,17 @@ checkCounted(
   ["src/domain/parseFailure.ts"],
 );
 
-// Cleanup completion is recorded by the owning lease and read by errors when
-// asked. Pushing it with resolveCleanup() and composing dependency sets with
-// bindCleanupDependencies() are being replaced, so neither may spread.
+// Cleanup completion is recorded by the owner and read by errors when asked;
+// AnalysisError has no push API. Composing dependency sets with
+// bindCleanupDependencies() is being replaced, so it may not spread.
 checkCounted(
-  "resolveCleanup() push outside the error base (release the owning AnalysisCleanupLease instead)",
-  "cleanup-resolve-push",
-  files,
-  /\.resolveCleanup\(/gu,
-  ["src/domain/analysisErrorBase.ts"],
-);
-checkCounted(
-  "bindCleanupDependencies() composition outside the error base (compose through runOwned or copy lease claims)",
+  "bindCleanupDependencies() composition outside the error base (compose through analysisErrorWithCleanupDependencies or runOwned, or copy lease claims)",
   "cleanup-dependency-binding",
   files,
   /\.bindCleanupDependencies\(/gu,
-  ["src/domain/analysisErrorBase.ts", "src/providers/runOwned.ts"],
+  ["src/domain/analysisErrorBase.ts", "src/domain/analysisErrorCleanup.ts"],
 );
+
 // A launcher's PATH search order (POSIX empty and relative entries and `..`;
 // Windows quoted entries and PATHEXT) belongs to src/process/executableSearch;
 // callers choose only how they probe each candidate.

@@ -190,8 +190,8 @@ export abstract class AnalysisError extends Error {
   }
   readonly cleanup: AnalysisCleanupObservation | undefined;
   /**
-   * This error's own unresolved cleanup. With bound dependencies, completion
-   * is read from them when asked instead of being pushed to each dependent.
+   * Whether cleanup is still unsettled. Once settled it stays settled; until
+   * then completion is read from the owners when asked, never pushed here.
    */
   #cleanupIncomplete: boolean;
   /** Whether this error ever owned cleanup, apart from whether it finished. */
@@ -251,29 +251,32 @@ export abstract class AnalysisError extends Error {
   }
 
   /**
-   * Whether owned resources remain unreleased, read from the owners when
-   * asked. Bound dependencies decide it once bound; otherwise a released
-   * lease claim completes it. Completion is monotonic, so a later binding
-   * cannot reopen it.
+   * Whether owned resources remain unreleased: this error's own record AND
+   * every bound dependency's record, each read from its owner when asked.
+   * Completion is monotonic, so a later binding cannot reopen it.
    */
   get cleanupIncomplete(): boolean {
     if (!this.#cleanupIncomplete) return false;
-    const dependencies = this.#cleanupDependencies;
-    if (dependencies === undefined) {
-      if (!this.#anyClaimReleased()) return true;
-    } else
-      for (const dependency of dependencies)
-        if (dependency.cleanupIncomplete) return true;
+    if (this.#ownCleanupPending()) return true;
+    for (const dependency of this.#cleanupDependencies ?? [])
+      if (dependency.cleanupIncomplete) return true;
     this.#cleanupIncomplete = false;
-    dependencies?.clear();
+    this.#cleanupDependencies?.clear();
     this.#cleanupReleaseClaims.clear();
     return false;
   }
 
-  #anyClaimReleased(): boolean {
+  /**
+   * This error's own completion record. A bound release claim is its owner's
+   * record; without one, an error composed only of dependencies has no
+   * resources of its own, and any other error waits for its owner.
+   */
+  #ownCleanupPending(): boolean {
+    if (this.#cleanupReleaseClaims.size === 0)
+      return this.#cleanupDependencies === undefined;
     for (const claim of this.#cleanupReleaseClaims)
-      if (claim.cleanupReleased) return true;
-    return false;
+      if (claim.cleanupReleased) return false;
+    return true;
   }
 
   /**
@@ -297,22 +300,29 @@ export abstract class AnalysisError extends Error {
   }
   readonly cleanupReport: ProcessCaptureCleanupReport | undefined = undefined;
 
-  /** Live dependencies own current resource attribution; cleanup keeps history. */
+  /**
+   * Live owners own current resource attribution; cleanup keeps history. A
+   * composed error's own resources usually summarize its dependencies, so
+   * pending dependencies attribute; once only the owner's record is pending,
+   * its own resources do.
+   */
   get cleanupResources(): readonly string[] {
-    if (this.#cleanupDependencies === undefined)
-      return (
-        this.#cleanupResourceOwner?.cleanupResources ??
-        this.#ownedCleanupResources
-      );
+    const own =
+      this.#cleanupResourceOwner?.cleanupResources ??
+      this.#ownedCleanupResources;
+    if (this.#cleanupDependencies === undefined) return own;
     const pending = [...this.#cleanupDependencies].filter(
       (dependency) => dependency.cleanupIncomplete,
     );
-    if (pending.length === 0) return [];
-    if (this.#cleanupResourceProjection !== undefined)
-      return this.#cleanupResourceProjection.cleanupResources;
-    return [
-      ...new Set(pending.flatMap((dependency) => dependency.cleanupResources)),
-    ];
+    if (pending.length > 0)
+      return (
+        this.#cleanupResourceProjection?.cleanupResources ?? [
+          ...new Set(
+            pending.flatMap((dependency) => dependency.cleanupResources),
+          ),
+        ]
+      );
+    return this.#cleanupIncomplete && this.#ownCleanupPending() ? own : [];
   }
 
   /** Whether cleanup follows an explicit owner or dependent errors. */
@@ -424,23 +434,6 @@ export abstract class AnalysisError extends Error {
       this.#cleanupResourceProjection = resourceProjection;
     for (const dependency of dependencies)
       if (dependency.cleanupIncomplete) pending.add(dependency);
-    if (pending.size === 0) this.resolveCleanup();
-    return this;
-  }
-
-  /**
-   * Clear live cleanup status only after its owning resource confirms retry
-   * success. Errors composed from this one read the change on their next check.
-   */
-  resolveCleanup(): this {
-    if (
-      [...(this.#cleanupDependencies ?? [])].some(
-        (dependency) => dependency.cleanupIncomplete,
-      )
-    )
-      return this;
-    this.#cleanupDependencies?.clear();
-    this.#cleanupIncomplete = false;
     return this;
   }
 

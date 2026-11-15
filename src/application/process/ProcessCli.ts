@@ -1,6 +1,6 @@
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import {
   AnalysisCancelledError,
@@ -175,11 +175,11 @@ export const captureProcessScenarioFile = async (
           : original instanceof AnalysisError && cause instanceof AnalysisError
             ? original instanceof ProcessCaptureError
               ? original.withFinalization({ cleanupFailure: cause })
-              : analysisErrorWithCleanupFailure(
+              : analysisErrorWithCleanupDependencies(
                   original,
                   cause,
                   "capture_process_scenario",
-                ).bindCleanupDependencies([original, cause])
+                )
             : new AggregateError(
                 [original, cause],
                 "Process capture and cleanup failed",

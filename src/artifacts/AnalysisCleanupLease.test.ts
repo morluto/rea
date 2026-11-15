@@ -1,4 +1,4 @@
-import { expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
 
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
@@ -72,7 +72,6 @@ it("resolves an aggregate only after every bound owner releases", async () => {
 
 it("lets errors read a group's release instead of having it pushed to them", async () => {
   const error = new ProviderCleanupError("fixture", ["owned resource"], {});
-  const resolveCleanup = vi.spyOn(error, "resolveCleanup");
   const lease = new AnalysisCleanupLease(
     async () => undefined,
     ["owned resource"],
@@ -81,7 +80,6 @@ it("lets errors read a group's release instead of having it pushed to them", asy
   expect(group.cleanupReleased).toBe(false);
   await lease.release();
   expect(group.cleanupReleased).toBe(true);
-  expect(resolveCleanup).not.toHaveBeenCalled();
   // A dependency bound after the release, before any read, cannot reopen it.
   error.bindCleanupDependencies([
     new ProviderCleanupError("fixture", ["later"], {}),
