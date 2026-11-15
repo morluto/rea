@@ -73,6 +73,10 @@ export const registerProcessCommands = (
           description:
             "Optional partial-order or finite-trace specification path",
         },
+        max_capture_age_ms: {
+          description:
+            "Refuse a capture completed more than this many milliseconds ago; omitted applies no age limit",
+        },
       },
     },
     async (_input, { checked, parsed }) => {

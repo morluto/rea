@@ -427,6 +427,12 @@ export interface CliViewDelivery {
   readonly viewSelectsSummary?: true;
 }
 
+/** Help for `--view`, which names the delivery it needs. */
+const viewOptionHelp = (viewDelivery: CliViewDelivery): string =>
+  viewDelivery.viewSelectsSummary === true
+    ? "JSON page selection; selects summary delivery, which requires --evidence_output"
+    : "JSON page selection; requires --detail summary and --evidence_output";
+
 /** A CLI option with no contract field, such as `--evidence_output`. */
 export interface CliOnlyOption {
   readonly key: string;
@@ -1593,14 +1599,7 @@ export const describeContractDocumentCommand = <
     ...(viewDelivery === undefined
       ? {}
       : {
-          view: z
-            .string()
-            .optional()
-            .describe(
-              viewDelivery.viewSelectsSummary === true
-                ? "JSON page selection; selects summary delivery, which requires --evidence_output"
-                : "JSON page selection; requires --detail summary and --evidence_output",
-            ),
+          view: z.string().optional().describe(viewOptionHelp(viewDelivery)),
         }),
   }).map(([key, schema]: [string, z.ZodType]) => ({
     key,
@@ -1840,7 +1839,9 @@ export const describeContractCommand = <
           : admitsOmission(declared)
             ? text.optional()
             : text;
-      if (declared.description !== undefined && !viewSelection)
+      if (viewSelection && viewDelivery !== undefined)
+        schema = schema.describe(viewOptionHelp(viewDelivery));
+      else if (declared.description !== undefined)
         schema = schema.describe(declared.description);
     } else if (nullFlag !== undefined) {
       // The flag spells null, so the option itself takes only a value.
