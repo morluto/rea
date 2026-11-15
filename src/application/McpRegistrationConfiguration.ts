@@ -1,7 +1,6 @@
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import type { ClientRegistrationCommand } from "../domain/clientRegistrationCommand.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
-import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   clientConfigurationValuesEqual,
   clientServerPath,
@@ -24,16 +23,19 @@ import { admitClientStdioConnection } from "./ClientRegistrationConnection.js";
 import type { McpRegistrationClient } from "./McpRegistrationCatalog.js";
 import { readRegularFileTextSnapshot } from "../process/RegularFileRead.js";
 
-// `rea mcp add` writes and verifies this host's client files.
-const { platform } = HOST_PLATFORM;
-
 const isMissing = (cause: unknown): boolean =>
   cause instanceof Error && "code" in cause && cause.code === "ENOENT";
 
+/**
+ * Merge REA's entry into one selected client document. `platform` is the host
+ * the catalog resolved the client for; it decides the document's environment
+ * name rules.
+ */
 export const prepareRegistration = async (
   path: string,
   client: McpRegistrationClient,
   launcher: ClientRegistrationCommand,
+  platform: NodeJS.Platform,
 ) => {
   const snapshot = await readRegularFileTextSnapshot(path, {
     symlinks: "reject",
@@ -113,11 +115,12 @@ export const prepareRegistration = async (
   const candidateLayers = layers.map((document, index) =>
     paths[index] === client.configPath ? candidate : document,
   );
-  assertEffectiveLauncher(client, candidateLayers, launcher);
+  assertEffectiveLauncher(client, candidateLayers, launcher, platform);
   return {
     path,
     client,
     launcher,
+    platform,
     snapshot,
     original,
     parsed,
@@ -167,6 +170,7 @@ const assertEffectiveLauncher = (
   client: McpRegistrationClient,
   layers: readonly ClientConfigurationDocument[],
   launcher: ClientRegistrationCommand,
+  platform: NodeJS.Platform,
 ): void => {
   const effective = mergeClientConfigurationDocuments(layers, platform);
   const admitted = admitClientStdioConnection(
@@ -204,7 +208,7 @@ export const verifyEffectiveRegistration = async (
   prepared: Awaited<ReturnType<typeof prepareRegistration>>,
   targetText: string,
 ): Promise<void> => {
-  const { client, launcher } = prepared;
+  const { client, launcher, platform } = prepared;
   assertEffectiveLauncher(
     client,
     await readRegistrationLayers(
@@ -212,5 +216,6 @@ export const verifyEffectiveRegistration = async (
       parseClientConfiguration(targetText, client.format),
     ),
     launcher,
+    platform,
   );
 };

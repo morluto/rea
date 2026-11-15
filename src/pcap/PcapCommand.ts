@@ -74,6 +74,8 @@ export interface PcapCommandLimits {
 /** Owned process execution shared by version probes and capture reads. */
 export const runPcapCommand = async (options: {
   readonly operation: string;
+  /** The host the command runs on; Windows launches batch files through cmd. */
+  readonly platform: NodeJS.Platform;
   readonly command: string;
   readonly arguments: readonly string[];
   readonly limits: PcapCommandLimits;
@@ -140,7 +142,7 @@ export const runPcapCommand = async (options: {
   let cleanup: PcapCommandCleanup | undefined;
   let commandAttempted = false;
   try {
-    const batch = process.platform === "win32" && isWindowsBatchFile(command);
+    const batch = options.platform === "win32" && isWindowsBatchFile(command);
     const invocation = batch
       ? windowsBatchCommand({
           environment: hostEnvironment,

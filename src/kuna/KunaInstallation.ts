@@ -130,7 +130,8 @@ export interface KunaReadinessFailure {
 }
 
 export interface KunaInstallationOptions {
-  readonly platform?: NodeJS.Platform;
+  /** The host Kuna runs on; it decides launcher and path rules. */
+  readonly platform: NodeJS.Platform;
   readonly signal?: AbortSignal;
   /** Probe deadline; tests shorten it. */
   readonly probeTimeoutMs?: number;

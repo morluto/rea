@@ -1,5 +1,8 @@
 import { snapshotEnvironment } from "../../process/snapshotEnvironment.js";
-import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
+import {
+  HOST_PLATFORM,
+  type HostPlatform,
+} from "../../platform/HostPlatform.js";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -74,6 +77,8 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
       Record<string, string | undefined>
     > = process.env,
     readonly launcher?: WakaruLauncher,
+    /** The host Wakaru runs on; selects the supported-host gate and environment rules. */
+    readonly host: HostPlatform = HOST_PLATFORM,
   ) {}
 
   /** Recover selected scripts using validated reports and verified output bytes. */
@@ -109,7 +114,7 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
     // Capture configuration after queue/cleanup admission; later requests may select updates.
     const environment = snapshotEnvironment(
       this.environment,
-      HOST_PLATFORM.platform,
+      this.host.platform,
     );
     let root: string | undefined;
     let tree: SafeOutputTree | undefined;
@@ -120,6 +125,7 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
       checkRecoveryCancellation(options?.signal);
       const engine = await resolveWakaruCommand(
         environment,
+        this.host,
         this.#resources,
         options?.signal,
       );

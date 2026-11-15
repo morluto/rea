@@ -102,12 +102,14 @@ export const resolveFirmwareCommand = async (
   engine: FirmwareEngineName,
   operation: string,
   files: FirmwareFileAccess,
+  /** The host the engine runs on; firmware engines are admitted on Linux only. */
+  platform: NodeJS.Platform,
   signal?: AbortSignal,
 ) => {
   const variable = FIRMWARE_TOOL_REQUIREMENTS[engine].commandEnvironment;
   const configured = environment[variable];
   if (
-    !firmwareHostSupported(process.platform) ||
+    !firmwareHostSupported(platform) ||
     configured === undefined ||
     !isAbsolute(configured)
   )

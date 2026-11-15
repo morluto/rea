@@ -52,7 +52,7 @@ export interface AdbBinarySelection {
  */
 export const resolveAdbBinary = async (
   environment: Readonly<Record<string, string | undefined>>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
   signal?: AbortSignal,
 ): Promise<AdbBinarySelection> => {
   const selectedEnvironment = snapshotEnvironment(environment, platform);

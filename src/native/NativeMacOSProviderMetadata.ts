@@ -25,7 +25,7 @@ const OWNED_PROCESS_OPERATIONS: ReadonlySet<string> = new Set([
 
 /** Declare native host coverage without creating a command runner. */
 export const nativeMacOSCapabilities = (
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): readonly CapabilityDescriptor[] => {
   const available = platform === "darwin";
   return Object.freeze(

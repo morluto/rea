@@ -422,7 +422,9 @@ export class DesktopBuildComputers {
     private readonly defaults: BuildComputerDefaults = {},
     private readonly startTiming: ComputerStartTiming = COMPUTER_START_TIMING,
   ) {
-    this.#secrets = new DesktopBuildSecrets(buildSecretsDirectory(environment));
+    this.#secrets = new DesktopBuildSecrets(
+      buildSecretsDirectory(environment, HOST_PLATFORM.platform),
+    );
     this.#shared = { settle, secrets: this.#secrets };
   }
 

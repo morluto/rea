@@ -270,7 +270,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         const selection = await selectArtifactCommandPath(
           appendCallerPath(
             directory,
-            `${tool}${process.platform === "win32" ? ".exe" : ""}`,
+            `${tool}${HOST_PLATFORM.platform === "win32" ? ".exe" : ""}`,
           ),
           options?.signal,
         );
