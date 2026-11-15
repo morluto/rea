@@ -373,8 +373,8 @@ The terminal finalizer then freezes PTY input, retains normalized and rendered
 facts, and releases the renderer. Cleanup retry reuses those completed facts.
 All new captures commit
 `terminal_observation_version: "deferred-rendered-journal-v1"`, including when
-PID and port normalization are disabled. Historical Evidence remains readable;
-recapture both sides with the same observation version before comparison.
+PID and port normalization are disabled. An Evidence bundle or record from an
+earlier Evidence format revision is refused; recreate the observation.
 
 When path normalization is enabled, aliases apply to selected path identities
 at clear text delimiters. A selected executable path does not alias a longer

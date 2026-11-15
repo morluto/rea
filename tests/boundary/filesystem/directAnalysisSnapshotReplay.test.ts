@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import {
   parseEvidenceBundle,
@@ -23,7 +24,7 @@ import {
   type AnalysisProvider,
   type CapabilityDescriptor,
   type ProviderIdentity,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import type { DirectAnalysisDependencies } from "../../../src/application/DirectAnalysisDependencies.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { err, ok } from "../../../src/domain/result.js";
@@ -606,11 +607,15 @@ describe("snapshot output cleanup lifecycle", () => {
               ["fixture provider"],
               {},
               {
-                partialObservation: createEvidence(undefined, IDENTITY, {
-                  operation: "health",
-                  parameters: {},
-                  result: "cleanup facts",
-                }),
+                partialObservation: createEvidence(
+                  unknownTarget("not-observed"),
+                  IDENTITY,
+                  {
+                    operation: "health",
+                    parameters: {},
+                    result: "cleanup facts",
+                  },
+                ),
               },
             )
           : new AnalysisCancelledError("close_binary");
@@ -2163,7 +2168,6 @@ it("replays source-bearing direct analysis only while snapshot source Evidence i
     "replayed-evidence.json",
   );
   await publishCliAnalysisEvidence(replayed, {
-    providerId: IDENTITY.id,
     operation: "procedure_pseudo_code",
     signal: new AbortController().signal,
     detail: "complete",
@@ -2225,7 +2229,6 @@ it("preserves captured sources when a transitive source is missing", async () =>
   expect(result.sourceEvidence).toHaveLength(1);
   const outputPath = join(dirname(fixture.snapshotPath), "missing-source.json");
   const output = await publishCliAnalysisEvidence(result, {
-    providerId: IDENTITY.id,
     operation: "procedure_pseudo_code",
     signal: new AbortController().signal,
     detail: "complete",
@@ -2280,7 +2283,6 @@ it("retains completed function sources when cancellation arrives as execution re
   expect(result.ok).toBe(false);
   const outputPath = join(dirname(fixture.snapshotPath), "cancelled.json");
   const output = await publishCliAnalysisEvidence(result, {
-    providerId: IDENTITY.id,
     operation: "analyze_function",
     signal: controller.signal,
     detail: "complete",
@@ -2328,7 +2330,6 @@ it("publishes captured function sources when completed parent admission fails", 
   expect(sourceIds).toHaveLength(1);
   const outputPath = join(dirname(fixture.snapshotPath), "refused.json");
   const output = await publishCliAnalysisEvidence(result, {
-    providerId: IDENTITY.id,
     operation: "analyze_function",
     signal: new AbortController().signal,
     detail: "complete",

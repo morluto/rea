@@ -1,11 +1,12 @@
+import { timerDurationMsSchema } from "../analysisResourceLimits.js";
 import {
   wasmInterfaceSchema,
   wasmInterfaceByteBudgetSchema,
 } from "./wasmInterface.js";
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import { createHash } from "node:crypto";
 import { constants as bufferConstants } from "node:buffer";
-import type { EvidenceSubjectTarget } from "../evidence.js";
 
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 /** Exact upstream release whose tool profile REA verified. */
@@ -28,7 +29,6 @@ const artifact = z.strictObject({
 });
 /** Default execution budget; upper bound is the runtime's signed 32-bit timer range. */
 export const DEFAULT_WASM_COMMAND_TIMEOUT_MS = 30_000;
-export const MAX_WASM_COMMAND_TIMEOUT_MS = 2_147_483_647;
 export const DEFAULT_WASM_ARTIFACT_PATHS = 16;
 export const MAX_WASM_ARTIFACT_PATHS = 0xffff_ffff;
 /** Defaults preserve the original WABT admission and capture envelope. */
@@ -97,11 +97,7 @@ export const inspectWasmArtifactInputSchema = z.strictObject({
     WASM_RESOURCE_DEFAULTS.outputBytes,
     WASM_RESOURCE_MAXIMUMS.outputBytes,
   ),
-  command_timeout_ms: z
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_WASM_COMMAND_TIMEOUT_MS)
+  command_timeout_ms: timerDurationMsSchema
     .exactOptional()
     .describe(
       `Deadline in milliseconds for each WABT version/analysis command (default ${String(DEFAULT_WASM_COMMAND_TIMEOUT_MS)}), not the whole inspection. Allow additional client time for all commands, file checks and cleanup. Does not raise max_input_bytes, max_tool_bytes or max_output_bytes.`,
@@ -181,7 +177,7 @@ export const wasmArtifactSchema = z
     glue: z.array(
       z.strictObject({
         artifact,
-        parse_status: z.enum(["complete", "partial", "failed"]),
+        parse_status: z.enum([...knownCoverageStatusSchema.options, "failed"]),
         references: z.array(
           z.strictObject({
             value: z.string(),
@@ -274,10 +270,11 @@ export type InspectWasmArtifactInput = z.infer<
 export type WasmArtifact = z.infer<typeof wasmArtifactSchema>;
 
 /** Semantic WASM subject identity excludes delivery-only local paths. */
-export type WasmArtifactSubject = Pick<
-  EvidenceSubjectTarget,
-  "sha256" | "format"
->;
+/** The file facts a WASM artifact is matched against (a subject or target identity). */
+export interface WasmArtifactSubject {
+  readonly sha256: string;
+  readonly format: string;
+}
 type WasmArtifactFileSubject = WasmArtifactSubject & {
   readonly format: "file";
 };

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, expect, it } from "vitest";
+import { phaseArrival } from "../../support/lifecycleHarness.js";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 
 import { RizinDebugSessionManager } from "../../../src/rizin/RizinDebugSessionManager.js";
@@ -12,9 +13,8 @@ import {
   type ProviderProcessHandle,
 } from "../../../src/process/ProviderProcess.js";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
+import { OwnerCancellation } from "../../../src/domain/analysisErrorCore.js";
 import { absoluteCallerPath } from "../../../src/filesystem/callerPath.js";
-import { createDeferred } from "../../fixtures/binarySession.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import {
   createRizinTestManager,
   rizinTestInferiorTty,
@@ -146,6 +146,68 @@ process.stdin.on("data", (chunk) => {
   await chmod(provider, 0o700);
   return provider;
 };
+
+it.skipIf(process.platform === "win32")(
+  "aborts an in-flight Rizin start as owner-closed when the manager closes",
+  async () => {
+    const rizinSpawn = phaseArrival();
+    const manager = new RizinDebugSessionManager(process.env, {
+      platform: "linux",
+      // Ownership preparation that only an abort of the start ends.
+      spawnProcess: (options) =>
+        new Promise<never>((_resolve, reject) => {
+          options.signal?.addEventListener(
+            "abort",
+            () => reject(options.signal?.reason),
+            { once: true },
+          );
+          rizinSpawn.arrive();
+        }),
+    });
+    managers.push(manager);
+    const starting = manager.start({
+      path: "/tmp/fixture.bin",
+      inferior_tty: await rizinTestInferiorTty(),
+    });
+    await rizinSpawn.reached(starting, "Rizin spawn");
+
+    await manager.closeAll();
+    const started = await starting;
+    expect(started).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCancelledError",
+        cause: OwnerCancellation.ownerClosed,
+      },
+    });
+  },
+);
+
+it("refuses a Rizin start made after closeAll began as owner-closed, keeping a caller's own abort reason", async () => {
+  const manager = new RizinDebugSessionManager(process.env, {
+    platform: "linux",
+    spawnProcess: () => {
+      throw new Error("a refused start must not spawn Rizin");
+    },
+  });
+  managers.push(manager);
+  await manager.closeAll();
+  const input = { path: "/tmp/fixture.bin", inferior_tty: "/dev/null" };
+  await expect(manager.start(input)).resolves.toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisCancelledError",
+      cause: OwnerCancellation.ownerClosed,
+    },
+  });
+  const caller = new AbortController();
+  const reason = new Error("caller stopped waiting");
+  caller.abort(reason);
+  await expect(manager.start(input, caller.signal)).resolves.toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisCancelledError", cause: reason },
+  });
+});
 
 it("keeps persistent Rizin sessions unavailable on Windows", async () => {
   const rizin = await createRizinTestManager(
@@ -756,13 +818,13 @@ it.skipIf(process.platform === "win32")(
       `#!/usr/bin/env node\nprocess.stdin.resume();\nsetInterval(() => {}, 1000);\n`,
     );
     await chmod(provider, 0o700);
-    const spawned = createDeferred<void>();
+    const rizinSpawn = phaseArrival();
     const manager = createRizinTestManager(
       { REA_RIZIN_COMMAND: provider },
       {
         spawnProcess: async (options) => {
           const launched = await spawnOwnedProviderProcess(options);
-          spawned.resolve();
+          rizinSpawn.arrive();
           return launched;
         },
       },
@@ -774,7 +836,7 @@ it.skipIf(process.platform === "win32")(
       controller.signal,
     );
     const started = await withVerifierCleanup(async () => {
-      await awaitAcknowledgement(spawned.promise, starting, "Rizin spawn");
+      await rizinSpawn.reached(starting, "Rizin spawn");
       controller.abort();
       return await starting;
     }, [

@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
@@ -11,6 +12,7 @@ import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   rebindEvidenceSubjectTargetPath,
   type Evidence,
+  evidenceSubjectDisplay,
 } from "../../domain/evidence.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
@@ -23,6 +25,7 @@ import {
   snapshotBindingMismatch,
   snapshotMatchesProfile,
   snapshotTarget,
+  snapshotTargetIdentity,
   parseAnalysisSnapshot,
   immutableAnalysisSnapshot,
   type AnalysisSnapshot,
@@ -37,7 +40,7 @@ import type {
   AnalysisOperation,
   CapabilityDescriptor,
   ExecutionOptions,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../../contracts/officialToolContracts.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 
@@ -46,6 +49,10 @@ import {
   snapshotReplayBinding,
   type SnapshotReplayBinding,
 } from "./AnalysisSnapshotReplayBinding.js";
+import {
+  binaryTargetSelection,
+  sameTargetIdentity,
+} from "../../domain/targetIdentity.js";
 import { createInvestigationEvidenceClosureChecker } from "../investigation/InvestigationEvidence.js";
 
 const RELATIONSHIP_OPERATIONS: ReadonlySet<AnalysisOperation> = new Set([
@@ -170,7 +177,7 @@ export const isSnapshotCacheable = (
 /** Windows Ghidra must admit the selected source through its native snapshot owner. */
 export const requiresNativeSourceAdmissionBeforeReplay = (
   providerId: string | undefined,
-): boolean => process.platform === "win32" && providerId === "ghidra";
+): boolean => HOST_PLATFORM.platform === "win32" && providerId === "ghidra";
 
 /** Limitation that marks every observation replayed from a snapshot. */
 const SNAPSHOT_REPLAY_LIMITATION =
@@ -225,7 +232,10 @@ export class AnalysisSnapshotCache {
     snapshot = immutableAnalysisSnapshot(snapshot);
     if (
       (this.#target !== undefined &&
-        JSON.stringify(this.#target) !== JSON.stringify(snapshot.target)) ||
+        !sameTargetIdentity(
+          snapshotTargetIdentity(this.#target),
+          snapshotTargetIdentity(snapshot.target),
+        )) ||
       (this.#binding !== undefined &&
         !snapshotMatchesProfile(
           this.#binding,
@@ -335,9 +345,10 @@ export class AnalysisSnapshotCache {
     }
     const header = { target: this.#target, binding: this.#binding };
     for (const { previous, current } of replacements) {
+      const display = evidenceSubjectDisplay(current);
       if (
-        current.subject === null ||
-        previous.subject?.local_path === current.subject.local_path
+        display === undefined ||
+        evidenceSubjectDisplay(previous)?.local_path === display.local_path
       )
         continue;
       const queryId = analysisQueryId(
@@ -358,7 +369,7 @@ export class AnalysisSnapshotCache {
             ...entry.execution,
             subject: {
               ...entry.execution.subject,
-              path: current.subject.local_path,
+              path: display.local_path,
             },
           },
         });
@@ -374,7 +385,7 @@ export class AnalysisSnapshotCache {
             ...workflow.execution,
             subject: {
               ...workflow.execution.subject,
-              path: current.subject.local_path,
+              path: display.local_path,
             },
           },
         });
@@ -546,6 +557,13 @@ export class AnalysisSnapshotCache {
       binding = restored;
     }
     const cachedSubject = cached.execution.subject;
+    // The query ID commits to the snapshot target, including its selection,
+    // so a cached subject naming the target's bytes made the same selection.
+    // Snapshot subjects do not persist it yet (ADR target-identity slice 2d).
+    const selection =
+      cachedSubject?.sha256 === target.sha256
+        ? binaryTargetSelection(target)
+        : null;
     const subject =
       cachedSubject == null
         ? null
@@ -557,6 +575,7 @@ export class AnalysisSnapshotCache {
               ...(cachedSubject.architecture === null
                 ? {}
                 : { architecture: cachedSubject.architecture }),
+              ...(selection === null ? {} : { selection }),
             },
             target,
           );

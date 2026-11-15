@@ -3,8 +3,8 @@ import {
   machoSelectionAnswersArchitecture,
   metadataReportSubjectFormat,
 } from "../../domain/apple/machoTargetSelection.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { GoBinaryPort } from "./GoBinaryPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { GoBinaryPort } from "../../ports/go/GoBinaryPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";

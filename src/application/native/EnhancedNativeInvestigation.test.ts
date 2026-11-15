@@ -1,4 +1,4 @@
-import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
 // Fake-backed composition coverage; real provider verification lives in
 // `npm run verify:hopper` and `npm run verify:ghidra`.
 import { describe, expect, it } from "vitest";
@@ -8,7 +8,7 @@ import {
   createAnalysisExecution,
   type AnalysisExecution,
   type AnalysisOperation,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
@@ -642,10 +642,6 @@ describe("native dispatch inventory", () => {
       label: "malformed value with a legacy name",
       entry: { ...methodInventoryEntry, value: 42, name: methodName },
     },
-    {
-      label: "undeclared field",
-      entry: { address: "0x1000", value: methodName, unexpected: true },
-    },
   ])(
     "rejects $label inventory in both dispatch consumers",
     async ({ entry }) => {
@@ -663,12 +659,32 @@ describe("native dispatch inventory", () => {
           error: {
             _tag: "AnalysisOutputError",
             operation: "list_names",
-            reason: "provider returned an invalid inventory",
+            reason: "Provider returned an invalid name inventory",
           },
         });
       }
     },
   );
+
+  it("accepts an inventory row with an undeclared provider field in both dispatch consumers", async () => {
+    const tools = new EnhancedTools(
+      testAnalysis({
+        list_names: () =>
+          execution("list_names", [
+            { ...methodInventoryEntry, provider_rank: 1 },
+          ]),
+      }),
+    );
+    for (const [operation, parameters] of [
+      ["inspect_native_dispatch_metadata", { max_records: 10 }],
+      ["trace_native_ui_action", { action: "buildTapped:" }],
+    ] as const) {
+      const result = await tools.execute(operation, parameters);
+      expect(result.ok ? null : result.error._tag).not.toBe(
+        "AnalysisOutputError",
+      );
+    }
+  });
 });
 
 describe("native UI query outcomes", () => {

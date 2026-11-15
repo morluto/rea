@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { expect, it } from "vitest";
 
 import {
@@ -5,6 +6,7 @@ import {
   parseClientRegistrationLauncher,
   replaceClientRegistrationLauncher,
 } from "./ClientRegistration.js";
+import { clientRegistrationEnvironment } from "./ClientRegistrationEnvironment.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import {
   parseClientConfiguration,
@@ -197,6 +199,32 @@ it.each([null, 42, ["value"], { VALUE: 123 }])(
       {
         setting: "env",
         constraint: "Expected a mapping of string environment values",
+      },
+    ]);
+  },
+);
+
+it.each([
+  "extensions:\n  rea:\n    cmd: old\n    env:\n",
+  "extensions:\n  rea:\n    cmd: old\n    env: null\n",
+])(
+  "reads a null Goose env alias as a malformed environment, not an empty one: %j",
+  (text) => {
+    const result = clientRegistrationEnvironment(
+      parseClientConfiguration(text, "goose"),
+      {
+        name: "goose",
+        registrationProfile: supportedClientRegistrationProfile("goose"),
+      },
+      HOST_PLATFORM.platform,
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Null Goose env alias was admitted");
+    expect(result.error.settings).toEqual([
+      {
+        setting: "env",
+        constraint:
+          "Server environment must be an object containing only string values",
       },
     ]);
   },

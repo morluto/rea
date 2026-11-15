@@ -2,7 +2,11 @@ import { z } from "zod";
 
 import { uniqueSorted } from "./canonicalOrdering.js";
 import { digestSchema, prefixedDigestSchema } from "./digests.js";
-import { evidenceSchema, type Evidence } from "./evidence.js";
+import {
+  evidenceFileTarget,
+  evidenceSchema,
+  type Evidence,
+} from "./evidence.js";
 import type { EvidenceBundle } from "./evidenceBundle.js";
 import { nativeValueFlowMetadataSchema } from "./native/nativeValueFlow.js";
 
@@ -31,9 +35,9 @@ const nativeSummarySchema = z.discriminatedUnion("available", [
       z.strictObject({
         status: z.literal("observed"),
         truncated: z.boolean(),
-        omitted_operations_lower_bound: countSchema.nullable(),
-        known_omitted_inputs: countSchema.nullable(),
-        known_omitted_edges: countSchema.nullable(),
+        omitted_operations_lower_bound: countSchema,
+        known_omitted_inputs: countSchema,
+        known_omitted_edges: countSchema,
       }),
       z.strictObject({ status: z.literal("unavailable"), reason: z.string() }),
       z.strictObject({ status: z.literal("not-recorded") }),
@@ -106,9 +110,9 @@ const nativeSummary = (
                 status: "observed",
                 truncated: flow.data.truncated,
                 omitted_operations_lower_bound:
-                  flow.data.omitted_operations_lower_bound ?? null,
-                known_omitted_inputs: flow.data.known_omitted_inputs ?? null,
-                known_omitted_edges: flow.data.known_omitted_edges ?? null,
+                  flow.data.omitted_operations_lower_bound,
+                known_omitted_inputs: flow.data.known_omitted_inputs,
+                known_omitted_edges: flow.data.known_omitted_edges,
               }
             : { status: "unavailable", reason: flow.data.reason },
   };
@@ -139,7 +143,7 @@ function* matchingEvidenceRecords(
       (filters.operation !== undefined &&
         filters.operation !== evidence.operation) ||
       (filters.target_sha256 !== undefined &&
-        filters.target_sha256 !== evidence.subject?.digest.sha256) ||
+        filters.target_sha256 !== evidenceFileTarget(evidence)?.sha256) ||
       (filters.analysis_profile_digest !== undefined &&
         filters.analysis_profile_digest !== evidence.analysis_profile?.digest)
     )

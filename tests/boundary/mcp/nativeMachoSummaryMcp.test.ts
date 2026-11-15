@@ -1,3 +1,5 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { copyFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -149,7 +151,7 @@ mcpTest(
     const { empty, segment, dependency, command, report } =
       binaryUncertainFixture();
     const source = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "inspect_macho",
@@ -168,7 +170,7 @@ mcpTest(
       createServer(
         { kind: "session", session },
         {
-          environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
+          environment: { ...process.env },
         },
       ),
       undefined,
@@ -180,7 +182,7 @@ mcpTest(
       schemaValidation.assertions,
     );
     expect(
-      tool.ajv.validate(tool.outputSchema, source),
+      tool.ajv.validate(canonicalOutputSchema(tool.name), source),
       JSON.stringify(tool.ajv.errors),
     ).toBe(true);
     const view = await advertisedMcpToolSchemas(
@@ -230,7 +232,7 @@ mcpTest(
       sections: empty,
     };
     const historical = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "inspect_macho",
@@ -247,7 +249,7 @@ mcpTest(
       },
     );
     expect(
-      tool.ajv.validate(tool.outputSchema, historical),
+      tool.ajv.validate(canonicalOutputSchema(tool.name), historical),
       JSON.stringify(tool.ajv.errors),
     ).toBe(true);
     const oldView = await client.callTool(
@@ -311,7 +313,7 @@ mcpTest(
       limitations: [],
     });
     const source = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "inspect_macho",
@@ -330,7 +332,7 @@ mcpTest(
       createServer(
         { kind: "session", session },
         {
-          environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
+          environment: { ...process.env },
         },
       ),
       undefined,
@@ -350,7 +352,7 @@ mcpTest(
         view: { kind: "macho", facet },
       };
       expect(
-        schemas.ajv.validate(schemas.inputSchema, request),
+        schemas.ajv.validate(schemas.canonicalInputSchema, request),
         JSON.stringify(schemas.ajv.errors),
       ).toBe(true);
       const reply = await client.callTool(

@@ -3,15 +3,18 @@ import { createHash } from "node:crypto";
 import { realpath, mkdir } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../../domain/coverage.js";
 import type { AppConfig } from "../../config/types.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisUnsupportedTargetError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import {
+  type ArtifactResourceScope,
+  assertArtifactReadActive,
+} from "../../resources/index.js";
 import {
   readGhidraProfileArtifact,
   writeGhidraProfileArtifact,
@@ -41,8 +44,7 @@ export const ghidraExtensionResultSchema = z.strictObject({
   id: z.string().min(1),
   sha256: digest,
   status: z.enum([
-    "complete",
-    "partial",
+    ...knownCoverageStatusSchema.options,
     "not_applicable",
     "unsupported",
     "failed",
@@ -104,10 +106,7 @@ export const resolveGhidraExtensions = async (
     .run(async () => {
       const extensions: GhidraExtension[] = [];
       for (const adapter of adapters) {
-        if (signal?.aborted)
-          return err(
-            new AnalysisCancelledError("open_binary", { cause: signal.reason }),
-          );
+        if (signal?.aborted) return err(cancelledBy("open_binary", signal));
         const configured = adapter.configuredPath(config);
         if (configured === undefined) continue;
         const refusal = adapter.unsupportedReason(target, platform);
@@ -133,10 +132,7 @@ export const resolveGhidraExtensions = async (
           );
         }
       }
-      if (signal?.aborted)
-        return err(
-          new AnalysisCancelledError("open_binary", { cause: signal.reason }),
-        );
+      if (signal?.aborted) return err(cancelledBy("open_binary", signal));
       return ok(extensions);
     })
     .catch((cause: unknown) =>

@@ -1,3 +1,5 @@
+import { fileIdentity } from "../fixtures/evidenceSubject.js";
+import { canonicalOutputSchema } from "../fixtures/canonicalOutputSchema.js";
 import { artifactMcpCall } from "../../scripts/lib/artifact-e2e.mjs";
 import { createHash } from "node:crypto";
 import { unlink, writeFile } from "node:fs/promises";
@@ -54,9 +56,11 @@ cliTest(
         (tool) => tool.name === "inspect_managed_members",
       );
       const ajv = new Ajv2020({ strict: false, validateFormats: false });
-      if (definition?.outputSchema === undefined)
+      if (definition === undefined)
         throw new Error("Managed member schema is absent");
-      const outputSchema: Record<string, unknown> = definition.outputSchema;
+      const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+        definition.name,
+      );
       expect(ajv.validateSchema(definition.inputSchema)).toBe(true);
       expect(ajv.validateSchema(outputSchema)).toBe(true);
       const output = await cli.run({
@@ -77,8 +81,8 @@ cliTest(
       expect(mcpEvidence.normalized_result).toEqual(
         cliEvidence.normalized_result,
       );
-      expect(mcpEvidence.subject?.digest.sha256).toBe(sha256);
-      expect(cliEvidence.subject?.digest.sha256).toBe(sha256);
+      expect(fileIdentity(mcpEvidence.subject).sha256).toBe(sha256);
+      expect(fileIdentity(cliEvidence.subject).sha256).toBe(sha256);
       const report = managedMemberInspectionSchema.parse(
         mcpEvidence.normalized_result,
       );

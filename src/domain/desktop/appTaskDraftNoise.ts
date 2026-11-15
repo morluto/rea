@@ -13,6 +13,7 @@ import { idReferencesOf, mirrorsOf } from "./appTaskDraftMirrors.js";
 import { isPositionalKey, positionalKeys } from "./positionalKeys.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
 import { elementText, isXmlElement, resolvePointer } from "./viewPointer.js";
+import { isRecord } from "../isRecord.js";
 
 /** Why a change is what an app writes as it saves or shows a document, rather than what its user made. */
 export const NOISE_REASONS = [
@@ -137,11 +138,6 @@ type Element = Record<string, JsonValue> & {
   name: string;
   children: JsonValue[];
 };
-
-const isRecord = (
-  value: JsonValue | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** The elements a pointer steps into through `children`, read from the view, outermost first. */
 const elementsAlong = (

@@ -1,6 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { z } from "zod";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
+import { readStableArtifact } from "../../resources/index.js";
 import { webNetworkCaptureBudgetsSchema } from "../../domain/webNetworkCapture.js";
 import { captureBudgets, withCaptureBudgets } from "./CaptureBudgets.js";
 import { CaptureFormatError } from "./CaptureFormatError.js";
@@ -49,7 +49,7 @@ const main = async (): Promise<void> => {
         cause instanceof CaptureFormatError
           ? {
               ok: false,
-              reason: cause.reason,
+              reason: cause.replyReason,
               message: cause.message,
               pointer: cause.pointer,
             }

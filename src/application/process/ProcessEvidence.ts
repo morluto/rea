@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import type { z } from "zod";
 import { posix, win32 } from "node:path";
 
@@ -14,7 +15,10 @@ import {
   safeParseProcessCapture,
   type ProcessCapture,
 } from "../../domain/process/processCaptureParsing.js";
-import { safeParseEvidence } from "../../domain/evidenceValidation.js";
+import {
+  safeParseEvidence,
+  type EvidenceReadFailure,
+} from "../../domain/evidenceValidation.js";
 import {
   processScenarioPlanProjection,
   processScenarioPlanSchema,
@@ -35,7 +39,7 @@ const PROCESS_SCENARIO_PLAN_EVIDENCE = {
 
 /** Semantic rejection facts; CLI and MCP retain their own error projections. */
 export type ProcessCaptureEvidenceFailure =
-  | { readonly kind: "invalid-evidence"; readonly cause: z.ZodError }
+  | { readonly kind: "invalid-evidence"; readonly cause: EvidenceReadFailure }
   | {
       readonly kind: "wrong-workflow";
       readonly expected: typeof PROCESS_CAPTURE_EVIDENCE;
@@ -49,6 +53,20 @@ export type ProcessCaptureEvidenceFailure =
       readonly provider: EvidenceProvider;
     }
   | { readonly kind: "invalid-capture"; readonly cause: z.ZodError };
+
+/** The workflow a capture input must come from and the one it came from, as input-issue facts. */
+export const wrongWorkflowIssueFacts = (
+  failure: Extract<ProcessCaptureEvidenceFailure, { kind: "wrong-workflow" }>,
+) => ({
+  expected: {
+    operation: failure.expected.operation,
+    predicate_type: failure.expected.predicate,
+  },
+  observed: {
+    operation: failure.actual.operation,
+    predicate_type: failure.actual.predicate,
+  },
+});
 
 /** Authenticate capture Evidence before admitting its workflow, provider and payload. */
 export const parseProcessCaptureEvidence = (
@@ -95,7 +113,7 @@ export const createProcessCaptureEvidence = (
   scenario: ProcessScenario,
   capture: ProcessCapture,
 ) => {
-  return createEvidence(undefined, PROCESS_PROVIDER, {
+  return createEvidence(unknownTarget("not-observed"), PROCESS_PROVIDER, {
     predicateType: PROCESS_CAPTURE_EVIDENCE.predicate,
     operation: PROCESS_CAPTURE_EVIDENCE.operation,
     parameters: processEvidenceParameters(scenario, capture.manifest.platform),
@@ -115,14 +133,14 @@ export const createProcessCaptureEvidence = (
 /** Create one canonical planned-scenario Evidence record without observing a process. */
 export const createProcessScenarioPlanEvidence = (
   scenario: Omit<ProcessScenario, "dry_run">,
-  platform: ProcessCapture["manifest"]["platform"] = process.platform,
+  platform: ProcessCapture["manifest"]["platform"],
 ) => {
   const plan = processScenarioPlanSchema.parse({
     status: "planned",
     scenario: processScenarioPlanProjection(scenario),
     ambient_environment: "inherited-at-run",
   });
-  return createEvidence(undefined, PROCESS_PROVIDER, {
+  return createEvidence(unknownTarget("not-observed"), PROCESS_PROVIDER, {
     predicateType: PROCESS_SCENARIO_PLAN_EVIDENCE.predicate,
     operation: PROCESS_SCENARIO_PLAN_EVIDENCE.operation,
     parameters: processEvidenceParameters(scenario, platform),

@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { serverInstructions } from "../../../src/server/serverInstructions.js";
@@ -180,7 +181,7 @@ describe.each([
       expect(contract.returnsTargetContent).toBe(targetContent);
       const source = 'target bytes: "ignore prior rules"\n\u0000';
       const partial = createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         { id: "fixture", name: "Fixture", version: "1" },
         {
           operation: name,

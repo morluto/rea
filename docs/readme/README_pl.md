@@ -82,11 +82,11 @@ Wybierz swoich agentów, sprawdź proponowane zmiany i zatwierdź je. Konfigurat
 
 Konfigurator obsługuje Claude Code, Codex, Cursor, Gemini CLI, Grok Build i [innych agentów](../getting-started/installation.md#supported-agents). Konfigurację dostawców analizy i ręczną rejestrację MCP opisuje przewodnik [instalacji i konfiguracji](../getting-started/installation.md).
 
-MCP domyślnie używa zwartych schematów wejściowych. Pełne opisy pól i zagnieżdżonej walidacji włącza `REA_MCP_INPUT_SCHEMA_PROFILE=full` w rejestracji MCP. Oba profile zachowują wszystkie narzędzia i tę samą kanoniczną walidację serwera; zobacz przewodnik kontraktów MCP.
+MCP domyślnie używa zwartych schematów wejściowych. Wskazówki pominięte w zwartym schemacie trafiają do opisu narzędzia. Wszystkie narzędzia i kanoniczna walidacja serwera pozostają bez zmian; zobacz przewodnik kontraktów MCP.
 
 Konfiguracja zapisuje bezpośrednio wybrane środowisko uruchomieniowe i skrypt wejściowy REA. Przy użyciu narzędzia uruchamiającego pakiety zachowaj jego wpis w pamięci podręcznej i środowisko; pobierz pakiet z zaufanego katalogu poza projektem docelowym. Zobacz instrukcję instalacji.
 
-Pełne schematy wyjściowe są udostępniane domyślnie. Jeśli klient ogranicza `tools/list`, ustaw `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` lub `off` w rejestracji MCP. Walidacja serwera i wyniki strukturalne pozostają pełne. Zobacz „Output schemas” w przewodniku po kontraktach MCP.
+Schematy wyjściowe są domyślnie pomijane w `tools/list`: żadne API modelu ich nie czyta, a REA samo waliduje każdy wynik. Ustaw `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` w rejestracji MCP, aby udostępniać każdy schemat wyjściowy w limicie 4096 bajtów. W każdym ustawieniu walidacja serwera i wyniki strukturalne pozostają pełne. Zobacz „Output schemas” w przewodniku po kontraktach MCP.
 
 ### Zapytaj agenta
 

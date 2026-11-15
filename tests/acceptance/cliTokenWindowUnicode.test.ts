@@ -39,13 +39,13 @@ workspaceCliTest(
         },
       );
 
-    const fullDigest = await run("subject.digest.sha256");
+    const fullDigest = await run("subject.identity.sha256");
     expect(
       fullDigest.exitCode,
       `${fullDigest.stderr}\n${fullDigest.stdout}`,
     ).toBe(0);
     const firstPage = await run(
-      "subject.digest.sha256",
+      "subject.identity.sha256",
       "--token-limit",
       "10",
       "--token-offset",
@@ -63,7 +63,7 @@ workspaceCliTest(
         offset === 0
           ? firstPage
           : await run(
-              "subject.digest.sha256",
+              "subject.identity.sha256",
               "--token-limit",
               "10",
               "--token-offset",

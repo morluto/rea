@@ -3,7 +3,9 @@ import { z } from "zod";
 import { emptyArraySchema } from "../emptyArraySchema.js";
 import { evidenceInputSchema } from "../evidenceReference.js";
 import {
+  managedInspectionStateSchema,
   cliMetadataGuidSchema,
+  managedMetadataStatusSchema,
   managedNativeImportSchema,
 } from "./managedArtifact.js";
 import { digestSchema, prefixedDigestSchema } from "../digests.js";
@@ -143,7 +145,11 @@ export const managedNativeVerificationRequestSchema = z
   .superRefine(distinctNativeSources);
 
 const verificationCoverageSchema = z.strictObject({
-  status: z.enum(["complete-within-inputs", "partial"]),
+  status: z
+    .enum(["complete-within-inputs", "partial", "unknown"])
+    .describe(
+      "unknown when the managed boundary inspection is unavailable; partial for a partial inspection, unsupported native Evidence or non-exhaustive exports.",
+    ),
 });
 
 /** Provider-neutral managed/native verification result. */
@@ -160,10 +166,10 @@ export const managedNativeVerificationResultSchema = z
       artifact_sha256: digestSchema,
       artifact_path: z.string().min(1),
       mvid: cliMetadataGuidSchema.nullable(),
-      metadata_status: z.enum(["absent", "complete", "partial", "malformed"]),
+      metadata_status: managedMetadataStatusSchema,
       pinvoke_imports_total: z.int().min(0),
       native_implementations_total: z.int().min(0),
-      coverage_state: z.enum(["complete", "partial", "unavailable"]),
+      coverage_state: managedInspectionStateSchema,
     }),
     native_observations: z.strictObject({
       total: z.int().min(1),
@@ -180,7 +186,7 @@ export const managedNativeVerificationResultSchema = z
     }),
     pinvoke_imports: z.array(pinvokeVerificationSchema),
     native_implementations: z.strictObject({
-      runtime_provided: z.int().nonnegative().nullable().default(null),
+      runtime_provided: z.int().nonnegative(),
       unresolved: z.int().min(0),
       reason: nonEmptyTextSchema,
     }),

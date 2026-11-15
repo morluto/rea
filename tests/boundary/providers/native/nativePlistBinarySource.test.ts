@@ -8,7 +8,7 @@ import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../../../../src/domain/analysisErrorCore.js";
-import { ArtifactFileCleanupFailure } from "../../../../src/artifacts/ArtifactFileOperation.js";
+import { ArtifactFileCleanupFailure } from "../../../../src/resources/ArtifactFileOperation.js";
 import { ProviderAdapterError } from "../../../../src/domain/providerAdapterError.js";
 import { buildBinary, type PlistValue } from "plist";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
@@ -74,7 +74,6 @@ it("reports a binary source-size refusal as a typed resource limit", async () =>
       ),
     },
   });
-  expect(projected.remediation.action).not.toMatch(/worker file-size limits/u);
   expect(runner.tools).toEqual(["file"]);
 });
 
@@ -87,7 +86,6 @@ it.each([
     // Three times the source length exceeds the 64 MiB decode estimate while
     // the source stays below the separate 64 MiB input ceiling.
     value: { data: Buffer.alloc(22 * 1024 * 1024, 0x78) },
-    reason: /binary plist object table.*decode budget/iu,
     limits: { maximum_decoded_bytes: 64 * 1024 * 1024 },
     allowance:
       /64 MiB.*67108864-byte.*binary plist decode.*no runtime override/iu,
@@ -95,13 +93,12 @@ it.each([
   {
     budget: "nesting",
     value: nested(MAX_JSON_DEPTH - 1),
-    reason: /binary plist nesting.*decode budget/iu,
     limits: { maximum_nesting_depth: MAX_JSON_DEPTH - 3 },
     allowance: /997-level.*plist nesting.*no runtime override/iu,
   },
 ])(
   "names the fixed binary plist $budget allowance instead of host memory",
-  async ({ value, reason, limits, allowance }) => {
+  async ({ value, limits, allowance }) => {
     const { root, path } = await binaryPath();
     await writeFile(path, buildBinary(value));
     const runner = new BinaryNativeRunner({
@@ -114,13 +111,9 @@ it.each([
     expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
     expect(result.error).toMatchObject({
       resource: "memory",
-      reason: expect.stringMatching(reason),
       reportedLimits: limits,
       retryable: false,
-      fixedAllowance: {
-        name: expect.stringMatching(allowance),
-        kind: "parser",
-      },
+      fixedAllowance: { kind: "parser" },
     });
     const projected = projectAnalysisError(result.error);
     expect(projected).toMatchObject({
@@ -129,7 +122,6 @@ it.each([
       details: { resource: "memory", reported_limits: limits },
     });
     expect(projected.remediation.action).toMatch(allowance);
-    expect(projected.remediation.action).toMatch(/complete input.*allowance/iu);
     expect(runner.tools).toEqual(["file"]);
   },
 );

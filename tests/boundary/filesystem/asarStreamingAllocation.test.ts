@@ -24,7 +24,7 @@ import {
 import { hashReadable } from "../../../src/artifacts/ArtifactHash.js";
 import { ARTIFACT_CLASSIFICATION_PREFIX_BYTES } from "../../../src/artifacts/ArtifactClassificationProbe.js";
 import { asarHeaderBytes } from "../../fixtures/asarHeader.js";
-import { readArtifactFileChunks } from "../../../src/artifacts/readArtifactFileChunks.js";
+import { readArtifactFileChunks } from "../../../src/resources/readArtifactFileChunks.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const memberBytes = 64 * 1024 * 1024;
@@ -248,9 +248,8 @@ describe("ASAR entry producer identity", () => {
           await expect(reader.open(changedEntry)).rejects.toMatchObject({
             name: "ArtifactReaderFailure",
             reason: "integrity",
-            message: expect.stringContaining(
-              `ASAR entry metadata changed since inventory: ${entry.path}`,
-            ),
+            integrityCheck: "entry-metadata",
+            message: expect.stringContaining(entry.path),
           });
         await waitForNoMatchingDescriptor(identity);
       } finally {
@@ -305,9 +304,7 @@ describe("ASAR entry producer identity", () => {
         await expect(reader.open(copiedRetained)).rejects.toMatchObject({
           name: "ArtifactReaderFailure",
           reason: "integrity",
-          message: expect.stringContaining(
-            "ASAR entry metadata changed since inventory",
-          ),
+          integrityCheck: "entry-metadata",
         });
         expect((await buffer(await reader.open(current))).toString()).toBe(
           memberContents,
@@ -552,9 +549,8 @@ it.skipIf(process.platform === "win32")(
       await expect(reader.open(entry)).rejects.toMatchObject({
         name: "ArtifactReaderFailure",
         reason: "integrity",
-        message: expect.stringContaining(
-          `ASAR unpacked entry changed before read: ${entry.path}`,
-        ),
+        integrityCheck: "unpacked-entry-identity",
+        message: expect.stringContaining(entry.path),
         cleanup: {
           resources: [unpackedPath],
           reason: "first close failed",

@@ -1,3 +1,4 @@
+import { OwnerCancellation } from "../domain/analysisErrorCore.js";
 import type { ProcessInspectionFailure } from "./ProcessInspectionCleanup.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import {
@@ -31,7 +32,8 @@ import {
   type OwnedProcessGroup,
   type ProcessCleanupFailure,
 } from "./ProcessOwnership.js";
-import { ABORTED, waitForAbortable } from "./AbortablePromise.js";
+import { AbortedWait, waitForAbortable } from "./AbortablePromise.js";
+import type { ManagedRuntime } from "./RuntimeExhaustion.js";
 import {
   ProviderStartupDeadline,
   waitForAbortableDelay,
@@ -102,6 +104,8 @@ export const ownedCommandResources = (
 interface OwnedCommandLimits {
   /** Retained output budget; stdout is excluded when a sink consumes it. */
   readonly diagnosticBytes: ProcessDiagnosticBudget;
+  /** The managed runtime the command hosts, so its memory exhaustion report is observed while output streams. */
+  readonly runtime?: ManagedRuntime;
   /** Acquire a pipe; closed-pipe sends EOF after supervision starts. */
   readonly stdin?: "pipe" | "closed-pipe";
   /** Accept an ordinary nonzero exit after output closes without other process errors. */
@@ -287,6 +291,7 @@ const collectOwnedCommand = async (
     {
       captureStdout: limits.stdout === undefined,
       maxDiagnosticBytes: limits.diagnosticBytes,
+      ...(limits.runtime === undefined ? {} : { runtime: limits.runtime }),
       onDiagnostic: (event) => {
         if (event.type === "output" && event.truncated === true) {
           exceeded = true;
@@ -367,7 +372,7 @@ const collectOwnedCommand = async (
               processError,
               collectionFailure: true,
             };
-          abandoned.abort();
+          abandoned.abort(OwnerCancellation.noLongerNeeded);
         })
       : Promise.resolve();
   let failure: OwnedCommandFailure | undefined;
@@ -427,7 +432,7 @@ const collectOwnedCommand = async (
     }
     // Output has closed, but the sink may still be parsing what it buffered.
     const sinkFailure = await waitForAbortable(consumed, collectionSignal);
-    if (sinkFailure !== ABORTED) processFailure ??= sinkFailure;
+    if (!(sinkFailure instanceof AbortedWait)) processFailure ??= sinkFailure;
     await waitForAbortable(inputCompleted, collectionSignal);
     const snapshot = supervisor.snapshot();
     const interrupted = interruptionOrObservedFailure(
@@ -478,7 +483,7 @@ const collectOwnedCommand = async (
           );
   }
   // A finished sink ignores this; an unfinished one is destroyed.
-  abandoned.abort();
+  abandoned.abort(OwnerCancellation.noLongerNeeded);
   const stopped = await supervisor.stop();
   const snapshot = supervisor.snapshot();
   // An input error can arrive after finish while process cleanup is still pending.

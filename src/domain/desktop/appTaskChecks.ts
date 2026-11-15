@@ -1,4 +1,4 @@
-import { cut } from "./compactValue.js";
+import { ellipsisExcerpt } from "../excerpt.js";
 import { CHECK_VALUE_CHARS } from "./valueCuts.js";
 import type { JsonValue } from "../jsonValue.js";
 import {
@@ -22,6 +22,7 @@ import {
   zipEntryAt,
   zipLeavesOutAt,
 } from "./zipView.js";
+import { isRecord } from "../isRecord.js";
 
 /** One file as the app's data/get reports it: its view, or why it has none. An absent file has no entry. */
 export interface TaskFileView {
@@ -82,11 +83,6 @@ const undecided = (file: string): Verdict =>
 /** A failure to find what a check looks for, undecided when its view is cut, since it may lie past what the view kept. */
 const notFound = (description: string, cut: boolean): Verdict =>
   cut ? unread(description) : fail(description);
-
-const isRecord = (
-  value: JsonValue | null | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** JSON equality: numbers by value, objects by their keys, arrays in order. */
 export const sameJson = (
@@ -621,7 +617,7 @@ export const evaluateTaskChecks = (
   redact: (value: JsonValue) => JsonValue = (value) => value,
 ): readonly TaskCheckOutcome[] => {
   const shown: ShowValue = (value) =>
-    cut(JSON.stringify(redact(value)), CHECK_VALUE_CHARS);
+    ellipsisExcerpt(JSON.stringify(redact(value)), CHECK_VALUE_CHARS);
   return checks.map((check) => ({
     id: check.id,
     ...(check.kind === "screen_judge"

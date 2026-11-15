@@ -1,7 +1,10 @@
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import canonicalize from "canonicalize";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { describe, expect, it } from "vitest";
@@ -11,33 +14,30 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { machoImage } from "../../../src/artifacts/apple/MachoImage.fixture.js";
 import {
-  FULL_CATALOG_IDENTITY,
   DEFAULT_CATALOG_IDENTITY,
   createCatalogDigestProfiles,
   createCatalogDigests,
   createCatalogIdentity,
-} from "../../../src/catalogIdentity.js";
-import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/config/mcpInputSchemaProfile.js";
-import { CLI_COMMAND_NAMES } from "../../../src/cliCommandNames.js";
+  CLI_COMMAND_NAMES,
+  digestPresentedCatalogs,
+} from "../../../src/contracts/catalog/catalogIdentity.js";
 import { PACKAGE_METADATA } from "../../../src/generatedPackageMetadata.js";
 import { PRODUCT_IDENTITY, SDK_IDENTITY } from "../../../src/identity.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
-import {
-  annotationsFromEffects,
-  toolSessionEffects,
-} from "../../../src/contracts/toolEffects.js";
+import { annotationsFromEffects } from "../../../src/contracts/toolEffects.js";
 import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { sessionOutputSchemas } from "../../../src/contracts/toolOutputSchemaGroups.js";
 import { PROMPT_CONTRACTS } from "../../../src/contracts/promptContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { createServerIdentity } from "../../../src/serverIdentity.js";
+import { createServerIdentity } from "../../../src/process/ServerIdentity.js";
 import { normalizeEntrypointPath } from "../../../src/process/CurrentEntrypointPath.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import { buildCapabilityInventory } from "../../../src/application/CapabilityInventory.js";
 import type {
   AnalysisProvider,
   CapabilityDescriptor,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
+import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/contracts/mcpSchemaPresentation.js";
 
 const availabilityProvider = (
   operations: readonly CapabilityDescriptor["operation"][] = [
@@ -117,18 +117,18 @@ describe("server and catalog identity", () => {
       packageJson.dependencies["@modelcontextprotocol/server"],
     );
     expect(new Set(CLI_COMMAND_NAMES).size).toBe(CLI_COMMAND_NAMES.length);
-    expect(FULL_CATALOG_IDENTITY.counts).toEqual({
+    expect(DEFAULT_CATALOG_IDENTITY.counts).toEqual({
       cli_commands: CLI_COMMAND_NAMES.length,
       mcp_tools: TOOL_CONTRACTS.length,
       mcp_prompts: PROMPT_CONTRACTS.length,
     });
-    expect(FULL_CATALOG_IDENTITY.digests.combined_sha256).toMatch(
+    expect(DEFAULT_CATALOG_IDENTITY.digests.combined_sha256).toMatch(
       /^[a-f0-9]{64}$/u,
     );
   });
 
   it("covers each tool's target-content policy in the catalog digest", () => {
-    expect(createCatalogDigests()).toEqual(FULL_CATALOG_IDENTITY.digests);
+    expect(createCatalogDigests()).toEqual(DEFAULT_CATALOG_IDENTITY.digests);
     const [first] = TOOL_CONTRACTS;
     if (first === undefined) throw new Error("expected a tool contract");
     const toggled = TOOL_CONTRACTS.map((contract) =>
@@ -138,20 +138,19 @@ describe("server and catalog identity", () => {
     );
     const digests = createCatalogDigests(toggled);
     expect(digests.combined_sha256).not.toBe(
-      FULL_CATALOG_IDENTITY.digests.combined_sha256,
+      DEFAULT_CATALOG_IDENTITY.digests.combined_sha256,
     );
     expect(digests.tools_sha256).not.toBe(
-      FULL_CATALOG_IDENTITY.digests.tools_sha256,
+      DEFAULT_CATALOG_IDENTITY.digests.tools_sha256,
     );
     expect(digests.prompts_sha256).toBe(
-      FULL_CATALOG_IDENTITY.digests.prompts_sha256,
+      DEFAULT_CATALOG_IDENTITY.digests.prompts_sha256,
     );
   });
 
   it("binds output schema profile and canonical output contracts into identity", () => {
     const profiles = createCatalogDigestProfiles();
-    expect(FULL_CATALOG_IDENTITY.digests).toEqual(profiles.full.full);
-    expect(DEFAULT_CATALOG_IDENTITY.digests).toEqual(profiles.compact.full);
+    expect(DEFAULT_CATALOG_IDENTITY.digests).toEqual(profiles.off);
     const changedOutput = TOOL_CONTRACTS.map((contract, index) =>
       index === 0
         ? {
@@ -161,37 +160,21 @@ describe("server and catalog identity", () => {
         : contract,
     );
     const changed = createCatalogDigestProfiles(changedOutput);
-    for (const input of ["full", "compact"] as const) {
-      const { full, off } = profiles[input];
-      expect(off.tools_sha256).not.toBe(full.tools_sha256);
-      expect(off.combined_sha256).not.toBe(full.combined_sha256);
-      expect(off.prompts_sha256).toBe(full.prompts_sha256);
-      for (const output of ["full", "off"] as const) {
-        expect(changed[input][output].tools_sha256).not.toBe(
-          profiles[input][output].tools_sha256,
-        );
-        expect(changed[input][output].combined_sha256).not.toBe(
-          profiles[input][output].combined_sha256,
-        );
-        expect(changed[input][output].prompts_sha256).toBe(
-          profiles[input][output].prompts_sha256,
-        );
-      }
+    const { compact, off } = profiles;
+    expect(off.tools_sha256).not.toBe(compact.tools_sha256);
+    expect(off.combined_sha256).not.toBe(compact.combined_sha256);
+    expect(off.prompts_sha256).toBe(compact.prompts_sha256);
+    for (const output of ["compact", "off"] as const) {
+      expect(changed[output].tools_sha256).not.toBe(
+        profiles[output].tools_sha256,
+      );
+      expect(changed[output].combined_sha256).not.toBe(
+        profiles[output].combined_sha256,
+      );
+      expect(changed[output].prompts_sha256).toBe(
+        profiles[output].prompts_sha256,
+      );
     }
-  });
-
-  it("changes catalog identity when advertised input examples change", () => {
-    const contract = TOOL_CONTRACTS.find((item) => item.examples.length > 0);
-    if (contract === undefined) throw new Error("expected an input example");
-    const original = createCatalogDigests();
-    const withoutExamples = createCatalogDigests(
-      TOOL_CONTRACTS.map((item) =>
-        item === contract ? { ...item, examples: [] } : item,
-      ),
-    );
-    expect(withoutExamples.tools_sha256).not.toBe(original.tools_sha256);
-    expect(withoutExamples.combined_sha256).not.toBe(original.combined_sha256);
-    expect(withoutExamples.prompts_sha256).toBe(original.prompts_sha256);
   });
 
   it("reports unknown without a live comparison and distinguishes aligned from stale", () => {
@@ -202,6 +185,9 @@ describe("server and catalog identity", () => {
     });
     expect(unknown.alignment.state).toBe("unknown");
     expect(unknown.server.command_path).toBeNull();
+    expect(unknown.package.root_path).toBe(
+      resolve(fileURLToPath(import.meta.url), "../../../.."),
+    );
     const aligned = createServerIdentity({
       catalog: DEFAULT_CATALOG_IDENTITY,
       startedAt: "2026-07-13T00:00:00.000Z",
@@ -378,13 +364,13 @@ describe("guided prompt catalog identity", () => {
     );
     const digests = createCatalogDigests(TOOL_CONTRACTS, changed);
     expect(digests.prompts_sha256).not.toBe(
-      FULL_CATALOG_IDENTITY.digests.prompts_sha256,
+      DEFAULT_CATALOG_IDENTITY.digests.prompts_sha256,
     );
     expect(digests.combined_sha256).not.toBe(
-      FULL_CATALOG_IDENTITY.digests.combined_sha256,
+      DEFAULT_CATALOG_IDENTITY.digests.combined_sha256,
     );
     expect(digests.tools_sha256).toBe(
-      FULL_CATALOG_IDENTITY.digests.tools_sha256,
+      DEFAULT_CATALOG_IDENTITY.digests.tools_sha256,
     );
   });
 });
@@ -468,9 +454,7 @@ describe("live server identity over MCP", () => {
         state: "aligned",
         reasons: [],
       });
-      expect(server.catalogIdentity.digests.tools_sha256).not.toBe(
-        FULL_CATALOG_IDENTITY.digests.tools_sha256,
-      );
+      expect(server.catalogIdentity).toBe(DEFAULT_CATALOG_IDENTITY);
     } finally {
       await Promise.allSettled([
         client.close(),
@@ -592,7 +576,7 @@ const assertLiveIdentity = async (client: Client): Promise<void> => {
     TOOL_CONTRACTS.map(({ name }) => name).sort(),
   );
   for (const contract of TOOL_CONTRACTS) {
-    const effects = toolSessionEffects(contract.name);
+    const effects = contract.sessionEffects;
     const annotations = annotationsFromEffects(effects);
     expect(availability).toContainEqual(
       expect.objectContaining({
@@ -695,3 +679,40 @@ const assertSessionIdentity = async (client: Client): Promise<void> => {
     },
   });
 };
+
+it("composes the combined digest exactly as whole-document canonicalization", () => {
+  const sha256 = (value: unknown) =>
+    createHash("sha256")
+      .update(canonicalize(value) ?? "")
+      .digest("hex");
+  // Escapes, non-ASCII text, key order and empty catalogs must all agree.
+  const escaped = [
+    {
+      name: 'quote " slash \\ line\u2028 é 😀',
+      z_last: [1.5, null, true, { b: 2, a: "\n" }],
+      a_first: {},
+    },
+  ];
+  const prompts = [{ name: "p", steps: ["tab\t", ""], arguments: [] }];
+  for (const [catalog, promptCatalog, profile] of [
+    [escaped, prompts, "off"],
+    [[], [], "off"],
+    [[], [], "compact"],
+  ] as const) {
+    const digests = digestPresentedCatalogs(
+      catalog as unknown as Parameters<typeof digestPresentedCatalogs>[0],
+      promptCatalog as unknown as Parameters<typeof digestPresentedCatalogs>[1],
+      profile,
+    );
+    const tools = { output_schema_profile: profile, catalog };
+    expect(digests).toEqual({
+      tools_sha256: sha256(tools),
+      prompts_sha256: sha256(promptCatalog),
+      combined_sha256: sha256({
+        cli: CLI_COMMAND_NAMES,
+        tools,
+        prompts: promptCatalog,
+      }),
+    });
+  }
+});

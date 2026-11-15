@@ -16,13 +16,14 @@ import {
   nativeUiResultSchema,
 } from "../domain/native/nativeUiObservation.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ExecFileOutputCancelledError } from "../process/ExecFileOutput.js";
 import { NativeUiCleanupError } from "./NativeUiCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -126,11 +127,11 @@ export const observeNativeUi = async (
         return result.ok
           ? err(cleanup)
           : err(
-              analysisErrorWithCleanupFailure(
+              analysisErrorWithCleanupDependencies(
                 result.error,
                 cleanup,
                 operation,
-              ).bindCleanupDependencies([result.error, cleanup]),
+              ),
             );
       }
     }
@@ -278,7 +279,7 @@ const observeWithHelper = async (
           ? ((signal.aborted && cause.cause === signal.reason
               ? interruption.error(operation)
               : undefined) ??
-              new AnalysisCancelledError(operation, { cause: cause.cause }))
+              cancelledBy(operation, carriedReason(cause.cause)))
           : new ProviderAdapterError("native-macos", operation, {
               cause,
               diagnostics: {

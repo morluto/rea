@@ -173,12 +173,6 @@ const storageDimension = (
     before.storage,
     after.storage,
   );
-  const indexedDbVersionCovered = [before.storage, after.storage].every(
-    (storage) =>
-      storage.content_fingerprints
-        .filter(({ scope }) => scope === "indexed_db_schema")
-        .every(({ projection_version }) => projection_version === 2),
-  );
   return compareDimension(
     storageMap(
       before.storage,
@@ -194,10 +188,9 @@ const storageDimension = (
     ),
     keysComplete &&
       usageComplete &&
-      indexedDbVersionCovered &&
       before.storage.fingerprints_complete &&
       after.storage.fingerprints_complete,
-    "Storage fingerprints, inventories, usage, quota, or IndexedDB schema version coverage were unavailable or truncated in at least one observation.",
+    "Storage fingerprints, inventories, usage, or quota were unavailable or truncated in at least one observation.",
     keysComplete,
   );
 };
@@ -434,7 +427,7 @@ const sharedNetworkMetadata = (
     for (const request of inspection.network.requests) {
       const identity = networkIdentity(request);
       retainKnownFields(identity, request, networkResponseFields);
-      for (const [index, redirect] of (request.redirects ?? []).entries())
+      for (const [index, redirect] of request.redirects.entries())
         retainKnownFields(
           redirectNetworkIdentity(identity, index),
           redirect,
@@ -649,7 +642,7 @@ const networkMap = (
     values.push(
       digestCanonicalValue({
         ...response,
-        redirects: (request.redirects ?? []).map(
+        redirects: request.redirects.map(
           (
             {
               request_timestamp: _requestTimestamp,
@@ -1082,8 +1075,7 @@ const domValueLengthsComparable = (
   after: WebPageInspection["dom"],
 ): boolean =>
   (before.nodes.length === 0 && after.nodes.length === 0) ||
-  (before.node_value_length_unit !== undefined &&
-    before.node_value_length_unit === after.node_value_length_unit);
+  before.node_value_length_unit === after.node_value_length_unit;
 
 /** Compare parsed node facts without serializing or copying the inventories. */
 const domNodesDiffer = (
@@ -1661,26 +1653,13 @@ const storageFingerprintIdentities = (
   const afterComplete = completeStorageFingerprints(after);
   const bothComplete =
     before.fingerprints_complete && after.fingerprints_complete;
-  const candidates = bothComplete
+  return bothComplete
     ? new Set([...beforeComplete.keys(), ...afterComplete.keys()])
     : new Set(
         [...beforeComplete.keys()].filter((identity) =>
           afterComplete.has(identity),
         ),
       );
-  return new Set(
-    [...candidates].filter((identity) => {
-      const beforeSchema = beforeComplete.get(identity);
-      const afterSchema = afterComplete.get(identity);
-      if ((beforeSchema ?? afterSchema)?.scope !== "indexed_db_schema")
-        return true;
-      return (
-        beforeSchema === undefined ||
-        afterSchema === undefined ||
-        beforeSchema.projection_version === afterSchema.projection_version
-      );
-    }),
-  );
 };
 
 const completeStorageFingerprints = (

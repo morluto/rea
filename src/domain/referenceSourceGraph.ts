@@ -1,3 +1,4 @@
+import { coverageStatusSchema } from "./coverage.js";
 import { posix } from "node:path";
 
 import { z } from "zod";
@@ -135,9 +136,7 @@ const parseFailureSchema = z.strictObject({
 const exclusionSchema = z.discriminatedUnion("reason", [
   z.strictObject({
     path: relativePathSchema,
-    entry_kind: z
-      .enum(["file", "directory", "symlink", "other", "unknown"])
-      .exactOptional(),
+    entry_kind: z.enum(["file", "directory", "symlink", "other", "unknown"]),
     reason: z.enum([
       "configured-secret",
       "project-ignored",
@@ -148,9 +147,7 @@ const exclusionSchema = z.discriminatedUnion("reason", [
   }),
   z.strictObject({
     path: relativePathSchema,
-    entry_kind: z
-      .enum(["file", "directory", "symlink", "other", "unknown"])
-      .exactOptional(),
+    entry_kind: z.enum(["file", "directory", "symlink", "other", "unknown"]),
     reason: z.enum(["symlink-escape", "unreadable"]),
   }),
 ]);
@@ -180,7 +177,7 @@ const graphShape = {
   authority: z.literal("historical-reference"),
   root_alias: z.literal("$REFERENCE_ROOT"),
   root_sha256: digestSchema,
-  inventory_state: z.enum(["complete", "partial", "unknown"]),
+  inventory_state: coverageStatusSchema,
   entries: z.array(sourceEntrySchema),
   relationships: z.array(sourceRelationshipSchema),
   parse_failures: z.array(parseFailureSchema),
@@ -226,7 +223,7 @@ const historicalSourceManifestBaseSchema = z.strictObject({
   manifest_id: prefixedDigestSchema("hsm"),
   graph_sha256: digestSchema,
   root_sha256: digestSchema,
-  inventory_state: z.enum(["complete", "partial", "unknown"]),
+  inventory_state: coverageStatusSchema,
   entry_count: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
   relationship_count: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
 });
@@ -366,7 +363,7 @@ const checkSymlinks = (
   );
   const excludedKinds = new Map<
     string,
-    Set<"file" | "directory" | "symlink" | "other" | "unknown" | undefined>
+    Set<"file" | "directory" | "symlink" | "other" | "unknown">
   >();
   for (const { path, entry_kind } of graph.exclusions) {
     const kinds = excludedKinds.get(path) ?? new Set();

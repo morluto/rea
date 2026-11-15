@@ -124,7 +124,6 @@ it("keeps CLI/MCP selection identity, invalid-input refusals and committed outpu
     args: [cli, "mcp"],
     env: {
       ...data.environment,
-      REA_MCP_INPUT_SCHEMA_PROFILE: "full",
       REA_MCP_TOOL_FAMILIES: "artifact,session",
     },
     stderr: "pipe",
@@ -144,14 +143,14 @@ it("keeps CLI/MCP selection identity, invalid-input refusals and committed outpu
     const schemas = await advertisedMcpToolSchemas(client, "extract_artifact");
     for (const occurrence_ids of [[id], [id, data.occurrence("lib/other.so")]])
       expect(
-        schemas.ajv.validate(schemas.inputSchema, {
+        schemas.ajv.validate(schemas.canonicalInputSchema, {
           output_root: output,
           occurrence_ids,
         }),
         JSON.stringify(schemas.ajv.errors),
       ).toBe(true);
     expect(
-      schemas.ajv.validate(schemas.inputSchema, {
+      schemas.ajv.validate(schemas.canonicalInputSchema, {
         output_root: output,
         occurrence_ids: [id, id],
       }),

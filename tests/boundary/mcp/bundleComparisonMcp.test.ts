@@ -1,3 +1,5 @@
+import { displayedEvidenceSubject } from "../../fixtures/evidenceSubject.js";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { writeFile } from "node:fs/promises";
@@ -25,7 +27,7 @@ import { observed } from "../../fixtures/analysisExecution.js";
 
 const sourceEvidence = (label: string) =>
   createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     {
       operation: "observe",
@@ -62,11 +64,10 @@ describe("bundle comparison MCP semantic status", () => {
     const left = createEvidenceBundle([record]);
     const displayRecord = {
       ...record,
-      subject: {
-        ...record.subject!,
+      subject: displayedEvidenceSubject(record.subject, {
         name: "renamed.elf",
         local_path: join(root, "renamed.elf"),
-      },
+      }),
     };
     const displayOnly = { ...left, records: [displayRecord] };
     const changedRecord = createEvidence(
@@ -319,10 +320,8 @@ describe("bundle comparison MCP integration", () => {
         error: {
           code: "invalid_request",
           category: "invalid_input",
-          details: { path: recordPath },
-          message: expect.stringContaining(
-            `this JSON is one Evidence record (${record.evidence_id})`,
-          ),
+          details: { path: recordPath, detected_kind: "evidence-record" },
+          message: expect.stringContaining(record.evidence_id),
         },
       });
     } finally {

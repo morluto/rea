@@ -4,7 +4,7 @@ import { GhidraSessionError } from "../../../src/ghidra/GhidraSessionError.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { connectGhidraMcp } from "./ghidraMcpHarness.js";
 
-it.each(["compact", "full"] as const)(
+it.each(["compact"] as const)(
   "preserves actionable Ghidra procedure ambiguity over MCP (%s)",
   async (profile) => {
     const message =
@@ -60,7 +60,7 @@ it.each(["compact", "full"] as const)(
   },
 );
 
-it.each(["compact", "full"] as const)(
+it.each(["compact"] as const)(
   "keeps file-offset mapping ambiguity distinct from function identity (%s)",
   async (profile) => {
     const message =

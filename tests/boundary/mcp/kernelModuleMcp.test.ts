@@ -1,3 +1,5 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile } from "node:fs/promises";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema } from "ajv";
@@ -111,7 +113,7 @@ mcpTest(
         machine: 20,
         applicability: "applicable",
       });
-      expect(evidence.subject?.architecture).toBe("powerpc");
+      expect(fileIdentity(evidence.subject).architecture).toBe("powerpc");
       expect(evidence.normalized_result.modinfo?.entries[0]).toMatchObject({
         key: "license",
         value: "GPL",
@@ -149,10 +151,7 @@ mcpTest(
         arguments: { path },
       });
       expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
-      const outputSchema = (await client.listTools()).tools.find(
-        (tool) => tool.name === "inspect_kernel_module",
-      )?.outputSchema;
-      if (outputSchema === undefined) throw new Error("Missing output schema");
+      const outputSchema = canonicalOutputSchema("inspect_kernel_module");
       const ajv = new Ajv2020({ strict: false, validateFormats: false });
       expect(ajv.validateSchema(outputSchema as AnySchema)).toBe(true);
       expect(

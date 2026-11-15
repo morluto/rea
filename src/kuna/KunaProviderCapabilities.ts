@@ -6,7 +6,7 @@ import type {
   AnalysisOperation,
   CapabilityDescriptor,
   ProviderAvailability,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 
 import {
   DEFAULT_REGEX_MATCHING_DEADLINE,

@@ -5,7 +5,8 @@ import {
   createGlobalPathReader,
   retainSemanticAmbientEffect,
 } from "./javascriptSemanticAmbientWrites.js";
-import { isIntrinsicMapLookup } from "./javascriptSemanticMapOperations.js";
+import { isIntrinsicMapLookup } from "./javascriptSemanticIntrinsicInstances.js";
+import { JavaScriptSemanticWorkMeter } from "./javascriptSemanticWorkAllowance.js";
 import {
   isIntrinsicTypedArrayConstruction,
   isTypedArrayNumericIndex,
@@ -14,7 +15,7 @@ import {
 import {
   semanticGlobalProcessOrigin,
   semanticGlobalProcessPathOrigin,
-  semanticOriginalGlobalProcessAt,
+  semanticEffectMayReachOriginalGlobalProcess,
   semanticMutableBuiltinOrigin,
   semanticRequireExportsIdentity,
   semanticRequireOriginCandidate,
@@ -73,6 +74,7 @@ import {
   javaScriptDefinitionKeyCoercions,
   javaScriptDefinitionTimeExpressions,
   javaScriptExecutions,
+  type JavaScriptExecution,
 } from "./javascriptSemanticExecutionPoints.js";
 import {
   semanticKnownArrayIteration,
@@ -405,84 +407,91 @@ const accessorEffectOperands = (
   const escape = (nodes: readonly t.Node[]): void => {
     for (const node of nodes) operands.push({ kind: "escape", node });
   };
+  const writeOnly = new WeakSet<t.Node>();
+  const apply = (execution: JavaScriptExecution): void => {
+    const { node } = execution;
+    switch (execution.kind) {
+      case "property-write":
+        if (!execution.readsFirst)
+          for (const target of semanticWriteTargets(execution.target))
+            writeOnly.add(target);
+        escape(execution.operands);
+        return;
+      case "property-read":
+        if (
+          (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) &&
+          !writeOnly.has(node)
+        )
+          operands.push({
+            kind: "read",
+            node: node.object,
+            path: [semanticStaticPropertyKey(node.property, node.computed)],
+            lookup: "prototype",
+          });
+        return;
+      case "call":
+      case "construction":
+      case "tagged-template":
+        if (t.isTaggedTemplateExpression(node))
+          operands.push({ kind: "invoke", node: node.tag });
+        else if (
+          t.isCallExpression(node) ||
+          t.isOptionalCallExpression(node) ||
+          t.isNewExpression(node)
+        )
+          operands.push({
+            kind: "invoke",
+            node: node.callee,
+            ...(t.isNewExpression(node) ? {} : { invocation: node }),
+          });
+        escape(execution.operands);
+        return;
+      // Projected getter and `then` reads belong to the read-source owner.
+      case "destructuring":
+      case "property-copy":
+      case "thenable":
+      // Static module evaluation finishes before this module's code runs.
+      case "module-evaluation":
+      // Ordinary objects enumerate without user code; Proxy traps escaped
+      // when the Proxy was constructed.
+      case "enumeration":
+        return;
+      // Without a narrower proof, code that may run receives its operands.
+      case "class-definition":
+      case "coercion":
+      case "disposal":
+      case "iteration":
+      case "suspension":
+      case "decorator":
+      case "dynamic-import":
+      case "dynamic-scope":
+      case "jsx-element":
+      case "unsupported-syntax":
+        escape(execution.operands);
+        return;
+      default:
+        execution satisfies never;
+    }
+  };
   const pending: { node: t.Node; parent: t.Node | null }[] = [
     { node: method.body, parent: method },
   ];
-  const writeOnly = new WeakSet<t.Node>();
   while (pending.length > 0) {
     const { node, parent } = pending.pop()!;
     // Defining a nested callable does not invoke it, but the definition itself
-    // evaluates heritage and computed keys against the enclosing receiver.
+    // evaluates heritage, decorators and computed keys against the enclosing
+    // receiver.
     if (t.isFunction(node) || t.isClass(node)) {
+      if (t.isClass(node))
+        for (const execution of javaScriptExecutions(node, parent))
+          apply(execution);
       escape(javaScriptDefinitionKeyCoercions(node));
       for (const child of javaScriptDefinitionTimeExpressions(node).reverse())
         pending.push({ node: child, parent: node });
       continue;
     }
     for (const execution of javaScriptExecutions(node, parent))
-      switch (execution.kind) {
-        case "property-write":
-          if (!execution.readsFirst)
-            for (const target of semanticWriteTargets(execution.target))
-              writeOnly.add(target);
-          escape(execution.operands);
-          break;
-        case "property-read":
-          if (
-            (t.isMemberExpression(node) ||
-              t.isOptionalMemberExpression(node)) &&
-            !writeOnly.has(node)
-          )
-            operands.push({
-              kind: "read",
-              node: node.object,
-              path: [semanticStaticPropertyKey(node.property, node.computed)],
-              lookup: "prototype",
-            });
-          break;
-        case "call":
-        case "construction":
-        case "tagged-template":
-          if (t.isTaggedTemplateExpression(node))
-            operands.push({ kind: "invoke", node: node.tag });
-          else if (
-            t.isCallExpression(node) ||
-            t.isOptionalCallExpression(node) ||
-            t.isNewExpression(node)
-          )
-            operands.push({
-              kind: "invoke",
-              node: node.callee,
-              ...(t.isNewExpression(node) ? {} : { invocation: node }),
-            });
-          escape(execution.operands);
-          break;
-        case "coercion":
-        case "disposal":
-          escape(execution.operands);
-          break;
-        // Projected getter and `then` reads belong to the read-source owner.
-        case "destructuring":
-        case "property-copy":
-        case "thenable":
-        // Definitions are handled above without entering deferred bodies.
-        case "class-definition":
-          break;
-        // Not applied yet: these may run code with their operands, but this
-        // collector has never modelled them. Listed so the gap is explicit.
-        case "iteration":
-        case "enumeration":
-        case "suspension":
-        case "decorator":
-        case "dynamic-import":
-        case "dynamic-scope":
-        case "jsx-element":
-        case "module-evaluation":
-        case "unsupported-syntax":
-          break;
-        default:
-          execution satisfies never;
-      }
+      apply(execution);
     for (const source of semanticPropertyReadSources(node, parent))
       operands.push({
         kind: "read",
@@ -502,11 +511,14 @@ const accessorEffectOperands = (
 export function* collectSemanticMemberMutationsSteps(
   program: t.Program,
   state: JavaScriptSemanticAnalysisState,
-  referenceMayHaveChangedAt: JavaScriptBindingIndex["referenceMayHaveChangedAt"],
+  mayObserve: JavaScriptBindingIndex["mayObserve"],
 ): Generator<void, void> {
   const deferredMapReceivers = new Set<
     t.CallExpression | t.OptionalCallExpression
   >();
+  // Alias states are retained until their query finishes; bound the phase
+  // before a pathological alias history exhausts the worker heap.
+  const work = new JavaScriptSemanticWorkMeter(state.memberMutationAllowance);
   // The binding pass already retained callable nodes. Ordinary data-only code
   // must not pay an alias walk for every member read or assignment.
   const accessorKeys = {
@@ -749,7 +761,7 @@ export function* collectSemanticMemberMutationsSteps(
       path[1] === "process" &&
       path.length > 2 &&
       node !== undefined &&
-      semanticOriginalGlobalProcessAt(node, state)
+      semanticEffectMayReachOriginalGlobalProcess(node, state)
     )
       recordRequiredEffect("node:process", path.slice(2), "write", node);
   const selections = new Map<string, readonly string[]>();
@@ -915,6 +927,10 @@ export function* collectSemanticMemberMutationsSteps(
         };
       };
     const pending: PendingValue[] = [];
+    const schedule = (value: PendingValue): void => {
+      work.charge();
+      pending.push(value);
+    };
     // The effect, mutation and assigned sources belong to this invocation.
     // Alias histories do not select a value: the binding/capture/projection do.
     // Keep small alternatives exact. Bound additional states across this whole
@@ -941,7 +957,7 @@ export function* collectSemanticMemberMutationsSteps(
         ? resolveBinding(expression, expression.name)
         : undefined;
       if (binding === undefined) {
-        pending.push(value);
+        schedule(value);
         return;
       }
       const observablePath = observablePaths.normalize(
@@ -1006,12 +1022,12 @@ export function* collectSemanticMemberMutationsSteps(
           : { path, definiteReceiver, scheduled: false };
       joinedProjections.set(key, joined);
       if (!projectionsWidened) {
-        pending.push({ ...value, exactKey: key });
+        schedule({ ...value, exactKey: key });
         return;
       }
       if (joined.scheduled) return;
       joined.scheduled = true;
-      pending.push({
+      schedule({
         ...value,
         path,
         definiteReceiver,
@@ -1052,7 +1068,11 @@ export function* collectSemanticMemberMutationsSteps(
         );
         continue;
       }
-      const globalProcess = semanticGlobalProcessPathOrigin(expression, state);
+      const globalProcess = semanticGlobalProcessPathOrigin(
+        expression,
+        state,
+        "effect",
+      );
       if (globalProcess !== undefined) {
         recordRequiredEffect(
           globalProcess.specifier,
@@ -1081,7 +1101,11 @@ export function* collectSemanticMemberMutationsSteps(
               recordedEffectCount += 1;
               clearSemanticValueCaches(state);
             }
-          const processOrigin = semanticGlobalProcessOrigin(expression, state);
+          const processOrigin = semanticGlobalProcessOrigin(
+            expression,
+            state,
+            "effect",
+          );
           if (processOrigin !== undefined)
             recordRequiredEffect(
               processOrigin.specifier,
@@ -1909,17 +1933,21 @@ export function* collectSemanticMemberMutationsSteps(
           case "thenable":
           // Definition-time code is traversed as ordinary code.
           case "class-definition":
-            break;
-          // Not applied yet: these may run code with their operands, but this
-          // collector has never modelled them. Listed so the gap is explicit.
-          case "suspension":
+          // Static module evaluation finishes before this module's code runs.
+          case "module-evaluation":
+          // Ordinary objects enumerate without user code; Proxy traps escaped
+          // when the Proxy was constructed.
           case "enumeration":
+            break;
+          // Without a narrower proof, code that may run receives its operands.
+          case "suspension":
           case "decorator":
           case "dynamic-import":
           case "dynamic-scope":
           case "jsx-element":
-          case "module-evaluation":
           case "unsupported-syntax":
+            for (const operand of execution.operands)
+              markEscaped(operand, node);
             break;
           default:
             execution satisfies never;
@@ -2040,11 +2068,7 @@ export function* collectSemanticMemberMutationsSteps(
     let receiverIndex = 0;
     for (const node of deferredMapReceivers) {
       if (receiverIndex++ % 64 === 0) yield;
-      if (
-        isIntrinsicMapLookup(node, state, { referenceMayHaveChangedAt }) ===
-        true
-      )
-        continue;
+      if (isIntrinsicMapLookup(node, state, { mayObserve }) === true) continue;
       deferredMapReceivers.delete(node);
       markReceiver(node.callee, node);
     }

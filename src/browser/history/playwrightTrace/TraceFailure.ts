@@ -1,30 +1,32 @@
 import { AnalysisError } from "../../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../../domain/artifactOperationError.js";
 import { PLAYWRIGHT_TRACE_OPERATION as operation } from "../../../domain/playwrightTrace/playwrightTrace.js";
-import { ArtifactReaderFailure } from "../../../artifacts/ArtifactReader.js";
-import { artifactFileCancellationCause } from "../../../artifacts/ArtifactFileOperation.js";
+import {
+  ArtifactReaderFailure,
+  artifactFileCancellationCause,
+  stableArtifactInputFailure,
+  readerIntegrityFailure,
+} from "../../../resources/index.js";
 import { isSelectedRegularFileError } from "../../../filesystem/RegularFile.js";
-import { stableArtifactInputFailure } from "../../../artifacts/StableArtifactFailure.js";
 
 /** Classify the archive owner's facts without interpreting opaque cancellation reasons. */
 export const traceFailure = (cause: unknown, path: string): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
   if (cause instanceof ArtifactReaderFailure) {
     if (cause.reason === "cancelled")
-      return new AnalysisCancelledError(operation, {
-        cause: artifactFileCancellationCause(cause),
-      });
+      return cancelledBy(
+        operation,
+        carriedReason(artifactFileCancellationCause(cause)),
+      );
     if (cause.reason === "integrity")
-      return new AnalysisArtifactChangedError(operation, path, cause.message, {
-        cause,
-      });
+      return readerIntegrityFailure(operation, path, cause);
     if (cause.reason === "limit")
       return new AnalysisResourceConstraintError(
         operation,

@@ -5,7 +5,7 @@ import { testWaitDeadline } from "../support/testWait.js";
  * reaches its controlled lifecycle boundary.
  */
 export const awaitAcknowledgement = async (
-  acknowledgement: Promise<void>,
+  acknowledgement: Promise<unknown>,
   operation: Promise<unknown>,
   boundary: string,
   timeoutMs = testWaitDeadline(),

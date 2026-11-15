@@ -1,9 +1,9 @@
-import {
-  systemDoctorHost,
-  type DoctorCheck,
-  type DoctorHost,
-  type DoctorProviderInspection,
-} from "./application/Doctor.js";
+import { HOST_PLATFORM, type HostPlatform } from "./platform/HostPlatform.js";
+import { systemDoctorHost, type DoctorHost } from "./application/Doctor.js";
+import type {
+  DoctorCheck,
+  DoctorProviderInspection,
+} from "./ports/DoctorProviderInspection.js";
 import { fileURLToPath } from "node:url";
 import { readDesktopBuildFacts } from "./desktop/DesktopBuildDoctorFacts.js";
 import {
@@ -25,10 +25,10 @@ import {
 import { readIdaConfiguration } from "./ida/IdaConfiguration.js";
 import { selectLinuxPrivateDisplayStrategy } from "./hopper/LinuxPrivateDisplayProbe.js";
 import { ok } from "./domain/result.js";
-import { AnalysisCancelledError } from "./domain/analysisErrorCore.js";
+import { cancelledBy, carriedReason } from "./domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "./domain/providerCleanupError.js";
-import { AnalysisCleanupLeaseGroup } from "./artifacts/AnalysisCleanupLease.js";
-import type { RetainedResourceScope } from "./application/AnalysisProvider.js";
+import { AnalysisCleanupLeaseGroup } from "./resources/index.js";
+import type { RetainedResourceScope } from "./ports/AnalysisProvider.js";
 import { RegularFileCleanupFailure } from "./filesystem/OwnedRegularFile.js";
 import { readEffectiveClientRegistrationConfiguration } from "./application/ClientConfigurationFiles.js";
 import { clientRegistrationEnvironmentDetails } from "./application/ClientRegistrationEnvironment.js";
@@ -36,7 +36,7 @@ import {
   mergeEnvironmentOverrides,
   snapshotEnvironment,
 } from "./process/snapshotEnvironment.js";
-import { supportedClients } from "./application/SupportedClients.js";
+import { resolveSupportedClients } from "./application/SupportedClients.js";
 import { homeDirectoryFromEnvironment } from "./config/homeDirectory.js";
 import {
   inspectLinuxHopperPythonRuntime,
@@ -62,26 +62,22 @@ const selectedRegistrationEnvironment = async (
   processEnvironment: Readonly<NodeJS.ProcessEnv>,
   resourceScope: RetainedResourceScope,
   signal: AbortSignal,
+  platform: NodeJS.Platform,
 ): Promise<SelectedRegistrationEnvironment | undefined> => {
   const [selected] = clients;
   // Only an unambiguous selection can stand for the terminal's environment.
   if (selected === undefined || clients.length !== 1) return undefined;
   signal.throwIfAborted();
-  const home = homeDirectoryFromEnvironment(
-    processEnvironment,
-    process.platform,
-  );
-  const client = supportedClients(
-    home,
-    process.platform,
-    processEnvironment,
+  const home = homeDirectoryFromEnvironment(processEnvironment, platform);
+  const client = (
+    await resolveSupportedClients(home, platform, processEnvironment)
   ).find(({ name }) => name === selected);
   if (client === undefined || client.format === "unsupported")
     return { environment: {}, unresolved: new Set(), unknown: true };
   const registered = await readSelectedRegistration(
     client,
     resourceScope,
-    process.platform,
+    platform,
   );
   if (registered === undefined) return undefined;
   if ("unknown" in registered)
@@ -107,7 +103,7 @@ const selectedRegistrationEnvironment = async (
 export const selectedProviderSettings = (
   selected: SelectedRegistrationEnvironment | undefined,
   terminal: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): Readonly<Record<string, string | undefined>> => {
   if (selected === undefined) return terminal;
   const settings: Record<string, string | undefined> = {
@@ -165,9 +161,9 @@ const readSelectedRegistration = async (
   const details = clientRegistrationEnvironmentDetails(
     configuration.value.document,
     client,
+    platform,
     {},
     "effective",
-    platform,
   );
   return details.ok
     ? {
@@ -204,7 +200,9 @@ export const settingAffectsProbe = (
       // Java comes from JAVA_HOME when it is explicit; only then is PATH unused.
       return name !== "PATH" || read("JAVA_HOME") === undefined;
     case "ghidra":
-      // Both the install directory and the JDK fall back to PATH lookups.
+      // An existing project changes admission only on Windows, which cannot
+      // open one. Both the install directory and the JDK fall back to PATH.
+      if (name === "REA_GHIDRA_PROJECT_PATH") return platform === "win32";
       return (
         name !== "PATH" ||
         read("GHIDRA_INSTALL_DIR") === undefined ||
@@ -297,7 +295,10 @@ const unresolvedProvider = (
 export const createSystemDoctorHost = (
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
   signal?: AbortSignal,
+  /** The host diagnosed; tests select another host's client layout. */
+  host: HostPlatform = HOST_PLATFORM,
 ): DoctorHost => {
+  const { platform } = host;
   const registrationReads = new WeakMap<
     RetainedResourceScope,
     Map<string, ReturnType<typeof readIdaConfiguration>>
@@ -324,6 +325,8 @@ export const createSystemDoctorHost = (
   };
   return systemDoctorHost({
     environment,
+    platform,
+    architecture: host.architecture,
     ...(signal === undefined ? {} : { signal }),
     resolveProviderRequestBudget: async (
       analysisProvider,
@@ -356,29 +359,26 @@ export const createSystemDoctorHost = (
         environment,
         resourceScope,
         inspectionSignal,
+        platform,
       );
       const inspectionEnvironment = selectedProviderSettings(
         selected,
         environment,
+        platform,
       );
       return [
         unresolvedProvider(
           "ghidra",
           selected,
           inspectionEnvironment,
-          process.platform,
+          platform,
         ) ??
           (await inspectSystemGhidraProvider(
             inspectionEnvironment,
             resourceScope,
             inspectionSignal,
           )),
-        unresolvedProvider(
-          "ida",
-          selected,
-          inspectionEnvironment,
-          process.platform,
-        ) ??
+        unresolvedProvider("ida", selected, inspectionEnvironment, platform) ??
           (await inspectIdaRegistration(
             inspectionEnvironment.REA_IDA_MCP_CONFIG,
             resourceScope,
@@ -391,24 +391,15 @@ export const createSystemDoctorHost = (
                   inspectionSignal,
                 ),
           )),
-        unresolvedProvider(
-          "jadx",
-          selected,
-          inspectionEnvironment,
-          process.platform,
-        ) ??
+        unresolvedProvider("jadx", selected, inspectionEnvironment, platform) ??
           (await inspectJadxProvider(
             inspectionEnvironment,
             resourceScope,
+            host,
             inspectionSignal,
           )),
-        unresolvedProvider(
-          "kuna",
-          selected,
-          inspectionEnvironment,
-          process.platform,
-        ) ??
-          (await inspectKunaProvider(inspectionEnvironment, process.platform, {
+        unresolvedProvider("kuna", selected, inspectionEnvironment, platform) ??
+          (await inspectKunaProvider(inspectionEnvironment, platform, {
             resourceScope,
             signal: inspectionSignal,
           })),
@@ -460,11 +451,7 @@ const inspectLinuxHopperDemoRuntime = async (
     };
     const failure =
       signal?.aborted === true
-        ? new AnalysisCancelledError("doctor", {
-            cause: signal.reason,
-            cleanup,
-            diagnostics,
-          })
+        ? cancelledBy("doctor", signal, { cleanup, diagnostics })
         : new ProviderCleanupError(
             "hopper",
             cleanup.resources,
@@ -475,8 +462,7 @@ const inspectLinuxHopperDemoRuntime = async (
     throw failure;
   }
   if (signal?.aborted === true)
-    throw new AnalysisCancelledError("doctor", {
-      cause: signal.reason,
+    throw cancelledBy("doctor", signal, {
       diagnostics: {
         hopper_demo_runtime: { private_display: { ...selection.diagnostic } },
       },
@@ -514,8 +500,7 @@ const inspectLinuxHopperDemoRuntime = async (
     embedded_python: pythonDiagnostic,
   };
   if (!python.ok && python.error.reason === "cancelled")
-    throw new AnalysisCancelledError("doctor", {
-      cause: python.error.cause,
+    throw cancelledBy("doctor", carriedReason(python.error.cause), {
       diagnostics: { hopper_demo_runtime: details },
     });
   if (selection.ok && pythonFailure === undefined)

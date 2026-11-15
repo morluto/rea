@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import type { ToolAnnotations } from "@modelcontextprotocol/server";
-import type { CapabilityDescriptor } from "../../src/application/AnalysisProvider.js";
+import type { CapabilityDescriptor } from "../../src/ports/AnalysisProvider.js";
 import type { ToolKind } from "../../src/contracts/toolContractTypes.js";
 import type { ToolEffects } from "../../src/contracts/toolEffects.js";
 
