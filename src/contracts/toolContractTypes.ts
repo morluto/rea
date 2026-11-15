@@ -64,7 +64,10 @@ export interface ToolContract<
   };
   readonly inputSchema: InputSchema;
   readonly outputSchema: OutputSchema;
+  /** Possible effects across every supported provider profile. */
   readonly effects: ToolEffects;
+  /** Effects the tool owns before composing the selected provider. */
+  readonly sessionEffects: ToolEffects;
   readonly annotations: DerivedToolAnnotations;
   /**
    * Results, successful or failed, can contain text that originates from the

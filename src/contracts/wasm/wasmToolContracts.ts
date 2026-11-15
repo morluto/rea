@@ -4,7 +4,7 @@ import {
   wasmArtifactSchema,
 } from "../../domain/wasm/wasmArtifact.js";
 import type { ToolContract } from "../toolContractTypes.js";
-import { toolContractMetadata } from "../toolEffects.js";
+import { toolContractMetadata, toolEffects } from "../toolEffects.js";
 import {
   analysisDetailSchema,
   analysisDetailOutputSchemaOf,
@@ -20,7 +20,14 @@ export const wasmArtifactInspectionInputSchema =
 export const INSPECT_WASM_ARTIFACT_CONTRACT = {
   name: "inspect_wasm_artifact",
   cli: true,
-  ...toolContractMetadata("inspect_wasm_artifact"),
+  ...toolContractMetadata(
+    "inspect_wasm_artifact",
+    toolEffects({
+      mutatesSession: true,
+      writesFilesystem: true,
+      launchesProcess: true,
+    }),
+  ),
   kind: "artifact-provider",
   requiresActiveTarget: true,
   description:
