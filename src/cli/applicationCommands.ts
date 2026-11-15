@@ -261,11 +261,10 @@ const registerEvidenceJsonCommand = ({
       ...(omit === undefined ? {} : { omit }),
       cliOptions: { evidenceBundle: evidenceBundleOption },
     },
-    async (input, { signal, cliOptions }) => {
+    async (input, { signal, frame, cliOptions }) => {
       const result = await runEvidenceInputCommand(
-        operation,
-        cliOptions.evidenceBundle,
-        signal,
+        input,
+        { operation, signal, frame, cliOptions },
         (lookup) => workflow(input, lookup, signal),
       );
       return result.ok

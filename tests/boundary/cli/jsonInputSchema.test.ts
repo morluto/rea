@@ -36,7 +36,7 @@ import {
   jsonInputArgument,
   jsonInputContentSchema,
 } from "../../../src/cli/jsonInputArgument.js";
-import { cliJsonCallerPathSchema } from "../../../src/cliJsonInput.js";
+import { cliJsonCallerPathSchema } from "../../../src/cli/cliJsonInput.js";
 import { visitRegisteredCommands } from "../../../src/cli/visitRegisteredCommands.js";
 import type { CliInstance } from "../../../src/cli/types.js";
 
