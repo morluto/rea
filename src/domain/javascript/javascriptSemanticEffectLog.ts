@@ -441,6 +441,42 @@ export const ambientBindingMayObserveWriteAt = (
   );
 
 /**
+ * Whether a recorded `=` assignment of exactly the ambient `path` (a
+ * `global` property path with literal keys) or of the unbound `name` always
+ * runs before `site` and stores a value `replacement` accepts. This is the
+ * "must" counterpart of `ambientPathMayObserveAt` and
+ * `ambientBindingMayObserveWriteAt`: a write site asks it to learn whether the
+ * object it writes through is proven to be no longer the original.
+ */
+export const ambientReplacementPrecedes = (
+  state: JavaScriptSemanticAnalysisState,
+  site: t.Node,
+  path: readonly string[],
+  name: string,
+  replacement: (value: t.Expression) => boolean,
+): boolean => {
+  const replaces = (
+    write: t.Node | undefined,
+    target: (left: t.Node) => boolean,
+  ): boolean =>
+    t.isAssignmentExpression(write, { operator: "=" }) &&
+    target(unwrapJavaScriptExpression(write.left).node) &&
+    replacement(write.right) &&
+    semanticDefiniteEffectPrecedesReference(write, site, state.parentsByNode);
+  return (
+    ambientPathEffects(state, path).writes.some(
+      (effect) =>
+        effect.path.length === path.length &&
+        effect.path.every((key, index) => key === path[index]) &&
+        replaces(effect.node, (left) => t.isMemberExpression(left)),
+    ) ||
+    (state.ambientBindingWrites.get(name) ?? []).some((write) =>
+      replaces(write, (left) => t.isIdentifier(left, { name })),
+    )
+  );
+};
+
+/**
  * A count that grows whenever an ambient write is recorded. A cache that
  * depends on ambient writes stores it and recomputes when it differs.
  */

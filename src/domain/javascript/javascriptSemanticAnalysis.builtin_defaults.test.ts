@@ -118,6 +118,85 @@ it.each([
   },
 );
 
+// A write through `process` reaches the original object unless a replacement
+// is proven to run before it. A replacement that may run first is not enough.
+it.each([
+  {
+    source: `process.env = {}; while (ready) process = other;`,
+    keys: [],
+    why: "the loop body may never run, and runs only after the write",
+  },
+  {
+    source: `if (ready) process = other; process.env = {};`,
+    keys: [],
+    why: "the replacement may be skipped, so the write may reach the original",
+  },
+  {
+    source: `process.env = {}; if (ready) process = other;`,
+    keys: [],
+    why: "the write runs before the replacement",
+  },
+  {
+    source: `if (ready) globalThis.process = other; globalThis.process.env = {};`,
+    keys: [],
+    why: "a skipped qualified replacement leaves the original in place",
+  },
+  {
+    source: `function swap() { process = other; } swap(); process.env = {};`,
+    keys: [],
+    why: "a replacement inside a function body is not proven to run",
+  },
+  {
+    source: `function write() { process.env = {}; } write(); process = other;`,
+    keys: [],
+    why: "the write runs in a call made before the replacement",
+  },
+  {
+    source: `process = other; process.env = {};`,
+    keys: [],
+    why: "the replacement may be the original object itself",
+  },
+  {
+    source: `if (ready) process = other; patch(process);`,
+    keys: [],
+    why: "an escape that may reach the original is kept like a write",
+  },
+  {
+    source: `if (ready) globalThis.process = other; patch(globalThis.process);`,
+    keys: [],
+    why: "a qualified escape that may reach the original is kept",
+  },
+  {
+    source: `if (ready) process = other; process.env.kept = "";`,
+    keys: [],
+    why: "a nested write that may reach the original is kept",
+  },
+  {
+    source: `process = {}; patch(process);`,
+    keys: ["kept"],
+    why: "a fresh replacement always runs before the escape",
+  },
+  {
+    source: `process = {}; process.env = {};`,
+    keys: ["kept"],
+    why: "a fresh object always replaces the original before the write",
+  },
+  {
+    source: `globalThis.process = {}; process.env = {};`,
+    keys: ["kept"],
+    why: "a fresh qualified replacement always runs before the write",
+  },
+])(
+  "attributes process writes that may reach the original: $source ($why)",
+  ({ source, keys }) => {
+    expect(
+      analyzeCommonJsSemanticFixture(
+        `${source} const proc = require('process'); const mode = proc.env.kept;`,
+      ).configurationOperations.map(({ key }) => key),
+    ).toEqual(keys);
+  },
+);
+
 it("preserves exports captured before a later loader overwrite", () => {
   const ir = analyzeCommonJsSemanticFixture(`
     const fs=require('node:fs'); fs.readFileSync('before');

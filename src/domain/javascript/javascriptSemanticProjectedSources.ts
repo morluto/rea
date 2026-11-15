@@ -89,7 +89,7 @@ interface ProjectedSource {
 }
 
 /** A fresh parent does not prove a descendant receiver is a fresh allocation. */
-const hasFreshProjectedReceiver = (
+export const hasFreshProjectedReceiver = (
   root: t.Node,
   path: JavaScriptSemanticPropertyPath,
   state: JavaScriptSemanticAnalysisState,
