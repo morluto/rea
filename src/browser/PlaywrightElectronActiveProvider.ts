@@ -7,6 +7,8 @@ import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { ElectronCaptureCleanup } from "./ElectronCaptureCleanup.js";
+import { ElectronCaptureProfile } from "./ElectronCaptureProfile.js";
+import { AnalysisCleanupLeaseGroup } from "../artifacts/AnalysisCleanupLease.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
@@ -66,6 +68,7 @@ type ElectronPaths = {
   readonly executable: string;
   readonly application: string;
   readonly root: string;
+  readonly profile: CanonicalElectronActiveObservationInput["profile"];
 };
 
 /** Launch an owned Electron application through the official Playwright API. */
@@ -121,6 +124,7 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
     let lineage: ProcessLineageObservation | undefined;
     let capture: ElectronActiveObservationResult | undefined;
     let paths: ElectronPaths | undefined;
+    let profile: ElectronCaptureProfile | undefined;
     let initialState:
       | Awaited<ReturnType<typeof readApplicationState>>
       | undefined;
@@ -141,6 +145,7 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         executable: input.executable_path,
         application: input.application_path,
         root: input.application_root,
+        profile: input.profile,
       };
       const preflight = assertNodeCliInspectArgumentsSupported(
         input.executable_path,
@@ -172,6 +177,8 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         throw new BrowserObservationError(OPERATION, "cancelled", {
           cause: options.signal.reason,
         });
+      if (input.profile === "isolated")
+        profile = await ElectronCaptureProfile.create();
       const applicationArgs = [
         "-r",
         hookPath,
@@ -182,7 +189,12 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         executablePath: paths.executable,
         cwd: paths.root,
         env: {
-          ...safeElectronEnvironment(this.environment, runId),
+          ...safeElectronEnvironment(
+            this.environment,
+            runId,
+            process.platform,
+            profile,
+          ),
           REA_ELECTRON_CAPTURE_ARGV: JSON.stringify({
             length: applicationArgs.length,
             sha256: createHash("sha256")
@@ -264,18 +276,30 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         });
       outcome = err(error);
     }
+    if (application === undefined && profile !== undefined)
+      return await this.#releaseUnlaunchedProfile(profile, outcome, options);
     if (application !== undefined) {
-      const owner = new ElectronCaptureCleanup(application, ownership, lineage);
+      const owner = new ElectronCaptureCleanup(
+        application,
+        ownership,
+        lineage,
+        profile,
+      );
       const released = await owner.release(this.#resources);
       const cleanup = owner.processResult;
       outcome = captureOutcomeWithCancellation(outcome, options.signal);
       if (
         released.processes.kind === "failed" ||
-        released.transport.kind === "failed"
+        released.transport.kind === "failed" ||
+        released.profile.kind === "failed"
       ) {
         const processFailure = released.processes.kind === "failed";
-        const failures = [released.processes, released.transport].flatMap(
-          (attempt) => (attempt.kind === "failed" ? [attempt.cause] : []),
+        const failures = [
+          released.processes,
+          released.transport,
+          released.profile,
+        ].flatMap((attempt) =>
+          attempt.kind === "failed" ? [attempt.cause] : [],
         );
         const cause =
           failures.length === 1
@@ -294,7 +318,7 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
           "cleanup_failed",
           {
             cause,
-            detail: `${processFailure ? "Electron process cleanup could not be verified" : "Electron transport teardown failed after process cleanup"}: ${reason}. Collected observations are retained when available.`,
+            detail: `${processFailure ? "Electron process cleanup could not be verified" : released.transport.kind === "failed" ? "Electron transport teardown failed after process cleanup" : "The private Electron profile could not be removed after process cleanup"}: ${reason}. Collected observations are retained when available.`,
             cleanup: { reason, resources: owner.pendingResources },
             ...(capture === undefined
               ? {}
@@ -340,6 +364,40 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
     // Cleanup failures returned above keep precedence; a completed capture
     // observed under late cancellation is retained as partial Evidence.
     return captureOutcomeWithCancellation(outcome, options.signal);
+  }
+
+  /** A launch that never produced an application still owns its private profile. */
+  async #releaseUnlaunchedProfile(
+    profile: ElectronCaptureProfile,
+    outcome: Result<ElectronActiveObservationResult, AnalysisError>,
+    options: ExecutionOptions,
+  ): Promise<Result<ElectronActiveObservationResult, AnalysisError>> {
+    const lease = ElectronCaptureCleanup.profileLease(profile);
+    const released = await this.#resources.release({
+      kind: "lease",
+      resource: "electron_profile",
+      lease,
+    });
+    const settled = captureOutcomeWithCancellation(outcome, options.signal);
+    if (released.kind === "released") return settled;
+    const reason =
+      released.cause instanceof Error
+        ? released.cause.message
+        : String(released.cause);
+    const failure = new BrowserObservationError(OPERATION, "cleanup_failed", {
+      cause: released.cause,
+      detail: `The private Electron profile could not be removed: ${reason}.`,
+      cleanup: { reason, resources: ["electron_profile"] },
+    });
+    new AnalysisCleanupLeaseGroup(failure, [lease]);
+    if (settled.ok) return err(failure);
+    return err(
+      analysisErrorWithCleanupFailure(
+        settled.error,
+        failure,
+        OPERATION,
+      ).bindCleanupDependencies([settled.error, failure]),
+    );
   }
 }
 
@@ -389,13 +447,33 @@ const cancelledCapture = (
     partialObservation: { kind: "electron-active-observation", capture },
   });
 
+/**
+ * Select the launched application's environment.
+ *
+ * With a private profile, every per-user location (home, temp, Windows
+ * application data) points into it; without one, the operator's real
+ * locations are passed by explicit caller choice.
+ */
 export const safeElectronEnvironment = (
   environment: Readonly<Record<string, string | undefined>>,
   runId: string,
-  platform = process.platform,
+  platform: NodeJS.Platform = process.platform,
+  profile?: ElectronCaptureProfile,
+): Record<string, string> => ({
+  ...operatorElectronEnvironment(environment, platform, profile !== undefined),
+  ...profile?.environment(platform),
+  REA_PROCESS_RUN_ID: runId,
+});
+
+const PROFILE_LOCATION_VARIABLES = new Set(["HOMEDRIVE", "HOMEPATH"]);
+
+const operatorElectronEnvironment = (
+  environment: Readonly<Record<string, string | undefined>>,
+  platform: NodeJS.Platform,
+  isolated: boolean,
 ): Record<string, string> =>
-  Object.fromEntries([
-    ...[
+  Object.fromEntries(
+    [
       "HOME",
       "LANG",
       "PATH",
@@ -423,12 +501,12 @@ export const safeElectronEnvironment = (
           ]
         : []),
     ]
+      .filter((name) => !isolated || !PROFILE_LOCATION_VARIABLES.has(name))
       .map((name) => [name, environment[name]] as const)
       .filter(
         (entry): entry is readonly [string, string] => entry[1] !== undefined,
       ),
-    ["REA_PROCESS_RUN_ID", runId] as const,
-  ]);
+  );
 
 const PLAYWRIGHT_INTERNAL_FRAME = /playwright-core[\\/]lib[\\/]/;
 interface LaunchRejectionScope {

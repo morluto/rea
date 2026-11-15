@@ -1298,6 +1298,36 @@ try {
   );
 }
 
+// Redirect the provider-owned private profile before application code runs.
+// Electron derives userData, sessionData and the single-instance lock from
+// appData, and macOS paths ignore $HOME, so the environment alone is not enough.
+// A requested profile that cannot be applied stops the launch: the application
+// must not run against the operator's real profile instead.
+const PROFILE_PATH_NAMES = ["home", "appData", "temp", "logs", "crashDumps"];
+const applyCaptureProfile = () => {
+  const handoff = process.env.REA_ELECTRON_CAPTURE_PROFILE;
+  if (handoff === undefined) return;
+  delete process.env.REA_ELECTRON_CAPTURE_PROFILE;
+  try {
+    const paths = JSON.parse(handoff);
+    const { app } = require("electron");
+    for (const name of PROFILE_PATH_NAMES) {
+      const path = paths?.[name];
+      if (typeof path !== "string" || !require("node:path").isAbsolute(path))
+        throw new Error(`profile path ${name} is not an absolute path`);
+      app.setPath(name, path);
+      if (app.getPath(name) !== path)
+        throw new Error(`Electron did not apply the ${name} profile path`);
+    }
+  } catch (cause) {
+    process.stderr.write(
+      `REA could not apply the isolated Electron profile; the application was not started: ${cause instanceof Error ? cause.message : String(cause)}\n`,
+    );
+    process.exit(78);
+  }
+};
+applyCaptureProfile();
+
 try {
   const electron = require("electron");
   patchEmitter(electron.app, (event, args) =>

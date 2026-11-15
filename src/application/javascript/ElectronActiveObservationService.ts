@@ -184,6 +184,7 @@ const canonicalizeInput = async (
     executable_path: executable.value,
     application_path: application.value,
     application_root: root.value ?? dirname(application.value),
+    profile: input.profile ?? "isolated",
   });
 };
 

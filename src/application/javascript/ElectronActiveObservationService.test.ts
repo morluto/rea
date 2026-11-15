@@ -224,6 +224,34 @@ it.each([false, true])(
   },
 );
 
+it.each(["isolated", "real"] as const)(
+  "hands the caller-selected %s profile to the provider and records it",
+  async (profile) => {
+    const { readable } = await fixture();
+    const application = join(readable, "main.js");
+    const capture = vi.fn<ElectronActiveObservationPort["capture"]>(
+      async (input) =>
+        ok(
+          createElectronActiveObservationFixtureResult(input.application_path),
+        ),
+    );
+    const result = await captureElectronScenario(
+      { identity: () => ({ id: "test", name: "test", version: "1" }), capture },
+      electronActiveObservationInputSchema.parse({
+        executable_path: process.execPath,
+        application_path: application,
+        profile,
+      }),
+    );
+    expect(capture.mock.calls[0]?.[0]).toMatchObject({ profile });
+    if (!result.ok) throw result.error;
+    expect(result.value.parameters).toMatchObject({
+      profile,
+      resolved_profile: profile,
+    });
+  },
+);
+
 it.skipIf(process.platform === "win32")(
   "records selected scenario paths and omission while executing canonical paths",
   async () => {
@@ -248,6 +276,7 @@ it.skipIf(process.platform === "win32")(
       executable_path: await realpath(process.execPath),
       application_path: canonicalApplication,
       application_root: await realpath(readable),
+      profile: "isolated",
     });
     if (!result.ok) throw result.error;
     expect(result.value.parameters).toEqual({
@@ -258,8 +287,11 @@ it.skipIf(process.platform === "win32")(
         application_path: canonicalApplication,
         application_root: await realpath(readable),
       },
+      resolved_profile: "isolated",
     });
     expect(result.value.parameters).not.toHaveProperty("application_root");
+    // An omitted profile is recorded as omitted and resolved to isolated.
+    expect(result.value.parameters).not.toHaveProperty("profile");
     expect(result.value.normalized_result).toMatchObject({
       application: { application_path: canonicalApplication },
     });

@@ -1109,7 +1109,7 @@ it.skipIf(process.platform === "win32")(
       });
       captureOutcome = new PlaywrightElectronActiveProvider({})
         .capture(
-          { ...input, application_root: process.cwd() },
+          { ...input, application_root: process.cwd(), profile: "isolated" },
           { signal: controller.signal },
         )
         .then(
@@ -1235,7 +1235,7 @@ it.skipIf(process.platform === "win32")(
       });
       captureOutcome = new PlaywrightElectronActiveProvider({})
         .capture(
-          { ...input, application_root: process.cwd() },
+          { ...input, application_root: process.cwd(), profile: "isolated" },
           { signal: controller.signal },
         )
         .then(

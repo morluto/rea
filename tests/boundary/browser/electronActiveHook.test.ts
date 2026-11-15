@@ -3783,3 +3783,61 @@ const runNode = async (
     };
   }, [() => processes.shutdown()]);
 };
+
+const profileElectronSource = `const { EventEmitter } = require("node:events");
+const app = new EventEmitter();
+app.isReady = () => false;
+globalThis.__profilePaths = {};
+app.setPath = (name, path) => {
+  if (globalThis.__rejectProfilePath === name) throw new Error("authored setPath denial for " + name);
+  globalThis.__profilePaths[name] = path;
+};
+app.getPath = (name) => globalThis.__profilePaths[name] ?? "/real/" + name;
+module.exports = { app };
+`;
+
+it.each(["applied", "rejected", "malformed"] as const)(
+  "applies the private profile before application code or stops the launch (%s)",
+  async (mode) => {
+    const root = await createTestTempDirectory("rea-electron-profile-hook-");
+    temporary.push(root);
+    await writeElectronFixture(root, profileElectronSource);
+    const paths = Object.fromEntries(
+      ["home", "appData", "temp", "logs", "crashDumps"].map((name) => [
+        name,
+        join(root, "profile", name),
+      ]),
+    );
+    const script = join(root, "profile.cjs");
+    await writeFile(
+      script,
+      `
+      const mode = ${JSON.stringify(mode)};
+      if (mode === "rejected") globalThis.__rejectProfilePath = "appData";
+      process.env.REA_ELECTRON_CAPTURE_PROFILE = mode === "malformed"
+        ? JSON.stringify({ home: "relative/home" })
+        : ${JSON.stringify(JSON.stringify(paths))};
+      require("./electron-active-hook.cjs");
+      // Application code: must observe only the private profile.
+      console.log(JSON.stringify({
+        paths: globalThis.__profilePaths,
+        handoff_present: "REA_ELECTRON_CAPTURE_PROFILE" in process.env,
+      }));
+    `,
+    );
+    const result = await runNode(script, root, undefined, [], false);
+    if (mode === "applied") {
+      expect(result.code, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout.trim())).toEqual({
+        paths,
+        handoff_present: false,
+      });
+      return;
+    }
+    expect(result.code).toBe(78);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain(
+      "REA could not apply the isolated Electron profile; the application was not started",
+    );
+  },
+);

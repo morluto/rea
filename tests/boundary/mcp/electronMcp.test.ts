@@ -466,6 +466,17 @@ const activeElectronScenarioFixture = async () => {
   return { root, applicationPath, aliasedRoot, workingDirectory, activeResult };
 };
 
+/** Split the caller's committed scenario from REA's digest and resolved selections. */
+const committedScenario = ({
+  scenario_sha256,
+  resolved_paths,
+  resolved_profile,
+  ...scenario
+}: Record<string, unknown>) => ({
+  resolved: { scenario_sha256, resolved_paths, resolved_profile },
+  scenario,
+});
+
 it("runs active Electron scenarios with selected paths and inferred working directory", async () => {
   const { root, applicationPath, aliasedRoot, workingDirectory, activeResult } =
     await activeElectronScenarioFixture();
@@ -563,14 +574,16 @@ it("runs active Electron scenarios with selected paths and inferred working dire
   expect(capturedEvidence.normalized_result).toMatchObject({
     application: { application_path: applicationPath },
   });
-  const { scenario_sha256, resolved_paths, ...selectedScenario } =
-    capturedEvidence.parameters;
-  expect(resolved_paths).toMatchObject({
-    application_path: applicationPath,
-    application_root: workingDirectory,
+  const committed = committedScenario(capturedEvidence.parameters);
+  expect(committed.resolved).toMatchObject({
+    resolved_paths: {
+      application_path: applicationPath,
+      application_root: workingDirectory,
+    },
+    resolved_profile: "isolated",
   });
-  expect(scenario_sha256).toBe(
-    digestCanonicalValue(selectedScenario, "Electron scenario"),
+  expect(committed.resolved.scenario_sha256).toBe(
+    digestCanonicalValue(committed.scenario, "Electron scenario"),
   );
   const inferredRoot = await client.callTool({
     name: "capture_electron_scenario",

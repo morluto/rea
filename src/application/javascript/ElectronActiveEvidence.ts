@@ -51,6 +51,7 @@ const parameters = (
             application_path: resolvedInput.application_path,
             application_root: resolvedInput.application_root,
           },
+          resolved_profile: resolvedInput.profile,
         }),
   };
 };

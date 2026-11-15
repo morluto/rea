@@ -11,8 +11,8 @@ import { ExecFileOutputCancelledError } from "../process/ExecFileOutput.js";
 import * as processOutput from "../process/ExecFileOutput.js";
 import { cleanupElectronProcesses } from "./ElectronProcessCleanup.js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { stat, writeFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
@@ -32,9 +32,22 @@ import {
   PlaywrightElectronActiveProvider,
   safeElectronEnvironment,
 } from "./PlaywrightElectronActiveProvider.js";
+import { ElectronCaptureProfile } from "./ElectronCaptureProfile.js";
 import { waitFor } from "../../tests/support/testWait.js";
 
-afterEach(() => {
+const createdProfiles: ElectronCaptureProfile[] = [];
+beforeEach(() => {
+  const create = ElectronCaptureProfile.create.bind(ElectronCaptureProfile);
+  vi.spyOn(ElectronCaptureProfile, "create").mockImplementation(async () => {
+    const profile = await create();
+    createdProfiles.push(profile);
+    return profile;
+  });
+});
+afterEach(async () => {
+  // Tests that abandon a provider with failed process cleanup correctly retain
+  // its private profile; remove what the abandoned owner still holds.
+  for (const profile of createdProfiles.splice(0)) await profile.remove();
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
 });
@@ -77,6 +90,7 @@ it.each([false, true])(
             application_path: process.execPath,
           }),
           application_root: dirname(process.execPath),
+          profile: "isolated",
         },
         { signal: controller.signal },
       );
@@ -152,6 +166,7 @@ it.each(["prepare", "baseline"] as const)(
               application_path: process.execPath,
             }),
             application_root: dirname(process.execPath),
+            profile: "isolated",
           },
           { signal: controller.signal },
         );
@@ -208,6 +223,7 @@ it("preserves an independent AbortError from actual ownership baseline inspectio
           application_path: process.execPath,
         }),
         application_root: dirname(process.execPath),
+        profile: "isolated",
       },
       { signal: controller.signal },
     );
@@ -261,6 +277,7 @@ it("retains failed ownership-helper cleanup until provider close retries it", as
           application_path: process.execPath,
         }),
         application_root: dirname(process.execPath),
+        profile: "isolated",
       },
       { signal: controller.signal },
     );
@@ -308,6 +325,7 @@ it("joins a late launch acknowledgement and its cleanup after shutdown", async (
         application_path: process.execPath,
       }),
       application_root: dirname(process.execPath),
+      profile: "isolated",
     },
     { signal: controller.signal },
   );
@@ -329,66 +347,279 @@ it("joins a late launch acknowledgement and its cleanup after shutdown", async (
   expect(result.error.cause).toBe(reason);
 });
 
-it("passes the selected environment and ownership token to Electron launch", async () => {
-  vi.stubEnv("LANG", "ambient-language");
-  vi.stubEnv("XAUTHORITY", "/ambient/.Xauthority");
-  let launchedEnvironment: unknown;
-  const callerArguments = [
-    "--",
-    "/caller/plugin.asar",
-    "-r",
-    "caller-hook.cjs",
-    "\\server\\share\\".repeat(150),
-  ];
-  const launchPlan = [
-    "-r",
-    fileURLToPath(
-      new URL("../../scripts/electron-active-hook.cjs", import.meta.url),
-    ),
-    process.execPath,
-    ...callerArguments,
-  ];
-  const handoff = JSON.stringify({
-    length: launchPlan.length,
-    sha256: createHash("sha256")
-      .update(JSON.stringify(launchPlan))
-      .digest("hex"),
-  });
-  const provider = new PlaywrightElectronActiveProvider(
-    {
+it.each(["isolated", "real"] as const)(
+  "passes the selected environment and ownership token to Electron launch (%s profile)",
+  async (profile) => {
+    vi.stubEnv("LANG", "ambient-language");
+    vi.stubEnv("XAUTHORITY", "/ambient/.Xauthority");
+    let launchedEnvironment: Record<string, string | undefined> | undefined;
+    let profileExistedAtLaunch: boolean | undefined;
+    const callerArguments = [
+      "--",
+      "/caller/plugin.asar",
+      "-r",
+      "caller-hook.cjs",
+      "\\server\\share\\".repeat(150),
+    ];
+    const launchPlan = [
+      "-r",
+      fileURLToPath(
+        new URL("../../scripts/electron-active-hook.cjs", import.meta.url),
+      ),
+      process.execPath,
+      ...callerArguments,
+    ];
+    const handoff = JSON.stringify({
+      length: launchPlan.length,
+      sha256: createHash("sha256")
+        .update(JSON.stringify(launchPlan))
+        .digest("hex"),
+    });
+    const provider = new PlaywrightElectronActiveProvider(
+      {
+        HOME: "/selected/home",
+        TMPDIR: "/selected/tmp",
+        LANG: "selected-language",
+        PATH: "/selected/bin",
+        DISPLAY: ":selected-display",
+        XAUTHORITY: "/selected/display-authorization",
+        WAYLAND_DISPLAY: "selected-wayland",
+        REA_PRIVATE_VALUE: "not-a-launch-setting",
+        REA_ELECTRON_CAPTURE_ARGV: "forged ambient launch plan",
+        REA_ELECTRON_CAPTURE_PROFILE: "forged ambient profile",
+      },
+      async (options) => {
+        launchedEnvironment = options?.env;
+        const home = options?.env?.HOME;
+        profileExistedAtLaunch =
+          home !== undefined && (await stat(home)).isDirectory();
+        throw new Error("launch boundary reached");
+      },
+    );
+    const result = await provider.capture({
+      ...electronActiveObservationInputSchema.parse({
+        executable_path: process.execPath,
+        application_path: process.execPath,
+        args: callerArguments,
+      }),
+      application_root: dirname(process.execPath),
+      profile,
+    });
+
+    expect(result.ok).toBe(false);
+    const selected = {
       LANG: "selected-language",
       PATH: "/selected/bin",
       DISPLAY: ":selected-display",
       XAUTHORITY: "/selected/display-authorization",
       WAYLAND_DISPLAY: "selected-wayland",
-      REA_PRIVATE_VALUE: "not-a-launch-setting",
-      REA_ELECTRON_CAPTURE_ARGV: "forged ambient launch plan",
-    },
-    async (options) => {
-      launchedEnvironment = options?.env;
-      throw new Error("launch boundary reached");
+      REA_PROCESS_RUN_ID: expect.any(String),
+      REA_ELECTRON_CAPTURE_ARGV: handoff,
+    };
+    if (profile === "real") {
+      expect(launchedEnvironment).toEqual({
+        ...selected,
+        HOME: "/selected/home",
+        TMPDIR: "/selected/tmp",
+      });
+    } else {
+      const paths = JSON.parse(
+        launchedEnvironment?.REA_ELECTRON_CAPTURE_PROFILE ?? "null",
+      ) as Record<string, string>;
+      const root = dirname(paths.home ?? "");
+      expect(basename(root)).toMatch(/^rea-electron-profile-/u);
+      expect(paths).toEqual({
+        home: join(root, "home"),
+        appData: join(root, "appData"),
+        temp: join(root, "temp"),
+        logs: join(root, "logs"),
+        crashDumps: join(root, "crashDumps"),
+      });
+      expect(launchedEnvironment).toEqual({
+        ...selected,
+        HOME: paths.home,
+        TMPDIR: paths.temp,
+        TMP: paths.temp,
+        REA_ELECTRON_CAPTURE_PROFILE: expect.any(String),
+      });
+      expect(profileExistedAtLaunch).toBe(true);
+      // A launch that never produced an application still removes its profile.
+      await expect(stat(root)).rejects.toMatchObject({ code: "ENOENT" });
+    }
+    expect(handoff.length).toBeLessThan(128);
+  },
+);
+
+it("redirects every Windows per-user location into the private profile", async () => {
+  const profile = await ElectronCaptureProfile.create();
+  try {
+    const environment = safeElectronEnvironment(
+      {
+        SYSTEMROOT: "C:\\Windows",
+        APPDATA: "C:\\Users\\analyst\\AppData\\Roaming",
+        LOCALAPPDATA: "C:\\Users\\analyst\\AppData\\Local",
+        USERPROFILE: "C:\\Users\\analyst",
+        HOMEDRIVE: "C:",
+        HOMEPATH: "\\Users\\analyst",
+        TEMP: "C:\\Users\\analyst\\AppData\\Local\\Temp",
+      },
+      "run-id",
+      "win32",
+      profile,
+    );
+    expect(environment).toEqual({
+      SYSTEMROOT: "C:\\Windows",
+      HOME: profile.paths.home,
+      USERPROFILE: profile.paths.home,
+      APPDATA: profile.paths.appData,
+      LOCALAPPDATA: join(profile.root, "localAppData"),
+      TEMP: profile.paths.temp,
+      TMP: profile.paths.temp,
+      TMPDIR: profile.paths.temp,
+      REA_ELECTRON_CAPTURE_PROFILE: JSON.stringify(profile.paths),
+      REA_PROCESS_RUN_ID: "run-id",
+    });
+  } finally {
+    await profile.remove();
+  }
+});
+
+it("keeps the private profile until owned processes are released, then removes it on retry", async () => {
+  stubVerifiedElectronCleanup();
+  stubCompletedCapture();
+  let denyProcess = true;
+  const processCleanup = vi.fn(async () =>
+    denyProcess
+      ? { cleaned: false as const, reason: "authored process cleanup denial" }
+      : { cleaned: true as const, signaled: false },
+  );
+  vi.spyOn(processOwnership, "cleanupOwnedProcessGroup").mockImplementation(
+    processCleanup,
+  );
+  vi.spyOn(processOwnership, "cleanupWindowsProcessTree").mockImplementation(
+    processCleanup,
+  );
+  let home: string | undefined;
+  const application = {
+    process: () => ({ pid: 424242 }),
+    close: vi.fn(async () => undefined),
+    windows: () => [],
+  };
+  const provider = new PlaywrightElectronActiveProvider({}, async (options) => {
+    home = options?.env?.HOME;
+    return application as unknown as Awaited<
+      ReturnType<typeof import("playwright-core")._electron.launch>
+    >;
+  });
+  try {
+    const result = await provider.capture({
+      ...electronActiveObservationInputSchema.parse({
+        executable_path: process.execPath,
+        application_path: process.execPath,
+      }),
+      application_root: dirname(process.execPath),
+      profile: "isolated",
+    });
+    if (result.ok) throw new Error("Expected incomplete cleanup");
+    expect(result.error.cleanupResources).toEqual(
+      expect.arrayContaining(["owned_process_group", "electron_profile"]),
+    );
+    const root = dirname(home ?? "");
+    expect((await stat(root)).isDirectory()).toBe(true);
+    denyProcess = false;
+    await provider.close();
+    expect(result.error).toMatchObject({
+      cleanupIncomplete: false,
+      cleanupResources: [],
+    });
+    await expect(stat(root)).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    denyProcess = false;
+    await provider.close();
+  }
+});
+
+it("retains an unlaunched private profile whose removal fails and removes it on retry", async () => {
+  let denyRemoval = true;
+  const remove = ElectronCaptureProfile.prototype.remove;
+  vi.spyOn(ElectronCaptureProfile.prototype, "remove").mockImplementation(
+    async function (this: ElectronCaptureProfile) {
+      if (denyRemoval) throw new Error("authored profile removal denial");
+      await remove.call(this);
     },
   );
-  const result = await provider.capture({
-    ...electronActiveObservationInputSchema.parse({
-      executable_path: process.execPath,
-      application_path: process.execPath,
-      args: callerArguments,
-    }),
-    application_root: dirname(process.execPath),
+  let home: string | undefined;
+  const provider = new PlaywrightElectronActiveProvider({}, async (options) => {
+    home = options?.env?.HOME;
+    throw new Error("launch boundary reached");
   });
+  try {
+    const result = await provider.capture({
+      ...electronActiveObservationInputSchema.parse({
+        executable_path: process.execPath,
+        application_path: process.execPath,
+      }),
+      application_root: dirname(process.execPath),
+      profile: "isolated",
+    });
+    if (result.ok) throw new Error("Expected launch failure");
+    expect(result.error).toMatchObject({
+      cleanupIncomplete: true,
+      cleanupResources: ["electron_profile"],
+    });
+    expect(JSON.stringify(result.error.diagnostics)).toContain(
+      "authored profile removal denial",
+    );
+    const root = dirname(home ?? "");
+    expect((await stat(root)).isDirectory()).toBe(true);
+    denyRemoval = false;
+    await provider.close();
+    expect(result.error).toMatchObject({
+      cleanupIncomplete: false,
+      cleanupResources: [],
+    });
+    await expect(stat(root)).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    denyRemoval = false;
+    await provider.close();
+  }
+});
 
-  expect(result.ok).toBe(false);
-  expect(launchedEnvironment).toEqual({
-    LANG: "selected-language",
-    PATH: "/selected/bin",
-    DISPLAY: ":selected-display",
-    XAUTHORITY: "/selected/display-authorization",
-    WAYLAND_DISPLAY: "selected-wayland",
-    REA_PROCESS_RUN_ID: expect.any(String),
-    REA_ELECTRON_CAPTURE_ARGV: handoff,
-  });
-  expect(handoff.length).toBeLessThan(128);
+it("reports the selected profile mode as a capture limitation", async () => {
+  stubVerifiedElectronCleanup();
+  stubCompletedCapture();
+  const application = {
+    process: () => ({ pid: 424242 }),
+    close: vi.fn(async () => undefined),
+    windows: () => [],
+  };
+  const provider = new PlaywrightElectronActiveProvider(
+    {},
+    async () =>
+      application as unknown as Awaited<
+        ReturnType<typeof import("playwright-core")._electron.launch>
+      >,
+  );
+  try {
+    for (const profile of ["isolated", "real"] as const) {
+      const result = await provider.capture({
+        ...electronActiveObservationInputSchema.parse({
+          executable_path: process.execPath,
+          application_path: process.execPath,
+        }),
+        application_root: dirname(process.execPath),
+        profile,
+      });
+      if (!result.ok) throw result.error;
+      expect(result.value.limitations[0]).toContain(
+        profile === "isolated"
+          ? "private temporary home"
+          : "operator's real home and Electron profile by caller choice",
+      );
+    }
+  } finally {
+    await provider.close();
+  }
 });
 
 it("passes required Windows runtime variables without inheriting unrelated values", () => {
@@ -617,6 +848,7 @@ it("retains the partial capture without taskkill when Windows lineage is unavail
         application_path: process.execPath,
       }),
       application_root: dirname(process.execPath),
+      profile: "isolated",
     });
 
     if (result.ok) throw new Error("Expected unverified cleanup to fail");
@@ -677,6 +909,7 @@ it("retains the initial snapshot when the final state read fails", async () => {
       actions: [],
     }),
     application_root: dirname(process.execPath),
+    profile: "isolated",
   });
 
   if (result.ok) throw new Error("Expected final state capture to fail");
@@ -709,6 +942,7 @@ it("rejects active capture before launch when EnableNodeCliInspectArguments fuse
       application_path: disabledBinary,
     }),
     application_root: root,
+    profile: "isolated",
   });
 
   if (result.ok) throw new Error("Expected capture to fail");
@@ -771,6 +1005,7 @@ const captureWithController = async (
         actions,
       }),
       application_root: dirname(process.execPath),
+      profile: "isolated",
     },
     { signal: controller.signal },
   );
@@ -1294,6 +1529,7 @@ it.each(["process", "transport", "both"] as const)(
         application_path: process.execPath,
       }),
       application_root: dirname(process.execPath),
+      profile: "isolated" as const,
     };
     try {
       const first = await provider.capture(input);
@@ -1374,6 +1610,7 @@ it.each(["process", "transport"] as const)(
             application_path: process.execPath,
           }),
           application_root: dirname(process.execPath),
+          profile: "isolated",
         },
         { signal: controller.signal },
       );
@@ -1441,6 +1678,7 @@ it.each([false, true])(
           application_path: process.execPath,
         }),
         application_root: dirname(process.execPath),
+        profile: "isolated",
       });
       if (result.ok) throw new Error("Expected failed native identity batch");
       const error = primaryAnalysisError(result.error);

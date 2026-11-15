@@ -295,6 +295,7 @@ it("does not launch Electron while its real preflight descriptor remains owned",
         application_path: fixture.path,
       }),
       application_root: dirname(fixture.path),
+      profile: "isolated",
     });
     expect(launches).toBe(0);
     if (result.ok) throw new Error("Expected owned preflight cleanup failure");
@@ -368,6 +369,7 @@ it("awaits an admitted preflight's final close before projecting cancellation", 
       application_path: fixture.path,
     }),
     application_root: dirname(fixture.path),
+    profile: "isolated" as const,
   };
   let settled = false;
   const running = provider
@@ -432,6 +434,7 @@ it.each(["admission", "close"] as const)(
             application_path: fixture.path,
           }),
           application_root: dirname(fixture.path),
+          profile: "isolated",
         },
         { signal: controller.signal },
       );
@@ -469,6 +472,7 @@ it("preserves a preflight caller cancelled while its preceding descriptor is bei
       application_path: fixture.path,
     }),
     application_root: dirname(fixture.path),
+    profile: "isolated" as const,
   };
   try {
     const first = await provider.capture(input);
@@ -512,6 +516,7 @@ it("joins shutdown during preflight and refuses any later launch or capture", as
       application_path: path,
     }),
     application_root: root,
+    profile: "isolated" as const,
   };
   const running = provider.capture(input);
   let closed = false;

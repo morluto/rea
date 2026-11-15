@@ -58,6 +58,12 @@ const actionSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 
+/** Which per-user data a launched Electron application sees. */
+export const electronCaptureProfileSchema = z.enum(["isolated", "real"]);
+export type ElectronCaptureProfileMode = z.infer<
+  typeof electronCaptureProfileSchema
+>;
+
 /** Input for one explicit, provider-owned Electron runtime experiment. */
 export const electronActiveObservationInputSchema = z.strictObject({
   executable_path: absoluteLocalPathStringSchema.describe(
@@ -79,6 +85,11 @@ export const electronActiveObservationInputSchema = z.strictObject({
     )
     .default([]),
   actions: z.array(actionSchema).default([]),
+  profile: electronCaptureProfileSchema
+    .optional()
+    .describe(
+      "Omit for isolated. isolated: the app runs with a private temporary home, temp directory and Electron profile that REA deletes after the capture, so it cannot read or change the operator's existing app data and starts without saved login state. real: the app uses the operator's HOME and its normal Electron profile, so it can read and change existing app data, caches and saved logins, and if the same app is already running it may hand the launch to that instance.",
+    ),
 });
 export type ElectronActiveObservationInput = z.infer<
   typeof electronActiveObservationInputSchema

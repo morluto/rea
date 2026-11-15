@@ -34,7 +34,11 @@ it.each([
   "keeps %s gaps distinct from captured IPC and retention loss",
   (boundary) => {
     const result = projectElectronActiveCapture(
-      { executable: "/opt/electron", application: "/opt/app/main.js" },
+      {
+        executable: "/opt/electron",
+        application: "/opt/app/main.js",
+        profile: "isolated",
+      },
       [],
       {
         windows: [],
@@ -93,6 +97,7 @@ it("projects hook retention and dropped event families through the result schema
     {
       executable: "/opt/electron",
       application: "/opt/app/main.js",
+      profile: "isolated",
     },
     [],
     {
@@ -156,6 +161,7 @@ it("keeps renderer coverage unavailable when only the main process was observed"
     {
       executable: "/opt/electron",
       application: "/opt/app/main.js",
+      profile: "isolated",
     },
     [],
     {
@@ -212,6 +218,7 @@ it("does not correlate legacy dropped families and roles", () => {
     {
       executable: "/opt/electron",
       application: "/opt/app/main.js",
+      profile: "isolated",
     },
     [],
     {

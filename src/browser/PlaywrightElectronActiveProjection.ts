@@ -11,7 +11,14 @@ import type {
 type ElectronCapturePaths = {
   readonly executable: string;
   readonly application: string;
+  readonly profile: "isolated" | "real";
 };
+
+const PROFILE_LIMITATIONS = {
+  isolated:
+    "The application ran with a private temporary home, temp directory and Electron profile that REA deletes after the capture; saved logins and data from the operator's real profile were unavailable. The OS credential store (keychain/libsecret), absolute paths chosen by the application, network and child processes were not isolated.",
+  real: "The application ran with the operator's real home and Electron profile by caller choice; it could read and change existing app data, caches and saved logins, and could hand the launch to an already-running instance of the same app.",
+} as const;
 
 type ElectronCaptureState = {
   readonly windows: ReadonlyArray<
@@ -183,6 +190,7 @@ export const projectElectronActiveCapture = (
     },
     coverage: createCoverage(hookSnapshot, observations),
     limitations: [
+      PROFILE_LIMITATIONS[paths.profile],
       "IPC payloads are represented by value shapes; payload values are never retained.",
       ...(observations.observedEventFamilies.includes("ipc-observation-gap")
         ? [

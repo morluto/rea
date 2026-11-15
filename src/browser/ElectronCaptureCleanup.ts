@@ -14,6 +14,7 @@ import type {
 } from "../process/ProcessOwnership.js";
 import { runWithExecutionLimits } from "./PlaywrightElectronExecution.js";
 import { cleanupElectronProcesses } from "./ElectronProcessCleanup.js";
+import type { ElectronCaptureProfile } from "./ElectronCaptureProfile.js";
 
 type ElectronApplication = Awaited<ReturnType<typeof electron.launch>>;
 
@@ -21,6 +22,7 @@ type ElectronApplication = Awaited<ReturnType<typeof electron.launch>>;
 export class ElectronCaptureCleanup {
   readonly #transport: AnalysisCleanupLease;
   readonly #processes: AnalysisCleanupLease;
+  readonly #profile: AnalysisCleanupLease | undefined;
   readonly #ownership: PersistentOwnedProcessGroup | undefined;
   #closeOperation: Promise<void> | undefined;
   #lineage: ProcessLineageObservation | undefined;
@@ -30,6 +32,7 @@ export class ElectronCaptureCleanup {
     application: Pick<ElectronApplication, "close">,
     ownership: PersistentOwnedProcessGroup | undefined,
     lineage: ProcessLineageObservation | undefined,
+    profile?: ElectronCaptureProfile,
   ) {
     this.#ownership = ownership;
     this.#lineage = lineage;
@@ -72,6 +75,28 @@ export class ElectronCaptureCleanup {
           cleanup: { reason: cleanup.reason, resources },
         });
     }, resources);
+    // Owned processes may still write into the profile, so it is removed only
+    // after their release; a later retry repeats this order.
+    this.#profile =
+      profile === undefined
+        ? undefined
+        : ElectronCaptureCleanup.profileLease(profile, () => {
+            if (!this.#processes.released)
+              throw new Error(
+                "the private Electron profile is retained until its owned processes are released",
+              );
+          });
+  }
+
+  /** Removal authority for one capture's provider-owned private profile. */
+  static profileLease(
+    profile: ElectronCaptureProfile,
+    precondition: () => void = () => undefined,
+  ): AnalysisCleanupLease {
+    return new AnalysisCleanupLease(async () => {
+      precondition();
+      await profile.remove();
+    }, ["electron_profile"]);
   }
 
   get processResult(): ProcessCleanupResult | undefined {
@@ -81,8 +106,9 @@ export class ElectronCaptureCleanup {
     return this.#pending.flatMap((lease) => lease.cleanupResources ?? []);
   }
   get #pending(): AnalysisCleanupLease[] {
-    return [this.#transport, this.#processes].filter(
-      (lease) => !lease.released,
+    return [this.#transport, this.#processes, this.#profile].filter(
+      (lease): lease is AnalysisCleanupLease =>
+        lease !== undefined && !lease.released,
     );
   }
 
@@ -97,7 +123,15 @@ export class ElectronCaptureCleanup {
       resource: "owned_process_group",
       lease: this.#processes,
     });
-    return { transport, processes };
+    const profile =
+      this.#profile === undefined
+        ? ({ kind: "released" } as const)
+        : await scope.release({
+            kind: "lease",
+            resource: "electron_profile",
+            lease: this.#profile,
+          });
+    return { transport, processes, profile };
   }
 
   bind(error: AnalysisError): void {

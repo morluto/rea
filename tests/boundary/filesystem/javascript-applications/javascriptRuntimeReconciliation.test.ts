@@ -456,6 +456,7 @@ it.each(["historical", "selected-paths"] as const)(
         actions: [],
       }),
       application_root: fixture,
+      profile: "isolated" as const,
     };
     const capture =
       createElectronActiveObservationFixtureResult(applicationPath);

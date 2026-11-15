@@ -167,6 +167,27 @@ This operation actively launches and interacts with the selected target. It is
 not a passive CDP observation. The owned process keeps normal host filesystem
 and network privileges, so lifecycle ownership does not make it a sandbox.
 
+### Application profile
+
+`profile` chooses which per-user data the launched application sees:
+
+| `profile`            | What the application uses                                                                                                                                                                                                                                                                                                                                                                     | Side effects on the operator's data                                                                                                                                                                                                                                                                                                   |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `isolated` (default) | A private directory that REA creates for this capture with owner-only permissions. `HOME`, `TMPDIR`/`TMP` (and on Windows `TEMP`, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`) point into it, and the hook sets Electron's `home`, `appData`, `temp`, `logs` and `crashDumps` paths there before application code runs. `userData`, `sessionData` and the single-instance lock follow `appData`. | The application starts without saved logins or existing app data and cannot change the operator's Electron profile through those paths. REA removes the directory after the owned processes are released; if process cleanup cannot be verified, the directory stays retained with the cleanup error and is removed on a later retry. |
+| `real`               | The operator's `HOME`, temp directory and the application's normal Electron profile.                                                                                                                                                                                                                                                                                                          | The application can read and change existing app data, caches and saved logins. If the same application is already running, Electron's single-instance lock can hand the launch, including caller arguments, to that running instance, and the capture then observes an application that quits.                                       |
+
+Use `real` only when the question needs the operator's existing login state or
+data. If the isolated profile cannot be applied, the hook stops the launch before
+application code runs instead of falling back to the real profile.
+
+The isolated profile is not a sandbox. It does not isolate the OS credential store
+(macOS keychain, libsecret, Windows Credential Manager), absolute paths that the
+application chooses itself, network access, or child processes. Caller arguments
+are passed unchanged, so a caller-supplied `--user-data-dir` still selects that
+directory for Electron's user data. On Linux, Playwright launches Electron with
+`--no-sandbox`, so renderer processes run without the Chromium sandbox in both
+profiles.
+
 The CLI and MCP surfaces accept the same schema. For a JSON request file:
 
 ```bash
@@ -181,10 +202,14 @@ native-addon, process, and IPC timeline events. IPC channels and argument-shape
 metadata retain their observed lengths; payload values are never retained.
 Renderer crash/restart and deep-link actions are synthetic
 scenario controls; their attempted and observed outcomes remain in the
-timeline. The active hook blocks and records the shell methods listed below
-and selected navigation, permission, download, popup, updater, and
-OS-integration APIs. These method patches do not contain direct filesystem,
-network, native-addon, or other unpatched target effects. The timeline
+timeline. The active hook blocks and records the shell methods listed below,
+non-loopback `loadURL` and top-level navigation, permission and certificate
+requests, downloads, popups, and `app.relaunch`, `app.moveToApplicationsFolder`,
+`app.setAsDefaultProtocolClient` and `app.setLoginItemSettings`. Child processes
+and utility processes are recorded but not blocked. Electron `autoUpdater`,
+third-party updaters, and other Electron APIs are not intercepted. These method
+patches do not contain direct filesystem, network, native-addon, or other
+unpatched target effects. The timeline
 is explicitly partial when attachment starts after application activity. The
 startup, including the initial state snapshot, has a 60-second deadline.
 Actions wait until completion or request cancellation; a click whose target
