@@ -10,6 +10,8 @@ import {
   assertArtifactReadActive,
   bindArtifactFileCleanup,
   ArtifactResourceScope,
+  DirectoryArtifactReader,
+  DirectoryArtifactEntryAccessDenied,
 } from "../../resources/index.js";
 import { createHash } from "node:crypto";
 import {
@@ -50,10 +52,6 @@ import {
   keyedArchiveResultSchema,
   projectKeyedArchive,
 } from "../../domain/apple/keyedArchive.js";
-import {
-  DirectoryArtifactReader,
-  DirectoryArtifactEntryAccessDenied,
-} from "../DirectoryArtifactReader.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
 import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";

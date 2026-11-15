@@ -109,7 +109,7 @@ const failedBoundary = (file, target, typeOnly) => {
     return "process-capture";
   if (
     file.startsWith("src/application/javascript/") &&
-    /^src\/artifacts\/(?:Asar|Directory)ArtifactReader\.(?:js|ts)$/u.test(
+    /^src\/(?:artifacts\/AsarArtifactReader|resources\/DirectoryArtifactReader)\.(?:js|ts)$/u.test(
       target,
     )
   )

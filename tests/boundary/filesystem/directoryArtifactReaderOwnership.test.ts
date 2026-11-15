@@ -30,8 +30,8 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
-import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { DirectoryArtifactReader } from "../../../src/resources/index.js";
 
 const makeFixture = async () => {
   const root = await createTestTempDirectory("rea-directory-owner-");

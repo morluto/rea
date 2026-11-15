@@ -22,6 +22,7 @@ import {
   type ArtifactResourceOwner,
   hashStableRootArtifact,
   hashStableRootArtifactHandle,
+  hostExecutableMarking,
 } from "../../resources/index.js";
 import {
   artifactInventoryResultSchema,
@@ -45,7 +46,6 @@ import {
   artifactManifestId,
 } from "../../domain/artifactIdentity.js";
 import { classifyAndHashRootForInventory } from "./classify.js";
-import { hostExecutableMarking } from "../hostExecutableMarking.js";
 import type { HashResult } from "../ArtifactHash.js";
 import { createReader, inventoryCoverage } from "./reader.js";
 import {

@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-
 import { hostExecutableMarking } from "./hostExecutableMarking.js";
 
 const file = (mode: number) => ({

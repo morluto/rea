@@ -14,10 +14,10 @@ import {
 } from "../../../src/resources/ArtifactReader.js";
 import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { AsarArtifactReader } from "../../../src/artifacts/AsarArtifactReader.js";
-import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
 import { scanCanonicalArtifactInventoryInScope } from "../../../src/artifacts/inventory/scanCanonical.js";
 import { scanArtifactInventory } from "../../fixtures/artifactInventory.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { DirectoryArtifactReader } from "../../../src/resources/index.js";
 
 describe("artifact inventory snapshot", () => {
   it("retains the complete scan after the source directory changes", async () => {

@@ -11,8 +11,8 @@ import {
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
+  DirectoryArtifactReader,
 } from "../resources/index.js";
-import { DirectoryArtifactReader } from "./DirectoryArtifactReader.js";
 import { declaredArtifactEntries } from "./ArtifactTraversalObservation.js";
 import {
   NonRegularFileReadError,
