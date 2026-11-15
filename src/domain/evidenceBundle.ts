@@ -15,6 +15,7 @@ import canonicalize from "canonicalize";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 
 import {
+  evidenceFileTarget,
   evidenceSchema,
   immutableEvidence,
   parseEvidence,
@@ -197,7 +198,8 @@ export const evidenceBundleForTarget = (
         // Mutation subjects record the target active at the time of an edit,
         // which need not be the question's immutable investigation scope.
         return (
-          record?.subject?.digest.sha256 === sha256 ||
+          (record !== undefined &&
+            evidenceFileTarget(record)?.sha256 === sha256) ||
           (mutationEvidenceIds.has(evidenceId) &&
             record?.predicate_type === "rea.residual-unknown-mutation")
         );
@@ -236,7 +238,7 @@ export const evidenceBundleForTarget = (
     bundle.records
       .filter(
         (record) =>
-          record.subject?.digest.sha256 === sha256 ||
+          evidenceFileTarget(record)?.sha256 === sha256 ||
           mutationIds.has(record.evidence_id),
       )
       .map((record) => record.evidence_id),

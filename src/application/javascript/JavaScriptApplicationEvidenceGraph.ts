@@ -5,6 +5,8 @@ import {
 } from "../../domain/investigationProviders.js";
 import {
   isImmutableEvidence,
+  evidenceFileTarget,
+  evidenceSubjectDisplay,
   evidenceSubjectTarget,
   type Evidence,
   type EvidenceSubjectTarget,
@@ -296,11 +298,12 @@ const assertApplicationSubject = (
   result: JavaScriptApplicationAnalysisResult,
   path: readonly (string | number)[],
 ): void => {
+  const target = evidenceFileTarget(evidence);
   if (
-    evidence.subject === null ||
-    evidence.subject.digest.sha256 !== result.root_artifact_sha256 ||
-    evidence.subject.format !== result.format ||
-    evidence.subject.local_path !== result.input_path
+    target === undefined ||
+    target.sha256 !== result.root_artifact_sha256 ||
+    target.format !== result.format ||
+    evidenceSubjectDisplay(evidence)?.local_path !== result.input_path
   )
     throw invalidEvidence(
       path,
