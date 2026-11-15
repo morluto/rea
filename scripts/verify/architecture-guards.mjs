@@ -175,6 +175,15 @@ check(
   ["src/process/SignalAbort.ts"],
 );
 
+// Provider errors carry their own presentation (AnalysisError.ownPresentation);
+// the domain presenter reads it and never imports a provider's error types.
+check(
+  "domain import of Hopper error types (implement ownPresentation in the error's module)",
+  files.filter((file) => file.path.startsWith("src/domain/")),
+  /from "\.{1,2}\/(?:[\w-]+\/)*hopperErrors\.js"/u,
+  ["src/domain/hopperErrors.ts"],
+);
+
 // Mach-O load-command codes have one table; a local copy drifts from it.
 check(
   "local Mach-O load-command code (import LC from src/domain/apple/machoLoadCommandCodes)",
