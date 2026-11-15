@@ -412,12 +412,9 @@
     "src/kuna/KunaProjectCache.ts": 1,
     "src/native/CommandRunner.ts": 1,
     "src/native/LldbCallTracer.ts": 1,
-    "src/pcap/PcapProvider.ts": 3,
-    "src/pcap/PcapSnapshot.ts": 1,
     "src/process/DarwinHelperCache.ts": 1,
     "src/process/DarwinProcessRunTokenReader.ts": 1,
     "src/process/OwnedDebuggerSessionRegistry.ts": 1,
-    "src/process/OwnedWorkerRuntime.ts": 4,
     "src/providers/AnalysisClientFailure.ts": 1,
     "src/server/environment/serveEnvironment.ts": 1,
     "src/sqlite/SqliteDatabaseProvider.ts": 2
