@@ -376,6 +376,8 @@ const MIGRATED_COMMANDS = [
   "capture-web-screenshot",
   "list-javascript-runtime-targets",
   "observe-javascript-runtime",
+  "list-electron-targets",
+  "inspect-electron-page",
 ];
 
 // An argv fixture is enrolled, so it cannot outlive its registration.
