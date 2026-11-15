@@ -273,6 +273,17 @@ checkCounted(
   ["src/pcap/TsharkJsonPackets.ts"],
 );
 
+// GDB MI result records have one parser, src/gdb/GdbMiRecord.ts, which
+// returns typed records and typed failures. A regex over `\^done` accepts a
+// malformed record by its prefix.
+checkCounted(
+  "GDB MI result record regex (use parseGdbMiResultRecord or parseGdbMiDoneRecord from src/gdb/GdbMiRecord)",
+  "gdb-mi-record-regex",
+  files,
+  /\\\^\(?(?:\?:)?(?:done|running|connected|error|exit)\b/gu,
+  ["src/gdb/GdbMiRecord.ts"],
+);
+
 // Byte-format parsers read untrusted input. Bounds, truncation and failure
 // kind belong to BinaryReader (src/native/metadata/BinaryContainer.ts) and
 // the ParseFailure algebra (src/domain/parseFailure.ts), not to each parser.
