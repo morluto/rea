@@ -401,15 +401,13 @@
     "src/application/desktop/DesktopBuildComputers.ts": 1,
     "src/application/desktop/DesktopRemoteTaskReaders.ts": 1,
     "src/application/desktop/DesktopTaskReaderCleanup.ts": 1,
-    "src/application/reverse/ReverseEngineeringService.ts": 1,
     "src/browser/WebSourceMapFetcher.ts": 2,
     "src/desktop/AgentEnvSolveHelper.ts": 2,
     "src/desktop/BuildComputerLongRuns.ts": 1,
     "src/kuna/KunaProjectCache.ts": 1,
     "src/native/CommandRunner.ts": 1,
     "src/native/LldbCallTracer.ts": 1,
-    "src/providers/AnalysisClientFailure.ts": 1,
-    "src/sqlite/SqliteDatabaseProvider.ts": 2
+    "src/providers/AnalysisClientFailure.ts": 1
   },
   "cleanup-dependency-binding": {
     "src/android/JadxConfiguration.ts": 1,
