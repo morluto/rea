@@ -16,7 +16,8 @@ import { withPlaywrightExecutionBoundary } from "./PlaywrightExecutionBoundary.j
 import {
   admitCdpReply,
   CdpMalformedReply,
-  type CdpSendResult,
+  type CdpCommand,
+  type CdpCommandResult,
 } from "./protocol/CdpCommands.js";
 import {
   releaseLateScenarioCommand,
@@ -85,11 +86,11 @@ interface StorageTarget {
   readonly parentId: string | undefined;
   readonly topLevelTargetId: string;
   /** Replies of registered commands are admitted by their result schemas. */
-  readonly send: <M extends string>(
+  readonly send: <M extends CdpCommand>(
     method: M,
     params?: Record<string, unknown>,
     timeoutMs?: number,
-  ) => Promise<CdpSendResult<M>>;
+  ) => Promise<CdpCommandResult<M>>;
   readonly contexts: Map<
     number,
     z.infer<typeof storageContextSchema>["context"]
@@ -373,11 +374,11 @@ export class PlaywrightScenarioStorage {
     });
   }
 
-  private sendObserved<M extends string>(
+  private sendObserved<M extends CdpCommand>(
     target: StorageTarget,
     method: M,
     params?: Record<string, unknown>,
-  ): Promise<CdpSendResult<M>> {
+  ): Promise<CdpCommandResult<M>> {
     return withPlaywrightExecutionBoundary(
       () => target.send(method, params),
       undefined,
