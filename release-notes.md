@@ -169,6 +169,7 @@
 * **parsers:** keep each ParseFailure constructor's kind in its return type ([#10746](https://github.com/morluto/rea/issues/10746)) ([59cd555](https://github.com/morluto/rea/commit/59cd5552c109ddaaac31b95cc3e4651db6dedf68))
 * **parsers:** stop reading every RangeError as a format failure ([#10602](https://github.com/morluto/rea/issues/10602)) ([89640a4](https://github.com/morluto/rea/commit/89640a446a48fb047bea8aa430170c730177c184))
 * **pcap:** disclose truncated DNS responses as partial ([#10214](https://github.com/morluto/rea/issues/10214)) ([0c01517](https://github.com/morluto/rea/commit/0c01517cc0330cebaaa194d270aa4b0923105b6c))
+* **pcap:** drop the unused expansion-estimate export and the aliased maximum ([6de147a](https://github.com/morluto/rea/commit/6de147aa3fd9b834451934f9e2ecb14d54334f8c))
 * **pcap:** keep selected relative executable paths in error facts ([#7569](https://github.com/morluto/rea/issues/7569)) ([1327c38](https://github.com/morluto/rea/commit/1327c386da2ab1dafc7e0a066308c238fb035a39)), closes [#7577](https://github.com/morluto/rea/issues/7577)
 * **pcap:** preserve DNS RCODE, EDNS extended RCODE, and OPCODE status in address attribution ([f8f019e](https://github.com/morluto/rea/commit/f8f019e1040af9ecdb52bb120a21dc40703107e2)), closes [#10211](https://github.com/morluto/rea/issues/10211) [#10218](https://github.com/morluto/rea/issues/10218)
 * **pcap:** refuse a DNS message with more than one OPT record ([46e9871](https://github.com/morluto/rea/commit/46e9871e59e34702a607823b9c7820640c3ecf82)), closes [#10211](https://github.com/morluto/rea/issues/10211)
@@ -180,6 +181,7 @@
 * **process:** exonerate kernel threads from ownership token checks ([5bb6591](https://github.com/morluto/rea/commit/5bb6591d58840d1cf07874729d5870cbb5723a7f))
 * **process:** retain observed cleanup intervention ([#10481](https://github.com/morluto/rea/issues/10481)) ([672e214](https://github.com/morluto/rea/commit/672e2149636e09ffa5bdf2000b4217e20106606b))
 * **process:** retain wide descendant inventories ([#10386](https://github.com/morluto/rea/issues/10386)) ([4566e48](https://github.com/morluto/rea/commit/4566e483ab5c15857ee0486be2121c277883cc81))
+* **process:** run ps from fixed system locations, not REA's PATH ([#10755](https://github.com/morluto/rea/issues/10755)) ([17a5f14](https://github.com/morluto/rea/commit/17a5f14f98814870912e9f9c8357007c10e254af))
 * **process:** stop execFileOutput's process group, not only its root ([#10733](https://github.com/morluto/rea/issues/10733)) ([d3db225](https://github.com/morluto/rea/commit/d3db2254bb91cc1eb3b88bfaf63a213ea9732163))
 * **process:** tolerate missing observer roots ([37ca2bc](https://github.com/morluto/rea/commit/37ca2bcc0ca33554a1c39762336baa11d9ba8994)), closes [#7281](https://github.com/morluto/rea/issues/7281) [#7287](https://github.com/morluto/rea/issues/7287)
 * **providers:** decode MCP text replies by declared kind instead of guessing ([#10654](https://github.com/morluto/rea/issues/10654)) ([5f98047](https://github.com/morluto/rea/commit/5f98047a88a79a9505ce5a4f3658212f121ac053))
@@ -264,6 +266,7 @@
 * **il2cpp:** report format failures through ParseFailure ([#10701](https://github.com/morluto/rea/issues/10701)) ([3a29b6b](https://github.com/morluto/rea/commit/3a29b6b8eac4d958ade8cffce3f7d53fcf7052b1))
 * **jadx:** read the bridge identity from the bridge source it launches ([#10720](https://github.com/morluto/rea/issues/10720)) ([da3541b](https://github.com/morluto/rea/commit/da3541bae3c21441339df62c215db45eb2345d23))
 * **javascript:** classify implicit execution in one owner ([#10605](https://github.com/morluto/rea/issues/10605)) ([a874fcc](https://github.com/morluto/rea/commit/a874fcc4e340ab27543fef63ab4494b8fd296047))
+* **limits:** declare the Node timer bound and duration schema once ([#10640](https://github.com/morluto/rea/issues/10640)) ([8443930](https://github.com/morluto/rea/commit/8443930bd33c58514138cd23c95fb9ce9e8f4860))
 * **macho:** read universal Mach-O slices only where admission selected them ([#10642](https://github.com/morluto/rea/issues/10642)) ([b342254](https://github.com/morluto/rea/commit/b342254f9ab1e53a0b8e417a7e522c41e94c1116))
 * **parsers:** decode LEB128 through one owner ([#10695](https://github.com/morluto/rea/issues/10695)) ([51e9dc1](https://github.com/morluto/rea/commit/51e9dc156f6ccb584fcce2f4f900b74257d14bdd))
 * **parsers:** report format failures through one ParseFailure algebra ([#10593](https://github.com/morluto/rea/issues/10593)) ([a0d9025](https://github.com/morluto/rea/commit/a0d90252020ef41eef1e572314e745a2b4d854ac))
@@ -271,6 +274,7 @@
 * **process:** classify owned command outcomes through one owner ([#10628](https://github.com/morluto/rea/issues/10628)) ([1f7884b](https://github.com/morluto/rea/commit/1f7884b5b9e5bc22964127fbcd0458b11d87a47c))
 * **process:** own deadlines as one monotonic type with a finalize budget ([#10723](https://github.com/morluto/rea/issues/10723)) ([a67dbe0](https://github.com/morluto/rea/commit/a67dbe07a4afcb4b23826c63d20005ce939dabe7))
 * **process:** own gdb and rizin debugger sessions in one registry ([#10735](https://github.com/morluto/rea/issues/10735)) ([e93dada](https://github.com/morluto/rea/commit/e93dada664d36f6e186508c5c177a35e09a13bd7))
+* **providers:** classify raw provider failures through one owner ([#10757](https://github.com/morluto/rea/issues/10757)) ([6a4caa0](https://github.com/morluto/rea/commit/6a4caa065b8934863b0d49ef8764751bd6456c5b))
 * prune internal seams and preserve configuration ownership ([#10430](https://github.com/morluto/rea/issues/10430)) ([b138f52](https://github.com/morluto/rea/commit/b138f52e12fdda3942855232a2a5bb3ed50d0943))
 * prune test-only seams and obsolete helpers ([#10275](https://github.com/morluto/rea/issues/10275)) ([02ebd3e](https://github.com/morluto/rea/commit/02ebd3e02da3971701c0c61ef787bacd7595f9a8))
 * **python:** report pyc format failures through ParseFailure ([#10664](https://github.com/morluto/rea/issues/10664)) ([b33e5c4](https://github.com/morluto/rea/commit/b33e5c486703d450ffcf75ff2a231087df66ed63))
@@ -282,6 +286,7 @@
 
 ### Documentation
 
+* **adr:** accept parsing native operation facts once at the operation port ([#10866](https://github.com/morluto/rea/issues/10866)) ([3b17d05](https://github.com/morluto/rea/commit/3b17d05f9ded2e195a89c402b0a7a0c1f1623a80))
 * **changelog:** remove Copilot from 6.6.0 human thanks ([26e51d0](https://github.com/morluto/rea/commit/26e51d0ce1db1261525a88cfb476a668a87bb5d0)), closes [#7674](https://github.com/morluto/rea/issues/7674) [#7755](https://github.com/morluto/rea/issues/7755)
 * **ci:** describe CI lanes without counts that drift ([ee3e627](https://github.com/morluto/rea/commit/ee3e627efb2992f3c1405a979006fc4b9f571c28)), closes [#7616](https://github.com/morluto/rea/issues/7616) [#7617](https://github.com/morluto/rea/issues/7617)
 * **ci:** remove dated shard measurements from the testing guides ([#10414](https://github.com/morluto/rea/issues/10414)) ([243e401](https://github.com/morluto/rea/commit/243e4015cbf453448e42f66fbdf99df34adfb331))
