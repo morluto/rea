@@ -61,7 +61,10 @@ function* javaPieces(
  * nested bodies blanked, so only that class's own member declarations remain.
  * Other top-level types in the same file are ignored.
  */
-const topLevelClassMembers = (source: string, className: string): string => {
+const topLevelClassMembers = (
+  source: string,
+  className: string,
+): JadxBridgeSourceRead<string> => {
   const declaresClass = new RegExp(
     String.raw`(?:^|\s)class\s+${className}(?![\w$])`,
     "u",
@@ -81,14 +84,18 @@ const topLevelClassMembers = (source: string, className: string): string => {
     else if (depth === 1 && inClass)
       members += text === "{" || text === "}" ? " " : text;
   }
-  if (classBodies !== 1)
-    throw new Error(
-      `REA's JADX bridge source must declare top-level class ${className} exactly once; found ${String(classBodies)}`,
-    );
-  return members;
+  return classBodies === 1
+    ? { ok: true, value: members }
+    : {
+        ok: false,
+        error: `REA's JADX bridge source must declare top-level class ${className} exactly once; found ${String(classBodies)}`,
+      };
 };
 
-const declaredString = (members: string, constant: string): string => {
+const declaredString = (
+  members: string,
+  constant: string,
+): JadxBridgeSourceRead<string> => {
   const matches = [
     ...members.matchAll(
       new RegExp(
@@ -98,35 +105,53 @@ const declaredString = (members: string, constant: string): string => {
     ),
   ];
   const value = matches.length === 1 ? matches[0]?.[1] : undefined;
-  if (value === undefined)
-    throw new Error(
-      `REA's JADX bridge source must declare ${constant} exactly once; found ${String(matches.length)}`,
-    );
-  return value;
+  return value === undefined
+    ? {
+        ok: false,
+        error: `REA's JADX bridge source must declare ${constant} exactly once; found ${String(matches.length)}`,
+      }
+    : { ok: true, value };
 };
+
+/**
+ * A read of REA's own packaged bridge source, shaped like `Result` from
+ * src/domain/result.ts. This module is loaded by fixture scripts without a
+ * build, so it cannot import that module.
+ */
+export type JadxBridgeSourceRead<T> =
+  | { readonly ok: true; readonly value: T }
+  | { readonly ok: false; readonly error: string };
 
 /** Read the bridge identity the bridge source itself declares. */
-export const parseJadxBridgeIdentity = (source: string): JadxBridgeIdentity => {
+export const parseJadxBridgeIdentity = (
+  source: string,
+): JadxBridgeSourceRead<JadxBridgeIdentity> => {
   const members = topLevelClassMembers(source, "ReaJadxBridge");
-  return Object.freeze({
-    name: declaredString(members, "BRIDGE_NAME"),
-    version: declaredString(members, "BRIDGE_VERSION"),
-  });
+  if (!members.ok) return members;
+  const name = declaredString(members.value, "BRIDGE_NAME");
+  if (!name.ok) return name;
+  const version = declaredString(members.value, "BRIDGE_VERSION");
+  if (!version.ok) return version;
+  return {
+    ok: true,
+    value: Object.freeze({ name: name.value, version: version.value }),
+  };
 };
 
-let bridgeIdentity: JadxBridgeIdentity | undefined;
+let bridgeIdentity: JadxBridgeSourceRead<JadxBridgeIdentity> | undefined;
 
 /**
  * Identity of REA's metadata bridge, distinct from the producing engine. The
  * bridge source owns it; REA reads it from the packaged copy it launches, so a
  * version bump cannot be made in one place and missed in the other.
  */
-export const jadxBridgeIdentity = (): JadxBridgeIdentity => {
-  bridgeIdentity ??= parseJadxBridgeIdentity(
-    readFileSync(JADX_BRIDGE_SOURCE_URL, "utf8"),
-  );
-  return bridgeIdentity;
-};
+export const jadxBridgeIdentity =
+  (): JadxBridgeSourceRead<JadxBridgeIdentity> => {
+    bridgeIdentity ??= parseJadxBridgeIdentity(
+      readFileSync(JADX_BRIDGE_SOURCE_URL, "utf8"),
+    );
+    return bridgeIdentity;
+  };
 
 /** Remediation when `REA_JADX_MCP_JAR` is missing or not an absolute path. */
 export const JADX_JAR_CONFIGURATION_REMEDIATION = `Download the jadx-headless-mcp ${JADX_RELEASE.version} release JAR from ${JADX_RELEASE.url}, verify SHA-256 ${JADX_RELEASE.sha256}, and set REA_JADX_MCP_JAR to its absolute path. REA does not download or install it.`;

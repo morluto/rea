@@ -562,7 +562,14 @@ export class JadxProvider implements AndroidAnalysisPort {
       );
       // Read before any child or workspace exists, so a malformed packaged
       // bridge is refused without resources to clean up.
-      const bridgeIdentity = jadxBridgeIdentity();
+      const identity = jadxBridgeIdentity();
+      if (!identity.ok)
+        throw new AnalysisCapabilityUnavailableError(
+          "jadx",
+          request.operation,
+          `${identity.error} (${BRIDGE_SOURCE}); reinstall REA to restore the packaged JADX bridge.`,
+        );
+      const bridgeIdentity = identity.value;
       let targetHash: string;
       try {
         targetHash = (

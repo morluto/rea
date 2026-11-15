@@ -3,6 +3,12 @@ import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
 import { jadxBridgeIdentity } from "../../../src/android/JadxRelease.ts";
 
+const packagedBridgeVersion = () => {
+  const identity = jadxBridgeIdentity();
+  if (!identity.ok) throw new Error(identity.error);
+  return identity.value.version;
+};
+
 // An actual child MCP server exercising the production stdio/process seam.
 // It is a protocol fixture, not evidence of JADX decompiler support.
 const mode = process.env.REA_FAKE_JADX_MODE ?? "normal";
@@ -21,7 +27,7 @@ const server = new McpServer({
       ? ""
       : mode === "version"
         ? "99.0.0"
-        : jadxBridgeIdentity().version,
+        : packagedBridgeVersion(),
 });
 const requestedCount = Number.parseInt(
   process.env.REA_FAKE_JADX_CLASS_COUNT ?? "",
