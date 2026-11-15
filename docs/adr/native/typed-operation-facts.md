@@ -41,7 +41,8 @@ consumers would still need the typed value.
    four readers today. `NativeDispatchMetadataInspection`'s `.strict()` row
    check is removed.
 3. **The port parses once: `executeFact`.** The application port module
-   exports `executeFact(port, contract, parameters, options)`. It runs the
+   `src/application/AnalysisOperationFacts.ts` exports
+   `executeFact(port, contract, parameters, options)`. It runs the
    operation through the given port's `execute` and parses the result with the
    contract once, returning
    `{ execution: AnalysisExecution; fact: Fact }`. A mismatch is an
