@@ -1,7 +1,5 @@
-import {
-  semanticOpaqueBindingReadMayHaveChanged,
-  semanticOpaqueNameMayHaveChanged,
-} from "./javascriptSemanticOpaqueEffects.js";
+import { semanticOpaqueBindingReadMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
+import { opaqueCodeMayChangeGlobalRead } from "./javascriptSemanticGlobalReference.js";
 import * as t from "@babel/types";
 
 import {
@@ -110,7 +108,7 @@ export const createSemanticExpressionShapeResolver = (
         isNullishJavaScriptSyntax(node) ||
         (isUnshadowedGlobal(node, state, "undefined") &&
           !namedProofBlocked() &&
-          !semanticOpaqueNameMayHaveChanged(node, state))
+          !opaqueCodeMayChangeGlobalRead(node, state, "undefined"))
       );
     },
   };
