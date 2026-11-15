@@ -24,8 +24,6 @@ export interface OwnedDebuggerSessionRegistryOptions<Session> {
   readonly provider: string;
   /** Debugger name shown in cleanup failures, such as "GDB". */
   readonly displayName: string;
-  /** Operation a retained failure names when no caller operation applies. */
-  readonly closeOperation: string;
   /** Seal the session against new commands; runs on every stop request. */
   readonly sealSession: (session: Session) => void;
   /** Stop the owned debugger process; protocol hooks stay with the adapter. */

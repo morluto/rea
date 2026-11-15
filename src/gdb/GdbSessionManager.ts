@@ -660,7 +660,6 @@ export class GdbSessionManager {
     this.#sessions = new OwnedDebuggerSessionRegistry({
       provider: "gdb",
       displayName: "GDB",
-      closeOperation: "close_gdb_session",
       sealSession: (session) => {
         session.cleanupStarted = true;
       },

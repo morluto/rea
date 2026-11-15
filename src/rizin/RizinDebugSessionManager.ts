@@ -312,7 +312,6 @@ export class RizinDebugSessionManager {
     this.#sessions = new OwnedDebuggerSessionRegistry({
       provider: "rizin",
       displayName: "Rizin",
-      closeOperation: "close_rizin_debug_session",
       sealSession: (session) => {
         session.closing = true;
       },
