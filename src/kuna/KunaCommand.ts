@@ -47,9 +47,11 @@ import {
   kunaChildEnvironment,
   kunaInstallationFailureDiagnostics,
   type KunaInstallation,
+  type KunaResourceScope,
 } from "./KunaInstallation.js";
 import type { KunaDeadline } from "./KunaConfiguration.js";
 import { KUNA_PROVIDER_ID } from "./KunaRelease.js";
+import type { ProviderFailureDialect } from "../providers/classifyProviderFailure.js";
 
 /**
  * `kuna functions --json` costs ~210 bytes per function; this admits about
@@ -140,11 +142,16 @@ export const kunaFileCleanupError = (
           diagnostics,
           userMessage: `Kuna ${operation} failed: ${message(primaryCause)}`,
         });
-  return analysisErrorWithCleanupFailure(primary, cleanup, operation);
+  const composed = analysisErrorWithCleanupFailure(primary, cleanup, operation);
+  // The installation facts stay where every other outcome reports them, not
+  // only inside the composed primary and cleanup reports.
+  return diagnostics === undefined
+    ? composed
+    : composed.retainDiagnostics(diagnostics);
 };
 
 /** Preserve the exact retryable resources when an inspection admission retries them. */
-export const kunaRetainedResourceCleanupError = (
+const kunaRetainedResourceCleanupError = (
   cause: ArtifactReaderFailure,
   operation: string,
 ): ProviderCleanupError | undefined => {
@@ -159,6 +166,33 @@ export const kunaRetainedResourceCleanupError = (
   bindArtifactFileCleanup(cause, cleanup);
   return cleanup;
 };
+
+/**
+ * The Kuna installation inspection's failures, read in one order: an
+ * admission's retained cleanup, the inspection's cancellation, then a file
+ * whose descriptor cleanup failed. What else a cause means belongs to the
+ * caller's `unclassified`.
+ */
+export const kunaInstallationDialect = (
+  operation: string,
+  resources: KunaResourceScope,
+  unclassified: ProviderFailureDialect["unclassified"],
+): ProviderFailureDialect => ({
+  providerId: KUNA_PROVIDER_ID,
+  operation,
+  recognise: (cause) => {
+    if (cause instanceof ArtifactReaderFailure) {
+      const retained = kunaRetainedResourceCleanupError(cause, operation);
+      if (retained !== undefined) return retained;
+    }
+    if (!(cause instanceof RegularFileCleanupFailure))
+      return resources.installationCancellationError(cause, operation);
+    const error = kunaFileCleanupError(cause, operation);
+    resources.bindFailure(cause, error);
+    return error;
+  },
+  unclassified,
+});
 
 /** File metadata that, unchanged, lets a verified digest stand without re-hashing. */
 const verifiedExecutables = new Map<

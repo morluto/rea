@@ -11,6 +11,11 @@ import {
   type ResourceConstraintRecovery,
 } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import type { ProviderAdapterErrorOptions } from "../domain/providerAdapterError.js";
+import {
+  UnclassifiedProviderFailure,
+  type ExaminedProviderOutcome,
+} from "../domain/unclassifiedProviderFailure.js";
 import type { AnalysisSettingLimit } from "../domain/analysisSettings.js";
 import type { ProviderOutcome } from "./ProviderOutcome.js";
 import type { ProviderProcessSnapshot } from "./ProviderProcess.js";
@@ -39,6 +44,42 @@ export type ProviderDialectOutcome = Extract<
 >;
 
 type ReportedLimits = Readonly<Record<string, JsonValue>> | null;
+
+/**
+ * Reports the dialect outcome being classified as unrecognised by
+ * `providerId`. The report always carries the examined outcome and the
+ * classifier's details; `options` add provider facts to those details.
+ */
+export type UnclassifiedOutcomeReport = (
+  providerId: string,
+  options?: ProviderAdapterErrorOptions,
+) => UnclassifiedProviderFailure;
+
+/** The facts the classifier examined for one dialect outcome. */
+const examinedOutcome = (
+  outcome: ProviderDialectOutcome,
+): ExaminedProviderOutcome => {
+  const snapshot = outcome.output?.snapshot;
+  return {
+    failure_kind: outcome.kind,
+    reason: outcome.message,
+    exit_code:
+      outcome.kind === "exited"
+        ? outcome.exitCode
+        : (snapshot?.exitCode ?? null),
+    signal:
+      outcome.kind === "exited" ? outcome.signal : (snapshot?.signal ?? null),
+    ...(outcome.kind === "exited"
+      ? { stop_requested: outcome.stopRequested }
+      : {}),
+    ...(outcome.output === undefined
+      ? {}
+      : { output_truncated: outcome.output.truncated }),
+    ...(outcome.kind === "launch-refused"
+      ? { launch_refusal_code: outcome.refusal.code }
+      : {}),
+  };
+};
 
 /** What one provider command needs to turn its outcome into a typed error. */
 export interface ProviderOutcomeContext {
@@ -81,10 +122,15 @@ export interface ProviderOutcomeContext {
     readonly limits: ReportedLimits;
     readonly recovery: ResourceConstraintRecovery;
   };
-  /** Provider-specific meaning of a launch refusal, an exit, or a stream failure. */
+  /**
+   * Provider-specific meaning of a launch refusal, an exit, or a stream
+   * failure. What the provider does not recognise it reports through
+   * `unclassified`, which carries the examined outcome.
+   */
   readonly dialect: (
     outcome: ProviderDialectOutcome,
     details: AnalysisErrorOptions,
+    unclassified: UnclassifiedOutcomeReport,
   ) => AnalysisError;
 }
 
@@ -187,6 +233,22 @@ export const classifyProviderOutcome = (
     case "launch-refused":
     case "exited":
     case "protocol":
-      return context.dialect(outcome, details);
+      return context.dialect(
+        outcome,
+        details,
+        (providerId, options) =>
+          new UnclassifiedProviderFailure(
+            providerId,
+            operation,
+            examinedOutcome(outcome),
+            {
+              ...details,
+              ...options,
+              // Provider facts join the context's diagnostics; neither
+              // replaces the other.
+              diagnostics: { ...details.diagnostics, ...options?.diagnostics },
+            },
+          ),
+      );
   }
 };

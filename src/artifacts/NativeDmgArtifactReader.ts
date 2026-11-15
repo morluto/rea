@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
 import { mkdtemp, realpath, rm, type FileHandle } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -181,7 +182,8 @@ export class NativeDmgArtifactReader implements ArtifactReader {
     environment: Readonly<NodeJS.ProcessEnv>,
     host?: NativeDmgHost,
   ) {
-    if (process.platform !== "darwin" && host === undefined)
+    // The system host mounts through this host's hdiutil.
+    if (HOST_PLATFORM.platform !== "darwin" && host === undefined)
       throw new ArtifactReaderFailure(
         "unavailable",
         "Native DMG traversal is available only on macOS",

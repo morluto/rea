@@ -10,7 +10,7 @@ import pino from "pino";
 import { describe, expect, it, vi } from "vitest";
 
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { HopperProcessError } from "../domain/hopperErrors.js";
+import { HopperProcessError } from "./HopperErrors.js";
 import { err, ok } from "../domain/result.js";
 import { observeProcessStartIdentity } from "../process/ProcessOwnershipObservation.js";
 import type { BridgeLaunch } from "./BridgeLauncher.js";

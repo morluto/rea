@@ -221,7 +221,13 @@ A position-independent `libil2cpp.so` stores zero in most pointer slots and
 keeps the value in `R_AARCH64_RELATIVE` or `R_X86_64_RELATIVE` relocations
 (`DT_RELA`). The reader indexes loader values by virtual address while keeping
 the source bytes unchanged, so addresses are the link-time addresses and RVAs are relative to
-the first loaded segment. Android packed
+the first loaded segment. Word-sized AArch64 ABS64/GLOB_DAT and x86-64
+absolute/GLOB_DAT pointers can also use a defined ordinary dynamic symbol from
+the selected image. Symbol-table indices must be bounded by `DT_HASH` or
+`DT_GNU_HASH`; undefined symbols, TLS offsets and IFUNC resolver results remain
+unknown. These are static link-image derivations, not observations of runtime
+symbol binding or proof that a definition cannot be interposed. Other pointer
+consumers retain their own conservative resolution policy. Android packed
 relocations (`DT_ANDROID_RELA`) are refused. No target code is executed.
 
 The binary's `Il2CppCodeRegistration` points to one `Il2CppCodeGenModule` per

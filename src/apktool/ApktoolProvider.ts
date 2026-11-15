@@ -23,10 +23,7 @@ import {
 import { providerOutcomeOf } from "../process/ProviderOutcome.js";
 import { classifyProviderOutcome } from "../process/classifyProviderOutcome.js";
 import { ApktoolCommandCleanup } from "./ApktoolCommandCleanup.js";
-import {
-  AnalysisError,
-  type AnalysisErrorOptions,
-} from "../domain/analysisErrorBase.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
@@ -56,7 +53,7 @@ import {
   OwnerCancellation,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { finalizedResult, runOwned } from "../providers/runOwned.js";
@@ -201,23 +198,15 @@ const apktoolCommandFailure = (
       ? processInspectionCancellationError(failure, operation)
       : undefined;
   if (inspectionCancellation !== undefined) return inspectionCancellation;
-  const commandFailure = (details: AnalysisErrorOptions): AnalysisError =>
-    new ProviderAdapterError("apktool", operation, {
-      ...details,
-      ...(failure instanceof OwnedCommandFailure
-        ? {
-            userMessage: `The selected Apktool command failed while decoding ${targetPath}`,
-          }
-        : {}),
-      diagnostics: {
-        selected_command: selection.command,
-        target_path: targetPath,
-      },
-    });
+  const diagnostics = {
+    selected_command: selection.command,
+    target_path: targetPath,
+  };
   if (!(failure instanceof OwnedCommandFailure))
-    return commandFailure({
+    return new ProviderAdapterError("apktool", operation, {
       cause: failure,
       ...(capturedOutput === undefined ? {} : { capturedOutput }),
+      diagnostics,
     });
   return classifyProviderOutcome(providerOutcomeOf(failure), {
     operation,
@@ -242,7 +231,7 @@ const apktoolCommandFailure = (
         remediationAction: `${externalJvmExhaustionRecovery(area, APKTOOL_JVM)} Repeating the unchanged request is expected to fail the same way.`,
       },
     }),
-    dialect: (exit, details) => {
+    dialect: (exit, details, unclassified) => {
       // A physical launcher/capture failure does not establish target refusal.
       // Only a fully collected ordinary nonzero decode exit carries that meaning.
       if (
@@ -254,7 +243,10 @@ const apktoolCommandFailure = (
         exit.signal !== null ||
         exit.output?.truncated !== false
       )
-        return commandFailure(details);
+        return unclassified("apktool", {
+          userMessage: `The selected Apktool command failed while decoding ${targetPath}`,
+          diagnostics,
+        });
       return new AnalysisUnsupportedTargetError(
         operation,
         targetPath,
@@ -522,11 +514,7 @@ export class ApktoolProvider {
     if (first === undefined) return;
     throw failures.reduce(
       (primary, cleanup) =>
-        analysisErrorWithCleanupFailure(
-          primary,
-          cleanup,
-          "close",
-        ).bindCleanupDependencies([primary, cleanup]),
+        analysisErrorWithCleanupDependencies(primary, cleanup, "close"),
       first,
     );
   }
@@ -734,11 +722,7 @@ export class ApktoolProvider {
         physical === cause && cause instanceof AnalysisError
           ? cause
           : failure.cleanupIncomplete
-            ? analysisErrorWithCleanupFailure(
-                primary,
-                failure,
-                operation,
-              ).bindCleanupDependencies([primary, failure])
+            ? analysisErrorWithCleanupDependencies(primary, failure, operation)
             : primary;
       if (
         completedDecode !== undefined &&

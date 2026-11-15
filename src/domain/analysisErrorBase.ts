@@ -31,19 +31,41 @@ const ANALYSIS_ERROR_TAGS = [
   "EvidenceIntegrityError",
   "EvidenceFileError",
   "UnknownRegistryError",
-  "HopperTimeoutError",
-  "HopperCancelledError",
-  "HopperProtocolError",
-  "HopperRemoteError",
-  "HopperProcessError",
-  "HopperStartError",
   "ConfigurationError",
   "NoBinaryOpenError",
   "BinaryTargetError",
 ] as const;
 
-/** Stable tag for an expected analysis failure. */
+/** Stable tag for an expected analysis failure the domain defines. */
 export type AnalysisErrorTag = (typeof ANALYSIS_ERROR_TAGS)[number];
+
+const DOMAIN_ERROR_TAGS: ReadonlySet<string> = new Set(ANALYSIS_ERROR_TAGS);
+
+/** Whether a tag names an error the domain defines and presents. */
+export const isAnalysisErrorTag = (tag: string): tag is AnalysisErrorTag =>
+  DOMAIN_ERROR_TAGS.has(tag);
+
+/** The error's domain tag; undefined for a provider-owned failure. */
+export const domainErrorTag = (error: {
+  readonly _tag: string;
+}): AnalysisErrorTag | undefined =>
+  isAnalysisErrorTag(error._tag) ? error._tag : undefined;
+
+declare const providerErrorTagBrand: unique symbol;
+
+/**
+ * Tag of a failure a provider module defines and presents itself. It is
+ * outside the domain tag set; the error's `ownPresentation()` supplies what
+ * the domain tables would.
+ */
+export type ProviderErrorTag = string & {
+  readonly [providerErrorTagBrand]: true;
+};
+
+/** Brand the tag of a `ProviderOwnedAnalysisError` subclass. */
+export const providerErrorTag = <const Tag extends string>(
+  tag: Tag,
+): Tag & ProviderErrorTag => tag as Tag & ProviderErrorTag;
 
 /** Retained command output associated with a typed failure; truncation stays explicit. */
 export interface AnalysisCapturedOutput {
@@ -163,6 +185,39 @@ export interface SourcePublicationRecovery {
   readonly completed: SourcePublicationCompletion;
 }
 
+/**
+ * Presentation an error's own module supplies. The shared presenter reads it
+ * before its tables, so it never needs the error's type: a provider error
+ * says what it means for callers where it is defined.
+ */
+export interface AnalysisErrorOwnPresentation {
+  /** The stable code before any cleanup composition. */
+  readonly code: AnalysisErrorProjection["code"];
+  readonly category: AnalysisErrorProjection["category"];
+  /** The outcome every caller receives; absent keeps the code's standard text. */
+  readonly message?: string;
+  /** Guidance only a caller that keeps REA's runtime and session receives. */
+  readonly continuing?: AnalysisContinuingCallerGuidance;
+  /** The next step; absent keeps the shared fallback. */
+  readonly remediation?: string;
+  /** False when the failure cannot clear on retry whatever its code. */
+  readonly retryable?: false;
+  readonly details?: Readonly<Record<string, JsonValue>>;
+}
+
+/**
+ * The provider request a provider-owned failure answered. A shared workflow
+ * that attributes the failure to its caller's operation copies `facts` under
+ * `provider_request` and rebuilds the failure with `reattribute`.
+ */
+export interface ProviderRequestFailure {
+  readonly facts: Readonly<Record<string, JsonValue>>;
+  readonly reattribute: (
+    operation: string,
+    options: AnalysisErrorOptions,
+  ) => AnalysisError;
+}
+
 /** Base class for expected analysis, provider, and session failures. */
 export abstract class AnalysisError extends Error {
   limit: Readonly<AnalysisSettingLimit> | undefined;
@@ -190,8 +245,8 @@ export abstract class AnalysisError extends Error {
   }
   readonly cleanup: AnalysisCleanupObservation | undefined;
   /**
-   * This error's own unresolved cleanup. With bound dependencies, completion
-   * is read from them when asked instead of being pushed to each dependent.
+   * Whether cleanup is still unsettled. Once settled it stays settled; until
+   * then completion is read from the owners when asked, never pushed here.
    */
   #cleanupIncomplete: boolean;
   /** Whether this error ever owned cleanup, apart from whether it finished. */
@@ -199,7 +254,7 @@ export abstract class AnalysisError extends Error {
   #ownedCleanupResources: readonly string[];
   #cleanupResourceOwner: AnalysisCleanupResourceOwner | undefined;
   #cleanupCompletionOwner: AnalysisCleanupResourceOwner | undefined;
-  readonly #cleanupReleaseClaims: AnalysisCleanupReleaseClaim[] = [];
+  readonly #cleanupReleaseClaims = new Set<AnalysisCleanupReleaseClaim>();
   #cleanupRetry: AnalysisCleanupRetry | undefined;
   #secondaryFailures: AnalysisError[] = [];
   constructor(message: string, options?: AnalysisErrorOptions) {
@@ -228,7 +283,23 @@ export abstract class AnalysisError extends Error {
     this.#ownedCleanupResources = [...(options?.cleanup?.resources ?? [])];
     this.partialObservation = options?.partialObservation;
   }
-  abstract readonly _tag: AnalysisErrorTag;
+  abstract readonly _tag: AnalysisErrorTag | ProviderErrorTag;
+  /** What this error's own module says it means; undefined uses the shared tables. */
+  ownPresentation(): AnalysisErrorOwnPresentation | undefined {
+    return undefined;
+  }
+  /**
+   * Whether the provider adapter or its process failed, rather than one
+   * request. Session availability treats every operation of that provider as
+   * affected until a later success.
+   */
+  get providerWide(): boolean {
+    return false;
+  }
+  /** The provider request this failure answered; undefined when none. */
+  providerRequest(): ProviderRequestFailure | undefined {
+    return undefined;
+  }
   readonly userMessage: string | undefined = undefined;
   readonly userCategory: "cancelled" | undefined = undefined;
   readonly executionFailure: string | undefined = undefined;
@@ -251,30 +322,41 @@ export abstract class AnalysisError extends Error {
   }
 
   /**
-   * Whether owned resources remain unreleased, read from the owners when
-   * asked. Bound dependencies decide it once bound; otherwise a released
-   * lease claim completes it. Completion is monotonic, so a later binding
-   * cannot reopen it.
+   * Whether owned resources remain unreleased: this error's own record AND
+   * every bound dependency's record, each read from its owner when asked.
+   * Completion is monotonic, so a later binding cannot reopen it.
    */
   get cleanupIncomplete(): boolean {
     if (!this.#cleanupIncomplete) return false;
-    const dependencies = this.#cleanupDependencies;
-    if (dependencies === undefined) {
-      if (!this.#cleanupReleaseClaims.some((claim) => claim.cleanupReleased))
-        return true;
-    } else
-      for (const dependency of dependencies)
-        if (dependency.cleanupIncomplete) return true;
+    if (this.#ownCleanupPending()) return true;
+    for (const dependency of this.#cleanupDependencies ?? [])
+      if (dependency.cleanupIncomplete) return true;
     this.#cleanupIncomplete = false;
-    dependencies?.clear();
-    this.#cleanupReleaseClaims.length = 0;
+    this.#cleanupDependencies?.clear();
+    this.#cleanupReleaseClaims.clear();
     return false;
   }
 
-  /** Read completion from a lease owner instead of having it pushed here. */
+  /**
+   * This error's own completion record. A bound release claim is its owner's
+   * record; without one, an error composed only of dependencies has no
+   * resources of its own, and any other error waits for its owner.
+   */
+  #ownCleanupPending(): boolean {
+    if (this.#cleanupReleaseClaims.size === 0)
+      return this.#cleanupDependencies === undefined;
+    for (const claim of this.#cleanupReleaseClaims)
+      if (claim.cleanupReleased) return false;
+    return true;
+  }
+
+  /**
+   * Read completion from a lease owner instead of having it pushed here.
+   * Binding the same claim again is a no-op, so retries do not grow it.
+   */
   bindCleanupReleaseClaim(claim: AnalysisCleanupReleaseClaim): this {
     this.#carriesCleanup = true;
-    this.#cleanupReleaseClaims.push(claim);
+    this.#cleanupReleaseClaims.add(claim);
     return this;
   }
 
@@ -289,22 +371,29 @@ export abstract class AnalysisError extends Error {
   }
   readonly cleanupReport: ProcessCaptureCleanupReport | undefined = undefined;
 
-  /** Live dependencies own current resource attribution; cleanup keeps history. */
+  /**
+   * Live owners own current resource attribution; cleanup keeps history. A
+   * composed error's own resources usually summarize its dependencies, so
+   * pending dependencies attribute; once only the owner's record is pending,
+   * its own resources do.
+   */
   get cleanupResources(): readonly string[] {
-    if (this.#cleanupDependencies === undefined)
-      return (
-        this.#cleanupResourceOwner?.cleanupResources ??
-        this.#ownedCleanupResources
-      );
+    const own =
+      this.#cleanupResourceOwner?.cleanupResources ??
+      this.#ownedCleanupResources;
+    if (this.#cleanupDependencies === undefined) return own;
     const pending = [...this.#cleanupDependencies].filter(
       (dependency) => dependency.cleanupIncomplete,
     );
-    if (pending.length === 0) return [];
-    if (this.#cleanupResourceProjection !== undefined)
-      return this.#cleanupResourceProjection.cleanupResources;
-    return [
-      ...new Set(pending.flatMap((dependency) => dependency.cleanupResources)),
-    ];
+    if (pending.length > 0)
+      return (
+        this.#cleanupResourceProjection?.cleanupResources ?? [
+          ...new Set(
+            pending.flatMap((dependency) => dependency.cleanupResources),
+          ),
+        ]
+      );
+    return this.#cleanupIncomplete && this.#ownCleanupPending() ? own : [];
   }
 
   /** Whether cleanup follows an explicit owner or dependent errors. */
@@ -416,23 +505,6 @@ export abstract class AnalysisError extends Error {
       this.#cleanupResourceProjection = resourceProjection;
     for (const dependency of dependencies)
       if (dependency.cleanupIncomplete) pending.add(dependency);
-    if (pending.size === 0) this.resolveCleanup();
-    return this;
-  }
-
-  /**
-   * Clear live cleanup status only after its owning resource confirms retry
-   * success. Errors composed from this one read the change on their next check.
-   */
-  resolveCleanup(): this {
-    if (
-      [...(this.#cleanupDependencies ?? [])].some(
-        (dependency) => dependency.cleanupIncomplete,
-      )
-    )
-      return this;
-    this.#cleanupDependencies?.clear();
-    this.#cleanupIncomplete = false;
     return this;
   }
 
@@ -455,6 +527,15 @@ export abstract class AnalysisError extends Error {
     this.workflowUnknownPublication ??= Object.freeze({ ...publication });
     return this;
   }
+}
+
+/**
+ * A failure its provider module defines: its tag is outside the domain tag
+ * set, so it must say what it means through `ownPresentation()`.
+ */
+export abstract class ProviderOwnedAnalysisError extends AnalysisError {
+  abstract override readonly _tag: ProviderErrorTag;
+  abstract override ownPresentation(): AnalysisErrorOwnPresentation;
 }
 
 /** Confirmed cleanup reveals the typed primary; unresolved ownership stays visible. */
@@ -490,6 +571,7 @@ import type {
 import type { FileOffsetPartialObservation } from "./native/fileOffsetPartialObservation.js";
 import type { NativeCallPartialObservation } from "./native/nativeCallPartialObservation.js";
 import type { HopperCallerReconciliationPartial } from "./native/hopperCallerReconciliation.js";
+import type { AnalysisErrorProjection } from "./analysisErrorProjection.js";
 import type {
   ElectronActiveObservationResult,
   ElectronActivePartialObservation,

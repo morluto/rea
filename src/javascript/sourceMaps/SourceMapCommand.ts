@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { AnalysisCleanupRelease } from "../../domain/analysisCleanupRelease.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import {
@@ -253,7 +254,8 @@ class OwnedCodec implements SourceMapCleanupOwner {
   readonly #runId = `rea-source-map-${randomUUID()}`;
   #runtime: SourceMapCodecRuntime | undefined;
   #supervisor: ProviderProcessSupervisor | undefined;
-  #cleanupAnchor: SourceMapCleanupFailure | undefined;
+  /** Reported by every close failure until a later close releases the codec. */
+  #cleanupRelease: AnalysisCleanupRelease | undefined;
   #outcome: CodecOutcome | undefined;
   #drainStop: CodecPhysicalObservation | undefined;
   readonly #onInterruption: () => void;
@@ -604,8 +606,8 @@ class OwnedCodec implements SourceMapCleanupOwner {
       }
     }
     if (failures.length === 0) {
-      this.#cleanupAnchor?.resolveCleanup();
-      this.#cleanupAnchor = undefined;
+      this.#cleanupRelease?.confirm();
+      this.#cleanupRelease = undefined;
       return undefined;
     }
     const failure = new SourceMapCleanupFailure(this.cleanupResources, {
@@ -613,9 +615,9 @@ class OwnedCodec implements SourceMapCleanupOwner {
       cleanup_failures: failures,
       codec_pid: this.#supervisor?.launch.process.pid ?? null,
     }).bindCleanupResourceOwner(this);
-    if (this.#cleanupAnchor === undefined) this.#cleanupAnchor = failure;
-    else failure.bindCleanupDependencies([this.#cleanupAnchor], this);
-    return failure;
+    return (this.#cleanupRelease ??= new AnalysisCleanupRelease()).bind(
+      failure,
+    );
   }
 }
 const message = (cause: unknown): string =>

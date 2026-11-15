@@ -192,3 +192,58 @@ it("allocates a plain temporary directory for child scratch space", async () => 
   await fixture.release();
   expect(await exists(fixture.path)).toBe(false);
 });
+
+it("keeps a retained root across every release and names why", async () => {
+  let closes = 0;
+  const fixture = new VerifierFixture({
+    path: "/fixture/root",
+    close: async () => {
+      closes += 1;
+    },
+  });
+  fixture.retain("Command cleanup is incomplete.");
+  for (const _attempt of [1, 2]) {
+    const failure: unknown = await fixture
+      .release()
+      .catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect(
+      ((failure as AggregateError).errors as Error[]).map(
+        ({ message }) => message,
+      ),
+    ).toEqual([
+      "Command cleanup is incomplete.",
+      "Retained verifier fixture /fixture/root because a cleanup that may still use it did not confirm.",
+    ]);
+  }
+  expect(closes).toBe(0);
+  expect(fixture.released).toBe(false);
+});
+
+it("keeps an artifact directory, owned by the verifier and named on stderr", async () => {
+  const parent = await VerifierFixture.open({ prefix: "rea-fixture-test-" });
+  const written: string[] = [];
+  const write = process.stderr.write.bind(process.stderr);
+  process.stderr.write = ((chunk: string) => {
+    written.push(String(chunk));
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    const artifacts = await VerifierFixture.keepArtifacts({
+      prefix: "rea-client-",
+      parent: parent.path,
+    });
+    expect(artifacts.kept).toBe(true);
+    expect(artifacts.path.startsWith(join(parent.path, "rea-client-"))).toBe(
+      true,
+    );
+    expect((await stat(artifacts.path)).mode & 0o077).toBe(0);
+    expect(Object.isFrozen(artifacts)).toBe(true);
+    expect(written).toEqual([
+      `Keeping verifier artifacts at ${artifacts.path}\n`,
+    ]);
+  } finally {
+    process.stderr.write = write;
+    await parent.release();
+  }
+});

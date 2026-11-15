@@ -1,3 +1,4 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import type { BigIntStats, Dir, Dirent } from "node:fs";
 import { opendir, readlink, realpath, stat } from "node:fs/promises";
 import { basename, dirname, join, sep } from "node:path";
@@ -478,10 +479,7 @@ const readSymlinkTarget = async (
   }
   let target: string;
   try {
-    target = new TextDecoder("utf-8", {
-      fatal: true,
-      ignoreBOM: true,
-    }).decode(rawTarget);
+    target = decodeStrictUtf8(rawTarget, "preserve");
   } catch {
     return entryFailure(
       path,
