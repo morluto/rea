@@ -13,25 +13,30 @@ import {
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { classifyLaunchFailure } from "../dist/process/launchFailure.js";
 
-// Compile every regular expression the packaged server advertises, in every
-// schema profile, with the engines clients and gateways actually run. One
-// pattern an engine refuses can make a client reject the whole tools/list
-// (#10830), so the portable-dialect rules are not trusted on their own.
+// Compile every regular expression and schema the packaged server advertises,
+// in every schema profile, with the engines and validators clients and
+// gateways actually run. One pattern or schema an engine refuses can make a
+// client reject the whole tools/list (#10830), so the portable-dialect rules
+// are not trusted on their own.
 //
 // An engine that is not installed is reported as not verified. CI sets
 // REA_REQUIRE_SCHEMA_ENGINES=1, which turns a missing engine into a failure.
 // `--package-root=DIR` lists an installed package, such as a packed release
 // candidate, instead of this checkout's build.
+// `--complete` adds the Python `jsonschema` meta-validation, which takes
+// seconds per profile.
 
 const directory = join(
   dirname(fileURLToPath(import.meta.url)),
   "verify/advertised-schemas",
 );
 const required = process.env.REA_REQUIRE_SCHEMA_ENGINES === "1";
+const options = new Set();
 let packageRoot;
 for (const option of process.argv.slice(2))
   if (option.startsWith("--package-root="))
     packageRoot = resolve(option.slice("--package-root=".length));
+  else if (option === "--complete") options.add(option);
   else throw new Error(`Unknown advertised schema check option: ${option}`);
 const ENGINE_TIMEOUT_MS = 120_000;
 // Results carry one entry per refused value, so allow far more than one.
@@ -113,7 +118,8 @@ const listed = Math.round(performance.now() - start);
 const { advertisedSchemaPatterns } =
   await import("../dist/contracts/advertisedDialect.js");
 
-// Each distinct pattern once, with every place it is advertised.
+// Each distinct schema and pattern once, with every place it is advertised.
+const describeSite = (site) => `${site.tool} ${site.kind} (${site.profile})`;
 const advertised = distinctAdvertisedSchemas(catalogs);
 const patternSites = new Map();
 for (const { schema, sites } of advertised)
@@ -136,8 +142,22 @@ const checked = {
     describe: (indexes) =>
       indexes.map((index) => `/${patterns[index]}/`).join(", "),
   },
+  schema: {
+    values: advertised,
+    sites: (index) =>
+      advertised[index].sites.map((site) => ({
+        tool: site.tool,
+        text: describeSite(site),
+      })),
+    describe: (indexes) =>
+      `${String(indexes.length)} schema${indexes.length === 1 ? "" : "s"}`,
+  },
 };
-const input = JSON.stringify({ patterns });
+const input = JSON.stringify({
+  patterns,
+  schemas: advertised.map(({ schema }) => schema),
+  complete: options.has("--complete"),
+});
 
 const fixture = await VerifierFixture.open({
   prefix: "rea-advertised-schemas-",
@@ -170,6 +190,10 @@ const results = await withVerifierFixture(fixture, async () => {
             { engine: "re2 (C++)", kind: "pattern" },
             { engine: "rust regex", kind: "pattern" },
             { engine: "rust fancy-regex", kind: "pattern" },
+            { engine: "rust jsonschema", kind: "schema" },
+            ...(options.has("--complete")
+              ? [{ engine: "python jsonschema", kind: "schema" }]
+              : []),
           ],
           {
             command:
@@ -186,7 +210,7 @@ const results = await withVerifierFixture(fixture, async () => {
 
 const problems = [];
 console.log(
-  `Listed ${String(catalogs.length)} packaged catalogs in ${String(listed)} ms: ${String(patterns.length)} distinct patterns.`,
+  `Listed ${String(catalogs.length)} packaged catalogs in ${String(listed)} ms: ${String(advertised.length)} distinct schemas, ${String(patterns.length)} distinct patterns.`,
 );
 for (const result of results) {
   if (result.unavailable !== undefined) {
@@ -238,7 +262,7 @@ for (const result of results) {
 }
 if (problems.length > 0) {
   console.error(
-    `\nAdvertised pattern check failed (${String(problems.length)}):\n${problems.map((problem) => `  ${problem}`).join("\n")}`,
+    `\nAdvertised schema check failed (${String(problems.length)}):\n${problems.map((problem) => `  ${problem}`).join("\n")}`,
   );
   process.exitCode = 1;
 }

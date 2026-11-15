@@ -1,10 +1,12 @@
-"""Compile advertised regular expressions with the engines clients use.
+"""Compile advertised schemas with the engines and validators clients use.
 
-Reads ``{"patterns": [...]}`` as JSON from the file named by the first
-argument and writes one result per engine as JSON on stdout; each failure
-indexes ``patterns``. A package that is not installed is reported as
-unavailable, never as passing; the caller decides whether that is allowed.
-Run with ``python3 -I`` so nothing is imported from the working directory.
+Reads ``{"patterns": [...], "schemas": [...], "complete": bool}`` as JSON
+from the file named by the first argument and writes one result per engine or
+validator as JSON on stdout. Pattern results index ``patterns``; schema results
+index ``schemas``. A package that is not installed is reported as unavailable,
+never as passing; the caller decides whether that is allowed. ``complete`` adds
+the slow Python ``jsonschema`` meta-validation. Run with ``python3 -I`` so
+nothing is imported from the working directory.
 """
 
 import json
@@ -46,6 +48,7 @@ def main():
     with open(sys.argv[1], encoding="utf-8") as request_file:
         request = json.load(request_file)
     patterns = request["patterns"]
+    schemas = request["schemas"]
     results = [
         check("python re", "pattern", sys.version.split()[0], re.compile, patterns)
     ]
@@ -76,6 +79,7 @@ def main():
             [
                 unavailable("rust regex", "pattern", reason),
                 unavailable("rust fancy-regex", "pattern", reason),
+                unavailable("rust jsonschema", "schema", reason),
             ]
         )
     else:
@@ -97,6 +101,42 @@ def main():
                         pattern_options=options(),
                     ),
                     patterns,
+                )
+            )
+        # Default construction, as a Rust client builds a validator: the
+        # declared draft's meta-schema, its formats and every subschema.
+        results.append(
+            check(
+                "rust jsonschema",
+                "schema",
+                version,
+                jsonschema_rs.validator_for,
+                schemas,
+            )
+        )
+
+    if request.get("complete"):
+        try:
+            import jsonschema
+        except ImportError as error:
+            results.append(
+                unavailable(
+                    "python jsonschema", "schema", f"jsonschema is not installed: {error}"
+                )
+            )
+        else:
+            # Python MCP clients validate structured results with
+            # `jsonschema.validate`, which first checks the schema against its
+            # declared draft's meta-schema, including the `regex` format.
+            results.append(
+                check(
+                    "python jsonschema",
+                    "schema",
+                    distribution_version("jsonschema"),
+                    lambda schema: jsonschema.validators.validator_for(
+                        schema
+                    ).check_schema(schema),
+                    schemas,
                 )
             )
 
