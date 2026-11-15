@@ -70,6 +70,7 @@ const PCAP_CPU_SECONDS = 300;
 
 /** Own native capture admission and the exact enforced resource profile. */
 export const preparePcapNativeBound = async (
+  platform: NodeJS.Platform,
   environment: Readonly<Record<string, string | undefined>>,
   resources: ArtifactAnalysisResources,
   probe: (
@@ -87,7 +88,7 @@ export const preparePcapNativeBound = async (
   nativeBound: NonNullable<Parameters<typeof runPcapCommand>[0]["nativeBound"]>;
   limitations: readonly string[];
 }> => {
-  if (process.platform === "win32") {
+  if (platform === "win32") {
     return {
       nativeBound: {
         memoryLimitBytes: BOUNDED_PRODUCER_LIMITS.address_space_bytes,
@@ -97,7 +98,7 @@ export const preparePcapNativeBound = async (
       ],
     };
   }
-  if (!pcapCaptureHostSupported(process.platform)) {
+  if (!pcapCaptureHostSupported(platform)) {
     const reason = PCAP_CAPTURE_UNSUPPORTED_HOST_REASON;
     throw new AnalysisCapabilityUnavailableError("pcap", operation, reason, {
       userMessage: reason,
