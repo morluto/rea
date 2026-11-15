@@ -1,7 +1,6 @@
 import { createPackageVerifierCommands } from "./lib/verify-package-commands.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -24,17 +23,20 @@ if (
 )
   throw new Error("Usage: node scripts/verify-published-package.mjs <version>");
 
-const canaryRoot = await mkdtemp(join(tmpdir(), "rea-published-canary-"));
+// npm and the package's children write beneath the root, as under the former mkdtemp.
+const fixture = await VerifierFixture.open({
+  prefix: "rea-published-canary-",
+  private: false,
+});
+const canaryRoot = fixture.path;
 const serverEnvironment = {
   ...process.env,
   npm_config_cache: join(canaryRoot, "npm-cache"),
 };
 delete serverEnvironment.HOPPER_TARGET_PATH;
 const commands = await createPackageVerifierCommands({
-  workspace: {
-    path: canaryRoot,
-    close: () => rm(canaryRoot, { recursive: true, force: true }),
-  },
+  // The package command owner releases the fixture after its commands close.
+  workspace: { path: canaryRoot, close: () => fixture.release() },
 });
 let surface;
 let update;
@@ -132,6 +134,7 @@ async function verifyPublishedUpdate({
     `
 import { runUpdate } from ${JSON.stringify(pathToFileURL(join(updaterRoot, "dist/application/Update.js")).href)};
 import { systemUpdateHost } from ${JSON.stringify(pathToFileURL(join(updaterRoot, "dist/application/UpdateRuntime.js")).href)};
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 const result = await runUpdate(${JSON.stringify(previousVersion)}, systemUpdateHost(${JSON.stringify(join(npmRoot, "rea-agents"))}, ${JSON.stringify(home)}), "structured");
 process.stdout.write(JSON.stringify(result));
 if (result.status === "failed") process.exitCode = 1;
