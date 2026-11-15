@@ -419,7 +419,7 @@ it.each([
   },
 );
 
-it("recognizes an ELF Bun name beyond the former string-table prefix without reading the prefix", async () => {
+it("recognizes an ELF Bun name whose string-table offset lies far beyond the prefix it reads", async () => {
   const bytes = elfBunSection(
     bunPrefixedPayload(
       bunModuleGraphPayload({

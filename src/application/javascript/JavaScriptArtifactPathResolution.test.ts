@@ -1588,7 +1588,7 @@ describe("JavaScript file URL resolution", () => {
 });
 
 describe("contextual JavaScript package path resolution", () => {
-  it("follows package entrypoints beyond the former recursion ceiling", () => {
+  it("follows chained package main entrypoints without reporting a limitation", () => {
     const files = fileMap([
       file("app/consumer.js", "root"),
       file(
