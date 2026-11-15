@@ -57,7 +57,7 @@ process.stdin.on("data", (chunk) => {
   for (const line of chunk.split("\\n")) {
     const match = /^(\\d+)/.exec(line);
     if (!match) continue;
-    if (line.includes("auto-load off"))
+    if (line.slice(match[1].length) === "-gdb-set auto-load off")
       process.stdout.write(match[1] + "^error,msg=\\"setting rejected\\"\\n");
     else answerModeled(match[1], line.slice(match[1].length));
   }
@@ -295,7 +295,7 @@ process.stdin.on("data", (chunk) => {
   for (const line of chunk.split("\\n")) {
     const match = /^(\\d+)/.exec(line);
     if (!match) continue;
-    if (line.includes("inferior-tty-show")) process.stdout.write(match[1] + "^done,inferior_tty_terminal=" + ${JSON.stringify(JSON.stringify(tty))} + "\\n");
+    if (line.slice(match[1].length) === "-inferior-tty-show") process.stdout.write(match[1] + "^done,inferior_tty_terminal=" + ${JSON.stringify(JSON.stringify(tty))} + "\\n");
     else answerModeled(match[1], line.slice(match[1].length));
   }
 });
@@ -386,7 +386,7 @@ process.stdin.on("data", (chunk) => {
   for (const line of chunk.split("\\n")) {
     const match = /^(\\d+)/.exec(line);
     if (!match) continue;
-    if (line.includes("auto-load off")) {
+    if (line.slice(match[1].length) === "-gdb-set auto-load off") {
       process.stdout.write(match[1] + "^done\\n");
       process.stdout.write(Buffer.from([0xff, 0x0a]));
     } else answerModeled(match[1], line.slice(match[1].length));

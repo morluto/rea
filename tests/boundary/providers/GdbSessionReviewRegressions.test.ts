@@ -714,12 +714,12 @@ process.stdin.on("data", (chunk) => {
     const boundary = input.indexOf("\\n"); if (boundary < 0) break;
     const line = input.slice(0, boundary); input = input.slice(boundary + 1);
     const match = /^(\\d+)/.exec(line); if (!match) continue;
-    if (line.includes("auto-load off")) process.stdout.write(match[1] + "^done\\n");
-    else if (line.includes("first")) {
+    if (line.slice(match[1].length) === "-gdb-set auto-load off") process.stdout.write(match[1] + "^done\\n");
+    else if (line.slice(match[1].length) === '-interpreter-exec console "first"') {
       firstActive = true;
       setTimeout(() => { firstActive = false; process.stdout.write(match[1] + "^done\\n"); }, 100);
     } else {
-      if (line.includes("third") && firstActive) import("node:fs/promises").then((fs) => fs.writeFile(${JSON.stringify(overlapPath)}, "overlap"));
+      if (line.slice(match[1].length) === '-interpreter-exec console "third"' && firstActive) import("node:fs/promises").then((fs) => fs.writeFile(${JSON.stringify(overlapPath)}, "overlap"));
       answerModeled(match[1], line.slice(match[1].length));
     }
   }
