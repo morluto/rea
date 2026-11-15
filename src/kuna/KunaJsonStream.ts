@@ -136,7 +136,7 @@ const detached = (text: string): string =>
  */
 export abstract class KunaJsonDocumentReader<Parsed> extends Writable {
   readonly #hash = createHash("sha256");
-  readonly #decoder = strictUtf8Decoder("preserve");
+  readonly #decoder = strictUtf8Decoder("strip-signature");
   readonly #tokens = jsonParser({
     packKeys: false,
     packNumbers: false,

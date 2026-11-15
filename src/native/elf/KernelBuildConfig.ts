@@ -235,7 +235,7 @@ const inflateGzipMember = async (
   return { kind: "member", output, end: trailer + 8 };
 };
 
-const decoder = strictUtf8Decoder("preserve");
+const decoder = strictUtf8Decoder("strip-signature");
 /** C0 controls other than tab, LF and CR, plus DEL. */
 const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u;
 

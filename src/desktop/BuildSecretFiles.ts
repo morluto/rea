@@ -180,8 +180,7 @@ export const readBuildSecretFile = async (
         );
         let text: string;
         try {
-          // Scanned text keeps the file's bytes and offsets.
-          text = decodeStrictUtf8(bytes, "preserve");
+          text = decodeStrictUtf8(bytes, "strip-signature");
         } catch {
           result = err(`${path} is not UTF-8 text.`);
           return;
