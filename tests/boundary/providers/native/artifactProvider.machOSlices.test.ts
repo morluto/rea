@@ -190,7 +190,10 @@ describe("artifact Mach-O slice integrity", () => {
       for await (const _entry of reader.entries()) {
         // Malformed structural facts must fail before any slice is yielded.
       }
-    }).rejects.toThrow(/structural slice index is malformed/u);
+    }).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "layout-consistency",
+    });
   });
 
   // #4280: record-and-continue keeps going with REA's FAT parse as the authority.

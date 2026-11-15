@@ -65,6 +65,8 @@ export class OwnedDebuggerSessionRegistry<
   #reservations = 0;
   /** In-flight starts; closing aborts each as owner-closed and awaits it. */
   readonly #starts = new Map<AbortController, Promise<unknown>>();
+  /** Set once closing begins; later starts are refused as owner-closed. */
+  #closed = false;
 
   constructor(options: OwnedDebuggerSessionRegistryOptions<Session>) {
     this.#options = options;
@@ -110,15 +112,25 @@ export class OwnedDebuggerSessionRegistry<
   }
 
   /**
-   * Run one session start that closing aborts as owner-closed. The caller's
-   * abort is relayed; when it came first, a cancellation reports the
-   * caller's reason. Register before awaiting, so a close cannot miss it.
+   * Run one session start that closing aborts as owner-closed. A start made
+   * after closing began is refused the same way, and a caller that already
+   * aborted gets its own reason. The caller's abort is relayed; when it came
+   * first, a cancellation reports the caller's reason. Register before
+   * awaiting, so a close cannot miss it.
    */
   start<Value>(
     operation: string,
     callerSignal: AbortSignal | undefined,
     run: (signal: AbortSignal) => Promise<Result<Value, AnalysisError>>,
   ): Promise<Result<Value, AnalysisError>> {
+    if (callerSignal?.aborted)
+      return Promise.resolve(
+        err(cancelledWithCallerReason(operation, callerSignal)),
+      );
+    if (this.#closed)
+      return Promise.resolve(
+        err(cancelledBy(operation, OwnerCancellation.ownerClosed)),
+      );
     const controller = new AbortController();
     let callerAbortWon = false;
     const relayAbort = (): void => {
@@ -127,7 +139,6 @@ export class OwnedDebuggerSessionRegistry<
       controller.abort(callerSignal?.reason);
     };
     callerSignal?.addEventListener("abort", relayAbort, { once: true });
-    if (callerSignal?.aborted) relayAbort();
     const started = Promise.resolve()
       .then(() => run(controller.signal))
       .finally(() => {
@@ -145,8 +156,12 @@ export class OwnedDebuggerSessionRegistry<
     );
   }
 
-  /** Abort every in-flight start as owner-closed and wait for each to settle. */
-  async abortStarts(): Promise<void> {
+  /**
+   * Refuse new starts, abort every in-flight start as owner-closed and wait
+   * for each to settle.
+   */
+  async closeStarts(): Promise<void> {
+    this.#closed = true;
     const active = [...this.#starts.entries()];
     for (const [controller] of active)
       controller.abort(OwnerCancellation.ownerClosed);
@@ -241,7 +256,7 @@ export class OwnedDebuggerSessionRegistry<
 
   /**
    * Stop every session; sessions whose stop is incomplete stay registered for
-   * retry. Callers block new starts and abort in-flight ones first.
+   * retry. Callers close starts first.
    */
   closeAll(): Promise<void> {
     return closeOwnedDebuggerSessions(

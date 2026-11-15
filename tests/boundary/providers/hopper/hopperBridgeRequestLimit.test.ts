@@ -1,12 +1,13 @@
+import {
+  transportReplyContracts,
+  HopperFixtureLauncher,
+  trackHopperClient,
+} from "./hopperClient.fixture.js";
 import { bridgeMaxRequestBytesRecovery } from "../../../../src/config/bridgeMaxRequestBytes.js";
 import { expect, it, vi } from "vitest";
 
 import { AnalysisResourceConstraintError } from "../../../../src/domain/analysisErrorCore.js";
 import { HopperClient } from "../../../../src/hopper/HopperClient.js";
-import {
-  HopperFixtureLauncher,
-  trackHopperClient,
-} from "./hopperClient.fixture.js";
 import { waitFor } from "../../../support/testWait.js";
 
 const limit = (maximumBytes: number) =>
@@ -16,6 +17,7 @@ it("reports a Hopper ceiling mismatch and releases the fixture", async () => {
   const launcher = new HopperFixtureLauncher();
   const client = trackHopperClient(
     new HopperClient({
+      replyContracts: transportReplyContracts,
       launcher,
       startupTimeoutMs: 10_000,
       bridgeMaxRequestBytes: limit(1_048_576),
@@ -50,6 +52,7 @@ it("refuses an oversized Hopper request before the fixture receives it", async (
   );
   const client = trackHopperClient(
     new HopperClient({
+      replyContracts: transportReplyContracts,
       launcher,
       startupTimeoutMs: 10_000,
       bridgeMaxRequestBytes: limit(8192),
@@ -86,6 +89,7 @@ it("refuses a Hopper payload whose JSON expansion exceeds the ceiling before ser
   );
   const client = trackHopperClient(
     new HopperClient({
+      replyContracts: transportReplyContracts,
       launcher,
       startupTimeoutMs: 10_000,
       bridgeMaxRequestBytes: limit(8192),
@@ -156,6 +160,7 @@ it("serializes a queued Hopper request only when it reaches the wire", async () 
   const launcher = new HopperFixtureLauncher();
   const client = trackHopperClient(
     new HopperClient({
+      replyContracts: transportReplyContracts,
       launcher,
       startupTimeoutMs: 10_000,
     }),
@@ -204,6 +209,7 @@ it("sends a Hopper request above 16 MiB when both sides raise the ceiling", asyn
   );
   const client = trackHopperClient(
     new HopperClient({
+      replyContracts: transportReplyContracts,
       launcher,
       startupTimeoutMs: 10_000,
       bridgeMaxRequestBytes: limit(ceiling),

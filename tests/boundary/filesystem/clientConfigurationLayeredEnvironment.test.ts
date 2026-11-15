@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -135,6 +136,7 @@ const layered = async (lower: unknown, upper: unknown) => {
   const status = async () =>
     (
       await readClientRegistrationStatuses(home, command[1], {
+        platform: HOST_PLATFORM.platform,
         environment: { XDG_CONFIG_HOME: join(home, ".config") },
       })
     ).find(({ client }) => client === "opencode");

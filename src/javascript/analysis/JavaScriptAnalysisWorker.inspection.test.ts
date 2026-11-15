@@ -13,6 +13,7 @@ import {
   ProcessOwnershipIdentityBatchFailure,
 } from "../../process/ProcessInspectionCancellation.js";
 import * as ownership from "../../process/ProcessOwnershipObservation.js";
+import { releaseOwnedCleanup } from "../../../tests/support/cleanupRelease.js";
 
 const text = "export const observed = 1;";
 const file: JavaScriptArtifactFile = {
@@ -101,7 +102,7 @@ it("retries the exact failed inspection owner before releasing its error", async
   const owner = {
     close: vi.fn(async () => {
       if (denied) throw cleanup;
-      cleanup.resolveCleanup();
+      releaseOwnedCleanup(cleanup);
     }),
   };
   const prepare = vi
@@ -283,7 +284,7 @@ it("joins a late inspection cleanup handoff before worker close completes", asyn
     close: vi.fn(async () => {
       acknowledgeRetry();
       await release;
-      cleanup.resolveCleanup();
+      releaseOwnedCleanup(cleanup);
     }),
   };
   const prepare = vi

@@ -1,5 +1,6 @@
 import { ParseFailureError } from "./parseFailure.js";
 import { byteOrderMarkEncoding } from "./textByteOrderMark.js";
+import { decodeStrictUtf8 } from "./strictUtf8.js";
 
 const XML_PLIST_FORMAT = "xml-plist";
 
@@ -85,8 +86,9 @@ const asciiXmlDeclaration = (bytes: Uint8Array): string | undefined => {
   for (let index = start + 5; index < bytes.length; index += 1) {
     if (bytes[index]! > 0x7f) return undefined;
     if (bytes[index] === 0x3f && bytes[index + 1] === 0x3e)
-      return new TextDecoder("utf-8", { fatal: true }).decode(
+      return decodeStrictUtf8(
         bytes.subarray(start, index + 2),
+        "strip-signature",
       );
   }
   return undefined;

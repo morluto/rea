@@ -1,6 +1,8 @@
 import { expect, it } from "vitest";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../contracts/artifactComparisonExample.js";
 import { compareArtifacts } from "./artifactComparison.js";
+import { readComparisonResult } from "./comparisonEvidenceResult.js";
+import { projectAnalysisError } from "./analysisErrorProjection.js";
 import {
   artifactInventoryResultSchema,
   type ArtifactInventoryResult,
@@ -864,5 +866,25 @@ it("compares a node-less record's recorded ASAR storage", () => {
   ).toMatchObject({
     status: "unknown",
     changes: [{ classification: "unknown", dimensions: ["availability"] }],
+  });
+});
+
+it("names the constraint an unchanged comparison with changes violates", () => {
+  const changed = compareArtifacts(
+    ARTIFACT_COMPARISON_EXAMPLE.left,
+    ARTIFACT_COMPARISON_EXAMPLE.right,
+  );
+  const read = readComparisonResult(
+    createEvidence(undefined, ARTIFACT_COMPARISON_EXAMPLE.left.provider, {
+      operation: "compare_artifacts",
+      parameters: {},
+      result: { ...changed, status: "unchanged" },
+    }),
+    "compare_artifacts",
+  );
+  if (read.ok) throw new Error("Expected the comparison to be refused");
+  expect(projectAnalysisError(read.error)).toMatchObject({
+    code: "evidence_integrity_mismatch",
+    details: { constraint: "unchanged-has-no-changes" },
   });
 });

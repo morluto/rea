@@ -9,6 +9,7 @@ import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.j
 import { ok } from "../../src/domain/result.js";
 import { OwnedCommandFailure } from "../../src/process/OwnedCommand.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { fixtureCommandRepair } from "../support/reverseEngineeringCompositionFixtures.js";
 
 it.each([false, true])(
   "keeps owned output collection failure primary after late cancellation=%s",
@@ -33,6 +34,7 @@ it.each([false, true])(
     const profile = {
       executable: "unused",
       arguments: [],
+      repair: fixtureCommandRepair,
       identity: { id: "fixture", name: "fixture", version: null },
     };
     const service = new ReverseEngineeringService({
@@ -68,6 +70,7 @@ it("keeps the owned producer cancellation reason authoritative", async () => {
   const profile = {
     executable: "unused",
     arguments: [],
+    repair: fixtureCommandRepair,
     identity: { id: "fixture", name: "fixture", version: null },
   };
   const service = new ReverseEngineeringService({
@@ -109,12 +112,13 @@ it.each([
               throw cause;
             }
           : stat,
-      run,
+      runOwned: run,
       commands: {
         objdump: () =>
           ok({
             executable: "unused-objdump",
             arguments: [path],
+            repair: fixtureCommandRepair,
             identity: {
               id: "test.objdump",
               name: "Test objdump",
@@ -125,6 +129,7 @@ it.each([
           ok({
             executable: "unused-rizin",
             arguments: [path],
+            repair: fixtureCommandRepair,
             identity: { id: "test.rizin", name: "Test Rizin", version: null },
           }),
       },

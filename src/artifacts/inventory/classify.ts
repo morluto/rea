@@ -106,6 +106,7 @@ export const classifyAndHashRootForInventory = async (
     throw new ArtifactReaderFailure(
       "integrity",
       `Root artifact changed before inventory: ${path}`,
+      { integrityCheck: "container-identity" },
     );
   }
   if (directory && options.expectedRootSha256 !== undefined)
@@ -113,6 +114,7 @@ export const classifyAndHashRootForInventory = async (
       "integrity",
       `Artifact root changed after target admission: expected an admitted file at ${path}, observed a directory`,
       {
+        integrityCheck: "container-identity",
         userMessage:
           "The opened file was replaced by a directory. Select the intended artifact and reopen it before retrying.",
       },
@@ -143,6 +145,7 @@ export const classifyAndHashRootForInventory = async (
       throw new ArtifactReaderFailure(
         "integrity",
         `Root artifact changed before inventory: ${path}`,
+        { integrityCheck: "container-identity" },
       );
     // Prior probe state can prove replacement without interpreting any bytes.
     const probes = new ArtifactEmbeddedFormatProbes(
@@ -321,7 +324,7 @@ const classifyRootFormat = async (
       throw new ArtifactReaderFailure(
         "integrity",
         `Root artifact changed during classification: ${path}`,
-        { cause: cause.cause ?? cause },
+        { cause: cause.cause ?? cause, integrityCheck: "container-identity" },
       );
     throw artifactOperationCause(cause);
   }
@@ -576,6 +579,7 @@ export const assertAdmittedRootDigest = (
       "integrity",
       `Artifact root changed after target admission at ${path}: expected ${expected}, observed ${observed}`,
       {
+        integrityCheck: "container-identity",
         userMessage:
           "The artifact changed after it was opened. Reopen the selected artifact, then retry.",
       },
