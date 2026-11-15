@@ -10,7 +10,6 @@ import { openRegularFile } from "../filesystem/RegularFile.js";
 import {
   buildBootImage,
   buildVendorBootImage,
-  declareVendorRamdiskCount,
 } from "../../tests/fixtures/androidBootImage.js";
 import { artifactReaderLifecycleCases } from "../../tests/fixtures/artifactReaderLifecycle.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
@@ -59,10 +58,32 @@ it("preserves cancellation during header admission", async () => {
   }
 });
 
+const vendorBootWithRamdisks = (count: number): Buffer =>
+  buildVendorBootImage({
+    version: 4,
+    ramdisks: Array.from({ length: count }, (_, index) => ({
+      name: `ramdisk${String(index)}`,
+      bytes: Buffer.from([index & 0xff]),
+    })),
+  });
+
+it("inventories a vendor ramdisk table at its 4096-entry allowance", async () => {
+  const path = await fixture(vendorBootWithRamdisks(4096));
+  const admitted = await openRegularFile(path, { symlinks: "reject" });
+  const reader = new AndroidBootImageArtifactReader(path, admitted);
+  try {
+    const listed = await entries(reader);
+    expect(
+      listed.filter((entry) => entry.path.startsWith("vendor_ramdisk")),
+    ).toHaveLength(4096);
+  } finally {
+    await reader.close();
+    await admitted.handle.close();
+  }
+});
+
 it("rejects an excessive vendor ramdisk count before reading the table", async () => {
-  const path = await fixture(
-    declareVendorRamdiskCount(buildVendorBootImage({ version: 4 }), 4097),
-  );
+  const path = await fixture(vendorBootWithRamdisks(4097));
   const admitted = await openRegularFile(path, { symlinks: "reject" });
   const reader = new AndroidBootImageArtifactReader(path, admitted);
   const reads = vi.spyOn(admitted.handle, "read");
