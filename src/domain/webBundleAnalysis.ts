@@ -4,6 +4,7 @@ import { javaScriptSemanticPrecisionSchema } from "./javascript/javascriptSemant
 import { javaScriptRefusedPhaseSchema } from "./javascript/javascriptSemanticWorkAllowance.js";
 import { fetchedSourceMapLimitsSchema } from "./sourceMapLimits.js";
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "./coverage.js";
 import { browserExclusionSchema } from "./browserCompleteness.js";
 import { webPageInspectionSchema } from "./browserObservationSchemas.js";
 import { javaScriptRouteInventorySchema } from "./javascript/javascriptRouteInventory.js";
@@ -533,7 +534,7 @@ export const webBundleAnalysisSchema = z.object({
     }),
   ),
   completeness: z.object({
-    status: z.enum(["complete", "partial"]),
+    status: knownCoverageStatusSchema,
     parsed_scripts: z.int().min(0),
     parse_failures: z.int().min(0),
     visited_ast_nodes: z.int().min(0),

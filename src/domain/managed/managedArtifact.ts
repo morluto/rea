@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import type { CoverageStatus } from "../coverage.js";
 import { digestSchema } from "../digests.js";
 import { managedFieldConstantSchema } from "./managedFieldConstant.js";
@@ -581,7 +582,7 @@ export const managedMemberInspectionSchema = z
     // coverage. null means they were not examined, not that there were none.
     user_strings: z
       .object({
-        state: z.enum(["complete", "partial"]),
+        state: knownCoverageStatusSchema,
         literals: z.array(managedUserStringSchema),
         issues: z.array(managedParseIssueSchema),
       })
