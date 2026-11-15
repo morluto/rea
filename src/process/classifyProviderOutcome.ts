@@ -4,16 +4,20 @@ import type {
   AnalysisErrorOptions,
 } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
   type ResourceConstraintRecovery,
 } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { AnalysisSettingLimit } from "../domain/analysisSettings.js";
 import type { ProviderOutcome } from "./ProviderOutcome.js";
 import type { ProviderProcessSnapshot } from "./ProviderProcess.js";
-import type { RuntimeExhaustion } from "./RuntimeExhaustion.js";
+import {
+  runtimeExhaustionReport,
+  type RuntimeExhaustion,
+} from "./RuntimeExhaustion.js";
 
 const RUNTIME_NAMES = {
   jvm: "The provider's Java virtual machine",
@@ -100,11 +104,16 @@ export const classifyProviderOutcome = (
       : { capturedOutput: context.capturedOutput(outcome.output.snapshot) }),
   };
   switch (outcome.kind) {
-    case "cancelled":
-      return new AnalysisCancelledError(operation, {
-        ...details,
-        cause: outcome.reason,
-      });
+    case "cancelled": {
+      // The caller's abort reason is the cancellation's cause; the outcome's
+      // own cause is the supervisor failure that observed it.
+      const { cause: _observed, ...cancellationDetails } = details;
+      return cancelledBy(
+        operation,
+        carriedReason(outcome.reason),
+        cancellationDetails,
+      );
+    }
     case "timeout":
       return new AnalysisTimeoutError(operation, context.timeout.ms, {
         ...details,
@@ -146,15 +155,7 @@ export const classifyProviderOutcome = (
     }
     case "runtime-exhausted": {
       const reported = context.runtimeExhaustion?.(outcome.exhaustion);
-      const {
-        area,
-        runtime,
-        stream,
-        line,
-        lineComplete,
-        truncated,
-        invalidUtf8,
-      } = outcome.exhaustion;
+      const { area, runtime } = outcome.exhaustion;
       return new AnalysisResourceConstraintError(
         operation,
         area === "native-thread" ? "capacity" : "memory",
@@ -162,20 +163,11 @@ export const classifyProviderOutcome = (
         reported?.limits ?? null,
         {
           ...details,
-          // The report may lie beyond the retained output, so the claim keeps
-          // its own source line.
           diagnostics: {
             ...details.diagnostics,
-            runtime_exhaustion_report: {
-              runtime,
-              area: area ?? null,
-              stream,
-              line,
-              line_complete: lineComplete,
-              // The same omission flags as Ghidra's observed-marker projection.
-              ...(truncated ? { truncated: true } : {}),
-              ...(invalidUtf8 ? { invalid_utf8: true } : {}),
-            },
+            runtime_exhaustion_report: runtimeExhaustionReport(
+              outcome.exhaustion,
+            ),
           },
           ...(area === "native-thread"
             ? {

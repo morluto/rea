@@ -18,7 +18,8 @@ import {
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisArtifactChangedError,
-  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
@@ -135,14 +136,20 @@ const fileFailure = (
     origin === "owned-or-classified" &&
     physical instanceof ArtifactReaderFailure
   ) {
-    if (physical.reason === "cancelled")
-      return new AnalysisCancelledError(operation, {
-        ...details,
-        cause: artifactFileCancellationCause(physical),
-        ...(dialect.observedOutput === undefined
-          ? {}
-          : { capturedOutput: dialect.observedOutput }),
-      });
+    if (physical.reason === "cancelled") {
+      // The reader's recorded abort reason is the cancellation's cause.
+      const { cause: _reader, ...cancellationDetails } = details;
+      return cancelledBy(
+        operation,
+        carriedReason(artifactFileCancellationCause(physical)),
+        {
+          ...cancellationDetails,
+          ...(dialect.observedOutput === undefined
+            ? {}
+            : { capturedOutput: dialect.observedOutput }),
+        },
+      );
+    }
     if (file === undefined) return undefined;
     if (physical.reason === "integrity")
       return new AnalysisArtifactChangedError(

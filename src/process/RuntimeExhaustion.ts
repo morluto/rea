@@ -1,3 +1,4 @@
+import type { JsonValue } from "../domain/jsonValue.js";
 import type { ProviderProcessOutputToken } from "./ProcessOutputTokenScanner.js";
 
 /** A managed runtime whose memory exhaustion is reported in process output. */
@@ -77,4 +78,28 @@ export const runtimeExhaustion = (
   lineComplete: token.trailingContextIncomplete !== true,
   truncated: token.truncated,
   invalidUtf8: token.invalidUtf8 === true,
+});
+
+/**
+ * The diagnostics projection of an exhaustion report. The report may lie
+ * beyond the retained output, so every error that claims exhaustion carries
+ * its source line, with the same omission flags as Ghidra's observed-marker
+ * projection.
+ */
+export const runtimeExhaustionReport = ({
+  runtime,
+  area,
+  stream,
+  line,
+  lineComplete,
+  truncated,
+  invalidUtf8,
+}: RuntimeExhaustion): Readonly<Record<string, JsonValue>> => ({
+  runtime,
+  area: area ?? null,
+  stream,
+  line,
+  line_complete: lineComplete,
+  ...(truncated ? { truncated: true } : {}),
+  ...(invalidUtf8 ? { invalid_utf8: true } : {}),
 });
