@@ -56,7 +56,6 @@ import {
   requestsFreshIndependentDecompile,
   requiresNativeSourceAdmissionBeforeReplay,
 } from "./binary/AnalysisSnapshotCache.js";
-import { classifyBinaryTargetFilesystemFailure } from "./BinaryTargetResolver.js";
 import {
   snapshotBindingMismatch,
   snapshotEvidenceForQuery,
@@ -94,6 +93,7 @@ import {
 } from "./DirectAnalysisCleanup.js";
 import { completeProviderEvidence } from "./ProviderOperationExecution.js";
 import { BUNDLE_RESOURCE_OPERATIONS } from "../ports/BundleResourceOperations.js";
+import { classifyBinaryTargetFilesystemFailure } from "../domain/binaryTargetFilesystemFailure.js";
 
 // These one-shot CLI questions require native utilities, not a deep engine.
 // Runtime observation retains the ordinary session and authority checks.
