@@ -204,11 +204,7 @@ describe("browser and Inspector CLI input diagnostics", () => {
 
   cliTest.for([
     ["list-browser-targets", "cdp_endpoint", "endpoint"],
-    [
-      "list-javascript-runtime-targets",
-      "inspector_endpoint",
-      "inspector_endpoint",
-    ],
+    ["list-javascript-runtime-targets", "inspector_endpoint", "endpoint"],
   ] as const)(
     "%s does not echo rejected endpoint credentials",
     async ([command, field, key], { cli, workspace }) => {
