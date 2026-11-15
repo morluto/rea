@@ -12,7 +12,6 @@
     "config -> native": 1,
     "desktop -> application": 5,
     "dotnet -> application": 2,
-    "hopper -> application": 2,
     "il2cpp -> application": 1,
     "native -> application": 2
   },

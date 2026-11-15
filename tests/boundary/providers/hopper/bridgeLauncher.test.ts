@@ -649,6 +649,37 @@ it.skipIf(process.platform !== "linux")(
   },
 );
 
+it("refuses a Linux demo launch when no launcher verification was supplied", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-publisher-unconfigured-",
+  );
+  const targetPath = join(directory, "target");
+  await writeFile(targetPath, "fixture target");
+  const selectPrivateDisplay = vi.fn(readyDirectDisplay);
+  const launcher = new HopperApplicationLauncher(
+    { ...options("/unused/Hopper"), targetPath },
+    { platform: "linux", selectPrivateDisplay },
+  );
+  const result = await launcher.launch({
+    directory,
+    socketPath: join(directory, "bridge.sock"),
+    token: "fixture-token",
+    runId: randomUUID(),
+  });
+  if (result.ok) throw new Error("Unverified launcher started");
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "provider_unavailable",
+    details: {
+      stage: "launch",
+      launch_rejection: {
+        boundary: "publisher_verification",
+        reason: "verification_unavailable",
+      },
+    },
+  });
+  expect(selectPrivateDisplay).not.toHaveBeenCalled();
+});
+
 it.skipIf(process.platform !== "linux")(
   "asks the demo helper to shut down orderly so its X lock is removed",
   async () => {

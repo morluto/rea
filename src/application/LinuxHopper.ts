@@ -38,6 +38,7 @@ import {
   type VerifiedLinuxHopperPackage,
   type VerifiedLinuxHopperLauncher,
 } from "./LinuxHopperPublisher.js";
+import type { LinuxHopperLauncherVerification } from "../ports/LinuxHopperLauncherVerification.js";
 
 /** Package-manager output retained per stream without stopping the command. */
 const PACKAGE_MANAGER_OUTPUT_BYTES = 64 * 1024;
@@ -639,6 +640,13 @@ export const inspectLinuxHopperLauncher = async (
     );
   }
 };
+
+/** The Linux launcher authentication production composition gives the Hopper provider. */
+export const LINUX_HOPPER_LAUNCHER_VERIFICATION: LinuxHopperLauncherVerification =
+  {
+    inspect: inspectLinuxHopperLauncher,
+    retryCleanup: retryLinuxHopperPublisherCleanup,
+  };
 
 /** The publisher retains a failed close before throwing; retry every retained owner. */
 const closePublisherAndRetainedScopes = async (
