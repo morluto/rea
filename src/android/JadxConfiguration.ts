@@ -18,7 +18,7 @@ import {
 } from "./JadxInterruption.js";
 import { constants } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
-import { isAbsolute } from "node:path";
+import { isAbsolute, posix, win32 } from "node:path";
 import {
   posixPathCandidates,
   windowsPathCandidates,
@@ -651,8 +651,13 @@ const resolveJava = async (
       "java_runtime",
     );
   }
-  if (isAbsolute(environment.JAVA_HOME))
-    return appendCallerPath(environment.JAVA_HOME, `bin/${executable}`);
+  // JAVA_HOME follows the same host path rules as the PATH search above.
+  if ((windows ? win32 : posix).isAbsolute(environment.JAVA_HOME))
+    return appendCallerPath(
+      environment.JAVA_HOME,
+      `bin/${executable}`,
+      platform,
+    );
   throw configurationFailure(
     "open_options_invalid",
     "JAVA_HOME must select an existing JDK by absolute path; omit it to use java on PATH.",
