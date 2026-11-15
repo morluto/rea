@@ -6,6 +6,8 @@ import {
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
+  readArtifactFileChunks,
+  streamChunkToBuffer,
 } from "../resources/index.js";
 import { readFileHandlePrefix } from "../filesystem/readFileHandlePrefix.js";
 import { Readable } from "node:stream";
@@ -20,10 +22,6 @@ import {
   assertStableRegularFileIdentity,
   type StableRegularFileDescriptor,
 } from "../filesystem/RegularFile.js";
-import {
-  readArtifactFileChunks,
-  streamChunkToBuffer,
-} from "../resources/index.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { abortIfNeeded } from "../resources/index.js";
 

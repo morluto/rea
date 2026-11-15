@@ -72,9 +72,7 @@ import type {
   KunaProjectFunction,
 } from "./KunaProjectFiles.js";
 import { KUNA_PROVIDER_ID } from "./KunaRelease.js";
-
-/** Bumped whenever the entry layout or manifest meaning changes. */
-const CACHE_LAYOUT = 3;
+import { releaseProducerIdentity } from "../filesystem/ProducerIdentity.js";
 
 /** A manifest names five files and their digests; anything larger is not ours. */
 const MANIFEST_MAX_BYTES = 64 * 1024;
@@ -103,7 +101,9 @@ export const kunaProjectKey = (inputs: KunaProjectKeyInputs): string =>
   createHash("sha256")
     .update(
       canonicalize({
-        layout: CACHE_LAYOUT,
+        // The entry layout and manifest meaning are REA's code: a new release
+        // keys new entries, and older ones are retired as foreign manifests.
+        producer: releaseProducerIdentity(),
         target_sha256: inputs.targetSha256,
         target_basename: inputs.targetBasename,
         kuna_sha256: inputs.kunaSha256,
@@ -123,7 +123,7 @@ const fileSchema = z.strictObject({
 
 const manifestSchema = z
   .strictObject({
-    layout: z.literal(CACHE_LAYOUT),
+    producer: z.strictObject({ rea_version: z.string().min(1) }),
     key: z.string().regex(KEY_PATTERN),
     inputs: z.strictObject({
       target_sha256: z.string().regex(SHA256_PATTERN),
@@ -147,7 +147,13 @@ const manifestSchema = z
     }),
     created_at: utcDateTimeSchema,
   })
-  .superRefine(({ files, inputs, key }, context) => {
+  .superRefine(({ files, inputs, key, producer }, context) => {
+    if (producer.rea_version !== releaseProducerIdentity().rea_version)
+      context.addIssue({
+        code: "custom",
+        path: ["producer"],
+        message: "Export cache entry was produced by another REA release",
+      });
     if (
       key !==
       kunaProjectKey({
@@ -1127,7 +1133,7 @@ export class KunaProjectCache {
     signal: AbortSignal,
   ): Promise<Result<KunaProject, AnalysisError>> {
     const manifest: KunaProjectManifest = {
-      layout: CACHE_LAYOUT,
+      producer: releaseProducerIdentity(),
       key,
       inputs: {
         target_sha256: request.targetSha256,

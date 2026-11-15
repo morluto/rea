@@ -54,6 +54,7 @@ import {
   type HopperMachOImageResolutionFileSystem,
   type HopperMachOImage,
 } from "./HopperMachOImage.js";
+import { hopperProducerIdentity } from "./HopperBridgeSources.js";
 
 interface HopperProfileOptions {
   readonly launcherPath: string;
@@ -180,7 +181,7 @@ const resolveHopperAnalysisProfileInScope = async (
         : {}),
       target_kind: target.kind,
       target_format: target.format,
-      function_dossier_coverage: "observed-facets-and-call-relationships-v1",
+      producer: hopperProducerIdentity(),
       architecture: target.architecture ?? null,
       available_architectures: [
         ...(target.availableArchitectures ?? []),

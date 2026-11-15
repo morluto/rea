@@ -13,15 +13,15 @@ import {
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import { createHash } from "node:crypto";
 import { lstat } from "node:fs/promises";
-import { streamChunkToBuffer } from "../../resources/index.js";
-import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import {
+  streamChunkToBuffer,
   ArtifactResourceScope,
   ArtifactReaderFailure,
   sameArtifactSourceIdentity,
   type ArtifactEntry,
   type ArtifactReaderTraversal,
 } from "../../resources/index.js";
+import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
 import { InternalInvariantError } from "../../domain/internalInvariant.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
