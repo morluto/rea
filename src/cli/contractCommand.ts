@@ -41,7 +41,10 @@ import {
   type ContractField,
   type ProjectedContract,
 } from "./contractCliDescription.js";
-import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
+import {
+  projectCliAnalysisResult,
+  projectCliInputFields,
+} from "./projectCliAnalysisResult.js";
 import type { CliInstance } from "./types.js";
 
 /**
@@ -71,8 +74,6 @@ export interface ContractCommandContext<
    * contract's spelling; empty without `sessionTarget.open`.
    */
   readonly opening: Readonly<Record<string, unknown>>;
-  /** Contract fields the CLI spells differently, for input issue paths. */
-  readonly inputBinding: ContractCliDescription["inputBinding"];
   /** The admitted delivery, for a projection with `evidenceDelivery`. */
   readonly delivery: CliEvidenceDeliveryChoice | undefined;
   /** The projection's CLI-only options, whose effect the handler owns. */
@@ -139,9 +140,8 @@ export const inspectWithService =
 /**
  * Open the session target as an MCP session would hold it, with the opening
  * fields the caller selected, and run the contract operation on the
- * remaining input. Input issues name renamed fields by their CLI key; a
- * projection with `evidenceDelivery` delivers complete Evidence or a summary
- * beside its bundle.
+ * remaining input. A projection with `evidenceDelivery` delivers complete
+ * Evidence or a summary beside its bundle.
  */
 export const runOnSessionTarget =
   (
@@ -172,8 +172,7 @@ export const runOnSessionTarget =
           undefined,
           openBinaryTargetSelection(opening),
         ));
-    if (delivery === undefined)
-      return projectCliAnalysisResult(result, context.inputBinding);
+    if (delivery === undefined) return projectCliAnalysisResult(result);
     return publishCliAnalysisEvidence(result, {
       operation,
       signal,
@@ -243,8 +242,7 @@ export const runDirectOnTarget =
           : { includeEvidenceSources: true }),
       },
     );
-    if (delivery === undefined)
-      return projectCliAnalysisResult(result, context.inputBinding);
+    if (delivery === undefined) return projectCliAnalysisResult(result);
     if (
       options.requireSourceEvidence === true &&
       result.ok &&
@@ -434,21 +432,27 @@ export const registerContractCommand = <
           if (!admitted.ok) return projectAnalysisError(admitted.error);
           const opening = admitOpening(selected, values);
           if (!opening.ok) return projectAnalysisError(opening.error);
-          return run(admitted.value.input as z.input<Contract["inputSchema"]>, {
-            signal,
-            operation: selected.contract.name,
-            callerInputs: selected.callerInputs(values),
-            sessionTarget:
-              description.sessionTarget === undefined
-                ? undefined
-                : (values[description.sessionTarget.key] as string),
-            opening: opening.value,
-            inputBinding: selected.inputBinding,
-            delivery: admitted.value.delivery,
-            cliOptions: selected.cliOptionValues(
-              values,
-            ) as CliOptionValues<CliOptions>,
-          });
+          // Every handler's input issues name renamed fields by their CLI key.
+          return projectCliInputFields(
+            await run(
+              admitted.value.input as z.input<Contract["inputSchema"]>,
+              {
+                signal,
+                operation: selected.contract.name,
+                callerInputs: selected.callerInputs(values),
+                sessionTarget:
+                  description.sessionTarget === undefined
+                    ? undefined
+                    : (values[description.sessionTarget.key] as string),
+                opening: opening.value,
+                delivery: admitted.value.delivery,
+                cliOptions: selected.cliOptionValues(
+                  values,
+                ) as CliOptionValues<CliOptions>,
+              },
+            ),
+            selected.inputBinding,
+          );
         }),
       );
     },
@@ -645,19 +649,21 @@ export const registerTargetRoutedCommand = (
           if (!admitted.ok) return projectAnalysisError(admitted.error);
           const opening = admitOpening(description, values);
           if (!opening.ok) return projectAnalysisError(opening.error);
-          return route.run(admitted.value.input, {
-            signal,
-            operation: description.contract.name,
-            callerInputs: description.callerInputs(values),
-            sessionTarget:
-              description.sessionTarget === undefined ? undefined : target,
-            opening: opening.value,
-            inputBinding: description.inputBinding,
-            delivery: admitted.value.delivery,
-            cliOptions: description.cliOptionValues(
-              withCliOnlyDefaults(description, values),
-            ),
-          });
+          return projectCliInputFields(
+            await route.run(admitted.value.input, {
+              signal,
+              operation: description.contract.name,
+              callerInputs: description.callerInputs(values),
+              sessionTarget:
+                description.sessionTarget === undefined ? undefined : target,
+              opening: opening.value,
+              delivery: admitted.value.delivery,
+              cliOptions: description.cliOptionValues(
+                withCliOnlyDefaults(description, values),
+              ),
+            }),
+            description.inputBinding,
+          );
         }),
       );
     },
