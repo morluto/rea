@@ -1,8 +1,9 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import {
@@ -10,16 +11,8 @@ import {
   packagedSourcesDigest,
 } from "../../../src/filesystem/ProducerIdentity.js";
 
-const roots: string[] = [];
-afterEach(async () => {
-  await Promise.all(
-    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
-  );
-});
-
 const sources = async (files: Readonly<Record<string, string>>) => {
-  const root = await mkdtemp(join(tmpdir(), "rea-producer-"));
-  roots.push(root);
+  const root = await createTestTempDirectory("rea-producer-");
   for (const [name, text] of Object.entries(files))
     await writeFile(join(root, name), text);
   return pathToFileURL(`${root}/`);
