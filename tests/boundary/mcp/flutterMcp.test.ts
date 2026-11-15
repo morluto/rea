@@ -143,6 +143,7 @@ const inspectExecution = () =>
         ],
       },
       string_pool: {
+        policy: {},
         coverage: "complete",
         package_uris: [
           "package:adaptive_breakpoints/src/adaptive_breakpoints.dart",

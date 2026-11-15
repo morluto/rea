@@ -423,7 +423,9 @@ const resolveInBrowser = async (
           resource_type: request.resourceType(),
           effect: "blocked",
         });
-        await route.abort();
+        // Playwright's default network error code, named so the abort-reason
+        // guard sees an argument rather than a bare AbortController abort.
+        await route.abort("failed");
       }
     }),
   );

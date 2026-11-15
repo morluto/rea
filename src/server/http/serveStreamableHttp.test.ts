@@ -27,6 +27,13 @@ import { parseMcpHttpArguments } from "../../main/mcpHttpArguments.js";
 import { RequestTrackingMcpServer } from "../RequestTrackingMcpServer.js";
 import { waitFor } from "../../../tests/support/testWait.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
+import {
+  CallerAbort,
+  OwnerCancellation,
+} from "../../domain/analysisErrorCore.js";
+import { EvidenceMcpServer } from "../EvidenceMcpServer.js";
+import { createToolResultDelivery } from "../toolResult.js";
+import { ok } from "../../domain/result.js";
 
 const servers: StreamableHttpServer[] = [];
 
@@ -2117,6 +2124,79 @@ it.each(["after timeout", "during drain"])(
         },
         async () => {
           await pendingClose;
+        },
+      ]);
+    }
+  },
+);
+
+it.each(["replacement", "shutdown", "DELETE"] as const)(
+  "tells a pending Evidence tool who ended its session after %s",
+  async (ending) => {
+    let release!: () => void;
+    let entered!: () => void;
+    let observed!: (reason: unknown) => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const aborted = new Promise<unknown>((resolve) => {
+      observed = resolve;
+    });
+    const { served } = await start({
+      createMcpServer: () => {
+        const server = new EvidenceMcpServer(
+          { name: "owner-close-http", version: "1" },
+          { capabilities: {} },
+          () => ok("added"),
+          createToolResultDelivery(4096),
+        );
+        server.registerTool(
+          "held",
+          { inputSchema: z.strictObject({}) },
+          async (_args, context) => {
+            context.mcpReq.signal.addEventListener(
+              "abort",
+              () => observed(context.mcpReq.signal.reason),
+              { once: true },
+            );
+            entered();
+            await gate;
+            return { content: [] };
+          },
+        );
+        return server;
+      },
+    });
+    const first = await connect(served.url);
+    const request = first.client
+      .callTool({ name: "held", arguments: {} })
+      .catch(() => undefined);
+    let ended: Promise<unknown> | undefined;
+    try {
+      await awaitAcknowledgement(started, request, "tool start");
+      ended =
+        ending === "DELETE"
+          ? first.transport.terminateSession()
+          : ending === "shutdown"
+            ? served.prepareShutdown()
+            : connect(served.url).then((next) => next.client.close());
+      await awaitAcknowledgement(
+        aborted.then(() => undefined),
+        ended,
+        "tool abort",
+      );
+      const reason = await aborted;
+      if (ending === "DELETE") expect(reason).toBeInstanceOf(CallerAbort);
+      else expect(reason).toBe(OwnerCancellation.ownerClosed);
+    } finally {
+      release();
+      await closeVerifierResources([
+        () => first.client.close(),
+        async () => {
+          await Promise.allSettled([request, ended]);
         },
       ]);
     }
