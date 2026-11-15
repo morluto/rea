@@ -120,44 +120,47 @@ it.each([
   },
 );
 
-it("secures fx permissions on owned directory and staged file, including a semantic no-op", async () => {
-  const { path, directory } = await settingsFixture(
-    '{"mcp":{"rea":{"type":"local","command":["/fixture/server path","","a\'b","--mcp"],"enabled":true}}}',
-  );
-  await chmod(directory, 0o755);
-  await chmod(path, 0o644);
-  const client = {
-    ...clientFor(path, "fx", "fx"),
-    privateProfile: { home: tmpdir() },
-  } as const;
-  const result = await registerMcpClient(
-    client,
-    launcher,
-    undefined,
-    resources,
-  );
-  expect(result).toMatchObject({
-    ok: true,
-    value: {
-      status: "configured",
-      permissions: {
-        kind: "verified_posix_modes",
-        directoryMode: 0o700,
-        fileMode: 0o600,
+it.skipIf(process.platform === "win32")(
+  "secures fx permissions on owned directory and staged file, including a semantic no-op",
+  async () => {
+    const { path, directory } = await settingsFixture(
+      '{"mcp":{"rea":{"type":"local","command":["/fixture/server path","","a\'b","--mcp"],"enabled":true}}}',
+    );
+    await chmod(directory, 0o755);
+    await chmod(path, 0o644);
+    const client = {
+      ...clientFor(path, "fx", "fx"),
+      privateProfile: { home: tmpdir() },
+    } as const;
+    const result = await registerMcpClient(
+      client,
+      launcher,
+      undefined,
+      resources,
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        status: "configured",
+        permissions: {
+          kind: "verified_posix_modes",
+          directoryMode: 0o700,
+          fileMode: 0o600,
+        },
       },
-    },
-  });
-  expect((await stat(directory)).mode & 0o777).toBe(0o700);
-  expect((await stat(path)).mode & 0o777).toBe(0o600);
-  const before = await stat(path);
-  expect(
-    await registerMcpClient(client, launcher, undefined, resources),
-  ).toMatchObject({
-    ok: true,
-    value: { status: "unchanged" },
-  });
-  expect((await stat(path)).ino).toBe(before.ino);
-});
+    });
+    expect((await stat(directory)).mode & 0o777).toBe(0o700);
+    expect((await stat(path)).mode & 0o777).toBe(0o600);
+    const before = await stat(path);
+    expect(
+      await registerMcpClient(client, launcher, undefined, resources),
+    ).toMatchObject({
+      ok: true,
+      value: { status: "unchanged" },
+    });
+    expect((await stat(path)).ino).toBe(before.ino);
+  },
+);
 
 it.each([
   {
@@ -280,7 +283,7 @@ it.runIf(process.platform === "win32")(
       },
     });
     const published = await readFile(path, "utf8");
-    expect(JSON.parse(published).mcp.rea.command).toEqual([
+    expect(JSON.parse(published).mcpServers.rea.command).toEqual([
       launcher.command,
       ...launcher.args,
     ]);
@@ -354,43 +357,46 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
-it("retains the private directory close owner during a semantic no-op", async () => {
-  const { path } = await settingsFixture("{}");
-  const client = {
-    ...clientFor(path, "fx", "fx"),
-    privateProfile: { home: tmpdir() },
-  } as const;
-  expect(
-    await registerMcpClient(client, launcher, undefined, resources),
-  ).toMatchObject({ ok: true });
-  const originalClose = OwnedFileHandle.prototype.close;
-  const close = vi
-    .spyOn(OwnedFileHandle.prototype, "close")
-    .mockImplementation(async function (this: OwnedFileHandle) {
-      if ((await this.handle.stat()).isDirectory())
-        throw new Error("fixture private directory close denied");
-      return originalClose.call(this);
-    });
-  try {
-    const result = await registerMcpClient(
-      client,
-      launcher,
-      undefined,
-      resources,
-    );
-    expect(result).toMatchObject({
-      ok: false,
-      error: { cleanupIncomplete: true },
-    });
-    expect(resources.hasPending).toBe(true);
-    await expect(resources.close()).rejects.toBeDefined();
-    expect(resources.hasPending).toBe(true);
-  } finally {
-    close.mockRestore();
-  }
-  await resources.close();
-  expect(resources.hasPending).toBe(false);
-});
+it.skipIf(process.platform === "win32")(
+  "retains the private directory close owner during a semantic no-op",
+  async () => {
+    const { path } = await settingsFixture("{}");
+    const client = {
+      ...clientFor(path, "fx", "fx"),
+      privateProfile: { home: tmpdir() },
+    } as const;
+    expect(
+      await registerMcpClient(client, launcher, undefined, resources),
+    ).toMatchObject({ ok: true });
+    const originalClose = OwnedFileHandle.prototype.close;
+    const close = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementation(async function (this: OwnedFileHandle) {
+        if ((await this.handle.stat()).isDirectory())
+          throw new Error("fixture private directory close denied");
+        return originalClose.call(this);
+      });
+    try {
+      const result = await registerMcpClient(
+        client,
+        launcher,
+        undefined,
+        resources,
+      );
+      expect(result).toMatchObject({
+        ok: false,
+        error: { cleanupIncomplete: true },
+      });
+      expect(resources.hasPending).toBe(true);
+      await expect(resources.close()).rejects.toBeDefined();
+      expect(resources.hasPending).toBe(true);
+    } finally {
+      close.mockRestore();
+    }
+    await resources.close();
+    expect(resources.hasPending).toBe(false);
+  },
+);
 
 // Fx v0.0.16's profile reader chooses mcp over mcpServers. Its native writer
 // keeps the sole existing key, creates mcpServers, and refuses both keys.
