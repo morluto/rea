@@ -135,6 +135,7 @@ const projectedReturnShapeSchema = z
         code: "custom",
         path: ["fields"],
         message: "Projected return field paths must be unique",
+        params: { constraint: "field-paths-unique" },
       });
     const coveragePaths = shape.property_coverage.map(({ path }) => path);
     if (new Set(coveragePaths).size !== coveragePaths.length)
@@ -142,6 +143,7 @@ const projectedReturnShapeSchema = z
         code: "custom",
         path: ["property_coverage"],
         message: "Projected property coverage paths must be unique",
+        params: { constraint: "coverage-paths-unique" },
       });
   });
 
@@ -172,6 +174,7 @@ export const projectedExportReturnShapesSchema = z
         code: "custom",
         path: ["return_shape_coverage", "retained_return_sites"],
         message: "Retained return-site count must match projected shapes",
+        params: { constraint: "retained-sites-match-shapes" },
       });
   });
 

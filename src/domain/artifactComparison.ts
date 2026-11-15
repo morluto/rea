@@ -108,6 +108,7 @@ export const artifactComparisonResultSchema = z
         path: ["status"],
         message:
           "An unchanged artifact comparison cannot retain changes, non-zero change counts, or integrity mismatches.",
+        params: { constraint: "unchanged-has-no-changes" },
       });
   });
 

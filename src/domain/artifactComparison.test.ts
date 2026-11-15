@@ -1,6 +1,9 @@
 import { expect, it } from "vitest";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../contracts/artifactComparisonExample.js";
-import { compareArtifacts } from "./artifactComparison.js";
+import {
+  artifactComparisonResultSchema,
+  compareArtifacts,
+} from "./artifactComparison.js";
 import {
   artifactInventoryResultSchema,
   type ArtifactInventoryResult,
@@ -865,4 +868,19 @@ it("compares a node-less record's recorded ASAR storage", () => {
     status: "unknown",
     changes: [{ classification: "unknown", dimensions: ["availability"] }],
   });
+});
+
+it("names the constraint an unchanged comparison with changes violates", () => {
+  const changed = compareArtifacts(
+    ARTIFACT_COMPARISON_EXAMPLE.left,
+    ARTIFACT_COMPARISON_EXAMPLE.right,
+  );
+  expect(
+    artifactComparisonResultSchema.safeParse({
+      ...changed,
+      status: "unchanged",
+    }).error?.issues,
+  ).toMatchObject([
+    { path: ["status"], params: { constraint: "unchanged-has-no-changes" } },
+  ]);
 });
