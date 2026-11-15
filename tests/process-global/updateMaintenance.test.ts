@@ -100,6 +100,42 @@ const action = {
   commands: ["rea mcp"],
 };
 
+describe("caller-selected maintenance platform", () => {
+  it("reads client locations for the selected platform", async () => {
+    const other = HOST_PLATFORM.platform === "linux" ? "darwin" : "linux";
+    const desktop = (platform: NodeJS.Platform): string => {
+      const client = supportedClients(home, platform).find(
+        ({ name }) => name === "claude_desktop",
+      );
+      if (client === undefined) throw new Error("Missing Claude Desktop");
+      return client.configPath;
+    };
+    // Each platform keeps Claude Desktop's file in its own location.
+    expect(desktop(other)).not.toBe(desktop(HOST_PLATFORM.platform));
+    const path = desktop(other);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(
+      path,
+      JSON.stringify({
+        mcpServers: {
+          rea: { command: process.execPath, args: [entryPoint, "mcp"] },
+        },
+      }),
+    );
+    const scope = (platform: NodeJS.Platform) =>
+      existingMaintenanceScope(home, entryPoint, process.env, {
+        ...isolated(),
+        platform,
+      });
+    await expect(scope(other)).resolves.toMatchObject({
+      clients: expect.arrayContaining(["claude_desktop"]),
+    });
+    expect((await scope(HOST_PLATFORM.platform)).clients).not.toContain(
+      "claude_desktop",
+    );
+  });
+});
+
 describe("OMP integration maintenance", () => {
   it("refreshes an OMP entry that enabledServers forces on", async () => {
     const entry = { type: "stdio", command: entryPoint, args: ["mcp"] };
