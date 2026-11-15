@@ -3,7 +3,10 @@ import { GhidraProvider } from "../../../../src/ghidra/GhidraProvider.js";
 import { fixtureDosLoadImage } from "../../../../src/ghidra/GhidraLoadImage.fixture.js";
 import { jsonValueSchema } from "../../../../src/domain/jsonValue.js";
 import { artifactFilePrimaryFacts } from "../../../../src/artifacts/ArtifactFileOperation.js";
-import { AnalysisCancelledError } from "../../../../src/domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  OwnerCancellation,
+} from "../../../../src/domain/analysisErrorCore.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
@@ -2640,6 +2643,49 @@ it.each([null, "helper owner stopped"])(
     expect(result).toMatchObject({ ok: false, error: { kind: "cancelled" } });
     if (result.ok) throw new Error("Expected cancellation");
     expect(result.error.cancellation?.reason).toBe(reason);
+  },
+);
+
+it.each([
+  { interruption: "timeout", kind: "timeout" },
+  { interruption: "owner close", kind: "process" },
+] as const)(
+  "reports the aborted startup deadline's $interruption over a producer cancellation with its own reason",
+  async ({ interruption, kind }) => {
+    const controller = new AbortController();
+    const cancellation = new AnalysisCancelledError("open_binary", {
+      cause: "helper owner stopped",
+    });
+    const client = clientFor(
+      {
+        launch: async (_session, options) => {
+          if (options?.signal === undefined)
+            throw new Error("Expected owned startup signal");
+          if (interruption === "owner close")
+            controller.abort(OwnerCancellation.startupOwnerClosed);
+          if (!options.signal.aborted)
+            await new Promise<void>((resolve) =>
+              options.signal?.addEventListener("abort", () => resolve(), {
+                once: true,
+              }),
+            );
+          return err(
+            new GhidraLaunchError("producer helper cancelled", {
+              primaryFailure: cancellation,
+            }),
+          );
+        },
+      },
+      { startupTimeoutMs: interruption === "timeout" ? 50 : 60_000 },
+    );
+    const result = await client.start(controller.signal);
+    expect(result).toMatchObject({ ok: false, error: { kind } });
+    if (result.ok) throw new Error("Expected startup failure");
+    if (kind === "process")
+      expect(result.error.message).toContain(
+        "Ghidra session closed during startup",
+      );
+    expect(result.error.cancellation?.reason).not.toBe("helper owner stopped");
   },
 );
 

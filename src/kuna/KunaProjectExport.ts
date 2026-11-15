@@ -24,6 +24,7 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import type { ProviderFailureDialect } from "../providers/classifyProviderFailure.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   hashStableFile,
@@ -170,59 +171,71 @@ const isMissing = (cause: unknown): boolean =>
   "code" in cause &&
   (cause.code === "ENOENT" || cause.code === "ENOTDIR");
 
-/** Map an unexpected failure to a typed one, preferring cancellation. */
-export const kunaExportFailure = (
-  cause: unknown,
-  signal: AbortSignal | undefined,
-): AnalysisError => {
-  if (cause instanceof ArtifactReaderFailure) {
-    const { completion } = kunaCopyFailureFacts(cause);
-    const primary =
-      cause.reason === "cancelled" || completion?.cancellation !== undefined
-        ? cancelledBy(
-            KUNA_EXPORT_OPERATION,
-            carriedReason(
-              completion?.cancellation === undefined
-                ? artifactFileCancellationCause(cause)
-                : completion.cancellation.reason,
-            ),
-          )
-        : new ProviderAdapterError(KUNA_PROVIDER_ID, KUNA_EXPORT_OPERATION, {
-            cause,
-            userMessage: `Kuna project cache failed: ${message(cause)}`,
-          });
-    if (cause.cleanup === undefined) return primary;
-    const cleanup = new ProviderCleanupError(
-      KUNA_PROVIDER_ID,
-      cause.cleanup.resources,
-      { reason: cause.cleanup.reason },
-      { cause, operation: KUNA_EXPORT_OPERATION },
-    );
-    bindArtifactFileCleanup(cause, cleanup);
-    if (completion !== undefined && completion.cancellation === undefined)
-      return cleanup;
-    return analysisErrorWithCleanupFailure(
-      primary,
-      cleanup,
-      KUNA_EXPORT_OPERATION,
-    ).bindCleanupDependencies([cleanup]);
-  }
-  if (cause instanceof RegularFileCleanupFailure)
-    return kunaFileCleanupError(cause, KUNA_EXPORT_OPERATION);
-  const cancellation = regularFileCancellation(cause);
-  if (cancellation !== undefined)
-    return cancelledBy(
-      KUNA_EXPORT_OPERATION,
-      carriedReason(cancellation.reason),
-    );
-  if (cause instanceof AnalysisError) return cause;
-  if (!(cause instanceof StableFileHashFailure) && signal?.aborted === true)
-    return cancelledBy(KUNA_EXPORT_OPERATION, carriedReason(cause));
-  return new ProviderAdapterError(KUNA_PROVIDER_ID, KUNA_EXPORT_OPERATION, {
+const projectCacheFailure = (cause: unknown) =>
+  new ProviderAdapterError(KUNA_PROVIDER_ID, KUNA_EXPORT_OPERATION, {
     cause,
     userMessage: `Kuna project cache failed: ${message(cause)}`,
   });
+
+/** A project-cache read's own report, apart from its cleanup. */
+const projectCacheReadFailure = (read: ArtifactReaderFailure) => {
+  const { completion } = kunaCopyFailureFacts(read);
+  return read.reason === "cancelled" || completion?.cancellation !== undefined
+    ? cancelledBy(
+        KUNA_EXPORT_OPERATION,
+        carriedReason(
+          completion?.cancellation === undefined
+            ? artifactFileCancellationCause(read)
+            : completion.cancellation.reason,
+        ),
+      )
+    : projectCacheFailure(read);
 };
+
+/**
+ * How the project export reports a failure, preferring cancellation. The
+ * shared classifier keeps typed failures and a cancelled read; a failure
+ * while the caller's signal was aborted is that caller's cancellation.
+ */
+export const kunaExportFailureDialect = (
+  signal: AbortSignal | undefined,
+): ProviderFailureDialect => ({
+  providerId: KUNA_PROVIDER_ID,
+  operation: KUNA_EXPORT_OPERATION,
+  recognise: (cause) => {
+    if (cause instanceof RegularFileCleanupFailure)
+      return kunaFileCleanupError(cause, KUNA_EXPORT_OPERATION);
+    const cancellation = regularFileCancellation(cause);
+    return cancellation === undefined
+      ? undefined
+      : cancelledBy(KUNA_EXPORT_OPERATION, carriedReason(cancellation.reason));
+  },
+  readCleanup: (read) => {
+    const cleanup = new ProviderCleanupError(
+      KUNA_PROVIDER_ID,
+      read.cleanup.resources,
+      { reason: read.cleanup.reason },
+      { cause: read, operation: KUNA_EXPORT_OPERATION },
+    );
+    bindArtifactFileCleanup(read, cleanup);
+    // A completed read's cleanup is the only failure.
+    const { completion } = kunaCopyFailureFacts(read);
+    if (completion !== undefined && completion.cancellation === undefined)
+      return cleanup;
+    return analysisErrorWithCleanupFailure(
+      projectCacheReadFailure(read),
+      cleanup,
+      KUNA_EXPORT_OPERATION,
+    ).bindCleanupDependencies([cleanup]);
+  },
+  unclassified: (cause) => {
+    if (cause instanceof ArtifactReaderFailure)
+      return projectCacheReadFailure(cause);
+    if (!(cause instanceof StableFileHashFailure) && signal?.aborted === true)
+      return cancelledBy(KUNA_EXPORT_OPERATION, carriedReason(cause));
+    return projectCacheFailure(cause);
+  },
+});
 
 const unusable = (reason: string): KunaExportOutcome => ({
   kind: "done",

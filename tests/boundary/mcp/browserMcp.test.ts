@@ -173,21 +173,21 @@ it("preserves Link parameter order and context through the advertised MCP contra
     `${browser.allowedOrigin}/same-context`,
   ]);
 
-  const legacy = structuredClone(normalized);
-  for (const response of legacy.metadata.responses)
+  const contextless = structuredClone(normalized) as unknown as {
+    metadata: { responses: { links: Record<string, unknown>[] }[] };
+  };
+  for (const response of contextless.metadata.responses)
     for (const projectedLink of response.links) {
       delete projectedLink.context_url;
       delete projectedLink.context_scope;
     }
-  expect(webPageInspectionSchema.safeParse(legacy).success).toBe(true);
-  const legacyStructuredContent = {
-    ...(inspected.structuredContent as Record<string, unknown>),
-    normalized_result: legacy,
-  };
+  expect(webPageInspectionSchema.safeParse(contextless).success).toBe(false);
   expect(
-    ajv.validate(outputSchema, legacyStructuredContent),
-    JSON.stringify(ajv.errors),
-  ).toBe(true);
+    ajv.validate(outputSchema, {
+      ...(inspected.structuredContent as Record<string, unknown>),
+      normalized_result: contextless,
+    }),
+  ).toBe(false);
 });
 
 cliTest(

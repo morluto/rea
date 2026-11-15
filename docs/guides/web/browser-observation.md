@@ -25,7 +25,7 @@ authority are validated independently before selection and connection.
 - `inspect_web_page` / `rea inspect-web-page` captures DOM structure, accessibility nodes, scripts, resources, safe response/DOM metadata, attach-window network and console metadata, WebSocket frame sizes, workers, quota, and optionally selected storage key names, redacted storage-content fingerprints, or script sources.
 - `analyze_web_bundle` / `rea analyze-web-bundle` parses selected script artifacts without execution and derives chunk edges, route and endpoint candidates, vendor fingerprints, static WebMCP declarations, and optionally source-map/original-source evidence.
 - `observe_web_session` / `rea observe-web-session` arms an observation window of the requested duration for an external user action and records ordered reload, SPA navigation, redirect, failure, lifecycle, and target-termination metadata.
-- `discover_webmcp_tools` / `rea discover-webmcp-tools` uses the experimental CDP WebMCP domain to return observed in-scope registrations and their complete observed `input_schema` declaration and canonical `input_schema_sha256` digest inline. Declarations are untrusted JSON data, including declared types, required fields, enums, examples and reference URLs. REA does not resolve schema references. An omitted optional `inputSchema` is a valid parameterless registration, represented by null schema and digest. These fields replace `input_schema_shape`. Registrations with the same name and URL in distinct observed frames retain separate identities. `tool_key` includes the observed frame ID; it is not a stable identity across navigation or browser sessions. Same-frame registration updates replace that owner only, and removal leaves other owners intact. Declared `readOnly`, `untrustedContent`, `consequential`, and `autosubmit` annotation hints are reported per registration: `true`/`false` are declared values, `null` means the declaration did not provide the hint in that capture, and a missing `consequential` key means the hint was not recorded, either in a historical capture or because the observed annotation was invalid. Consult discovery completeness and exclusions to distinguish these cases. Malformed annotation values or registration stacks retain the registration with incomplete coverage and an `invalid_protocol_value` exclusion. Other malformed protocol payloads can fail discovery explicitly. REA never exposes `WebMCP.invokeTool`.
+- `discover_webmcp_tools` / `rea discover-webmcp-tools` uses the experimental CDP WebMCP domain to return observed in-scope registrations and their complete observed `input_schema` declaration and canonical `input_schema_sha256` digest inline. Declarations are untrusted JSON data, including declared types, required fields, enums, examples and reference URLs. REA does not resolve schema references. An omitted optional `inputSchema` is a valid parameterless registration, represented by null schema and digest. These fields replace `input_schema_shape`. Registrations with the same name and URL in distinct observed frames retain separate identities. `tool_key` includes the observed frame ID; it is not a stable identity across navigation or browser sessions. Same-frame registration updates replace that owner only, and removal leaves other owners intact. Declared `readOnly`, `untrustedContent`, `consequential`, and `autosubmit` annotation hints are reported per registration: `true`/`false` are declared values, `null` means the declaration did not provide the hint in that capture, and a missing `consequential` key means the observed annotation was invalid, so the hint was not recorded. Consult discovery completeness and exclusions to distinguish these cases. Malformed annotation values or registration stacks retain the registration with incomplete coverage and an `invalid_protocol_value` exclusion. Other malformed protocol payloads can fail discovery explicitly. REA never exposes `WebMCP.invokeTool`.
 
 - `compare_web_captures` / `rea compare-web-captures` compares passive captures or exact-step-aligned browser scenarios. Scenario results commit reproducible literal normalization and expose alignment failures plus artifact-level action, screenshot, DOM, accessibility, URL, history, storage, and event differences. Missing or truncated evidence is never treated as equivalence.
 
@@ -47,9 +47,8 @@ properties owner could not be enumerated as an object literal, including
 explicit non-object values; `not_present` means no effective schema or own
 `properties` member was present after the `inputSchema ?? input_schema` alias
 selection. `not_present` describes this projection only: it does not validate a
-schema or rule out properties expressed through other schema constructs. Older
-observations may omit the coverage field; treat omission as `unknown` rather
-than inferring completeness from the array.
+schema or rule out properties expressed through other schema constructs. Read
+the coverage field rather than inferring completeness from the array.
 
 Passive DOM comparison checks complete node inventories and complete frame
 parent/child structure independently. Node value lengths are comparable only
@@ -98,14 +97,10 @@ content. Actual JSON properties with those names remain content. Reference-only
 objects, unsupported values, and opaque cookie partition identities remain
 incomplete. Previously exported fingerprints are not recomputed; recapture both
 sides when comparing captures produced across this decoder change.
-IndexedDB schema fingerprints with `projection_version: 2` include the observed
-database version and object-store definitions. A missing, malformed, or imprecise
-version leaves the schema fingerprint incomplete while retaining observed store
-facts. Historical fingerprints without this marker covered object stores only:
-matching historical hashes cannot establish unchanged database versions, and a
-historical hash is not compared with a version-bearing hash. Recapture both
-sides for a complete IndexedDB version comparison; other proven storage changes
-remain reportable.
+IndexedDB schema fingerprints carry `projection_version: 2` and include the
+observed database version and object-store definitions. A missing, malformed, or
+imprecise version leaves the schema fingerprint incomplete while retaining
+observed store facts.
 
 Script comparison groups observations by reported URL and compares unordered
 content samples. Producer inventory keys include optional metadata, so a changed
@@ -468,7 +463,7 @@ agent hint is emitted only when the resolved context matches the response URL
 before userinfo credentials are removed. Following [RFC 8288](https://www.rfc-editor.org/rfc/rfc8288.html),
 the `rel`, `anchor`, and `type` parameters use their first occurrence, and
 quoted-pair escapes are decoded as specified by [RFC 9110 §5.6.4](https://www.rfc-editor.org/rfc/rfc9110.html#section-5.6.4).
-The context fields are optional when reading older saved captures. Commas
+Commas
 inside URI targets or quoted parameters remain part of those values.
 Well-known-resource hints require an exact supported pathname; path case is
 preserved because a case variant may identify a different HTTP resource.
@@ -655,13 +650,12 @@ Source maps are not fetched by inspection. Bundle analysis fetches them only whe
 A fully read response that fails UTF-8, JSON, mapping, or structural validation
 retains `artifact: null`, empty original-source, module-edge, and mapping
 arrays, and an explicit failure limitation. Invalid content is `invalid`;
-decoder or structural capacity refusal is `fetch_failed`. Its optional
-`response_identity` records the complete body's SHA-256 digest, byte count,
+decoder or structural capacity refusal is `fetch_failed`. Its
+`response_identity`, always present on an `invalid` item, records the complete body's SHA-256 digest, byte count,
 and `fetch-response-body-bytes` representation without retaining malformed
 text or charging that text to the 32 MiB output budget. These are bytes
 delivered by Fetch after HTTP content decoding and before UTF-8 decoding, not
-HTTP wire bytes. The identity is absent when the body was not fully read, and
-older observations may omit it. A response whose text cannot fit the existing
+HTTP wire bytes. A `fetch_failed` item omits the identity when the body was not fully read. A response whose text cannot fit the existing
 output budget is likewise `fetch_failed` with text omitted and completed-body
 identity; JSON parsing and source-map decoding are not attempted. Successful and partial maps keep their
 full text artifacts. Their original text, including an initial BOM or XSSI
@@ -691,8 +685,6 @@ Source-map items retain the script's `declared_url` separately from the observed
 Failed fetches retain the last response URL observed within the approved origins;
 `effective_url` is `null` when no response was observed. Query parameters are
 preserved, and both URLs count toward the inline evidence budget.
-Current fetches emit a string or null; historical observations may omit
-`effective_url` without changing their stored content or Evidence identity.
 An observed URL must fit before its response body is read. If it cannot fit,
 remaining map results are explicitly unknown; failed cancellation retains its
 cleanup context and resource constraint.
