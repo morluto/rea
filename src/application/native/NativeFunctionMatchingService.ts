@@ -8,7 +8,11 @@ import {
   matchNativeFunctionsInputSchema,
   type MatchNativeFunctionsInput,
 } from "../../contracts/native/functionMatchingContracts.js";
-import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import {
+  createEvidence,
+  evidenceFileTarget,
+  type Evidence,
+} from "../../domain/evidence.js";
 import { readFunctionInventory } from "../../domain/native/functionInventory.js";
 import {
   nativeFunctionMatchingSchema,
@@ -87,9 +91,11 @@ const matchWithAdmission = async (
     rightObservations,
     checkpoint,
   );
+  const leftTarget = evidenceFileTarget(left);
+  const rightTarget = evidenceFileTarget(right);
   const compatible =
-    left.subject?.architecture != null &&
-    left.subject.architecture === right.subject?.architecture;
+    leftTarget?.architecture != null &&
+    leftTarget.architecture === rightTarget?.architecture;
   const { matches, summary } = await matchFunctionInventories(
     leftFunctions,
     rightFunctions,
@@ -145,12 +151,12 @@ const matchWithAdmission = async (
   const report = nativeFunctionMatchingSchema.parse({
     left: {
       evidence_id: left.evidence_id,
-      sha256: left.subject!.digest.sha256,
+      sha256: leftTarget!.sha256,
       functions: leftFunctions.length,
     },
     right: {
       evidence_id: right.evidence_id,
-      sha256: right.subject!.digest.sha256,
+      sha256: rightTarget!.sha256,
       functions: rightFunctions.length,
     },
     scope: "provider-observed-inputs",

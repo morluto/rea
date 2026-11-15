@@ -22,6 +22,7 @@ import {
 import { isCallerOnlyIncompleteCoverage } from "./functionCallCoverage.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 import { appendAll } from "./appendAll.js";
+import { sameTargetIdentity } from "./targetIdentity.js";
 
 /** Minimal directed caller-to-callee adjacency for call-path search. */
 class CallGraph {
@@ -218,11 +219,7 @@ const assertCompatible = (
   if (firstEntry.done) return;
   const first = firstEntry.value;
   for (const snapshot of snapshots.values()) {
-    if (
-      snapshot.subject.digest.sha256 !== first.subject.digest.sha256 ||
-      snapshot.subject.format !== first.subject.format ||
-      snapshot.subject.architecture !== first.subject.architecture
-    )
+    if (!sameTargetIdentity(snapshot.target, first.target))
       throw invalidCallPathSelection(
         ["functions"],
         "Call-path Evidence mixes artifact subjects",
