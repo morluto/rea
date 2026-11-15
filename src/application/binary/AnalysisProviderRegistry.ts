@@ -20,6 +20,7 @@ import {
   AnalysisUnsupportedTargetError,
 } from "../../domain/analysisErrorCore.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { AnalysisCleanupRelease } from "../../domain/analysisCleanupRelease.js";
 import {
   ProviderSelectionError,
   type ProviderSelectionErrorOptions,
@@ -132,9 +133,10 @@ export class AnalysisProviderRegistry {
     >
   >();
   readonly #selectionCleanup = new Set<AnalysisError>();
+  /** Each candidate's unconfirmed resource close; its failures read it. */
   readonly #candidateCleanup = new Map<
     AnalysisProviderCandidate,
-    Set<AnalysisError>
+    AnalysisCleanupRelease
   >();
   readonly #profileResources = new ArtifactResourceScope();
   readonly #profileOwner: RetainedResourceScope = {
@@ -267,8 +269,7 @@ export class AnalysisProviderRegistry {
         result = err(cause);
       }
       if (result.ok) {
-        for (const failure of this.#candidateCleanup.get(provider) ?? [])
-          failure.resolveCleanup();
+        this.#candidateCleanup.get(provider)?.confirm();
         this.#candidateCleanup.delete(provider);
       } else {
         const failure =
@@ -290,9 +291,10 @@ export class AnalysisProviderRegistry {
                 },
               );
         failures.push(failure);
-        const retained = this.#candidateCleanup.get(provider) ?? new Set();
-        retained.add(failure);
-        this.#candidateCleanup.set(provider, retained);
+        const release =
+          this.#candidateCleanup.get(provider) ?? new AnalysisCleanupRelease();
+        release.bind(failure);
+        this.#candidateCleanup.set(provider, release);
         this.#selectionCleanup.add(failure);
       }
     }

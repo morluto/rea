@@ -397,7 +397,6 @@
   },
   "cleanup-resolve-push": {
     "src/android/JadxProvider.ts": 2,
-    "src/application/binary/AnalysisProviderRegistry.ts": 1,
     "src/application/binary/BinarySession.ts": 1,
     "src/application/desktop/DesktopBuildComputers.ts": 1,
     "src/application/desktop/DesktopRemoteTaskReaders.ts": 1,
