@@ -350,9 +350,8 @@ export const contractDocumentCommandDescriptions = (
 const refusedDocumentFieldError = (
   operation: string,
   refusals: Readonly<Record<string, string>>,
-  document: unknown,
+  document: object,
 ): AnalysisError | undefined => {
-  if (typeof document !== "object" || document === null) return undefined;
   const issues = Object.entries(refusals)
     .filter(([field]) => Object.hasOwn(document, field))
     .map(([field, message]) => ({
@@ -425,11 +424,16 @@ export const registerContractDocumentCommand = <
             signal,
           );
           if (!decoded.ok) return decoded.error;
-          const refused = refusedDocumentFieldError(
-            contract.name,
-            description.documentRefusals,
-            decoded.value,
-          );
+          // A document that is not an object has no fields to refuse; the
+          // contract refuses it.
+          const refused =
+            typeof decoded.value === "object" && decoded.value !== null
+              ? refusedDocumentFieldError(
+                  contract.name,
+                  description.documentRefusals,
+                  decoded.value,
+                )
+              : undefined;
           if (refused !== undefined) return projectAnalysisError(refused);
           return run(
             resolveCliJsonPaths(decoded.value, description.callerPaths),
