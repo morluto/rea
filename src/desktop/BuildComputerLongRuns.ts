@@ -292,9 +292,9 @@ export class BuildComputerLongRuns {
       ...(typeof answer.stdout_bytes === "number"
         ? { stdout_bytes: answer.stdout_bytes }
         : {}),
-      ...(typeof answer.exit_code === "number"
-        ? { exit_code: answer.exit_code }
-        : {}),
+      ...(answer.exit_code === undefined
+        ? {}
+        : { exit_code: answer.exit_code }),
       ...(typeof answer.stderr === "string" ? { stderr: answer.stderr } : {}),
       ...(typeof answer.error === "string" ? { error: answer.error } : {}),
       ...(answer.timed_out === undefined

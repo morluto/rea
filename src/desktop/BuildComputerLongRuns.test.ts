@@ -322,9 +322,13 @@ it("retains an unsettled finished command until computer teardown clears it", as
   expect(failure.cleanupIncomplete).toBe(false);
 });
 
-it.each(["pending", "transport failure"])(
-  "keeps a polled command receipt when cancellation returns %s",
-  async (cancelOutcome) => {
+it.each([
+  { cancelOutcome: "pending", exitCode: 0 },
+  { cancelOutcome: "transport failure", exitCode: 0 },
+  { cancelOutcome: "transport failure", exitCode: null },
+])(
+  "keeps a polled command receipt after $cancelOutcome (exit: $exitCode)",
+  async ({ cancelOutcome, exitCode }) => {
     const computer = {
       exec: async (argv: readonly string[]) => {
         if (argv[4] === "run-begin") return response({ started: true });
@@ -332,7 +336,7 @@ it.each(["pending", "transport failure"])(
           return response({
             finished: true,
             settled: false,
-            exit_code: 0,
+            exit_code: exitCode,
             stdout_bytes: 9,
             stderr: "observed output",
             timed_out: true,
@@ -360,7 +364,7 @@ it.each(["pending", "transport failure"])(
       throw new Error("expected retained cleanup");
     const expected = {
       completed_command: {
-        exit_code: 0,
+        exit_code: exitCode,
         stdout_bytes: 9,
         stderr: "observed output",
         settled: false,
