@@ -324,6 +324,7 @@ export const ENTRY_FILES = Object.freeze(
       javascript: [
         "analysis/JavaScriptAnalysisTransfer.ts",
         "analysis/JavaScriptAnalysisWorkerServer.ts",
+        "analysis/JavaScriptSourceAnalysis.ts",
         "recovery/WakaruCommand.ts",
         "recovery/WakaruProvider.ts",
         "recovery/WakaruProviderIdentity.ts",

@@ -21,7 +21,6 @@
     "android -> native": 1,
     "apktool -> artifacts": 2,
     "artifacts -> dotnet": 3,
-    "artifacts -> javascript": 1,
     "artifacts -> native": 2,
     "browser -> artifacts": 6,
     "browser -> electron": 5,
@@ -42,7 +41,7 @@
     "rust -> native": 2
   },
   "entry": {
-    "application -> artifacts": 9,
+    "application -> artifacts": 7,
     "application -> browser": 2,
     "application -> desktop": 41,
     "application -> frida": 2,
