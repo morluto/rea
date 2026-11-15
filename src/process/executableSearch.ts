@@ -28,31 +28,28 @@ export type RelativePathEntries =
  * resolves against it. `..` is kept for the filesystem to resolve after any
  * symbolic link. Each caller decides how a candidate is probed and how a
  * failed probe is reported; this owner fixes only the search order.
+ * Candidates are produced on demand: stop iterating at the first match.
  */
-export const posixPathCandidates = (
+export function* posixPathCandidates(
   command: string,
   searchPath: string,
   selection: RelativePathEntries,
-): readonly PathSearchCandidate[] =>
-  searchPath.split(posix.delimiter).flatMap((directory) => {
+): Generator<PathSearchCandidate, void, undefined> {
+  // Lazy, so an entry after the first match is never resolved: resolving a
+  // relative entry reads the working directory, which may no longer exist.
+  for (const directory of searchPath.split(posix.delimiter)) {
     const relativeEntry = !posix.isAbsolute(directory);
-    if (relativeEntry && selection.relativeEntries === "skip") return [];
+    if (relativeEntry && selection.relativeEntries === "skip") continue;
     const workingDirectory =
       selection.relativeEntries === "resolve"
         ? selection.workingDirectory
         : undefined;
-    return [
-      {
-        path: absoluteCallerPath(
-          appendCallerPath(directory, command, "linux"),
-          {
-            ...(workingDirectory === undefined
-              ? {}
-              : { cwd: workingDirectory }),
-            platform: "linux",
-          },
-        ),
-        relativeEntry,
-      },
-    ];
-  });
+    yield {
+      path: absoluteCallerPath(appendCallerPath(directory, command, "linux"), {
+        ...(workingDirectory === undefined ? {} : { cwd: workingDirectory }),
+        platform: "linux",
+      }),
+      relativeEntry,
+    };
+  }
+}

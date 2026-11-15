@@ -570,13 +570,13 @@ const installationCoordinates = async (
         command: platform === "win32" ? "java.exe" : "java",
       };
     // Check the caller's PATH, never a file named java in the working directory.
-    const javaOnPath = posixPathCandidates(
+    for (const { path: javaOnPath } of posixPathCandidates(
       "java",
       options.environment.PATH ?? "",
       { relativeEntries: "skip" },
-    ).find(({ path: candidate }) => host.executable(candidate))?.path;
-    if (javaOnPath !== undefined)
-      return { source: "path", command: javaOnPath };
+    ))
+      if (host.executable(javaOnPath))
+        return { source: "path", command: javaOnPath };
     const homebrew = homebrewJavaCandidates()[0];
     return homebrew === undefined
       ? { source: "default", command: "/usr/bin/java" }

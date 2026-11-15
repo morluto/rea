@@ -595,23 +595,21 @@ const resolveJava = async (
     // Resolve in the caller's directory once. The module probe and the engine
     // run in different directories, and the selected executable also owns the
     // retained session's cache identity. Empty POSIX PATH components select cwd.
-    const candidates = windows
+    const candidates: Iterable<{ readonly path: string }> = windows
       ? path
           .split(win32.delimiter)
           .filter((entry) => entry !== "")
           // Windows PATH commonly quotes individual entries containing spaces.
-          .map((directory) =>
-            resolve(
+          .map((directory) => ({
+            path: resolve(
               directory.startsWith('"') && directory.endsWith('"')
                 ? directory.slice(1, -1)
                 : directory,
               executable,
             ),
-          )
-      : posixPathCandidates(executable, path, {
-          relativeEntries: "resolve",
-        }).map(({ path: candidate }) => candidate);
-    for (const candidate of candidates) {
+          }))
+      : posixPathCandidates(executable, path, { relativeEntries: "resolve" });
+    for (const { path: candidate } of candidates) {
       throwIfJadxInterrupted(signal);
       try {
         await access(
