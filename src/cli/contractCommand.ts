@@ -289,8 +289,9 @@ export const runDirectOnTarget =
 /**
  * Run the source contract on each Evidence target in argv order with the
  * source fields the caller selected, then compose the contract from that
- * Evidence. A target's failure names its positional; a later failure
- * retains the first target's completed Evidence.
+ * Evidence. A target's failure names its positional; any failure retains
+ * each completed target's Evidence under its contract field beside the
+ * failure's own partial observation.
  */
 export const runOnEvidenceTargets =
   (
@@ -313,24 +314,22 @@ export const runOnEvidenceTargets =
     // Argv values are decoded text, and absent options are left out.
     const parameters = context.opening as Readonly<Record<string, JsonValue>>;
     const sources: Record<string, Evidence> = {};
-    let first: Evidence | undefined;
+    const retainSources = (failure: AnalysisError) => {
+      for (const [field, evidence] of Object.entries(sources))
+        failure.retainArgumentObservation(field, evidence);
+      return failure;
+    };
     for (const { field, key, target } of evidenceTargets.targets) {
       const source = await runSource(target, parameters, signal);
-      if (!source.ok) {
-        const failure =
-          first === undefined
-            ? source.error
-            : source.error.retainPartialObservation(first);
+      if (!source.ok)
         return projectCliInputFields(
           {
             error: "Analysis failed",
-            ...projectAnalysisError(failure, "invocation"),
+            ...projectAnalysisError(retainSources(source.error), "invocation"),
           },
           { operation: evidenceTargets.source, fields: { path: key } },
         );
-      }
       sources[field] = source.value;
-      first ??= source.value;
     }
     // A cancellation that arrives as the composition settles keeps its
     // most complete Evidence. The composition owns no resource of its own,
@@ -365,13 +364,9 @@ export const runOnEvidenceTargets =
       ),
     );
     if (result.ok) return result.value;
-    const failure =
-      first === undefined
-        ? result.error
-        : result.error.retainPartialObservation(first);
     return {
       error: "Analysis failed",
-      ...projectAnalysisError(failure, "invocation"),
+      ...projectAnalysisError(retainSources(result.error), "invocation"),
     };
   };
 
