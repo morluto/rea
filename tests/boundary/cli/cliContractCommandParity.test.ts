@@ -325,6 +325,9 @@ const MIGRATED_COMMANDS = [
   "inspect-managed-artifact",
   "inspect-managed-members",
   "inspect-managed-native-boundaries",
+  "list-frida-devices",
+  "list-frida-processes",
+  "instrument-with-frida",
 ];
 
 describe("CLI commands projected from tool contracts", () => {
@@ -342,6 +345,7 @@ describe("CLI commands projected from tool contracts", () => {
           ...new Set(description.parameters.map(({ field }) => field)),
           ...Object.keys(description.omitted),
           ...targetFields(description),
+          ...description.handlerFields,
         ]
           .toSorted()
           .join(),
@@ -361,6 +365,7 @@ describe("CLI commands projected from tool contracts", () => {
         ...description.parameters
           .filter(({ positional }) => positional)
           .map(({ key }) => key),
+        ...description.cliPositionals.map(({ key }) => key),
       ]);
       // A routed command takes the union of its routes' options.
       const routes = descriptions.filter(
@@ -458,8 +463,12 @@ describe("CLI commands projected from tool contracts", () => {
         if (runtimeJson !== undefined && typeof values[key] === "string")
           values[key] = JSON.parse(values[key]) as unknown;
       const input = description.toContractInput(values);
-      // The handler supplies each Evidence target's field from its source.
-      const targets = new Set(targetFields(description));
+      // The handler supplies each Evidence target's field from its source,
+      // and each handler field from CLI-only values.
+      const targets = new Set([
+        ...targetFields(description),
+        ...description.handlerFields,
+      ]);
       const admitted =
         targets.size === 0
           ? description.contract.inputSchema
@@ -528,6 +537,61 @@ describe("CLI-only options of contract commands", () => {
       }
     },
   );
+
+  it("takes CLI-only positionals after the contract's and leaves handler fields to the handler", () => {
+    const contract = {
+      name: "probe",
+      inputSchema: z.object({
+        mode: z.enum(["a", "b"]),
+        id: z.number().optional(),
+        kind: z.enum(["x", "y"]),
+        value: z.string().optional(),
+      }),
+    };
+    const described = describeContractCommand(contract, {
+      command: "probe",
+      description: "Probe",
+      positionals: ["mode"],
+      cliOptions: { target: z.string().min(1) },
+      cliPositionals: ["target"],
+      handlerFields: ["id", "kind"],
+    });
+    expect(described.parameters.map(({ field }) => field)).toEqual([
+      "mode",
+      "value",
+    ]);
+    expect(described.cliPositionals.map(({ key }) => key)).toEqual(["target"]);
+    expect(described.cliOnlyOptions).toEqual([]);
+    expect(described.handlerFields).toEqual(["id", "kind"]);
+    expect(
+      described.toContractInput({ mode: "a", target: "7", value: "v" }),
+    ).toEqual({ mode: "a", value: "v" });
+    expect(described.cliOptionValues({ mode: "a", target: "7" })).toEqual({
+      target: "7",
+    });
+    expect(() =>
+      describeContractCommand(contract, {
+        command: "probe",
+        description: "Probe",
+        cliPositionals: ["missing" as never],
+      }),
+    ).toThrow("probe has no CLI option missing");
+    expect(() =>
+      describeContractCommand(contract, {
+        command: "probe",
+        description: "Probe",
+        handlerFields: ["kind"],
+        fields: { kind: { name: "k" } },
+      }),
+    ).toThrow("probe.kind is filled by the handler");
+    expect(() =>
+      describeContractCommand(contract, {
+        command: "probe",
+        description: "Probe",
+        handlerFields: ["absent" as never],
+      }),
+    ).toThrow("probe has no input field absent");
+  });
 
   it("refuses CLI-only options that collide with or depend on unknown keys", () => {
     const contract = {
@@ -682,24 +746,31 @@ describe("Flattened object fields of contract commands", () => {
   it.each(flattening)(
     "%s supplies the whole object when any member is given",
     (_command, description) => {
-      const members = description.parameters.filter(
-        ({ member }) => member !== undefined,
+      const fields = new Set(
+        description.parameters.flatMap(({ field, member }) =>
+          member === undefined ? [] : [field],
+        ),
       );
-      const field = members[0]!.field;
-      expect(
-        field in description.toContractInput(argvValues(description, {})),
-      ).toBe(false);
-      for (const given of members) {
-        const value = requiredValue(description, given);
-        const input = description.toContractInput(
-          argvValues(description, { [given.key]: value }),
+      for (const field of fields) {
+        const members = description.parameters.filter(
+          (parameter) =>
+            parameter.field === field && parameter.member !== undefined,
         );
-        expect(Object.keys(input[field] as object).toSorted()).toEqual(
-          members.map(({ member }) => member).toSorted(),
-        );
-        expect((input[field] as Record<string, unknown>)[given.member!]).toBe(
-          value,
-        );
+        expect(
+          field in description.toContractInput(argvValues(description, {})),
+        ).toBe(false);
+        for (const given of members) {
+          const value = requiredValue(description, given);
+          const input = description.toContractInput(
+            argvValues(description, { [given.key]: value }),
+          );
+          expect(Object.keys(input[field] as object).toSorted()).toEqual(
+            members.map(({ member }) => member).toSorted(),
+          );
+          expect((input[field] as Record<string, unknown>)[given.member!]).toBe(
+            value,
+          );
+        }
       }
     },
   );
