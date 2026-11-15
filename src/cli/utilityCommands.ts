@@ -133,7 +133,7 @@ const registerNativeCommands = (
       command: CLI_COMMANDS.inspectMacho,
       description: "Run inspect_macho without launching Hopper",
       sessionTarget: machoTarget,
-      omit: { detail: "The CLI returns the complete inspection Evidence" },
+      evidenceDelivery: true,
     },
     run,
   );

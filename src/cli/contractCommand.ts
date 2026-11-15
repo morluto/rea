@@ -147,7 +147,6 @@ export const runOnSessionTarget =
   (
     runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
     logger: Logger,
-    providerId?: string,
   ) =>
   async (input: object, context: ContractCommandContext) => {
     const { sessionTarget, operation, signal, delivery, opening } = context;
@@ -175,10 +174,7 @@ export const runOnSessionTarget =
         ));
     if (delivery === undefined)
       return projectCliAnalysisResult(result, context.inputBinding);
-    if (providerId === undefined)
-      throw new Error(`${operation} delivers Evidence without a provider`);
     return publishCliAnalysisEvidence(result, {
-      providerId,
       operation,
       signal,
       detail: delivery.detail,
@@ -262,7 +258,6 @@ export const runDirectOnTarget =
         ).retainPartialObservation(result.value),
       );
     return publishCliAnalysisEvidence(result, {
-      providerId: "auto",
       operation,
       signal,
       detail: delivery.detail,

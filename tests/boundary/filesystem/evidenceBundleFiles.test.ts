@@ -207,7 +207,6 @@ it("preserves tagged refusal JSON without interpreting Evidence-shaped fields", 
   const delivered = await publishCliAnalysisEvidence(
     { ok: false, error: refusal },
     {
-      providerId: "fixture",
       operation: "inspect_artifact",
       signal: new AbortController().signal,
       detail: "summary",
@@ -254,7 +253,6 @@ it("preserves direct duplicate rejection and CLI identity merging for repeated i
   const delivered = await publishCliAnalysisEvidence(
     { ok: true, value: complete },
     {
-      providerId: "fixture",
       operation: "inspect_artifact",
       signal: new AbortController().signal,
       detail: "complete",
@@ -292,7 +290,6 @@ it("retains a malformed artifact parent and refuses publication through both del
   const cli = await publishCliAnalysisEvidence(
     { ok: true, value: evidence },
     {
-      providerId: "fixture",
       operation: "inspect_artifact",
       signal: new AbortController().signal,
       detail: "complete",
