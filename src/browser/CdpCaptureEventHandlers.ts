@@ -10,14 +10,11 @@ import {
   readCdpScriptParsed,
   selectCdpScriptFrame,
 } from "./CdpScriptContextFacts.js";
-import {
-  selectCdpFrameIdentity,
-  cdpFrameEventFacts,
-} from "./CdpFrameIdentity.js";
+import { selectCdpFrameIdentity } from "./CdpFrameIdentity.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
-import { observeCdpFrameUrl } from "./CdpCaptureDocuments.js";
-import { observedFrameUrl } from "./protocol/CdpFrameTree.js";
+import type { CdpFrameEvent } from "./protocol/CdpEvents.js";
+import { observedFrameUrl, reportedFrameUrl } from "./protocol/CdpFrameTree.js";
 import {
   inferJsonShape,
   type JsonShapeCapacityFailure,
@@ -738,14 +735,10 @@ export const handleWebSocketCreated = (
 
 export const handleFrameNavigated = (
   state: CdpCaptureEventsState,
-  params: unknown,
+  { facts: frameFacts, url }: CdpFrameEvent,
 ): void => {
   const document = state.document;
   if (document === undefined) return;
-  const frameFacts = cdpFrameEventFacts({
-    method: "Page.frameNavigated",
-    params,
-  });
   const identity = selectCdpFrameIdentity(frameFacts, document.current.frameId);
   if (identity.identityIssue !== null || identity.parentIssue !== null) {
     state.completeness.exclude("frames", "invalid_protocol_value");
@@ -774,10 +767,10 @@ export const handleFrameNavigated = (
   const comparison = document.observe({
     frameId: identity.frameId,
     loaderId: frameFacts.loaderId,
-    url: observedFrameUrl(observeCdpFrameUrl(frameFacts.source)),
+    url: observedFrameUrl(url),
   });
   if (comparison === "same") return;
-  const rawUrl = cdpStringValue(frameFacts.source?.url);
+  const rawUrl = reportedFrameUrl(url);
   if (
     isHttpUrl(rawUrl) &&
     allowedSanitizedUrl(rawUrl, state.allowedOrigins) === undefined
