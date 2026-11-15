@@ -480,6 +480,16 @@ checkCounted(
   /\.bindCleanupDependencies\(/gu,
   ["src/domain/analysisErrorBase.ts"],
 );
+// A launcher's PATH search order (POSIX empty and relative entries and `..`;
+// Windows quoted entries and PATHEXT) belongs to src/process/executableSearch;
+// callers choose only how they probe each candidate.
+checkCounted(
+  "PATH or PATHEXT split outside the executable search owner (use posixPathCandidates or windowsPathCandidates from src/process/executableSearch)",
+  "path-search-split",
+  files,
+  /\.split\(\s*(?:posix\.|win32\.)?(?:delimiter|pathDelimiter)\s*\)|\bPATH\b[^\n]{0,12}\.split\(":"\)|\bPATHEXT\b[^\n]{0,60}\.split\(/gu,
+  ["src/process/executableSearch.ts"],
+);
 
 // The running host is read once by src/platform/HostPlatform; composition
 // takes it from there and passes the platform or architecture on as a

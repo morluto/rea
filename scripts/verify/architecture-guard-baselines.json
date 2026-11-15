@@ -441,6 +441,9 @@
     "src/sqlite/SqliteDatabaseWorkerExecution.ts": 2,
     "src/wasm/WabtArtifactProvider.ts": 1
   },
+  "path-search-split": {
+    "src/process/capture/ProcessScenarioRuntimeValidation.ts": 1
+  },
   "ambient-host-platform": {
     "src/adb/AdbConfiguration.ts": 1,
     "src/adb/AdbDeviceOutput.ts": 1,
