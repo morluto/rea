@@ -119,17 +119,22 @@ const IOS_FAMILY_CODE_LOCATIONS = [["Frameworks"], ["PlugIns"]] as const;
  * Evaluate the placement rules whose facts the anatomy owns: observed layout,
  * entry kind, path, and Mach-O content format from magic. Archive members
  * (paths below another inventoried file, including an application found
- * inside an inventoried archive) are not placed in the bundle.
+ * inside an inventoried archive) are not placed in the bundle. Partial pages
+ * can list an archive's members without the archive, so there a path is
+ * placed only below listed directories; otherwise its membership is unknown.
  */
 export const projectAppleBundlePlacement = (
   anatomy: AppleBundleAnatomy,
   inventoryComplete: boolean,
 ): AppleBundlePlacement => {
   const { tree, bundles } = anatomy;
-  const placement = placementScope(anatomy);
-  const evaluated = bundles.filter(
-    ({ path }) => placement.ancestors(path) !== null,
-  );
+  const placement = placementScope(anatomy, inventoryComplete);
+  const unplaced: string[] = [];
+  const evaluated = bundles.filter(({ path }) => {
+    const scope = placement.directory(path);
+    if (scope === "unknown") unplaced.push(path);
+    return scope !== null && scope !== "unknown";
+  });
   const bundlePaths = new Set(bundles.map(({ path }) => path));
   const targets = [
     ...evaluated.flatMap((bundle) => frameworkRootContent(bundle, tree)),
@@ -147,12 +152,12 @@ export const projectAppleBundlePlacement = (
         ),
       ),
     ),
-    { bundlePaths, targets },
+    { bundlePaths, targets, unplaced },
   );
   const groupingBundles = evaluated.filter(
     (bundle) => codeLocationNames(bundle).length > 0,
   ).length;
-  const coverage = ruleCoverage(inventoryComplete);
+  const coverage = ruleCoverage(inventoryComplete, unplaced);
   const findings = [
     ...scanned.findings,
     ...targets.filter(
@@ -198,26 +203,44 @@ export const projectAppleBundlePlacement = (
   };
 };
 
+/**
+ * Proper ancestors, outermost first; null when the path is outside every
+ * application root or below an inventoried file such as an archive; "unknown"
+ * when partial pages leave an enclosing path unlisted.
+ */
+type Placement = string[] | null | "unknown";
+
 /** Paths inside an application root, excluding members of inventoried files such as archives. */
 interface PlacementScope {
-  /** Proper ancestors, outermost first, or null when the path is not placed. */
-  readonly ancestors: (path: string) => string[] | null;
+  readonly ancestors: (path: string) => Placement;
+  /** The same decision for a directory, such as a bundle, that must itself be listed. */
+  readonly directory: (path: string) => Placement;
 }
 
-const placementScope = ({
-  tree,
-  roots,
-}: AppleBundleAnatomy): PlacementScope => {
+const placementScope = (
+  { tree, roots }: AppleBundleAnatomy,
+  inventoryComplete: boolean,
+): PlacementScope => {
   const files = new Set(fileEntries(tree).map(({ path }) => path));
+  // Complete inventories list every enclosing entry, so an unlisted path there
+  // is an implied directory. Partial pages can omit an archive's own entry.
+  const unlisted = (path: string): boolean =>
+    !inventoryComplete && !tree.listedDirectories.has(path);
+  const ancestors = (path: string): Placement => {
+    if (!roots.some((root) => isWithin(path, root))) return null;
+    // A selected archive is the inventory itself, not an entry, so only a
+    // file inside the inventory can make this path an archive member.
+    const enclosing = ancestorsOf(path);
+    if (enclosing.some((ancestor) => files.has(ancestor))) return null;
+    return enclosing.some(unlisted) ? "unknown" : enclosing;
+  };
   return {
-    ancestors: (path) => {
-      if (!roots.some((root) => isWithin(path, root))) return null;
-      // A selected archive is the inventory itself, not an entry, so only a
-      // file inside the inventory can make this path an archive member.
-      const ancestors = ancestorsOf(path);
-      return ancestors.some((ancestor) => files.has(ancestor))
-        ? null
-        : ancestors;
+    ancestors,
+    directory: (path) => {
+      const placement = ancestors(path);
+      return path !== "." && Array.isArray(placement) && unlisted(path)
+        ? "unknown"
+        : placement;
     },
   };
 };
@@ -235,6 +258,8 @@ const scanEntries = (
   context: {
     readonly bundlePaths: ReadonlySet<string>;
     readonly targets: readonly Finding[];
+    /** Receives examined paths whose archive membership is unknown. */
+    readonly unplaced: string[];
   },
 ): {
   readonly findings: Finding[];
@@ -260,6 +285,10 @@ const scanEntries = (
     if (content === "other") continue;
     const ancestors = placement.ancestors(entry.path);
     if (ancestors === null) continue;
+    if (ancestors === "unknown") {
+      context.unplaced.push(entry.path);
+      continue;
+    }
     const containing = [...ancestors, entry.path].flatMap(
       (path) => targets.get(path) ?? [],
     );
@@ -305,7 +334,7 @@ const scanEntries = (
 };
 
 const ruleCoverage =
-  (inventoryComplete: boolean) =>
+  (inventoryComplete: boolean, unplaced: readonly string[]) =>
   (
     rule: PlacementRule,
     evaluatedBundles: number,
@@ -325,6 +354,7 @@ const ruleCoverage =
         ? []
         : ["Source inventory coverage is partial; absence is unknown."]),
       ...unknownFormatLimitation(unknown),
+      ...unplacedLimitation(unplaced),
     ];
     return {
       rule,
@@ -388,6 +418,16 @@ const unknownFormatLimitation = (paths: readonly string[]): string[] => {
   const count = paths.length;
   return [
     `${count} examined ${count === 1 ? "file has" : "files have"} no byte-established format (unknown, unavailable, outside the supplied pages, or a path the inventory repeats); whether ${count === 1 ? "it is a Mach-O image" : "they are Mach-O images"} is unknown. First path: ${JSON.stringify(first)}.`,
+  ];
+};
+
+const unplacedLimitation = (paths: readonly string[]): string[] => {
+  const first = [...paths].sort(compare)[0];
+  if (first === undefined) return [];
+  const count = paths.length;
+  const subject = count === 1 ? "it is" : "they are";
+  return [
+    `${count} examined ${count === 1 ? "path lies" : "paths lie"} below a path the supplied inventory pages do not list, so whether ${subject} inside an inventoried archive is unknown; ${subject} not evaluated. First path: ${JSON.stringify(first)}.`,
   ];
 };
 

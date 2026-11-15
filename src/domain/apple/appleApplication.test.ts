@@ -1398,6 +1398,48 @@ describe("Apple bundle placement coverage", () => {
     });
   });
 
+  it("does not place code below a path that partial inventory pages do not list", () => {
+    // These pages list the asar member but not app.asar itself, and a
+    // bundle's code but not the bundle directory.
+    const evidence = inventoryEvidence("directory", "Fixture.app", [
+      { path: "Contents", kind: "directory" },
+      { path: "Contents/MacOS", kind: "directory" },
+      macho("Contents/MacOS/Fixture"),
+      { path: "Contents/PlugIns", kind: "directory" },
+      macho("Contents/PlugIns/Inner.bundle/Contents/MacOS/Inner"),
+      { path: "Contents/Resources", kind: "directory" },
+      macho("Contents/Resources/payload.dat"),
+      macho("Contents/Resources/app.asar/addon.node"),
+    ]);
+    const parsed = parseArtifactInventoryEvidence([evidence]);
+    const result = projectAppleInventory({
+      ...parsed,
+      inventory: {
+        ...parsed.inventory,
+        coverage: { scope: "container-entries", status: "unknown" },
+      },
+    });
+    if (!result.ok) throw result.error;
+    const placement = result.value.bundle_placement;
+    expect(placement?.findings.map(({ path }) => path)).toEqual([
+      "Contents/Resources/payload.dat",
+    ]);
+    expect(placement?.mach_o_images.map(({ path }) => path)).toEqual([
+      "Contents/Resources/payload.dat",
+    ]);
+    const resources = placement?.rules.find(
+      ({ rule }) => rule === "code-in-resource-location",
+    );
+    // Only the root bundle is evaluated; Inner.bundle is not listed.
+    expect(resources?.evaluated_bundles).toBe(1);
+    expect(resources?.limitations).toEqual([
+      "Source inventory coverage is partial; absence is unknown.",
+      expect.stringMatching(
+        /^3 examined paths lie below a path the supplied inventory pages do not list.*"Contents\/PlugIns\/Inner\.bundle"/u,
+      ),
+    ]);
+  });
+
   it("does not evaluate platform-specific rules from a shallow layout", () => {
     const app = "Payload/Shallow.app";
     const result = project(

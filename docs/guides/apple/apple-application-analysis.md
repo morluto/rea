@@ -192,8 +192,12 @@ A Mach-O image is a file whose inventory format, `mach-o` or
 the basis, so scripts and other files are resources.
 Members of inventoried archives, such as files inside `app.asar` or an
 application found inside an inventoried `.zip`, are not placed in the bundle and
-are not examined. A path the inventory repeats has no single content identity,
-so it is examined as unknown.
+are not examined. Partial inventory pages can list an archive's members without
+the archive itself, so with partial coverage a path is placed only when every
+directory above it is listed. Any other path, and a bundle whose own directory
+is not listed, is not evaluated, and each rule's limitations name the first
+such path. A path the inventory repeats has no single content identity, so it
+is examined as unknown.
 
 | Rule                                  | Bundles                                                   | Finding                                                                                                                                                                             |
 | ------------------------------------- | --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

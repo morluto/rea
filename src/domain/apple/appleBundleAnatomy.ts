@@ -206,6 +206,8 @@ export interface AppleBundleTree {
   readonly links: ReadonlyMap<string, ReadonlySet<string>>;
   /** File paths that occur more than once; `files` keeps only the last occurrence. */
   readonly duplicateFiles: ReadonlySet<string>;
+  /** Directories the inventory lists; `directories` also holds those implied by deeper paths. */
+  readonly listedDirectories: ReadonlySet<string>;
 }
 type Tree = AppleBundleTree;
 
@@ -214,9 +216,11 @@ const indexTree = (entries: readonly Entry[]): Tree => {
   const files = new Map<string, Map<string, Entry>>();
   const links = new Map<string, Set<string>>();
   const duplicateFiles = new Set<string>();
+  const listedDirectories = new Set<string>();
   for (const entry of entries) {
     const { path, kind } = entry;
     if (isSidecar(path)) continue;
+    if (kind === "directory") listedDirectories.add(path);
     const segments = path.split("/");
     let parent = "";
     for (const [index, segment] of segments.entries()) {
@@ -238,7 +242,7 @@ const indexTree = (entries: readonly Entry[]): Tree => {
       parent = joinPath(parent, segment);
     }
   }
-  return { directories, files, links, duplicateFiles };
+  return { directories, files, links, duplicateFiles, listedDirectories };
 };
 
 function* directoryPaths(tree: Tree): Iterable<string> {
