@@ -35,13 +35,17 @@ export const registerWebSourceLocationCommands = (
     description:
       "Trace one retained script position through an explicitly selected local source map",
     args: z.object({
-      manifestPath: localPathStringSchema,
+      manifestPath: localPathStringSchema.describe(
+        "export_web_scripts manifest path; a relative path resolves against the current directory",
+      ),
       scriptIndex: cliDecimalField(
         webSourceLocationInputSchema.shape.script_index.describe(
           "Zero-based manifest script index",
         ),
       ),
-      sourceMapPath: localPathStringSchema,
+      sourceMapPath: localPathStringSchema.describe(
+        "Local source-map path, not fetched; a relative path resolves against the current directory",
+      ),
       sourceMapUrl: sourceMapSelection.shape.url,
       line: cliDecimalField(
         generatedPosition.shape.line.describe("One-based generated line"),

@@ -24,7 +24,7 @@ cliTest(
       join(root, "files", "modules", "main.js"),
       artifacts.source,
     );
-    let manifestPath = join(root, "manifest.json").replaceAll("\\", "/");
+    let manifestPath = join(root, "manifest.json");
     await writeFile(manifestPath, JSON.stringify(manifest));
     if (process.platform !== "win32") {
       await mkdir(join(root, "lexical"));

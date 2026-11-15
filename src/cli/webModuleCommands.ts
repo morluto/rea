@@ -26,7 +26,9 @@ export const registerWebModuleCommands = (
     description:
       "Trace one captured script's native imports to URLs and captured source candidates",
     args: z.object({
-      manifestPath: localPathStringSchema,
+      manifestPath: localPathStringSchema.describe(
+        "export_web_scripts manifest path; a relative path resolves against the current directory",
+      ),
       scriptIndex: cliDecimalField(
         webModuleTraceInputSchema.shape.script_index.describe(
           "Zero-based manifest script index",
