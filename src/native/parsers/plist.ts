@@ -1,4 +1,11 @@
-import { decodeBinaryPlistValue } from "../../artifacts/apple/BinaryPlistMaterializer.js";
+import {
+  binaryPlistDuplicateKeys,
+  decodeBinaryPlistValue,
+} from "../../artifacts/apple/BinaryPlistMaterializer.js";
+import {
+  plistDuplicateKeyLimitations,
+  type PlistDuplicateKeys,
+} from "../../domain/apple/plistDuplicateKeys.js";
 
 import {
   AnalysisOutputError,
@@ -312,12 +319,14 @@ const projectPlistXml = (
 ): Result<ParsedPlist, PlistParseError> => {
   let projected: ProjectedPlistValue;
   let literals: PlistNumberLiterals;
+  let duplicateKeys: PlistDuplicateKeys;
   try {
     const decoded = parseXmlPropertyList(
       output,
       MAX_NATIVE_PLIST_NESTING_DEPTH,
     );
     literals = decoded.numberLiterals;
+    duplicateKeys = decoded.duplicateKeys;
     projected = projectPlistValue(
       decoded.value,
       undefined,
@@ -347,6 +356,7 @@ const projectPlistXml = (
       ...projectedScalarLimitations(projected),
       ...(literals.incomplete ? [incompletePlistNumberLimitation] : []),
       ...numberLimitations(exactIntegerCount, ambiguousNumberCount),
+      ...plistDuplicateKeyLimitations(duplicateKeys),
     ],
   });
 };
@@ -381,6 +391,7 @@ export const parsePlistBinary = (
     );
     const scalarMetadata = scanBinaryPlistScalars(bytes, expansion);
     const decoded = decodeBinaryPlistValue(bytes, expansion, scalarMetadata);
+    const duplicateKeys = binaryPlistDuplicateKeys(expansion);
     const projected = projectPlistValue(
       decoded,
       undefined,
@@ -401,6 +412,7 @@ export const parsePlistBinary = (
               ),
             ]),
         ...numbers.limitations(),
+        ...plistDuplicateKeyLimitations(duplicateKeys),
       ],
     });
   } catch (cause: unknown) {

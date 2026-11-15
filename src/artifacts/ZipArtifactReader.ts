@@ -37,8 +37,14 @@ import {
   sameArtifactEntry,
   type ArtifactEntry,
   type ArtifactReader,
+  type ArtifactReaderTraversal,
   type ArtifactTraversalOptions,
 } from "./ArtifactReader.js";
+import {
+  accountZipMemberRegion,
+  type ZipLocalRecord,
+  type ZipMemberRegionAccount,
+} from "./ZipMemberRegion.js";
 import type { ZipPackageFormat } from "../domain/zipPackageFormat.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
 import { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
@@ -175,6 +181,8 @@ export class ZipArtifactReader implements ArtifactReader {
   readonly #reader: ZipReader<string>;
   readonly #streams = new Map<Readable, Promise<void>>();
   readonly #enumerations = new Set<AsyncGenerator<Entry, void>>();
+  /** Running traversal steps, including the final accounting pass, that close joins. */
+  readonly #traversalSteps = new Set<Promise<unknown>>();
   #closing = false;
   #closePromise: Promise<void> | undefined;
   readonly #entries = new Map<
@@ -194,14 +202,40 @@ export class ZipArtifactReader implements ArtifactReader {
     this.#reader = new ZipReader(this.#source, ZIP_READER_OPTIONS);
   }
 
-  async *entries(
+  entries(
     signal?: AbortSignal,
     options?: ArtifactTraversalOptions,
   ): AsyncIterable<ArtifactEntry> {
+    const traversal = this.#enumerate(signal, options);
+    const steps = this.#traversalSteps;
+    // Close joins a running step without ending the traversal, so the
+    // caller's next step still observes the close instead of completion.
+    const step = <T>(running: Promise<T>): Promise<T> => {
+      steps.add(running);
+      const settled = () => {
+        steps.delete(running);
+      };
+      running.then(settled, settled);
+      return running;
+    };
+    const iterator: AsyncIterator<ArtifactEntry, void> = {
+      next: () => step(traversal.next()),
+      return: (value) => step(traversal.return(value)),
+      throw: (cause: unknown) => step(traversal.throw(cause)),
+    };
+    return { [Symbol.asyncIterator]: () => iterator };
+  }
+
+  async *#enumerate(
+    signal?: AbortSignal,
+    options?: ArtifactTraversalOptions,
+  ): AsyncGenerator<ArtifactEntry, void> {
     this.#assertOpen(signal);
     let index = 0;
     // A traversal owns its accounting, including overlapping or repeated passes.
     let declaredFileBytes = 0n;
+    // Every directory record, listed or not, claims its local entry's bytes.
+    const records: ZipLocalRecord[] = [];
     const enumeration = typedZipFailures(
       this.#reader.getEntriesGenerator({ decodeText: decodeZipEntryText }),
     );
@@ -210,6 +244,14 @@ export class ZipArtifactReader implements ArtifactReader {
       for await (const entry of enumeration) {
         await this.#source.verify();
         this.#assertOpen(signal);
+        records.push({
+          offset: entry.offset,
+          compressedSize: entry.compressedSize,
+          uncompressedSize: entry.uncompressedSize,
+          crc32: entry.crc32,
+          zip64: entry.zip64,
+          dataDescriptor: entry.bitFlag?.dataDescriptor ?? false,
+        });
         // ZIP member identity is its directory occurrence, not its filename.
         // Logical path uniqueness belongs to the artifact inventory boundary.
         const metadata = projectZipEntry(entry, index++);
@@ -251,11 +293,24 @@ export class ZipArtifactReader implements ArtifactReader {
         yield metadata;
       }
       this.#assertOpen(signal);
+      // The listing comes from the central directory; local entries it does
+      // not reference are only visible as bytes no record accounts for.
+      const directoryOffset = this.#reader.directoryOffset;
+      const account =
+        directoryOffset === undefined
+          ? undefined
+          : await accountZipMemberRegion(
+              records,
+              directoryOffset,
+              (at, length) => this.#source.readUint8Array(at, length),
+            );
+      this.#assertOpen(signal);
       await this.#source.verify();
       this.#assertOpen(signal);
-      options?.onCoverage?.({ status: "complete", limitations: [] });
+      options?.onCoverage?.(zipListingCoverage(account));
     } finally {
       this.#enumerations.delete(enumeration);
+      await enumeration.return();
     }
   }
 
@@ -309,9 +364,15 @@ export class ZipArtifactReader implements ArtifactReader {
       output.destroy(
         new ArtifactReaderFailure("unavailable", "ZIP reader closed"),
       );
-    const outcomes = await Promise.allSettled([
-      ...this.#streams.values(),
-      ...Array.from(this.#enumerations, (enumeration) => enumeration.return()),
+    // A joined traversal step reports its own failure to its caller.
+    const [outcomes] = await Promise.all([
+      Promise.allSettled([
+        ...this.#streams.values(),
+        ...Array.from(this.#enumerations, (enumeration) =>
+          enumeration.return(),
+        ),
+      ]),
+      Promise.allSettled(this.#traversalSteps),
     ]);
     this.#enumerations.clear();
     // best-effort cleanup: zip-reader close must not mask prior extraction state.
@@ -340,6 +401,35 @@ export class ZipArtifactReader implements ArtifactReader {
     return [];
   }
 }
+
+/** Coverage of a central-directory listing, given the member region's byte account. */
+const zipListingCoverage = (
+  account: ZipMemberRegionAccount | undefined,
+): ArtifactReaderTraversal => {
+  if (account === undefined)
+    return {
+      status: "unknown",
+      limitations: [
+        "ZIP central directory offset was not established; bytes outside the listed members were not accounted for.",
+      ],
+    };
+  const limitations = [
+    ...(account.unaccountedRanges === 0
+      ? []
+      : [
+          `ZIP central directory does not account for ${String(account.unaccountedBytes)} byte(s) in ${String(account.unaccountedRanges)} range(s) before it, first at offset ${String(account.firstUnaccountedOffset)}; local entries it does not list may exist there.`,
+        ]),
+    ...(account.unlocatedHeaders === 0
+      ? []
+      : [
+          `${String(account.unlocatedHeaders)} ZIP central directory record(s) point at no local file header; the bytes they claim were not accounted for.`,
+        ]),
+  ];
+  return {
+    status: limitations.length === 0 ? "complete" : "unknown",
+    limitations,
+  };
+};
 
 const projectZipEntry = (
   entry: Entry,

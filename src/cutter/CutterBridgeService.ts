@@ -200,9 +200,18 @@ export class CutterBridgeService {
                   "Command completion or its output could not be confirmed; do not retry automatically because the command may have produced partial or persistent effects.",
                 ]
               : []),
-            ...(output.outputTruncated
+            ...(output.outputTruncated === true
               ? [
                   "The command completed or may have completed, but output exceeded the bridge transport limit and was omitted.",
+                ]
+              : output.outputTruncated === null
+                ? [
+                    "The bridge did not declare whether output was omitted, so the output may be incomplete.",
+                  ]
+                : []),
+            ...(output.documentGeneration === null
+              ? [
+                  "The bridge did not report the document generation after this command; list Cutter sessions again before selecting an expected_generation.",
                 ]
               : []),
           ],

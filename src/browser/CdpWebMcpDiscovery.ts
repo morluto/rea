@@ -127,7 +127,10 @@ export const discoverWebMcp = async (
       {},
       limitations,
     );
-    const available = enabled !== undefined;
+    // WebMCP.enable is an acknowledgement; a malformed one is a protocol error.
+    if (!enabled.ok && enabled.error._tag === "CdpMalformedReply")
+      throw enabled.error.reply;
+    const available = enabled.ok;
     if (!available) {
       completeness.unavailable("webmcp_tools");
     } else

@@ -1,7 +1,9 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { writeWebResponse } from "./nodeHttpBridge.js";
-import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
+
+const HTTP_RESPONSE_SOURCE = "MCP HTTP response source";
 
 export type HttpAdmissionLifetime = "dispatch" | "response";
 
@@ -162,17 +164,21 @@ export class NodeHttpRequestOwner {
     while (this.#bodyCleanups.size > 0)
       await Promise.allSettled(this.#bodyCleanups);
     if (this.#cleanupFailures.length > 0)
-      throw new AnalysisResourceConstraintError(
-        "mcp_http_response_cleanup",
-        "transport",
-        "HTTP response cleanup could not be confirmed; provider shutdown remains blocked",
-        { failed_cleanup_count: this.#cleanupFailures.length },
+      // Unconfirmed cleanup is retained work, not a budget the caller can raise.
+      throw new ProviderCleanupError(
+        "rea",
+        [HTTP_RESPONSE_SOURCE],
         {
+          reason:
+            "HTTP response cleanup could not be confirmed; provider shutdown remains blocked",
+          failed_cleanup_count: this.#cleanupFailures.length,
+        },
+        {
+          operation: "mcp_http_response_cleanup",
           cause: new AggregateError(
             this.#cleanupFailures,
             "Response cleanup failed",
           ),
-          retryable: false,
         },
       );
   }
