@@ -190,6 +190,8 @@ const classifyPackage = (before: string, after: string) =>
   classifyCommit(["package.json"], "pull_request", false, { before, after });
 
 it.each([
+  // Shared resource owners moved from src/artifacts keep their lanes.
+  ["src/resources/AnalysisCleanupLease.ts", "apk_signature"],
   ["bridge/native/rea_lldb_tracer.py", "python"],
   ["bridge/pwndbg/test_core_context.py", "python"],
   ["tests/support/analysis-efficiency/test_catalog_eval.py", "python"],
