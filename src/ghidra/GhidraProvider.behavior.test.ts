@@ -1,5 +1,6 @@
 import { failedInspectionDescriptor } from "../../tests/fixtures/processInspectionCleanup.js";
 import { ghidraFailureOutput } from "./GhidraDiagnostics.js";
+import { ghidraProducerIdentity } from "./GhidraBridgeSources.js";
 import {
   ProcessOwnershipInspectionCancelled,
   ProcessOwnershipIdentityBatchFailure,
@@ -369,13 +370,11 @@ it.each(["readiness", "client"] as const)(
 );
 
 it.each([
-  "program-info-v1",
-  "program-info-v2",
-  "program-info-v3",
-  "program-info-v4",
+  { rea_version: "6.8.0", sources_sha256: "0".repeat(64) },
+  { rea_version: "6.9.0", sources_sha256: "0".repeat(64) },
 ])(
-  "retains historical PE PDB Evidence for %s without replaying its old projection",
-  async (pdbObservations) => {
+  "retains Evidence from an earlier producer $rea_version without replaying its old projection",
+  async (producer) => {
     const target = peTarget("x86_64");
     const resolved = await provider().resolveAnalysisProfile(target);
     if (!resolved.ok || resolved.value.profile === null)
@@ -383,15 +382,11 @@ it.each([
     const current = resolved.value.profile;
     const prior = createAnalysisProfile(current.provider, {
       ...current.parameters,
-      pdb_observations: pdbObservations,
+      producer,
     });
     const operation = "search_procedures";
     const parameters = { pattern: "wmain" };
-    const limitations = [
-      pdbObservations === "program-info-v4"
-        ? "Legacy projection discarded NB10 declaration when the reported GUID was omitted."
-        : "Legacy projection collapsed unknown PDB load state.",
-    ];
+    const limitations = ["An earlier REA producer projected this result."];
     const cache = new AnalysisSnapshotCache();
     cache.record({
       target,
@@ -487,7 +482,6 @@ describe("Ghidra provider", () => {
           target_format: "dos-mz",
           architecture: "x86",
           loader: "MzLoader",
-          load_image_evidence: "independent-mz-mapping-relocations-v2",
           language_id: "x86:LE:16:Real Mode",
           compiler_spec_id: "default",
           load_segment: "0x1000",
@@ -668,8 +662,7 @@ describe("Ghidra raw-binary profile", () => {
       language_id: "6502:LE:16:default",
       compiler_spec_id: "default",
       entry_point: "0x8001",
-      language_selection: "caller-supplied-v1",
-      load_image_evidence: "independent-raw-mapping-context-v4",
+      language_selection: "caller-supplied",
     });
     expect(
       ghidra
@@ -699,7 +692,7 @@ describe("Ghidra raw-binary profile", () => {
           loader: "BinaryLoader",
           language_id: "ARM:LE:32:v7",
           compiler_spec_id: "default",
-          language_selection: "caller-supplied-v1",
+          language_selection: "caller-supplied",
           entry_point: "0x8000000",
         },
       },
@@ -740,7 +733,7 @@ describe("Ghidra raw-binary profile", () => {
       loader: "BinaryLoader",
       language_id: "68000:BE:32:default",
       compiler_spec_id: "default",
-      language_selection: "caller-supplied-v1",
+      language_selection: "caller-supplied",
       entry_point: "0x1000",
     });
     expect(
@@ -855,7 +848,7 @@ describe("Ghidra platform support", () => {
       );
       if (!resolved.ok) throw resolved.error;
       expect(resolved.value.profile?.parameters).toMatchObject({
-        windows_arm_pe_import: "explicit-language-v1",
+        windows_arm_pe_import: "explicit-language",
         windows_arm_pe_machine: peTarget(architecture).peMachine,
         language_id: languageId,
         compiler_spec_id: "windows",
@@ -880,7 +873,7 @@ describe("Ghidra platform support", () => {
         )
           expect(parameters).toHaveProperty(
             "windows_arm_pe_import",
-            "loader-selected-language-v1",
+            "loader-selected-language",
           );
         else expect(parameters).not.toHaveProperty("windows_arm_pe_import");
         if (
@@ -905,11 +898,9 @@ describe("Ghidra platform support", () => {
     };
     // Windows P0 cannot mark blocks volatile, so its snapshots must not replay
     // as volatile-protected pseudocode.
-    expect(await semantics("win32")).toBe(
-      "read-only-relocation-limitations-v1",
-    );
+    expect(await semantics("win32")).toBe("read-only-relocation-limitations");
     expect(await semantics("linux")).toBe(
-      "volatile-unapplied-relocation-blocks-v1",
+      "volatile-unapplied-relocation-blocks",
     );
     // A caller's existing project is read-only too, so its saved results must
     // not match a profile that predates the relocation limitation.
@@ -919,7 +910,7 @@ describe("Ghidra platform support", () => {
         { id: "ghidra", name: "Ghidra", version: "12.1.4" },
         { project_name: "fixture" },
       ).parameters.loader_relocation_semantics,
-    ).toBe("read-only-relocation-limitations-v1");
+    ).toBe("read-only-relocation-limitations");
   });
 
   it("keeps Windows annotation mutation unavailable independently of native controls", () => {
@@ -1007,7 +998,6 @@ describe("Ghidra Windows DOS admission", () => {
       profile: {
         parameters: {
           loader: "MzLoader",
-          load_image_evidence: "independent-mz-mapping-relocations-v2",
           language_id: "x86:LE:16:Real Mode",
           load_segment: "0x1000",
         },
@@ -1515,17 +1505,15 @@ describe("Ghidra client projection", () => {
       provider: { id: "ghidra", name: "Ghidra", version: "12.1.4" },
       parameters: {
         import_mode: "ephemeral-source-immutable",
-        annotation_policy: "atomic-function-entry-metadata-v1",
+        annotation_policy: "atomic-function-entry-metadata",
         analyzer_preset: "ghidra-default",
       },
     });
     expect(resolved.value.profile.parameters).toMatchObject({
       language_id: "auto-from-header",
       compiler_spec_id: "auto-default",
-      call_relationship_coverage: "observed-call-inventory-and-discovery-v7",
-      function_dossier_coverage: "observed-facets-and-call-relationships-v1",
-      native_value_flow_projection: "accepted-runtime-budgets-v1",
-      loader_relocation_semantics: "volatile-unapplied-relocation-blocks-v1",
+      producer: ghidraProducerIdentity(),
+      loader_relocation_semantics: "volatile-unapplied-relocation-blocks",
     });
 
     const result = await ghidra

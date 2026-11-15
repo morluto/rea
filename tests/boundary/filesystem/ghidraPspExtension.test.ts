@@ -180,7 +180,7 @@ describe.skipIf(process.platform === "win32")(
         language_id: "Allegrex:LE:32:default",
         compiler_spec_id: "default",
         loader: "PspElfLoader",
-        mips_support_lane: "psp-elf32-exec-eabi32-allegrex-v2",
+        mips_support_lane: "psp-elf32-exec-eabi32-allegrex",
         mips_elf: {
           elf_class: 32,
           byte_order: "little",
