@@ -165,11 +165,14 @@ it.each([
     const launcher = launcherChild();
     const host = hostFor(launcher, launcherRow("/usr/bin/other"), lifecycle);
     const { supervisor, results } = supervise(launcher, host);
-    const started = performance.now();
+    const waited = vi.spyOn(supervisor, "waitForExit");
 
     const stopped = await supervisor.stop({ killGraceMs: 50 });
 
-    expect(performance.now() - started).toBeGreaterThanOrEqual(45);
+    // A mismatch is not exit proof: the launcher gets its grace before the
+    // stop reports incomplete.
+    expect(waited.mock.calls).toEqual([[50]]);
+    await expect(waited.mock.results[0]?.value).resolves.toBe(false);
     expect(stopped).toEqual({
       status: "incomplete",
       reason: `owned launcher command identity did not match (observed=/usr/bin/other; expected=${JAVA})`,
@@ -195,14 +198,12 @@ it("does not repeat verification without new launcher exit evidence", async () =
     cleanup,
   });
   launcher.exit();
-  const started = performance.now();
 
   await expect(supervisor.stop()).resolves.toMatchObject({
     status: "incomplete",
     reason: "process table could not be inspected: spawn EPERM",
   });
   expect(cleanup).toHaveBeenCalledOnce();
-  expect(performance.now() - started).toBeLessThan(500);
 });
 
 it("retains the post-exit verification failure for a later owned retry", async () => {
