@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 /** Numeric admission contracts shared by environment parsing and runtime tools.
  * Timer maxima follow signed 32-bit scheduling. ASAR's 256 MiB maximum and
  * worker 16 GiB maxima are REA policies, not claims about format/host capacity.
@@ -55,10 +57,21 @@ export const DEFAULT_HOPPER_CALLER_SCAN_BUDGET_MS = 2_000;
 export const MINIMUM_HOPPER_CALLER_SCAN_BUDGET_MS = 1;
 
 /**
- * Largest delay Node schedules exactly. Delays above this signed 32-bit
- * boundary become a 1 ms timer, so startup and swiftc timeouts stop here.
+ * Largest delay Node schedules exactly. A `setTimeout` delay above this signed
+ * 32-bit bound is clamped to 1 ms, so a deadline past it would expire
+ * immediately. Every millisecond duration REA hands to a timer stops here;
+ * this is the only declaration of that bound.
  */
 export const MAX_NODE_TIMER_DELAY_MS = 2_147_483_647;
+
+/**
+ * A positive whole-millisecond duration Node can schedule exactly. Zero and
+ * negative values are not a deadline.
+ */
+export const timerDurationMsSchema = z
+  .int()
+  .min(1)
+  .max(MAX_NODE_TIMER_DELAY_MS);
 
 /**
  * Ghidra 12.1.4 converts whole seconds to a signed int millisecond delay.
@@ -70,15 +83,6 @@ export const MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS = Math.floor(
 
 /** Matching deadline used when the setting is unset. Today's fixed constant. */
 export const DEFAULT_REGEX_MATCHING_DEADLINE_MS = 5_000;
-
-/**
- * Largest delay Node schedules exactly. A `setTimeout` delay above this
- * signed 32-bit bound is clamped to 1 ms, so a matching deadline past it
- * would expire immediately. The setting stops here instead of growing
- * without a bound. The floor is 1 ms: zero and negative values are not a
- * deadline.
- */
-export const MAXIMUM_REGEX_MATCHING_DEADLINE_MS = 2_147_483_647;
 
 /** Worker old-generation request used when the setting is unset. Today's constant. */
 export const DEFAULT_REGEX_WORKER_HEAP_REQUEST_MIB = 128;
@@ -127,13 +131,8 @@ export const DEFAULT_JADX_OPERATION_TIMEOUT_MS = 120_000;
  */
 export const DEFAULT_DEBUGGER_COMMAND_DEADLINE_MS = 120_000;
 
-/**
- * Smallest command deadline. Zero is not a deadline. The maximum is the
- * largest delay Node schedules exactly; a `setTimeout` delay above that
- * signed 32-bit bound becomes 1 ms.
- */
+/** Smallest command deadline. Zero is not a deadline; the maximum is MAX_NODE_TIMER_DELAY_MS. */
 export const MINIMUM_DEBUGGER_COMMAND_DEADLINE_MS = 1;
-export const MAXIMUM_DEBUGGER_COMMAND_DEADLINE_MS = 2_147_483_647;
 
 /** Debugger sessions admitted when the setting is unset. Today's constant. */
 export const DEFAULT_DEBUGGER_MAX_SESSIONS = 8;

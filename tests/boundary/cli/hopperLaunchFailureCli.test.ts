@@ -40,7 +40,12 @@ describe("Hopper launcher failure through the one-shot CLI", () => {
       const loaderArgs = ["--probe"];
       try {
         for (const attempt of ["first", "retry"]) {
+          // The one-shot CLI keeps the lease while cleanup is incomplete, and
+          // the operating system releases it when that process exits. The
+          // file's shared process does not exit between commands, so each
+          // attempt needs its own process.
           const result = await cli.run({
+            freshProcess: true,
             arguments: [
               "analyze",
               targetPath,

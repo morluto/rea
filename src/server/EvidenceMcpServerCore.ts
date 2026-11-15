@@ -122,9 +122,6 @@ const hasAdvertisedInputJsonSchema = (value: unknown): boolean => {
   );
 };
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
 /** Recognize the SDK's argument diagnostic after its wire size is checked. */
 const sdkInputValidationDiagnostic = (
   text: string | undefined,
@@ -289,6 +286,7 @@ export const forgetPendingMcpRequest = (
   pendingCompletions.delete(id);
 };
 import type { PromptCompletionSource } from "./promptCompletion.js";
+import { isRecord } from "../domain/isRecord.js";
 
 /** Standard-schema registration boundary shared with deferred SDK bindings. */
 export interface StandardToolRegistration {
