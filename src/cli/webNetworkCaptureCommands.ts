@@ -8,7 +8,7 @@ import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
-import { cliDecimalField } from "./options.js";
+import { cliDecimalArrayField, cliDecimalField } from "./options.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import {
   analysisEvidenceDeliveryOptions,
@@ -18,8 +18,8 @@ import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { explicitSensitiveValueOptions } from "./explicitSensitiveArguments.js";
 
-const recordOrdinal =
-  inspectWebNetworkCaptureInputSchema.shape.record_ordinals.unwrap().element;
+const recordOrdinals =
+  inspectWebNetworkCaptureInputSchema.shape.record_ordinals;
 
 /** Expose offline historical capture inspection with the same selection contract as MCP. */
 export const registerWebNetworkCaptureCommands = (
@@ -53,11 +53,9 @@ export const registerWebNetworkCaptureCommands = (
         .string()
         .optional()
         .describe("Fully qualified message type in the descriptor set"),
-      record: z
-        .array(cliDecimalField(recordOrdinal))
-        .min(1)
-        .optional()
-        .describe("Zero-based producer ordinals; repeat to select several"),
+      record: cliDecimalArrayField(recordOrdinals).describe(
+        "Zero-based producer ordinals; repeat to select several",
+      ),
       ...explicitSensitiveValueOptions,
       maxInputBytes: cliDecimalField(
         inspectWebNetworkCaptureInputSchema.shape.max_input_bytes,

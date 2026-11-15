@@ -147,6 +147,115 @@ export const cliDecimalField = <Field extends z.ZodType>(
   return publishArgvInput(described) as z.ZodType<z.output<Field>>;
 };
 
+type ArrayWrapper =
+  | { readonly kind: "default"; readonly value: unknown }
+  | { readonly kind: "prefault"; readonly value: unknown }
+  | {
+      readonly kind: "optional" | "exactOptional" | "nullable" | "readonly";
+    };
+
+const arrayStack = (
+  field: z.ZodType,
+):
+  | {
+      readonly core: z.ZodArray<z.ZodType>;
+      readonly wrappers: readonly ArrayWrapper[];
+      readonly description: string | undefined;
+    }
+  | undefined => {
+  const wrappers: ArrayWrapper[] = [];
+  let description: string | undefined;
+  let current = field;
+  for (;;) {
+    if (description === undefined && current.description !== undefined)
+      description = current.description;
+    if (current instanceof z.ZodDefault) {
+      wrappers.push({
+        kind: "default",
+        value: current.parse(undefined),
+      });
+      current = unwrapSchema(current);
+      continue;
+    }
+    if (current instanceof z.ZodPrefault) {
+      wrappers.push({
+        kind: "prefault",
+        value: current.parse(undefined),
+      });
+      current = unwrapSchema(current);
+      continue;
+    }
+    if (current instanceof z.ZodOptional) {
+      wrappers.push({ kind: "optional" });
+      current = unwrapSchema(current);
+      continue;
+    }
+    if (current instanceof z.ZodExactOptional) {
+      wrappers.push({ kind: "exactOptional" });
+      current = unwrapSchema(current);
+      continue;
+    }
+    if (current instanceof z.ZodNullable) {
+      wrappers.push({ kind: "nullable" });
+      current = unwrapSchema(current);
+      continue;
+    }
+    if (current instanceof z.ZodReadonly) {
+      wrappers.push({ kind: "readonly" });
+      current = unwrapSchema(current);
+      continue;
+    }
+    break;
+  }
+  return current instanceof z.ZodArray
+    ? {
+        core: current as z.ZodArray<z.ZodType>,
+        wrappers,
+        description,
+      }
+    : undefined;
+};
+
+const applyArrayWrappers = (
+  field: z.ZodType,
+  wrappers: readonly ArrayWrapper[],
+): z.ZodType => {
+  let admitted = field;
+  for (const wrapper of wrappers.toReversed()) {
+    if (wrapper.kind === "nullable") admitted = admitted.nullable();
+    else if (wrapper.kind === "optional") admitted = admitted.optional();
+    else if (wrapper.kind === "exactOptional")
+      admitted = admitted.exactOptional();
+    else if (wrapper.kind === "readonly") admitted = admitted.readonly();
+    else if (wrapper.kind === "prefault")
+      admitted = admitted.prefault(wrapper.value as never);
+    else if (wrapper.kind === "default")
+      admitted = admitted.default(wrapper.value as never);
+  }
+  return admitted;
+};
+
+/** Adapt a shared numeric array while retaining its complete field contract. */
+export const cliDecimalArrayField = <Field extends z.ZodType>(
+  field: Field,
+): z.ZodType<z.output<Field>> => {
+  const array = arrayStack(field);
+  if (array === undefined)
+    throw new Error(
+      `cliDecimalArrayField expected an array field, received ${field.constructor.name}`,
+    );
+  const adapted = new z.ZodArray({
+    ...array.core._zod.def,
+    element: cliDecimalField(array.core.element),
+  });
+  const admitted = applyArrayWrappers(adapted, array.wrappers);
+  const described =
+    array.description === undefined
+      ? admitted
+      : admitted.describe(array.description);
+  return publishArgvInput(described) as z.ZodType<z.output<Field>>;
+};
+
 /** Adapt each numeric property of a shared shape; other properties stay unchanged. */
 export const cliDecimalShape = <Shape extends Record<string, z.ZodType>>(
   shape: Shape,

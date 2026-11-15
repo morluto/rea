@@ -14,6 +14,7 @@ import {
   apktoolInputSchemas,
   MAX_SELECTED_LOCALES,
 } from "../../../src/domain/apktool/apktoolResourceAnalysis.js";
+import { inspectWebNetworkCaptureInputSchema } from "../../../src/domain/webNetworkCapture.js";
 import { presentOmittableDefaults } from "../../../src/cli/omittableDefaults.js";
 import { dataTypeSelectorGuidance } from "../../../src/cli/analysisSelector.js";
 
@@ -751,9 +752,16 @@ describe("web capture record selection input schema", () => {
     const validate = new Ajv2020({ strict: false }).compile(
       advertised.options ?? {},
     );
-    for (const record of [[], [0], [0, 1]]) {
-      const input = { record };
-      const expected = record.length > 0;
+    for (const [input, ownerValue] of [
+      [{}, undefined],
+      [{ record: [] }, []],
+      [{ record: [0] }, [0]],
+      [{ record: [0, 1] }, [0, 1]],
+    ] as const) {
+      const expected =
+        inspectWebNetworkCaptureInputSchema.shape.record_ordinals.safeParse(
+          ownerValue,
+        ).success;
       expect(parser.safeParse(input).success).toBe(expected);
       expect(validate(input)).toBe(expected);
     }
