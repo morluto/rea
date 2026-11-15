@@ -3,9 +3,9 @@ import { listNamesFact } from "../domain/native/nativeOperationFacts.js";
 import { executeFact } from "./AnalysisOperationFacts.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { AnalysisOperationPort } from "./AnalysisProvider.js";
@@ -47,8 +47,7 @@ export const resolveXrefsName = async (
   signal?: AbortSignal,
   operation: "xrefs" | "find_xrefs_to_name" = "xrefs",
 ): Promise<Result<string | null, AnalysisError>> => {
-  if (signal?.aborted)
-    return err(new AnalysisCancelledError(operation, { cause: signal.reason }));
+  if (signal?.aborted) return err(cancelledBy(operation, signal));
   const inventory = await executeFact(
     analysis,
     listNamesFact,
@@ -75,8 +74,7 @@ export const resolveXrefsName = async (
       );
     return inventory;
   }
-  if (signal?.aborted)
-    return err(new AnalysisCancelledError(operation, { cause: signal.reason }));
+  if (signal?.aborted) return err(cancelledBy(operation, signal));
   const addresses = new Set<string>();
   for (const [index, row] of inventory.value.fact.entries()) {
     // An empty address cannot be passed back to xrefs.

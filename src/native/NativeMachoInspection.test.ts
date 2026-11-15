@@ -13,7 +13,8 @@ import {
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import { err, ok } from "../domain/result.js";
-import { parseMachoLayout, selectMachoSlice } from "./AppleMachoSelection.js";
+import { layoutFor } from "./AppleMachoSelection.fixture.js";
+import { selectMachoSlice } from "./metadata/MachoSliceSelection.js";
 import type { NativeCommandCapture } from "./CommandRunner.js";
 import type { MachoSliceEncryption } from "../domain/apple/machoEncryption.js";
 import { inspectMachoSchema } from "../domain/native/nativeInspection.js";
@@ -288,13 +289,19 @@ describe("Mach-O tool architecture selection", () => {
         offset: (index + 1) * 4096,
         size: slices[index]!.bytes.length,
       };
-      expect(selectMachoSlice(fat, "arm64", admitted).slice).toBe(
-        admitted.offset,
-      );
-      expect(() => selectMachoSlice(fat, "arm64")).toThrow(
-        /needs the admitted slice/u,
-      );
-      expect(parseMachoLayout(fat, "arm64", admitted).fixups.dylibs).toEqual([
+      const slice = (at?: typeof admitted) =>
+        selectMachoSlice(fat, {
+          mode: "admitted",
+          architecture: "arm64",
+          slice: at,
+        });
+      expect(slice(admitted)).toMatchObject({
+        value: { fileOffset: admitted.offset },
+      });
+      expect(slice()).toMatchObject({
+        error: { kind: "admitted_slice_mismatch" },
+      });
+      expect(layoutFor(fat, "arm64", admitted).fixups.dylibs).toEqual([
         `/fixture/${selected}.dylib`,
       ]);
     },
