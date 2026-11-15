@@ -1,15 +1,41 @@
+import { createHash } from "node:crypto";
+
 import type { ParsedFieldGlossaryRecord } from "./parseFieldDiscovery.js";
 
 /**
  * Identity of the TShark installation a cached glossary describes. The
  * glossary depends only on the installation, never on capture traffic, so
- * these three facts fully determine the parsed records.
+ * these facts fully determine the parsed records — including the installed
+ * dissector plugins, which can add, remove, or rename registrations without
+ * changing the executable or its version banner.
  */
 export interface FieldGlossaryIdentity {
   readonly path: string;
   readonly sha256: string;
   readonly versionBanner: string;
+  /** SHA-256 of the installed plugin list; see {@link pluginListDigest}. */
+  readonly pluginsDigest: string;
 }
+
+/**
+ * Digest a `tshark -G plugins` report into one stable value. Lines are
+ * sorted before hashing so plugin load order never invalidates the snapshot;
+ * any installed, removed, upgraded, or relocated plugin changes the digest.
+ * A plugin file replaced in place without a version change is not detected —
+ * the session boundary (provider close) is the refresh point for that case.
+ */
+export const pluginListDigest = (pluginsReport: string): string =>
+  createHash("sha256")
+    .update(
+      pluginsReport
+        .split("\n")
+        .map((line) => (line.endsWith("\r") ? line.slice(0, -1) : line))
+        .filter((line) => line.length > 0)
+        .sort()
+        .join("\n"),
+      "utf8",
+    )
+    .digest("hex");
 
 /**
  * Upper bound on the retained glossary source bytes for one cached identity.
@@ -57,7 +83,8 @@ export const createFieldGlossaryCache = (): FieldGlossaryCache => {
       const current = entry.identity;
       return current.path === identity.path &&
         current.sha256 === identity.sha256 &&
-        current.versionBanner === identity.versionBanner
+        current.versionBanner === identity.versionBanner &&
+        current.pluginsDigest === identity.pluginsDigest
         ? entry.records
         : undefined;
     },

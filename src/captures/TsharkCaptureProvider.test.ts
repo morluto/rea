@@ -23,6 +23,13 @@ import type {
   ProcessCleanupResult,
 } from "../process/ProcessOwnership.js";
 import { TsharkCaptureProvider } from "./TsharkCaptureProvider.js";
+import {
+  createFieldGlossaryCache,
+  pluginListDigest,
+  type FieldGlossaryCache,
+  type FieldGlossaryIdentity,
+} from "./fieldGlossaryCache.js";
+import type { FieldGlossaryParseLimits } from "./parseFieldDiscovery.js";
 
 const VERSION_BANNER = "tshark (Wireshark) 4.6.9\n";
 const GLOSSARY = [
@@ -34,6 +41,12 @@ const GLOSSARY = [
   "F\tip.dst\tip.dst\tFT_IPv4\tip\t0x0\t0\tDestination Address",
   "F\ttcp.port\ttcp.port\tFT_UINT16\ttcp\t0x0\t0\tSource or Destination Port",
   "F\ttcp.srcport\ttcp.srcport\tFT_UINT16\ttcp\t0x0\t0\tSource Port",
+].join("\n");
+const PLUGINS_V1 =
+  "gryphon.so\t0.0.4\tdissector\t/usr/lib/wireshark/plugins/4.6/gryphon.so";
+const PLUGINS_V2 = [
+  PLUGINS_V1,
+  "acme.so\t1.2.3\tdissector\t/usr/lib/wireshark/plugins/4.6/acme.so",
 ].join("\n");
 
 class FakeProcess extends EventEmitter implements ProviderProcessHandle {
@@ -62,47 +75,163 @@ class FakeProcess extends EventEmitter implements ProviderProcessHandle {
   }
 }
 
+const spawnFake = (stdoutText: string): SpawnedOwnedProviderProcess => ({
+  process: new FakeProcess(stdoutText),
+  ownership: {} as OwnedProcessGroup,
+  cleanup: async (): Promise<ProcessCleanupResult> => ({
+    cleaned: true,
+    signaled: false,
+  }),
+});
+
 const input = (
   overrides: Partial<InspectPacketFieldsInput> = {},
 ): InspectPacketFieldsInput => inspectPacketFieldsInputSchema.parse(overrides);
 
+/** Records cache operations in order so close/drain ordering is observable. */
+const createSpyCache = () => {
+  const inner = createFieldGlossaryCache();
+  const ops: string[] = [];
+  const cache: FieldGlossaryCache = {
+    lookup: (identity) => inner.lookup(identity),
+    store: (identity, records) => {
+      ops.push("store");
+      return inner.store(identity, records);
+    },
+    clear: () => {
+      ops.push("clear");
+      inner.clear();
+    },
+  };
+  return { cache, ops };
+};
+
+interface ProviderTestFakes {
+  readonly fakeTshark: string;
+  readonly fakePrlimit: string;
+  readonly readArtifact: (
+    path: string,
+    maximumBytes: number,
+  ) => Promise<StableArtifactSnapshot>;
+}
+
+const makeProvider = (
+  fakes: ProviderTestFakes,
+  overrides: {
+    cache?: FieldGlossaryCache;
+    limits?: FieldGlossaryParseLimits;
+  } = {},
+) => {
+  const localCalls = { version: 0, fields: 0, plugins: 0 };
+  let plugins = PLUGINS_V1;
+  let fieldsGate: (() => Promise<void>) | undefined;
+  const launcher = async (
+    spawn: OwnedProviderProcessSpawnOptions,
+  ): Promise<SpawnedOwnedProviderProcess> => {
+    const args = spawn.arguments ?? [];
+    if (args.includes("--version")) {
+      localCalls.version++;
+      return spawnFake(VERSION_BANNER);
+    }
+    if (args.includes("plugins")) {
+      localCalls.plugins++;
+      return spawnFake(plugins);
+    }
+    if (args.includes("-G")) {
+      localCalls.fields++;
+      if (fieldsGate !== undefined) await fieldsGate();
+      return spawnFake(GLOSSARY);
+    }
+    throw new Error(`unexpected tshark args: ${args.join(" ")}`);
+  };
+  const readLimits = async (
+    configured: LinuxResourceLimits,
+  ): Promise<LinuxResourceLimits> => configured;
+  const made = new TsharkCaptureProvider(
+    {
+      ...process.env,
+      REA_TSHARK_COMMAND: fakes.fakeTshark,
+      REA_TSHARK_PRLIMIT_COMMAND: fakes.fakePrlimit,
+    },
+    launcher,
+    () => PrivateRuntimeRoot.create({ prefix: "rea-tshark-test-" }),
+    "linux",
+    fakes.readArtifact,
+    readLimits,
+    overrides.cache,
+    overrides.limits,
+  );
+  return {
+    provider: made,
+    calls: localCalls,
+    setPlugins: (next: string) => {
+      plugins = next;
+    },
+    setFieldsGate: (gate: () => Promise<void>) => {
+      fieldsGate = gate;
+    },
+  };
+};
+
+interface FieldPageReport {
+  records: { abbreviation: string }[];
+  output_window: {
+    examined: number;
+    matching: number;
+    returned: number;
+    has_more: boolean;
+  };
+}
+
+const expectFieldPage = (
+  execution: { result: unknown },
+  abbreviations: string[],
+  outputWindow: FieldPageReport["output_window"],
+) => {
+  const report = execution.result as unknown as FieldPageReport;
+  expect(report.records.map((record) => record.abbreviation)).toEqual(
+    abbreviations,
+  );
+  expect(report.output_window).toEqual(outputWindow);
+};
+
+/** Fake tshark + limiter executables and the bytes the artifact reader returns. */
+const createFixtures = async () => {
+  const directory = await mkdtemp(join(tmpdir(), "rea-tshark-test-"));
+  const fakeTshark = join(directory, "tshark");
+  await writeFile(fakeTshark, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  await chmod(fakeTshark, 0o755);
+  // The limiter is never executed — the injected launcher owns every spawn —
+  // but the provider resolves and checks it, so it must be a real executable
+  // fixture instead of the host's /usr/bin/prlimit.
+  const fakePrlimit = join(directory, "prlimit");
+  await writeFile(fakePrlimit, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  await chmod(fakePrlimit, 0o755);
+  const fakeBytes = Buffer.from("fake-tshark-binary-v1", "utf8");
+  const sha256 = createHash("sha256").update(fakeBytes).digest("hex");
+  return { directory, fakeTshark, fakePrlimit, fakeBytes, sha256 };
+};
+
 describe("TsharkCaptureProvider field glossary cache", () => {
   let directory: string;
-  let provider: TsharkCaptureProvider;
-  let calls: { version: number; fields: number };
+  let fakeTshark: string;
+  let fakePrlimit: string;
+  let fakeBytes: Buffer;
   let currentSha256: string;
+  let provider: TsharkCaptureProvider;
+  let calls: { version: number; fields: number; plugins: number };
+  let setPlugins: (next: string) => void;
+  let extraProviders: TsharkCaptureProvider[];
+  let fakes: ProviderTestFakes;
 
   beforeEach(async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-tshark-test-"));
-    const fakeTshark = join(directory, "tshark");
-    await writeFile(fakeTshark, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-    await chmod(fakeTshark, 0o755);
-    const fakeBytes = Buffer.from("fake-tshark-binary-v1", "utf8");
-    currentSha256 = createHash("sha256").update(fakeBytes).digest("hex");
-    calls = { version: 0, fields: 0 };
-    const launcher = async (
-      spawn: OwnedProviderProcessSpawnOptions,
-    ): Promise<SpawnedOwnedProviderProcess> => {
-      const args = spawn.arguments ?? [];
-      let stdout: string;
-      if (args.includes("--version")) {
-        calls.version++;
-        stdout = VERSION_BANNER;
-      } else if (args.includes("-G")) {
-        calls.fields++;
-        stdout = GLOSSARY;
-      } else {
-        throw new Error(`unexpected tshark args: ${args.join(" ")}`);
-      }
-      return {
-        process: new FakeProcess(stdout),
-        ownership: {} as OwnedProcessGroup,
-        cleanup: async (): Promise<ProcessCleanupResult> => ({
-          cleaned: true,
-          signaled: false,
-        }),
-      };
-    };
+    const fixtures = await createFixtures();
+    directory = fixtures.directory;
+    fakeTshark = fixtures.fakeTshark;
+    fakePrlimit = fixtures.fakePrlimit;
+    fakeBytes = fixtures.fakeBytes;
+    currentSha256 = fixtures.sha256;
+    extraProviders = [];
     const readArtifact = async (
       _path: string,
       _maximumBytes: number,
@@ -110,20 +239,17 @@ describe("TsharkCaptureProvider field glossary cache", () => {
       bytes: fakeBytes,
       sha256: currentSha256,
     });
-    const readLimits = async (
-      configured: LinuxResourceLimits,
-    ): Promise<LinuxResourceLimits> => configured;
-    provider = new TsharkCaptureProvider(
-      { ...process.env, REA_TSHARK_COMMAND: fakeTshark },
-      launcher,
-      () => PrivateRuntimeRoot.create({ prefix: "rea-tshark-test-" }),
-      "linux",
-      readArtifact,
-      readLimits,
+    const setup = makeProvider(
+      (fakes = { fakeTshark, fakePrlimit, readArtifact }),
     );
+    provider = setup.provider;
+    calls = setup.calls;
+    setPlugins = setup.setPlugins;
   });
 
   afterEach(async () => {
+    for (const extra of extraProviders)
+      await extra.close().catch(() => undefined);
     await provider.close().catch(() => undefined);
     await rm(directory, { recursive: true, force: true });
   });
@@ -137,30 +263,19 @@ describe("TsharkCaptureProvider field glossary cache", () => {
       input({ kind: "fields", limit: 2, offset: 2 }),
     );
     if (!second.ok) throw new Error(`second page failed: ${second.error}`);
-    expect(calls).toEqual({ version: 2, fields: 1 });
-    const firstReport = first.value.result as unknown as {
-      records: { abbreviation: string }[];
-      output_window: { matching: number; has_more: boolean };
-    };
-    const secondReport = second.value.result as unknown as {
-      records: { abbreviation: string }[];
-      output_window: { matching: number; has_more: boolean };
-    };
-    expect(firstReport.records.map((record) => record.abbreviation)).toEqual([
-      "ip.addr",
-      "ip.src",
-    ]);
-    expect(firstReport.output_window).toEqual({
+    expect(calls).toEqual({ version: 2, fields: 1, plugins: 2 });
+    expectFieldPage(first.value, ["ip.addr", "ip.src"], {
       examined: 5,
       matching: 5,
       returned: 2,
       has_more: true,
     });
-    expect(secondReport.records.map((record) => record.abbreviation)).toEqual([
-      "ip.dst",
-      "tcp.port",
-    ]);
-    expect(secondReport.output_window.has_more).toBe(true);
+    expectFieldPage(second.value, ["ip.dst", "tcp.port"], {
+      examined: 5,
+      matching: 5,
+      returned: 2,
+      has_more: true,
+    });
     expect(first.value.limitations.join(" ")).toContain("cached in memory");
   });
 
@@ -176,5 +291,80 @@ describe("TsharkCaptureProvider field glossary cache", () => {
     );
     if (!second.ok) throw new Error(`second call failed: ${second.error}`);
     expect(calls.fields).toBe(2);
+  });
+
+  it("re-dumps when the installed plugin list changes", async () => {
+    const first = await provider.inspectFields(
+      input({ kind: "fields", limit: 1 }),
+    );
+    if (!first.ok) throw new Error(`first call failed: ${first.error}`);
+    expect(calls).toEqual({ version: 1, fields: 1, plugins: 1 });
+    setPlugins(PLUGINS_V2);
+    const second = await provider.inspectFields(
+      input({ kind: "fields", limit: 1 }),
+    );
+    if (!second.ok) throw new Error(`second call failed: ${second.error}`);
+    expect(calls.fields).toBe(2);
+    expect(calls.plugins).toBe(2);
+    const third = await provider.inspectFields(
+      input({ kind: "fields", limit: 1 }),
+    );
+    if (!third.ok) throw new Error(`third call failed: ${third.error}`);
+    expect(calls.fields).toBe(2);
+    expect(calls.plugins).toBe(3);
+  });
+
+  it("answers the page without caching when the glossary exceeds the retention caps", async () => {
+    const setup = makeProvider(fakes, {
+      limits: { maxSourceBytes: 1_000_000, maxRecords: 3 },
+    });
+    extraProviders.push(setup.provider);
+    const first = await setup.provider.inspectFields(
+      input({ kind: "fields", limit: 2, offset: 0 }),
+    );
+    if (!first.ok) throw new Error(`first page failed: ${first.error}`);
+    const firstReport = first.value.result as unknown as {
+      records: { abbreviation: string }[];
+    };
+    expect(firstReport.records.map((record) => record.abbreviation)).toEqual([
+      "ip.addr",
+      "ip.src",
+    ]);
+    const second = await setup.provider.inspectFields(
+      input({ kind: "fields", limit: 2, offset: 2 }),
+    );
+    if (!second.ok) throw new Error(`second page failed: ${second.error}`);
+    // Nothing was retained, so the second page pays a fresh dump.
+    expect(setup.calls.fields).toBe(2);
+  });
+
+  it("leaves no retained glossary when close drains an in-flight dump", async () => {
+    const spy = createSpyCache();
+    const setup = makeProvider(fakes, { cache: spy.cache });
+    let releaseDump!: () => void;
+    const dumpStarted = new Promise<void>((resolve) => {
+      setup.setFieldsGate(async () => {
+        resolve();
+        await new Promise<void>((release) => {
+          releaseDump = release;
+        });
+      });
+    });
+    const first = setup.provider.inspectFields(
+      input({ kind: "fields", limit: 1 }),
+    );
+    await dumpStarted;
+    const closing = setup.provider.close();
+    releaseDump();
+    const [result] = await Promise.all([first, closing]);
+    if (!result.ok) throw new Error(`request failed: ${result.error}`);
+    const identity: FieldGlossaryIdentity = {
+      path: fakeTshark,
+      sha256: currentSha256,
+      versionBanner: VERSION_BANNER,
+      pluginsDigest: pluginListDigest(PLUGINS_V1),
+    };
+    expect(spy.ops).toEqual(["clear", "store", "clear"]);
+    expect(spy.cache.lookup(identity)).toBeUndefined();
   });
 });
