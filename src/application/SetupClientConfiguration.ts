@@ -1006,6 +1006,7 @@ const clientConfigurationDesired = async (
     format,
     client,
     parsed,
+    sources,
     effective,
     providerEnvironment,
   );
@@ -1030,10 +1031,16 @@ const withInheritedGooseSettings = (
   format: ClientRegistrationDialect,
   client: SetupClient,
   parsed: ClientConfigurationDocument | undefined,
+  sources: readonly ClientConfigurationSource[],
   effective: ClientConfigurationDocument | undefined,
   providerEnvironment: SetupProviderEnvironment,
 ): Record<string, unknown> => {
   if (format !== "goose") return withoutInherited;
+  // The layers below the user file, which the user entry overlays field by field.
+  const lower = effectiveClientConfiguration(sources, {
+    client,
+    document: undefined,
+  });
   const declares = (
     document: ClientConfigurationDocument | undefined,
     keys: readonly string[],
@@ -1048,26 +1055,33 @@ const withInheritedGooseSettings = (
       keys.some((key) => Object.hasOwn(entry, key))
     );
   };
+  // Goose merges each field separately, so a user map must use the spelling a
+  // lower layer declares: `envs` beside an inherited `env` alias would leave
+  // both in force, which Goose's readers reject as ambiguous.
+  const spelled = (
+    registration: Record<string, unknown>,
+  ): Record<string, unknown> => {
+    if (!declares(lower, ["env"]) || !Object.hasOwn(registration, "envs"))
+      return registration;
+    const { envs, ...rest } = registration;
+    return { ...rest, env: envs };
+  };
+  const userDeclares = (keys: readonly string[]) => declares(parsed, keys);
   // A setting only a lower layer declares stays in effect: writing setup's
   // default into the user entry would override that caller's choice.
   const registration = Object.fromEntries(
     Object.entries(withoutInherited).filter(
       ([key]) =>
         !GOOSE_INHERITABLE_SETTINGS.includes(key) ||
-        declares(parsed, [key]) ||
-        !declares(effective, [key]),
+        userDeclares([key]) ||
+        !declares(lower, [key]),
     ),
   );
   const environmentKeys = ["envs", "env"];
-  if (
-    declares(parsed, environmentKeys) ||
-    !declares(effective, environmentKeys)
-  )
-    return registration;
-  if (Object.keys(providerEnvironment).length === 0) {
-    const { envs: _inherited, ...rest } = registration;
-    return rest;
-  }
+  if (userDeclares(environmentKeys) || !declares(lower, environmentKeys))
+    return spelled(registration);
+  const { envs: _generated, ...rest } = registration;
+  if (Object.keys(providerEnvironment).length === 0) return rest;
   const inherited = clientRegistrationEnvironment(
     effective,
     client,
@@ -1075,5 +1089,5 @@ const withInheritedGooseSettings = (
     "fragment",
   );
   if (!inherited.ok) throw inherited.error;
-  return { ...registration, envs: { ...inherited.value } };
+  return spelled({ ...rest, envs: { ...inherited.value } });
 };
