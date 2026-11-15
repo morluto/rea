@@ -1,5 +1,5 @@
 import { ARTIFACT_TOOL_CONTRACTS } from "../contracts/artifactToolContracts.js";
-import { toolContract } from "../contracts/toolContracts.js";
+import { OPEN_BINARY_TOOL_CONTRACT } from "../contracts/sessionToolContracts.js";
 import { ARTIFACT_GRAPH_PROVIDER } from "../domain/investigationProviders.js";
 import {
   contractNamed,
@@ -34,7 +34,7 @@ export const registerArtifactCommands = (
 const artifactTarget = {
   description: "Application or package path",
   open: {
-    contract: toolContract("open_binary"),
+    contract: OPEN_BINARY_TOOL_CONTRACT,
     fields: {
       format: {
         name: "targetFormat",
