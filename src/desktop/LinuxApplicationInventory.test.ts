@@ -1,10 +1,20 @@
-import { chmod, mkdir, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import {
+  chmod,
+  mkdir,
+  realpath,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { isAbsolute, join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { inspectLinuxApplication } from "./LinuxApplicationInventory.js";
+import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import { ArtifactFileCleanupFailure } from "../artifacts/ArtifactFileOperation.js";
+import { desktopOperationFailure } from "../application/desktop/DesktopCaptureRefusals.js";
 
 const fixture = async () => {
   const root = await createTestTempDirectory("desktop-inventory-");
@@ -36,6 +46,93 @@ const fixture = async () => {
     },
   };
 };
+
+describe.skipIf(process.platform === "win32")(
+  "explicit executable traversal",
+  () => {
+    it("refuses a directory symlink as an executable while accepting a file symlink", async () => {
+      const { home, bin, environment } = await fixture();
+      const directoryAlias = join(bin, "directory-alias");
+      const fileAlias = join(bin, "file-alias");
+      await symlink(home, directoryAlias);
+      await symlink(join(bin, "notes-app"), fileAlias);
+      const inspect = (executable: string) =>
+        inspectLinuxApplication({
+          desktopEntry: undefined,
+          executable,
+          arguments: [],
+          environment,
+          home,
+          callerDirectory: home,
+        });
+      expect(await inspect(fileAlias)).toMatchObject({ ok: true });
+      expect(await inspect(directoryAlias)).toEqual({
+        ok: false,
+        error: { reason: "executable_not_found", program: directoryAlias },
+      });
+    });
+
+    it("preserves symlink and parent traversal for the selected executable", async () => {
+      const { home, environment } = await fixture();
+      const physical = join(home, "physical");
+      const named = join(home, "named");
+      await mkdir(join(physical, "child"), { recursive: true });
+      await mkdir(named);
+      await symlink(join(physical, "child"), join(named, "link"));
+      await writeFile(join(physical, "app"), "#!/bin/sh\n", { mode: 0o755 });
+      await writeFile(join(named, "app"), "#!/bin/sh\n", { mode: 0o755 });
+      const selected = `${named}/link/../app`;
+      const result = await inspectLinuxApplication({
+        desktopEntry: undefined,
+        executable: selected,
+        arguments: [],
+        environment,
+        home,
+        callerDirectory: home,
+      });
+      if (!result.ok) throw new Error(result.error.reason);
+      expect(result.value.inventory.argv[0]).toBe(selected);
+      expect(result.value.inventory.executable.resolved_path).toBe(
+        await realpath(join(physical, "app")),
+      );
+    });
+  },
+);
+
+describe.skipIf(process.platform === "win32")(
+  "desktop entry Unicode values",
+  () => {
+    it.each(["\u2028", "\u2029"])(
+      "retains Unicode separator %j in desktop launch arguments",
+      async (separator) => {
+        const { home, bin, environment } = await fixture();
+        const desktopEntry = join(home, "unicode.desktop");
+        await writeFile(
+          desktopEntry,
+          `[Desktop Entry]\nType=Application\nName=Notes${separator}Editor\nExec=notes-app --title "A${separator}B" %F\n`,
+        );
+        const inspected = await inspectLinuxApplication({
+          desktopEntry,
+          executable: undefined,
+          arguments: ["today.md"],
+          environment,
+          home,
+          callerDirectory: home,
+        });
+        expect(inspected).toMatchObject({
+          ok: true,
+          value: {
+            inventory: {
+              argv: ["notes-app", "--title", `A${separator}B`, "today.md"],
+              desktop_entry: { name: `Notes${separator}Editor` },
+              executable: { path: join(bin, "notes-app") },
+            },
+          },
+        });
+      },
+    );
+  },
+);
 
 describe.skipIf(process.platform === "win32")("inspectLinuxApplication", () => {
   it("resolves a desktop entry id into a launch command and state directories", async () => {
@@ -194,10 +291,366 @@ describe.skipIf(process.platform === "win32")("inspectLinuxApplication", () => {
   });
 });
 
+describe.skipIf(process.platform === "win32")(
+  "inspectLinuxApplication desktop file ids",
+  () => {
+    it("resolves a nested entry by its desktop file id before a lower-priority flat one", async () => {
+      const { home, environment } = await fixture();
+      const share = environment.XDG_DATA_DIRS;
+      await mkdir(join(home, ".local/share/applications/vendor"), {
+        recursive: true,
+      });
+      await writeFile(
+        join(
+          home,
+          ".local/share/applications/vendor/org.example.nested.desktop",
+        ),
+        "[Desktop Entry]\nType=Application\nName=High\nExec=notes-app --high\n",
+      );
+      // The spec's id for the nested entry above, installed at lower priority.
+      await writeFile(
+        join(share, "applications/vendor-org.example.nested.desktop"),
+        "[Desktop Entry]\nType=Application\nName=Low\nExec=notes-app --low\n",
+      );
+
+      const inventory = await inventoryOf("vendor-org.example.nested", {
+        home,
+        environment,
+      });
+
+      expect(inventory.desktop_entry).toMatchObject({
+        id: "vendor-org.example.nested",
+        name: "High",
+      });
+      expect(inventory.argv).toEqual(["notes-app", "--high"]);
+    });
+
+    it("resolves an id whose directory name itself contains a dash", async () => {
+      const { home, environment } = await fixture();
+      const directory = join(home, ".local/share/applications/org.example");
+      await mkdir(directory, { recursive: true });
+      await writeFile(
+        join(directory, "my-app.desktop"),
+        "[Desktop Entry]\nType=Application\nName=Dashed\nExec=notes-app\n",
+      );
+
+      const inventory = await inventoryOf("org.example-my-app", {
+        home,
+        environment,
+      });
+
+      expect(inventory.desktop_entry).toMatchObject({
+        id: "org.example-my-app",
+        name: "Dashed",
+      });
+    });
+
+    it("refuses a lower-priority entry when an applicable path cannot be probed", async () => {
+      const { home, environment } = await fixture();
+      const share = environment.XDG_DATA_DIRS;
+      const applications = join(home, ".local/share/applications");
+      const vendor = join(applications, "vendor");
+      await mkdir(vendor, { recursive: true });
+      await writeFile(
+        join(vendor, "org.example.app.desktop"),
+        "[Desktop Entry]\nType=Application\nName=High\nExec=notes-app --high\n",
+      );
+      await writeFile(
+        join(share, "applications/vendor-org.example.app.desktop"),
+        "[Desktop Entry]\nType=Application\nName=Low\nExec=notes-app --low\n",
+      );
+      // The exact higher-priority path cannot be examined without directory
+      // traversal permission; it must remain unknown rather than absent.
+      await chmod(vendor, 0o000);
+
+      try {
+        const inspected = await inspectLinuxApplication({
+          desktopEntry: "vendor-org.example.app",
+          executable: undefined,
+          arguments: [],
+          environment,
+          home,
+          callerDirectory: home,
+        });
+
+        // Root ignores the mode bits, so the directory stays listable and the
+        // scenario this asserts cannot be built.
+        if (inspected.ok) expect(process.getuid?.()).toBe(0);
+        else
+          expect(inspected.error.reason).toBe(
+            "desktop_entry_search_incomplete",
+          );
+      } finally {
+        await chmod(vendor, 0o755);
+      }
+    });
+  },
+);
+
+describe.skipIf(process.platform === "win32")(
+  "unresolved desktop entry link targets",
+  () => {
+    it
+      .skipIf(process.getuid?.() === 0)
+      .each(["directory", "flat-file", "nested-file"] as const)(
+      "refuses a lower-priority entry when a %s link target cannot be examined",
+      async (kind) => {
+        const { home, environment } = await fixture();
+        const applications = join(home, ".local/share/applications");
+        const blocked = join(home, "blocked");
+        const target = join(blocked, "vendor");
+        await mkdir(target, { recursive: true });
+        await mkdir(applications, { recursive: true });
+        await writeFile(
+          join(target, "app.desktop"),
+          "[Desktop Entry]\nType=Application\nName=High\nExec=notes-app\n",
+        );
+        await writeFile(
+          join(environment.XDG_DATA_DIRS, "applications/vendor-app.desktop"),
+          "[Desktop Entry]\nType=Application\nName=Low\nExec=notes-app\n",
+        );
+        let link: string;
+        if (kind === "directory") {
+          link = join(applications, "vendor");
+          await symlink(target, link);
+        } else {
+          if (kind === "nested-file") await mkdir(join(applications, "vendor"));
+          link = join(
+            applications,
+            kind === "flat-file" ? "vendor-app.desktop" : "vendor/app.desktop",
+          );
+          await symlink(join(target, "app.desktop"), link);
+        }
+        await chmod(blocked, 0o000);
+        try {
+          const probe = await stat(link).then(
+            () => undefined,
+            (cause: unknown) => cause,
+          );
+          expect(probe).toMatchObject({ code: "EACCES" });
+          const result = await inspectLinuxApplication({
+            desktopEntry: "vendor-app",
+            executable: undefined,
+            arguments: [],
+            environment,
+            home,
+            callerDirectory: home,
+          });
+          expect(result).toMatchObject({
+            ok: false,
+            error: { reason: "desktop_entry_search_incomplete" },
+          });
+        } finally {
+          await chmod(blocked, 0o755);
+        }
+      },
+    );
+  },
+);
+
+describe.skipIf(process.platform === "win32")(
+  "remaining desktop file id controls",
+  () => {
+    it("ignores an unreadable sibling that cannot encode the requested ID", async () => {
+      const { home, environment } = await fixture();
+      const applications = join(home, ".local/share/applications");
+      const found = join(applications, "zz-vendor");
+      const unreadable = join(applications, "aa-vendor");
+      await mkdir(found, { recursive: true });
+      await mkdir(unreadable, { recursive: true });
+      await writeFile(
+        join(found, "org.example.app.desktop"),
+        "[Desktop Entry]\nType=Application\nName=High\nExec=notes-app\n",
+      );
+      await chmod(unreadable, 0o000);
+
+      try {
+        const inventory = await inventoryOf("zz-vendor-org.example.app", {
+          home,
+          environment,
+        });
+
+        // This sibling cannot encode the requested ID and is irrelevant to
+        // selecting the known matching path.
+        expect(inventory.desktop_entry).toMatchObject({
+          id: "zz-vendor-org.example.app",
+          name: "High",
+        });
+      } finally {
+        await chmod(unreadable, 0o755);
+      }
+    });
+
+    it.skipIf(process.getuid?.() === 0)(
+      "finds a same-root spelling after an applicable probe fails",
+      async () => {
+        const { home, environment } = await fixture();
+        const applications = join(home, ".local/share/applications");
+        const blocked = join(home, "blocked");
+        await mkdir(join(blocked, "aa"), { recursive: true });
+        await mkdir(join(applications, "aa-bb"), { recursive: true });
+        await symlink(join(blocked, "aa"), join(applications, "aa"));
+        await writeFile(
+          join(applications, "aa-bb/app.desktop"),
+          "[Desktop Entry]\nType=Application\nName=Matched\nExec=notes-app\n",
+        );
+        await chmod(blocked, 0o000);
+        try {
+          await expect(stat(join(applications, "aa"))).rejects.toMatchObject({
+            code: "EACCES",
+          });
+          const inventory = await inventoryOf("aa-bb-app", {
+            home,
+            environment,
+          });
+          expect(inventory.desktop_entry).toMatchObject({
+            id: "aa-bb-app",
+            name: "Matched",
+          });
+        } finally {
+          await chmod(blocked, 0o755);
+        }
+      },
+    );
+
+    it.each(["plain", "vendor-app", "loop-vendor-app"])(
+      "ignores unrelated directory-link cycles when resolving %s in a later root",
+      async (id) => {
+        const { home, environment } = await fixture();
+        const applications = join(home, ".local/share/applications");
+        await mkdir(applications, { recursive: true });
+        await symlink(".", join(applications, "loop"));
+        await writeFile(
+          join(environment.XDG_DATA_DIRS, "applications", id + ".desktop"),
+          "[Desktop Entry]\nType=Application\nName=Selected\nExec=notes-app\n",
+        );
+        const inventory = await inventoryOf(id, { home, environment });
+        expect(inventory.desktop_entry).toMatchObject({ id, name: "Selected" });
+      },
+    );
+
+    it("keeps an applicable path beyond the depth allowance unresolved", async () => {
+      const { home, environment } = await fixture();
+      const applications = join(home, ".local/share/applications");
+      const directory = join(applications, "one/two/three/four/five");
+      await mkdir(directory, { recursive: true });
+      await writeFile(
+        join(directory, "app.desktop"),
+        "[Desktop Entry]\nType=Application\nName=High\nExec=notes-app\n",
+      );
+      const id = "one-two-three-four-five-app";
+      await writeFile(
+        join(environment.XDG_DATA_DIRS, "applications", id + ".desktop"),
+        "[Desktop Entry]\nType=Application\nName=Low\nExec=notes-app\n",
+      );
+      const result = await inspectLinuxApplication({
+        desktopEntry: id,
+        executable: undefined,
+        arguments: [],
+        environment,
+        home,
+        callerDirectory: home,
+      });
+      expect(result).toMatchObject({
+        ok: false,
+        error: { reason: "desktop_entry_search_incomplete" },
+      });
+    });
+
+    it("searches a directory whose own name ends in .desktop", async () => {
+      const { home, environment } = await fixture();
+      const directory = join(home, ".local/share/applications/vendor.desktop");
+      await mkdir(directory, { recursive: true });
+      await writeFile(
+        join(directory, "app.desktop"),
+        "[Desktop Entry]\nType=Application\nName=Nested\nExec=notes-app\n",
+      );
+
+      const inventory = await inventoryOf("vendor.desktop-app", {
+        home,
+        environment,
+      });
+
+      expect(inventory.desktop_entry).toMatchObject({
+        id: "vendor.desktop-app",
+        name: "Nested",
+      });
+    });
+
+    it("keeps a dash inside a directory name, not only inside the file name", async () => {
+      const { home, environment } = await fixture();
+      const directory = join(
+        home,
+        ".local/share/applications/org.example-tools",
+      );
+      await mkdir(directory, { recursive: true });
+      await writeFile(
+        join(directory, "my-app.desktop"),
+        "[Desktop Entry]\nType=Application\nName=Both\nExec=notes-app\n",
+      );
+
+      const inventory = await inventoryOf("org.example-tools-my-app", {
+        home,
+        environment,
+      });
+
+      expect(inventory.desktop_entry).toMatchObject({
+        id: "org.example-tools-my-app",
+        name: "Both",
+      });
+    });
+  },
+);
+
+describe.skipIf(process.platform === "win32")(
+  "inspectLinuxApplication incomplete desktop file searches",
+  () => {
+    it("ignores deep trees that cannot encode the requested desktop ID", async () => {
+      const { home, environment } = await fixture();
+      const share = environment.XDG_DATA_DIRS;
+      const applications = join(home, ".local/share/applications");
+      // An unrelated deep tree cannot change the requested ID's applicability.
+      for (let index = 0; index < 6; index += 1)
+        await mkdir(
+          join(applications, ...Array<string>(index + 1).fill("deep")),
+          { recursive: true },
+        );
+      await writeFile(
+        join(share, "applications/buried-org.example.app.desktop"),
+        "[Desktop Entry]\nType=Application\nName=Low\nExec=notes-app\n",
+      );
+
+      const inspected = await inspectLinuxApplication({
+        desktopEntry: "buried-org.example.app",
+        executable: undefined,
+        arguments: [],
+        environment,
+        home,
+        callerDirectory: home,
+      });
+
+      expect(inspected).toMatchObject({
+        ok: true,
+        value: {
+          inventory: {
+            desktop_entry: { id: "buried-org.example.app", name: "Low" },
+          },
+        },
+      });
+    });
+  },
+);
+
 /** The inventory of an installed desktop entry, launched with no arguments. */
 const inventoryOf = async (
   desktopEntry: string,
-  { home, environment }: Awaited<ReturnType<typeof fixture>>,
+  {
+    home,
+    environment,
+  }: {
+    home: string;
+    environment: Readonly<Record<string, string | undefined>>;
+  },
 ) => {
   const inspected = await inspectLinuxApplication({
     desktopEntry,
@@ -352,5 +805,220 @@ describe.skipIf(process.platform === "win32")(
       expect(paths).not.toContain(join(home, ".notesy"));
       expect(paths).not.toContain(join(home, ".other.ini"));
     });
+
+    it("adds KDE's ~/.config/<name>rc, which the application may first write during the capture", async () => {
+      const installed = await fixture();
+      const { home } = installed;
+      await mkdir(join(home, ".config"), { recursive: true });
+      await writeFile(join(home, ".config/org.example.notesrc"), "x\n");
+
+      const inventory = await inventoryOf("org.example.notes", installed);
+
+      expect(inventory.state_directories).toEqual(
+        expect.arrayContaining([
+          { path: join(home, ".config/notesrc"), exists_at_start: false },
+          {
+            path: join(home, ".config/org.example.notesrc"),
+            exists_at_start: true,
+          },
+        ]),
+      );
+    });
+  },
+);
+
+describe.skipIf(process.platform === "win32")(
+  "inspectLinuxApplication relative XDG bases",
+  () => {
+    it("ignores a relative XDG base and keeps the home default", async () => {
+      const installed = await fixture();
+      const { home, environment } = installed;
+      const inventory = await inventoryOf("org.example.notes", {
+        ...installed,
+        environment: {
+          ...environment,
+          XDG_CONFIG_HOME: "relative-config",
+          XDG_DATA_HOME: "relative-data",
+          XDG_STATE_HOME: "relative-state",
+          XDG_CACHE_HOME: "relative-cache",
+        },
+      });
+
+      const paths = inventory.state_directories.map((entry) => entry.path);
+      expect(paths).toContain(join(home, ".config/notes"));
+      expect(paths).toContain(join(home, ".local/share/notes"));
+      expect(paths).toContain(join(home, ".local/state/notes"));
+      expect(paths).toContain(join(home, ".cache/notes"));
+      expect(paths.filter((path) => !isAbsolute(path))).toEqual([]);
+    });
+
+    it("reads a relative XDG base an Exec env prefix sets as unset", async () => {
+      const installed = await fixture();
+      const { home, bin } = installed;
+      await mkdir(join(home, ".config"), { recursive: true });
+      await mkdir(join(home, ".local/share/applications"), {
+        recursive: true,
+      });
+      await writeFile(
+        join(
+          home,
+          ".local/share/applications/org.example.env-relative.desktop",
+        ),
+        `[Desktop Entry]\nType=Application\nName=Env\nExec=env XDG_CONFIG_HOME=relative-config notes-app\n`,
+      );
+
+      const inventory = await inventoryOf(
+        "org.example.env-relative",
+        installed,
+      );
+
+      expect(inventory.executable.path).toBe(join(bin, "notes-app"));
+      expect(inventory.state_directories.map((entry) => entry.path)).toContain(
+        join(home, ".config/notes-app"),
+      );
+    });
+
+    it("finds a desktop entry by id when XDG_DATA_HOME is relative", async () => {
+      const installed = await fixture();
+      const { home, environment } = installed;
+      await mkdir(join(home, ".local/share/applications"), { recursive: true });
+      await writeFile(
+        join(home, ".local/share/applications/org.example.home-notes.desktop"),
+        `[Desktop Entry]\nType=Application\nName=HomeNotes\nExec=notes-app\n`,
+      );
+
+      const inventory = await inventoryOf("org.example.home-notes", {
+        ...installed,
+        environment: { ...environment, XDG_DATA_HOME: "relative-data" },
+      });
+
+      expect(inventory.desktop_entry).toMatchObject({ name: "HomeNotes" });
+    });
+  },
+);
+
+it.skipIf(process.platform === "win32").each([
+  { stage: "desktop entry", closeAt: 1, oversized: false, cancel: false },
+  {
+    stage: "desktop entry capacity failure",
+    closeAt: 1,
+    oversized: true,
+    cancel: false,
+  },
+  { stage: "executable header", closeAt: 2, oversized: false, cancel: false },
+  {
+    stage: "optional Electron probe",
+    closeAt: 3,
+    oversized: false,
+    cancel: false,
+  },
+  {
+    stage: "desktop entry final cancellation",
+    closeAt: 1,
+    oversized: false,
+    cancel: true,
+  },
+  {
+    stage: "capacity failure before final cancellation",
+    closeAt: 1,
+    oversized: true,
+    cancel: true,
+  },
+])(
+  "retains and retries a failed close during $stage",
+  async ({ closeAt, oversized, cancel }) => {
+    const { home, bin, environment } = await fixture();
+    const entry = join(
+      environment.XDG_DATA_DIRS,
+      "applications/org.example.notes.desktop",
+    );
+    if (oversized) await writeFile(entry, "x".repeat(1024 * 1024 + 1));
+    const controller = new AbortController();
+    const reason = new Error("cancelled during close");
+    const denied = new Error("descriptor close denied");
+    const originalClose = OwnedFileHandle.prototype.close;
+    let closes = 0;
+    let retained: OwnedFileHandle | undefined;
+    const close = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementation(function (this: OwnedFileHandle) {
+        closes += 1;
+        if (closes === closeAt || this === retained) {
+          // oxlint-disable-next-line typescript/no-this-alias -- Retain the exact failed descriptor owner for retry.
+          retained = this;
+          if (cancel) controller.abort(reason);
+          return Promise.reject(denied);
+        }
+        return originalClose.call(this);
+      });
+    try {
+      const failure = await inspectLinuxApplication(
+        {
+          desktopEntry: "org.example.notes",
+          executable: undefined,
+          arguments: [],
+          environment,
+          home,
+          callerDirectory: home,
+        },
+        controller.signal,
+        {
+          runQuery: async () => "missing",
+          apt: {
+            trusted: join(home, "trusted"),
+            trustedParts: join(home, "trusted.d"),
+            lists: join(home, "lists"),
+          },
+        },
+      ).catch((cause: unknown) => cause);
+      expect(retained).toBeDefined();
+      if (!(failure instanceof ArtifactFileCleanupFailure))
+        throw new Error("expected transferable descriptor cleanup", {
+          cause: failure,
+        });
+      const expectedPath =
+        closeAt === 1 ? entry : await realpath(join(bin, "notes-app"));
+      expect(failure.cleanup?.resources).toEqual([expectedPath]);
+      expect(failure.fileCleanupFailure.owner).toBe(retained);
+      expect(failure.fileCleanupFailure.cleanupCause).toBe(denied);
+      const outcome = failure.fileCleanupFailure.outcome;
+      if (oversized) {
+        expect(outcome).toMatchObject({
+          kind: "failed",
+          cause: {
+            maximumBytes: 1024 * 1024,
+            observedBytes: BigInt(1024 * 1024 + 1),
+          },
+        });
+      } else if (closeAt === 3) {
+        expect(outcome).toMatchObject({
+          kind: "failed",
+          cause: { kind: "unsupported" },
+        });
+      } else {
+        expect(outcome.kind).toBe("completed");
+      }
+      if (cancel && !oversized)
+        expect(failure.cancellation?.reason).toBe(reason);
+      else expect(failure.reason).not.toBe("cancelled");
+      const projected = desktopOperationFailure(
+        failure,
+        controller.signal,
+        "capture_desktop_application",
+        "Desktop capture",
+      );
+      expect(projected.cleanupIncomplete).toBe(true);
+      expect(projected.cleanupResources).toEqual([expectedPath]);
+      await expect(failure.cleanupLease.release()).rejects.toBe(denied);
+      expect(projected.cleanupIncomplete).toBe(true);
+      close.mockRestore();
+      await failure.cleanupLease.release();
+      expect(projected.cleanupIncomplete).toBe(false);
+      expect(projected.cleanupResources).toEqual([]);
+      expect(retained?.handle.fd).toBe(-1);
+    } finally {
+      close.mockRestore();
+      await retained?.close();
+    }
   },
 );

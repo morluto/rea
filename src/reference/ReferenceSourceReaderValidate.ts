@@ -45,6 +45,12 @@ export const validateDirectory = async (
       readonly localDiagnostic?: string;
     }
 > => {
+  if (isAborted(signal))
+    return {
+      ok: false,
+      code: "cancelled",
+      message: "Reference source traversal cancelled",
+    };
   try {
     const rootNow = await bigLstat(root);
     if (!sameFile(rootIdentity, rootNow))
@@ -71,12 +77,6 @@ export const validateDirectory = async (
       };
     return { ok: true, stats };
   } catch (cause: unknown) {
-    if (isAborted(signal))
-      return {
-        ok: false,
-        code: "cancelled",
-        message: "Reference source traversal cancelled",
-      };
     const detail = filesystemFailureDetail(
       cause,
       "Directory identity could not be verified",
@@ -121,7 +121,6 @@ export const prepareRoot = async (
       );
     return ok({ canonicalRoot, rootIdentity: canonicalMetadata });
   } catch (cause: unknown) {
-    if (isAborted(signal)) return err(cancelled(signal));
     const rootFailure = rootFilesystemFailure(
       cause,
       "Reference source root could not be resolved",

@@ -8,7 +8,6 @@ import {
 import { fixedAllowanceOptions } from "../fixedAllowanceRemediation.js";
 import type { GoModule } from "../go/goBinary.js";
 import { goBinarySchema } from "../go/goBinary.js";
-import { PRODUCT_IDENTITY } from "../../identity.js";
 import {
   cargoPackageUrl,
   golangPackageUrl,
@@ -85,9 +84,11 @@ export const cycloneDxDocumentSchema = z.strictObject({
   version: z.literal(1),
   metadata: z.strictObject({
     component: componentSchema,
-    tools: z.strictObject({
-      components: z.array(componentSchema).min(1),
-    }),
+    tools: z
+      .strictObject({
+        components: z.array(componentSchema).min(1),
+      })
+      .exactOptional(),
   }),
   components: z.array(componentSchema),
   dependencies: z.array(dependencySchema).min(1).exactOptional(),
@@ -419,16 +420,24 @@ const projectSizedDocument = (
         hashes: [{ alg: "SHA-256" as const, content: report.artifact.sha256 }],
         ...(sliceProperties.length > 0 ? { properties: sliceProperties } : {}),
       },
-      tools: {
-        components: [
-          {
-            type: "application" as const,
-            "bom-ref": `rea@${PRODUCT_IDENTITY.packageVersion}`,
-            name: PRODUCT_IDENTITY.displayName,
-            version: PRODUCT_IDENTITY.packageVersion,
-          },
-        ],
-      },
+      // The parent's recorded provider produced these facts; this view only
+      // re-projects them, so the projecting build is not the tool.
+      ...(parent.provider === undefined
+        ? {}
+        : {
+            tools: {
+              components: [
+                {
+                  type: "application" as const,
+                  "bom-ref": `${parent.provider.id}@${parent.provider.version ?? "unknown"}`,
+                  name: parent.provider.name,
+                  ...(parent.provider.version === null
+                    ? {}
+                    : { version: parent.provider.version }),
+                },
+              ],
+            },
+          }),
     },
     components,
     ...(subjectRef === undefined

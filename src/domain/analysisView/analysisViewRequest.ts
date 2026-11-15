@@ -1,3 +1,4 @@
+import { webSourceLocationViewRequestSchema } from "./webSourceLocationView.js";
 import { nativeProcedureReferencesViewRequestSchema } from "./nativeProcedureReferencesView.js";
 import { graphqlContractViewRequestSchema } from "../apiContract/graphqlContractQuery.js";
 import { playwrightTraceViewRequestSchema } from "../playwrightTrace/playwrightTraceQuery.js";
@@ -40,7 +41,7 @@ import { javascriptModuleReferencesRequestSchema } from "./javascriptModuleRefer
 import { javascriptFactsViewRequestSchema } from "./javascriptFactsView.js";
 import { evidenceSchema } from "../evidence.js";
 import { declareEvidenceReferenceAlternative } from "../evidenceInputContract.js";
-import { apiSurfaceViewSchema } from "./webNetworkApiSurfaceView.js";
+import { apiSurfaceViewSchema } from "./apiSurfaceSchema.js";
 import { evmViewRequestSchema } from "./evmInterfaceView.js";
 import { artifactInventoryViewRequestSchema } from "./artifactInventoryView.js";
 import { managedViewRequestSchema } from "./managedArtifactView.js";
@@ -54,7 +55,7 @@ import { environmentStateViewRequestSchema } from "./environmentStateView.js";
 import { environmentCoverageViewRequestSchema } from "./environmentCoverageView.js";
 import { pcapViewRequestSchema } from "./pcapCaptureView.js";
 import { qlogViewRequestSchema } from "./qlogCaptureView.js";
-import { androidViewRequestSchema } from "./androidPackageView.js";
+import { androidViewRequestSchema } from "../android/androidPackageQuery.js";
 import { androidJniViewRequestSchema } from "../android/androidJniQuery.js";
 import { dartAotViewRequestSchema } from "./dartAotView.js";
 import { il2cppMetadataViewRequestSchema } from "./il2cppMetadataView.js";
@@ -98,6 +99,7 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   nativeFeatureTraceViewRequestSchema,
   batchDecompileViewRequestSchema,
   summaryViewSchema,
+  webSourceLocationViewRequestSchema,
   goBinaryViewRequestSchema,
   rustBinaryViewRequestSchema,
   cycloneDxViewRequestSchema,

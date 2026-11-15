@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { expect, it } from "vitest";
+import { selectedEvmProducerLimits } from "../../../src/domain/evm/evmInterface.js";
 import { solidityMetadataSchema } from "../../../src/domain/evm/solidityMetadata.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -47,6 +48,7 @@ it.each([
         reply_path: reply,
         failure_marker_path: join(directory, "resource.failure"),
         encoding: "hex",
+        producer_limits: selectedEvmProducerLimits(undefined),
       }),
     );
     await promisify(execFile)(

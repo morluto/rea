@@ -102,7 +102,6 @@ describe("immutable JavaScript result reuse", () => {
 
   it("borrows imported immutable results only after complete format validation", () => {
     const input = example();
-    delete input.statistics.skipped_javascript_files;
     freezeJsonSnapshot(input);
     const result = complete(
       parseOwnedJavaScriptApplicationAnalysisSteps(input),
@@ -111,7 +110,6 @@ describe("immutable JavaScript result reuse", () => {
     expect(result).toEqual(
       javascriptApplicationAnalysisResultSchema.parse(input),
     );
-    expect(result.statistics).not.toHaveProperty("skipped_javascript_files");
     expect(complete(parseOwnedJavaScriptApplicationAnalysisSteps(input))).toBe(
       input,
     );
@@ -426,19 +424,17 @@ describe("graphs transferred to their sealing steps", () => {
   });
 });
 
-describe("skipped_javascript_files backward compatibility", () => {
-  it("preserves omission for saved evidence that predates the skipped counter", () => {
-    const legacy = structuredClone(
+describe("skipped_javascript_files", () => {
+  it("refuses a result without the skipped counter", () => {
+    const withoutCounter = structuredClone(
       JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE.normalized_result,
     ) as Record<string, unknown>;
-    const statistics = legacy.statistics as Record<string, unknown>;
+    const statistics = withoutCounter.statistics as Record<string, unknown>;
     delete statistics.skipped_javascript_files;
-    const result = javascriptApplicationAnalysisResultSchema.parse(legacy);
-    // A pre-change result can contain the very resource-skipped files this
-    // field reports, but it has no counter: unknown must not become a
-    // measured zero that comparisons would treat as "nothing skipped".
-    expect("skipped_javascript_files" in result.statistics).toBe(false);
-    expect(result.statistics.skipped_javascript_files).toBeUndefined();
+    expect(
+      javascriptApplicationAnalysisResultSchema.safeParse(withoutCounter).error
+        ?.issues[0]?.path,
+    ).toEqual(["statistics", "skipped_javascript_files"]);
   });
 
   it("keeps the producer-written skipped count in current evidence", () => {
@@ -452,14 +448,15 @@ describe("skipped_javascript_files backward compatibility", () => {
   });
 });
 
-describe("Electron boundary summary compatibility", () => {
-  it("reads results produced before protocol registrations were counted", () => {
+describe("Electron boundary summary", () => {
+  it("refuses a summary without the protocol registration count", () => {
     const current = example();
     const { protocol_registrations: _count, ...summary } = current.summary;
-    const parsed = javascriptApplicationAnalysisResultSchema.parse({
-      ...current,
-      summary,
-    });
-    expect(parsed.summary).not.toHaveProperty("protocol_registrations");
+    expect(
+      javascriptApplicationAnalysisResultSchema.safeParse({
+        ...current,
+        summary,
+      }).error?.issues[0]?.path,
+    ).toEqual(["summary", "protocol_registrations"]);
   });
 });

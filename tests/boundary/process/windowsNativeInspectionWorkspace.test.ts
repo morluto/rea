@@ -39,7 +39,7 @@ processTest(
           'assert.equal(typeof loader.systemWindowsNativeAuthority, "function");',
         ].join("\n"),
       ],
-      { cwd: workspace, timeoutMs: 10_000 },
+      { cwd: workspace },
     );
     expect(imported.exitCode, imported.stderr).toBe(0);
     expect(await realpath(join(workspace, "node_modules"))).toBe(

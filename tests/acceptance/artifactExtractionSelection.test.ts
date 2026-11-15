@@ -1,3 +1,4 @@
+import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstat, readFile, readdir, writeFile } from "node:fs/promises";
@@ -19,6 +20,7 @@ import { artifactInspectionResultSchema } from "../../src/domain/artifactInspect
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { advertisedMcpToolSchemas } from "../fixtures/advertisedMcpTool.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { schemaVerifierEnvironment } from "../../scripts/lib/mcp-verification-environment.mjs";
 
 const execute = promisify(execFile);
 const cli = fileURLToPath(new URL("../../scripts/rea.mjs", import.meta.url));
@@ -121,11 +123,11 @@ it("keeps CLI/MCP selection identity, invalid-input refusals and committed outpu
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [cli, "mcp"],
-    env: {
+    env: schemaVerifierEnvironment({
       ...data.environment,
       REA_MCP_INPUT_SCHEMA_PROFILE: "full",
       REA_MCP_TOOL_FAMILIES: "artifact,session",
-    },
+    }),
     stderr: "pipe",
   });
   const client = new Client({
@@ -133,7 +135,7 @@ it("keeps CLI/MCP selection identity, invalid-input refusals and committed outpu
     version: "1",
   });
   const output = join(data.root, "mcp-output");
-  try {
+  await withVerifierCleanup(async () => {
     await client.connect(transport);
     const opened = await artifactMcpCall(client, {
       name: "open_binary",
@@ -191,10 +193,7 @@ it("keeps CLI/MCP selection identity, invalid-input refusals and committed outpu
       arguments: {},
     });
     expect(closed.isError).not.toBe(true);
-  } finally {
-    await client.close();
-    await transport.close();
-  }
+  }, [() => client.close(), () => transport.close()]);
   expect(await readFile(join(output, "lib/selected.so"), "utf8")).toBe(
     "native fixture",
   );

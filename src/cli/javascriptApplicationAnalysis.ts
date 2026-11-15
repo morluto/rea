@@ -1,4 +1,4 @@
-import type { AnalysisViewRequest } from "../domain/analysisView/analysisView.js";
+import type { AnalysisViewRequest } from "../domain/analysisView/analysisViewRequest.js";
 import { publishCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
 import { JAVASCRIPT_APPLICATION_PROVIDER } from "../domain/investigationProviders.js";
 import { createProgressReporter } from "../application/ProgressReporter.js";
@@ -12,6 +12,8 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { javaScriptSourcePathsSchema } from "../domain/javascript/javascriptSourceSelection.js";
 import { parseCliJsonInput } from "../cliJsonInput.js";
+import { writeCliProgressLine } from "./cliProgress.js";
+import { ownCliProcessResource } from "./cliResources.js";
 
 const OPERATION = "analyze_javascript_application";
 
@@ -94,6 +96,10 @@ export const closeCliJavaScriptResources = (
   host: CliJavaScriptAnalysisHost = processJavaScriptAnalysis,
 ): Promise<void> => host.close();
 
+ownCliProcessResource("javascript-analysis", () =>
+  closeCliJavaScriptResources(),
+);
+
 /** Execute the shared CLI boundary for static JavaScript analysis. */
 export const runCliJavaScriptApplicationAnalysis = async (
   input: unknown,
@@ -110,7 +116,7 @@ export const runCliJavaScriptApplicationAnalysis = async (
     await import("../application/javascript/JavaScriptApplicationService.js");
   const progress = createProgressReporter(
     async (update) => {
-      process.stderr.write(`${JSON.stringify({ rea_progress: update })}\n`);
+      writeCliProgressLine(update);
     },
     { minimumIntervalMs: 0 },
   );

@@ -10,7 +10,7 @@ This family is present on repository main and in npm 4.1.0. Check the
 connected server's tool list before selecting it.
 
 On Linux, JADX launches an REA-owned process and requires a procps-compatible
-`ps` on REA's `PATH`; see the shared
+system `ps`; see the shared
 [Linux process prerequisite](../../getting-started/installation.md#linux-owned-process-prerequisite).
 
 ## Optional package delivery
@@ -101,10 +101,9 @@ complete decoded manifest. Component, filter, data and metadata `location` value
 use one-based lines/columns and UTF-16 offsets into that manifest. A component's
 `declaration_index` preserves its original declaration ordinal, including gaps.
 
-`declaration_coverage` distinguishes complete, partial and unknown observations.
-Historical Evidence omits newly introduced fields and defaults coverage to
-`unknown`; omission never establishes absence. Current records contain the fields,
-with null for absent or unresolved scalar declarations. The inventory retains at
+`declaration_coverage` distinguishes complete and partial observations. Every
+record contains the declaration fields, with null for absent or unresolved scalar
+declarations. The inventory retains at
 most 32 filters and 64 nested action/category/data/metadata records per component,
 and shares a 1 MiB structured-value copy budget across components. Omitted values
 or unsupported filter constructs mark coverage partial and include a limitation;
@@ -410,6 +409,14 @@ original ZIP spelling. Omitted filters include all scoped facts; `[]` matches
 none. Class selection never narrows the global inventory used for table-class
 attribution.
 
+Only libraries inside the selected APK are examined. `native_inventory.manifest_splits`
+reports the root manifest's `android:requiredSplitTypes` and the
+`<application>` `android:isSplitRequired` flag, decoded without loading the APK.
+When the manifest requires splits, or those requirements cannot be read, native
+libraries may live in split APKs that were not examined: `library_inventory` is
+then `partial` with an unknown that says so, and a binding with no candidate is
+`unknown` rather than `unmatched`.
+
 Independent `declarations`, `libraries`, `candidates` and `bindings` collections
 have stable IDs and source ordinals. Candidates retain APK/library digests,
 ABI, function addresses and file offsets. Table candidates also retain section,
@@ -545,7 +552,8 @@ and each upstream request and reply collected before the failure. Failed replies
 remain available even when their payload cannot be interpreted. Cancellation
 also stops target hashing before provider admission.
 
-These operations do not execute the APK or provide split APK/AAB handling,
+The JADX package, class, method and reference operations do not execute the APK
+or provide split APK/AAB handling,
 signature validation, full resource-table semantics, native-library analysis or
 Android runtime capture. An `.aab` suffix is a ZIP archive, not an APK, so
 Android tools and the application graph do not treat it as a standalone APK.
@@ -664,9 +672,13 @@ uses native memory. A typed JVM memory allocation failure during APK loading
 reports `resource_constraint` with the observed maximum heap in bytes. Known
 heap failures name `REA_JADX_HEAP_MIB` in remediation; other memory regions
 remain unknown. A healthy doctor configuration check does not establish that
-any particular APK fits. Failures before the bridge can report a typed result
-and upstream errors from other operations retain their existing diagnostics;
-error text alone does not establish memory exhaustion.
+any particular APK fits. If the launcher stops before the bridge answers and
+its retained stderr carries HotSpot's `java.lang.OutOfMemoryError: Java heap
+space` or `GC overhead limit exceeded`, REA reports `resource_constraint` with
+`observed_max_heap_bytes: null`, since no runtime fact measured the heap, and
+the same `REA_JADX_HEAP_MIB` remediation. Other failures before the bridge can
+report a typed result and upstream errors from other operations retain their
+existing diagnostics; error text alone does not establish memory exhaustion.
 
 Independent REA instances have independent queues. Whole
 operations have a **120-second** execution deadline by default, starting after
@@ -770,5 +782,4 @@ means the producer did not establish instruction coverage. Using-node totals
 and coverage do not imply complete instruction evidence.
 `direct_invokes_coverage` reports counts of using nodes with complete, partial,
 or unknown positions, plus the number of retained instruction sites. This
-aggregate makes position truncation visible without scanning every caller;
-older retained Evidence may omit it, which means the aggregate was unexamined.
+aggregate makes position truncation visible without scanning every caller.

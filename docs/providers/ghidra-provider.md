@@ -17,7 +17,7 @@ database state into a fresh discovery. The default remains ephemeral.
 Use [installation](../getting-started/installation.md#ghidra) for supported hosts, prerequisites,
 configuration, startup deadlines, resource controls, and cleanup recovery.
 [Linux Ghidra launches](../getting-started/installation.md#linux-owned-process-prerequisite) also
-require a procps-compatible `ps` on REA's `PATH` for process ownership checks.
+require a procps-compatible system `ps` for process ownership checks.
 [Windows P0](windows-ghidra-p0.md) has its own admission and lifecycle boundary;
 [NativeAOT observations](ghidra-nativeaot.md) include a built-in read-only PE
 snapshot parser and a separate optional annotation extension. Check the
@@ -65,7 +65,8 @@ escaping, before allocating the serialized request or sending it. The framing
 newline is excluded. An oversized request returns `resource_constraint` with
 the effective setting, its source, and the exact payload byte count.
 
-Set the value in the environment that starts REA, then restart REA to apply it.
+`bridge.max_request_bytes` can be changed at runtime with
+`update_analysis_settings`. The launch seed is `REA_BRIDGE_MAX_REQUEST_BYTES`.
 This setting is enforced by the REA client; the Java bridge has no corresponding
 request ceiling.
 
@@ -95,6 +96,40 @@ data, not independent proof of the original source encoding. Procedure searches
 and trace matches likewise retain Ghidra's external and thunk classification.
 The Ghidra analysis profile identifies this search projection, so older
 snapshots with unqualified search rows cannot replay under the new profile.
+
+## Decompiler and value-flow budgets
+
+Use `inspect_analysis_settings` or a result's named recovery to inspect
+`ghidra.value_flow_max_operations` (default 3000),
+`ghidra.value_flow_max_inputs_per_operation` (default 64), and
+`ghidra.value_flow_max_edges` (default 12000). Each accepts a positive Java
+integer count. `update_analysis_settings` applies changes to the next operation
+on the same Program without restarting REA. Launch seeds use the corresponding
+`REA_GHIDRA_VALUE_FLOW_MAX_OPERATIONS`,
+`REA_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION`, and
+`REA_GHIDRA_VALUE_FLOW_MAX_EDGES` environment settings.
+For a one-shot CLI retry, set the named seed in the environment that launches
+the next `rea` invocation; the completed invocation's Program is no longer
+active. Runtime MCP changes preserve the current Program. A changed launch seed
+only affects a running MCP server after that server restarts.
+
+The returned `native_value_flow.limits` and `limits_reached` distinguish accepted
+budgets from actual exhaustion. Truncation keeps omitted counts and names the
+setting to adjust. The edge budget applies independently to def-use and
+parameter-use collections. New function dossiers are reobserved rather than
+replayed from snapshots; completed Evidence remains available for historical
+inspection. Other observation caches keep their existing policy.
+
+`ghidra.decompile_max_payload_mib` controls the native decompiler's response
+payload, separately from p-code projection and decompile time. Its launch seed
+is `REA_GHIDRA_DECOMPILE_MAX_PAYLOAD_MIB`; explicit values are 1..2047 MiB to
+avoid overflow in Ghidra's signed integer byte conversion. Omission or runtime
+`null` preserves the installed provider's default. Changes apply before the
+next native decompile, and native option changes clear its old cached function
+state. A failed decompile preserves the original diagnostic and reports the
+effective payload allowance; payload recovery applies only when that diagnostic
+identifies payload exhaustion. Raising these controls does not raise the MCP
+client's deadline or receive buffer.
 
 ## PE debug-symbol coverage
 
@@ -195,8 +230,7 @@ status and limitations state.
 
 Relocation rows retain Ghidra's `symbol` value, including an empty string or
 null when returned by Ghidra. It is a provider observation, not proof of the
-runtime-resolved address. Older Evidence may not have recorded this field;
-a relocation page requesting it reports that uncertainty.
+runtime-resolved address. Every relocation row records the field.
 
 For large relocation inventories, select MCP `inspect_native_load_image` with
 `detail: "summary"`. It returns verification state, observed identity and counts,
@@ -267,7 +301,7 @@ profile stages before retrying their retained descriptors.
 | Function identity       | Every function result carries the entry address and Ghidra FunctionManager classification for external, thunk, and resolved thunk target. These are observations, not proof that unresolved targetless calls have been recovered.                                                                                                                                                                                                                                                                                                                                                                                          |
 | Assembly and pseudocode | Assembly is complete Ghidra Listing text; pseudocode is Ghidra decompiler output. Neither is original source, and cross-provider comparison never treats Hopper and Ghidra text as equal or unequal semantic facts.                                                                                                                                                                                                                                                                                                                                                                                                        |
 | Instruction fast path   | `read_function_instructions` returns every raw Listing instruction for the requested function without invoking the decompiler or whole-program name/string inventories.                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| Calls and references    | Callers/callees contain only resolved functions. Reference edges preserve exact ReferenceManager type and call/jump/data/read/write/indirect/computed/conditional/terminal/external facts. Targetless computed flow remains unknown. Synthetic entry-point references without actionable memory sources are omitted explicitly.                                                                                                                                                                                                                                                                                            |
+| Calls and references    | Callers/callees contain only resolved functions. Reference edges preserve exact ReferenceManager type and call/jump/data/read/write/indirect/computed/conditional/terminal/external facts. Targetless computed flow remains unknown. A computed call's recorded targets stay observed callees, but they are static candidates rather than an exhaustive set, so callee coverage is `partial` and names those call sites. Synthetic entry-point references without actionable memory sources are omitted explicitly.                                                                                                        |
 | CFG                     | Dossiers use `BasicBlockModel` and retain only non-call successors inside the function body. CFG topology is address-normalized for comparison; provider-specific block construction remains a declared difference.                                                                                                                                                                                                                                                                                                                                                                                                        |
 | P-code value flow       | Function dossiers include up to 3,000 high-p-code operations, at most 64 inputs per operation, and 12,000 def-use edges. Results identify memory reads/writes, branches, and calls by p-code opcode, and mark decompiler-dead operations. Large results report truncation, an omitted-operation lower bound, and known omitted-input/edge counts. The dossier is an intra-function graph; `trace_native_values` composes derived parameter/argument and return/output dependencies across resolved calls. It does not resolve memory aliasing, call side effects, runtime behavior, persistent state, or business meaning. |
 | Result extent           | Function instruction scans and native API boundary observations remain complete. P-code flow is the explicit bounded exception; its count fields distinguish exact retained counts from lower-bound or known-omitted counts. Caller cancellation and provider failures remain distinct.                                                                                                                                                                                                                                                                                                                                    |
@@ -303,7 +337,18 @@ handler execution or change the body. Instruction windows and dossiers also
 retain these warnings in their result limitations. An unresolved callee or
 unestablished terminal-flow basis remains explicit. These observations qualify
 the analysis; they do not prove that a no-return flag is incorrect or recover
-excluded code. Analysis profiles version this observation contract so older
+excluded code. When the callee's entry, or the function a thunk forwards to,
+carries the `Non-Returning Function Found` analysis bookmark that Ghidra's
+`Non-Returning Functions - Discovered` analyzer writes, the call's limitation
+says the flag was inferred, and the function's limitations add one statement
+that Ghidra excluded that call's fall-through from the body and pseudocode, so
+code reachable only through it is missing if the callee returns. That analyzer can mark returning callees, such as an
+imported `operator new` thunk, so a constructor may decompile to a few lines. To
+compare, open a fresh import with
+`REA_GHIDRA_DISABLED_ANALYZERS='Non-Returning Functions - Discovered'`; an
+existing project (`REA_GHIDRA_PROJECT_PATH`) keeps the flags its analysis
+already stored. A flag without that bookmark keeps an unknown origin; REA does
+not treat it as declared. Analysis profiles version this observation contract so older
 snapshots cannot replay unqualified results.
 
 On non-Windows hosts, the ephemeral import repair clears no-return flags on the
@@ -315,6 +360,21 @@ entries. If a recovered caller reveals a decoded return, its propagated no-retur
 flag and affected callers are repaired in the same pass. Unknown imports and
 genuine no-return imports keep their flags. Analysis profiles version this repair
 so snapshots produced before it are not reused. Windows P0 does not run it.
+
+Ghidra applies most loader relocations, but it cannot apply some, such as an
+ELF copy relocation into RELRO (for example musl's `stderr`). Those destinations
+keep their file bytes while the runtime loader writes another object's value.
+Before decompiling, a fresh non-Windows import marks each loaded, initialized,
+non-writable block that holds such an unapplied relocation destination volatile
+in the ephemeral database, so the decompiler cannot fold the on-disk value into
+a constant. Applied relocations such as GOT entries stay foldable, so external
+calls keep their names. Permissions and source `FileBytes` are unchanged; the
+whole block is affected because Ghidra sets volatility per block. A procedure
+that reads an unapplied destination adds a limitation naming the relocation.
+Windows P0 and existing projects (`REA_GHIDRA_PROJECT_PATH`) have no
+database-mutation authority: they add the same limitation, but their pseudocode
+may still show the file-backed value. ELF relocatable objects and core files are
+excluded. Analysis profiles version this behavior.
 
 `npm run verify:ghidra` compiles the versioned C oracle into debug and stripped
 host-native targets (x86-64/AArch64 ELF on Linux or Mach-O on macOS), plus a native
@@ -377,10 +437,17 @@ offset for that starting address (or null), and containing procedure (or null).
 A starting offset does not imply the full match is contiguous in the file.
 
 Pages default to 100 matches and accept 1 to 1000. Pass `next_cursor` as `cursor`
-with the same target, profile, pattern, mask and bounds to continue. `complete`
-means no further matches remain. `searched.blocks` and `searched.bytes` describe
-the inclusive memory ranges examined for this page, including lookahead for the
-next match. Coverage can overlap between pages; do not sum it as unique memory.
+with the same target, analysis profile or selected project, pattern, mask,
+bounds, and document to continue. A cursor from a different binding is
+rejected. The message names those bound values and states that the cursor does
+not identify which one differs; select the original context or start a new
+search without the cursor. The request matches the input schema, so the error
+carries no `inspect_input_contract` recovery. `details.issues[0].path` is
+`cursor`, and `details.issues[0].observed.differing_component` is `unknown`.
+`complete` means no further matches remain. `searched.blocks` and
+`searched.bytes` describe the inclusive memory ranges examined for this page,
+including lookahead for the next match. Coverage can overlap between pages; do
+not sum it as unique memory.
 `searched.skipped_uninitialized` lists eligible uninitialized blocks on every
 page. These blocks are never searched. Cancellation returns a typed error,
 discards the active Ghidra database, and does not return a successful partial page.

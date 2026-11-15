@@ -109,7 +109,7 @@ it.each(["regular", "indexed"])(
         })),
       );
       expect(webSourceMapsSchema.parse(result)).toEqual(result);
-      const historical = {
+      expectInvalidSourceMaps({
         ...result,
         items: [
           {
@@ -119,8 +119,21 @@ it.each(["regular", "indexed"])(
             ),
           },
         ],
-      };
-      expect(webSourceMapsSchema.parse(historical)).toEqual(historical);
+      });
+      for (const omit of ["source_index", "declaration_index"] as const)
+        expectInvalidSourceMaps({
+          ...result,
+          items: [
+            {
+              ...item,
+              original_sources: item.original_sources.map((source) =>
+                Object.fromEntries(
+                  Object.entries(source).filter(([key]) => key !== omit),
+                ),
+              ),
+            },
+          ],
+        });
       expectInvalidSourceMaps({
         ...result,
         items: [
@@ -678,9 +691,12 @@ describe("web source-map fetching and validation: enforcing fetch limits and val
       const url = `${localOrigin}/map?n=0`;
       const result = await fetchWebSourceMapsOk(
         [{ ...request, fetchUrl: url, declaredUrl: url }],
-        input({ allowed_origins: [localOrigin] }),
+        input({
+          allowed_origins: [localOrigin],
+          source_map_fetch_timeout_ms: 100,
+        }),
         undefined,
-        { fetch, timeoutMs: 100 },
+        { fetch },
       );
       expect(calls).toBeGreaterThan(1);
       expect(result).toMatchObject({
@@ -733,9 +749,12 @@ describe("web source-map fetching and validation: enforcing fetch limits and val
       const url = `${localOrigin}/map`;
       const result = await fetchWebSourceMapsOk(
         [{ ...request, fetchUrl: url, declaredUrl: url }],
-        input({ allowed_origins: [localOrigin] }),
+        input({
+          allowed_origins: [localOrigin],
+          source_map_limits: { fetch_bytes: 512 },
+        }),
         undefined,
-        { fetch, maxResponseBytes: 512 },
+        { fetch },
       );
       let timeout: ReturnType<typeof setTimeout> | undefined;
       const closeConfirmed = await Promise.race([
@@ -964,7 +983,7 @@ describe("selected source-map fetch deadline", () => {
           );
         });
     }
-  }, 3_000);
+  });
 });
 
 describe("browser map decoded validation", () => {
@@ -1046,15 +1065,24 @@ describe("source-map operation deadline observations", () => {
       request,
       { ...request, scriptKey: `scr_${"2".repeat(64)}` },
     ];
-    const result = await fetchWebSourceMapsOk(requests, input(), undefined, {
-      timeoutMs: 100,
-      fetch: () => {
-        calls += 1;
-        return calls === 1
-          ? Promise.resolve(validMapResponse())
-          : new Promise<Response>(() => undefined);
+    const result = await fetchWebSourceMapsOk(
+      requests,
+      input({ source_map_fetch_timeout_ms: 100 }),
+      undefined,
+      {
+        fetch: (_url, options) => {
+          calls += 1;
+          return calls === 1
+            ? Promise.resolve(validMapResponse())
+            : new Promise<Response>((_resolve, reject) => {
+                const signal = options?.signal;
+                signal?.addEventListener("abort", () => reject(signal.reason), {
+                  once: true,
+                });
+              });
+        },
       },
-    });
+    );
 
     expect(result.status).toBe("partial");
     expect(result.items.map(({ status }) => status)).toEqual([
@@ -1063,6 +1091,38 @@ describe("source-map operation deadline observations", () => {
     ]);
     expect(result.items[0]?.original_sources).toHaveLength(1);
   });
+});
+
+it("shares the caller's fetch byte budget across completed map responses", async () => {
+  const body = JSON.stringify({
+    version: 3,
+    sources: [],
+    names: [],
+    mappings: "",
+  });
+  const requests = [
+    request,
+    { ...request, scriptKey: `scr_${"2".repeat(64)}` },
+  ];
+  let calls = 0;
+  const result = await fetchWebSourceMapsOk(
+    requests,
+    input({ source_map_limits: { fetch_bytes: Buffer.byteLength(body) } }),
+    undefined,
+    {
+      fetch: () => {
+        calls += 1;
+        return Promise.resolve(new Response(body));
+      },
+    },
+  );
+
+  expect(calls).toBe(2);
+  expect(result.items.map(({ status }) => status)).toEqual([
+    "included",
+    "fetch_failed",
+  ]);
+  expect(result.items[1]?.limitation).toContain("retained budget");
 });
 
 describe("indexed source-map offsets", () => {
@@ -1529,7 +1589,9 @@ describe("web source-map collection", () => {
       "included",
       "fetch_failed",
     ]);
-    expect(result.items[1]?.limitation).toContain("262144-record");
+    expect(result.items[1]?.limitation).toContain(
+      "source_map_limits.decoded_records is 262144",
+    );
   });
 
   it("rejects deeply nested indexed maps before recursive flattening", async () => {
@@ -1554,7 +1616,9 @@ describe("web source-map collection", () => {
       status: "fetch_failed",
       artifact: null,
     });
-    expect(result.items[0]?.limitation).toContain("64-level");
+    expect(result.items[0]?.limitation).toContain(
+      "source_map_limits.section_depth is 64",
+    );
   });
 
   it("retains every mapping from a sectioned source map", async () => {
@@ -1703,10 +1767,12 @@ describe("source-map set output admission", () => {
     });
     const result = await fetchWebSourceMapsOk(
       requests,
-      input({ allowed_origins: [localOrigin] }),
+      input({
+        allowed_origins: [localOrigin],
+        source_map_fetch_timeout_ms: 120_000,
+      }),
       undefined,
       {
-        timeoutMs: 120_000,
         fetch: () => Promise.resolve(new Response(map, { status: 200 })),
       },
     );
@@ -1749,7 +1815,7 @@ describe("source-map set output admission", () => {
     expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(
       outputLimitBytes,
     );
-  }, 120_000);
+  });
 
   it("reserves large failure contexts and reports unprocessed requests as unknown", async () => {
     const largeDeclaredUrl = `${origin}/${"u".repeat(8 * 1_024 * 1_024)}`;
@@ -1848,7 +1914,7 @@ describe("expanded source-map evidence budget", () => {
       "included",
     ]);
     expect(result.items[2]?.artifact?.text).toBe(valid);
-  }, 15_000);
+  });
 
   it("bounds expanded evidence across individually valid maps", async () => {
     const expanded = JSON.stringify({
@@ -1938,7 +2004,7 @@ describe("expanded source-map evidence budget", () => {
       original_sources: [],
     });
     expect(result.items[0]?.limitation).toContain(
-      "Resolved source-map identities exceed the 64 MiB decoder representation budget",
+      "source_map_limits.fetch_bytes is 67108864",
     );
   });
 });
@@ -1962,7 +2028,9 @@ describe("raw source-map structure preflight", () => {
       status: "fetch_failed",
       artifact: null,
     });
-    expect(result.items[0]?.limitation).toContain("262144-record");
+    expect(result.items[0]?.limitation).toContain(
+      "source_map_limits.decoded_records is 262144",
+    );
   });
 });
 

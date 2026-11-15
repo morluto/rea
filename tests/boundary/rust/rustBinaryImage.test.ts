@@ -12,7 +12,7 @@ import {
 import { readRustBinaryImage } from "../../../src/rust/RustBinaryImage.js";
 import { readBinaryContainer } from "../../../src/native/metadata/readBinaryContainer.js";
 import { readGoBinaryImage } from "../../../src/go/GoBinaryImage.js";
-import { RustAuditableFormatFailure } from "../../../src/rust/RustAuditableReader.js";
+import { ParseFailureError } from "../../../src/domain/parseFailure.js";
 
 const packages = [
   {
@@ -107,6 +107,23 @@ it.each(["elf", "pe"] as const)(
       evidence_kind: "inferred",
       hashes: [{ hash: RUSTC_HASH, file_offset: 2048 }],
     });
+  },
+);
+
+it.each([
+  ["\\", [{ hash: RUSTC_HASH, file_offset: 2048 }]],
+  ["-", undefined],
+] as const)(
+  "reads a rustc hash followed by %s only when it is a path separator",
+  (separator, hashes) => {
+    // Windows builds store /rustc/<hash>\library\...; the fixture path is at 2048.
+    const bytes = createRustImage({ format: "pe" });
+    bytes.write(
+      separator,
+      2048 + "/rustc/".length + RUSTC_HASH.length,
+      "latin1",
+    );
+    expect(readRustBinaryImage(bytes).rustc_commit?.hashes).toEqual(hashes);
   },
 );
 
@@ -289,9 +306,37 @@ it("finds rustc paths in read-only ELF load data without section headers", () =>
 
 it("refuses a universal Mach-O container", () => {
   expect(() => readRustBinaryImage(fat([0x0100000c]))).toThrow(
-    RustAuditableFormatFailure,
+    ParseFailureError,
   );
   expect(() => readRustBinaryImage(fat([0x0100000c]))).toThrow(/thin slice/);
+});
+
+it("keeps the container's truncated failure and its facts unchanged", () => {
+  const bytes = createRustImage({ format: "elf" });
+  // The fixture's first program header is at byte 128; p_filesz and
+  // p_memsz are at +32 and +40.
+  bytes.writeBigUInt64LE(BigInt(bytes.length) * 2n, 128 + 32);
+  bytes.writeBigUInt64LE(BigInt(bytes.length) * 2n, 128 + 40);
+  const thrown = (read: () => unknown): unknown => {
+    try {
+      read();
+    } catch (cause: unknown) {
+      return cause;
+    }
+    throw new Error("expected a container failure");
+  };
+  const container = thrown(() => readBinaryContainer(bytes));
+  const rust = thrown(() => readRustBinaryImage(bytes));
+  expect(rust).toBeInstanceOf(ParseFailureError);
+  expect((rust as ParseFailureError).failure).toEqual(
+    (container as ParseFailureError).failure,
+  );
+  expect((rust as ParseFailureError).failure).toMatchObject({
+    kind: "truncated",
+    format: "elf",
+    offset: expect.any(Number),
+    field: expect.any(String),
+  });
 });
 
 it("does not read SHT_NOBITS dependency sections as stored bytes", () => {
@@ -302,7 +347,7 @@ it("does not read SHT_NOBITS dependency sections as stored bytes", () => {
   try {
     metadata = readRustBinaryImage(bytes).auditable_metadata;
   } catch (cause: unknown) {
-    expect(cause).toBeInstanceOf(RustAuditableFormatFailure);
+    expect(cause).toBeInstanceOf(ParseFailureError);
     return;
   }
   expect(metadata).toBeNull();
@@ -324,16 +369,23 @@ it("reads a rustc path from a read-only ELF section whose name exceeds 64 bytes"
   });
 });
 
-it("refuses read-only data with more distinct rustc paths than it retains", () => {
+it("retains dependency facts when compiler paths exceed the selected prefix", () => {
   const bytes = createRustHashOverflowImage();
-  expect(() => readRustBinaryImage(bytes)).toThrow(
-    expect.objectContaining({
-      constraint: {
-        resource: "capacity",
-        reported_limits: { maximum_rustc_hashes: 64 },
-      },
-    }),
-  );
+  const partial = readRustBinaryImage(bytes);
+  expect(partial.auditable_metadata?.packages.map(({ name }) => name)).toEqual([
+    "itoa",
+    "sample",
+  ]);
+  expect(partial.rustc_commit?.hashes).toHaveLength(64);
+  expect(partial.rustc_commit?.coverage).toEqual({
+    status: "partial",
+    reason: "max_rustc_hashes",
+    effective_limit: 64,
+  });
+  const recovered = readRustBinaryImage(bytes, 65);
+  expect(recovered.rustc_commit?.hashes).toHaveLength(65);
+  expect(recovered.rustc_commit).not.toHaveProperty("coverage");
+  expect(recovered.auditable_metadata).toEqual(partial.auditable_metadata);
 });
 
 it.each([

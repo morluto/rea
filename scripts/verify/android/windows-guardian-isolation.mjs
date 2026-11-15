@@ -12,7 +12,10 @@ const marker = "REA synthetic guardian isolation test\n";
 const exists = (path) =>
   stat(path).then(
     () => true,
-    () => false,
+    (cause) => {
+      if (cause.code === "ENOENT" || cause.code === "ENOTDIR") return false;
+      throw cause;
+    },
   );
 
 if (process.argv[1] === source && process.argv[2] === "owner") {

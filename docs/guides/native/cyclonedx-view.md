@@ -8,8 +8,9 @@ The same Evidence produces the same bytes. The document has no timestamp.
 `serialNumber` is a UUID derived from the parent Evidence digest.
 
 `metadata.component` is the binary file. Its name is the file name, and its
-hash is the artifact SHA-256. `metadata.tools` names REA and the package
-version that produced the document.
+hash is the artifact SHA-256. `metadata.tools` names the provider recorded in
+the parent Evidence, the reader that observed these facts, so the document
+depends only on its parent and not on the REA build that projects it.
 
 That hash covers the whole file, and the inventory of a universal Mach-O covers
 one slice of it. For a slice, `metadata.component.properties` names the selection

@@ -95,6 +95,62 @@ it.each(["worker-phase", "final-cleanup", "no-cancellation"] as const)(
   },
 );
 
+it("retains worker cleanup when progress reporting fails during analysis", async () => {
+  const root = await createTestTempDirectory("rea-js-progress-cleanup-");
+  await writeFile(join(root, "main.js"), "export const observed = 7;");
+  await writeFile(join(root, "second.js"), "export const later = 8;");
+  const primary = new Error("progress reporting failed");
+  let sourceReports = 0;
+  let denyRemoval = true;
+  let runtimePath: string | undefined;
+  const originalClose = PrivateRuntimeRoot.prototype.close;
+  const close = vi
+    .spyOn(PrivateRuntimeRoot.prototype, "close")
+    .mockImplementation(async function (this: PrivateRuntimeRoot) {
+      if (basename(this.path).startsWith("rea-javascript-analysis-")) {
+        runtimePath = this.path;
+        if (denyRemoval) throw new Error("worker root removal failed");
+      }
+      await originalClose.call(this);
+    });
+  const reuse = vi
+    .spyOn(JavaScriptAnalysisWorker.prototype, "canReuse")
+    .mockReturnValue(false);
+  const scope = new ArtifactResourceScope();
+  onTestFinished(async () => {
+    denyRemoval = false;
+    try {
+      await scope.close();
+    } finally {
+      close.mockRestore();
+      reuse.mockRestore();
+    }
+  });
+  const result = await analyzeOwnedApplication(
+    { input_path: root, format: "directory" },
+    scope,
+    {
+      progress: {
+        async report(event) {
+          if (
+            event.phase === "parse_javascript_source" &&
+            ++sourceReports === 2
+          )
+            throw primary;
+        },
+      },
+    },
+  );
+  if (result.ok) throw new Error("Expected progress failure");
+  expect(runtimePath).toBeDefined();
+  expect(result.error.cleanupIncomplete).toBe(true);
+  expect(result.error.cleanupResources).toContain(runtimePath);
+  expect(result.error.cause).toMatchObject({ cause: { cause: primary } });
+  denyRemoval = false;
+  await scope.close();
+  expect(result.error.cleanupIncomplete).toBe(false);
+});
+
 it.each(["during cleanup", "on the next control turn"] as const)(
   "retains the final source when cancellation arrives %s after analysis",
   async (timing) => {

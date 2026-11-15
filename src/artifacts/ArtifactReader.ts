@@ -1,4 +1,5 @@
 import { fixedAllowanceRemediation } from "../domain/fixedAllowanceRemediation.js";
+import type { ArtifactReaderLimitFact } from "../domain/artifactReaderLimits.js";
 import type {
   ArtifactAdmissionLimit,
   ArtifactLimitBoundary,
@@ -37,6 +38,7 @@ export interface ArtifactReaderFailureOptions extends ErrorOptions {
   readonly boundary?: ArtifactLimitBoundary;
   /** Named admission whose recovery must not be inferred from other limit text. */
   readonly admission?: ArtifactAdmissionLimit;
+  readonly readerLimit?: ArtifactReaderLimitFact;
 }
 
 /** Archive-neutral entry metadata. Reader adapters never choose output paths. */
@@ -184,11 +186,19 @@ export interface ArtifactReaderTraversal {
   readonly examinedEntries?: number;
 }
 
-/** Per-iterator observation sink; adapters report intentional omissions without shared state. */
+/**
+ * Per-iterator observation sink; adapters report intentional omissions without shared state.
+ * A reader declares its coverage through `onCoverage` before its iterator ends,
+ * including complete coverage; consumers that need a completeness claim
+ * iterate through `declaredArtifactEntries`, which treats silence as unknown.
+ */
 export interface ArtifactTraversalOptions {
   readonly onOmission?: (omission: ArtifactTraversalOmission) => void;
   readonly onCoverage?: (coverage: ArtifactReaderTraversal) => void;
 }
+
+/** The sink of a traversal whose coverage feeds a completeness claim. */
+export type ArtifactTraversalSink = Required<ArtifactTraversalOptions>;
 
 /** Read-only adapter over one directory, archive, or virtual container. */
 export interface ArtifactReader {
@@ -204,6 +214,7 @@ export interface ArtifactReader {
     | "pyinstaller"
     | "dotnet-bundle"
     | "bun-standalone"
+    | "deno-standalone"
     | "node-sea"
     | "intel-hex"
     | "srec"
@@ -212,6 +223,7 @@ export interface ArtifactReader {
     | "dfuse"
     | "esp-flash-image"
     | "fit"
+    | "ntfs-mft"
     | "file";
   entries(
     signal?: AbortSignal,
@@ -231,6 +243,11 @@ export interface ArtifactReader {
 }
 
 /** Typed adapter failure translated at provider boundary. */
+/** A selected-file read whose own cleanup failed. */
+export type CleanupFailedRead = ArtifactReaderFailure & {
+  readonly cleanup: AnalysisCleanupObservation;
+};
+
 export class ArtifactReaderFailure extends Error {
   readonly userMessage: string | undefined;
   readonly resolvedPath: string | undefined;
@@ -242,6 +259,7 @@ export class ArtifactReaderFailure extends Error {
   readonly boundary: ArtifactLimitBoundary | undefined;
   /** Named admission for a limit whose public recovery is owned by the producer. */
   readonly admission: ArtifactAdmissionLimit | undefined;
+  readonly readerLimit: ArtifactReaderLimitFact | undefined;
 
   constructor(
     readonly reason:
@@ -270,6 +288,7 @@ export class ArtifactReaderFailure extends Error {
     this.partialObservation = options?.partialObservation;
     this.boundary = options?.boundary;
     this.admission = options?.admission;
+    this.readerLimit = options?.readerLimit;
   }
 
   /** Retain completed facts when a later artifact step fails. */
@@ -325,6 +344,9 @@ export class ArtifactReaderFailure extends Error {
         ...(primary.admission === undefined
           ? {}
           : { admission: primary.admission }),
+        ...(primary.readerLimit === undefined
+          ? {}
+          : { readerLimit: primary.readerLimit }),
         ...(mergedObservation === undefined
           ? {}
           : { partialObservation: mergedObservation }),

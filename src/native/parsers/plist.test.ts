@@ -12,6 +12,7 @@ import {
   UnsupportedBinaryPlistUidError,
 } from "../../artifacts/apple/PlistScalars.js";
 
+import { plistDuplicateKeyLimitations } from "../../domain/apple/plistDuplicateKeys.js";
 import {
   parsePlistBinary,
   readPlistJson,
@@ -990,3 +991,67 @@ it.each(["\n", "\r\n", "\r", "\u2028", "\u2029"])(
     });
   },
 );
+
+const duplicateKeyLimitation = (names: string, replaced: number) =>
+  `1 dictionary(ies) declare a key more than once (${names}). REA kept the last value for each key; ${String(replaced)} earlier value(s) are not reported, and other plist readers may keep a different one.`;
+
+it("records binary dictionary keys declared more than once before the decoded value collapses them", () => {
+  const bytes = Buffer.from(buildBinary({ a: 1, b: 2, c: 3 }));
+  // Rename the stored key "b" to "a": the dictionary now declares "a" twice.
+  const key = bytes.indexOf(Buffer.from([0x51, 0x62]));
+  expect(key).toBeGreaterThan(0);
+  bytes[key + 1] = 0x61;
+  const parsed = parsePlistBinary(bytes);
+  if (!parsed.ok) throw parsed.error;
+  expect(parsed.value.value).toEqual({ a: 2, c: 3 });
+  expect(parsed.value.limitations).toEqual([duplicateKeyLimitation('"a"', 1)]);
+});
+
+it("records XML source dictionary keys declared more than once", () => {
+  const parsed = parsePlistXmlSource(
+    Buffer.from(
+      "<plist><dict><key>a</key><string>first</string><key>b</key><string>kept</string><key>a</key><string>last</string></dict></plist>",
+    ),
+  );
+  if (!parsed.ok) throw parsed.error;
+  expect(parsed.value.value).toEqual({ a: "last", b: "kept" });
+  expect(parsed.value.limitations).toEqual([duplicateKeyLimitation('"a"', 1)]);
+});
+
+it("reports no duplicate-key limitation when every key is distinct", () => {
+  const parsed = parsePlistXmlSource(
+    Buffer.from(
+      "<plist><dict><key>a</key><string>x</string><key>b</key><dict><key>a</key><string>y</string></dict></dict></plist>",
+    ),
+  );
+  if (!parsed.ok) throw parsed.error;
+  expect(parsed.value.limitations).toEqual([]);
+});
+
+it("counts OpenStep dictionary keys declared more than once", () => {
+  expect(
+    parseXmlPropertyList("{ a = 1; a = 2; b = { c = 3; c = 4; c = 5; }; }")
+      .duplicateKeys,
+  ).toEqual({
+    dictionaries: 2,
+    replaced: 3,
+    names: ["c", "a"],
+    namesOmitted: false,
+  });
+});
+
+it("lists each repeated key once, shortens long keys and marks omitted names", () => {
+  const long = "k".repeat(100);
+  const nine = Array.from({ length: 9 }, (_, index) => `n${String(index)}`);
+  const entries = [long, long, long, ...nine.flatMap((name) => [name, name])]
+    .map((key, index) => `"${key}" = ${String(index)};`)
+    .join(" ");
+  const parsed = parseXmlPropertyList(`{ ${entries} }`).duplicateKeys;
+  expect(parsed).toMatchObject({ replaced: 11, namesOmitted: true });
+  expect(plistDuplicateKeyLimitations(parsed)[0]).toContain(
+    `"${"k".repeat(64)}" (shortened from 100 characters), "n0"`,
+  );
+  // One key repeated three times names no further key.
+  const single = parseXmlPropertyList("{ a = 1; a = 2; a = 3; }").duplicateKeys;
+  expect(plistDuplicateKeyLimitations(single)[0]).toContain('("a").');
+});

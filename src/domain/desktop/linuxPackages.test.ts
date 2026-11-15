@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   isAppImageHeader,
+  ownershipCandidates,
   packageFromPath,
   parseAptPolicyOrigins,
   parseAptPolicyPackageSources,
@@ -11,6 +12,42 @@ import {
 } from "./linuxPackages.js";
 
 describe("dpkg output", () => {
+  it("adds merged-/usr ownership candidates only for merged system directories", () => {
+    const paths = [
+      "/usr/bin/editor",
+      "/sbin/helper",
+      "/usr/lib/x86_64-linux-gnu/libexample.so",
+      "/lib64/ld-linux-x86-64.so.2",
+      "/usr/lib32/libexample.so",
+      "/libx32/libexample.so",
+      "/usr/libo32/libexample.so",
+      "/opt/vendor/app",
+      "/home/ada/bin/app",
+      "/usr/share/applications/app.desktop",
+      "/usr/local/bin/app",
+    ];
+    expect(ownershipCandidates(paths)).toEqual([
+      "/usr/bin/editor",
+      "/bin/editor",
+      "/sbin/helper",
+      "/usr/sbin/helper",
+      "/usr/lib/x86_64-linux-gnu/libexample.so",
+      "/lib/x86_64-linux-gnu/libexample.so",
+      "/lib64/ld-linux-x86-64.so.2",
+      "/usr/lib64/ld-linux-x86-64.so.2",
+      "/usr/lib32/libexample.so",
+      "/lib32/libexample.so",
+      "/libx32/libexample.so",
+      "/usr/libx32/libexample.so",
+      "/usr/libo32/libexample.so",
+      "/libo32/libexample.so",
+      "/opt/vendor/app",
+      "/home/ada/bin/app",
+      "/usr/share/applications/app.desktop",
+      "/usr/local/bin/app",
+    ]);
+  });
+
   it("reads every owner of a path and skips diversions", () => {
     expect(
       parseDpkgOwners(

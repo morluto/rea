@@ -38,7 +38,7 @@ import {
   traverseDataEffects as traverseWithContext,
   type DataEffectTraversalContext as TraversalContext,
 } from "./javascriptSemanticDataEffectHelpers.js";
-import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
+import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import { semanticPrimitiveSet } from "./javascriptSemanticPrimitives.js";
 import type { JavaScriptSemanticValue } from "./javascriptSemanticValueTypes.js";
@@ -220,7 +220,7 @@ const collectDefaults = (
     if (candidate === undefined) return;
     const literal = readExactJavaScriptLiteral(node.right);
     const value: JavaScriptSemanticValue = literal.found
-      ? semanticPrimitiveSet([literal.value])
+      ? semanticPrimitiveSet([literal.value], context.state.precision)
       : { status: "unknown", reason: "Default is not an exact primitive." };
     recordSemanticValueLimit(context.state, value);
     output.push({

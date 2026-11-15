@@ -17,7 +17,7 @@ access.
 - Produce byte-identical output for the same Evidence: no timestamp, and a
   `serialNumber` UUID derived from the parent Evidence digest.
 - Describe the binary file in `metadata.component` with its file name and
-  artifact SHA-256, name REA and its package version in `metadata.tools`, and
+  artifact SHA-256, name the parent Evidence's recorded provider in `metadata.tools`, and
   name a selected universal Mach-O slice with `rea:macho:*` properties.
 - Identify Go modules as `pkg:golang/<module path>@<version>` and crates.io
   packages as `pkg:cargo/<name>@<version>`. Keep a Go `h1:` sum as the property

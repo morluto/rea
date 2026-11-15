@@ -180,12 +180,25 @@ cause when a directly checked caller `AbortSignal` is converted to an
 follow indirect cancellation helpers, or prove that an explicit cause equals
 the caller's reason. Keep focused boundary and lifecycle tests for those facts.
 
+Build a cancellation with `cancelledBy` from `src/domain/analysisErrorCore.ts`.
+Its reason argument is required: an aborted `AbortSignal`, an earlier
+`AnalysisCancelledError`, a `carriedReason(...)` recovered from an inner
+failure, or an `OwnerCancellation` when REA itself closed the work's owner. The
+architecture guard rejects a direct `new AnalysisCancelledError(` outside that
+module. Files that still construct one directly are listed with their counts in
+`scripts/verify/architecture-guard-baselines.json`; a file may not exceed its
+count, and after removing copies run
+`node scripts/verify/architecture-guards.mjs --shrink-baselines` to lower it.
+
 `rea/no-evidence-json-preadmission` rejects direct generic JSON parses in
 `createEvidence` payload expressions; it does not analyze intermediate values.
 `rea/no-positional-tool-contract` rejects catalog indices used to select
 operation names, schemas or types; display-only selection remains allowed.
 `rea/no-fixture-root-cleanup` follows `const` fixture-root aliases into teardown
 deletion; mutable bindings and mixed root arrays remain outside its scope.
+`rea/project-wait-deadline` resolves Vitest's `vi` and `expect` bindings,
+including aliases and namespace imports; a shadowed local or a fixture method
+with the same name is not reported.
 
 `rea/no-shared-module-mock` resolves Vitest import bindings before rejecting
 module mocks in projects without per-file isolation. The test-project definitions
@@ -199,9 +212,9 @@ directives are errors. `vitest/valid-expect` warns (`maxArgs: 2`) because valid 
 collected assertions can be awaited later. `import/no-duplicates` warns with
 `preferInline: false`.
 
-`no-useless-escape` keeps intentional `\-` regex escapes because advertised
-patterns must also compile in `v` mode; the catalog regression checks every
-advertised pattern.
+`no-useless-escape` keeps intentional `\-` regex escapes. Source regexes need
+no escaping for clients: the presentation re-emits every advertised pattern in
+the portable grammar (`src/contracts/portablePattern.ts`).
 
 Fast lint stays syntax-based. `npm run lint:typed` runs serially with pinned
 `oxlint-tsgolint` 7.0.2005 and records native plus typed diagnostics in
@@ -238,12 +251,16 @@ broad changes or diagnosing CI, rather than after every edit. Package/install
 changes additionally need package verification; provider changes need actual
 provider evidence.
 
-Vitest projects use up to two workers, bounded by host parallelism.
+Vitest projects use up to two workers, bounded by host parallelism. GitHub
+Actions jobs own their runner and use up to four; see
+[test deadlines](#developer-commands) for how deadlines scale there.
 `process-boundary` runs later with serial files because process-tree sampling
 shares host resources. Acceptance and process-global cases use isolated forks
 without serial scheduling. Pure domain/service, composition, conformance,
 evaluation, CLI boundary, and MCP boundary projects share module graphs. Their
-tests avoid process-global state and keep resource cleanup test-scoped. Each
+tests avoid process-global state and keep resource cleanup test-scoped. Source
+projects run those shared graphs in forked workers, so each worker owns its own
+heap and no single process holds the whole lane. Each
 MCP session still owns its resources, and CLI cases retain fresh command
 instances or subprocesses. Fixtures using `vi.mock` or `vi.doMock` need an
 isolated project. CLI/MCP fixtures normally live in `tests/process-global/`.
@@ -274,7 +291,25 @@ operation name rather than array position.
 
 Check advertised schemas after SDK conversion for every supported schema
 profile. Meta-schema validity does not establish client acceptance or useful
-rendered declarations. Keep canonical rejection checks separate from the
+rendered declarations. `src/contracts/advertisedDialect.ts` owns the portable
+advertised dialect: the keyword allowlist, size and depth limits, and the regex
+grammar that compiles in V8, Python, RE2 and Rust. `advertisedDialect.test.ts`
+lists every input, output and catalog profile combination and compares the
+violation counts with `advertisedDialectBaseline.ts`, which may only shrink,
+except when a runtime analysis setting adds its `update_analysis_settings`
+branch, or a fix restores a contract declaration the presentation had lost and
+the PR names it; the packaged catalog check applies the same rules to the
+default profiles.
+Advertised patterns, input and output, are enforced at zero:
+`portablePattern.ts` re-emits each one exactly, widens it, or omits it, and the
+presentation drops any enclosing `not` or `if` and turns `oneOf` into `anyOf`
+when a pattern widens. `portablePattern.test.ts` pins the same acceptance of
+BMP strings in V8's plain, `u` and `v` modes. Python, Go and Rust read code
+points as `u` does; Python's `$` also matches before a final newline, which
+only widens. A client compiling without `u` may still reject one astral
+character where a wildcard, shorthand or negated class must match it (for
+example `^[\S]$`); `PortablePatternProjection` documents this accepted
+limitation. Keep canonical rejection checks separate from the
 intentionally reduced compact advertisement, and probe actual client renderers
 when changing schema representations.
 
@@ -283,7 +318,7 @@ coverage. Ordinary CI also exhausted the former 384 MiB budget after earlier
 files loaded the shared source/contract graph, while later command registration
 and schema/help rendering still needed transient allocation space. This is a
 measured capacity control, not a suite-wide speedup claim. The worker count
-remains bounded at two, and spawned REA processes retain their own heap settings.
+remains bounded, and spawned REA processes retain their own heap settings.
 Coverage enablement still controls instrumentation, test deadlines and coverage
 thresholds; explicitly disabling it or selecting only a provider does not enable
 instrumentation.
@@ -298,6 +333,33 @@ and profile a bounded representative case before retrying. Separate production
 work from fixture generation, schema compilation, subprocess startup and cleanup.
 Choose elapsed, CPU and process-family memory limits before the run; a worker
 count or test timeout alone does not enforce those limits.
+
+A test deadline turns a hang into a named failure; it is not a performance
+assertion. `vitest.config.ts` applies the deadlines in
+`tests/support/testDeadlines.ts` per project: 30 seconds for source projects
+and 120 seconds for built projects, with hooks sharing their project's
+deadline. Coverage doubles every deadline, and so does hosted CI, where
+CPU-bound cases share every core with other workers and their subprocesses.
+Do not pass a per-test timeout to fit a slow host. A child run through a
+test process registry (`processTest`, `cli.run`, or `createTestProcessRegistry`)
+gets the running test's remaining deadline less a reporting reserve, so a hung
+child fails with its captured output. Pass `timeoutMs` only when the child's deadline is itself under test. Tag a bounded workload that needs longer with
+`{ tags: ["long-running"] }`, or a whole file with
+`// @module-tag long-running`. Assert elapsed time explicitly when speed is the
+behavior under test. Derive an explicit deadline only when a test must outlive
+an operation deadline whose diagnostics it checks.
+
+Waits follow the same policy; Vitest's one-second `expect.poll` and
+`vi.waitFor` defaults assume a host's speed. A wait may take as long as its
+test may run, less the reporting reserve: projects configure `expect.poll`
+that way, and `waitFor` from `tests/support/testWait.ts` replaces `vi.waitFor`.
+Fixture waits such as `awaitAcknowledgement` default to the same deadline.
+`expect.poll` keeps its project's budget in a `long-running` test, while
+`waitFor` follows the deadline the tag applies.
+`rea/project-wait-deadline` rejects `vi.waitFor` and explicit poll timeouts. When promptness is the behavior under test, such as
+cancellation that must preempt a slower production deadline, a wait timeout is
+not its oracle: order the condition before releasing the gate that would
+otherwise satisfy it, or compare elapsed time with the deadline it must beat.
 
 Keep capacity fixtures intact when diagnosing a test failure. For byte equality
 of large buffers, use `Buffer.equals` or `Buffer.compare`; a generic structural
@@ -343,11 +405,17 @@ The process restarts when the environment changes, after 32 commands, or when
 the worker reports a resident set of at least 1 GiB. A fatal worker failure
 or a broken session frame retires that process and waits for it to exit before
 the next command starts.
-`cli.run` still starts a fresh process, including stdin and explicit deadlines.
-`runFileCli` uses the file session for commands that have neither. Go binary,
-IL2CPP metadata, and dylib-resolution commands use that session. File teardown
-stops the shared CLI process, including startup still in flight, and does not
-open another after close.
+In a `cliTest` file, `cli.run` uses that shared process when it reports the
+command exactly as a fresh `rea` process would. Both run the same one-shot
+owner (`src/cliOneShot.ts`), and the shared process presents the launcher's
+entrypoint. A command starts a fresh process instead when it supplies stdin or
+an explicit deadline, enters MCP or the MCP doctor (which the launcher routes
+first), sets `NODE_OPTIONS`, or enables logging, which writes outside the
+per-command capture. Pass `freshProcess: true` for process-level facts such as
+startup, signals, or exit, and keep one fresh check beside reused cases where
+dispatch itself is under test. `createTestCli` drivers always start a fresh
+process. File teardown stops the shared CLI process, including startup still in
+flight, and does not open another after close.
 `exportedFunctionBindingsCli.test.ts` uses the shared compiled CLI session for
 its file and compares its JSON command results with the MCP session. It selects
 20-second startup and command deadlines; other callers retain their existing
@@ -406,6 +474,10 @@ it rejects advanced CodeQL uploads. Then enable the variable and manually run
 relying on the new scope. While the variable is unset, the existing default
 setup continues scanning. Adding the configuration file alone does not change
 default setup in this user-owned repository.
+
+Pull-request scans are cancelled when superseded. Active scans on `main` finish
+so frequent pushes cannot prevent a complete baseline from being uploaded.
+Cancelled runs skip the SARIF artifact upload when no report was produced.
 
 Each analysis uses two threads and a 4096 MiB CodeQL memory budget; language
 jobs run one at a time. Complete SARIF reports are retained for seven days.
@@ -602,6 +674,12 @@ For partial Evidence delivery, verify that same-session readback preserves
 identity and provenance without rerunning the provider. Include a no-writer
 control that keeps completed Evidence inline and preserves the original failure.
 
+For a seekable file with a known extent, distinguish a provably impossible wire
+extent from an independent representation limit. Pair the malformed declaration
+with a structurally possible over-limit control. A count-only truncated fixture
+does not establish capacity behavior. This does not require decoding an opaque
+compressed payload merely to apply its declared expansion limit.
+
 When producer order is unspecified, synchronize fixtures on the observed request
 or completion event. A filename, generated key, or fixed delay does not prove
 which item completed before cancellation. Preserve real producer ordering and
@@ -702,16 +780,22 @@ the affected owners and applicable scenarios below. Include temporary snapshots
 and one-shot commands. Use public CLI/MCP workflows where practical and a
 controlled production seam for interleavings that cannot be reproduced reliably.
 
-| Scenario                                                                                | Assertion and control                                                                                                                                                                                                                                |
-| --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Target admitted; startup still pending                                                  | Status preserves the readiness distinction and observed startup activity; readiness requires the provider's documented proof.                                                                                                                        |
-| First handshake is late, absent, invalid, or recovered during close                     | Initial and recovery paths retain the same authenticated identity facts. Foreign run/token controls cannot authorize cleanup; authenticated idle/native work survives the unauthenticated listener deadline.                                         |
-| Launch returns an error with a valid process handle                                     | Cover already-exited and still-live owned processes. Verify observed exit separately from creation; failed termination or unavailable identity remains unresolved.                                                                                   |
-| Cancellation arrives after workload exit, during result reads or temporary-root removal | Return typed cancellation with available partial observations and actual cleanup status. The non-aborted control succeeds; existing primary/cleanup failures keep their precedence.                                                                  |
-| Children have mixed health or cleanup outcomes                                          | Missing peer health does not erase an observed failure or activity. Idle plus unknown stays unknown. Retry a failed child without closing a successful peer again, including after a close-option change.                                            |
-| Cleanup fails after success or primary failure                                          | Public output retains the completed observation or primary diagnostic, remaining resources, and owner recovery action. Restore the denied resource and verify the owning cleanup retry.                                                              |
-| Cleanup owners recover after an error was returned                                      | Retain the original child and aggregate errors and project them after each owner releases. A successful peer stays released; the aggregate remains incomplete until all owners release. Preserve the first cause even when rejection is `undefined`. |
-| Target exits without an acknowledgement, or transport disappears while it stays alive   | Positive owned exit proof resolves target lifetime; other resources still need cleanup. Lost transport alone does not prove exit. Verify unrelated/attached targets survive and same-connection recovery works when supported.                       |
+| Scenario                                                                                | Assertion and control                                                                                                                                                                                                                                                                     |
+| --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Target admitted; startup still pending                                                  | Status preserves the readiness distinction and observed startup activity; readiness requires the provider's documented proof.                                                                                                                                                             |
+| First handshake is late, absent, invalid, or recovered during close                     | Initial and recovery paths retain the same authenticated identity facts. Foreign run/token controls cannot authorize cleanup; authenticated idle/native work survives the unauthenticated listener deadline.                                                                              |
+| Launch returns an error with a valid process handle                                     | Cover already-exited and still-live owned processes. Verify observed exit separately from creation; failed termination or unavailable identity remains unresolved.                                                                                                                        |
+| Cancellation arrives after workload exit, during result reads or temporary-root removal | Before the documented commit cutoff, return typed cancellation with available partial observations and actual cleanup status. After commit, assert the owning publication outcome and receipt. The non-aborted control succeeds; existing primary/cleanup failures keep their precedence. |
+| Children have mixed health or cleanup outcomes                                          | Missing peer health does not erase an observed failure or activity. Idle plus unknown stays unknown. Retry a failed child without closing a successful peer again, including after a close-option change.                                                                                 |
+| Cleanup fails after success or primary failure                                          | Public output retains the completed observation or primary diagnostic, remaining resources, and owner recovery action. Restore the denied resource and verify the owning cleanup retry.                                                                                                   |
+| Cleanup owners recover after an error was returned                                      | Retain the original child and aggregate errors and project them after each owner releases. A successful peer stays released; the aggregate remains incomplete until all owners release. Preserve the first cause even when rejection is `undefined`.                                      |
+| Target exits without an acknowledgement, or transport disappears while it stays alive   | Positive owned exit proof resolves target lifetime; other resources still need cleanup. Lost transport alone does not prove exit. Verify unrelated/attached targets survive and same-connection recovery works when supported.                                                            |
+
+Owners that finalize through `runOwned` inherit the precedence rows above from
+`src/providers/runOwned.lifecycle.test.ts`, which runs each scenario over a
+table of adopter shapes (partial or diagnostics record, publication, lease).
+Add a shape to that table instead of repeating those cases per provider; a
+provider's own tests cover how its work and close reach `runOwned`.
 
 Shared process-supervision controls separate leader exit from output closure.
 Cover output during held or failed cleanup, bounded retention and drain timeout,
@@ -732,6 +816,16 @@ materialized source. Exercise descriptor close failure and retry before output
 publication.
 Use explicit abort reasons and assert their identity at admission and after
 provider completion, alongside retained observations and cleanup state.
+Include a physical I/O failure reused as the abort reason and genuine
+cancellation whose reason is already a typed error; neither error names nor
+value equality establishes origin. Assert that cleanup capabilities carried by
+that opaque reason are neither adopted nor released. Verify an owning command's timeout or
+refusal policy when preparation records cancellation but its caller is still
+active. Parallel inspection failures must retain completed observations and
+mixed physical/cancelled request facts after all peers settle, including
+multiple failed closes and partial cleanup retry. For input copying, hold an
+admitted read or write in flight before cancelling; descriptor close and
+workspace retirement must await its settlement.
 
 Electron fuse regressions cover actual descriptor close denial and retry through
 the built CLI, same-connection MCP recovery, mixed descriptor outcomes, and
@@ -980,8 +1074,8 @@ partial diagnostics and preflights do not establish complete mutation outcomes
 or qualify the release revision for mutation coverage.
 
 Fast CI starts the source-only projects after classification, independently of
-build and static checks, and runs eight built-dependent shards after the build.
-Those nine test jobs still select every portable test. Full qualification keeps six
+build and static checks, and runs twelve built-dependent shards after the build.
+Those thirteen test jobs still select every portable test. Full qualification keeps six
 complete Vitest shards with coverage. Neither tier retries tests. Canonical
 project ownership lives in `scripts/lib/test-projects.mjs`, shared by Vitest,
 CI group execution, and development-test preparation. A test importing compiled
@@ -1057,32 +1151,12 @@ existing four-minute timing collection plus the bounded diagnostic stages.
 
 Fast built shards target under ten minutes of uncontended shard-job execution.
 That figure is the `test-shard` job. The job waits for classification and the
-build, and the portable-test merge runs after the slowest shard. On 2026-10-20,
-run `39451548945` measured those surrounding jobs with runner queue excluded:
-classification 15 seconds, build 49 seconds, and the portable-test merge 29
-seconds. Shard 1/5 of that run spent 22 seconds before built Vitest and 3
-seconds after it, including `npm ci` at 9 seconds. `node_modules` is about 674
-MiB, so publishing it as a shared artifact would transfer more data than that
-install saves. The npm download cache stays the setup cache.
-
-File timings from that run put the built suite at 7944 seconds of module time.
-The sequencer keeps each file's full duration on one worker. Extra workers
-overlap other files in the same sequence group, and `process-boundary` runs
-after that group. Scheduling the unsplit inventory onto five shards peaks at
-820 seconds of tests. That run's slowest built shard job lasted 925 seconds
-(shard 4/5), and shard 1/5 spent 874 seconds in built Vitest, so hosted job
-time sits above the file schedule. Six shards of the same inventory peak at
-684 seconds of tests. Eight shards, after the 578-second loader file is split
-by case count (54 cases stay in that file and 46 move into each of three
-files), peak at 513 seconds of tests. With the measured 25-second shard setup,
-that shard job is about 538 seconds. Adding the measured classification, build,
-and merge makes an uncontended portable critical path of about 631 seconds,
-still before the gap between this file schedule and hosted Vitest. Runner queue
-is separate and grows when more shard jobs compete for runners.
+build, and the portable-test merge runs after the slowest shard. Runner queue is
+separate and grows when more shard jobs compete for runners. The npm download
+cache stays the setup cache rather than a shared `node_modules` artifact.
 `process-boundary` stays serial because process-tree sampling shares the host.
-Raising the worker cap from two to four on this four-core host cut a six-file
-acceptance sample from 96–101 seconds to 71 seconds and did not remove the
-single-file floor, so the cap stays two. Full qualification keeps six covered
+Hosted CI jobs use four workers; other hosts stay at two
+because they are shared with other checks. Full qualification keeps six covered
 shards; its longer instrumentation is outside this fast budget.
 
 The separate `CI timings` workflow batches recent completed CI and Release runs
@@ -1107,8 +1181,8 @@ memory usage, or billing. Step names identify samples, not complete transfer
 costs. Its queue, execution, and failures are independent of the required gate
 and publication. CPU time and peak process-family memory are not measured by this API.
 
-The build job saves portable Turbo outputs across runs. Eight Linux real-system
-lanes reuse its current-run artifact; standalone dispatches restore the cross-run cache. The shared action
+The build job saves portable Turbo outputs across runs. Linux real-system lanes
+that pass `build_cache_artifact` reuse its current-run artifact; standalone dispatches restore the cross-run cache. The shared action
 derives its key from `test:prepare --dry=json` task hashes, runner OS and
 architecture, `.npmrc`, `.nvmrc`, and the lockfile; test-only changes can reuse compiled outputs. Every
 build and verification command still runs, so Turbo checks task inputs and

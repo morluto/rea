@@ -8,6 +8,7 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import {
   isX86OnlyTarget,
   readCallGraphCallees,
+  UNCLASSIFIED_CALL_SITE_LIMITATION,
   UNRECOGNIZED_CALLEE_LIMITATION,
 } from "./IdaCallGraph.js";
 
@@ -232,10 +233,18 @@ describe("call graph coverage and failure handling", () => {
         /callgraph was truncated.*callees remain unknown/iu,
       ),
     );
+    expect(result.coverage).toMatchObject({
+      status: "partial",
+      limitations: [
+        "Upstream callgraph was truncated; additional callees remain unknown.",
+      ],
+    });
   });
 
   it("keeps an explicitly uncapped root below its edge cap untruncated", async () => {
     const result = await readGraph([call("0x1000", "0x20")], {
+      truncated: false,
+      limit_reason: null,
       per_func_capped: false,
       max_edges_per_func: 200,
     });
@@ -244,7 +253,50 @@ describe("call graph coverage and failure handling", () => {
       result.limitations,
       "an uncapped, unsaturated root has no truncation evidence",
     ).toEqual([UNRECOGNIZED_CALLEE_LIMITATION]);
+    expect(
+      result.coverage,
+      "function edges without call sites cannot establish a computed call's targets",
+    ).toEqual({
+      status: "complete",
+      discovery: {
+        callees: {
+          status: "unknown",
+          reason: UNCLASSIFIED_CALL_SITE_LIMITATION,
+        },
+      },
+      diagnostics: [UNRECOGNIZED_CALLEE_LIMITATION],
+    });
   });
+
+  it.each([
+    ["no truncation markers", {}],
+    [
+      "a per-function cap without the graph truncation flag",
+      { per_func_capped: false, max_edges_per_func: 200 },
+    ],
+    [
+      "the graph truncation flag without a per-function cap",
+      { truncated: false, limit_reason: null },
+    ],
+  ])(
+    "reports a graph with %s as unknown, never complete",
+    async (_label, extra) => {
+      const result = await readGraph([call("0x1000", "0x20")], extra);
+
+      expect(
+        result.coverage,
+        "an omitted upstream truncation marker is unknown, not a declaration that nothing was truncated",
+      ).toMatchObject({
+        status: "unknown",
+        reason: expect.stringMatching(/did not declare whether it truncated/u),
+        limited_directions: ["callees"],
+      });
+      expect(
+        result.callees.map(({ address }) => address),
+        "the observed edges are retained",
+      ).toEqual(["0x20"]);
+    },
+  );
 
   it("reports a graph that saturates its per-function cap with root edges", async () => {
     const result = await readGraph(

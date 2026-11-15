@@ -1,4 +1,4 @@
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { rustBinarySchema } from "../../../src/domain/rust/rustBinary.js";
 import { writeFile } from "node:fs/promises";
@@ -166,7 +166,7 @@ mcpTest(
 );
 
 mcpTest(
-  "preserves rustc hash capacity units through the public error contract",
+  "preserves dependency Evidence and compiler-prefix coverage through MCP",
   async ({ mcp }) => {
     const { client, session } = await connect(mcp);
     try {
@@ -177,25 +177,17 @@ mcpTest(
         name: "inspect_rust_binary",
         arguments: { path },
       });
-      expect(response.isError).toBe(true);
-      expect(parseMcpToolError(response).error).toMatchObject({
-        code: "resource_constraint",
-        category: "resource_constraint",
-        retryable: false,
-        remediation: {
-          action: expect.stringMatching(
-            /rustc commit.path inventory.*fixed count/iu,
-          ),
-        },
-        details: {
-          operation: "inspect_rust_binary",
-          resource: "capacity",
-          reported_limits: { maximum_rustc_hashes: 64 },
-        },
-      });
-      expect(parseMcpToolError(response).error.details).not.toHaveProperty(
-        "reported_limits.maximum_bytes",
+      expect(response.isError).not.toBe(true);
+      const evidence = toolContract("inspect_rust_binary").outputSchema.parse(
+        response.structuredContent,
       );
+      const report = rustBinarySchema.parse(evidence.normalized_result);
+      expect(report.auditable_metadata?.packages).toHaveLength(2);
+      expect(report.rustc_commit?.coverage).toEqual({
+        status: "partial",
+        reason: "max_rustc_hashes",
+        effective_limit: 64,
+      });
     } finally {
       await session.close();
     }

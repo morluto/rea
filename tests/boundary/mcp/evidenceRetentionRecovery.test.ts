@@ -201,7 +201,7 @@ it("keeps an oversized unretained observation failure bounded and the connection
     await server.close();
     await session.close();
   }
-}, 120000);
+});
 
 it("bounds fallback when the retention error itself has oversized diagnostics", async () => {
   const records = new InvestigationRecords({ maximumRepresentationBytes: 0 });
@@ -257,4 +257,4 @@ it("bounds fallback when the retention error itself has oversized diagnostics", 
     await client.close();
     await server.close();
   }
-}, 120000);
+});

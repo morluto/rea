@@ -15,11 +15,12 @@ import type {
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import {
   sqliteDatabaseSchema,
@@ -37,7 +38,11 @@ import type {
   ProviderProcessStopResult,
 } from "../process/ProviderProcess.js";
 import { capturedSqliteOutput } from "./SqliteDatabaseFailures.js";
-import { SQLITE_DATABASE_LIMITS } from "./SqliteDatabaseLimits.js";
+import {
+  SQLITE_DATABASE_LIMITS,
+  SQLITE_INSPECTION_REASONS,
+  SQLITE_STRUCTURED_INSPECTION_REASONS,
+} from "./SqliteDatabaseLimits.js";
 
 const operation = "inspect_sqlite_database";
 const {
@@ -51,16 +56,9 @@ const replySchema = z.union([
   z.strictObject({ ok: z.literal(true), inspection: inspectionSchema }),
   z.strictObject({
     ok: z.literal(false),
-    reason: z.enum([
-      "format",
-      "selection",
-      "column-selection",
-      "row-evaluation",
-      "unsupported",
-      "unavailable",
-      "output-limit",
-      "memory",
-    ]),
+    reason: z
+      .enum(SQLITE_INSPECTION_REASONS)
+      .exclude(SQLITE_STRUCTURED_INSPECTION_REASONS),
     message: z.string(),
   }),
   z.strictObject({
@@ -94,6 +92,7 @@ const rejectedArgument = {
   unsupported: "path",
   selection: "table",
   "column-selection": "columns",
+  "row-offset": "row_offset",
 } as const;
 
 const rejectedReply = (
@@ -241,6 +240,7 @@ export const executeSqliteDatabaseWorker = async (request: {
     {
       timeoutMs: request.timeoutMs,
       diagnosticBytes: SQLITE_DATABASE_LIMITS.diagnosticBytes,
+      runtime: "v8",
     },
     {
       ...(request.signal === undefined ? {} : { signal: request.signal }),
@@ -292,19 +292,20 @@ const sqliteReplyReadFailure = (
   cause: unknown,
   capturedOutput: AnalysisCapturedOutput,
 ): AnalysisError => {
-  const options = {
-    cause,
+  const optionsWithoutCause = {
     capturedOutput,
     ...(cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined
       ? { cleanup: cause.cleanup }
       : {}),
   };
+  const options = { cause, ...optionsWithoutCause };
   const error =
     cause instanceof ArtifactReaderFailure && cause.reason === "cancelled"
-      ? new AnalysisCancelledError(operation, {
-          ...options,
-          cause: artifactFileCancellationCause(cause),
-        })
+      ? cancelledBy(
+          operation,
+          carriedReason(artifactFileCancellationCause(cause)),
+          optionsWithoutCause,
+        )
       : new AnalysisOutputError(
           operation,
           `Owned SQLite worker reply is missing or malformed: ${cause instanceof Error ? cause.message : String(cause)}`,
@@ -329,10 +330,11 @@ const sqliteReplyCompletionFailure = (
   );
   bindArtifactFileCleanup(cause, cleanup);
   if (cause.reason !== "cancelled") return cleanup;
-  const cancellation = new AnalysisCancelledError(operation, {
-    cause: artifactFileCancellationCause(cause),
-    capturedOutput,
-  });
+  const cancellation = cancelledBy(
+    operation,
+    carriedReason(artifactFileCancellationCause(cause)),
+    { capturedOutput },
+  );
   return analysisErrorWithCleanupFailure(
     cancellation,
     cleanup,

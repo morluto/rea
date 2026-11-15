@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · **Tiếng Việt** · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA: Kỹ thuật dịch ngược cho mọi thứ
 
@@ -83,6 +83,10 @@ Chọn các tác nhân, xem lại những thay đổi được đề xuất và 
 Quá trình thiết lập hỗ trợ Claude Code, Codex, Cursor, Gemini CLI, Grok Build và [các tác nhân khác](../getting-started/installation.md#supported-agents). Xem [cài đặt và thiết lập](../getting-started/installation.md) để cấu hình trình phân tích và đăng ký MCP thủ công.
 
 MCP mặc định dùng schema đầu vào gọn. Để có hướng dẫn đầy đủ về trường và xác thực lồng nhau, đặt `REA_MCP_INPUT_SCHEMA_PROFILE=full` trong đăng ký MCP. Cả hai cấu hình giữ toàn bộ công cụ và cùng xác thực chuẩn ở máy chủ; xem hướng dẫn hợp đồng MCP.
+
+Thiết lập đăng ký trực tiếp runtime đã chọn và script khởi chạy REA. Khi dùng trình chạy gói, hãy giữ mục cache và runtime đó; tải gói từ một thư mục đáng tin cậy bên ngoài dự án đích. Xem hướng dẫn cài đặt.
+
+Theo mặc định, schema đầu ra được lược khỏi `tools/list`: không API mô hình nào đọc chúng, và REA tự xác thực mọi kết quả. Đặt `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` trong cấu hình MCP để công bố từng schema đầu ra trong giới hạn 4096 byte, hoặc `full` để công bố schema đầu ra đầy đủ (cho các client MCP có xác thực kết quả). Với mọi thiết lập, xác thực phía server và kết quả có cấu trúc vẫn đầy đủ. Xem mục “Output schemas” trong hướng dẫn hợp đồng MCP.
 
 ### Hỏi tác nhân
 
@@ -170,7 +174,7 @@ REA yêu cầu Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) hoặc 26+ (>=26.12.1)
 | JavaScript / Electron             | Mô-đun, các khai báo import, source map, tuyến, IPC và quan hệ với tiện ích mở rộng mã máy                      | Node.js và npm; [phân tích ứng dụng](../guides/javascript/javascript-application-workflows.md); Linux: procps `ps`                                                       |
 | Trang web                         | Cấu trúc trang, script, quan sát mạng và ảnh chụp màn hình được yêu cầu                                         | Trình duyệt thuộc họ Chrome; [phân tích trình duyệt](../guides/web/browser-observation.md)                                                                               |
 | Bản ghi lưu lượng mạng đã lưu     | Yêu cầu, phản hồi, payload có thể truy cập và vị trí nguồn                                                      | HAR / Fiddler Everywhere SAZ; mitmdump trên Linux cho bản ghi định dạng gốc của mitmproxy; [hướng dẫn bản ghi mạng](../guides/web/web-network-captures.md)               |
-| Bắt gói tin                       | Điểm cuối, DNS, TLS SNI, phân bố giao thức và yêu cầu HTTP                                                      | tshark và capinfos do nơi gọi cung cấp; [hướng dẫn pcap](../guides/data/pcap-analysis.md)                                                                                |
+| Bắt gói tin                       | Điểm cuối, DNS, TLS SNI, phân bố giao thức và yêu cầu HTTP                                                      | tshark và capinfos do nơi gọi cung cấp (đã xác minh trên Linux); [hướng dẫn pcap](../guides/data/pcap-analysis.md)                                                       |
 | Assembly .NET                     | Siêu dữ liệu, lệnh CIL, các phụ thuộc mã máy được khai báo và so sánh bản dựng                                  | Kiểm tra tĩnh; [hướng dẫn mã được quản lý](../guides/managed/managed-code-analysis.md)                                                                                   |
 | APK Android                       | Khai báo manifest, lớp, phương thức được dịch ngược và tham chiếu                                               | JADX không giao diện đồ họa và JDK đầy đủ trên Linux/macOS/Windows x64; [hướng dẫn Android](../guides/android/android-analysis.md)                                       |
 | Thiết bị Android                  | Thiết bị, gói, tiến trình, nhật ký, dump, ảnh chụp màn hình và truyền APK/tệp                                   | adb do nơi gọi cung cấp (trình giả lập hoặc thiết bị); [hướng dẫn ADB](../guides/android/adb-device-analysis.md)                                                         |
@@ -183,6 +187,7 @@ REA yêu cầu Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) hoặc 26+ (>=26.12.1)
 | Gói và tài nguyên                 | Danh sách tệp, giá trị băm, plist, cấu trúc bundle Apple và tài nguyên được trích xuất                          | [Hướng dẫn hiện vật phần mềm và JavaScript](../guides/javascript/javascript-artifact-reconstruction.md), [ứng dụng Apple](../guides/apple/apple-application-analysis.md) |
 | Hành vi tiến trình                | Đầu ra terminal, tương tác, quan sát khi thoát và hệ thống tệp, cùng so sánh các lần chạy                       | Linux/macOS có PTY gốc; [ghi lại tiến trình](../guides/runtime/process-capture.md)                                                                                       |
 | PyInstaller                       | CArchive, PYZ, Python bytecode                                                                                  | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                                    |
+| Deno compile binaries             | Virtual files, entry point, recorded options, npm snapshot length                                               | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                                     |
 | Tệp nhị phân Go                   | Phiên bản trình biên dịch nhúng, mô-đun, thay thế và thiết lập build                                            | Kiểm tra tĩnh tích hợp ELF/PE/thin Mach-O; Không cần cài Go                                                                                                              |
 | Cơ sở dữ liệu SQLite              | Bảng, cột, chỉ mục, view, trigger và hàng được chọn từ bảng thông thường                                        | Ảnh chụp cơ sở dữ liệu/WAL cục bộ; Node.js 24.x >=24.15 hoặc 26+ có giới hạn SQLite native                                                                               |
 | Đối tượng mã GPU                  | Đích CUDA/HIP, tham số và tài nguyên kernel được chọn, văn bản PTX được giữ lại                                 | Kiểm tra tĩnh tích hợp ELF/PE/fatbin/CUBIN/PTX; [GPU](../gpu-code-objects.md)                                                                                            |
@@ -273,6 +278,12 @@ REA xuất môi trường chạy được cùng bài kiểm tra cơ bản để 
 [Hướng dẫn xây dựng môi trường](https://rea.tools/guides/rl-environments/) ·
 [Tài liệu tham chiếu môi trường](../agent-environments.md) ·
 [Xem bản demo trên X](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### Môi trường ứng dụng desktop
+
+REA cũng có thể xây dựng môi trường cho một ứng dụng desktop Linux mà tác tử dùng qua ảnh chụp màn hình, chuột và bàn phím. Từ một yêu cầu một dòng, chẳng hạn "Tạo cho tôi một môi trường Gnote trong đó tác tử thêm dầu ô liu vào ghi chú danh sách mua sắm", tác tử của bạn cài ứng dụng trên một máy tính dựng cục bộ, viết tác vụ, xuất môi trường và kiểm tra tác vụ trên một máy tính mới. Máy dựng môi trường cần Linux trên amd64 hoặc arm64, Docker và phiên bản framework agentenv mà hướng dẫn chỉ định.
+
+[Thiết lập môi trường ứng dụng desktop](../desktop-build-computer.md)
 
 ## Câu hỏi thường gặp
 

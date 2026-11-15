@@ -2,6 +2,7 @@ import {
   createCapabilityServices,
   type CapabilityServiceOptions,
 } from "../composition/capabilityServices.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { registerToolFamilies } from "../contracts/toolFamilyIds.js";
 import { SCOPED_NO_TARGET_RECOVERY } from "./recoveryInstructions.js";
 import { AnalysisSettings } from "../application/AnalysisSettings.js";
@@ -19,9 +20,13 @@ import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { captureProviderEnvironment } from "./providerEnvironment.js";
 import { createByteEntropyService } from "../composition/binaryDiagnostics.js";
 import { registerElfNotesTool } from "./registerElfNotesTool.js";
+import { registerNativeInitializersTool } from "./registerNativeInitializersTool.js";
+import { registerElfUnwindRangesTool } from "./registerElfUnwindRangesTool.js";
 import { registerAppleIpsTool } from "./registerAppleIpsTool.js";
 import { registerKernelModuleTool } from "./registerKernelModuleTool.js";
+import { registerKernelBuildConfigTool } from "./registerKernelBuildConfigTool.js";
 import { registerPeLoadConfigTool } from "./registerPeLoadConfigTool.js";
+import { registerReleaseExposureTool } from "./registerReleaseExposureTool.js";
 import { registerBinaryHardeningTool } from "./registerBinaryHardeningTool.js";
 import { registerPeCertificatesTool } from "./registerPeCertificatesTool.js";
 import { registerPeImportsTool } from "./registerPeImportsTool.js";
@@ -52,6 +57,7 @@ import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 import { parseMcpResponseBudget } from "../config/mcpResponseBudget.js";
 import {
   parseMcpOutputSchemaProfile,
+  resolveMcpOutputSchemaProfile,
   type McpOutputSchemaProfile,
 } from "../config/mcpOutputSchemaProfile.js";
 import {
@@ -169,7 +175,10 @@ export const createServer = (
 ): EvidenceMcpServer => {
   const session = source.kind === "session" ? source.session : undefined;
   const analysis = source.kind === "session" ? source.session : source.analysis;
-  const environment = snapshotEnvironment(options.environment ?? process.env);
+  const environment = snapshotEnvironment(
+    options.environment ?? process.env,
+    HOST_PLATFORM.platform,
+  );
   const analysisSettings =
     options.analysisSettings ?? new AnalysisSettings(environment);
   const compactInputPresentation =
@@ -219,14 +228,18 @@ export const createServer = (
     nativeExports,
     devicetree,
     elfNotes,
+    nativeInitializers,
+    elfUnwindRanges,
     appleIps,
     kernelModule,
+    kernelBuildConfig,
     peLoadConfig,
     binaryHardening,
     peCertificates,
     peImports,
     windowsShortcut,
     electronFuses,
+    releaseExposure,
     pythonPyc,
     webNetworkCapture,
     javascriptRecovery,
@@ -499,6 +512,20 @@ export const createServer = (
         recordEvidence,
         analysisAdmission,
       );
+      registerNativeInitializersTool(
+        server,
+        nativeInitializers,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      );
+      registerElfUnwindRangesTool(
+        server,
+        elfUnwindRanges,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      );
       registerAppleIpsTool(
         server,
         appleIps,
@@ -513,9 +540,23 @@ export const createServer = (
         recordEvidence,
         analysisAdmission,
       );
+      registerKernelBuildConfigTool(
+        server,
+        kernelBuildConfig,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      );
       registerPeLoadConfigTool(
         server,
         peLoadConfig,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      );
+      registerReleaseExposureTool(
+        server,
+        releaseExposure,
         toolLogger,
         recordEvidence,
         analysisAdmission,
@@ -823,13 +864,12 @@ export const createServer = (
         recordEvidence,
         analysisAdmission,
       );
-      registerWebSourceLocationTool(
-        server,
-        webSourceLocation,
-        toolLogger,
+      registerWebSourceLocationTool(server, webSourceLocation, {
+        logger: toolLogger,
         recordEvidence,
-        analysisAdmission,
-      );
+        withAdmittedAnalysis: analysisAdmission,
+        evidenceById,
+      });
       registerJavaScriptRecoveryTool(
         server,
         new JavaScriptRecoveryService(javascriptRecovery),
@@ -884,7 +924,7 @@ const outputSchemaProfile = (
     environment.REA_MCP_OUTPUT_SCHEMA_PROFILE,
   );
   if (!configured.ok) throw configured.error;
-  return configured.value ?? "full";
+  return resolveMcpOutputSchemaProfile(configured.value);
 };
 
 const selectCompactInputSchemaPresentation = (

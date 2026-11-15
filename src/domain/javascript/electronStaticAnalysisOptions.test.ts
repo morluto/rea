@@ -8,7 +8,7 @@ import { semanticPropertyReadSources } from "./javascriptSemanticIterationSource
 import {
   analyzeParsedJavaScriptStaticSource,
   analyzeJavaScriptStaticSource,
-} from "./javascriptStaticAnalysis.js";
+} from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 
 describe("Electron constant option evidence", () => {
   it("keeps mixed constant, inline and unresolved windows in construction order", () => {

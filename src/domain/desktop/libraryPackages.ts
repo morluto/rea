@@ -3,7 +3,11 @@ import { posix } from "node:path";
 import type { Result } from "../result.js";
 import { fromUbuntuNobleArchive } from "./appExportInstall.js";
 import { isWithinAny } from "./desktopStateDiff.js";
-import type { ElfDependencies } from "./elfDependencies.js";
+import type {
+  ElfDependencies,
+  ElfDependenciesFailure,
+  ElfLibraryIdentity,
+} from "./elfDependencies.js";
 
 /** One library `ldconfig -p` lists from the dynamic linker cache. */
 export interface LinkerCacheEntry {
@@ -36,20 +40,23 @@ const CACHE_FLAGS: ReadonlyMap<number, string> = new Map([
 ]);
 const MACHINE_FLAGS = new Set(CACHE_FLAGS.values());
 
-const cachedPath = (
+const cachedPaths = (
   cache: readonly LinkerCacheEntry[],
   soname: string,
   machine: number,
-): string | undefined => {
+): readonly string[] => {
   const matching = cache.filter((entry) => entry.soname === soname);
   const flag = CACHE_FLAGS.get(machine);
-  return (
-    flag === undefined
-      ? (matching.find(
-          (entry) => !entry.flags.some((name) => MACHINE_FLAGS.has(name)),
-        ) ?? matching[0])
-      : matching.find((entry) => entry.flags.includes(flag))
-  )?.path;
+  if (flag !== undefined)
+    return matching
+      .filter((entry) => entry.flags.includes(flag))
+      .map((entry) => entry.path);
+  const unclassified = matching.filter(
+    (entry) => !entry.flags.some((name) => MACHINE_FLAGS.has(name)),
+  );
+  return (unclassified.length > 0 ? unclassified : matching).map(
+    (entry) => entry.path,
+  );
 };
 
 /** A loaded object and the object whose DT_NEEDED loaded it, as ld.so links them. */
@@ -59,16 +66,18 @@ interface LoadedObject {
   readonly loader: LoadedObject | undefined;
 }
 
+const ORIGIN_TOKEN = /\$(?:ORIGIN(?![A-Za-z0-9_])|\{ORIGIN\})/gu;
+
 /** Absolute directories with `$ORIGIN` expanded to the owner's folder; relative and other dynamic-token paths are left out. */
 const expanded = (
   owner: string,
   directories: readonly string[],
 ): readonly string[] =>
   directories
-    .map((path) =>
-      path.replace(/\$(?:ORIGIN|\{ORIGIN\})/gu, posix.dirname(owner)),
-    )
-    .filter((path) => path.startsWith("/") && !path.includes("$"))
+    // Check tokens before expansion: dollars in the owner's directory are data.
+    .filter((path) => !path.replace(ORIGIN_TOKEN, "").includes("$"))
+    .map((path) => path.replace(ORIGIN_TOKEN, () => posix.dirname(owner)))
+    .filter((path) => path.startsWith("/"))
     .map((path) => posix.normalize(path));
 
 /**
@@ -89,12 +98,53 @@ const searchDirectories = (object: LoadedObject): readonly string[] => {
   ];
 };
 
+/** Search order identifies candidates; existence alone does not select a loaded object. */
+async function* libraryCandidates(
+  soname: string,
+  directories: readonly string[],
+  machine: number,
+  cache: readonly LinkerCacheEntry[],
+  host: LibraryWalkHost,
+): AsyncGenerator<{ path: string; unprobed: boolean }> {
+  if (soname.startsWith("/")) {
+    yield { path: posix.normalize(soname), unprobed: false };
+    return;
+  }
+  const unprobed: string[] = [];
+  if (!soname.includes("/"))
+    for (const directory of directories) {
+      const candidate = posix.join(directory, soname);
+      const probe = await host.isFile(candidate);
+      if (probe.kind === "file") {
+        if (probe.isFile) yield { path: candidate, unprobed: false };
+      }
+      // A folder the linker cannot search is not the object it loads with the
+      // same credentials. It is only evidence that the soname may be there.
+      else if (probe.unreachable) unprobed.push(candidate);
+      // Any other failed check may be transient, so the candidate keeps its
+      // search position instead of falling behind every cache entry.
+      else yield { path: candidate, unprobed: false };
+    }
+  for (const path of cachedPaths(cache, soname, machine))
+    yield { path, unprobed: false };
+  for (const path of unprobed) yield { path, unprobed: true };
+}
+
+/** What a host check of one candidate path established. */
+export type LibraryFileProbe =
+  | { readonly kind: "file"; readonly isFile: boolean }
+  | {
+      readonly kind: "unknown";
+      /** The check settled the candidate, rather than failing transiently. */
+      readonly unreachable: boolean;
+    };
 /** Host reads the closure walk needs. */
 export interface LibraryWalkHost {
   readonly dependencies: (
     path: string,
-  ) => Promise<Result<ElfDependencies, string>>;
-  readonly isFile: (path: string) => Promise<boolean>;
+    expected: ElfLibraryIdentity,
+  ) => Promise<Result<ElfDependencies, ElfDependenciesFailure>>;
+  readonly isFile: (path: string) => Promise<LibraryFileProbe>;
 }
 
 /** The shared libraries an executable loads at start, as the dynamic linker would find them. */
@@ -104,9 +154,9 @@ export interface LibraryClosure {
     readonly soname: string;
     readonly path: string;
   }[];
-  /** Sonames found neither in an RPATH or RUNPATH directory nor in the linker cache. */
+  /** Sonames without a compatible candidate in the searched directories or linker cache. */
   readonly missing: readonly string[];
-  /** Libraries whose own dependencies could not be read. */
+  /** Candidates whose selection or dependency closure could not be established. */
   readonly unreadable: readonly {
     readonly path: string;
     readonly reason: string;
@@ -144,23 +194,63 @@ export const libraryClosure = async (
       if (seen.has(soname)) continue;
       if (seen.size >= limit) return { ...closure, truncated: true };
       seen.add(soname);
-      let path = soname.startsWith("/") ? posix.normalize(soname) : undefined;
-      for (const directory of soname.includes("/") ? [] : directories) {
-        const candidate = posix.join(directory, soname);
-        if (path === undefined && (await host.isFile(candidate)))
-          path = candidate;
+      let selected:
+        | {
+            path: string;
+            dependencies: Result<ElfDependencies, ElfDependenciesFailure>;
+          }
+        | undefined;
+      let unresolved = false;
+      // A candidate the probe could not reach stays behind everything the walk
+      // did check, so a searchable candidate with the same soname still wins.
+      let unprobed: { path: string; reason: string } | undefined;
+      for await (const { path, unprobed: couldNotProbe } of libraryCandidates(
+        soname,
+        directories,
+        object.dependencies.machine,
+        cache,
+        host,
+      )) {
+        const dependencies = await host.dependencies(path, object.dependencies);
+        if (!dependencies.ok && dependencies.error.identity === null) {
+          if (couldNotProbe) {
+            unprobed ??= { path, reason: dependencies.error.reason };
+            continue;
+          }
+          // A failed identity read does not prove this candidate can be skipped,
+          // or that its package belongs to the executable's loaded closure.
+          closure.unreadable.push({
+            path,
+            reason: dependencies.error.reason,
+          });
+          unresolved = true;
+          break;
+        }
+        if (!dependencies.ok && dependencies.error.kind === "incompatible") {
+          if (soname.startsWith("/")) {
+            closure.unreadable.push({
+              path,
+              reason: dependencies.error.reason,
+            });
+            unresolved = true;
+            break;
+          }
+          continue;
+        }
+        selected = { path, dependencies };
+        break;
       }
-      path ??= cachedPath(cache, soname, object.dependencies.machine);
-      if (path === undefined) {
-        closure.missing.push(soname);
+      if (selected === undefined) {
+        if (unprobed !== undefined) closure.unreadable.push(unprobed);
+        else if (!unresolved) closure.missing.push(soname);
         continue;
       }
+      const { path, dependencies } = selected;
       if (!isWithinAny(path, [ownFolder]))
         closure.libraries.push({ soname, path });
-      const dependencies = await host.dependencies(path);
       if (dependencies.ok)
         queue.push({ path, dependencies: dependencies.value, loader: object });
-      else closure.unreadable.push({ path, reason: dependencies.error });
+      else closure.unreadable.push({ path, reason: dependencies.error.reason });
     }
   }
   return closure;

@@ -1,4 +1,8 @@
 import type {
+  FridaCapturePolicy,
+  FridaCapturePolicyInput,
+} from "../../domain/fridaCapturePolicy.js";
+import type {
   AnalysisError,
   AnalysisErrorOptions,
 } from "../../domain/analysisErrorBase.js";
@@ -32,8 +36,9 @@ export interface FridaProcessObservation {
   readonly identifier: string | null;
 }
 
-export type StartFridaSessionInput = FridaDeviceSelector &
-  (
+export type StartFridaSessionInput = FridaDeviceSelector & {
+  readonly captureLimits?: FridaCapturePolicyInput;
+} & (
     | { readonly mode: "attach"; readonly pid: number }
     | {
         readonly mode: "spawn";
@@ -47,6 +52,7 @@ export type FridaScriptSource =
   | { readonly sourceKind: "file"; readonly path: string };
 
 export interface FridaSessionObservation {
+  readonly captureLimits?: FridaCapturePolicy;
   readonly sessionId: string;
   readonly deviceId: string;
   readonly target: string;
@@ -56,6 +62,7 @@ export interface FridaSessionObservation {
 }
 
 export interface FridaScriptObservation {
+  readonly captureLimits?: FridaCapturePolicy;
   readonly scriptId: string;
   readonly sourceKind: "inline" | "file";
   readonly sourcePath: string | null;

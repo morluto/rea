@@ -1,10 +1,12 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "./analysisResourceLimits.js";
+import { javaScriptSemanticPrecisionSchema } from "./javascript/javascriptSemanticPrecision.js";
+import { fetchedSourceMapLimitsSchema } from "./sourceMapLimits.js";
 import { z } from "zod";
 import { browserExclusionSchema } from "./browserCompleteness.js";
 import { webPageInspectionSchema } from "./browserObservationSchemas.js";
 import { javaScriptRouteInventorySchema } from "./javascript/javascriptRouteInventory.js";
 
 import {
-  MAX_BROWSER_DEADLINE_MS,
   browserDeadlineIncrease,
   browserDeadlineRetry,
   noRuntimeOverrideSentence,
@@ -33,14 +35,24 @@ export const DEFAULT_SOURCE_MAP_FETCH_TIMEOUT_MS = 30_000;
 
 const webBundleHeapDescription = `Heap phase: maximum V8 old-space for the isolated inert-script analyzer, in MiB (default ${String(DEFAULT_WEB_BUNDLE_HEAP_MB)}, range ${String(MIN_WEB_BUNDLE_HEAP_MB)}..${String(MAX_WEB_BUNDLE_HEAP_MB)}). Omitted means ${String(DEFAULT_WEB_BUNDLE_HEAP_MB)} and applies on the next call. This is not a total process RSS limit, not analysis_timeout_ms, and not total_analysis_timeout_ms. Bun ignores V8 flags; Windows Bun uses an owned process commit limit plus a 512 MiB runtime reserve, while other Bun hosts have no enforced memory limit. Raising max_heap_mb does not raise the fixed worker protocol or result byte budgets.`;
 
-const webBundleScriptTimeoutDescription = `Per-script deadline phase: maximum startup, analysis and result transfer time for one captured script, in milliseconds (default ${String(DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS)}, range 1..${String(MAX_BROWSER_DEADLINE_MS)}). Omitted means ${String(DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS)}. deadlineExpired for one script is not total_analysis_timeout_ms. A per-script value above the effective total is rejected. Timed-out scripts are explicit unknowns and other scripts may still be analyzed. Applies on the next call.`;
+const webBundleScriptTimeoutDescription = `Per-script deadline phase: maximum startup, analysis and result transfer time for one captured script, in milliseconds (default ${String(DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS)}, range 1..${String(MAX_NODE_TIMER_DELAY_MS)}). Omitted means ${String(DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS)}. deadlineExpired for one script is not total_analysis_timeout_ms. A per-script value above the effective total is rejected. Timed-out scripts are explicit unknowns and other scripts may still be analyzed. Applies on the next call.`;
 
-const webBundleTotalTimeoutDescription = `Total analysis deadline phase: maximum time for all captured-script analysis, in milliseconds (default ${String(DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS)}, range 1..${String(MAX_BROWSER_DEADLINE_MS)}). Omitted means ${String(DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS)}. This is not the per-script analysis_timeout_ms, not capture, and not source-map fetch. A per-script timeout above this total is rejected. Unstarted scripts remain explicit unknowns. Applies on the next call.`;
+const webBundleTotalTimeoutDescription = `Total analysis deadline phase: maximum time for all captured-script analysis, in milliseconds (default ${String(DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS)}, range 1..${String(MAX_NODE_TIMER_DELAY_MS)}). Omitted means ${String(DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS)}. This is not the per-script analysis_timeout_ms, not capture, and not source-map fetch. A per-script timeout above this total is rejected. Unstarted scripts remain explicit unknowns. Applies on the next call.`;
 
 /** Capture-and-analyze input with optional source-map fetching. */
 export const analyzeWebBundleInputSchema = inspectWebPageWithSourceInputSchema
   .safeExtend({
     fetch_source_maps: z.boolean().default(false),
+    semantic_precision: javaScriptSemanticPrecisionSchema
+      .exactOptional()
+      .describe(
+        "Per-script semantic evaluator budgets; omitted fields preserve defaults. Independent of worker memory, deadlines and reply budgets.",
+      ),
+    source_map_limits: fetchedSourceMapLimitsSchema
+      .exactOptional()
+      .describe(
+        "Source-map fetch/representation and decoder admission for this call. Omitted fields keep existing defaults; no restart required.",
+      ),
     max_heap_mb: z
       .number()
       .int()
@@ -55,10 +67,17 @@ export const analyzeWebBundleInputSchema = inspectWebPageWithSourceInputSchema
       webBundleTotalTimeoutDescription,
     ),
     source_map_fetch_timeout_ms: optionalBrowserDeadlineMs(
-      `Source-map fetch deadline in milliseconds (default ${String(DEFAULT_SOURCE_MAP_FETCH_TIMEOUT_MS)}). Omitted means ${String(DEFAULT_SOURCE_MAP_FETCH_TIMEOUT_MS)} and applies on the next fetch. A fetch overrun is an item limitation (fetch_failed), not a thrown analysis timeout. Does not raise the fixed 64 MiB response budget or the source-map decode deadline. The response budget has no runtime override.`,
+      `Source-map fetch deadline in milliseconds (default ${String(DEFAULT_SOURCE_MAP_FETCH_TIMEOUT_MS)}). Omitted means ${String(DEFAULT_SOURCE_MAP_FETCH_TIMEOUT_MS)} and applies on the next fetch. After response cleanup completes, a fetch overrun is an item limitation (fetch_failed), not a thrown analysis timeout. Pending or failed response cleanup is reported as an error with its retained owner. Response/representation and decoder budgets are independent source_map_limits fields.`,
     ),
   })
   .superRefine((input, context) => {
+    if (input.source_map_limits !== undefined && !input.fetch_source_maps)
+      context.addIssue({
+        code: "custom",
+        path: ["source_map_limits"],
+        message:
+          "source_map_limits requires fetch_source_maps: true; inspection does not fetch maps unless explicitly selected.",
+      });
     const perScript =
       input.analysis_timeout_ms ?? DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS;
     const total =
@@ -248,14 +267,14 @@ const findingSchema = z.object({
 });
 
 const originalSourceSchema = z.object({
-  source_index: z.int().min(0).optional(),
-  declaration_index: z.int().min(0).optional(),
+  source_index: z.int().min(0),
+  declaration_index: z.int().min(0),
   source: z.string().nullable(),
   artifact: webTextArtifactSchema.nullable(),
 });
 const originalModuleEdgeSchema = z.object({
-  // Historical observations omit this link to original_sources declarations.
-  declaration_index: z.int().min(0).optional(),
+  /** The original_sources declaration this edge was read from. */
+  declaration_index: z.int().min(0),
   from_source: z.string(),
   kind: z.enum(["static_import", "dynamic_import", "require"]),
   specifier: z.string(),

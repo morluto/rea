@@ -7,6 +7,7 @@ import type {
   JavaScriptSemanticChildProcessSpawn,
 } from "./javascriptSemanticIr.js";
 import { createSemanticCallableIdStack } from "./javascriptSemanticCallableStack.js";
+import { rejectsSemanticEventListener } from "./javascriptSemanticAsyncEffects.js";
 import {
   createSemanticExpressionShapeResolver,
   optionsAfterOptionalArgv,
@@ -76,10 +77,13 @@ export const collectJavaScriptSemanticChildProcesses = (
   const candidates = collectSpawns(program, state, callables).filter(
     (candidate) =>
       !forkRejectsStdioArray(candidate, context) &&
-      !rejectsOptionsShape(candidate, context, state),
+      !rejectsStdioLiteral(candidate, context) &&
+      !rejectsProcessOptionLiteral(candidate, context) &&
+      !rejectsOptionsShape(candidate, context, state) &&
+      !rejectsCallback(candidate, context),
   );
   const childProcessSpawns = candidates.map((candidate) =>
-    immutableSpawn(candidate, context),
+    immutableSpawn(candidate, context, state),
   );
   return {
     childProcessSpawns,
@@ -144,6 +148,7 @@ const collectSpawns = (
 const immutableSpawn = (
   candidate: SpawnCandidate,
   context: ChildSpawnContext,
+  state: JavaScriptSemanticAnalysisState,
 ): JavaScriptSemanticChildProcessSpawn => {
   const { options, argvCount } = spawnArguments(candidate, context);
   const command = dataEffectLiteralString(candidate.node.arguments[0]);
@@ -159,7 +164,7 @@ const immutableSpawn = (
     projectedResultBindings: candidate.projectedResultBindings,
     command,
     argvCount,
-    environmentSupplied: environmentSupplied(options, context),
+    environmentSupplied: environmentSupplied(options, context, state),
     stdioMode: stdioMode(options, candidate.method, context),
     resolution: command === null ? "partial" : "complete",
   };
@@ -222,6 +227,11 @@ const childInteraction = (
   const method = semanticStaticPropertyName(member.property, member.computed);
   const classification = classifyInteraction(method, node.arguments[0]);
   if (classification === null) return null;
+  if (
+    classification.kind === "listener" &&
+    rejectsSemanticEventListener(node.arguments[1])
+  )
+    return null;
   const binding = objectBinding(member.object, state);
   const { candidates: linked, complete } = resolveChildCandidates(
     member.object,
@@ -441,13 +451,55 @@ const spawnArguments = (
 const environmentSupplied = (
   options: t.Node | undefined,
   context: ChildSpawnContext,
+  state: JavaScriptSemanticAnalysisState,
 ): boolean => {
   const lookup = staticObjectProperty(options, "env", context.isNullish);
   if (lookup.status !== "explicit") return false;
   const value = unwrapJavaScriptExpression(lookup.value).node;
   if (context.isNullish(value)) return false;
+  if (
+    t.isIdentifier(value, { name: "NaN" }) &&
+    isUnshadowedGlobal(value, state, "NaN")
+  )
+    return false;
   return staticJavaScriptTruthiness(value) !== false;
 };
+
+/**
+ * The `stdio` string values Node accepts for `spawn`, `execFile` and `fork`.
+ *
+ * Measured on Node 24.22.1: `"pipe"`, `"overlapped"`, `"inherit"` and `"ignore"` start a
+ * child; `"ipc"`, `"PIPE"`, `"pipe "`, `"pipeline"`, `"stream"` and `"stdio"` all throw
+ * `ERR_INVALID_ARG_VALUE` before anything is created. The set is exact and case-sensitive.
+ */
+const STREAM_STDIO_MODES = new Set([
+  "pipe",
+  "overlapped",
+  "inherit",
+  "ignore",
+] as const);
+
+/**
+ * Whether an exact string `stdio` makes the call throw before a child exists.
+ *
+ * `spawn` passes the string to `getValidStdio`, so every value outside
+ * `STREAM_STDIO_MODES` throws. `fork` sends the string through `stdioStringToArray`, which
+ * refuses `""` on its own — it does not split the string and it never appends `"ipc"`, so
+ * the rejection is that one explicit check rather than an IPC-count rule. Measured on Node
+ * 24.22.1: `spawn(..., {stdio: ""})` starts a child while `fork(..., {stdio: ""})` throws
+ * `ERR_INVALID_ARG_VALUE`.
+ *
+ * `exec` and `execFile` are excluded by the caller: async `execFile` does not forward
+ * `stdio` to its underlying `spawn` at all, so `execFile(..., {stdio: "bad"})` returns a
+ * real child, which `stdioMode` already records as `"default"`.
+ */
+const rejectsStdioString = (
+  value: string,
+  method: JavaScriptSemanticChildProcessSpawn["method"],
+): boolean =>
+  (STREAM_STDIO_MODES as ReadonlySet<string>).has(value)
+    ? false
+    : method === "fork" || value !== "";
 
 const stdioMode = (
   options: t.Node | undefined,
@@ -472,6 +524,33 @@ const stdioMode = (
   if (method === "fork" && staticJavaScriptTruthiness(value) !== undefined)
     return unsetStdioMode(expression, method, context);
   return "dynamic";
+};
+
+/**
+ * Whether a `stdio` member is a string Node refuses at the call site.
+ *
+ * The value is read through the shared literal owner rather than the AST kind, because a
+ * no-substitution template literal is the same string to Node: measured on Node 24.22.1,
+ * `{stdio: \`ipc\`}` throws `ERR_INVALID_ARG_VALUE` while `{stdio: \`pipe\`}` starts a
+ * child. A non-string value is left to `stdioMode`, which already reports it as
+ * `"dynamic"`, so this filter only speaks about strings.
+ */
+const rejectsStdioLiteral = (
+  candidate: SpawnCandidate,
+  context: ChildSpawnContext,
+): boolean => {
+  // Async exec/execFile do not forward options.stdio to their underlying spawn.
+  if (candidate.method === "exec" || candidate.method === "execFile")
+    return false;
+  const { options } = spawnArguments(candidate, context);
+  if (options === undefined) return false;
+  const expression = unwrapJavaScriptExpression(options).node;
+  if (context.isNullish(expression)) return false;
+  const lookup = staticObjectProperty(expression, "stdio", context.isNullish);
+  if (lookup.status !== "explicit") return false;
+  const literal = readExactJavaScriptLiteral(lookup.value);
+  if (!literal.found || typeof literal.value !== "string") return false;
+  return rejectsStdioString(literal.value, candidate.method);
 };
 
 /**
@@ -510,6 +589,48 @@ const forkRejectsStdioArray = (
   return ipcCount !== 1;
 };
 
+/** Only proven invalid cwd paths or argv0 strings establish call-site rejection. */
+const rejectsProcessOptionLiteral = (
+  candidate: SpawnCandidate,
+  context: ChildSpawnContext,
+): boolean => {
+  const { options } = spawnArguments(candidate, context);
+  if (options === undefined) return false;
+  const expression = unwrapJavaScriptExpression(options).node;
+  if (context.isNullish(expression)) return false;
+  for (const member of ["cwd", "argv0"] as const) {
+    const lookup = staticObjectProperty(expression, member, context.isNullish);
+    if (lookup.status !== "explicit") continue;
+    const value = unwrapJavaScriptExpression(lookup.value).node;
+    if (context.isNullish(value)) continue;
+    // The value is read through the shared literal owner, so a no-substitution template
+    // literal counts as the string Node receives: measured on Node 24.22.1,
+    // `{cwd: \`/tmp\`}` and `{argv0: \`x\`}` both start a child.
+    const literal = readExactJavaScriptLiteral(value);
+    if (literal.found) {
+      if (typeof literal.value === "string") continue;
+      return true;
+    }
+    if (t.isStringLiteral(value)) continue;
+    // A constructor can return a URL or another accepted path value. Its name
+    // cannot prove that cwd is invalid, including qualified and custom constructors.
+    if (member === "cwd" && t.isNewExpression(value)) continue;
+    if (
+      t.isObjectExpression(value) ||
+      t.isArrayExpression(value) ||
+      t.isBooleanLiteral(value) ||
+      t.isBigIntLiteral(value) ||
+      t.isRegExpLiteral(value) ||
+      t.isArrowFunctionExpression(value) ||
+      t.isFunctionExpression(value) ||
+      t.isClassExpression(value) ||
+      t.isNewExpression(value)
+    )
+      return true;
+  }
+  return false;
+};
+
 /**
  * Node validates the options object before creating anything, so a literal
  * primitive or literal array in that slot throws ERR_INVALID_ARG_TYPE
@@ -527,6 +648,13 @@ const rejectsOptionsShape = (
   if (options === undefined) return false;
   const value = unwrapJavaScriptExpression(options).node;
   if (context.isArray(value)) return true;
+  if (
+    candidate.method !== "execFile" &&
+    (t.isFunctionExpression(value) ||
+      t.isArrowFunctionExpression(value) ||
+      t.isClassExpression(value))
+  )
+    return true;
   const literal = readExactJavaScriptLiteral(value);
   if (literal.found)
     return !(candidate.method !== "spawn" && literal.value === null);
@@ -542,6 +670,52 @@ const rejectsOptionsShape = (
   return isUnpricedPrimitiveLiteral(value);
 };
 
+/** Select only callback slots whose overload is established by source syntax. */
+const rejectsCallback = (
+  candidate: SpawnCandidate,
+  context: ChildSpawnContext,
+): boolean => {
+  if (candidate.method !== "exec" && candidate.method !== "execFile")
+    return false;
+  const args = candidate.node.arguments;
+  if (args.slice(0, 4).some((argument) => t.isSpreadElement(argument)))
+    return false;
+  const second = args[1] && unwrapJavaScriptExpression(args[1]).node;
+  const third = args[2] && unwrapJavaScriptExpression(args[2]).node;
+  let callback: t.Node | undefined;
+  if (candidate.method === "exec") {
+    // A function in slot 1 replaces slot 2, even when slot 2 is not callable.
+    if (
+      second !== undefined &&
+      !context.isNullish(second) &&
+      !rejectsSemanticEventListener(second)
+    )
+      return false;
+    callback = third;
+  } else if (t.isObjectExpression(second) || t.isRegExpLiteral(second)) {
+    callback = third;
+  } else if (
+    second === undefined ||
+    context.isArray(second) ||
+    context.isNullish(second)
+  ) {
+    // With argv present, a third-slot function replaces the fourth callback.
+    if (
+      third !== undefined &&
+      !context.isNullish(third) &&
+      !rejectsSemanticEventListener(third)
+    )
+      return false;
+    callback = args[3];
+  } else {
+    return false;
+  }
+  return (
+    callback !== undefined &&
+    !context.isNullish(callback) &&
+    rejectsSemanticEventListener(callback)
+  );
+};
 /**
  * The exact-value reader deliberately refuses to price a BigInt, a non-finite
  * numeric literal such as `1e400`, and a negated numeric literal such as `-0`.

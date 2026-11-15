@@ -1,3 +1,4 @@
+import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
@@ -5,25 +6,22 @@ import {
   readStableArtifact,
 } from "../artifacts/readStableArtifact.js";
 import {
-  artifactFileCancellationCause,
   artifactFilePrimaryFacts,
   artifactSelectedPathErrno,
   type ArtifactFilePrimaryFacts,
 } from "../artifacts/ArtifactFileOperation.js";
 import {
   projectArtifactCloseFailure,
+  projectOwnedArtifactIdentityFailure,
   projectStableArtifactFailure,
-  stableArtifactInputRecovery,
+  stableArtifactInputFailure,
 } from "../artifacts/StableArtifactFailure.js";
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
 import type { V8CodeCachePort } from "../application/v8CodeCache/V8CodeCachePort.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
 import {
@@ -34,10 +32,7 @@ import {
   type InspectV8CodeCacheInput,
 } from "../domain/v8/v8CodeCache.js";
 import { err, ok } from "../domain/result.js";
-import {
-  V8CodeCacheBudgetFailure,
-  V8CodeCacheFormatFailure,
-} from "./V8CodeCache.errors.js";
+import { V8CodeCacheBudgetFailure } from "./V8CodeCache.errors.js";
 import { V8_CODE_CACHE_PROVIDER_IDENTITY } from "./V8CodeCacheProviderIdentity.js";
 import { parseV8CodeCache } from "./V8CodeCacheParser.js";
 
@@ -185,42 +180,14 @@ const v8CodeCacheFailurePrimary = (
         remediationAction: observationBudgetRemediation(cause, input),
       },
     );
-  if (cause instanceof V8CodeCacheFormatFailure)
-    return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(
-          OPERATION,
-          input.path,
-          cause.message,
-          { cause },
-        )
-      : new AnalysisInputError(OPERATION, { cause }, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: cause.message,
-          },
-        ]);
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "integrity"
-  )
-    return new AnalysisArtifactChangedError(
-      OPERATION,
-      input.path,
-      cause.message,
-      {
-        cause,
-      },
-    );
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "cancelled"
-  )
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
-    });
+  const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
+  if (formatFailure !== undefined) return formatFailure;
+  const identityFailure = projectOwnedArtifactIdentityFailure(
+    facts,
+    OPERATION,
+    input.path,
+  );
+  if (identityFailure !== undefined) return identityFailure;
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure
@@ -244,17 +211,7 @@ const v8CodeCacheFailurePrimary = (
       );
     }
     if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(
-        OPERATION,
-        { cause, ...stableArtifactInputRecovery(cause) },
-        [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: cause.message,
-          },
-        ],
-      );
+      return stableArtifactInputFailure(cause, OPERATION);
   }
   if (cause instanceof Error && "code" in cause) {
     if (cause.code === "EACCES" || cause.code === "EPERM")

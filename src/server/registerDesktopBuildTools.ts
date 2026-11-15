@@ -9,6 +9,7 @@ import type {
   DesktopBuildComputers,
   ForwardedResult,
 } from "../application/desktop/DesktopBuildComputers.js";
+import type { ProgressReporter } from "../application/ProgressReporter.js";
 import { DesktopBuildSteps } from "../application/desktop/DesktopBuildSteps.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import type { ToolContract } from "../contracts/toolContractTypes.js";
@@ -36,13 +37,16 @@ const admit = <Schema extends z.ZodType>(
       );
 };
 
-const HEARTBEAT_MS = 5_000;
-
-/** Report progress every few seconds while a long build step works, so a client's request timeout can reset. */
+/**
+ * Report progress every `intervalMs` while a long build step works, so a
+ * client's request timeout can reset; the step reports on the same
+ * reporter, whose notifications keep one order.
+ */
 const withHeartbeat = async <Value>(
   context: ServerContext,
   phase: string,
-  run: () => Promise<Value>,
+  intervalMs: number,
+  run: (progress: ProgressReporter) => Promise<Value>,
 ): Promise<Value> => {
   const progress = mcpProgressReporter(context);
   const startedAt = Date.now();
@@ -55,15 +59,38 @@ const withHeartbeat = async <Value>(
         message: `working (${String(Math.round((Date.now() - startedAt) / 1000))} s)`,
       })
       .catch(() => undefined);
-  }, HEARTBEAT_MS);
+  }, intervalMs);
   try {
-    return await run();
+    return await run(progress);
   } finally {
     clearInterval(timer);
   }
 };
 
-/** Registration of one build tool: the server, its logger and the tool's contract. */
+/** How results show secrets typed on this server's build computers: by their handles. */
+type Redactor = DesktopBuildComputers["redaction"];
+
+/** A result with each typed secret's value replaced by its handle, in its text and structured content; images pass as they are. */
+const redacted = (
+  result: CallToolResult,
+  redact: Redactor,
+): CallToolResult => ({
+  ...result,
+  content: result.content.map((block) =>
+    block.type === "text"
+      ? { ...block, text: redact.redact(block.text) }
+      : block,
+  ),
+  ...(result.structuredContent === undefined
+    ? {}
+    : {
+        structuredContent: redact.redactJson(
+          result.structuredContent as JsonValue,
+        ) as Record<string, unknown>,
+      }),
+});
+
+/** Registration of one build tool: the server, its logger, the tool's contract and how its results show typed secrets. */
 interface Registration<Schema extends z.ZodType> {
   readonly server: EvidenceMcpServer;
   readonly logger: Logger;
@@ -71,11 +98,12 @@ interface Registration<Schema extends z.ZodType> {
     readonly name: string;
     readonly inputSchema: Schema;
   };
+  readonly redact: Redactor;
 }
 
 /** Register a tool whose result carries a forwarded driver answer, such as a screenshot, after REA's JSON. */
 const registerForwarded = <Schema extends z.ZodType>(
-  { server, logger, contract }: Registration<Schema>,
+  { server, logger, contract, redact }: Registration<Schema>,
   run: (
     input: z.output<Schema>,
     context: ServerContext,
@@ -86,24 +114,31 @@ const registerForwarded = <Schema extends z.ZodType>(
     applicationToolRegistrationOptions(contract),
     async (raw: unknown, context: ServerContext): Promise<CallToolResult> => {
       const input = admit(contract, raw);
-      if (!input.ok) return server.delivery.toCallToolResult(input, contract);
+      if (!input.ok)
+        return redacted(
+          server.delivery.toCallToolResult(input, contract),
+          redact,
+        );
       const result = await logToolExecution(logger, contract.name, () =>
         run(input.value, context),
       );
-      return result.ok
-        ? server.delivery.toForwardedToolResult(
-            ok(result.value.value),
-            contract,
-            result.value.content,
-          )
-        : server.delivery.toCallToolResult(result, contract);
+      return redacted(
+        result.ok
+          ? server.delivery.toForwardedToolResult(
+              ok(result.value.value),
+              contract,
+              result.value.content,
+            )
+          : server.delivery.toCallToolResult(result, contract),
+        redact,
+      );
     },
   );
 };
 
 /** Register a tool with a plain JSON result. */
 const registerPlain = <Schema extends z.ZodType>(
-  { server, logger, contract }: Registration<Schema>,
+  { server, logger, contract, redact }: Registration<Schema>,
   run: (
     input: z.output<Schema>,
     context: ServerContext,
@@ -114,29 +149,45 @@ const registerPlain = <Schema extends z.ZodType>(
     applicationToolRegistrationOptions(contract),
     async (raw: unknown, context: ServerContext): Promise<CallToolResult> => {
       const input = admit(contract, raw);
-      if (!input.ok) return server.delivery.toCallToolResult(input, contract);
-      return server.delivery.toCallToolResult(
-        await logToolExecution(logger, contract.name, () =>
-          run(input.value, context),
+      if (!input.ok)
+        return redacted(
+          server.delivery.toCallToolResult(input, contract),
+          redact,
+        );
+      return redacted(
+        server.delivery.toCallToolResult(
+          await logToolExecution(logger, contract.name, () =>
+            run(input.value, context),
+          ),
+          contract,
         ),
-        contract,
+        redact,
       );
     },
   );
 };
 
-/** Register the build computer session tools and the build steps on them on the REA MCP server. */
+/** Register the build computer session tools and the build steps on them on the REA MCP server; no result shows a typed secret's value. */
 export const registerDesktopBuildTools = (
   server: EvidenceMcpServer,
-  computers: Pick<DesktopBuildComputers, "start" | "act" | "close" | "steps">,
+  computers: Pick<
+    DesktopBuildComputers,
+    "start" | "act" | "close" | "steps" | "measure" | "redaction" | "progressMs"
+  >,
   logger: Logger,
 ): void => {
+  const heartbeat = <Value>(
+    context: ServerContext,
+    phase: string,
+    run: (progress: ProgressReporter) => Promise<Value>,
+  ) => withHeartbeat(context, phase, computers.progressMs, run);
   const tool = <Name extends Parameters<typeof toolContract>[0]>(
     name: Name,
   ) => ({
     server,
     logger,
     contract: toolContract(name),
+    redact: computers.redaction,
   });
   const steps = new DesktopBuildSteps(computers);
   registerForwarded(tool("start_build_computer"), (input, context) =>
@@ -144,34 +195,43 @@ export const registerDesktopBuildTools = (
   );
   // An action can wait for the call before it on its computer, and a reset for the relaunched app, which can take minutes.
   registerForwarded(tool("act_on_build_computer"), (input, context) =>
-    withHeartbeat(context, "act_on_build_computer", () =>
+    heartbeat(context, "act_on_build_computer", () =>
       computers.act(input, context.mcpReq.signal),
     ),
   );
   registerForwarded(tool("start_build_capture"), (input, context) =>
-    withHeartbeat(context, "start_build_capture", () =>
+    heartbeat(context, "start_build_capture", () =>
       steps.startCapture(input, context.mcpReq.signal),
     ),
   );
   registerPlain(tool("mark_build_checkpoint"), (input, context) =>
-    withHeartbeat(context, "mark_build_checkpoint", () =>
+    heartbeat(context, "mark_build_checkpoint", () =>
       steps.markCheckpoint(input, context.mcpReq.signal),
     ),
   );
   registerPlain(tool("stop_build_capture"), (input, context) =>
-    withHeartbeat(context, "stop_build_capture", () =>
+    heartbeat(context, "stop_build_capture", () =>
       steps.stopCapture(input, context.mcpReq.signal),
     ),
   );
   registerPlain(tool("export_build_environment"), (input, context) =>
-    withHeartbeat(context, "export_build_environment", () =>
+    heartbeat(context, "export_build_environment", () =>
       steps.exportEnvironment(input, context.mcpReq.signal),
     ),
   );
   registerPlain(tool("check_build_task"), (input, context) =>
-    withHeartbeat(context, "check_build_task", () =>
-      steps.checkTask(input, context.mcpReq.signal),
+    heartbeat(context, "check_build_task", (progress) =>
+      steps.checkTask(input, context.mcpReq.signal, progress),
     ),
+  );
+  // Solves run one at a time for minutes each, so progress keeps the client waiting.
+  registerPlain(tool("measure_build_task"), (input, context) =>
+    heartbeat(context, "measure_build_task", (progress) =>
+      computers.measure(input, context.mcpReq.signal, progress),
+    ),
+  );
+  registerPlain(tool("record_build_consent"), (input, context) =>
+    steps.recordConsent(input, context.mcpReq.signal),
   );
   registerPlain(tool("close_build_computer"), (input) =>
     computers.close(input.computer_id),

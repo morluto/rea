@@ -17,29 +17,29 @@ import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js
 
 const expectRecoveredBatch = (response: CallToolResult, owned: string) => {
   expect(parseMcpToolError(response).error).toMatchObject({
-    code: "resource_constraint",
+    code: "cleanup_incomplete",
     details: {
-      completed_observation: {
+      resources: [owned],
+      partial_observation: {
         evidence: {
-          normalized_result: {
-            items: [
-              { status: "ok" },
-              {
-                status: "error",
-                error: {
-                  code: "cleanup_incomplete",
-                  details: { resources: [owned] },
-                },
-              },
-            ],
-          },
+          normalized_result: { items: [{ status: "ok" }], total: 1 },
         },
       },
+      secondary_failures: expect.arrayContaining([
+        {
+          code: "resource_constraint",
+          category: "resource_constraint",
+          message: expect.any(String),
+          retryable: true,
+          remediation: expect.any(Object),
+          details: expect.objectContaining({ operation: "record_evidence" }),
+        },
+      ]),
     },
   });
 };
 
-it("keeps a mixed batch cleanup owner after source retention fails and retries it", async () => {
+it("keeps a batch cleanup owner and its completed prefix after source retention fails", async () => {
   const root = await createTestTempDirectory("rea-batch-owned-cleanup-");
   const target = join(root, "fixture.com"),
     owned = join(root, "owned");

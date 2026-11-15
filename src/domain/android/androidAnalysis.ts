@@ -187,8 +187,11 @@ export const dexStaticValueSchema = z.discriminatedUnion("type", [
     type: z.literal("long"),
     value: z
       .string()
-      .regex(/^(?:0|-?[1-9]\d*)$/u)
-      .refine((text) => BigInt(text) >= LONG_MIN && BigInt(text) <= LONG_MAX),
+      .regex(/^(?:0|-?[1-9]\d*)$/u, { abort: true })
+      .refine((text) => {
+        const value = BigInt(text);
+        return value >= LONG_MIN && value <= LONG_MAX;
+      }),
   }),
   floating("float", Math.fround),
   floating("double", (value) => value),
@@ -230,15 +233,7 @@ export const androidResultSchemas = {
     target_sdk: z.string().nullable(),
     permissions: z.array(z.string()),
     manifest: textCoverage,
-    // Evidence retained before the component projection existed re-parses
-    // with an explicit unavailable inventory; current results always carry it.
-    components: androidManifestComponentsSchema.default(() => ({
-      status: "unavailable" as const,
-      items: [],
-      limitations: [
-        "This Evidence predates the manifest component projection; run inspect_android_package again to obtain it.",
-      ],
-    })),
+    components: androidManifestComponentsSchema,
     class_count: z.int().nonnegative(),
     resource_count: z.int().nonnegative(),
     signature_verification: z.literal("not_performed"),
@@ -285,8 +280,7 @@ export const androidResultSchemas = {
   }),
   trace_android_references: z.strictObject({
     ...common,
-    /** Older retained Evidence omits this fact; omission does not mean external. */
-    target_definition: z.enum(["defined", "external"]).exactOptional(),
+    target_definition: z.enum(["defined", "external"]),
     /** External results inventory directly encoded invokes, not reflection or dispatch. */
     reference_scope: z.literal("direct_dex_invokes").exactOptional(),
     class_name: z.string(),
@@ -295,16 +289,13 @@ export const androidResultSchemas = {
     reported_signature: z.string().nullable(),
     dex_descriptor: dexDescriptorSchema.nullable(),
     total: z.int().nonnegative(),
-    /** Position coverage is separate from the complete using-node inventory.
-     * Historical Evidence may omit this aggregate; omission is unexamined. */
-    direct_invokes_coverage: z
-      .strictObject({
-        complete_using_nodes: z.int().nonnegative(),
-        partial_using_nodes: z.int().nonnegative(),
-        unknown_using_nodes: z.int().nonnegative(),
-        recorded_sites: z.int().nonnegative(),
-      })
-      .exactOptional(),
+    /** Position coverage is separate from the complete using-node inventory. */
+    direct_invokes_coverage: z.strictObject({
+      complete_using_nodes: z.int().nonnegative(),
+      partial_using_nodes: z.int().nonnegative(),
+      unknown_using_nodes: z.int().nonnegative(),
+      recorded_sites: z.int().nonnegative(),
+    }),
     references: z.array(
       z.strictObject({
         kind: z.string(),

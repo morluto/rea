@@ -150,6 +150,42 @@ describe("modern Swift category evidence", () => {
   });
 });
 
+describe("file-private Swift nominals", () => {
+  it("classifies a private nested type by the kind after its discriminator", () => {
+    const discriminator = "33_06D5FEE0226E625B433890B34489ED31LL";
+    const names = [
+      [`_$s4main8EnvelopeV5State${discriminator}O8describeSSyF`, "enums"],
+      [`_$s4main7ServiceC4Item${discriminator}V6methodyyF`, "structs"],
+      [`_$s4main5ColorO3Box${discriminator}CMa`, "classes"],
+      [`_$s4main8EnvelopeV8describe${discriminator}SSyF`, "structs"],
+      ["_$s4main7ServiceC5State6NestedLLVMa", "classes"],
+    ] as const;
+    for (const [name, category] of names) {
+      expect(
+        categorizeSwiftTypes([{ address: "0x1", name }], { category }),
+      ).toMatchObject({
+        total: 1,
+        categories: { [category]: { count: 1 } },
+        unclassified: [],
+      });
+    }
+    expect(
+      categorizeSwiftTypes(
+        [
+          {
+            address: "0x1",
+            name: `_$s4main8EnvelopeV5State${discriminator}O8describeSSyF`,
+          },
+        ],
+        { category: "structs" },
+      ),
+    ).toMatchObject({
+      total: 0,
+      categories: { structs: { count: 0 }, enums: { count: 0 } },
+    });
+  });
+});
+
 describe("Swift alias ambiguity", () => {
   it("reports conflicting aliases rather than choosing a category", () => {
     expect(
@@ -280,5 +316,25 @@ it("distinguishes protocol identity from protocol member contexts", () => {
   ).toMatchObject({
     categories: { protocols: { count: 1 } },
     unclassified: [],
+  });
+});
+
+it("selects exact Objective-C protocol symbol leaves", () => {
+  const declarations = [
+    "OBJC_PROTOCOL_$_Runnable",
+    "_OBJC_PROTOCOL_$_Runnable",
+    "__OBJC_PROTOCOL_$_Runnable",
+    "Framework::__OBJC_PROTOCOL_$_Runnable",
+  ].map((name, index) => ({ address: `0x${index}`, name }));
+  const otherNames = [
+    "s__OBJC_PROTOCOL_$_Runnable_1000",
+    "PTR__OBJC_PROTOCOL_$_Runnable_1000",
+    "-[Example useOBJC_PROTOCOL_$_Runnable]",
+    "__OBJC_PROTOCOL_REFERENCE_$_Runnable",
+    "__OBJC_PROTOCOL_$_",
+  ].map((name, index) => ({ address: `0x${index + 4}`, name }));
+  expect(discoverObjcProtocols([...otherNames, ...declarations])).toEqual({
+    count: declarations.length,
+    protocols: declarations,
   });
 });

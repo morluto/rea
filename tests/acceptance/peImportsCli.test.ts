@@ -14,7 +14,7 @@ import {
 } from "../fixtures/binaryDiagnostics/peImports.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
-import { cliTest, runFileCli } from "../support/cli/cliFixture.js";
+import { cliTest } from "../support/cli/cliFixture.js";
 
 for (const bits of [32, 64] as const) {
   cliTest(
@@ -263,9 +263,10 @@ cliTest(
       const invocation = {
         arguments: ["inspect-pe-imports", path, "--json"],
       };
-      const result = await (rva === 0xffffffec
-        ? cli.run(invocation)
-        : runFileCli(cli, invocation));
+      const result = await cli.run({
+        ...invocation,
+        freshProcess: rva === 0xffffffec,
+      });
       expect(result.exitCode, result.stderr).toBe(0);
       const report = toolContract("inspect_pe_imports").outputSchema.parse(
         result.json,

@@ -8,7 +8,10 @@ import writeFileAtomic from "write-file-atomic";
 
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { analysisClientFailureContext } from "../providers/AnalysisClientFailure.js";
-import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCapabilityUnavailableError,
+  OwnerCancellation,
+} from "../domain/analysisErrorCore.js";
 import {
   hopperCancelledBySignal,
   type HopperCancelledError,
@@ -21,6 +24,7 @@ import {
   HopperTimeoutError,
 } from "../domain/hopperErrors.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import {
   hopperStartupFailure,
   type HopperStartupFailureDiagnostic,
@@ -45,11 +49,8 @@ import {
 } from "../process/ProviderDeadline.js";
 import { redactCapturedTransportCredential } from "../process/ProviderDiagnosticRedaction.js";
 import { ProviderRunLineage } from "../process/ProviderRunLineage.js";
-import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
-import {
-  SharedStartupAttempt,
-  STARTUP_OWNER_CLOSED,
-} from "../process/SharedStartupAttempt.js";
+import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
+import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
 import {
   type ProviderProcessDiagnostic,
   ProviderProcessSupervisor,
@@ -63,11 +64,11 @@ import {
   confirmExternalApplicationExit,
   type HopperOwnedResources,
 } from "./HopperCleanup.js";
+import { HOPPER_SHUTDOWN_TIMEOUT_MS } from "./HopperSessionValues.js";
 import {
   parseHopperServerInfo,
-  HOPPER_SHUTDOWN_TIMEOUT_MS,
   type HopperServerInfo,
-} from "./HopperSessionValues.js";
+} from "./HopperReplyContracts.js";
 import { connectHopperSocketOnce } from "./HopperSocketConnection.js";
 import {
   hopperLauncherFailureDiagnostic,
@@ -93,7 +94,7 @@ import {
 } from "./protocol.js";
 
 /** Aggregate in-memory retention budget for this provider's launcher output. */
-export const HOPPER_PROCESS_DIAGNOSTIC_BYTES = 8 * 1024 * 1024;
+const HOPPER_PROCESS_DIAGNOSTIC_BYTES = 8 * 1024 * 1024;
 
 const SESSION_ROOT = process.platform === "darwin" ? "/tmp" : tmpdir();
 
@@ -103,6 +104,12 @@ export interface HopperClientOptions {
   readonly runId?: string;
   readonly startupTimeoutMs?: number;
   readonly readStartupTimeoutMs?: () => number;
+  /** Selection owner for the startup deadline. Absent when the caller did not record it. */
+  readonly readStartupTimeoutSource?: () =>
+    | "default"
+    | "setting"
+    | "runtime"
+    | undefined;
   /** Effective request ceiling. Omitted uses the 16 MiB default. */
   readonly bridgeMaxRequestBytes?: BridgeMaxRequestBytes;
   readonly onDiagnostic?: (event: HopperDiagnostic) => void;
@@ -161,8 +168,11 @@ export class HopperClient {
   #runId: string | undefined;
   #startupAttempt: HopperStartupAttempt | undefined;
   #closePromise: Promise<Result<null, AnalysisError>> | undefined;
-  readonly #onSocketData = (chunk: string): void => {
+  readonly #onSocketData = (chunk: Buffer): void => {
     this.#responses.push(chunk);
+  };
+  readonly #onSocketEnd = (): void => {
+    this.#responses.finish();
   };
   readonly #onSocketError = (): void => {
     const error = new HopperProcessError(null, {
@@ -368,7 +378,7 @@ export class HopperClient {
       return Promise.resolve(err(hopperCancelledBySignal(signal)));
     if (this.#closePromise !== undefined)
       return waitForAbortable(this.#closePromise, signal).then((closed) =>
-        closed === ABORTED
+        closed instanceof AbortedWait
           ? err(hopperCancelledBySignal(signal))
           : closed.ok
             ? this.start(signal)
@@ -416,7 +426,7 @@ export class HopperClient {
     signal?: AbortSignal,
   ): Promise<HopperStartupResult> {
     const waited = await waitForAbortable(attempt.promise, signal);
-    if (waited === ABORTED || (waited.ok && isAborted(signal)))
+    if (waited instanceof AbortedWait || (waited.ok && isAborted(signal)))
       return err(hopperCancelledBySignal(signal));
     if (waited.ok || waited.error.cleanupIncomplete) return waited;
     return this.start(signal);
@@ -437,14 +447,20 @@ export class HopperClient {
           new HopperProtocolError("Hopper client is already started"),
       );
     }
+    let startupTimeoutMs: number;
+    try {
+      startupTimeoutMs =
+        this.#options.readStartupTimeoutMs?.() ??
+        this.#options.startupTimeoutMs;
+    } catch (cause: unknown) {
+      if (cause instanceof ConfigurationError) return err(cause);
+      throw cause;
+    }
     this.#operationFailure = undefined;
     this.#startupFailureResult = undefined;
     this.#resources.shutdownConfirmed = false;
     this.#resources.externalApplication = undefined;
-    const deadline = new ProviderStartupDeadline(
-      this.#options.readStartupTimeoutMs?.() ?? this.#options.startupTimeoutMs,
-      signal,
-    );
+    const deadline = new ProviderStartupDeadline(startupTimeoutMs, signal);
     this.#startupOutcome = undefined;
     this.#startupSignal = deadline.signal;
     const onStartupAbort = (): void => {
@@ -752,7 +768,7 @@ export class HopperClient {
       return;
     const controller = new AbortController();
     const timer = setTimeout(
-      () => controller.abort(),
+      () => controller.abort(OwnerCancellation.deadlineElapsed),
       HOPPER_SHUTDOWN_TIMEOUT_MS,
     );
     this.#closing = true;
@@ -948,7 +964,7 @@ export class HopperClient {
   async #startupInterruption(
     deadline: ProviderStartupDeadline,
   ): Promise<HopperCancelledError | HopperTimeoutError | HopperProtocolError> {
-    if (deadline.signal.reason === STARTUP_OWNER_CLOSED)
+    if (deadline.signal.reason === OwnerCancellation.startupOwnerClosed)
       return new HopperProtocolError("Hopper session closed during startup");
     if (deadline.interruption === "cancelled")
       return hopperCancelledBySignal(deadline.signal);
@@ -966,7 +982,7 @@ export class HopperClient {
         limit: analysisSettingLimit(
           "hopper.startup_timeout_ms",
           deadline.timeoutMs,
-          undefined,
+          this.#options.readStartupTimeoutSource?.(),
         ),
       },
     );
@@ -1028,8 +1044,10 @@ export class HopperClient {
     ) {
       this.#resources.shutdownConfirmed = true;
       return new HopperStartError({
-        userMessage:
-          "macOS denied permission to send Apple Events to Hopper. Allow the application that starts REA under System Settings > Privacy & Security > Automation, then retry opening the target.",
+        launchRejection: {
+          boundary: "apple_events_authorization",
+          reason: "not_authorized",
+        },
         launcherFailure,
       });
     }
@@ -1132,8 +1150,9 @@ export class HopperClient {
   }
 
   #attachSocket(socket: Socket): void {
-    socket.setEncoding("utf8");
+    this.#responses.reset();
     socket.on("data", this.#onSocketData);
+    socket.on("end", this.#onSocketEnd);
     socket.on("error", this.#onSocketError);
     socket.on("close", this.#onSocketClose);
   }
@@ -1168,6 +1187,7 @@ export class HopperClient {
 
   #detachSocket(socket: Socket): void {
     socket.off("data", this.#onSocketData);
+    socket.off("end", this.#onSocketEnd);
     socket.off("error", this.#onSocketError);
     socket.off("close", this.#onSocketClose);
   }

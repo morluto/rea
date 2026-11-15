@@ -432,7 +432,6 @@ cliTest(
 
     await assertCoverageControls({ left, right, inventory, compare });
   },
-  30_000,
 );
 
 cliTest.skipIf(process.platform === "win32")(
@@ -469,7 +468,6 @@ cliTest.skipIf(process.platform === "win32")(
       ],
     });
   },
-  30_000,
 );
 
 cliTest.skipIf(process.platform === "win32")(
@@ -521,7 +519,6 @@ cliTest.skipIf(process.platform === "win32")(
       ]),
     });
   },
-  30_000,
 );
 
 cliTest.skipIf(process.platform === "win32")(
@@ -579,7 +576,6 @@ cliTest.skipIf(process.platform === "win32")(
       );
     }
   },
-  30_000,
 );
 
 cliTest(
@@ -620,7 +616,6 @@ cliTest(
       ]),
     });
   },
-  30_000,
 );
 
 cliTest(

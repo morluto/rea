@@ -122,7 +122,7 @@ it("preserves the JEB discovery timeout when availability cleanup is incomplete"
   const lease = new AnalysisCleanupLease(() => Promise.resolve(), [resource]);
   lease.bindCleanupError(cleanup);
   const timeout = new AnalysisTimeoutError("jeb_mcp_catalog", 250, {
-    ...jebMcpTimeoutGuidance("discovery", 250),
+    ...jebMcpTimeoutGuidance("discovery", 250, "setting"),
   });
   const failure = new JebMcpCleanupFailure(timeout, cleanup, "jeb_mcp_catalog");
   const connection: JebMcpConnection = {

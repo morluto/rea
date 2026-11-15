@@ -113,6 +113,42 @@ for (const bits of [32, 64] as const) {
       expect((await admit(fixture.bytes)).ok).toBe(true);
     });
 
+    it(`rejects a table that starts inside the declared ELF header (ELF${bits} ${little ? "LE" : "BE"})`, async () => {
+      const headerAt = bits === 64 ? 52 : 40;
+      const declared = bits === 64 ? 80 : 64;
+      const programOverlap = image(bits, little);
+      programOverlap.u16(headerAt, declared);
+      const overlappedProgram = await admit(programOverlap.bytes);
+      expect(overlappedProgram).toMatchObject({
+        ok: false,
+        error: {
+          constraint: "file_format_rejected",
+          reason: expect.stringContaining(
+            "ELF program header table overlaps the fixed header",
+          ),
+        },
+      });
+
+      const sectionOverlap = image(bits, little);
+      sectionOverlap.u16(headerAt, 200);
+      sectionOverlap.u16(bits === 64 ? 56 : 44, 0);
+      const overlappedSection = await admit(sectionOverlap.bytes);
+      expect(overlappedSection).toMatchObject({
+        ok: false,
+        error: {
+          constraint: "file_format_rejected",
+          reason: expect.stringContaining(
+            "ELF section header table overlaps the fixed header",
+          ),
+        },
+      });
+
+      const adjacent = image(bits, little);
+      adjacent.u16(headerAt, declared);
+      adjacent.u16(bits === 64 ? 56 : 44, 0);
+      expect((await admit(adjacent.bytes)).ok).toBe(true);
+    });
+
     it(`keeps declared offsets exact when their sum exceeds host precision (ELF${bits} ${little ? "LE" : "BE"})`, async () => {
       const fixture = image(bits, little);
       const maximum = bits === 64 ? 0xffffffffffffffffn : 0xffffffffn;

@@ -52,7 +52,7 @@ const freebuffPath = (
 
 describe("FreeBuff configuration paths", () => {
   it("resolves the shared user agents file and the profile marker directory", () => {
-    expect(freebuffPath("/home/a")).toEqual({
+    expect(freebuffPath("/home/a")).toMatchObject({
       name: "freebuff",
       displayName: "FreeBuff",
       configPath: join("/home/a", ".agents", "mcp.json"),
@@ -149,7 +149,9 @@ describe("FreeBuff configuration paths", () => {
   });
 
   it("resolves the personal skills directory FreeBuff discovers", () => {
-    expect(skillDestinations("/home/a", ["freebuff"])).toEqual([
+    expect(
+      skillDestinations("/home/a", ["freebuff"], {}, process.platform),
+    ).toEqual([
       {
         client: "shared",
         path: join("/home/a", ".agents", "skills", "reverse-engineer-anything"),
@@ -236,7 +238,7 @@ describe("FreeBuff JSON registration", () => {
   it("reports a preserved shared disable as a manual conflict, not a setup repair", async () => {
     // The shared row's `enable: false` survives repair, so a stale doctor
     // result must not point at an endlessly ineffective setup run: the
-    // remediation names the manual conflict instead.
+    // status names the manual conflict instead.
     const { home, client } = await freebuffClient();
     await writeFile(
       client.configPath,
@@ -256,13 +258,10 @@ describe("FreeBuff JSON registration", () => {
         environment: {},
       })
     ).find(({ client }) => client === "freebuff");
-    expect(status).toMatchObject({ state: "stale" });
-    expect(status?.remediation).toEqual(
-      expect.stringContaining("enable: false"),
-    );
-    expect(status?.remediation).toEqual(
-      expect.stringContaining("will not change"),
-    );
+    expect(status).toMatchObject({
+      state: "stale",
+      manual_conflict: "shared_disabled_activation",
+    });
   });
 
   it("creates the mcpServers table in an existing file without servers", async () => {

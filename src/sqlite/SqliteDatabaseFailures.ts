@@ -1,5 +1,6 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { stableArtifactInputRecovery } from "../artifacts/StableArtifactFailure.js";
+import { stableArtifactInputFailure } from "../artifacts/StableArtifactFailure.js";
 import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
@@ -11,7 +12,6 @@ import {
 } from "../domain/analysisErrorProjection.js";
 import {
   AnalysisError,
-  primaryAnalysisError,
   type AnalysisCapturedOutput,
   type AnalysisErrorOptions,
 } from "../domain/analysisErrorBase.js";
@@ -20,20 +20,20 @@ import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisCapabilityUnavailableError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
-import {
-  DEFAULT_SQLITE_WORKER_TIMEOUT_MS,
-  MAX_SQLITE_WORKER_TIMEOUT_MS,
-} from "../domain/sqlite/sqliteDatabase.js";
+import { providerOutcomeOf } from "../process/ProviderOutcome.js";
+import { runtimeExhaustionReport } from "../process/RuntimeExhaustion.js";
+import { DEFAULT_SQLITE_WORKER_TIMEOUT_MS } from "../domain/sqlite/sqliteDatabase.js";
 import { SQLITE_PROVIDER_IDENTITY } from "../domain/sqlite/SqliteProviderIdentity.js";
 import { SQLITE_DATABASE_LIMITS } from "./SqliteDatabaseLimits.js";
 import { SqliteSnapshotAcquisitionFailure } from "./SqliteDatabaseSnapshot.js";
@@ -108,10 +108,7 @@ export const sqliteDatabaseFailure = (
         members: cause.completedMembers.map((member) => ({ ...member })),
       },
     };
-    failure.retainDiagnostics(diagnostics);
-    // Keep the facts on the semantic error after its cleanup envelope resolves.
-    const primary = primaryAnalysisError(failure);
-    if (primary !== failure) primary.retainDiagnostics(diagnostics);
+    failure.retainPrimaryDiagnostics(diagnostics);
     return failure;
   }
   if (cause instanceof AnalysisError) return cause;
@@ -131,9 +128,10 @@ export const sqliteDatabaseFailure = (
           workerTimeoutMs,
         );
       else if (cause.reason === "cancelled")
-        previous = new AnalysisCancelledError(operation, {
-          cause: artifactFileCancellationCause(cause),
-        });
+        previous = cancelledBy(
+          operation,
+          carriedReason(artifactFileCancellationCause(cause)),
+        );
       else if (physicalRead?.kind === "completed") previous = undefined;
       else if (cause.cause !== undefined)
         previous = sqliteDatabaseFailure(
@@ -170,28 +168,21 @@ export const sqliteDatabaseFailure = (
         cause,
       });
     if (cause.reason === "cancelled")
-      return new AnalysisCancelledError(operation, {
-        cause: artifactFileCancellationCause(cause),
-      });
-    return new AnalysisInputError(
-      operation,
-      { cause, ...stableArtifactInputRecovery(cause) },
-      [
-        {
-          path: ["path"],
-          reason: "invalid_format",
-          message: cause.message,
-        },
-      ],
-    );
+      return cancelledBy(
+        operation,
+        carriedReason(artifactFileCancellationCause(cause)),
+      );
+    return stableArtifactInputFailure(cause, operation);
   }
   if (cause instanceof Error && cause.name === "AbortError")
-    return new AnalysisCancelledError(operation, {
-      cause:
+    return cancelledBy(
+      operation,
+      carriedReason(
         signal?.aborted === true && cause.cause === signal.reason
           ? signal.reason
           : cause,
-    });
+      ),
+    );
   if (cause instanceof OwnedCommandFailure) {
     const projected = ownedCommandFailure(cause, path, workerTimeoutMs);
     if (projected !== undefined) return projected;
@@ -256,10 +247,9 @@ const ownedCommandFailure = (
   const operation = "inspect_sqlite_database";
   const capturedOutput =
     cause.snapshot === null ? undefined : capturedSqliteOutput(cause.snapshot);
-  const options = {
-    cause,
-    ...(capturedOutput === undefined ? {} : { capturedOutput }),
-  };
+  const optionsWithoutCause =
+    capturedOutput === undefined ? {} : { capturedOutput };
+  const options = { cause, ...optionsWithoutCause };
   // Preserve the same typed primary whether or not owned cleanup also fails.
   const timeout =
     cause.reason === "timeout"
@@ -267,9 +257,9 @@ const ownedCommandFailure = (
           ...options,
           userMessage: `The SQLite worker reached its ${String(workerTimeoutMs)} ms server/provider deadline (worker_timeout_ms). This is not a whole-inspection or MCP client deadline.`,
           remediationAction: `${
-            workerTimeoutMs < MAX_SQLITE_WORKER_TIMEOUT_MS
-              ? `Increase worker_timeout_ms above ${String(workerTimeoutMs)} (integer milliseconds, maximum ${String(MAX_SQLITE_WORKER_TIMEOUT_MS)}), or use rea inspect-sqlite-database <path> --worker-timeout-ms <milliseconds> on the CLI.`
-              : `worker_timeout_ms is already at the maximum supported ${String(MAX_SQLITE_WORKER_TIMEOUT_MS)} ms; no higher worker deadline is supported. Report the blocker or narrow the question with caller approval.`
+            workerTimeoutMs < MAX_NODE_TIMER_DELAY_MS
+              ? `Increase worker_timeout_ms above ${String(workerTimeoutMs)} (integer milliseconds, maximum ${String(MAX_NODE_TIMER_DELAY_MS)}), or use rea inspect-sqlite-database <path> --worker-timeout-ms <milliseconds> on the CLI.`
+              : `worker_timeout_ms is already at the maximum supported ${String(MAX_NODE_TIMER_DELAY_MS)} ms; no higher worker deadline is supported. Report the blocker or narrow the question with caller approval.`
           } This per-call setting needs no server restart. It covers worker startup, queries and reply writing, not snapshot acquisition or final reply reads/cleanup. Allow client headroom for the whole call; increasing only the client deadline does not change the worker budget. Keep the selected database/WAL and requested facts; narrow table/columns/schema_scope/row_limit only if the question permits it. Byte and heap safety limits remain fixed. Resolve incomplete cleanup before retrying; do not repeat the unchanged failed call.`,
         })
       : undefined;
@@ -293,22 +283,18 @@ const ownedCommandFailure = (
       },
     );
   if (cause.reason === "cancelled")
-    return new AnalysisCancelledError(operation, {
-      ...options,
-      cause:
+    return cancelledBy(
+      operation,
+      carriedReason(
         cause.cancellation === undefined ? cause : cause.cancellation.reason,
-    });
+      ),
+      optionsWithoutCause,
+    );
   if (timeout !== undefined) return timeout;
-  if (cause.reason === "output-limit")
-    return new AnalysisOutputError(operation, cause.message, {
-      ...options,
-      userMessage: `SQLite worker diagnostics exceeded the ${String(SQLITE_DATABASE_LIMITS.diagnosticBytes)}-byte capture allowance. This release has no runtime override.`,
-      remediationAction: `The SQLite diagnostic capture allowance is ${String(SQLITE_DATABASE_LIMITS.diagnosticBytes)} bytes. This release has no runtime override. worker_timeout_ms does not raise it. Repeating the unchanged request fails the same way.`,
-    });
-  if (
-    cause.snapshot?.stderr.text.includes("JavaScript heap out of memory") ===
-    true
-  )
+  // The supervisor observed V8's heap report as output streamed, so a
+  // retention budget or a stack trace that overflowed it cannot hide it.
+  const outcome = providerOutcomeOf(cause);
+  if (outcome.kind === "runtime-exhausted")
     return new AnalysisResourceConstraintError(
       operation,
       "memory",
@@ -316,7 +302,21 @@ const ownedCommandFailure = (
       {
         javascript_heap_bytes: 256 * 1024 * 1024,
       },
-      { ...options, diagnostics: { selected_path: selectedPath } },
+      {
+        ...options,
+        diagnostics: {
+          selected_path: selectedPath,
+          runtime_exhaustion_report: runtimeExhaustionReport(
+            outcome.exhaustion,
+          ),
+        },
+      },
     );
+  if (cause.reason === "output-limit")
+    return new AnalysisOutputError(operation, cause.message, {
+      ...options,
+      userMessage: `SQLite worker diagnostics exceeded the ${String(SQLITE_DATABASE_LIMITS.diagnosticBytes)}-byte capture allowance. This release has no runtime override.`,
+      remediationAction: `The SQLite diagnostic capture allowance is ${String(SQLITE_DATABASE_LIMITS.diagnosticBytes)} bytes. This release has no runtime override. worker_timeout_ms does not raise it. Repeating the unchanged request fails the same way.`,
+    });
   return undefined;
 };

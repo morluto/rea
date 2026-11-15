@@ -1,3 +1,4 @@
+import { schemaVerifierEnvironment } from "./lib/mcp-verification-environment.mjs";
 import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import { promisify } from "node:util";
@@ -62,10 +63,9 @@ const parseServerArgs = (encoded) => {
 };
 
 const runtimeParent = process.platform === "darwin" ? "/tmp" : tmpdir();
-const sessionsBefore = await snapshotHopperRuntime(
-  runtimeParent,
-  HOPPER_TARGET_LEASE_DIRECTORY,
-);
+const sessionsBefore = (
+  await snapshotHopperRuntime(runtimeParent, HOPPER_TARGET_LEASE_DIRECTORY)
+).paths;
 const ownedProcessIds = new Set();
 const textValue = mcpTextValue;
 
@@ -234,7 +234,7 @@ const targetB = fixtureTargets.secondary.path;
 const largeTarget = fixtureTargets.large.path;
 const targetHashA = fixtureTargets.primary.sha256;
 const targetHashB = fixtureTargets.secondary.sha256;
-const serverEnvironment = { ...process.env };
+const serverEnvironment = schemaVerifierEnvironment(process.env);
 serverEnvironment.REA_ANALYSIS_PROVIDER = "auto";
 delete serverEnvironment.HOPPER_TARGET_PATH;
 delete serverEnvironment.HOPPER_SECOND_TARGET_PATH;
@@ -557,11 +557,8 @@ try {
 
 await new Promise((resolve) => setTimeout(resolve, 500));
 const sessionsAfter = [
-  ...(await snapshotHopperRuntime(
-    runtimeParent,
-    HOPPER_TARGET_LEASE_DIRECTORY,
-    ownedProcessIds,
-  )),
+  ...(await snapshotHopperRuntime(runtimeParent, HOPPER_TARGET_LEASE_DIRECTORY))
+    .paths,
 ]
   .filter((path) => !sessionsBefore.has(path))
   .sort();
@@ -573,7 +570,7 @@ if (sessionsAfter.length > 0) {
     retainedRuntimePaths: sessionsAfter,
   });
   throw new Error(
-    `The MCP runtime retained Hopper resources: ${sessionsAfter.join(", ")}`,
+    `Hopper resources remain or have unresolved ownership: ${sessionsAfter.join(", ")}`,
   );
 }
 if (summary === undefined)

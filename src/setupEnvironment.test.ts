@@ -141,8 +141,11 @@ it("includes the macOS Hopper installer diagnostic in setup remediation", async 
     if (result.status !== "failed") throw new Error("expected setup failure");
     expect(result.remediation).not.toContain("\u001b");
   } finally {
-    await host.close?.();
-    install.mockRestore();
+    try {
+      await host.close?.();
+    } finally {
+      install.mockRestore();
+    }
   }
 });
 

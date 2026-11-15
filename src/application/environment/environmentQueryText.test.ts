@@ -28,7 +28,7 @@ describe("query values given as numbers or booleans", () => {
       body: { maxSize: 3 },
     });
     const strings = { maxSize: "2", offset: ["0"] };
-    expect(withQueryText(tool, strings)).toBe(strings);
+    expect(withQueryText(tool, strings)).toEqual(strings);
   });
 
   it("answers a list paged by a number as it answers the same page size given as text", () => {

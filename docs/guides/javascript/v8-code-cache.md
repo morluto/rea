@@ -54,7 +54,8 @@ reader reports it under the name the measurement supports. Treat that name as an
 observation, not as a claim about what any other build stores there.
 `header.producer` names the producer family from the flag bits in that word. Bit 29
 marks `vm.compileFunction` (`compile_function`); bit 30 marks `vm.SourceTextModule`
-(`module`). When neither flag is present, the producer remains `unknown`:
+(`module`). V8 before 13.4, including Node 22, marks a module with bit 31 instead,
+which is also reported as `module`. When no flag is present, the producer remains `unknown`:
 `vm.Script`, bytenode output and older unflagged function caches cannot be
 separated by those bits alone. The source-length mask is `0x1fffffff`, so both
 flags sit outside the reported length. This describes the admitted header
@@ -100,8 +101,8 @@ Every result states these, and they are part of the contract:
 
 An unknown magic is a typed `unsupported_target` failure, because the file is not a V8
 code cache. A short header, a payload-length disagreement, or bytes past the declared
-payload is a typed `invalid_request` failure. Neither is a partial parse, and no Evidence
-is recorded for them.
+payload is a typed `invalid_request` failure. Neither produces completed inspection
+Evidence; the stable-read partial observation described above is retained when available.
 
 `max_file_bytes` (default 32 MiB, ceiling 64 MiB) is the caller-selected read budget. The
 payload SHA-256 is computed over the declared payload, so two containers with the same

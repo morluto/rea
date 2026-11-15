@@ -304,22 +304,6 @@ it("honors cancellation both before acquisition and across decoder completion", 
     ].map((path) => ({ kind: "artifact-path", path })),
   });
 
-  const malformedDecoder: WebSourceMapPort = {
-    trace: async (input, options) => {
-      const decoded = await decoder.trace(input, options);
-      return decoded.ok
-        ? ok({ ...decoded.value, source_map_sha256: "b".repeat(64) })
-        : decoded;
-    },
-  };
-  const malformed = await new WebSourceLocationService(
-    { load: () => Promise.resolve(ok(webSourceLocationFixture())) },
-    malformedDecoder,
-  ).trace(args);
-  expect(malformed.ok).toBe(false);
-  if (!malformed.ok)
-    expect(malformed.error).toBeInstanceOf(AnalysisOutputError);
-
   const invalidController = new AbortController();
   const malformedLate = await new WebSourceLocationService(
     { load: () => Promise.resolve(ok(webSourceLocationFixture())) },

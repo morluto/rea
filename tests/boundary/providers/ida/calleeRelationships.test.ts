@@ -1,6 +1,7 @@
 import { afterEach, expect, it } from "vitest";
 import { z } from "zod";
 import { EnhancedTools } from "../../../../src/application/EnhancedTools.js";
+import { UNCLASSIFIED_CALL_SITE_LIMITATION } from "../../../../src/ida/IdaCallGraph.js";
 import {
   callGraphSession,
   edge,
@@ -38,6 +39,7 @@ it("keeps unknown caller coverage and callee diagnostics in an ARM64 dossier", a
     expect(result.value.relationshipCoverage).toMatchObject({
       status: "unknown",
       reason: expect.stringMatching(/xrefs.*not establish.*caller/iu),
+
       diagnostics: expect.arrayContaining([
         expect.stringContaining("targets IDA does not recognize as functions"),
       ]),
@@ -152,16 +154,26 @@ it("traverses every ARM64 callee in a call path without a goal and records no fa
         { source_address: "0x1000", target_address: "0x3000" },
       ],
       failures: [],
+      // The recorded graph is complete; possible undiscovered calls remain unknown.
       truncated: false,
       limitations: expect.arrayContaining([
         "This relationship read does not establish calls to targets IDA does not recognize as functions; imports and other non-function call targets remain unknown.",
       ]),
       residual_unknowns: [],
-      relationship_coverage: {
-        "0x1000": { status: "complete" },
-        "0x2000": { status: "complete" },
-        "0x3000": { status: "complete" },
-      },
+      relationship_coverage: Object.fromEntries(
+        ["0x1000", "0x2000", "0x3000"].map((address) => [
+          address,
+          {
+            status: "complete",
+            discovery: {
+              callees: {
+                status: "unknown",
+                reason: UNCLASSIFIED_CALL_SITE_LIMITATION,
+              },
+            },
+          },
+        ]),
+      ),
     });
     expect(
       requestedRoots(producer),

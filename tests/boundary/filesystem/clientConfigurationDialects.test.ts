@@ -238,6 +238,9 @@ describe("OpenCode JSONC registration edits", () => {
       reason: "readback",
     });
     expect(await readFile(client.configPath, "utf8")).toBe(invalid);
+    await expect(
+      readFile(`${client.configPath}.rea.backup`),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
 

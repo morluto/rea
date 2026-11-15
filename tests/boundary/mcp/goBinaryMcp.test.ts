@@ -12,7 +12,7 @@ import {
   evidenceResultOf,
   expandToolAvailability,
 } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { GoBinaryProvider } from "../../../src/go/GoBinaryProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
@@ -348,15 +348,11 @@ goMcpTest(
       moduleText: "path\texample.com/tool\nnew-record\tfuture\n",
     });
     await writeFile(path, fixture.bytes);
-    const response = await client.callTool({
-      name: "inspect_go_binary",
-      arguments: { path },
-    });
+    const response = await client.callTool(
+      { name: "inspect_go_binary", arguments: { path } },
+      { toolDefinition: advertised },
+    );
     expect(response.isError).not.toBe(true);
-    expect(
-      ajv.validate(outputSchema, response.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
     const parsed = evidenceResultOf(goBinarySchema).parse(
       response.structuredContent,
     );

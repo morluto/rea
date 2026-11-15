@@ -1,3 +1,8 @@
+import {
+  malformedInput,
+  parseFailureFromCause,
+} from "../domain/parseFailure.js";
+import { setImmediate as immediate } from "node:timers/promises";
 import { createHash } from "node:crypto";
 import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
 import {
@@ -13,12 +18,13 @@ import {
   type BinaryTarget,
 } from "../domain/binaryTargetTypes.js";
 import {
-  AnalysisCancelledError,
   AnalysisArtifactChangedError,
   AnalysisAccessDeniedError,
   AnalysisCapabilityUnavailableError,
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import {
   ArtifactFileCleanupFailure,
@@ -39,12 +45,13 @@ import { NATIVE_MACOS_PROVIDER_IDENTITY as IDENTITY } from "./NativeMacosProvide
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import { pushDispatchCoverage } from "./AppleDispatchCoverage.js";
-import { parsePointerFixups } from "./AppleMachoFixups.js";
+import { parsePointerFixupsSteps } from "./AppleMachoFixups.js";
 import { BinaryFormatFailure } from "./metadata/BinaryContainer.js";
+import { parseMachoLayout } from "./AppleMachoSelection.js";
 import {
-  parseMachoLayout,
-  UnsupportedMachoMetadataFormatError,
-} from "./AppleMachoSelection.js";
+  selectMachoSlice,
+  type AdmittedMachoSlice,
+} from "./metadata/MachoSliceSelection.js";
 import { decodeObjcDispatchFacets } from "./AppleObjcDispatchFacets.js";
 import {
   createSwiftRelativeReader,
@@ -60,17 +67,36 @@ import {
 import { inspectObjcClassImportBindings } from "./AppleObjcClassImportBindings.js";
 
 /** Decode validated little-endian 64-bit Apple Objective-C metadata without loading target code. */
-export const decodeAppleDispatchMetadata = (
+export function* decodeAppleDispatchMetadataSteps(
   bytes: Buffer,
   maxRecords: number,
   provenance: { path: string; sha256: string },
   architecture = "arm64",
   objcClassImportAddresses?: readonly string[],
   objcClassImportAddressesComplete = true,
-): ObjcSwiftMetadata => {
-  const layout = parseMachoLayout(bytes, architecture);
+  admittedSlice?: AdmittedMachoSlice,
+): Generator<void, ObjcSwiftMetadata, void> {
+  const selected = selectMachoSlice(bytes, {
+    mode: "admitted",
+    architecture,
+    slice: admittedSlice,
+  });
+  if (!selected.ok) {
+    if (selected.error.kind === "malformed")
+      throw malformedInput("macho", selected.error.message);
+    // Admission bound this architecture and slice to these exact bytes, so a
+    // refusal is an inconsistency inside REA, not the caller's selection.
+    throw new ProviderAdapterError(IDENTITY.id, OPERATION, {
+      diagnostics: {
+        target_path: provenance.path,
+        refusal: selected.error.kind,
+        reason: selected.error.message,
+      },
+    });
+  }
+  const layout = parseMachoLayout(bytes, selected.value);
   const { segments, sections, offset } = layout;
-  const fixups = parsePointerFixups(
+  const fixups = yield* parsePointerFixupsSteps(
     bytes,
     layout.fixups,
     segments,
@@ -98,7 +124,7 @@ export const decodeAppleDispatchMetadata = (
     // pointer-fixup coverage remains partial, and consumers that need to
     // distinguish null from an unresolved bind use resolvePointer directly.
     if (decodedPointer.kind === "unknown") return decodedPointer.raw;
-    throw new RangeError(decodedPointer.reason);
+    throw malformedInput("macho", decodedPointer.reason);
   };
   const bound = (address: bigint) => {
     const decodedPointer = decodePointer(address);
@@ -113,7 +139,7 @@ export const decodeAppleDispatchMetadata = (
     try {
       fileOffset = offset(address);
     } catch (cause) {
-      if (!(cause instanceof RangeError)) throw cause;
+      if (parseFailureFromCause(cause) === undefined) throw cause;
       fileOffset = null;
     }
     return { address: `0x${address.toString(16)}`, file_offset: fileOffset };
@@ -132,7 +158,10 @@ export const decodeAppleDispatchMetadata = (
     let end = start;
     while (end < bytes.length && end - start < 4096 && bytes[end] !== 0) end++;
     if (end === bytes.length || end - start >= 4096)
-      throw new RangeError("Unterminated or oversized metadata string");
+      throw malformedInput(
+        "macho",
+        "Unterminated or oversized metadata string",
+      );
     offset(address, end - start + 1);
     // A metadata C string owns every code point, including an initial U+FEFF.
     return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
@@ -287,7 +316,7 @@ export const decodeAppleDispatchMetadata = (
     swift,
   });
   return objcSwiftMetadataSchema.parse(result);
-};
+}
 
 const OPERATION = "inspect_native_dispatch_metadata";
 const MEBIBYTE = 1024 * 1024;
@@ -359,10 +388,8 @@ export const inspectAppleDispatchMetadata = async (
         }
       : { maximum_bytes: options.maxInputBytes, source: "caller" as const };
   const maximumBytes = admission.maximum_bytes;
-  const cancelled = () =>
-    new AnalysisCancelledError(OPERATION, {
-      cause: signal?.reason,
-    });
+  // Called only after the caller's signal aborted.
+  const cancelled = () => cancelledBy(OPERATION, carriedReason(signal?.reason));
   const { bytes, digest } = await withArtifactRegularFile(
     target.path,
     resources,
@@ -385,20 +412,28 @@ export const inspectAppleDispatchMetadata = async (
     },
     "reject",
   );
+  const steps = decodeAppleDispatchMetadataSteps(
+    bytes,
+    maxRecords,
+    { path: target.path, sha256: digest },
+    target.architecture,
+    options.objcClassImportAddresses,
+    options.objcClassImportAddressesComplete ?? true,
+    target.format === "mach-o-universal" ? target.universalSlice : undefined,
+  );
+  let next = steps.next();
+  while (!next.done) {
+    await immediate();
+    if (signal?.aborted) throw cancelled();
+    next = steps.next();
+  }
   return nativeDispatchMetadataResultSchema.parse({
     target_sha256: target.sha256,
     target_architecture: target.architecture,
     provider: APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE.provider,
     analysis_profile_digest: APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE.digest,
     input_admission: { ...admission, retained_bytes: bytes.length },
-    result: decodeAppleDispatchMetadata(
-      bytes,
-      maxRecords,
-      { path: target.path, sha256: digest },
-      target.architecture,
-      options.objcClassImportAddresses,
-      options.objcClassImportAddressesComplete ?? true,
-    ),
+    result: next.value,
   });
 };
 
@@ -420,9 +455,10 @@ export const appleDispatchMetadataFailure = (
           )
         : physical?.completionCancellation === undefined
           ? undefined
-          : new AnalysisCancelledError(OPERATION, {
-              cause: physical.completionCancellation.reason,
-            });
+          : cancelledBy(
+              OPERATION,
+              carriedReason(physical.completionCancellation.reason),
+            );
     const failure = new ProviderCleanupError(
       IDENTITY.id,
       cause.cleanup.resources,
@@ -448,6 +484,15 @@ const appleDispatchMetadataPrimaryFailure = (
 ): AnalysisError => {
   if (origin === "owned-or-classified") {
     if (cause instanceof AnalysisError) return cause;
+    // A recognized Mach-O class this reader cannot decode still holds metadata
+    // another reader may recover.
+    if (cause instanceof BinaryFormatFailure && cause.undecodedContent)
+      return new AnalysisCapabilityUnavailableError(
+        IDENTITY.id,
+        OPERATION,
+        cause.message,
+        { cause },
+      );
     if (cause instanceof BinaryFormatFailure)
       return new AnalysisUnsupportedTargetError(
         OPERATION,
@@ -456,22 +501,16 @@ const appleDispatchMetadataPrimaryFailure = (
         {
           cause,
           remediationAction:
-            cause.kind === "malformed"
+            cause.kind !== "unsupported"
               ? "Select a Mach-O artifact with well-formed metadata sections, reopen the target, then retry."
               : "Select a supported little-endian 64-bit Mach-O artifact, reopen the target, then retry.",
         },
       );
-    if (cause instanceof UnsupportedMachoMetadataFormatError)
-      return new AnalysisCapabilityUnavailableError(
-        IDENTITY.id,
-        OPERATION,
-        cause.message,
-        { cause },
-      );
     if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-      return new AnalysisCancelledError(OPERATION, {
-        cause: artifactFileCancellationCause(cause),
-      });
+      return cancelledBy(
+        OPERATION,
+        carriedReason(artifactFileCancellationCause(cause)),
+      );
     if (
       cause instanceof ArtifactReaderFailure &&
       cause.reason === "unavailable"

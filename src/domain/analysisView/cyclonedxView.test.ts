@@ -11,10 +11,8 @@ import {
   type GoModule,
 } from "../go/goBinary.js";
 import { rustBinarySchema, type RustBinary } from "../rust/rustBinary.js";
-import {
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "./analysisView.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 import { goBinaryUnknowns } from "./goBinaryView.js";
 import { rustBinaryUnknowns } from "./rustBinaryView.js";
 import {
@@ -59,6 +57,7 @@ const parentFor = (
     subject: evidence.subject,
     normalizedResult: structuredClone(report),
     limitations: evidence.limitations,
+    provider: evidence.provider,
   };
 };
 
@@ -1269,4 +1268,40 @@ it("refuses a Go parent whose subject does not match the report", () => {
   expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected a subject refusal");
   expect(result.error).toBeInstanceOf(AnalysisInputError);
+});
+
+it("names the parent's recorded provider, not the projecting build, as the tool", () => {
+  const report = goReport({
+    path: "example.com/tool/cmd/tool",
+    main: goModule("example.com/tool", "(devel)"),
+    dependencies: [],
+    settings: [],
+    unparsed_lines: [],
+    unparsed_line_bytes_base64: [],
+    complete: true,
+  });
+  const withProvider = projectAnalysisView(
+    parentFor("inspect_go_binary", report),
+    { kind: "cyclonedx" },
+  );
+  if (!withProvider.ok || withProvider.value.kind !== "cyclonedx")
+    throw new Error("Expected a CycloneDX view");
+  expect(withProvider.value.document.metadata.tools).toEqual({
+    components: [
+      {
+        type: "application",
+        "bom-ref": "cyclonedx-test@1",
+        name: "CycloneDX test",
+        version: "1",
+      },
+    ],
+  });
+  const { provider: _omitted, ...withoutProvider } = parentFor(
+    "inspect_go_binary",
+    report,
+  );
+  const bare = projectAnalysisView(withoutProvider, { kind: "cyclonedx" });
+  if (!bare.ok || bare.value.kind !== "cyclonedx")
+    throw new Error("Expected a CycloneDX view");
+  expect(bare.value.document.metadata).not.toHaveProperty("tools");
 });
