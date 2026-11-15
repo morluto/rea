@@ -14,6 +14,7 @@ import {
 } from "../../domain/evidenceErrors.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { describeValidationFailure } from "../../domain/validationFailure.js";
+import { validationIssueOptions } from "../../domain/evidenceValidation.js";
 import { isUnsupportedEvidenceFormat } from "../../domain/evidenceFormat.js";
 import type { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import {
@@ -87,7 +88,10 @@ export const readAnalysisSnapshot = async (
     if (signal?.aborted === true)
       return err(cancelledBy(READ_OPERATION, signal));
     return err(
-      new EvidenceIntegrityError(snapshotValidationMessage(cause), { cause }),
+      new EvidenceIntegrityError(snapshotValidationMessage(cause), {
+        cause,
+        ...validationIssueOptions(cause, []),
+      }),
     );
   }
 };
@@ -156,7 +160,10 @@ export const writeAnalysisSnapshot = async (
     encoded = serializeAnalysisSnapshot(snapshot);
   } catch (cause: unknown) {
     return err(
-      new EvidenceIntegrityError(snapshotValidationMessage(cause), { cause }),
+      new EvidenceIntegrityError(snapshotValidationMessage(cause), {
+        cause,
+        ...validationIssueOptions(cause, []),
+      }),
     );
   }
   return writeTextFile(encoded, path, overwrite, resources);

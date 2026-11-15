@@ -58,12 +58,15 @@ describe.each([
         code: "evidence_integrity_mismatch",
         category: "integrity_mismatch",
         retryable: false,
-        details: { reason: expect.stringContaining(`at ${field}:`) },
+        details: {
+          reason: expect.stringContaining(`at ${field}:`),
+          issue_path: field
+            .split(".")
+            .map((key) => (/^\d+$/u.test(key) ? Number(key) : key)),
+        },
       });
       if (field === "target")
-        expect(projected.details?.reason).toMatch(
-          / at target: .+ \(2 more issues\)$/,
-        );
+        expect(projected.details?.remaining_issue_count).toBe(2);
       expect(projected).not.toHaveProperty("cause");
       expect(projected).not.toHaveProperty("stack");
       expect(await readFile(path, "utf8")).toBe(encoded);
