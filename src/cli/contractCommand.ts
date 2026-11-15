@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from "node:util";
+
 import { z } from "incur";
 import type { Logger } from "pino";
 
@@ -61,6 +63,7 @@ export interface ContractCommandContext<
   CliOptions extends Readonly<Record<string, unknown>> = Readonly<
     Record<string, unknown>
   >,
+  Parsed = unknown,
 > {
   readonly signal: AbortSignal;
   /** The contract name, which is the canonical operation. */
@@ -86,6 +89,11 @@ export interface ContractCommandContext<
   readonly opening: Readonly<Record<string, unknown>>;
   /** The admitted delivery, for a projection with `evidenceDelivery`. */
   readonly delivery: CliEvidenceDeliveryChoice | undefined;
+  /**
+   * The contract's parse of the input, when the projection decodes JSON at
+   * run time and admission parsed the whole input; undefined otherwise.
+   */
+  readonly parsed: Parsed | undefined;
   /** The projection's CLI-only options, whose effect the handler owns. */
   readonly cliOptions: CliOptions;
 }
@@ -506,7 +514,10 @@ export const registerContractCommand = <
   projection: CliContractProjection<ContractField<Contract>, CliOptions>,
   run: (
     input: z.input<Contract["inputSchema"]>,
-    context: ContractCommandContext<CliOptionValues<CliOptions>>,
+    context: ContractCommandContext<
+      CliOptionValues<CliOptions>,
+      z.output<Contract["inputSchema"]>
+    >,
   ) => Promise<Value>,
 ): void => {
   const description = describeContractCommand(contract, projection);
@@ -585,6 +596,9 @@ export const registerContractCommand = <
                       },
                 opening: opening.value,
                 delivery: admitted.value.delivery,
+                parsed: admitted.value.parsed as
+                  | z.output<Contract["inputSchema"]>
+                  | undefined,
                 cliOptions: selected.cliOptionValues(
                   values,
                 ) as CliOptionValues<CliOptions>,
@@ -636,7 +650,10 @@ export const commandRoute = <
   projection: CliContractProjection<ContractField<Contract>, CliOptions>,
   run: (
     input: z.input<Contract["inputSchema"]>,
-    context: ContractCommandContext<CliOptionValues<CliOptions>>,
+    context: ContractCommandContext<
+      CliOptionValues<CliOptions>,
+      z.output<Contract["inputSchema"]>
+    >,
   ) => Promise<unknown>,
   route: {
     readonly takes?: (values: RouteValues) => Promise<boolean>;
@@ -657,19 +674,35 @@ export const commandRoute = <
  * The input shape of a union contract that has `field`, as a contract a
  * route can project: the same operation, admitted by that shape alone.
  */
-export const contractInputBranch = <Name extends string>(
+export const contractInputBranch = <
+  Name extends string,
+  Branches extends readonly z.ZodObject[],
+  Field extends string,
+>(
   contract: {
     readonly name: Name;
-    readonly inputSchema: z.ZodUnion<readonly z.ZodObject[]>;
+    readonly inputSchema: z.ZodUnion<Branches>;
   },
-  field: string,
-): ProjectedContract<Name> & { readonly inputSchema: z.ZodObject } => {
+  field: Field,
+): {
+  readonly name: Name;
+  readonly inputSchema: Extract<
+    Branches[number],
+    { readonly shape: { readonly [Key in Field]: z.ZodType } }
+  >;
+} => {
   const branches = contract.inputSchema.options.filter((branch) =>
     Object.hasOwn(branch.shape, field),
   );
   if (branches.length !== 1)
     throw new Error(`${contract.name} has no single input shape with ${field}`);
-  return { name: contract.name, inputSchema: branches[0]! };
+  return {
+    name: contract.name,
+    inputSchema: branches[0] as Extract<
+      Branches[number],
+      { readonly shape: { readonly [Key in Field]: z.ZodType } }
+    >,
+  };
 };
 
 /** The argv arguments and options one description takes, keyed by CLI key. */
@@ -678,26 +711,10 @@ const commandShape = (description: ContractCliDescription) => ({
     ({ key, schema }) => [key, schema] as const,
   ),
   // Routed descriptions declare no object-level rules, so this is the object.
-  options: Object.fromEntries(
-    Object.entries(
-      (incurOptions(description) as z.ZodObject).shape as Readonly<
-        Record<string, z.ZodType>
-      >,
-    ).map(([key, schema]) => [key, withoutDefault(schema)]),
-  ),
+  options: (incurOptions(description) as z.ZodObject).shape as Readonly<
+    Record<string, z.ZodType>
+  >,
 });
-
-/**
- * An omitted option must stay omitted, since a given option routes the
- * target; the chosen contract applies its own default on admission. Help and
- * `--schema` keep the option's metadata.
- */
-const withoutDefault = (schema: z.ZodType): z.ZodType => {
-  if (!(schema instanceof z.ZodDefault)) return schema;
-  const omittable = (schema.removeDefault() as z.ZodType).optional();
-  const metadata = schema.meta();
-  return metadata === undefined ? omittable : omittable.meta(metadata);
-};
 
 const schemaSignature = (schema: z.ZodType): string =>
   JSON.stringify(z.toJSONSchema(schema, { unrepresentable: "any" }));
@@ -765,6 +782,14 @@ export const registerRoutedCommand = (
       owners.set(key, routes[index]!);
     }
   }
+  // Help and `--schema` advertise each option's default, but a given option
+  // routes the input, so an option that holds its default counts as omitted
+  // and the chosen route applies its own default.
+  const defaults = [...options].flatMap(([key, schema]) =>
+    schema instanceof z.ZodDefault
+      ? [[key, schema.parse(undefined)] as const]
+      : [],
+  );
   const owns = (route: CliCommandRoute, key: string): boolean =>
     args.some(([argument]) => argument === key) ||
     Object.hasOwn(shapes[routes.indexOf(route)]!.options, key);
@@ -782,6 +807,8 @@ export const registerRoutedCommand = (
       readonly options: Readonly<Record<string, unknown>>;
     }) => {
       const values: Record<string, unknown> = { ...chosen, ...given };
+      for (const [key, value] of defaults)
+        if (isDeepStrictEqual(values[key], value)) delete values[key];
       const supplied = Object.keys(values).filter(
         (key) => values[key] !== undefined,
       );
@@ -841,6 +868,7 @@ export const registerRoutedCommand = (
               evidenceTargets: undefined,
               opening: opening.value,
               delivery: admitted.value.delivery,
+              parsed: admitted.value.parsed,
               cliOptions: description.cliOptionValues(
                 withCliOnlyDefaults(description, values),
               ),
