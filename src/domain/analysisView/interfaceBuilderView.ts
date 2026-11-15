@@ -177,7 +177,7 @@ const summarizeInterfaceBuilder = (
       truncated: graph.truncated,
       limitation_count: limitationCount,
     }),
-    coverage: completeWithinViewCoverage(total, total),
+    coverage: completeWithinViewCoverage(total),
   };
 };
 

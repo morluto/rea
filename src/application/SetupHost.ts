@@ -303,6 +303,7 @@ export const systemSetupHost = (
     ...clientConfigurationOperations(
       resources,
       doctorHost.resolveProviderRequestBudget,
+      platform,
     ),
     skillNeedsInstall: (clientIds) =>
       canonicalSkillNeedsInstall(
@@ -363,6 +364,7 @@ const setupInstallerDiagnostic = (
 const clientConfigurationOperations = (
   resources: ArtifactResourceScope,
   resolveProviderRequestBudget: DoctorHost["resolveProviderRequestBudget"],
+  platform: NodeJS.Platform,
 ) => ({
   configureClient: (
     client: SetupClient,
@@ -377,6 +379,7 @@ const clientConfigurationOperations = (
             providerEnvironment,
             command,
             resolveProviderRequestBudget,
+            platform,
           ),
     ),
   clientNeedsConfigure: (
@@ -392,6 +395,7 @@ const clientConfigurationOperations = (
             providerEnvironment,
             command,
             resolveProviderRequestBudget,
+            platform,
           )),
     ),
   inspectClientConfiguration: (
@@ -405,6 +409,7 @@ const clientConfigurationOperations = (
         providerEnvironment,
         command,
         resolveProviderRequestBudget,
+        platform,
       ),
     ),
 });

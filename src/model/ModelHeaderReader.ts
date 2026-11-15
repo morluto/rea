@@ -92,6 +92,7 @@ export class ModelHeaderReader {
           throw new ArtifactReaderFailure(
             "integrity",
             "Model header ended before its admitted file extent",
+            { integrityCheck: "read-coverage" },
           );
         this.#hash.update(next.subarray(offset, offset + result.bytesRead));
         offset += result.bytesRead;
@@ -141,6 +142,7 @@ export class ModelHeaderReader {
         throw new ArtifactReaderFailure(
           "integrity",
           "Model ended before its admitted extent during full-file hashing",
+          { integrityCheck: "read-coverage" },
         );
       this.#hash.update(buffer.subarray(0, bytesRead));
       position += bytesRead;

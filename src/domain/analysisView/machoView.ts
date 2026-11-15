@@ -210,7 +210,7 @@ export const projectMachoView = (
       ...shared,
       limitations,
       summary,
-      coverage: completeWithinViewCoverage(returned, returned),
+      coverage: completeWithinViewCoverage(returned),
     });
   }
   const source =

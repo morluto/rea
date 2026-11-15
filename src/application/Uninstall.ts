@@ -550,10 +550,8 @@ export const systemUninstallHost = (
     if (upper !== undefined) lowerLayers.push(upper);
     return {
       kind: "entry",
-      entry:
-        effectiveClientConfiguration(lowerLayers)?.servers[
-          PRODUCT_IDENTITY.mcpServerKey
-        ],
+      entry: effectiveClientConfiguration(lowerLayers, undefined, platform)
+        ?.servers[PRODUCT_IDENTITY.mcpServerKey],
     };
   };
   /**
@@ -574,9 +572,11 @@ export const systemUninstallHost = (
     const inlineEntry =
       inline === undefined
         ? undefined
-        : effectiveClientConfiguration([
-            { ...inline.parsed, inlineOrigin: inline.origin },
-          ])?.servers[PRODUCT_IDENTITY.mcpServerKey];
+        : effectiveClientConfiguration(
+            [{ ...inline.parsed, inlineOrigin: inline.origin }],
+            undefined,
+            platform,
+          )?.servers[PRODUCT_IDENTITY.mcpServerKey];
     if (
       inline !== undefined &&
       enabledRegistration(inlineEntry) &&
@@ -820,14 +820,16 @@ export const systemUninstallHost = (
             originalLayers.push(layer);
             remainingLayers.push(layer);
           }
-          const selected =
-            effectiveClientConfiguration(originalLayers)?.servers[
-              PRODUCT_IDENTITY.mcpServerKey
-            ];
-          const remaining =
-            effectiveClientConfiguration(remainingLayers)?.servers[
-              PRODUCT_IDENTITY.mcpServerKey
-            ];
+          const selected = effectiveClientConfiguration(
+            originalLayers,
+            undefined,
+            platform,
+          )?.servers[PRODUCT_IDENTITY.mcpServerKey];
+          const remaining = effectiveClientConfiguration(
+            remainingLayers,
+            undefined,
+            platform,
+          )?.servers[PRODUCT_IDENTITY.mcpServerKey];
           const altersEffectiveRegistration =
             clientRegistrationOwnership(selected, client) === "owned"
               ? remaining !== undefined
@@ -878,6 +880,7 @@ export const systemUninstallHost = (
             client,
             fileSystem,
             resources,
+            platform,
             () => clientWriteBlocker(client),
             preflightOwnedClients.has(client),
           ),
@@ -1212,6 +1215,7 @@ const removeClient = async (
   client: UninstallClient,
   fileSystem: UninstallFileSystem,
   resources: ArtifactResourceScope,
+  platform: NodeJS.Platform,
   writeBlocker?: () => string | undefined,
   preflightOwned = false,
 ): Promise<UninstallItem> => {
@@ -1252,6 +1256,7 @@ const removeClient = async (
   const document = withClientServers(
     parsed,
     remaining,
+    platform,
     removeLegacy ? name : undefined,
   );
   const editedPaths = [

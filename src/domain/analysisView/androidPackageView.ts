@@ -174,7 +174,7 @@ export const projectAndroidPackageView = (
           text_included: false as const,
         },
       },
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   }
   if (view.facet === "manifest") {
@@ -299,7 +299,7 @@ export const projectAndroidPackageView = (
       facet: "component-summary" as const,
       view,
       summary,
-      coverage: completeWithinViewCoverage(rows.length, rows.length),
+      coverage: completeWithinViewCoverage(rows.length),
     };
     return jsonValueByteLength(
       result as unknown as JsonValue,

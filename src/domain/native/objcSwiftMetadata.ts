@@ -350,6 +350,11 @@ export const objcClassImportIdentitySchema = machoImportBindingSchema.omit({
 export const objcClassImportBindingCoverageSchema =
   nativeMetadataCoverageSchema.extend({
     facet: z.literal("objc_class_import_bindings"),
+    /** `unknown` when the caller did not state whether the candidates are complete. */
+    status: z.enum([
+      ...nativeMetadataCoverageSchema.shape.status.options,
+      "unknown",
+    ]),
     examined: z.number().int().nonnegative(),
     decoded: z.number().int().nonnegative(),
   });
@@ -466,7 +471,7 @@ export const nativeDispatchMetadataInputSchema = z.strictObject({
   objc_class_import_addresses_complete: z
     .boolean()
     .describe(
-      "Whether the candidate addresses include every selected class-label row. false keeps binding coverage partial when the existing record budget truncates the scan; omitted is unknown and also keeps it partial.",
+      "Whether the candidate addresses include every selected class-label row. false keeps binding coverage partial when the existing record budget truncates the scan; omitted makes binding coverage unknown.",
     )
     .optional(),
   max_input_bytes: z

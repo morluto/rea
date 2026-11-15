@@ -1,0 +1,3264 @@
+{
+  "patterns": {
+    "^(0|[1-9][0-9]*)$": [
+      "inspect_analysis_view input",
+      "inspect_analysis_view output",
+      "inspect_web_network_capture output"
+    ],
+    "^(?:(?:[0-9][0-9][2468][048]|[0-9][0-9][13579][26]|[0-9][0-9]0[48]|[02468][048]00|[13579][26]00)-02-29|[0-9]{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12][0-9]|3[01])|(?:0[469]|11)-(?:0[1-9]|[12][0-9]|30)|(?:02)-(?:0[1-9]|1[0-9]|2[0-8])))T(?:[01][0-9]|2[0-3]):[0-5][0-9](?::[0-5][0-9](?:\\.[0-9]+)?)?(?:Z|[+\\-](?:[01][0-9]|2[0-3]):[0-5][0-9])$": [
+      "evaluate_reconstruction_coverage input"
+    ],
+    "^(?:(?:[0-9][0-9][2468][048]|[0-9][0-9][13579][26]|[0-9][0-9]0[48]|[02468][048]00|[13579][26]00)-02-29|[0-9]{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12][0-9]|3[01])|(?:0[469]|11)-(?:0[1-9]|[12][0-9]|30)|(?:02)-(?:0[1-9]|1[0-9]|2[0-8])))T(?:[01][0-9]|2[0-3]):[0-5][0-9](?::[0-5][0-9](?:\\.[0-9]+)?)?Z$": [
+      "binary_session output",
+      "capture_browser_scenario output",
+      "capture_process_scenario output",
+      "capture_web_screenshot output",
+      "inspect_analysis_view output",
+      "inspect_electron_page output",
+      "inspect_web_event_listeners output",
+      "inspect_web_page output",
+      "observe_web_execution output",
+      "observe_web_session output"
+    ],
+    "^(?:(?:[\\-.0-9A-Z_a-z~]|%[0-9A-F]{2})+:)?0x(?:0|[1-9a-f][0-9a-f]*)$": [
+      "build_call_path output",
+      "compare_functions output"
+    ],
+    "^(?:(?:[\\-.0-9A-Z_a-z~]|%[0-9A-F]{2})+:)?0x[0-9a-f]+$": [
+      "inspect_analysis_view output",
+      "inspect_native_load_image output"
+    ],
+    "^(?:(?:[\\-.0-9A-Z_a-z~]|%[0-9A-Fa-f]{2})+:)?0[Xx][0-9A-Fa-f]+$": [
+      "build_call_path input"
+    ],
+    "^(?:/[^\\x0a\\x0d]*)?$": ["capture_browser_scenario input"],
+    "^(?:0|-?[1-9][0-9]*)$": [
+      "inspect_analysis_view output",
+      "inspect_android_class output",
+      "inspect_artifact output",
+      "inspect_ntfs_journal output"
+    ],
+    "^(?:0|[1-9][0-9]*)$": [
+      "compare_wasm_interfaces output",
+      "inspect_analysis_view output",
+      "inspect_apple_ips output",
+      "inspect_artifact output",
+      "inspect_elf_unwind_ranges output",
+      "inspect_gpu_code_objects output",
+      "inspect_model_artifact output",
+      "inspect_ntfs_journal output",
+      "inspect_wasm_artifact output",
+      "inspect_windows_shortcut output"
+    ],
+    "^(?:NaN|-?Infinity|-?[0-9]+\\.[0-9]+(?:E-?[0-9]+)?)$": [
+      "inspect_analysis_view output",
+      "inspect_android_class output"
+    ],
+    "^(?:[0-9]+|0x[0-9a-f]*)$": [
+      "export_environment_bundle input",
+      "measure_build_task input"
+    ],
+    "^(?:[0-9a-f]{2})*$": [
+      "extract_firmware output",
+      "inspect_analysis_view output",
+      "inspect_apk_signature output",
+      "inspect_evm_interface output",
+      "inspect_macho output",
+      "inspect_managed_members output",
+      "inspect_native_load_image output",
+      "inspect_sqlite_database output",
+      "read_bytes output"
+    ],
+    "^(?:[0-9a-f]{2})+$": [
+      "capture_process_scenario output",
+      "identify_flutter_build output"
+    ],
+    "^(?:[0-9a-f]{2}){0,252}$": [
+      "inspect_analysis_view output",
+      "inspect_artifact output"
+    ],
+    "^(?:[0-9a-f]{2}){1,16}$": [
+      "inspect_analysis_view output",
+      "inspect_artifact output"
+    ],
+    "^(?:[0-9a-f]{2}){1,63}$": [
+      "inspect_analysis_view input",
+      "inspect_analysis_view output",
+      "inspect_pcap_capture output"
+    ],
+    "^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$": ["inspect_windows_shortcut output"],
+    "^(?:[0-9a-f]{40}|[0-9a-f]{64})$": ["compare_source_to_bundle input"],
+    "^(?:[0-9a-f]{4})*$": ["inspect_pe_resources output"],
+    "^(?:[0-9a-f]{64}|[0-9a-f]{96})$": [
+      "inspect_analysis_view output",
+      "inspect_artifact output"
+    ],
+    "^(?:[0-9a-f]{8}|[0-9a-f]{16})$": ["inspect_kernel_module output"],
+    "^(?:[^\\x00.\\x2f\\\\][^\\x00\\x2f\\\\]*|\\.[^\\x00.\\x2f\\\\][^\\x00\\x2f\\\\]*|\\.\\.[^\\x00\\x2f\\\\]+)(?:/(?:[^\\x00.\\x2f\\\\][^\\x00\\x2f\\\\]*|\\.[^\\x00.\\x2f\\\\][^\\x00\\x2f\\\\]*|\\.\\.[^\\x00\\x2f\\\\]+))*$": [
+      "trace_dylib_resolution input"
+    ],
+    "^(?:[^\\x00=R][^\\x00=]*|R(?:[^\\x00=E][^\\x00=]*|E(?:[^\\x00=A][^\\x00=]*|A(?:[^\\x00=_][^\\x00=]*|_(?:[^\\x00=P][^\\x00=]*|P(?:[^\\x00=R][^\\x00=]*|R(?:[^\\x00=O][^\\x00=]*|O(?:[^\\x00=C][^\\x00=]*|C(?:[^\\x00=E][^\\x00=]*|E(?:[^\\x00=S][^\\x00=]*|S(?:[^\\x00=S][^\\x00=]*|S(?:[^\\x00=_][^\\x00=]*|_(?:[^\\x00=R][^\\x00=]*|R(?:[^\\x00=U][^\\x00=]*|U(?:[^\\x00=N][^\\x00=]*|N(?:[^\\x00=_][^\\x00=]*|_(?:[^\\x00=I][^\\x00=]*|I(?:[^\\x00=D][^\\x00=]*|D[^\\x00=]+)?)?)?)?)?)?)?)?)?)?)?)?)?)?)?)?)?)$": [
+      "capture_process_scenario input",
+      "capture_process_scenario output"
+    ],
+    "^(?:[^\\x00=_][^\\x00=]*|_(?:[^\\x00=_][^\\x00=]*|_(?:[^\\x00=p][^\\x00=]*|p(?:[^\\x00=r][^\\x00=]*|r(?:[^\\x00=o][^\\x00=]*|o(?:[^\\x00=t][^\\x00=]*|t(?:[^\\x00=o][^\\x00=]*|o(?:[^\\x00=_][^\\x00=]*|_(?:[^\\x00=_][^\\x00=]*|_[^\\x00=]+)?)?)?)?)?)?)?)?)$": [
+      "capture_process_scenario input",
+      "capture_process_scenario output"
+    ],
+    "^(?:[^\\x0a\\x0d][^\\x0a\\x0d][^\\x0a\\x0d][^\\x0a\\x0d])*$": [
+      "inspect_analysis_view output",
+      "inspect_binary_layout output",
+      "inspect_go_binary output",
+      "inspect_il2cpp_metadata output",
+      "inspect_native_exports output",
+      "inspect_recorded_crash output",
+      "inspect_web_network_capture output"
+    ],
+    "^(?:[a-z]{2,3}(?:-(?:r?[A-Z]{2}|[0-9]{3}))?|b\\+[a-z]{2,3}(?:\\+[0-9A-Za-z]{2,8})*)$": [
+      "decode_android_resources input"
+    ],
+    "^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$": [
+      "export_environment_bundle input",
+      "measure_build_task input"
+    ],
+    "^([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-8][0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$": [
+      "act_on_build_computer input",
+      "act_on_build_computer output",
+      "binary_session output",
+      "check_build_task input",
+      "check_build_task output",
+      "close_build_computer input",
+      "close_build_computer output",
+      "close_frida_session input",
+      "close_gdb_session input",
+      "close_rizin_debug_session input",
+      "cutter_command input",
+      "export_build_environment input",
+      "export_build_environment output",
+      "frida_session_status input",
+      "frida_session_status output",
+      "gdb_console input",
+      "gdb_session_status input",
+      "gdb_session_status output",
+      "inspect_analysis_view output",
+      "instrument_with_frida output",
+      "list_cutter_sessions output",
+      "load_frida_script input",
+      "load_frida_script output",
+      "mark_build_checkpoint input",
+      "mark_build_checkpoint output",
+      "record_build_consent input",
+      "record_build_consent output",
+      "resume_frida_session input",
+      "rizin_debug_command input",
+      "rizin_debug_session_status input",
+      "rizin_debug_session_status output",
+      "start_build_capture input",
+      "start_build_capture output",
+      "start_build_computer output",
+      "start_frida_session output",
+      "start_gdb_session output",
+      "start_rizin_debug_session output",
+      "stop_build_capture input",
+      "stop_build_capture output",
+      "unload_frida_script input"
+    ],
+    "^(true|false)$": ["start_adb_activity input"],
+    "^-?(?:0|[1-9][0-9]*)$": [
+      "inspect_analysis_view output",
+      "inspect_apple_ips output",
+      "inspect_evm_interface output",
+      "inspect_sqlite_database output"
+    ],
+    "^-?(?:0|[1-9][0-9]{0,18})$": ["inspect_binary_layout output"],
+    "^-?[0-9]+$": [
+      "analyze_function output",
+      "annotate_native_function output",
+      "get_objc_classes output",
+      "inspect_adb_package output",
+      "inspect_native_dispatch_metadata output",
+      "procedure_info output",
+      "start_adb_activity input"
+    ],
+    "^/(?:[^\\x2f\\\\]|$)[^\\x00]*(?:\\x00[^\\x00]*)*$": [
+      "capture_browser_scenario input"
+    ],
+    "^/[^\\x00]*$": [
+      "list_adb_directory input",
+      "pull_adb_file input",
+      "push_adb_file input"
+    ],
+    "^/[^\\x00]*(?:\\x00[^\\x00]*)*$": [
+      "analyze_javascript_application input",
+      "analyze_javascript_application output",
+      "analyze_web_bundle output",
+      "audit_release_exposure input",
+      "binary_session input",
+      "capture_browser_scenario input",
+      "capture_electron_scenario input",
+      "check_build_task input",
+      "close_binary input",
+      "compare_artifacts input",
+      "compare_bundles input",
+      "compare_source_to_bundle input",
+      "decode_signal_recording input",
+      "decompile_all input",
+      "export_build_environment input",
+      "export_environment_bundle input",
+      "export_evidence_bundle input",
+      "export_web_scripts input",
+      "extract_artifact input",
+      "extract_firmware input",
+      "import_evidence_bundle input",
+      "inspect_analysis_view input",
+      "inspect_analysis_view output",
+      "inspect_android_class input",
+      "inspect_android_method input",
+      "inspect_api_contract input",
+      "inspect_apk_signature input",
+      "inspect_apple_ips input",
+      "inspect_binary_hardening input",
+      "inspect_binary_hardening output",
+      "inspect_binary_layout input",
+      "inspect_byte_entropy input",
+      "inspect_desktop_application input",
+      "inspect_devicetree input",
+      "inspect_electron_fuses input",
+      "inspect_elf_notes input",
+      "inspect_elf_unwind_ranges input",
+      "inspect_erlang_beam input",
+      "inspect_evm_interface input",
+      "inspect_firmware_regions input",
+      "inspect_go_binary input",
+      "inspect_gpu_code_objects input",
+      "inspect_il2cpp_metadata input",
+      "inspect_kernel_build_config input",
+      "inspect_kernel_module input",
+      "inspect_managed_artifact input",
+      "inspect_managed_members input",
+      "inspect_managed_native_boundaries input",
+      "inspect_model_artifact input",
+      "inspect_native_exports input",
+      "inspect_native_initializers input",
+      "inspect_native_initializers output",
+      "inspect_ntfs_journal input",
+      "inspect_ntfs_journal output",
+      "inspect_packet_capture input",
+      "inspect_pe_certificates input",
+      "inspect_pe_imports input",
+      "inspect_pe_load_config input",
+      "inspect_pe_resources input",
+      "inspect_playwright_trace input",
+      "inspect_python_pyc input",
+      "inspect_recorded_crash input",
+      "inspect_rust_binary input",
+      "inspect_sqlite_database input",
+      "inspect_v8_code_cache input",
+      "inspect_v8_code_cache output",
+      "inspect_wasm_artifact input",
+      "inspect_web_network_capture input",
+      "inspect_windows_shortcut input",
+      "measure_build_task input",
+      "open_binary input",
+      "open_bundle_resources input",
+      "recover_javascript_sources input",
+      "reset_investigation input",
+      "start_build_computer input",
+      "trace_web_module_imports input",
+      "trace_web_source_location input"
+    ],
+    "^0x(?:0|[1-9a-f][0-9a-f]{0,15})$": [
+      "inspect_binary_layout output",
+      "inspect_recorded_crash output"
+    ],
+    "^0x[0-9A-Fa-f]+$": [
+      "inspect_analysis_view output",
+      "inspect_macho output"
+    ],
+    "^0x[0-9A-Fa-f]{1,16}$": [
+      "binary_session output",
+      "execute_rizin_command input",
+      "inspect_analysis_view input",
+      "inspect_analysis_view output",
+      "open_binary input",
+      "open_binary output"
+    ],
+    "^0x[0-9A-Fa-f]{1,8}$": ["open_binary input"],
+    "^0x[0-9a-f]+$": [
+      "inspect_analysis_view output",
+      "inspect_android_jni_bindings output",
+      "inspect_apple_ips output",
+      "inspect_elf_notes output",
+      "inspect_elf_unwind_ranges output",
+      "inspect_macho output",
+      "inspect_native_data_type output",
+      "inspect_native_exports output",
+      "inspect_native_initializers output",
+      "inspect_native_load_image output",
+      "inspect_pe_load_config output",
+      "observe_native_calls output"
+    ],
+    "^0x[0-9a-f]{1,16}$": [
+      "inspect_analysis_view output",
+      "inspect_il2cpp_metadata output"
+    ],
+    "^0x[0-9a-f]{4}$": [
+      "inspect_analysis_view output",
+      "inspect_managed_artifact output",
+      "inspect_managed_native_boundaries output"
+    ],
+    "^0x[0-9a-f]{8}$": [
+      "compare_managed_members output",
+      "import_managed_reconstruction input",
+      "import_managed_reconstruction output",
+      "inspect_analysis_view output",
+      "inspect_evm_interface output",
+      "inspect_gpu_code_objects output",
+      "inspect_managed_artifact output",
+      "inspect_managed_members output",
+      "inspect_managed_native_boundaries output",
+      "verify_managed_native_boundaries output"
+    ],
+    "^1\\.0\\.[0-9]+$": [
+      "inspect_analysis_view output",
+      "inspect_wasm_artifact output"
+    ],
+    "^CONFIG_[0-9A-Z_a-z]+$": [
+      "inspect_kernel_build_config input",
+      "inspect_kernel_build_config output"
+    ],
+    "^INVOKE_[^\\x00]*(?:\\x00[^\\x00]*)*$": [
+      "trace_android_references output"
+    ],
+    "^REA_[0-9A-Z_]{1,60}$": ["start_build_computer input"],
+    "^[ +\\x2d-\\x3a\\x40-Z_a-z]+$": ["compare_source_to_bundle input"],
+    "^[!\\x23-\\x27*+\\-.0-9A-Z\\x5e-z\\|~]+$": [
+      "capture_browser_scenario input"
+    ],
+    "^[+\\-0-9A-Z_a-z]+$": [
+      "inspect_signal_decoders input",
+      "inspect_signal_decoders output"
+    ],
+    "^[+\\-0-9A-Z_a-z]+(?:/[+\\-0-9A-Z_a-z]+)*$": [
+      "capture_browser_scenario input"
+    ],
+    "^[+\\-0-9\\x40-Z_a-z][+\\-.0-9\\x40-Z_a-z]*(?:/[+\\-0-9\\x40-Z_a-z][+\\-.0-9\\x40-Z_a-z]*)*$": [
+      "start_build_computer input"
+    ],
+    "^[0-9A-F]{8}$": ["inspect_windows_shortcut output"],
+    "^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$": [
+      "inspect_apple_ips output",
+      "inspect_windows_shortcut output"
+    ],
+    "^[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}$": [
+      "compare_managed_members output",
+      "import_managed_reconstruction output",
+      "inspect_analysis_view output",
+      "inspect_managed_artifact output",
+      "inspect_managed_members output",
+      "inspect_managed_native_boundaries output",
+      "verify_managed_native_boundaries output"
+    ],
+    "^[0-9A-Za-z]+(?:-[0-9A-Za-z]+)*$": ["capture_browser_scenario input"],
+    "^[0-9A-Za-z][+\\-.0-9A-Z_a-z]*$": ["execute_rizin_command input"],
+    "^[0-9A-Za-z][\\-.0-9A-Z_a-z]*$": ["start_build_computer input"],
+    "^[0-9A-Za-z][\\x2d-9A-Z_a-z]*$": ["start_build_computer input"],
+    "^[0-9]+$": [
+      "inspect_analysis_view output",
+      "inspect_native_exports output"
+    ],
+    "^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$": [
+      "inspect_analysis_view output",
+      "inspect_managed_artifact output",
+      "inspect_managed_members output"
+    ],
+    "^[0-9a-f]*$": [
+      "inspect_analysis_view output",
+      "inspect_devicetree output",
+      "inspect_elf_notes output",
+      "inspect_kernel_module output",
+      "inspect_pe_certificates output"
+    ],
+    "^[0-9a-f]+$": [
+      "analyze_function output",
+      "annotate_native_function output",
+      "inspect_analysis_view output",
+      "inspect_artifact output",
+      "inspect_pe_imports output",
+      "trace_native_values output"
+    ],
+    "^[0-9a-f]{16}$": [
+      "inspect_analysis_view output",
+      "inspect_managed_artifact output",
+      "inspect_managed_members output",
+      "inspect_python_pyc output"
+    ],
+    "^[0-9a-f]{32}$": [
+      "analyze_javascript_application output",
+      "analyze_swift_types output",
+      "batch_decompile output",
+      "extract_artifact output",
+      "get_call_graph output",
+      "identify_flutter_build output",
+      "inspect_analysis_settings output",
+      "inspect_analysis_view output",
+      "inspect_artifact output",
+      "inspect_dart_aot output",
+      "inspect_pe_imports output",
+      "trace_call_path output",
+      "update_analysis_settings output"
+    ],
+    "^[0-9a-f]{40}$": [
+      "inspect_analysis_view output",
+      "inspect_artifact output",
+      "inspect_rust_binary output"
+    ],
+    "^[0-9a-f]{64}$": [
+      "address_name output",
+      "address_to_file_offset output",
+      "analyze_function output",
+      "analyze_javascript_application output",
+      "analyze_swift_types output",
+      "analyze_web_bundle output",
+      "annotate_native_function output",
+      "audit_release_exposure output",
+      "batch_decompile output",
+      "binary_overview output",
+      "binary_session input",
+      "binary_session output",
+      "build_call_path input",
+      "build_call_path output",
+      "build_reconstruction_obligation_ledger input",
+      "build_reconstruction_obligation_ledger output",
+      "capture_adb_screen output",
+      "capture_browser_scenario output",
+      "capture_electron_scenario output",
+      "capture_native_ui_scenario output",
+      "capture_process_scenario output",
+      "capture_web_screenshot output",
+      "collect_adb_bugreport output",
+      "comment output",
+      "compare_application_versions input",
+      "compare_application_versions output",
+      "compare_artifacts input",
+      "compare_artifacts output",
+      "compare_bundles output",
+      "compare_functions input",
+      "compare_functions output",
+      "compare_javascript_export_shapes input",
+      "compare_javascript_export_shapes output",
+      "compare_managed_members input",
+      "compare_managed_members output",
+      "compare_process_captures input",
+      "compare_process_captures output",
+      "compare_source_to_bundle input",
+      "compare_source_to_bundle output",
+      "compare_static_and_observed_endpoints input",
+      "compare_static_and_observed_endpoints output",
+      "compare_wasm_interfaces input",
+      "compare_wasm_interfaces output",
+      "compare_web_captures output",
+      "compare_web_screenshots input",
+      "compare_web_screenshots output",
+      "correlate_static_and_runtime input",
+      "correlate_static_and_runtime output",
+      "current_address output",
+      "current_document output",
+      "current_procedure output",
+      "cutter_command output",
+      "decode_android_resources output",
+      "decode_interface_builder output",
+      "decode_signal_recording output",
+      "decompile_all output",
+      "decompile_jeb_item output",
+      "demangle_swift output",
+      "discover_webmcp_tools output",
+      "evaluate_reconstruction_coverage input",
+      "execute_rizin_command output",
+      "export_web_scripts output",
+      "extract_artifact output",
+      "extract_firmware output",
+      "find_changed_behavior input",
+      "find_changed_behavior output",
+      "find_xrefs_to_name output",
+      "frida_session_status output",
+      "gdb_console output",
+      "get_call_graph output",
+      "get_evidence_bundle input",
+      "get_evidence_bundle output",
+      "get_objc_classes output",
+      "get_objc_protocols output",
+      "goto_address output",
+      "identify_flutter_build output",
+      "import_managed_reconstruction input",
+      "import_managed_reconstruction output",
+      "inline_comment output",
+      "inspect_adb_client output",
+      "inspect_adb_device output",
+      "inspect_adb_display output",
+      "inspect_adb_package output",
+      "inspect_adb_window output",
+      "inspect_analysis_view input",
+      "inspect_analysis_view output",
+      "inspect_android_class output",
+      "inspect_android_jni_bindings output",
+      "inspect_android_method output",
+      "inspect_android_package output",
+      "inspect_api_contract output",
+      "inspect_apk_signature output",
+      "inspect_apktool_client output",
+      "inspect_apple_ips output",
+      "inspect_artifact output",
+      "inspect_asset_catalog output",
+      "inspect_binary_hardening output",
+      "inspect_binary_layout output",
+      "inspect_byte_entropy output",
+      "inspect_dart_aot output",
+      "inspect_desktop_application output",
+      "inspect_devicetree output",
+      "inspect_electron_fuses output",
+      "inspect_electron_page output",
+      "inspect_elf_notes output",
+      "inspect_elf_unwind_ranges output",
+      "inspect_erlang_beam output",
+      "inspect_evm_interface output",
+      "inspect_firmware_regions output",
+      "inspect_go_binary output",
+      "inspect_gpu_code_objects input",
+      "inspect_gpu_code_objects output",
+      "inspect_il2cpp_metadata output",
+      "inspect_jeb_client output",
+      "inspect_kernel_build_config output",
+      "inspect_kernel_module output",
+      "inspect_keyed_archive output",
+      "inspect_macho output",
+      "inspect_managed_artifact output",
+      "inspect_managed_members output",
+      "inspect_managed_native_boundaries output",
+      "inspect_model_artifact output",
+      "inspect_native_api output",
+      "inspect_native_data_type output",
+      "inspect_native_dispatch_metadata output",
+      "inspect_native_exports output",
+      "inspect_native_initializers output",
+      "inspect_native_instruction output",
+      "inspect_native_load_image output",
+      "inspect_ntfs_journal output",
+      "inspect_packet_capture output",
+      "inspect_packet_fields output",
+      "inspect_pcap_capture output",
+      "inspect_pcap_client output",
+      "inspect_pe_certificates output",
+      "inspect_pe_imports output",
+      "inspect_pe_load_config output",
+      "inspect_pe_resources output",
+      "inspect_playwright_trace output",
+      "inspect_plist output",
+      "inspect_python_pyc output",
+      "inspect_recorded_crash output",
+      "inspect_rust_binary output",
+      "inspect_signal_decoders output",
+      "inspect_signature output",
+      "inspect_sqlite_database output",
+      "inspect_v8_code_cache output",
+      "inspect_wasm_artifact output",
+      "inspect_web_event_listeners output",
+      "inspect_web_network_capture output",
+      "inspect_web_page output",
+      "inspect_windows_shortcut output",
+      "inspect_with_objdump output",
+      "install_adb_package output",
+      "instrument_with_frida output",
+      "list_adb_devices output",
+      "list_adb_directory output",
+      "list_adb_features output",
+      "list_adb_packages output",
+      "list_adb_processes output",
+      "list_adb_services output",
+      "list_architectures output",
+      "list_bookmarks output",
+      "list_browser_targets output",
+      "list_documents output",
+      "list_electron_targets output",
+      "list_javascript_runtime_targets output",
+      "list_jeb_units output",
+      "list_names output",
+      "list_procedures output",
+      "list_segments output",
+      "list_strings output",
+      "list_unknowns output",
+      "load_frida_script output",
+      "match_native_functions input",
+      "match_native_functions output",
+      "next_address output",
+      "observe_javascript_runtime output",
+      "observe_native_calls output",
+      "observe_native_ui output",
+      "observe_web_execution output",
+      "observe_web_session output",
+      "open_binary output",
+      "open_bundle_resources output",
+      "open_jeb_project output",
+      "prev_address output",
+      "procedure_address output",
+      "procedure_assembly output",
+      "procedure_callees output",
+      "procedure_callers output",
+      "procedure_info output",
+      "procedure_pseudo_code output",
+      "procedure_references output",
+      "project_android_application_graph input",
+      "project_android_application_graph output",
+      "project_apple_application_graph input",
+      "project_apple_application_graph output",
+      "project_harmony_application_graph input",
+      "project_harmony_application_graph output",
+      "project_managed_application_graph input",
+      "project_managed_application_graph output",
+      "pull_adb_file output",
+      "pull_adb_package output",
+      "push_adb_file output",
+      "read_adb_logcat output",
+      "read_adb_setting output",
+      "read_bytes output",
+      "read_function_instructions output",
+      "reconcile_javascript_runtime input",
+      "reconcile_javascript_runtime output",
+      "record_unknown output",
+      "recover_javascript_sources output",
+      "resolve_adb_packages output",
+      "resolve_containing_procedure output",
+      "resolve_native_call_targets output",
+      "rizin_debug_command output",
+      "search_android_classes output",
+      "search_bytes output",
+      "search_procedures output",
+      "search_strings output",
+      "set_address_name output",
+      "set_addresses_names output",
+      "set_bookmark output",
+      "set_comment output",
+      "set_inline_comment output",
+      "start_adb_activity output",
+      "start_adb_app output",
+      "start_build_computer input",
+      "stop_adb_app output",
+      "trace_android_references output",
+      "trace_application_feature input",
+      "trace_application_feature output",
+      "trace_call_path output",
+      "trace_dylib_resolution output",
+      "trace_feature output",
+      "trace_javascript_semantics input",
+      "trace_javascript_semantics output",
+      "trace_native_ui_action output",
+      "trace_native_values output",
+      "trace_web_module_imports output",
+      "trace_web_source_location output",
+      "uninstall_adb_package output",
+      "unset_bookmark output",
+      "update_unknown output",
+      "verify_managed_native_boundaries input",
+      "verify_managed_native_boundaries output",
+      "verify_reconstruction output",
+      "verify_unknown_resolution output",
+      "xrefs output"
+    ],
+    "^[0-9a-f]{6}$": [
+      "inspect_analysis_view output",
+      "inspect_artifact output"
+    ],
+    "^[0-9a-f]{8}$": [
+      "analyze_javascript_application output",
+      "analyze_swift_types output",
+      "batch_decompile output",
+      "extract_artifact output",
+      "get_call_graph output",
+      "inspect_analysis_settings output",
+      "inspect_analysis_view output",
+      "inspect_artifact output",
+      "trace_call_path output",
+      "update_analysis_settings output"
+    ],
+    "^[0-9a-z]+(?:-[0-9a-z]+)*$": [
+      "export_environment_bundle input",
+      "measure_build_task input"
+    ],
+    "^[0-9a-z][+\\-.0-9a-z]+$": ["start_build_computer input"],
+    "^[0-9a-z][\\-.0-9_a-z]{0,62}$": [
+      "act_on_build_computer input",
+      "export_build_environment input",
+      "mark_build_checkpoint input",
+      "start_build_computer input"
+    ],
+    "^[0-9a-z][\\-0-9a-z]{0,63}$": [
+      "check_build_task input",
+      "export_build_environment input"
+    ],
+    "^[1-9][0-9]*$": [
+      "inspect_packet_capture output",
+      "list_adb_devices output"
+    ],
+    "^[A-Za-z][0-9A-Z_a-z]*(\\.[A-Za-z][0-9A-Z_a-z]*)*$": [
+      "inspect_adb_package input",
+      "inspect_adb_package output",
+      "list_adb_packages output",
+      "pull_adb_package input",
+      "pull_adb_package output",
+      "resolve_adb_packages output",
+      "start_adb_app input",
+      "start_adb_app output",
+      "stop_adb_app input",
+      "stop_adb_app output",
+      "uninstall_adb_package input",
+      "uninstall_adb_package output"
+    ],
+    "^[A-Za-z][\\-.0-9A-Z_a-z]*$": [
+      "capture_browser_scenario input",
+      "compare_process_captures input",
+      "compare_process_captures output",
+      "start_adb_activity input",
+      "verify_reconstruction input",
+      "verify_reconstruction output"
+    ],
+    "^[A-Za-z][\\x2d-\\x3aA-Z_a-z]*$": [
+      "build_reconstruction_obligation_ledger input",
+      "build_reconstruction_obligation_ledger output"
+    ],
+    "^[A-Za-z][\\x2d-\\x3aA-Z_a-z]{0,199}$": [
+      "evaluate_reconstruction_coverage input",
+      "evaluate_reconstruction_coverage output"
+    ],
+    "^[\\-.0-9A-Z_a-z]+$": [
+      "read_adb_setting input",
+      "start_adb_activity input",
+      "start_build_computer input"
+    ],
+    "^[\\-.0-9A-Z_a-z]+/[$\\-.0-9A-Z_a-z]+$": ["start_adb_activity input"],
+    "^[\\x01-\\x20]*(?:\\+|-)?(?:NaN|Infinity|(?:(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[Ee](?:\\+|-)?[0-9]+)?[DFdf]?|0[Xx](?:[0-9A-Fa-f]+(?:\\.[0-9A-Fa-f]*)?|\\.[0-9A-Fa-f]+)[Pp](?:\\+|-)?[0-9]+[DFdf]?))[\\x01-\\x20]*$": [
+      "start_adb_activity input"
+    ],
+    "^[^\\x00-\\x08\\x0a-\\x1f\\x7f]*$": ["capture_browser_scenario input"],
+    "^[^\\x00=]+$": [
+      "observe_native_calls input",
+      "observe_native_calls output"
+    ],
+    "^[^\\x00\\x09-\\x0d \"']+$": [
+      "capture_adb_screen input",
+      "collect_adb_bugreport input",
+      "inspect_adb_device input",
+      "inspect_adb_display input",
+      "inspect_adb_package input",
+      "inspect_adb_window input",
+      "install_adb_package input",
+      "list_adb_directory input",
+      "list_adb_features input",
+      "list_adb_packages input",
+      "list_adb_processes input",
+      "list_adb_services input",
+      "pull_adb_file input",
+      "pull_adb_package input",
+      "push_adb_file input",
+      "read_adb_logcat input",
+      "read_adb_setting input",
+      "resolve_adb_packages input",
+      "start_adb_activity input",
+      "start_adb_app input",
+      "stop_adb_app input",
+      "uninstall_adb_package input"
+    ],
+    "^[^\\x00\\x09-\\x0d ]+$": ["start_adb_activity input"],
+    "^[^\\x00]*$": [
+      "address_name output",
+      "address_to_file_offset output",
+      "analyze_function output",
+      "analyze_javascript_application input",
+      "analyze_javascript_application output",
+      "analyze_swift_types output",
+      "analyze_web_bundle output",
+      "annotate_native_function output",
+      "audit_release_exposure input",
+      "audit_release_exposure output",
+      "batch_decompile output",
+      "binary_overview output",
+      "binary_session input",
+      "build_call_path input",
+      "build_call_path output",
+      "build_reconstruction_obligation_ledger input",
+      "build_reconstruction_obligation_ledger output",
+      "capture_adb_screen input",
+      "capture_adb_screen output",
+      "capture_browser_scenario input",
+      "capture_browser_scenario output",
+      "capture_electron_scenario input",
+      "capture_electron_scenario output",
+      "capture_native_ui_scenario output",
+      "capture_process_scenario input",
+      "capture_process_scenario output",
+      "capture_web_screenshot output",
+      "check_build_task input",
+      "close_binary input",
+      "collect_adb_bugreport input",
+      "collect_adb_bugreport output",
+      "comment output",
+      "compare_application_versions input",
+      "compare_application_versions output",
+      "compare_artifacts input",
+      "compare_artifacts output",
+      "compare_bundles input",
+      "compare_bundles output",
+      "compare_functions input",
+      "compare_functions output",
+      "compare_javascript_export_shapes input",
+      "compare_javascript_export_shapes output",
+      "compare_managed_members input",
+      "compare_managed_members output",
+      "compare_process_captures input",
+      "compare_process_captures output",
+      "compare_source_to_bundle input",
+      "compare_source_to_bundle output",
+      "compare_static_and_observed_endpoints input",
+      "compare_static_and_observed_endpoints output",
+      "compare_wasm_interfaces input",
+      "compare_wasm_interfaces output",
+      "compare_web_captures output",
+      "compare_web_screenshots output",
+      "correlate_static_and_runtime input",
+      "correlate_static_and_runtime output",
+      "current_address output",
+      "current_document output",
+      "current_procedure output",
+      "cutter_command output",
+      "decode_android_resources input",
+      "decode_android_resources output",
+      "decode_interface_builder output",
+      "decode_signal_recording input",
+      "decode_signal_recording output",
+      "decompile_all input",
+      "decompile_all output",
+      "decompile_jeb_item output",
+      "demangle_swift input",
+      "demangle_swift output",
+      "discover_webmcp_tools output",
+      "evaluate_reconstruction_coverage input",
+      "execute_rizin_command input",
+      "execute_rizin_command output",
+      "export_build_environment input",
+      "export_environment_bundle input",
+      "export_evidence_bundle input",
+      "export_web_scripts input",
+      "export_web_scripts output",
+      "extract_artifact input",
+      "extract_artifact output",
+      "extract_firmware input",
+      "extract_firmware output",
+      "find_changed_behavior input",
+      "find_changed_behavior output",
+      "find_xrefs_to_name output",
+      "frida_session_status output",
+      "gdb_console output",
+      "get_call_graph output",
+      "get_evidence_bundle output",
+      "get_objc_classes output",
+      "get_objc_protocols output",
+      "goto_address output",
+      "identify_flutter_build input",
+      "identify_flutter_build output",
+      "import_evidence_bundle input",
+      "import_managed_reconstruction input",
+      "import_managed_reconstruction output",
+      "inline_comment output",
+      "inspect_adb_client output",
+      "inspect_adb_device output",
+      "inspect_adb_display output",
+      "inspect_adb_package output",
+      "inspect_adb_window output",
+      "inspect_analysis_view input",
+      "inspect_analysis_view output",
+      "inspect_android_class input",
+      "inspect_android_class output",
+      "inspect_android_jni_bindings input",
+      "inspect_android_jni_bindings output",
+      "inspect_android_method input",
+      "inspect_android_method output",
+      "inspect_android_package input",
+      "inspect_android_package output",
+      "inspect_api_contract input",
+      "inspect_api_contract output",
+      "inspect_apk_signature input",
+      "inspect_apk_signature output",
+      "inspect_apktool_client output",
+      "inspect_apple_ips input",
+      "inspect_apple_ips output",
+      "inspect_artifact output",
+      "inspect_asset_catalog output",
+      "inspect_binary_hardening input",
+      "inspect_binary_hardening output",
+      "inspect_binary_layout input",
+      "inspect_binary_layout output",
+      "inspect_byte_entropy input",
+      "inspect_byte_entropy output",
+      "inspect_dart_aot input",
+      "inspect_dart_aot output",
+      "inspect_desktop_application input",
+      "inspect_desktop_application output",
+      "inspect_devicetree input",
+      "inspect_devicetree output",
+      "inspect_electron_fuses input",
+      "inspect_electron_fuses output",
+      "inspect_electron_page output",
+      "inspect_elf_notes input",
+      "inspect_elf_notes output",
+      "inspect_elf_unwind_ranges input",
+      "inspect_elf_unwind_ranges output",
+      "inspect_erlang_beam input",
+      "inspect_erlang_beam output",
+      "inspect_evm_interface input",
+      "inspect_evm_interface output",
+      "inspect_firmware_regions input",
+      "inspect_firmware_regions output",
+      "inspect_go_binary input",
+      "inspect_go_binary output",
+      "inspect_gpu_code_objects input",
+      "inspect_gpu_code_objects output",
+      "inspect_il2cpp_metadata input",
+      "inspect_il2cpp_metadata output",
+      "inspect_jeb_client output",
+      "inspect_kernel_build_config input",
+      "inspect_kernel_build_config output",
+      "inspect_kernel_module input",
+      "inspect_kernel_module output",
+      "inspect_keyed_archive input",
+      "inspect_keyed_archive output",
+      "inspect_macho output",
+      "inspect_managed_artifact input",
+      "inspect_managed_artifact output",
+      "inspect_managed_members input",
+      "inspect_managed_members output",
+      "inspect_managed_native_boundaries input",
+      "inspect_managed_native_boundaries output",
+      "inspect_model_artifact input",
+      "inspect_model_artifact output",
+      "inspect_native_api output",
+      "inspect_native_data_type output",
+      "inspect_native_dispatch_metadata output",
+      "inspect_native_exports input",
+      "inspect_native_exports output",
+      "inspect_native_initializers input",
+      "inspect_native_initializers output",
+      "inspect_native_instruction output",
+      "inspect_native_load_image output",
+      "inspect_ntfs_journal input",
+      "inspect_ntfs_journal output",
+      "inspect_packet_capture input",
+      "inspect_packet_capture output",
+      "inspect_packet_fields output",
+      "inspect_pcap_capture input",
+      "inspect_pcap_capture output",
+      "inspect_pcap_client output",
+      "inspect_pe_certificates input",
+      "inspect_pe_certificates output",
+      "inspect_pe_imports input",
+      "inspect_pe_imports output",
+      "inspect_pe_load_config input",
+      "inspect_pe_load_config output",
+      "inspect_pe_resources input",
+      "inspect_pe_resources output",
+      "inspect_playwright_trace input",
+      "inspect_playwright_trace output",
+      "inspect_plist input",
+      "inspect_plist output",
+      "inspect_python_pyc input",
+      "inspect_python_pyc output",
+      "inspect_recorded_crash input",
+      "inspect_recorded_crash output",
+      "inspect_rust_binary input",
+      "inspect_rust_binary output",
+      "inspect_signal_decoders output",
+      "inspect_signature output",
+      "inspect_sqlite_database input",
+      "inspect_sqlite_database output",
+      "inspect_v8_code_cache input",
+      "inspect_v8_code_cache output",
+      "inspect_wasm_artifact input",
+      "inspect_wasm_artifact output",
+      "inspect_web_event_listeners output",
+      "inspect_web_network_capture input",
+      "inspect_web_network_capture output",
+      "inspect_web_page output",
+      "inspect_windows_shortcut input",
+      "inspect_windows_shortcut output",
+      "inspect_with_objdump input",
+      "inspect_with_objdump output",
+      "install_adb_package input",
+      "install_adb_package output",
+      "instrument_with_frida input",
+      "instrument_with_frida output",
+      "list_adb_devices output",
+      "list_adb_directory output",
+      "list_adb_features output",
+      "list_adb_packages output",
+      "list_adb_processes output",
+      "list_adb_services output",
+      "list_architectures output",
+      "list_bookmarks output",
+      "list_browser_targets output",
+      "list_documents output",
+      "list_electron_targets output",
+      "list_javascript_runtime_targets output",
+      "list_jeb_units output",
+      "list_names output",
+      "list_procedures output",
+      "list_segments output",
+      "list_strings output",
+      "load_frida_script input",
+      "load_frida_script output",
+      "match_native_functions input",
+      "match_native_functions output",
+      "measure_build_task input",
+      "next_address output",
+      "observe_javascript_runtime output",
+      "observe_native_calls input",
+      "observe_native_calls output",
+      "observe_native_ui output",
+      "observe_web_execution output",
+      "observe_web_session output",
+      "open_binary input",
+      "open_bundle_resources input",
+      "open_jeb_project input",
+      "open_jeb_project output",
+      "prev_address output",
+      "procedure_address output",
+      "procedure_assembly output",
+      "procedure_callees output",
+      "procedure_callers output",
+      "procedure_info output",
+      "procedure_pseudo_code output",
+      "procedure_references output",
+      "project_android_application_graph input",
+      "project_android_application_graph output",
+      "project_apple_application_graph input",
+      "project_apple_application_graph output",
+      "project_harmony_application_graph input",
+      "project_harmony_application_graph output",
+      "project_managed_application_graph input",
+      "project_managed_application_graph output",
+      "pull_adb_file input",
+      "pull_adb_file output",
+      "pull_adb_package input",
+      "pull_adb_package output",
+      "push_adb_file input",
+      "push_adb_file output",
+      "read_adb_logcat output",
+      "read_adb_setting output",
+      "read_bytes output",
+      "read_function_instructions output",
+      "reconcile_javascript_runtime input",
+      "reconcile_javascript_runtime output",
+      "recover_javascript_sources input",
+      "recover_javascript_sources output",
+      "reset_investigation input",
+      "resolve_adb_packages output",
+      "resolve_containing_procedure output",
+      "resolve_native_call_targets output",
+      "rizin_debug_command output",
+      "search_android_classes input",
+      "search_android_classes output",
+      "search_bytes output",
+      "search_procedures output",
+      "search_strings output",
+      "set_address_name output",
+      "set_addresses_names output",
+      "set_bookmark output",
+      "set_comment output",
+      "set_inline_comment output",
+      "start_adb_activity input",
+      "start_adb_activity output",
+      "start_adb_app output",
+      "start_build_computer input",
+      "start_frida_session input",
+      "start_gdb_session input",
+      "start_rizin_debug_session input",
+      "stop_adb_app output",
+      "trace_android_references input",
+      "trace_android_references output",
+      "trace_application_feature input",
+      "trace_application_feature output",
+      "trace_call_path output",
+      "trace_dylib_resolution output",
+      "trace_feature output",
+      "trace_javascript_semantics input",
+      "trace_javascript_semantics output",
+      "trace_native_ui_action output",
+      "trace_native_values output",
+      "trace_web_module_imports input",
+      "trace_web_module_imports output",
+      "trace_web_source_location input",
+      "trace_web_source_location output",
+      "uninstall_adb_package output",
+      "unset_bookmark output",
+      "verify_managed_native_boundaries input",
+      "verify_managed_native_boundaries output",
+      "verify_reconstruction output",
+      "xrefs output"
+    ],
+    "^[^\\x09-\\x0d \\[\\]]+$": [
+      "observe_native_calls input",
+      "observe_native_calls output"
+    ],
+    "^[^\\x0a]*$": ["demangle_swift input"],
+    "^[^\\x2f]*$": ["inspect_dart_aot input"],
+    "^[a-z][\\-0-9a-z]*$": ["open_binary input"],
+    "^\\((?:\\[{0,255}(?:[B-DFIJSZ]|L[^\\(\\);]+;))*\\)(?:V|\\[{0,255}(?:[B-DFIJSZ]|L[^\\(\\);]+;))$": [
+      "inspect_analysis_view input",
+      "inspect_analysis_view output",
+      "inspect_android_class output",
+      "inspect_android_jni_bindings input",
+      "inspect_android_jni_bindings output",
+      "inspect_android_method output",
+      "trace_android_references output"
+    ],
+    "^\\[{0,255}(?:[B-DFIJSZ]|L[^\\(\\);]+;)$": [
+      "inspect_analysis_view output",
+      "inspect_android_class output",
+      "inspect_android_method output"
+    ],
+    "^aap_[0-9a-f]{64}$": ["project_apple_application_graph output"],
+    "^adp_[0-9a-f]{64}$": ["project_android_application_graph output"],
+    "^aex_[0-9a-f]{64}$": ["extract_artifact output"],
+    "^agm_[0-9a-f]{64}$": [
+      "analyze_javascript_application output",
+      "compare_artifacts output",
+      "extract_artifact output",
+      "inspect_analysis_view output",
+      "inspect_artifact output"
+    ],
+    "^ai_[0-9a-f]{64}$": ["inspect_artifact output"],
+    "^aib_[0-9a-f]{64}$": [
+      "inspect_analysis_view output",
+      "inspect_artifact output"
+    ],
+    "^aic_[0-9a-f]{64}$": ["inspect_artifact output"],
+    "^aih_[0-9a-f]{64}$": ["inspect_artifact output"],
+    "^aio_[0-9a-f]{64}$": ["inspect_artifact output"],
+    "^ais_[0-9a-f]{64}$": ["inspect_artifact output"],
+    "^api_contract_[0-9a-f]{64}$": [
+      "inspect_analysis_view output",
+      "inspect_api_contract output"
+    ],
+    "^api_contract_diagnostic_[0-9a-f]{64}$": [
+      "inspect_analysis_view output",
+      "inspect_api_contract output"
+    ],
+    "^api_operation_[0-9a-f]{64}$": [
+      "inspect_analysis_view input",
+      "inspect_analysis_view output",
+      "inspect_api_contract input",
+      "inspect_api_contract output"
+    ],
+    "^api_operation_key_[0-9a-f]{64}$": [
+      "inspect_analysis_view input",
+      "inspect_analysis_view output",
+      "inspect_api_contract input",
+      "inspect_api_contract output"
+    ],
+    "^api_path_reference_[0-9a-f]{64}$": [
+      "inspect_analysis_view input",
+      "inspect_analysis_view output",
+      "inspect_api_contract input",
+      "inspect_api_contract output"
+    ],
+    "^art_[0-9a-f]{64}$": [
+      "analyze_javascript_application output",
+      "compare_application_versions output",
+      "compare_artifacts output",
+      "extract_artifact output",
+      "inspect_analysis_view input",
+      "inspect_analysis_view output",
+      "inspect_artifact output",
+      "project_android_application_graph output",
+      "project_apple_application_graph output",
+      "project_harmony_application_graph output",
+      "project_managed_application_graph output",
+      "reconcile_javascript_runtime output",
+      "trace_application_feature output",
+      "trace_javascript_semantics output"
+    ],
+    "^cor_[0-9a-f]{64}$": ["correlate_static_and_runtime output"],
+    "^dsc_[0-9a-f]{64}$": [
+      "inspect_analysis_view output",
+      "inspect_desktop_application output"
+    ],
+    "^dsf_[0-9a-f]{64}$": [
+      "inspect_analysis_view input",
+      "inspect_analysis_view output",
+      "inspect_desktop_application output"
+    ],
+    "^dsm_[0-9a-f]{64}$": [
+      "inspect_analysis_view output",
+      "inspect_desktop_application output"
+    ],
+    "^dso_[0-9a-f]{64}$": [
+      "inspect_analysis_view input",
+      "inspect_analysis_view output",
+      "inspect_desktop_application output"
+    ],
+    "^dsp_[0-9a-f]{64}$": [
+      "inspect_analysis_view output",
+      "inspect_desktop_application output"
+    ],
+    "^dsr_[0-9a-f]{64}$": [
+      "inspect_analysis_view output",
+      "inspect_desktop_application output"
+    ],
+    "^edge_[0-9a-f]{64}$": [
+      "inspect_analysis_view output",
+      "inspect_artifact output"
+    ],
+    "^electron_resource_[0-9a-f]{64}$": ["inspect_electron_page output"],
+    "^electron_script_[0-9a-f]{64}$": ["inspect_electron_page output"],
+    "^endpoint_comparison_[0-9a-f]{64}$": [
+      "compare_static_and_observed_endpoints output",
+      "inspect_analysis_view output"
+    ],
+    "^endpoint_match_[0-9a-f]{64}$": [
+      "compare_static_and_observed_endpoints output",
+      "inspect_analysis_view output"
+    ],
+    "^ev_[0-9a-f]{64}$": [
+      "address_name output",
+      "address_to_file_offset output",
+      "analyze_function output",
+      "analyze_javascript_application output",
+      "analyze_swift_types output",
+      "analyze_web_bundle output",
+      "annotate_native_function output",
+      "audit_release_exposure output",
+      "batch_decompile output",
+      "binary_overview output",
+      "build_call_path input",
+      "build_call_path output",
+      "build_reconstruction_obligation_ledger input",
+      "build_reconstruction_obligation_ledger output",
+      "capture_adb_screen output",
+      "capture_browser_scenario output",
+      "capture_electron_scenario output",
+      "capture_native_ui_scenario output",
+      "capture_process_scenario output",
+      "capture_web_screenshot output",
+      "collect_adb_bugreport output",
+      "comment output",
+      "compare_application_versions input",
+      "compare_application_versions output",
+      "compare_artifacts input",
+      "compare_artifacts output",
+      "compare_bundles input",
+      "compare_bundles output",
+      "compare_functions input",
+      "compare_functions output",
+      "compare_javascript_export_shapes input",
+      "compare_javascript_export_shapes output",
+      "compare_managed_members input",
+      "compare_managed_members output",
+      "compare_process_captures input",
+      "compare_process_captures output",
+      "compare_source_to_bundle input",
+      "compare_source_to_bundle output",
+      "compare_static_and_observed_endpoints input",
+      "compare_static_and_observed_endpoints output",
+      "compare_wasm_interfaces input",
+      "compare_wasm_interfaces output",
+      "compare_web_captures output",
+      "compare_web_screenshots output",
+      "correlate_static_and_runtime input",
+      "correlate_static_and_runtime output",
+      "current_address output",
+      "current_document output",
+      "current_procedure output",
+      "cutter_command output",
+      "decode_android_resources output",
+      "decode_interface_builder output",
+      "decode_signal_recording output",
+      "decompile_all output",
+      "decompile_jeb_item output",
+      "demangle_swift output",
+      "discover_webmcp_tools output",
+      "evaluate_reconstruction_coverage input",
+      "evaluate_reconstruction_coverage output",
+      "execute_rizin_command output",
+      "export_environment_bundle input",
+      "export_environment_bundle output",
+      "export_web_scripts output",
+      "extract_artifact output",
+      "extract_firmware output",
+      "find_changed_behavior input",
+      "find_changed_behavior output",
+      "find_xrefs_to_name output",
+      "frida_session_status output",
+      "gdb_console output",
+      "get_call_graph output",
+      "get_evidence_bundle input",
+      "get_evidence_bundle output",
+      "get_objc_classes output",
+      "get_objc_protocols output",
+      "goto_address output",
+      "identify_flutter_build output",
+      "import_managed_reconstruction input",
+      "import_managed_reconstruction output",
+      "inline_comment output",
+      "inspect_adb_client output",
+      "inspect_adb_device output",
+      "inspect_adb_display output",
+      "inspect_adb_package output",
+      "inspect_adb_window output",
+      "inspect_analysis_view input",
+      "inspect_analysis_view output",
+      "inspect_android_class output",
+      "inspect_android_jni_bindings output",
+      "inspect_android_method output",
+      "inspect_android_package output",
+      "inspect_api_contract output",
+      "inspect_apk_signature output",
+      "inspect_apktool_client output",
+      "inspect_apple_ips output",
+      "inspect_artifact output",
+      "inspect_asset_catalog output",
+      "inspect_binary_hardening output",
+      "inspect_binary_layout output",
+      "inspect_byte_entropy output",
+      "inspect_dart_aot output",
+      "inspect_desktop_application output",
+      "inspect_devicetree output",
+      "inspect_electron_fuses output",
+      "inspect_electron_page output",
+      "inspect_elf_notes output",
+      "inspect_elf_unwind_ranges output",
+      "inspect_erlang_beam output",
+      "inspect_evm_interface output",
+      "inspect_firmware_regions output",
+      "inspect_go_binary output",
+      "inspect_gpu_code_objects output",
+      "inspect_il2cpp_metadata output",
+      "inspect_jeb_client output",
+      "inspect_kernel_build_config output",
+      "inspect_kernel_module output",
+      "inspect_keyed_archive output",
+      "inspect_macho output",
+      "inspect_managed_artifact output",
+      "inspect_managed_members output",
+      "inspect_managed_native_boundaries output",
+      "inspect_model_artifact output",
+      "inspect_native_api output",
+      "inspect_native_data_type output",
+      "inspect_native_dispatch_metadata output",
+      "inspect_native_exports output",
+      "inspect_native_initializers output",
+      "inspect_native_instruction output",
+      "inspect_native_load_image output",
+      "inspect_ntfs_journal output",
+      "inspect_packet_capture output",
+      "inspect_packet_fields output",
+      "inspect_pcap_capture output",
+      "inspect_pcap_client output",
+      "inspect_pe_certificates output",
+      "inspect_pe_imports output",
+      "inspect_pe_load_config output",
+      "inspect_pe_resources output",
+      "inspect_playwright_trace output",
+      "inspect_plist output",
+      "inspect_python_pyc output",
+      "inspect_recorded_crash output",
+      "inspect_rust_binary output",
+      "inspect_signal_decoders output",
+      "inspect_signature output",
+      "inspect_sqlite_database output",
+      "inspect_v8_code_cache output",
+      "inspect_wasm_artifact output",
+      "inspect_web_event_listeners output",
+      "inspect_web_network_capture output",
+      "inspect_web_page output",
+      "inspect_windows_shortcut output",
+      "inspect_with_objdump output",
+      "install_adb_package output",
+      "instrument_with_frida output",
+      "list_adb_devices output",
+      "list_adb_directory output",
+      "list_adb_features output",
+      "list_adb_packages output",
+      "list_adb_processes output",
+      "list_adb_services output",
+      "list_architectures output",
+      "list_bookmarks output",
+      "list_browser_targets output",
+      "list_documents output",
+      "list_electron_targets output",
+      "list_javascript_runtime_targets output",
+      "list_jeb_units output",
+      "list_names output",
+      "list_procedures output",
+      "list_segments output",
+      "list_strings output",
+      "list_unknowns output",
+      "load_frida_script output",
+      "match_native_functions input",
+      "match_native_functions output",
+      "next_address output",
+      "observe_javascript_runtime output",
+      "observe_native_calls output",
+      "observe_native_ui output",
+      "observe_web_execution output",
+      "observe_web_session output",
+      "open_jeb_project output",
+      "prev_address output",
+      "procedure_address output",
+      "procedure_assembly output",
+      "procedure_callees output",
+      "procedure_callers output",
+      "procedure_info output",
+      "procedure_pseudo_code output",
+      "procedure_references output",
+      "project_android_application_graph input",
+      "project_android_application_graph output",
+      "project_apple_application_graph input",
+      "project_apple_application_graph output",
+      "project_harmony_application_graph input",
+      "project_harmony_application_graph output",
+      "project_managed_application_graph input",
+      "project_managed_application_graph output",
+      "pull_adb_file output",
+      "pull_adb_package output",
+      "push_adb_file output",
+      "read_adb_logcat output",
+      "read_adb_setting output",
+      "read_bytes output",
+      "read_function_instructions output",
+      "reconcile_javascript_runtime input",
+      "reconcile_javascript_runtime output",
+      "record_unknown input",
+      "record_unknown output",
+      "recover_javascript_sources output",
+      "resolve_adb_packages output",
+      "resolve_containing_procedure output",
+      "resolve_native_call_targets output",
+      "rizin_debug_command output",
+      "search_android_classes output",
+      "search_bytes output",
+      "search_procedures output",
+      "search_strings output",
+      "set_address_name output",
+      "set_addresses_names output",
+      "set_bookmark output",
+      "set_comment output",
+      "set_inline_comment output",
+      "start_adb_activity output",
+      "start_adb_app output",
+      "stop_adb_app output",
+      "trace_android_references output",
+      "trace_application_feature input",
+      "trace_application_feature output",
+      "trace_call_path output",
+      "trace_dylib_resolution output",
+      "trace_feature output",
+      "trace_javascript_semantics input",
+      "trace_javascript_semantics output",
+      "trace_native_ui_action output",
+      "trace_native_values output",
+      "trace_web_module_imports output",
+      "trace_web_source_location output",
+      "uninstall_adb_package output",
+      "unset_bookmark output",
+      "update_unknown input",
+      "update_unknown output",
+      "verify_managed_native_boundaries input",
+      "verify_managed_native_boundaries output",
+      "verify_reconstruction input",
+      "verify_reconstruction output",
+      "verify_unknown_resolution output",
+      "xrefs output"
+    ],
+    "^graphql_contract_[0-9a-f]{64}$": [
+      "inspect_analysis_view output",
+      "inspect_api_contract output"
+    ],
+    "^graphql_definition_[0-9a-f]{64}$": [
+      "inspect_analysis_view input",
+      "inspect_analysis_view output",
+      "inspect_api_contract input",
+      "inspect_api_contract output"
+    ],
+    "^graphql_diagnostic_[0-9a-f]{64}$": [
+      "inspect_analysis_view output",
+      "inspect_api_contract output"
+    ],
+    "^graphql_field_[0-9a-f]{64}$": [
+      "inspect_analysis_view input",
+      "inspect_analysis_view output",
+      "inspect_api_contract input",
+      "inspect_api_contract output"
+    ],
+    "^graphql_reference_[0-9a-f]{64}$": [
+      "inspect_analysis_view input",
+      "inspect_analysis_view output",
+      "inspect_api_contract input",
+      "inspect_api_contract output"
+    ],
+    "^graphql_spread_[0-9a-f]{64}$": [
+      "inspect_analysis_view output",
+      "inspect_api_contract output"
+    ],
+    "^graphql_type_[0-9a-f]{64}$": [
+      "inspect_analysis_view input",
+      "inspect_analysis_view output",
+      "inspect_api_contract input",
+      "inspect_api_contract output"
+    ],
+    "^hmp_[0-9a-f]{64}$": ["project_harmony_application_graph output"],
+    "^https?://[^\\x00]*(?:\\x00[^\\x00]*)*$": ["start_build_computer input"],
+    "^ic_[0-9a-f]{64}$": [
+      "analyze_javascript_application output",
+      "extract_artifact output",
+      "inspect_analysis_view output",
+      "inspect_artifact output"
+    ],
+    "^jag_[0-9a-f]{64}$": [
+      "analyze_javascript_application output",
+      "compare_application_versions output",
+      "compare_javascript_export_shapes output",
+      "compare_source_to_bundle output",
+      "compare_static_and_observed_endpoints output",
+      "inspect_analysis_view output",
+      "project_managed_application_graph output",
+      "reconcile_javascript_runtime output",
+      "trace_application_feature output"
+    ],
+    "^jag_edge_[0-9a-f]{64}$": [
+      "analyze_javascript_application output",
+      "compare_application_versions output",
+      "inspect_analysis_view output",
+      "project_managed_application_graph output",
+      "reconcile_javascript_runtime output",
+      "trace_application_feature output"
+    ],
+    "^jag_node_[0-9a-f]{64}$": [
+      "analyze_javascript_application output",
+      "build_reconstruction_obligation_ledger input",
+      "build_reconstruction_obligation_ledger output",
+      "compare_application_versions output",
+      "compare_javascript_export_shapes output",
+      "compare_source_to_bundle output",
+      "compare_static_and_observed_endpoints output",
+      "inspect_analysis_view input",
+      "inspect_analysis_view output",
+      "project_managed_application_graph output",
+      "reconcile_javascript_runtime output",
+      "trace_application_feature input",
+      "trace_application_feature output",
+      "trace_javascript_semantics input",
+      "trace_javascript_semantics output"
+    ],
+    "^jag_observation_[0-9a-f]{64}$": [
+      "analyze_javascript_application output",
+      "compare_application_versions output",
+      "compare_static_and_observed_endpoints output",
+      "inspect_analysis_view output",
+      "project_managed_application_graph output",
+      "reconcile_javascript_runtime output",
+      "trace_application_feature output"
+    ],
+    "^jatp_[0-9a-f]{64}$": [
+      "inspect_analysis_view output",
+      "trace_application_feature output"
+    ],
+    "^jatr_[0-9a-f]{64}$": [
+      "inspect_analysis_view output",
+      "trace_application_feature output"
+    ],
+    "^javc_[0-9a-f]{64}$": ["compare_application_versions output"],
+    "^javc_item_[0-9a-f]{64}$": ["compare_application_versions output"],
+    "^jesc_[0-9a-f]{64}$": ["compare_javascript_export_shapes output"],
+    "^jesc_change_[0-9a-f]{64}$": ["compare_javascript_export_shapes output"],
+    "^jrl_[0-9a-f]{64}$": ["reconcile_javascript_runtime output"],
+    "^jrr_[0-9a-f]{64}$": ["reconcile_javascript_runtime output"],
+    "^jrr_item_[0-9a-f]{64}$": ["reconcile_javascript_runtime output"],
+    "^jsg:[0-9a-f]{32}$": [
+      "analyze_javascript_application output",
+      "analyze_web_bundle output",
+      "inspect_analysis_view output"
+    ],
+    "^jso:[0-9a-f]{32}$": [
+      "analyze_javascript_application output",
+      "analyze_web_bundle output",
+      "inspect_analysis_view output"
+    ],
+    "^jsr:[0-9a-f]{32}$": [
+      "analyze_javascript_application output",
+      "analyze_web_bundle output",
+      "inspect_analysis_view output"
+    ],
+    "^jsrg_[0-9a-f]{64}$": [
+      "analyze_javascript_application output",
+      "inspect_analysis_view output",
+      "trace_application_feature output",
+      "trace_javascript_semantics output"
+    ],
+    "^jsrg_evidence_[0-9a-f]{64}$": [
+      "analyze_javascript_application output",
+      "trace_javascript_semantics output"
+    ],
+    "^jsrg_fingerprint_[0-9a-f]{64}$": [
+      "analyze_javascript_application output"
+    ],
+    "^jsrg_node_[0-9a-f]{64}$": [
+      "analyze_javascript_application output",
+      "build_reconstruction_obligation_ledger input",
+      "build_reconstruction_obligation_ledger output",
+      "inspect_analysis_view output",
+      "trace_application_feature output",
+      "trace_javascript_semantics input",
+      "trace_javascript_semantics output"
+    ],
+    "^jsrg_relation_[0-9a-f]{64}$": [
+      "analyze_javascript_application output",
+      "trace_javascript_semantics output"
+    ],
+    "^jsrg_unknown_[0-9a-f]{64}$": [
+      "analyze_javascript_application output",
+      "trace_javascript_semantics output"
+    ],
+    "^jsri:[0-9a-f]{64}$": [
+      "analyze_javascript_application output",
+      "analyze_web_bundle output",
+      "inspect_analysis_view output"
+    ],
+    "^jsrq_[0-9a-f]{64}$": ["trace_javascript_semantics output"],
+    "^jss:[0-9a-f]{32}$": [
+      "analyze_javascript_application output",
+      "analyze_web_bundle output",
+      "inspect_analysis_view output"
+    ],
+    "^magp_[0-9a-f]{64}$": ["project_managed_application_graph output"],
+    "^match_[0-9a-f]{64}$": [
+      "inspect_analysis_view output",
+      "match_native_functions output"
+    ],
+    "^mmc_[0-9a-f]{64}$": ["compare_managed_members output"],
+    "^mmc_field_[0-9a-f]{64}$": ["compare_managed_members output"],
+    "^mmc_method_[0-9a-f]{64}$": ["compare_managed_members output"],
+    "^mnv_[0-9a-f]{64}$": ["verify_managed_native_boundaries output"],
+    "^mnv_pinvoke_[0-9a-f]{64}$": ["verify_managed_native_boundaries output"],
+    "^mre_[0-9a-f]{64}$": ["import_managed_reconstruction output"],
+    "^observed_endpoint_[0-9a-f]{64}$": [
+      "compare_static_and_observed_endpoints input",
+      "compare_static_and_observed_endpoints output",
+      "inspect_analysis_view input",
+      "inspect_analysis_view output"
+    ],
+    "^occ_[0-9a-f]{64}$": [
+      "analyze_javascript_application output",
+      "compare_artifacts output",
+      "extract_artifact input",
+      "extract_artifact output",
+      "inspect_analysis_view input",
+      "inspect_analysis_view output",
+      "inspect_artifact output"
+    ],
+    "^playwright_trace_[0-9a-f]{64}$": [
+      "inspect_analysis_view output",
+      "inspect_playwright_trace output"
+    ],
+    "^res_[0-9a-f]{64}$": ["inspect_web_page output"],
+    "^rol_[0-9a-f]{64}$": ["build_reconstruction_obligation_ledger output"],
+    "^scr_[0-9a-f]{64}(?:_[0-9]+)?$": ["inspect_web_page output"],
+    "^static_endpoint_[0-9a-f]{64}$": [
+      "compare_static_and_observed_endpoints input",
+      "compare_static_and_observed_endpoints output",
+      "inspect_analysis_view input",
+      "inspect_analysis_view output"
+    ],
+    "^stbc_[0-9a-f]{64}$": [
+      "compare_source_to_bundle output",
+      "inspect_analysis_view output"
+    ],
+    "^stbc_item_[0-9a-f]{64}$": [
+      "compare_source_to_bundle input",
+      "compare_source_to_bundle output",
+      "inspect_analysis_view input",
+      "inspect_analysis_view output"
+    ],
+    "^trace_diagnostic_[0-9a-f]{64}$": [
+      "inspect_analysis_view output",
+      "inspect_playwright_trace output"
+    ],
+    "^trace_event_[0-9a-f]{64}$": [
+      "inspect_analysis_view input",
+      "inspect_analysis_view output",
+      "inspect_playwright_trace input",
+      "inspect_playwright_trace output"
+    ],
+    "^trace_member_[0-9a-f]{64}$": [
+      "inspect_analysis_view input",
+      "inspect_analysis_view output",
+      "inspect_playwright_trace input",
+      "inspect_playwright_trace output"
+    ],
+    "^trace_stream_[0-9a-f]{64}$": [
+      "inspect_analysis_view input",
+      "inspect_analysis_view output",
+      "inspect_playwright_trace input",
+      "inspect_playwright_trace output"
+    ],
+    "^unk_[0-9a-f]{64}$": [
+      "build_reconstruction_obligation_ledger input",
+      "evaluate_reconstruction_coverage input",
+      "get_evidence_bundle output",
+      "list_unknowns output",
+      "record_unknown input",
+      "record_unknown output",
+      "update_unknown input",
+      "update_unknown output",
+      "verify_reconstruction output",
+      "verify_unknown_resolution input",
+      "verify_unknown_resolution output"
+    ],
+    "^v8_script_[0-9a-f]{64}$": ["observe_javascript_runtime output"],
+    "^webmcp_[0-9a-f]{64}$": ["discover_webmcp_tools output"]
+  },
+  "tools": {
+    "act_on_build_computer": {
+      "input compact": "492ec1ac2a1230c5",
+      "input full": "fe0ca8b863da0bf1",
+      "output compact": "9bd80958780175fe",
+      "output full": "2ad61e3ecab3d881"
+    },
+    "address_name": {
+      "input compact": "f1b0a54d8c702be5",
+      "input full": "dbc2a763429ebf8f",
+      "output compact": "9e24f29540c4da8a",
+      "output full": "83872009723f45ea"
+    },
+    "address_to_file_offset": {
+      "input compact": "c9d8a29b5ea9eaf2",
+      "input full": "0ab8a9a24f970cbf",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "748b8df6220513cb"
+    },
+    "analyze_function": {
+      "input compact": "02ac81c718b49410",
+      "input full": "573c4bf9ff99f946",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "fb02b58bbf1dea56"
+    },
+    "analyze_javascript_application": {
+      "input compact": "990f691d36bfeeec",
+      "input full": "463072c41fe38945",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "9658186a6c224c9a"
+    },
+    "analyze_swift_types": {
+      "input compact": "954672370cc76451",
+      "input full": "4b996c516df3e4c4",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "25e016be8abacc53"
+    },
+    "analyze_web_bundle": {
+      "input compact": "3d7959f5cdca863d",
+      "input full": "1b2a3ffc89e2ce0e",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "b2368fb3eedde37c"
+    },
+    "annotate_native_function": {
+      "input compact": "70c17ea61092a8c3",
+      "input full": "5bc1398c10cd90e3",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "47791123e7cadf27"
+    },
+    "audit_release_exposure": {
+      "input compact": "d4ebd6a35bc062aa",
+      "input full": "5055ede7d1f3450f",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "49ac2a8610170a58"
+    },
+    "batch_decompile": {
+      "input compact": "cd55cbd9191fb397",
+      "input full": "35e3b8c0e37d488c",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "e422f6fcbe4846d2"
+    },
+    "binary_overview": {
+      "input compact": "32062bdb9024160d",
+      "input full": "4ca60b6725ad78fa",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "ce6b6a6b3e76650b"
+    },
+    "binary_session": {
+      "input compact": "ea2ae40d88bad772",
+      "input full": "bdc9ef39d01dc6af",
+      "output compact": "9cda19dfa1310afa",
+      "output full": "88501cffa8a4622d"
+    },
+    "build_call_path": {
+      "input compact": "5b291bcc2323c4d0",
+      "input full": "591fe3b23aa24195",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "b465a94a856ee163"
+    },
+    "build_reconstruction_obligation_ledger": {
+      "input compact": "a7cd5ce32e774439",
+      "input full": "fcb5b278ee29d4a6",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "f43613afd95c3750"
+    },
+    "capture_adb_screen": {
+      "input compact": "5270421b8c21c650",
+      "input full": "d8e07a01fdcfbde6",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "16e20fe396e71218"
+    },
+    "capture_browser_scenario": {
+      "input compact": "b6594631753958b4",
+      "input full": "ec0e1087368b32b1",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "bdc0e92ab339d9f0"
+    },
+    "capture_electron_scenario": {
+      "input compact": "1966487f98e87f51",
+      "input full": "b70e8d23758a4f2a",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "7d7f5efdd61e3b3a"
+    },
+    "capture_native_ui_scenario": {
+      "input compact": "699d21a37250979b",
+      "input full": "9980fd16980030d9",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "a5491cbb15a68153"
+    },
+    "capture_process_scenario": {
+      "input compact": "b16f62e36c31a0cc",
+      "input full": "f12f6aaec6b7b255",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "8e18236d4810c499"
+    },
+    "capture_web_screenshot": {
+      "input compact": "7ba00cbe6d75c7d9",
+      "input full": "105e53d45b26ca8f",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "a494fd22fad4c52a"
+    },
+    "check_build_task": {
+      "input compact": "2e039048620b8a11",
+      "input full": "ce5d4c3ad1f07904",
+      "output compact": "86cabbcac4bdb308",
+      "output full": "7570e201f7392892"
+    },
+    "close_binary": {
+      "input compact": "1650d4dd6dfc3b5e",
+      "input full": "13c14d6d73723f3f",
+      "output compact": "67aadfbdedfd0c6e",
+      "output full": "8de052ee6c183d96"
+    },
+    "close_build_computer": {
+      "input compact": "3b3f0b6ed9a02890",
+      "input full": "9adc1d883ed94c75",
+      "output compact": "b384409a7d0f96ed",
+      "output full": "994b57fa6b0ba714"
+    },
+    "close_frida_session": {
+      "input compact": "d5defc56611ce19d",
+      "input full": "4b71db780c1a3f28",
+      "output compact": "9ca208e0b4a3ca6f",
+      "output full": "9e736438339d5d4b"
+    },
+    "close_gdb_session": {
+      "input compact": "d5defc56611ce19d",
+      "input full": "4b71db780c1a3f28",
+      "output compact": "377e3b6f9b0db8e3",
+      "output full": "37fd22b655998a1d"
+    },
+    "close_rizin_debug_session": {
+      "input compact": "d5defc56611ce19d",
+      "input full": "4b71db780c1a3f28",
+      "output compact": "9ca208e0b4a3ca6f",
+      "output full": "9e736438339d5d4b"
+    },
+    "collect_adb_bugreport": {
+      "input compact": "5270421b8c21c650",
+      "input full": "126e7335caba09a9",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "e5a1c40ee2b0552b"
+    },
+    "comment": {
+      "input compact": "f1b0a54d8c702be5",
+      "input full": "dbc2a763429ebf8f",
+      "output compact": "9e24f29540c4da8a",
+      "output full": "83872009723f45ea"
+    },
+    "compare_application_versions": {
+      "input compact": "6e86c4697a074d94",
+      "input full": "a476cd134b7fd2f2",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "61c8381862f56ebf"
+    },
+    "compare_artifacts": {
+      "input compact": "633f07e1c25fb0e9",
+      "input full": "d8be0c2cd573ba1d",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "98c6ffc654611bf4"
+    },
+    "compare_bundles": {
+      "input compact": "65c9f2cad6fee49f",
+      "input full": "cf71f82072833270",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "0a58e04d9c80a831"
+    },
+    "compare_functions": {
+      "input compact": "633f07e1c25fb0e9",
+      "input full": "49082f494d551ebd",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "db50e6fc0e036b08"
+    },
+    "compare_javascript_export_shapes": {
+      "input compact": "169fa0bb1123cfed",
+      "input full": "ee0493e1d87ebbb8",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "d7c3906507c145c4"
+    },
+    "compare_managed_members": {
+      "input compact": "633f07e1c25fb0e9",
+      "input full": "e95d4c348b60dcc9",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "5d237ec5c0048a4a"
+    },
+    "compare_process_captures": {
+      "input compact": "09de9679075c918d",
+      "input full": "4ebd05582fe3252b",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "e1d49f0a80706861"
+    },
+    "compare_source_to_bundle": {
+      "input compact": "53e35e56039bbec8",
+      "input full": "6e99d392d341fb5e",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "f24053aae7e1e599"
+    },
+    "compare_static_and_observed_endpoints": {
+      "input compact": "87bd558a19485f40",
+      "input full": "32707dc01645362f",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "8b13c007fbc604d7"
+    },
+    "compare_wasm_interfaces": {
+      "input compact": "762370ff0063b96c",
+      "input full": "9886ebad78aa5342",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "f14fc6b047e054a9"
+    },
+    "compare_web_captures": {
+      "input compact": "9a27667fef6bb852",
+      "input full": "22e4552549eba9cd",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "6513f71988070aff"
+    },
+    "compare_web_screenshots": {
+      "input compact": "eff327dda5c10d9a",
+      "input full": "9a2e7804cb4c51a1",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "79bc0e517b7b90a2"
+    },
+    "correlate_static_and_runtime": {
+      "input compact": "24360903f54081d4",
+      "input full": "b66f3e8b56ac6886",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "587854817049ba58"
+    },
+    "current_address": {
+      "input compact": "4df1857d0f25b9b1",
+      "input full": "8d7280bca0b14cf2",
+      "output compact": "ffd2432283f65468",
+      "output full": "e5ab6e33086533ac"
+    },
+    "current_document": {
+      "input compact": "32062bdb9024160d",
+      "input full": "4ca60b6725ad78fa",
+      "output compact": "ffd2432283f65468",
+      "output full": "e5ab6e33086533ac"
+    },
+    "current_procedure": {
+      "input compact": "4df1857d0f25b9b1",
+      "input full": "8d7280bca0b14cf2",
+      "output compact": "ffd2432283f65468",
+      "output full": "e5ab6e33086533ac"
+    },
+    "cutter_command": {
+      "input compact": "b91fd6378ec89ada",
+      "input full": "b2498419df0799a6",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "3ad6e2b547bea0b2"
+    },
+    "decode_android_resources": {
+      "input compact": "a1b45d95750ca8ef",
+      "input full": "a431c83aa943b8ae",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "305a0073811ca5db"
+    },
+    "decode_interface_builder": {
+      "input compact": "0395893cc47e3a89",
+      "input full": "0a3e8cd205422160",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "1350c0e95cd079a2"
+    },
+    "decode_signal_recording": {
+      "input compact": "57f1e31eab5d6150",
+      "input full": "3421d68afea3e305",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "034b694447d662c9"
+    },
+    "decompile_all": {
+      "input compact": "f9475f6ca1476ae0",
+      "input full": "8edf4f9728334112",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "027c85c124f3eb94"
+    },
+    "decompile_jeb_item": {
+      "input compact": "365c0a3f3e7ee733",
+      "input full": "550314d3566b4d06",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "9eaba827b9c0df95"
+    },
+    "demangle_swift": {
+      "input compact": "ce0ed2a63eb8849e",
+      "input full": "c00ce4105952db46",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "c7e9a6485b9f2511"
+    },
+    "discover_tools": {
+      "input compact": "fdb69f3d5123e80e",
+      "input full": "db7d3a192d019fd3",
+      "output compact": "3e22807c622e44b2",
+      "output full": "32f3a4bae160d629"
+    },
+    "discover_webmcp_tools": {
+      "input compact": "4425590849a07d7f",
+      "input full": "4c1c00b38167c522",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "6e44435e7574e13a"
+    },
+    "evaluate_reconstruction_coverage": {
+      "input compact": "4c824f77c8039956",
+      "input full": "7939aaf37e3ed764",
+      "output compact": "6eb93bf85f43f04d",
+      "output full": "d6d551e9c2d87f25"
+    },
+    "execute_rizin_command": {
+      "input compact": "abd06cd2d1a16823",
+      "input full": "2f94236f15541ad1",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "6641582cc244716a"
+    },
+    "export_build_environment": {
+      "input compact": "f2e2ecfc4671d550",
+      "input full": "62bc3e2d0ab04e94",
+      "output compact": "c9f69f0d4856f6f4",
+      "output full": "390dad80870631cc"
+    },
+    "export_environment_bundle": {
+      "input compact": "61eb02cacceb0fc4",
+      "input full": "744ea588b4eead6a",
+      "output compact": "31f5a06d7bc1ebba",
+      "output full": "dceeebaf6160555e"
+    },
+    "export_evidence_bundle": {
+      "input compact": "fc434da7d0233b71",
+      "input full": "0108de34746f6550",
+      "output compact": "66a3eb6c5dc33577",
+      "output full": "3e62cab0931831f4"
+    },
+    "export_web_scripts": {
+      "input compact": "b18c35aaccafe15a",
+      "input full": "1184064cfab19a5e",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "e9fb40af65d5281d"
+    },
+    "extract_artifact": {
+      "input compact": "5ecb2020ae1f8f42",
+      "input full": "01fa5d96d1d7ec30",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "ccc9da0f11f369f8"
+    },
+    "extract_firmware": {
+      "input compact": "6ca4f62a458ff3d7",
+      "input full": "5532b56827f00c58",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "3f1934751041ebc3"
+    },
+    "find_changed_behavior": {
+      "input compact": "a8a946736b36ddb8",
+      "input full": "f4ee35765ec19d05",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "33ae23e1449da56d"
+    },
+    "find_xrefs_to_name": {
+      "input compact": "ba6030423e62d130",
+      "input full": "a71994c97b288b3f",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "8f1b014112cb21c0"
+    },
+    "frida_session_status": {
+      "input compact": "31cc6bc09d1bb29d",
+      "input full": "1e54d48e2c836204",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "d21c77dcda2c79e7"
+    },
+    "gdb_console": {
+      "input compact": "3a493db9e13845e2",
+      "input full": "f881edec7b3deaad",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "81a18d0c5a98d9e8"
+    },
+    "gdb_session_status": {
+      "input compact": "d5defc56611ce19d",
+      "input full": "4b71db780c1a3f28",
+      "output compact": "c29682a2312eb267",
+      "output full": "b966c84f3b4307ce"
+    },
+    "get_call_graph": {
+      "input compact": "5d40cd3080063c1d",
+      "input full": "d7ee8a225352e1b9",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "54b6a9dbb64e9097"
+    },
+    "get_evidence_bundle": {
+      "input compact": "3c840e5bbd9e9894",
+      "input full": "da9006c880020e5e",
+      "output compact": "9cda19dfa1310afa",
+      "output full": "a26c3bd621203a0d"
+    },
+    "get_navigation_context": {
+      "input compact": "4c9f333a998b4999",
+      "input full": "3e8f619285b8a44a",
+      "output compact": "f496722f55251654",
+      "output full": "268e4988bdfe1284"
+    },
+    "get_objc_classes": {
+      "input compact": "e2e179a75a6a8189",
+      "input full": "f2dad16a8fa59c65",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "0f0a8280b706c3ec"
+    },
+    "get_objc_protocols": {
+      "input compact": "32062bdb9024160d",
+      "input full": "4ca60b6725ad78fa",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "2294d4cd7b528639"
+    },
+    "goto_address": {
+      "input compact": "c9d8a29b5ea9eaf2",
+      "input full": "0ab8a9a24f970cbf",
+      "output compact": "ffd2432283f65468",
+      "output full": "e5ab6e33086533ac"
+    },
+    "guided_workflows": {
+      "input compact": "eab443f9a403d9f4",
+      "input full": "7b82ba652be17879",
+      "output compact": "2fefdacc1c7b9233",
+      "output full": "bab03929a6e8fea7"
+    },
+    "identify_flutter_build": {
+      "input compact": "18d266261424a97c",
+      "input full": "a0d01d4361373cc0",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "cfabff00f232456d"
+    },
+    "import_evidence_bundle": {
+      "input compact": "18d266261424a97c",
+      "input full": "f9275b31e76e709a",
+      "output compact": "6c6c35e1ceaeb7ae",
+      "output full": "00f86c62d562bdc9"
+    },
+    "import_managed_reconstruction": {
+      "input compact": "32ffbbfc8df34d78",
+      "input full": "3192e92a7311cdfb",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "8bb0832e69f9b84c"
+    },
+    "inline_comment": {
+      "input compact": "f1b0a54d8c702be5",
+      "input full": "dbc2a763429ebf8f",
+      "output compact": "9e24f29540c4da8a",
+      "output full": "83872009723f45ea"
+    },
+    "inspect_adb_client": {
+      "input compact": "32062bdb9024160d",
+      "input full": "4ca60b6725ad78fa",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "cfb880acbdaebae1"
+    },
+    "inspect_adb_device": {
+      "input compact": "0eefd4f4245ea66b",
+      "input full": "809345a31c21bb43",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "ca55e6f468904bc1"
+    },
+    "inspect_adb_display": {
+      "input compact": "0eefd4f4245ea66b",
+      "input full": "809345a31c21bb43",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "0ca5f240faf27b0e"
+    },
+    "inspect_adb_package": {
+      "input compact": "2d6b5bb69d217de1",
+      "input full": "18d1a418dd45188f",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "578e9aa061ba090c"
+    },
+    "inspect_adb_window": {
+      "input compact": "0eefd4f4245ea66b",
+      "input full": "809345a31c21bb43",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "cddb436877d72abe"
+    },
+    "inspect_address_context": {
+      "input compact": "9dd6c6df7b9ea95f",
+      "input full": "cf19092234e1cb71",
+      "output compact": "9cda19dfa1310afa",
+      "output full": "5ec565e258d7f01d"
+    },
+    "inspect_analysis_settings": {
+      "input compact": "60b44d23dd57ba69",
+      "input full": "1f5d7c73cf8a5b40",
+      "output compact": "b3a429110120aff1",
+      "output full": "d98ea6dc62763c7b"
+    },
+    "inspect_analysis_view": {
+      "input compact": "99dbe34c28cd04dd",
+      "input full": "9f3548ab0d96918c",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "eb1b9cf3a1cb1101"
+    },
+    "inspect_android_class": {
+      "input compact": "fb8be61f22dca985",
+      "input full": "2acc22cf59776739",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "d81ad5ccc4d224b0"
+    },
+    "inspect_android_jni_bindings": {
+      "input compact": "e5d2cfec1580148e",
+      "input full": "62232046e59e04f7",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "0518be07f91f63f2"
+    },
+    "inspect_android_method": {
+      "input compact": "f4d383779c829cc1",
+      "input full": "a306408bc7c4174a",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "a53e146e0e939917"
+    },
+    "inspect_android_package": {
+      "input compact": "6f391991d856198a",
+      "input full": "30021dcd33a85198",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "5546a2f4315e37be"
+    },
+    "inspect_api_contract": {
+      "input compact": "79519ee02b61df07",
+      "input full": "a3bab8e17fe60041",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "d1df13b6284b5600"
+    },
+    "inspect_apk_signature": {
+      "input compact": "dec153ba3fc1960c",
+      "input full": "4b9794bc1798c807",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "3e82b1caf1d35728"
+    },
+    "inspect_apktool_client": {
+      "input compact": "32062bdb9024160d",
+      "input full": "4ca60b6725ad78fa",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "dd7496e2a2b6c25c"
+    },
+    "inspect_apple_ips": {
+      "input compact": "c55c03a1cfb12bf4",
+      "input full": "21914ef23fb008e9",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "596616d03d2149a0"
+    },
+    "inspect_artifact": {
+      "input compact": "aabcc05db1232b21",
+      "input full": "aab2ccd8777bd3dc",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "60fa986d5d03bc5e"
+    },
+    "inspect_asset_catalog": {
+      "input compact": "72d0fff774075e7c",
+      "input full": "e75dd6946f5ebbd4",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "58c7e5f89c6f5e41"
+    },
+    "inspect_binary_hardening": {
+      "input compact": "c2417cfbfd1a4976",
+      "input full": "a443f7ff71920d2b",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "0e8485f4b878f5d9"
+    },
+    "inspect_binary_layout": {
+      "input compact": "59748ce45f667d12",
+      "input full": "8c2f01ee4713b3aa",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "c183ea17727dde13"
+    },
+    "inspect_byte_entropy": {
+      "input compact": "fdd4a3a111b4308b",
+      "input full": "59cf0e12bc3c108e",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "de5a7d222a981da3"
+    },
+    "inspect_dart_aot": {
+      "input compact": "a048bd94aa23c39e",
+      "input full": "84b7a4d7885725d2",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "e5366bda21abaa94"
+    },
+    "inspect_desktop_application": {
+      "input compact": "f7cf5551a6ffd825",
+      "input full": "56c058e26af84fce",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "55ffcf71322c47e6"
+    },
+    "inspect_devicetree": {
+      "input compact": "02a13a32cf55d458",
+      "input full": "5e4ff085d8caedb1",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "37cd8c96dac7d44c"
+    },
+    "inspect_electron_fuses": {
+      "input compact": "18d266261424a97c",
+      "input full": "6c021241d8cd9bba",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "86c725cca41b2e8b"
+    },
+    "inspect_electron_page": {
+      "input compact": "4bfd2a08afbc54fc",
+      "input full": "e7e98605fd861bd2",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "ddf3b275b9e2f853"
+    },
+    "inspect_elf_notes": {
+      "input compact": "8b30e04cd3ac0805",
+      "input full": "72951828309d7890",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "09e1374b000c473f"
+    },
+    "inspect_elf_unwind_ranges": {
+      "input compact": "9a9a8438a4b6e9f0",
+      "input full": "de4fdb0b32bba220",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "cb6cb8ce3d696fc6"
+    },
+    "inspect_erlang_beam": {
+      "input compact": "c14ca0aea789c645",
+      "input full": "e8105c1c3831969f",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "71f853fdc1ce0f71"
+    },
+    "inspect_evm_interface": {
+      "input compact": "f8a87e80e0ca66fe",
+      "input full": "eea3525bc6145792",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "c016c2f159ef8331"
+    },
+    "inspect_firmware_regions": {
+      "input compact": "ac72671d7bdc9ed4",
+      "input full": "077121200c6230d6",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "3494a60126706e43"
+    },
+    "inspect_go_binary": {
+      "input compact": "f5cc9dc3caf9edf4",
+      "input full": "4cc2529f61181257",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "70261e5c2f965682"
+    },
+    "inspect_gpu_code_objects": {
+      "input compact": "01c7ceeb7a6ac4d4",
+      "input full": "57828f2d970d5ec6",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "a6509e3b5d7bbb86"
+    },
+    "inspect_il2cpp_metadata": {
+      "input compact": "7181073b85e89641",
+      "input full": "d1f0b5d95f44b979",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "13b593523657b92f"
+    },
+    "inspect_jeb_client": {
+      "input compact": "32062bdb9024160d",
+      "input full": "4ca60b6725ad78fa",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "d46072274de39a08"
+    },
+    "inspect_kernel_build_config": {
+      "input compact": "67f91f8c76d696c7",
+      "input full": "90f801f16bcee24f",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "87e30d96fe5ec329"
+    },
+    "inspect_kernel_module": {
+      "input compact": "9f3ed49a3c380bd6",
+      "input full": "428edf5db3df7824",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "d8bd0171ffc09440"
+    },
+    "inspect_keyed_archive": {
+      "input compact": "fe4818885a05bfb0",
+      "input full": "3022b9844d558fd9",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "a40af63f27b8f0a5"
+    },
+    "inspect_macho": {
+      "input compact": "d50348f9415e6058",
+      "input full": "57d78ef0e5807969",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "2c2d4b041b83c16f"
+    },
+    "inspect_managed_artifact": {
+      "input compact": "b64e74c7116cc99b",
+      "input full": "39d3d9b27bfbb2bc",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "6c679ed6b00ecd30"
+    },
+    "inspect_managed_members": {
+      "input compact": "2c6c9865b3119ae2",
+      "input full": "4e2d466049d3db8a",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "c1398e2053c19bb2"
+    },
+    "inspect_managed_native_boundaries": {
+      "input compact": "ab5465849952e847",
+      "input full": "16fcf2208d2649c1",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "c8128dae7beafee6"
+    },
+    "inspect_model_artifact": {
+      "input compact": "0a9a2b524be0ce15",
+      "input full": "77c23542b6c0cc91",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "9fccb1bf3712547e"
+    },
+    "inspect_native_api": {
+      "input compact": "e1341c240f08c350",
+      "input full": "797d8e00e4516641",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "d7c2553d6e22f8f1"
+    },
+    "inspect_native_data_type": {
+      "input compact": "957e0a1d7fa1bd33",
+      "input full": "0106a28c68a6c1f4",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "a147305b1437aa33"
+    },
+    "inspect_native_dispatch_metadata": {
+      "input compact": "743838105118ca29",
+      "input full": "7471befefb6ecc03",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "de464d9fb160bf5a"
+    },
+    "inspect_native_exports": {
+      "input compact": "70adce0beddda5eb",
+      "input full": "ca56759b24315a92",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "27b6fa8a5cb77430"
+    },
+    "inspect_native_initializers": {
+      "input compact": "546bf32e9f7eb381",
+      "input full": "8dae0031df746862",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "5c34881386230019"
+    },
+    "inspect_native_instruction": {
+      "input compact": "940657f284593726",
+      "input full": "874cb6dd1433a2b9",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "fe091fab701e055f"
+    },
+    "inspect_native_load_image": {
+      "input compact": "f23a678531aa373a",
+      "input full": "b4f17638fe058818",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "fd83c093241df901"
+    },
+    "inspect_ntfs_journal": {
+      "input compact": "2e70facfe9d6f4f4",
+      "input full": "27993fb75f380d3c",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "dcf67a22f25e2efa"
+    },
+    "inspect_packet_capture": {
+      "input compact": "6b084c215c2391a6",
+      "input full": "83e69e1840a1b76f",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "fa4cbed82a20db32"
+    },
+    "inspect_packet_fields": {
+      "input compact": "7c1e0a2a80f4c87c",
+      "input full": "352f41bad20373eb",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "952deccd5027ec69"
+    },
+    "inspect_pcap_capture": {
+      "input compact": "5655059de2dcc830",
+      "input full": "37c0dee810ad43ba",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "ab4a25c8a892c33f"
+    },
+    "inspect_pcap_client": {
+      "input compact": "32062bdb9024160d",
+      "input full": "4ca60b6725ad78fa",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "3300dea89b1f7e6d"
+    },
+    "inspect_pe_certificates": {
+      "input compact": "eaa9f9a271f19ee9",
+      "input full": "42cfc75628887310",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "c90224285c2b9eaa"
+    },
+    "inspect_pe_imports": {
+      "input compact": "ad8b37fcf0adb19e",
+      "input full": "5b14dc7c54013f45",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "956b1b81feabfce5"
+    },
+    "inspect_pe_load_config": {
+      "input compact": "ea4a836a963d167b",
+      "input full": "1627e15cbccf40eb",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "57ca664436841319"
+    },
+    "inspect_pe_resources": {
+      "input compact": "2caac0f860526546",
+      "input full": "27aac58a9f10fc00",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "146513ec0ac0f950"
+    },
+    "inspect_playwright_trace": {
+      "input compact": "8211b6c65f46d420",
+      "input full": "b75133a3a13dde4a",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "76b7a1d70a4056fa"
+    },
+    "inspect_plist": {
+      "input compact": "c22855860d96f2a7",
+      "input full": "cb3c96882c8847c0",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "7c6fbc3e7d8e5b05"
+    },
+    "inspect_python_pyc": {
+      "input compact": "5969a9c826c2c055",
+      "input full": "fbc4308060a7efc2",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "ac4617fc12b74383"
+    },
+    "inspect_recorded_crash": {
+      "input compact": "3460ff3dfbfb1b2a",
+      "input full": "5229ff71304da517",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "35d1105e6420123f"
+    },
+    "inspect_rust_binary": {
+      "input compact": "55e64710a49b9fa2",
+      "input full": "50b4214d76713128",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "48bdf3e1453ddc77"
+    },
+    "inspect_signal_decoders": {
+      "input compact": "3748645472ab43e5",
+      "input full": "8d84ddfb4b2d7bd1",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "f07b92837cd184ee"
+    },
+    "inspect_signature": {
+      "input compact": "fcb6d54fec138c1e",
+      "input full": "b339e1884abe4fb2",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "04563e76e07f5d22"
+    },
+    "inspect_sqlite_database": {
+      "input compact": "e85331872a5525e6",
+      "input full": "dff8cc156179e435",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "53687605d9bfd0bd"
+    },
+    "inspect_v8_code_cache": {
+      "input compact": "17341f97702a0422",
+      "input full": "de55f188be526d0f",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "08e94e6a93710d59"
+    },
+    "inspect_wasm_artifact": {
+      "input compact": "7a138da90fc5e650",
+      "input full": "c4c28d5c089c03b7",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "cef0b0922a1b7685"
+    },
+    "inspect_web_event_listeners": {
+      "input compact": "2ef444a0a29f50e4",
+      "input full": "ce8cd07db8c7e59b",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "429e5c77ee7040be"
+    },
+    "inspect_web_network_capture": {
+      "input compact": "9a171b304737ce3d",
+      "input full": "a73cb946587e663b",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "bec94829c8c29d08"
+    },
+    "inspect_web_page": {
+      "input compact": "ae6db425047c0a8f",
+      "input full": "48fbe489c80a476d",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "b205593aafb06b34"
+    },
+    "inspect_windows_shortcut": {
+      "input compact": "f7055432bf97761a",
+      "input full": "4d754a10fbaca4ca",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "b05303d2b14c9bb9"
+    },
+    "inspect_with_objdump": {
+      "input compact": "3f51a78954949124",
+      "input full": "afcfcee5af05febd",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "aedf30bb7dbbdc00"
+    },
+    "install_adb_package": {
+      "input compact": "46f07cf88578ac7a",
+      "input full": "17ea522d18ea46f7",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "84b6fbf378d1da19"
+    },
+    "instrument_with_frida": {
+      "input compact": "6d62658ca139ecb4",
+      "input full": "0f976284ab4ee551",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "4442bf95ef4f9c2c"
+    },
+    "list_adb_devices": {
+      "input compact": "32062bdb9024160d",
+      "input full": "4ca60b6725ad78fa",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "dfd224b0e6e55d48"
+    },
+    "list_adb_directory": {
+      "input compact": "5560c011cdc77714",
+      "input full": "6da0d1c6b41aee8d",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "6b6c0c769d846493"
+    },
+    "list_adb_features": {
+      "input compact": "0eefd4f4245ea66b",
+      "input full": "809345a31c21bb43",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "77b63c8f6ff19cac"
+    },
+    "list_adb_packages": {
+      "input compact": "5cd991375a9f0a8f",
+      "input full": "88925c7f277cf06e",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "4bf7a3ce82b77b7a"
+    },
+    "list_adb_processes": {
+      "input compact": "0eefd4f4245ea66b",
+      "input full": "809345a31c21bb43",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "505d82df4c35a8bc"
+    },
+    "list_adb_services": {
+      "input compact": "0eefd4f4245ea66b",
+      "input full": "809345a31c21bb43",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "6cb0e05a69b2581c"
+    },
+    "list_architectures": {
+      "input compact": "fcb6d54fec138c1e",
+      "input full": "b339e1884abe4fb2",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "1db9b1172c5f67a1"
+    },
+    "list_bookmarks": {
+      "input compact": "4df1857d0f25b9b1",
+      "input full": "8d7280bca0b14cf2",
+      "output compact": "ef2ab2008a66fdd8",
+      "output full": "2f1381be676687e2"
+    },
+    "list_browser_targets": {
+      "input compact": "cfdc32cb7dc51cda",
+      "input full": "c931fc88e338c96c",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "7c97ab3784537f37"
+    },
+    "list_cutter_sessions": {
+      "input compact": "32062bdb9024160d",
+      "input full": "4ca60b6725ad78fa",
+      "output compact": "a61f3d77d190e70d",
+      "output full": "9d3c28981f007665"
+    },
+    "list_documents": {
+      "input compact": "32062bdb9024160d",
+      "input full": "4ca60b6725ad78fa",
+      "output compact": "49662c31e39ea6a1",
+      "output full": "cd9580c4d8d853b3"
+    },
+    "list_electron_targets": {
+      "input compact": "c32eb20cbe48cefa",
+      "input full": "745a189166918d0e",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "b02c41d5e62368a9"
+    },
+    "list_frida_devices": {
+      "input compact": "4478f0c5fb8ad186",
+      "input full": "a9c8cc732879c69b",
+      "output compact": "f1344e6ff37d2aa3",
+      "output full": "d4ebd1bf7ee78089"
+    },
+    "list_frida_processes": {
+      "input compact": "b04d2099435f3cac",
+      "input full": "0c7186de2af40a75",
+      "output compact": "f685f02d537b3bdf",
+      "output full": "646612a99438b324"
+    },
+    "list_javascript_runtime_targets": {
+      "input compact": "2b836a5a8a6c41d0",
+      "input full": "73b1f9e25fc8df9f",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "2c3b9a18aa07277a"
+    },
+    "list_jeb_units": {
+      "input compact": "4b137397fb16524d",
+      "input full": "e247faf31fe0ec63",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "f61ff906072d2f88"
+    },
+    "list_names": {
+      "input compact": "0ab7d5f507e24ad6",
+      "input full": "5ef5bc20130695cc",
+      "output compact": "2622a47474da6c03",
+      "output full": "79049d31807466ab"
+    },
+    "list_procedures": {
+      "input compact": "96e4c1b335588f47",
+      "input full": "41b8cbb8e9fe9c11",
+      "output compact": "2622a47474da6c03",
+      "output full": "e549351f44938a72"
+    },
+    "list_segments": {
+      "input compact": "4df1857d0f25b9b1",
+      "input full": "8d7280bca0b14cf2",
+      "output compact": "ef2ab2008a66fdd8",
+      "output full": "345e36b01e114028"
+    },
+    "list_strings": {
+      "input compact": "0ab7d5f507e24ad6",
+      "input full": "5ef5bc20130695cc",
+      "output compact": "2622a47474da6c03",
+      "output full": "e72ac73a4407c596"
+    },
+    "list_unknowns": {
+      "input compact": "8e887061536632ee",
+      "input full": "e28dd673bdb76694",
+      "output compact": "9cda19dfa1310afa",
+      "output full": "f5d81bfa0cecc921"
+    },
+    "load_frida_script": {
+      "input compact": "ed20157c00980757",
+      "input full": "bec28cb50b2736f8",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "70b2c62ad8ca8b3f"
+    },
+    "mark_build_checkpoint": {
+      "input compact": "f2e13f2c20cc0620",
+      "input full": "437c94722fb6250a",
+      "output compact": "8a71b3f0e157e74f",
+      "output full": "bd77a1a7bd66b777"
+    },
+    "match_native_functions": {
+      "input compact": "149e91c2ce2cc2f3",
+      "input full": "e537462c725377ac",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "6139fce8f156f9ae"
+    },
+    "measure_build_task": {
+      "input compact": "e7f4c82c15a6ce96",
+      "input full": "ecb0fd8a3eca02d3",
+      "output compact": "d368534f377ef13b",
+      "output full": "61de1405afa96929"
+    },
+    "next_address": {
+      "input compact": "f1b0a54d8c702be5",
+      "input full": "dbc2a763429ebf8f",
+      "output compact": "ffd2432283f65468",
+      "output full": "e5ab6e33086533ac"
+    },
+    "observe_javascript_runtime": {
+      "input compact": "e04053c4c8250c81",
+      "input full": "7eb7e5f05efc1d0d",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "c18514ef9e3c9a14"
+    },
+    "observe_native_calls": {
+      "input compact": "3ef1f34cab7e4387",
+      "input full": "5407f3241aa3941e",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "5840fd691f7aaba1"
+    },
+    "observe_native_ui": {
+      "input compact": "79890b6c44be3b32",
+      "input full": "6ebf031c232e994c",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "a5491cbb15a68153"
+    },
+    "observe_web_execution": {
+      "input compact": "d59167e845f9c262",
+      "input full": "eeb43f4b6574b727",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "892b41f6f9d9e563"
+    },
+    "observe_web_session": {
+      "input compact": "b68bdfd126b58c24",
+      "input full": "0c12d3bc050e7373",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "7670fb2eb98a4054"
+    },
+    "open_binary": {
+      "input compact": "706f1985ca397688",
+      "input full": "7b5cf7f1c39a70d2",
+      "output compact": "4cbb79604f9b9e14",
+      "output full": "114aaa1c3966c025"
+    },
+    "open_bundle_resources": {
+      "input compact": "18d266261424a97c",
+      "input full": "bd6f2ec781ec07b7",
+      "output compact": "57c40955388cd718",
+      "output full": "4f65f0daedac8b5b"
+    },
+    "open_jeb_project": {
+      "input compact": "18d266261424a97c",
+      "input full": "45deac1b582a89bf",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "6cdf0ade70ee4052"
+    },
+    "prev_address": {
+      "input compact": "f1b0a54d8c702be5",
+      "input full": "dbc2a763429ebf8f",
+      "output compact": "ffd2432283f65468",
+      "output full": "e5ab6e33086533ac"
+    },
+    "procedure_address": {
+      "input compact": "fd653e0720583704",
+      "input full": "0220946446d6b330",
+      "output compact": "4f6bd8217751f707",
+      "output full": "99a5a4082b2c7c12"
+    },
+    "procedure_assembly": {
+      "input compact": "7bbe36435a4e3ba8",
+      "input full": "c544b2488ecdbd55",
+      "output compact": "ffd2432283f65468",
+      "output full": "e5ab6e33086533ac"
+    },
+    "procedure_callees": {
+      "input compact": "fd653e0720583704",
+      "input full": "0220946446d6b330",
+      "output compact": "3558a96c0cb0a314",
+      "output full": "e99ea10ce7e3c9cf"
+    },
+    "procedure_callers": {
+      "input compact": "fd653e0720583704",
+      "input full": "0220946446d6b330",
+      "output compact": "3558a96c0cb0a314",
+      "output full": "aa32f77b9e522cf4"
+    },
+    "procedure_info": {
+      "input compact": "7bbe36435a4e3ba8",
+      "input full": "c544b2488ecdbd55",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "d1a6d4604ffcb626"
+    },
+    "procedure_pseudo_code": {
+      "input compact": "6dc93a3e8a3e48e4",
+      "input full": "7143429e3ffe5e47",
+      "output compact": "a6a19eed5331b2af",
+      "output full": "d7512367f6208022"
+    },
+    "procedure_references": {
+      "input compact": "dabb0c95aeeef564",
+      "input full": "dba2839ba1f62d34",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "1999fbe7856f8535"
+    },
+    "project_android_application_graph": {
+      "input compact": "af88743b51732378",
+      "input full": "934423de251b174e",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "863039e9b66e1d3e"
+    },
+    "project_apple_application_graph": {
+      "input compact": "af88743b51732378",
+      "input full": "8ebfa0d5f06423db",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "26c803059444fa84"
+    },
+    "project_harmony_application_graph": {
+      "input compact": "af88743b51732378",
+      "input full": "3c3d8cbfe057f1fb",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "bbde759881630604"
+    },
+    "project_managed_application_graph": {
+      "input compact": "926cbfd4477960cc",
+      "input full": "fdeaae10fff78bb7",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "ceb31fc3b096dab1"
+    },
+    "pull_adb_file": {
+      "input compact": "da6ee35a3849c53b",
+      "input full": "99b24dd80720988a",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "2ebe2c9149b53f9d"
+    },
+    "pull_adb_package": {
+      "input compact": "7f3087dd0cb3722b",
+      "input full": "46f398b6b0b928f3",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "838f72ec8feb0646"
+    },
+    "push_adb_file": {
+      "input compact": "09c89b1cb90f857b",
+      "input full": "2f39ec0c4540c53a",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "bcffe5c89f08af58"
+    },
+    "read_adb_logcat": {
+      "input compact": "827ccf60f59990d4",
+      "input full": "ead67c8e90f04068",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "969fbb7080d84294"
+    },
+    "read_adb_setting": {
+      "input compact": "ffd694dc45e55a70",
+      "input full": "a915c9414568e616",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "359be0b9452b3604"
+    },
+    "read_bytes": {
+      "input compact": "b271d6570e8bd906",
+      "input full": "8a052cfeb89c38eb",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "7fbea0b4ae9a2865"
+    },
+    "read_function_instructions": {
+      "input compact": "7bbe36435a4e3ba8",
+      "input full": "0c8dbba7f23902ea",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "8ac1d838a28a4a84"
+    },
+    "read_guidance_section": {
+      "input compact": "56957ce06b265ede",
+      "input full": "0312c29de650355f",
+      "output compact": "be25041cd42b10ec",
+      "output full": "320ca631319ece3a"
+    },
+    "reconcile_javascript_runtime": {
+      "input compact": "12dcdff55b84d363",
+      "input full": "37c3cf2d88cd6cb9",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "76f4021b991965d5"
+    },
+    "record_build_consent": {
+      "input compact": "a37dd3fbb6304940",
+      "input full": "ef23c3cff6b30a5c",
+      "output compact": "ed09e287cbf98b85",
+      "output full": "7c7a6076afade6c9"
+    },
+    "record_unknown": {
+      "input compact": "685294c0ddc0e020",
+      "input full": "06abdaa6ca6d7a2a",
+      "output compact": "9cda19dfa1310afa",
+      "output full": "447bbb45a3d5dcdb"
+    },
+    "recover_javascript_sources": {
+      "input compact": "8ac2f60d560cb8e9",
+      "input full": "4bb7bbafc1f87be6",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "6e20d1403b6e0973"
+    },
+    "reset_investigation": {
+      "input compact": "9fff69030d873c44",
+      "input full": "cecc491efc696c69",
+      "output compact": "0d2c6c6d5a286267",
+      "output full": "56fc10e0667d4def"
+    },
+    "resolve_adb_packages": {
+      "input compact": "16856277f255380d",
+      "input full": "c2a94402cc0d7f89",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "a7c549aa307132e3"
+    },
+    "resolve_containing_procedure": {
+      "input compact": "1e9a46a46d409356",
+      "input full": "dfc23cdc75cf036e",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "8df8f36e2efca85f"
+    },
+    "resolve_native_call_targets": {
+      "input compact": "940657f284593726",
+      "input full": "874cb6dd1433a2b9",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "3f1eea2e2d1d7b8c"
+    },
+    "resume_frida_session": {
+      "input compact": "d5defc56611ce19d",
+      "input full": "4b71db780c1a3f28",
+      "output compact": "f9a0c56f36f58265",
+      "output full": "e5dcac1611a3d10e"
+    },
+    "rizin_debug_command": {
+      "input compact": "c70e42c90db7a9f1",
+      "input full": "b91945bbd6c0be2c",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "16d75d349481eb33"
+    },
+    "rizin_debug_session_status": {
+      "input compact": "d5defc56611ce19d",
+      "input full": "4b71db780c1a3f28",
+      "output compact": "cdbade1a97bbb088",
+      "output full": "f1aae35aa55e3da5"
+    },
+    "search_android_classes": {
+      "input compact": "db67ac2566308239",
+      "input full": "8f628f88bdbac5cf",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "fc8143d248f073b6"
+    },
+    "search_bytes": {
+      "input compact": "05bc71d6612c74db",
+      "input full": "7a607295b002658b",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "d52579638295d756"
+    },
+    "search_guidance": {
+      "input compact": "e08dca23a03ab73b",
+      "input full": "1868228067cec6e0",
+      "output compact": "ccc9d9f4009e2c90",
+      "output full": "398153c9580881b6"
+    },
+    "search_procedures": {
+      "input compact": "05ff4a8d2a0fa1cf",
+      "input full": "4e94f61b4077bfd5",
+      "output compact": "2622a47474da6c03",
+      "output full": "24b013c84aba7ea0"
+    },
+    "search_strings": {
+      "input compact": "05ff4a8d2a0fa1cf",
+      "input full": "374db74e89cad759",
+      "output compact": "2622a47474da6c03",
+      "output full": "88252b743be5c8de"
+    },
+    "set_address_name": {
+      "input compact": "b15641bedfef5010",
+      "input full": "9ece3e63bfaa6459",
+      "output compact": "3c3f5b2578e1a632",
+      "output full": "60ca06761be3cddf"
+    },
+    "set_addresses_names": {
+      "input compact": "9dabf376fc823a5d",
+      "input full": "cf5fade07eb19019",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "feff0de1f3f54d7c"
+    },
+    "set_bookmark": {
+      "input compact": "04b55352b608b7e7",
+      "input full": "37bcbd457d943922",
+      "output compact": "3c3f5b2578e1a632",
+      "output full": "60ca06761be3cddf"
+    },
+    "set_comment": {
+      "input compact": "1989be9d5b720d84",
+      "input full": "8314e8673cacea5a",
+      "output compact": "3c3f5b2578e1a632",
+      "output full": "60ca06761be3cddf"
+    },
+    "set_inline_comment": {
+      "input compact": "1989be9d5b720d84",
+      "input full": "f9e7a04c33c1038b",
+      "output compact": "3c3f5b2578e1a632",
+      "output full": "60ca06761be3cddf"
+    },
+    "start_adb_activity": {
+      "input compact": "1457e8daaa15b8ce",
+      "input full": "828047e0681e9c47",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "5ad14fede3638967"
+    },
+    "start_adb_app": {
+      "input compact": "2d6b5bb69d217de1",
+      "input full": "2adc09597440e823",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "227c093d87a52c0f"
+    },
+    "start_build_capture": {
+      "input compact": "fb22413ed630198e",
+      "input full": "1672c5f59bcccbed",
+      "output compact": "ec7acbbccb1d199b",
+      "output full": "bfce0e1a8518dfdc"
+    },
+    "start_build_computer": {
+      "input compact": "f1976a463d3143e7",
+      "input full": "10cbe3174fe9a542",
+      "output compact": "e4fa205faaf0e82e",
+      "output full": "3d7a08bf5d14f8d1"
+    },
+    "start_frida_session": {
+      "input compact": "849dbbcd225a233a",
+      "input full": "b960b01d88e54588",
+      "output compact": "2565468480ec3144",
+      "output full": "6dbf34b783fe654b"
+    },
+    "start_gdb_session": {
+      "input compact": "21c503e369a05f57",
+      "input full": "7f12f941cd880d81",
+      "output compact": "a14bf3365e44977e",
+      "output full": "9c295f8d31b186bc"
+    },
+    "start_rizin_debug_session": {
+      "input compact": "ab6163e1a603d534",
+      "input full": "408e848e06f64118",
+      "output compact": "8679774ab9ec07a1",
+      "output full": "b37765d288071337"
+    },
+    "stop_adb_app": {
+      "input compact": "2d6b5bb69d217de1",
+      "input full": "070694a1c822fc8c",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "5f8c3fb8b378299a"
+    },
+    "stop_build_capture": {
+      "input compact": "3b3f0b6ed9a02890",
+      "input full": "9adc1d883ed94c75",
+      "output compact": "6ad23bedc3a584a2",
+      "output full": "c0418b4d2e05e883"
+    },
+    "trace_android_references": {
+      "input compact": "bed8f76edd347cb6",
+      "input full": "b6378abd45badfbc",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "3785f1ee85a22a75"
+    },
+    "trace_application_feature": {
+      "input compact": "6da6ada4587d6b1e",
+      "input full": "30c955768a4061fc",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "10f538ed7befb508"
+    },
+    "trace_call_path": {
+      "input compact": "eb86d04cd6c8d08e",
+      "input full": "70a468c2d2a8a351",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "9de3cae3d8c6d978"
+    },
+    "trace_dylib_resolution": {
+      "input compact": "fba037864c570ea9",
+      "input full": "45f2af8917ab7595",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "de680209d061dfd9"
+    },
+    "trace_feature": {
+      "input compact": "6e6c01e5a00f75ec",
+      "input full": "e6da33780049b8c7",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "7eedc13b0f055d59"
+    },
+    "trace_javascript_semantics": {
+      "input compact": "86bc47efe9065d21",
+      "input full": "941e1bdc205d6cb3",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "336ce73fb6d5a84c"
+    },
+    "trace_native_ui_action": {
+      "input compact": "5f7e5def746a8c3d",
+      "input full": "258357b193ca6d4e",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "2e0a96227678cd8f"
+    },
+    "trace_native_values": {
+      "input compact": "2d2afa5eefb4be64",
+      "input full": "7c4c10ea873d67ba",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "f6db546cf92a3c41"
+    },
+    "trace_web_module_imports": {
+      "input compact": "fac6a749ccacd74f",
+      "input full": "0f1bc7937a81be35",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "43f60c8ee46f6cbd"
+    },
+    "trace_web_source_location": {
+      "input compact": "ae3268db6e89a16b",
+      "input full": "dc4353623267beba",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "986e34494d9a6ae2"
+    },
+    "uninstall_adb_package": {
+      "input compact": "2d6b5bb69d217de1",
+      "input full": "6a2815a86f5dcd95",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "5f8c3fb8b378299a"
+    },
+    "unload_frida_script": {
+      "input compact": "2b7c1fe308fe6475",
+      "input full": "4e1590464e35482a",
+      "output compact": "433541d12d2cce0f",
+      "output full": "bb9f2449493fc50b"
+    },
+    "unset_bookmark": {
+      "input compact": "c9d8a29b5ea9eaf2",
+      "input full": "0ab8a9a24f970cbf",
+      "output compact": "3c3f5b2578e1a632",
+      "output full": "60ca06761be3cddf"
+    },
+    "update_analysis_settings": {
+      "input compact": "a16933f98bedfc3a",
+      "input full": "6b1deb63e4e36def",
+      "output compact": "39446aa1012006cc",
+      "output full": "5270e4654d984a2b"
+    },
+    "update_unknown": {
+      "input compact": "9c58fa7f6dfaccdb",
+      "input full": "2407902ba1c82558",
+      "output compact": "9cda19dfa1310afa",
+      "output full": "447bbb45a3d5dcdb"
+    },
+    "verify_managed_native_boundaries": {
+      "input compact": "6b357d640e0a98f5",
+      "input full": "a3fb480008d0f2b0",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "34d3bba9d7e0d642"
+    },
+    "verify_reconstruction": {
+      "input compact": "8b4cfb9f381ccb12",
+      "input full": "b31389c983ee1d64",
+      "output compact": "9087cdd7aaaf031b",
+      "output full": "e78a6a9596829597"
+    },
+    "verify_unknown_resolution": {
+      "input compact": "09378f40aaf4fa55",
+      "input full": "af205e3e45797ae3",
+      "output compact": "9cda19dfa1310afa",
+      "output full": "0d598a592d2d90e8"
+    },
+    "xrefs": {
+      "input compact": "f1b0a54d8c702be5",
+      "input full": "dbc2a763429ebf8f",
+      "output compact": "49662c31e39ea6a1",
+      "output full": "cd9580c4d8d853b3"
+    }
+  }
+}
