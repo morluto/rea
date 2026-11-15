@@ -220,6 +220,24 @@ export const withExtension = (
   );
 };
 
+/** The certificate with its `extensions [3]` field declared twice. */
+export const withRepeatedExtensions = (certificate: Uint8Array): Uint8Array => {
+  const { fields, outer } = certificateParts(certificate);
+  const part = ({ start, end }: DerSpan) => certificate.subarray(start, end);
+  return tlv(
+    0x30,
+    tlv(
+      0x30,
+      ...fields.flatMap((field) =>
+        certificate[field.start] === 0xa3
+          ? [part(field), part(field)]
+          : [part(field)],
+      ),
+    ),
+    ...outer.map(part),
+  );
+};
+
 export interface SignerInfoSpec {
   /** Certificate whose issuer and serial the SignerInfo names. */
   readonly names: Uint8Array;

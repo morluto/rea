@@ -17,6 +17,7 @@
  * conflated with malformed input.
  */
 import { type Result, err, ok } from "../result.js";
+import { keyedBy, uniqueKeyed } from "../keyedCollection.js";
 import { decodeAsn1Oid } from "../asn1Oid.js";
 import { Asn1BerFailure, Asn1BerReader, type Asn1BerNode } from "../asn1Ber.js";
 
@@ -290,7 +291,16 @@ const certificateIdentity = (
     const serial = expectTag(fields[offset], TAG.integer, "serialNumber");
     const issuer = expectTag(fields[offset + 2], TAG.sequence, "issuer");
     let subjectKeyIdentifier: Uint8Array | null = null;
-    const extensions = fields.find((field) => field.tag === TAG.context3);
+    // RFC 5280 §4.1: TBSCertificate is a SEQUENCE with at most one
+    // `extensions [3]`, and §4.2 allows each extension at most once. A repeat
+    // is not a TBSCertificate, so the certificate names no SignerInfo.
+    const extensionFields = uniqueKeyed(
+      keyedBy(fields, (field) => String(field.tag)),
+      String(TAG.context3),
+    );
+    if (!extensionFields.ok)
+      throw malformed("tbsCertificate declares extensions more than once");
+    const extensions = extensionFields.value;
     if (extensions !== undefined) {
       const list = expectTag(
         extensions.children[0],
@@ -301,6 +311,10 @@ const certificateIdentity = (
         const parts = extension.children;
         const id = expectTag(parts[0], TAG.oid, "extension id");
         if (oidText(id.content) !== OID_SUBJECT_KEY_IDENTIFIER) continue;
+        if (subjectKeyIdentifier !== null)
+          throw malformed(
+            "tbsCertificate declares subjectKeyIdentifier more than once",
+          );
         const value = expectTag(parts.at(-1), TAG.octetString, "extnValue");
         const inner = reader.read(value.contentStart, value.contentEnd, 0);
         subjectKeyIdentifier = expectTag(

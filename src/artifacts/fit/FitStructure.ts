@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { crc32 } from "node:zlib";
+import { keyedBy, uniqueKeyed } from "../../domain/keyedCollection.js";
 
 import { artifactExpansionBudgetBytes } from "../../domain/artifactExpansionBudget.js";
 import type {
@@ -83,8 +84,22 @@ const capacityFailure = (message: string): ArtifactReaderFailure =>
   new ArtifactReaderFailure("limit", message, { boundary: "capacity" });
 const nodeName = (node: FitNode): string =>
   node.path.slice(node.path.lastIndexOf("/") + 1);
-const propertyOf = (node: FitNode, name: string): FitProperty | undefined =>
-  node.properties.find((property) => property.name === name);
+/**
+ * A node's one property of a name. The devicetree parser already refuses a
+ * repeated property name in a node as malformed, as dtc does; a repeat here
+ * is the same malformed structure, not a first-wins choice.
+ */
+const propertyOf = (node: FitNode, name: string): FitProperty | undefined => {
+  const property = uniqueKeyed(
+    keyedBy(node.properties, (candidate) => candidate.name),
+    name,
+  );
+  if (!property.ok)
+    throw formatFailure(
+      `${node.path} declares property ${name} more than once`,
+    );
+  return property.value;
+};
 const valueOf = (fdt: Buffer, property: FitProperty): Buffer =>
   fdt.subarray(property.offset, property.offset + property.bytes);
 
