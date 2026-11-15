@@ -11,6 +11,8 @@ import {
   runEvidenceInputCommand,
 } from "./evidenceInputCommand.js";
 import { publishCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
+import { parseAnalysisInput } from "../application/AnalysisInput.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 
 /** Reuse standard CLI publication so summaries keep their complete source closure on disk. */
 export const registerStaticObservedEndpointsCommand = (
@@ -34,9 +36,12 @@ export const registerStaticObservedEndpointsCommand = (
       viewDelivery: { invalidJson: "view must be valid JSON" },
       cliOptions: { evidenceBundle: evidenceBundleOption },
     },
-    async (document, { signal, operation, delivery, cliOptions }) => {
+    async (document, { signal, operation, delivery, cliOptions, frame }) => {
       if (delivery === undefined)
         throw new Error(`${operation} declares evidenceDelivery`);
+      // Refuse a malformed document before reading the Evidence bundle.
+      const framed = parseAnalysisInput(operation, document, frame, signal);
+      if (!framed.ok) return projectAnalysisError(framed.error);
       let sources: readonly Evidence[] = [];
       const result = await runEvidenceInputCommand(
         operation,

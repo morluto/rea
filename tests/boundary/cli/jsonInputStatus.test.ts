@@ -187,6 +187,43 @@ describe("compiled CLI JSON document omissions", () => {
     );
 });
 
+describe("compiled CLI JSON document admission order", () => {
+  // The document frame is checked before any Evidence bundle is read, so a
+  // missing bundle cannot hide document errors.
+  cliTest(
+    "compare-static-and-observed-endpoints refuses a malformed document before reading its bundle",
+    async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-cli-json-frame-");
+      const result = await cli.run({
+        arguments: [
+          "compare-static-and-observed-endpoints",
+          "{}",
+          "--evidence-bundle",
+          join(root, "missing.bundle.json"),
+          "--json",
+        ],
+        environment: {
+          HOME: root,
+          XDG_CONFIG_HOME: root,
+          XDG_CACHE_HOME: root,
+        },
+      });
+      expect(result.json).toMatchObject({
+        code: "invalid_request",
+        details: {
+          operation: "compare_static_and_observed_endpoints",
+          issues: expect.arrayContaining([
+            expect.objectContaining({ path: ["application"] }),
+            expect.objectContaining({ path: ["capture"] }),
+          ]),
+        },
+      });
+      expect(JSON.stringify(result.json)).not.toContain("missing.bundle.json");
+      expect(result.exitCode).toBe(1);
+    },
+  );
+});
+
 describe("compiled CLI JSON document caller paths", () => {
   // A `file:` spelling is a URL, never resolved against the working directory
   // (#2577); a caller names such a file as `./file:ref.json`.
