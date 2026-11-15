@@ -228,13 +228,13 @@ checkCounted(
 // An abort reason names who ended the work: a typed `CallerAbort` at the CLI,
 // MCP and HTTP adapters, or an `OwnerCancellation` when REA closes an owner.
 // A bare `.abort()` leaves an anonymous platform AbortError as the cause.
-// Playwright's `route.abort()` fails an intercepted request instead; it takes
-// a network error code, not a reason, so that receiver is not counted.
+// Playwright's `route.abort(errorCode)` takes a network error code instead;
+// its call sites pass that code explicitly so the scan stays receiver-independent.
 checkCounted(
   "AbortController.abort() without a reason (pass a CallerAbort or OwnerCancellation from src/domain/analysisErrorCore)",
   "abort-without-reason",
   files,
-  /(?<!\broute)\.abort\(\s*\)/gu,
+  /\.abort\(\s*\)/gu,
   [],
 );
 
