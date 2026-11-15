@@ -1528,3 +1528,44 @@ it.each(["attached", "resumed"] as const)(
     expect(fixture.controls.resumes).toBe(state === "resumed" ? 1 : 0);
   },
 );
+
+// The MCP server's working directory is not the caller's, so a relative
+// script path would read a file the caller did not select.
+it.each(["load_frida_script", "instrument_with_frida"] as const)(
+  "%s refuses a relative script path before starting or loading",
+  async (name) => {
+    const fixture = await connectedFixture();
+    const result = await fixture.client.callTool({
+      name,
+      arguments:
+        name === "load_frida_script"
+          ? {
+              session_id: await fixture.start(),
+              source_kind: "file",
+              path: "script.js",
+            }
+          : {
+              mode: "attach",
+              device_id: "local",
+              pid: 512,
+              source_kind: "file",
+              path: "./script.js",
+            },
+    });
+    expect(parseMcpToolError(result)).toMatchObject({
+      error: {
+        code: "invalid_request",
+        details: {
+          operation: name,
+          issues: [
+            expect.objectContaining({
+              path: ["path"],
+              reason: "invalid_format",
+            }),
+          ],
+        },
+      },
+    });
+    expect(fixture.loaded).toEqual([]);
+  },
+);

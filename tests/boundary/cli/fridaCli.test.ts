@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import { expect, it } from "vitest";
 import type { DeviceManager } from "frida";
 
@@ -483,7 +483,11 @@ it("keeps Frida script-file identity in original bytes when UTF-8 decoding repla
           "attach",
           "71",
           "--script-file",
-          join(directory, name),
+          // The CLI resolves a relative script file against its working
+          // directory; the contract admits only the absolute path.
+          name === "ascii.js"
+            ? relative(process.cwd(), join(directory, name))
+            : join(directory, name),
           "--duration-ms",
           "0",
           "--json",
@@ -499,7 +503,10 @@ it("keeps Frida script-file identity in original bytes when UTF-8 decoding repla
         },
       );
       expect(exitCode).toBe(0);
-      const output: unknown = JSON.parse(stdout);
+      const output = JSON.parse(stdout) as {
+        readonly normalized_result: { readonly source_path: string };
+      };
+      expect(isAbsolute(output.normalized_result.source_path)).toBe(true);
       const bytes = files.find((file) => file.name === name)?.bytes;
       if (bytes === undefined) throw new Error(`Missing fixture ${name}`);
       const decodedSource = bytes.toString("utf8");
