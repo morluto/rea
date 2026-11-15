@@ -1,3 +1,4 @@
+import { UnclassifiedProviderFailure } from "../../../src/domain/unclassifiedProviderFailure.js";
 import { realpath, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { expect, onTestFinished, test, vi } from "vitest";
@@ -368,7 +369,7 @@ it("a physical command failure survives a late cancellation and cleanup retry", 
   if (result.ok) return;
   const returned = result.error;
   const primary = returned.cleanupPrimary;
-  expect(primary?._tag).toBe("AnalysisProtocolError");
+  expect(primary).toBeInstanceOf(UnclassifiedProviderFailure);
   expect(primary?.cause).not.toBe(reason);
   expect(projectAnalysisError(returned).code).toBe("cleanup_incomplete");
   expect(returned.capturedOutput?.stderr).toContain(

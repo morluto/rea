@@ -18,7 +18,6 @@ import {
   AnalysisCancelledError,
   AnalysisArtifactChangedError,
   AnalysisResourceConstraintError,
-  AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -525,8 +524,8 @@ export class ArtifactAnalysisResources {
           },
         };
       },
-      dialect: (outcome, details) =>
-        new AnalysisOutputError(operation, outcome.message, details),
+      dialect: (_outcome, _details, unclassified) =>
+        unclassified(this.providerId),
     };
   }
 
