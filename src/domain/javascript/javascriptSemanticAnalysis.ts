@@ -1371,13 +1371,14 @@ function* collectDefinitionsSteps(
     }
   }
   for (const { node, ancestors } of thrownValues) {
+    // A value not caught in its own function or class body reaches a
+    // caller's handler, and one thrown uncaught at the top level reaches the
+    // host's uncaught-exception handlers; neither is linked to the throw.
+    let caught = false;
     let child: t.Node = node;
     for (let index = ancestors.length - 1; index >= 0; index--) {
       const parent = ancestors[index]!;
-      if (t.isFunction(parent) || t.isClass(parent)) {
-        state.escapingThrows.push(node);
-        break;
-      }
+      if (t.isFunction(parent) || t.isClass(parent)) break;
       if (
         t.isTryStatement(parent) &&
         parent.handler != null &&
@@ -1403,10 +1404,12 @@ function* collectDefinitionsSteps(
             referenceOnly: true,
             entryBody: parent.handler.body,
           });
+        caught = true;
         break;
       }
       child = parent;
     }
+    if (!caught) state.escapingThrows.push(node);
   }
   for (const { node, scope } of legacyBlockFunctions) {
     if (

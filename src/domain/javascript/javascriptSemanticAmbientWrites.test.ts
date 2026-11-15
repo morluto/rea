@@ -389,6 +389,33 @@ it.each([
 // An argument of a directly invoked source function expression reaches only
 // that function's parameter, whose effects are indexed like any other source
 // effect. Only arguments the body may reach another way escape.
+function expectAmbientEffectPaths({
+  source,
+  writes,
+  escapes,
+}: {
+  readonly source: string;
+  readonly writes: readonly (readonly unknown[])[];
+  readonly escapes: readonly (readonly unknown[])[];
+}): void {
+  const parsed = parseJavaScriptSource(source, "app.js");
+  if (parsed === null) throw new Error("Expected ambient effect fixture");
+  const index = completeSemanticSteps(
+    indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+  );
+  completeSemanticSteps(index.indexMemberMutationFactsSteps());
+  const paths = (effects: readonly { readonly path: unknown }[]) => [
+    ...new Set(effects.map(({ path }) => JSON.stringify(path))),
+  ];
+  expect({
+    writes: paths(index.bindings.ambientWriteEffects),
+    escapes: paths(index.bindings.ambientEscapeEffects),
+  }).toEqual({
+    writes: writes.map((path) => JSON.stringify(path)),
+    escapes: escapes.map((path) => JSON.stringify(path)),
+  });
+}
+
 it.each([
   { source: "(function(g){})(this);", writes: [], escapes: [] },
   { source: "(function(){})(this);", writes: [], escapes: [] },
@@ -470,22 +497,24 @@ it.each([
   },
 ])(
   "tracks arguments of directly invoked functions through parameters: $source",
-  ({ source, writes, escapes }) => {
-    const parsed = parseJavaScriptSource(source, "app.js");
-    if (parsed === null) throw new Error("Expected invocation fixture");
-    const index = completeSemanticSteps(
-      indexJavaScriptBindingsWithReceiversSteps(parsed.program),
-    );
-    completeSemanticSteps(index.indexMemberMutationFactsSteps());
-    const paths = (effects: readonly { readonly path: unknown }[]) => [
-      ...new Set(effects.map(({ path }) => JSON.stringify(path))),
-    ];
-    expect({
-      writes: paths(index.bindings.ambientWriteEffects),
-      escapes: paths(index.bindings.ambientEscapeEffects),
-    }).toEqual({
-      writes: writes.map((path) => JSON.stringify(path)),
-      escapes: escapes.map((path) => JSON.stringify(path)),
-    });
-  },
+  expectAmbientEffectPaths,
+);
+
+// A value thrown uncaught at the top level reaches the host's
+// uncaught-exception handlers, which may change it.
+it.each([
+  ...[
+    "throw this;",
+    "{ throw this; }",
+    "try { throw this; } finally {}",
+    "try {} catch { throw this; }",
+  ].map((source) => ({
+    source,
+    writes: [],
+    escapes: [["global", null]],
+  })),
+  { source: "try { throw this; } catch {}", writes: [], escapes: [] },
+])(
+  "escapes values thrown uncaught at the top level: $source",
+  expectAmbientEffectPaths,
 );
