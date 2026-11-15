@@ -161,6 +161,19 @@ export interface CliContractProjection<
    */
   readonly cliOptions?: CliOptions;
   /**
+   * CLI-only options taken as positional arguments after the contract's
+   * positionals, in this order, such as one target text the handler reads
+   * as one of several contract fields. Their values reach the handler with
+   * the other CLI-only values.
+   */
+  readonly cliPositionals?: readonly (keyof CliOptions & string)[];
+  /**
+   * Contract fields argv never supplies because the handler fills them from
+   * CLI-only values, including required ones. The handler admits its
+   * completed input with the contract, so the contract's own rules apply.
+   */
+  readonly handlerFields?: readonly Field[];
+  /**
    * `dependentRequired` entries over CLI keys that the CLI-only options add
    * to the contract's own. Help and `--schema` advertise them; the handler
    * enforces them.
@@ -459,8 +472,12 @@ export interface ContractCliDescription {
   readonly parameters: readonly ContractCliParameter[];
   /** Options after the contract parameters that no contract field owns. */
   readonly cliOnlyOptions: readonly CliOnlyOption[];
+  /** Positionals after the contract's own that no contract field owns. */
+  readonly cliPositionals: readonly CliOnlyOption[];
   /** Contract fields the command does not expose, with the reason. */
   readonly omitted: Readonly<Record<string, string>>;
+  /** Contract fields the handler fills from CLI-only values. */
+  readonly handlerFields: readonly string[];
   /** Object-level JSON Schema constraints, renamed to CLI keys. */
   readonly optionConstraints: Readonly<Record<string, unknown>> | undefined;
   /**
@@ -1333,12 +1350,15 @@ export const describeContractCommand = <
   const targetFields: ReadonlySet<string> = new Set(
     Object.keys(projection.evidenceTargets?.fields ?? {}),
   );
-  // Fields argv never supplies: the delivery's, the omitted ones, and those
-  // the handler supplies with each target's source Evidence.
+  const handlerFields: readonly string[] = projection.handlerFields ?? [];
+  // Fields argv never supplies: the delivery's, the omitted ones, those the
+  // handler supplies with each target's source Evidence, and those it fills
+  // from CLI-only values.
   const unprojectedFields: ReadonlySet<string> = new Set([
     ...deliveryFields,
     ...Object.keys(projection.omit ?? {}),
     ...targetFields,
+    ...handlerFields,
   ]);
   const shape = inputFields(contract, unprojectedFields);
   if (viewDelivery !== undefined && !admitsOmission(shape.view ?? z.never()))
@@ -1378,6 +1398,14 @@ export const describeContractCommand = <
     ...Object.keys(fieldProjections),
     ...Object.keys(omitted),
   ]) {
+    if (!Object.hasOwn(shape, field))
+      throw new Error(`${contract.name} has no input field ${field}`);
+    if (targetFields.has(field))
+      throw new Error(`${contract.name}.${field} is an Evidence target`);
+    if (handlerFields.includes(field))
+      throw new Error(`${contract.name}.${field} is filled by the handler`);
+  }
+  for (const field of handlerFields) {
     if (!Object.hasOwn(shape, field))
       throw new Error(`${contract.name} has no input field ${field}`);
     if (targetFields.has(field))
@@ -1537,7 +1565,8 @@ export const describeContractCommand = <
       (field) =>
         !positionals.includes(field) &&
         !Object.hasOwn(omitted, field) &&
-        !targetFields.has(field),
+        !targetFields.has(field) &&
+        !handlerFields.includes(field),
     ),
   ].flatMap((field) =>
     flattened[field] === undefined
@@ -1545,6 +1574,17 @@ export const describeContractCommand = <
       : memberParameters(field),
   );
   const cliOptions: CliOptionShape = projection.cliOptions ?? {};
+  const cliPositionalKeys: readonly string[] = projection.cliPositionals ?? [];
+  for (const key of cliPositionalKeys)
+    if (!Object.hasOwn(cliOptions, key))
+      throw new Error(`${contract.name} has no CLI option ${key}`);
+  const cliPositionals: readonly CliOnlyOption[] = cliPositionalKeys.map(
+    (key) => ({
+      key,
+      description: cliOptions[key]!.description,
+      schema: cliOptions[key]!,
+    }),
+  );
   const cliOnlyOptions: readonly CliOnlyOption[] = [
     ...Object.values(nullFlags).flatMap((flag) =>
       flag === undefined
@@ -1563,7 +1603,9 @@ export const describeContractCommand = <
           : analysisEvidenceDeliveryOptions
         : {},
     ),
-    ...Object.entries(cliOptions),
+    ...Object.entries(cliOptions).filter(
+      ([key]) => !cliPositionalKeys.includes(key),
+    ),
   ].map(([key, schema]: [string, z.ZodType]) => ({
     key,
     description: schema.description,
@@ -1602,6 +1644,7 @@ export const describeContractCommand = <
     ...sessionTargetKeys,
     ...parameters.map(({ key }) => key),
     ...cliOnlyOptions.map(({ key }) => key),
+    ...cliPositionalKeys,
   ]);
   const optionKeys = new Set([
     ...sessionTargetKeys,
@@ -1611,7 +1654,10 @@ export const describeContractCommand = <
   ]);
   if (
     keys.size !==
-      sessionTargetKeys.length + parameters.length + cliOnlyOptions.length ||
+      sessionTargetKeys.length +
+        parameters.length +
+        cliOnlyOptions.length +
+        cliPositionalKeys.length ||
     optionKeys.size !==
       sessionTargetKeys.length +
         parameters.filter(({ positional }) => !positional).length +
@@ -1739,7 +1785,9 @@ export const describeContractCommand = <
     contract,
     parameters,
     cliOnlyOptions,
+    cliPositionals,
     omitted,
+    handlerFields,
     fields: shape,
     optionConstraints: projectObjectConstraints(
       contract,
