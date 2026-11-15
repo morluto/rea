@@ -178,10 +178,6 @@
     "src/wasm/WabtArtifactProvider.ts": 2,
     "src/wasm/WabtFailures.ts": 1
   },
-  "parser-format-failure-class": {
-    "src/domain/propertyListXmlText.ts": 1,
-    "src/kuna/KunaDocumentError.ts": 1
-  },
   "parser-json-parse": {
     "src/android/JadxProtocol.ts": 2,
     "src/android/JadxWorkspaceRoot.ts": 1,
@@ -208,12 +204,10 @@
     "src/artifacts/StreamBytes.ts": 1,
     "src/artifacts/ZipArtifactReader.ts": 1,
     "src/artifacts/apple/BinaryPlistMaterializer.ts": 4,
-    "src/artifacts/apple/KeyedArchiveReader.ts": 1,
     "src/artifacts/apple/NibArchive.ts": 19,
     "src/artifacts/apple/PlistScalars.ts": 3,
     "src/artifacts/apple/PropertyListDecodeBudget.ts": 25,
     "src/domain/apple/interfaceBuilderKeyedArchive.ts": 1,
-    "src/domain/apple/keyedArchive.ts": 5,
     "src/domain/apple/plistValue.ts": 3,
     "src/domain/native/functionByteCoverage.ts": 1,
     "src/domain/python/marshalUtf8.ts": 1,
@@ -380,8 +374,6 @@
   },
   "range-error-interpretation": {
     "src/application/JsonInputFile.ts": 1,
-    "src/artifacts/apple/InterfaceBuilderAnalysis.ts": 1,
-    "src/artifacts/apple/KeyedArchiveReader.ts": 1,
     "src/artifacts/nodeSea/NodeSeaBlob.ts": 1,
     "src/browser/WebBundleAnalysisWorkerServer.ts": 1,
     "src/cli/cliResultOutput.ts": 1,
