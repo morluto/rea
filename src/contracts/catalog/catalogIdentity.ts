@@ -20,16 +20,16 @@ import {
   type AdvertisedToolPresentation,
 } from "../advertisedTool.js";
 import {
-  advertisedToolPresentation,
-  resolveMcpOutputSchemaProfile,
-  type McpOutputSchemaProfile,
-} from "../../config/mcpOutputSchemaProfile.js";
-import { COMPACT_INPUT_SCHEMA_PRESENTATION } from "../../config/mcpInputSchemaProfile.js";
-import {
   RECORDED_CATALOG_DIGEST_PROFILES,
   type CatalogDigestProfiles,
   type CatalogDigests,
 } from "./recordedCatalogDigests.js";
+import {
+  advertisedToolPresentation,
+  resolveMcpOutputSchemaProfile,
+  type McpOutputSchemaProfile,
+  COMPACT_INPUT_SCHEMA_PRESENTATION,
+} from "../mcpSchemaPresentation.js";
 
 /**
  * Digested per-tool projection. Every contract field that changes what a

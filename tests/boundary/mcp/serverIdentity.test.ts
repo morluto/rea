@@ -18,7 +18,6 @@ import {
   createCatalogIdentity,
   CLI_COMMAND_NAMES,
 } from "../../../src/contracts/catalog/catalogIdentity.js";
-import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/config/mcpInputSchemaProfile.js";
 import { PACKAGE_METADATA } from "../../../src/generatedPackageMetadata.js";
 import { PRODUCT_IDENTITY, SDK_IDENTITY } from "../../../src/identity.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
@@ -38,6 +37,7 @@ import type {
   AnalysisProvider,
   CapabilityDescriptor,
 } from "../../../src/application/AnalysisProvider.js";
+import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/contracts/mcpSchemaPresentation.js";
 
 const availabilityProvider = (
   operations: readonly CapabilityDescriptor["operation"][] = [

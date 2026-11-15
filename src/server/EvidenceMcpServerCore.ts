@@ -35,12 +35,6 @@ import {
   advertiseToolOutput,
   type AdvertisedToolPresentation,
 } from "../contracts/advertisedTool.js";
-import {
-  advertisedToolPresentation,
-  resolveMcpOutputSchemaProfile,
-  type McpOutputSchemaProfile,
-} from "../config/mcpOutputSchemaProfile.js";
-import { COMPACT_INPUT_SCHEMA_PRESENTATION } from "../config/mcpInputSchemaProfile.js";
 import type { createCatalogIdentity } from "../contracts/catalog/catalogIdentity.js";
 import { transformAdvertisedInputJsonSchema } from "../contracts/toolSchemaMetadata.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
@@ -280,6 +274,12 @@ export const forgetPendingMcpRequest = (
 };
 import type { PromptCompletionSource } from "./promptCompletion.js";
 import { isRecord } from "../domain/isRecord.js";
+import {
+  advertisedToolPresentation,
+  resolveMcpOutputSchemaProfile,
+  type McpOutputSchemaProfile,
+  COMPACT_INPUT_SCHEMA_PRESENTATION,
+} from "../contracts/mcpSchemaPresentation.js";
 
 /** Standard-schema registration boundary shared with deferred SDK bindings. */
 export interface StandardToolRegistration {

@@ -12,10 +12,7 @@ import {
   missingCliOutputValueMessage,
   renderCliDocument,
 } from "./cliOutput.js";
-import {
-  parseMcpOutputSchemaProfile,
-  resolveMcpOutputSchemaProfile,
-} from "./config/mcpOutputSchemaProfile.js";
+import { parseMcpOutputSchemaProfile } from "./config/mcpOutputSchemaProfile.js";
 import { parseMcpToolFamilies } from "./config/mcpToolFamilies.js";
 import { parseMcpToolCatalogProfile } from "./config/mcpToolCatalogProfile.js";
 import {
@@ -41,6 +38,7 @@ import {
 import { MCP_DOCTOR_ALIAS, MCP_DOCTOR_OPTIONS } from "./mcpDoctorOptions.js";
 import { OwnedMcpStdioTransport } from "./process/OwnedMcpStdioTransport.js";
 import { isRecord } from "./domain/isRecord.js";
+import { resolveMcpOutputSchemaProfile } from "./contracts/mcpSchemaPresentation.js";
 
 const OUTPUT_FORMATS = CLI_DOCUMENT_OUTPUT_FORMATS;
 type OutputFormat = (typeof OUTPUT_FORMATS)[number];

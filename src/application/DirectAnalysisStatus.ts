@@ -9,14 +9,16 @@ import { sqliteDatabaseCapability } from "./sqlite/SqliteDatabaseCapability.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 import { catalogIdentityForToolFamilies } from "../contracts/catalog/catalogIdentity.js";
 import { progressiveCatalogIdentity } from "../contracts/catalog/catalogDiscovery.js";
-import { COMPACT_INPUT_SCHEMA_PRESENTATION } from "../config/mcpInputSchemaProfile.js";
-import { resolveMcpOutputSchemaProfile } from "../config/mcpOutputSchemaProfile.js";
 import {
   directAnalysisCleanupFailure,
   projectInvocationFailure,
   withSessionCleanup,
 } from "./DirectAnalysisCleanup.js";
 import { ok } from "../domain/result.js";
+import {
+  COMPACT_INPUT_SCHEMA_PRESENTATION,
+  resolveMcpOutputSchemaProfile,
+} from "../contracts/mcpSchemaPresentation.js";
 
 /** Read target-free provider status and operation availability. */
 export const runSessionStatus = async (
