@@ -8,6 +8,7 @@ import {
 } from "./counted-baseline.mjs";
 import { localCompletenessEnumCount } from "./completeness-enum-guard.mjs";
 import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
+import { localLimitErrorClassCount } from "./limit-class-guard.mjs";
 
 // Architecture guards for the strict-identity / best-effort-inference split.
 // - Composite dedup keys must not NUL-join variable-length or free-form
@@ -333,7 +334,7 @@ checkCounted(
   "local limit class extending plain Error (use decodeLimit from src/domain/parseFailure or an AnalysisRefusal)",
   "local-limit-error-class",
   files,
-  /\bclass \w*(?:Limit|Budget|Exhausted|Exceeded)\w* extends Error\b/gu,
+  localLimitErrorClassCount,
   [],
 );
 
