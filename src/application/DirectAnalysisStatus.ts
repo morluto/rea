@@ -10,6 +10,7 @@ import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 import { catalogIdentityForToolFamilies } from "../catalogIdentity.js";
 import { progressiveCatalogIdentity } from "../catalogDiscovery.js";
 import { compactPresentationForMcpInputSchemaProfile } from "../config/mcpInputSchemaProfile.js";
+import { resolveMcpOutputSchemaProfile } from "../config/mcpOutputSchemaProfile.js";
 import {
   directAnalysisCleanupFailure,
   projectInvocationFailure,
@@ -36,7 +37,7 @@ export const runSessionStatus = async (
         compactPresentationForMcpInputSchemaProfile(
           config.value.mcpInputSchemaProfile,
         ),
-        config.value.mcpOutputSchemaProfile ?? "full",
+        resolveMcpOutputSchemaProfile(config.value.mcpOutputSchemaProfile),
         config.value.mcpToolFamilies === undefined
           ? undefined
           : new Set(config.value.mcpToolFamilies),

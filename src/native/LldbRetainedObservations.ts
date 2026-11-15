@@ -2,6 +2,7 @@ import {
   NATIVE_CALL_CAPTURE_DEFAULTS,
   type NativeCallCaptureLimits,
 } from "../domain/native/nativeCallCaptureLimits.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
 import type { FileHandle } from "node:fs/promises";
 import type { LldbReadbackFiles } from "./LldbReadbackFiles.js";
 import type { Result } from "../domain/result.js";
@@ -190,7 +191,9 @@ export const readBoundedPrefix = async (
     }
     if (count === 0) break;
     if (count > requestedBytes - bytesRead)
-      throw new Error("The bounded read returned more bytes than requested");
+      throw invariantViolation(
+        "The bounded read returned more bytes than requested",
+      );
     bytesRead += count;
   }
   return {

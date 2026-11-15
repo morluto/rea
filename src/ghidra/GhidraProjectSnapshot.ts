@@ -1,6 +1,7 @@
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import { ghidraFileDialect } from "./GhidraFileArtifacts.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { createHash } from "node:crypto";
 import { cp, lstat, mkdir, readdir, realpath } from "node:fs/promises";
@@ -233,7 +234,7 @@ const pathsOverlap = (first: string, second: string): boolean => {
       rel === "" ||
       (!isAbsolute(rel) &&
         rel !== ".." &&
-        !rel.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`))
+        !rel.startsWith(`..${HOST_PLATFORM.platform === "win32" ? "\\" : "/"}`))
     );
   };
   return contains(first, second) || contains(second, first);

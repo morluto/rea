@@ -11,6 +11,7 @@ import {
   type RpcError,
   type StateIntake,
 } from "./stateIntake.js";
+import { isRecord } from "../../domain/isRecord.js";
 
 /** One data-plane method's outcome; undefined from a method table means the method is not served. */
 export type RpcOutcome =
@@ -23,9 +24,6 @@ export type RpcMethods = (
   params: unknown,
   signal?: AbortSignal,
 ) => Promise<RpcOutcome | undefined>;
-
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** The first document problem as `-32602`, located by a JSON pointer into the document. */
 const documentError = (error: AnalysisInputError): RpcError => {

@@ -32,33 +32,37 @@ it("revalidates mutable managed facts despite a sealed flag and shallow freeze",
   });
 });
 
-it("retains historical unknowns while normalizing immutable managed parents", () => {
+it("keeps unexamined collections unknown while normalizing immutable managed parents", () => {
   const complete = managedMemberInspectionSchema.parse(
     MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE.static_members.normalized_result,
   );
-  const {
-    signature_resolution: _signature,
-    nesting_read: _nesting,
-    exported_types: _exported,
-    user_strings: _strings,
-    selection: _selection,
-    method_rows: _rows,
-    ...legacy
-  } = complete;
-  const input = parent(freezeOwnedJsonTreeSnapshot(legacy));
+  const unexamined = {
+    ...complete,
+    signature_resolution: null,
+    exported_types: null,
+    user_strings: null,
+    fields: [],
+    methods: [],
+    member_refs: [],
+    call_edges: [],
+    field_accesses: [],
+  };
+  const input = parent(freezeOwnedJsonTreeSnapshot(unexamined));
   for (let attempt = 0; attempt < 2; attempt++) {
     expect(projectManagedMemberView(input, { kind: "summary" })).toMatchObject({
       ok: true,
       value: {
         summary: {
           signature_resolution: null,
-          nesting_read: null,
           reported_counts: { exported_types: null, user_strings: null },
         },
       },
     });
   }
-  expect(Object.hasOwn(legacy, "signature_resolution")).toBe(false);
+  const { nesting_read: _nesting, ...withoutNesting } = complete;
+  expect(
+    projectManagedMemberView(parent(withoutNesting), { kind: "summary" }),
+  ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
 });
 
 const methodFacts = () => {
@@ -239,25 +243,30 @@ it("rejects unsupported selectors and fields instead of silently ignoring caller
     ).toBe(false);
 });
 
-it("does not restore omitted defaulted columns and admits historical unknown IL offsets", () => {
+it("does not add omitted columns and requires the IL offset of every edge row", () => {
   const types = {
     collection: "types",
     rows: [{ token: "0x02000001", row_offset: 32, source_index: 0 }],
   };
   expect(managedMembersViewPageSchema.parse(types)).toEqual(types);
+  const edge = {
+    caller_token: "0x06000001",
+    opcode: "call",
+    target_token: "0x0a000001",
+    source_index: 0,
+  };
   const calls = managedMembersViewPageSchema.parse({
     collection: "call_edges",
-    rows: [
-      {
-        caller_token: "0x06000001",
-        opcode: "call",
-        target_token: "0x0a000001",
-      },
-    ],
+    rows: [{ ...edge, il_offset: null }],
   });
-  expect(calls.rows[0]).toMatchObject({ il_offset: null });
   expect(calls.rows[0]).not.toHaveProperty("target_identity_sha256");
   expect(calls.rows[0]).not.toHaveProperty("target_declaring_type");
+  expect(
+    managedMembersViewPageSchema.safeParse({
+      collection: "call_edges",
+      rows: [edge],
+    }).success,
+  ).toBe(false);
 });
 
 it("filters relationship endpoints from recorded facts rather than caller display text", () => {

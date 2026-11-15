@@ -6,6 +6,7 @@ import {
   createImmutableEvidenceBundle,
   isImmutableEvidenceBundle,
   safeParseImmutableEvidenceBundle,
+  singleEvidenceRecordIssue,
   validateResidualUnknownAddition,
   type EvidenceBundle,
 } from "../../domain/evidenceBundle.js";
@@ -137,10 +138,11 @@ export class EvidenceLedger {
       const { kind, message, cause } = parsed.error;
       if (kind === "single-record")
         return err(
-          new AnalysisInputError("import_evidence_bundle", {
-            cause,
-            userMessage: message,
-          }),
+          new AnalysisInputError(
+            "import_evidence_bundle",
+            { cause, userMessage: message },
+            [singleEvidenceRecordIssue([], message)],
+          ),
         );
       return err(
         new EvidenceIntegrityError("Evidence bundle validation failed", {

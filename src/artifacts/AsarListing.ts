@@ -9,7 +9,8 @@ import {
   DEFAULT_ASAR_LISTING_ADMISSION,
   type AsarListingAdmission,
 } from "../config/asarListingAdmission.js";
-const BLOCK_INTEGRITY_LIMITATION =
+/** Recorded once per member whose integrity declares a block table REA does not check. */
+export const BLOCK_INTEGRITY_LIMITATION =
   "ASAR block integrity declarations were not validated. Whole-file digest comparison does not establish block integrity or Electron runtime acceptance.";
 /** Source text quoted in listing diagnostics; longer values keep their length. */
 const MAX_QUOTED_SOURCE_UNITS = 256;

@@ -8,7 +8,10 @@ import {
   CDP_DISCOVERY_RESPONSE_TIMEOUT_MS,
   selectedCdpCommandTimeoutMs,
 } from "../domain/browserDeadline.js";
-import { AnalysisTimeoutError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisTimeoutError,
+  OwnerCancellation,
+} from "../domain/analysisErrorCore.js";
 import { browserObservationEndpointSchema } from "../domain/browserObservation.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { CdpTargetSessionOwner } from "./CdpTargetSessionOwner.js";
@@ -24,7 +27,11 @@ import {
   type CdpTargetSession,
 } from "./CdpTargetSession.js";
 import { withPlaywrightExecutionBoundary } from "./PlaywrightExecutionBoundary.js";
-import type { CdpSendParams, CdpSendResult } from "./protocol/CdpCommands.js";
+import type {
+  CdpCommand,
+  CdpCommandParams,
+  CdpCommandResult,
+} from "./protocol/CdpCommands.js";
 
 const OPERATION = "capture_browser_scenario" as const;
 // Restoration performs several sequential CDP mutations before the transport's
@@ -47,9 +54,6 @@ const serviceWorkerPolicyCheckTimeout = (): AnalysisTimeoutError => {
   });
 };
 
-const restorationResponse = z.object({
-  result: z.object({ value: z.literal("policy_owned").nullable() }),
-});
 const attachedEvent = z.object({
   sessionId: z.string(),
   targetInfo: z.object({ type: z.string() }),
@@ -263,11 +267,11 @@ export class PlaywrightScenarioServiceWorkers {
     }
   }
 
-  private send<M extends string>(
+  private send<M extends CdpCommand>(
     id: string,
     method: M,
-    params: CdpSendParams<M> = {} as CdpSendParams<M>,
-  ): Promise<CdpSendResult<M>> {
+    params: CdpCommandParams<M> = {} as CdpCommandParams<M>,
+  ): Promise<CdpCommandResult<M>> {
     if (this.#session === undefined)
       throw new BrowserObservationError(OPERATION, "disconnected");
     return this.#session.connection.send(method, params, id);
@@ -315,16 +319,18 @@ export class PlaywrightScenarioServiceWorkers {
   }
 
   private async restoreMainFrame(id: string): Promise<void> {
-    const { result } = restorationResponse.parse(
-      await this.send(id, "Runtime.evaluate", {
-        expression: this.restorationScript(),
-        returnByValue: true,
-      }),
-    );
+    const { result } = await this.send(id, "Runtime.evaluate", {
+      expression: this.restorationScript(),
+      returnByValue: true,
+    });
     if (result.value === "policy_owned")
       throw new Error(
         "service-worker policy restoration could not be confirmed",
       );
+    // The script returns null once restored; anything else, including a
+    // thrown evaluation, is a protocol failure as in the Playwright frame path.
+    if (result.value !== null)
+      throw new BrowserObservationError(OPERATION, "protocol_error");
   }
 
   private async restorePlaywrightFrame(frame: Frame): Promise<void> {
@@ -389,7 +395,7 @@ export class PlaywrightScenarioServiceWorkers {
       POLICY_CLEANUP_CONFIRMATION_TIMEOUT_MS,
     );
     // Abort discovery/handshakes and reads, never an already-sent page mutation.
-    this.#setup.abort();
+    this.#setup.abort(OwnerCancellation.ownerClosed);
     const restoration = (this.#restoration ??= this.restore());
     const clearRestoration = (): void => {
       if (this.#restoration === restoration) this.#restoration = undefined;

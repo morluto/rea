@@ -24,6 +24,8 @@ import {
   javaScriptWorkerModuleRecordSchema,
   javaScriptWorkerProjectionHeaderSchema,
 } from "./JavaScriptAnalysisWorkerSchemas.js";
+import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
+import { withOwnedFileHandle } from "../../filesystem/OwnedRegularFile.js";
 
 // Budgets bound transfer representation, independently of source length.
 const FRAME_BYTES = JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES;
@@ -195,7 +197,8 @@ export const writeJavaScriptAnalysisTransfer = async (
   transferBytes = TRANSFER_BYTES,
 ): Promise<Descriptor> => {
   assertTransferByteBudget(transferBytes);
-  const output = await open(path, "wx", 0o600);
+  const owner = new OwnedFileHandle(await open(path, "wx", 0o600));
+  const output = owner.handle;
   const digest = createHash("sha256");
   let bytes = 0;
   let records = 0;
@@ -237,7 +240,7 @@ export const writeJavaScriptAnalysisTransfer = async (
     batchBytes += size;
     if (batchBytes >= BATCH_BYTES) await flush();
   };
-  try {
+  return withOwnedFileHandle(path, owner, {}, async () => {
     await append({
       kind: "projection-header",
       value: {
@@ -270,9 +273,7 @@ export const writeJavaScriptAnalysisTransfer = async (
       graph_bytes: graphBytes,
       graph_records: graphRecords,
     };
-  } finally {
-    await output.close();
-  }
+  });
 };
 
 /** Decode producer records into realm-local, source-bound facts; sealing follows in the consumer. */

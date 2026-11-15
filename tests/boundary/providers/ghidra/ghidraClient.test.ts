@@ -3,7 +3,10 @@ import { GhidraProvider } from "../../../../src/ghidra/GhidraProvider.js";
 import { fixtureDosLoadImage } from "../../../../src/ghidra/GhidraLoadImage.fixture.js";
 import { jsonValueSchema } from "../../../../src/domain/jsonValue.js";
 import { artifactFilePrimaryFacts } from "../../../../src/artifacts/ArtifactFileOperation.js";
-import { AnalysisCancelledError } from "../../../../src/domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  OwnerCancellation,
+} from "../../../../src/domain/analysisErrorCore.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
@@ -31,7 +34,6 @@ import * as GhidraTransport from "../../../../src/ghidra/GhidraTransport.js";
 import { GhidraClient } from "../../../../src/ghidra/GhidraClient.js";
 import { GhidraAdmissionError } from "../../../../src/ghidra/GhidraAdmissionError.js";
 import { ProviderRunLineage } from "../../../../src/process/ProviderRunLineage.js";
-import { STARTUP_OWNER_CLOSED } from "../../../../src/process/SharedStartupAttempt.js";
 import { PrivateRuntimeRoot } from "../../../../src/process/PrivateRuntimeRoot.js";
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import { GHIDRA_PROCESS_DIAGNOSTIC_BYTES } from "../../../../src/ghidra/GhidraDiagnostics.js";
@@ -2660,7 +2662,7 @@ it.each([
           if (options?.signal === undefined)
             throw new Error("Expected owned startup signal");
           if (interruption === "owner close")
-            controller.abort(STARTUP_OWNER_CLOSED);
+            controller.abort(OwnerCancellation.startupOwnerClosed);
           if (!options.signal.aborted)
             await new Promise<void>((resolve) =>
               options.signal?.addEventListener("abort", () => resolve(), {

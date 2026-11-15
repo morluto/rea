@@ -3,6 +3,7 @@ import {
   type ProviderFailureDialect,
 } from "../providers/classifyProviderFailure.js";
 import { PCAP_PROVIDER_IDENTITY } from "./PcapProviderIdentity.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { PCAP_HTTP_URI_FIELDS } from "./PcapHttpUri.js";
 import {
   type ExecutionOptions,
@@ -23,10 +24,12 @@ import {
   AnalysisOutputError,
   AnalysisProtocolError,
   AnalysisResourceConstraintError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import {
   AnalysisError,
   type AnalysisCapturedOutput,
+  type AnalysisCleanupReleaseClaim,
 } from "../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -200,20 +203,61 @@ export interface PcapProviderOptions {
   readonly artifactReader?: typeof readStableArtifact;
 }
 
-interface RetainedPcapCommand {
-  readonly snapshot: PcapSnapshot | undefined;
-  readonly resources: readonly string[];
-  readonly reason: string;
-  readonly capturedOutput: PcapCommandCleanup["capturedOutput"];
-  ownerReleased: boolean;
-  failure: AnalysisError | undefined;
+/**
+ * One command whose process-family release is unconfirmed. Errors that report
+ * it read the release when asked; it is never pushed to them.
+ */
+class RetainedPcapCommand implements AnalysisCleanupReleaseClaim {
+  #failure: AnalysisError | undefined;
+  #released = false;
+
+  constructor(
+    readonly snapshot: PcapSnapshot | undefined,
+    readonly resources: readonly string[],
+    readonly reason: string,
+    readonly capturedOutput: PcapCommandCleanup["capturedOutput"],
+  ) {}
+
+  get cleanupReleased(): boolean {
+    return this.#released;
+  }
+
+  /** The latest error reporting this command's retained cleanup. */
+  get failure(): AnalysisError | undefined {
+    return this.#failure;
+  }
+
+  retainFailure<T extends AnalysisError>(failure: T): T {
+    this.#failure = failure.bindCleanupReleaseClaim(this);
+    return failure;
+  }
+
+  confirmReleased(): void {
+    this.#released = true;
+  }
 }
 
-interface RetainedSnapshotFailure {
-  /** Exact error returned to the caller for the originating analysis. */
-  readonly returned: AnalysisError;
-  /** Snapshot-owned failure resolved only by a successful snapshot close. */
-  readonly snapshot: AnalysisError;
+/** Errors reporting one snapshot, complete once the snapshot closes. */
+class RetainedSnapshotFailure implements AnalysisCleanupReleaseClaim {
+  #released = false;
+
+  constructor(
+    /** Exact error returned to the caller for the originating analysis. */
+    readonly returned: AnalysisError,
+    /** Snapshot-owned failure completed only by a successful snapshot close. */
+    readonly snapshot: AnalysisError,
+  ) {
+    returned.bindCleanupReleaseClaim(this);
+    snapshot.bindCleanupReleaseClaim(this);
+  }
+
+  get cleanupReleased(): boolean {
+    return this.#released;
+  }
+
+  confirmReleased(): void {
+    this.#released = true;
+  }
 }
 
 /** Inspect saved captures through bounded, owned tool processes and one stable input copy. */
@@ -236,7 +280,10 @@ export class PcapProvider {
   >();
 
   constructor(options: PcapProviderOptions = {}) {
-    this.environment = snapshotEnvironment(options.environment ?? process.env);
+    this.environment = snapshotEnvironment(
+      options.environment ?? process.env,
+      HOST_PLATFORM.platform,
+    );
     this.launcher = options.launcher;
     this.#resources = createArtifactAnalysisResources(
       "pcap",
@@ -329,14 +376,12 @@ export class PcapProvider {
           : { nativeBound: this.nativeBound }),
         ...(this.launcher === undefined ? {} : { launcher: this.launcher }),
         retain: (owner, resources, reason, capturedOutput) => {
-          retainedCommand = {
+          retainedCommand = new RetainedPcapCommand(
             snapshot,
             resources,
             reason,
             capturedOutput,
-            ownerReleased: false,
-            failure: undefined,
-          };
+          );
           this.commands.set(owner, retainedCommand);
           cleanup = { reason, resources, capturedOutput };
         },
@@ -372,8 +417,7 @@ export class PcapProvider {
         cause instanceof AnalysisError &&
         cause.cleanupIncomplete
       ) {
-        retainedCommand.failure = cause;
-        throw cause;
+        throw retainedCommand.retainFailure(cause);
       }
       // Post-run validation can fail before the caller receives the command
       // output. Carry its retained cleanup for both probes and capture reads.
@@ -387,7 +431,7 @@ export class PcapProvider {
                 cleanup,
                 cleanup.capturedOutput,
               );
-        if (retainedCommand !== undefined) retainedCommand.failure = pending;
+        retainedCommand?.retainFailure(pending);
         // The classified failure may own its own cleanup, such as an
         // executable re-read whose file close failed; keep both live.
         const primary = classifyProviderFailure(
@@ -408,7 +452,7 @@ export class PcapProvider {
         cleanup,
         output.capturedOutput,
       );
-      if (retainedCommand !== undefined) retainedCommand.failure = failure;
+      retainedCommand?.retainFailure(failure);
       throw failure;
     }
     return output;
@@ -604,7 +648,8 @@ export class PcapProvider {
     try {
       if (
         [...this.commands.values()].some(
-          (command) => command.snapshot === snapshot && !command.ownerReleased,
+          (command) =>
+            command.snapshot === snapshot && !command.cleanupReleased,
         )
       )
         throw new Error(
@@ -612,9 +657,7 @@ export class PcapProvider {
         );
       await snapshot.close();
       this.snapshots.delete(snapshot);
-      const retainedFailure = this.snapshotFailures.get(snapshot);
-      retainedFailure?.snapshot.resolveCleanup();
-      retainedFailure?.returned.resolveCleanup();
+      this.snapshotFailures.get(snapshot)?.confirmReleased();
       this.snapshotFailures.delete(snapshot);
       return undefined;
     } catch (cause) {
@@ -632,7 +675,7 @@ export class PcapProvider {
     operation: string,
   ): ProviderCleanupError | undefined {
     const retainedCommands = [...this.commands.values()].filter(
-      (command) => !command.ownerReleased,
+      (command) => !command.cleanupReleased,
     );
     if (retainedCommands.length === 0 && this.snapshots.size === 0)
       return undefined;
@@ -664,21 +707,23 @@ export class PcapProvider {
         artifactCleanupFailure = cause;
     }
     for (const [owner, command] of this.commands) {
-      if (command.ownerReleased) continue;
-      command.failure ??= new ProviderCleanupError(
-        "pcap",
-        command.resources,
-        { reason: command.reason },
-        { operation: "pcap.close" },
-      );
+      if (command.cleanupReleased) continue;
+      if (command.failure === undefined)
+        command.retainFailure(
+          new ProviderCleanupError(
+            "pcap",
+            command.resources,
+            { reason: command.reason },
+            { operation: "pcap.close" },
+          ),
+        );
       try {
         const result = await owner.stop();
         if (result.status === "incomplete") failures.push(result.reason);
         else if (result.status === "not-owned")
           failures.push("Command ownership remains unresolved");
         else {
-          command.ownerReleased = true;
-          command.failure?.resolveCleanup();
+          command.confirmReleased();
           if (command.snapshot === undefined) {
             this.commands.delete(owner);
           }
@@ -695,10 +740,10 @@ export class PcapProvider {
         { reason: "Capture snapshot cleanup remains unresolved." },
         { operation: "pcap.close" },
       );
-      this.snapshotFailures.set(snapshot, {
-        returned: failure,
-        snapshot: failure,
-      });
+      this.snapshotFailures.set(
+        snapshot,
+        new RetainedSnapshotFailure(failure, failure),
+      );
     }
     for (const snapshot of this.snapshots) {
       const failure = await this.discard(snapshot);
@@ -720,7 +765,7 @@ export class PcapProvider {
             .map((snapshot) => snapshot.path)
             .concat(
               [...this.commands.values()]
-                .filter((command) => !command.ownerReleased)
+                .filter((command) => !command.cleanupReleased)
                 .flatMap((command) => command.resources),
             ),
         ],
@@ -732,7 +777,7 @@ export class PcapProvider {
           ? []
           : [artifactCleanupFailure]),
         ...[...this.commands.values()]
-          .filter((command) => !command.ownerReleased)
+          .filter((command) => !command.cleanupReleased)
           .flatMap((command) =>
             command.failure === undefined ? [] : [command.failure],
           ),
@@ -786,10 +831,7 @@ export class PcapProvider {
     let snapshot: PcapSnapshot | undefined;
     let result: Result<AnalysisExecution, AnalysisError>;
     try {
-      if (signal?.aborted)
-        throw new AnalysisCancelledError(request.operation, {
-          cause: signal.reason,
-        });
+      if (signal?.aborted) throw cancelledBy(request.operation, signal);
       const { selection, client } = await this.client(
         request.operation,
         signal,
@@ -842,8 +884,7 @@ export class PcapProvider {
     }
     if (signal?.aborted && result.ok)
       result = err(
-        new AnalysisCancelledError(request.operation, {
-          cause: signal.reason,
+        cancelledBy(request.operation, signal, {
           partialObservation: createPcapEvidence(request, result.value),
         }),
       );
@@ -857,8 +898,7 @@ export class PcapProvider {
       const cleanup = await this.discard(snapshot);
       if (signal?.aborted && result.ok)
         result = err(
-          new AnalysisCancelledError(request.operation, {
-            cause: signal.reason,
+          cancelledBy(request.operation, signal, {
             partialObservation: createPcapEvidence(request, result.value),
           }),
         );
@@ -868,10 +908,10 @@ export class PcapProvider {
             createPcapEvidence(request, result.value),
           );
           result = err(failure);
-          this.snapshotFailures.set(snapshot, {
-            returned: failure,
-            snapshot: failure,
-          });
+          this.snapshotFailures.set(
+            snapshot,
+            new RetainedSnapshotFailure(failure, failure),
+          );
         } else {
           const returned = analysisErrorWithCleanupFailure(
             result.error,
@@ -879,10 +919,10 @@ export class PcapProvider {
             request.operation,
           ).bindCleanupDependencies([cleanup]);
           result = err(returned);
-          this.snapshotFailures.set(snapshot, {
-            returned,
-            snapshot: cleanup,
-          });
+          this.snapshotFailures.set(
+            snapshot,
+            new RetainedSnapshotFailure(returned, cleanup),
+          );
         }
       }
     }
@@ -904,7 +944,7 @@ export class PcapProvider {
           },
           { operation: request.operation },
         );
-        pendingCommand.failure = commandFailure;
+        pendingCommand.retainFailure(commandFailure);
       }
       const snapshotFailure = new ProviderCleanupError(
         "pcap",
@@ -951,10 +991,10 @@ export class PcapProvider {
               request.operation,
             ).bindCleanupDependencies([commandFailure, snapshotFailure]);
       result = err(returned);
-      this.snapshotFailures.set(snapshot, {
-        returned,
-        snapshot: snapshotFailure,
-      });
+      this.snapshotFailures.set(
+        snapshot,
+        new RetainedSnapshotFailure(returned, snapshotFailure),
+      );
     }
     if (
       snapshot !== undefined &&
@@ -963,10 +1003,10 @@ export class PcapProvider {
       result.error.cleanupIncomplete &&
       !this.snapshotFailures.has(snapshot)
     )
-      this.snapshotFailures.set(snapshot, {
-        returned: result.error,
-        snapshot: result.error,
-      });
+      this.snapshotFailures.set(
+        snapshot,
+        new RetainedSnapshotFailure(result.error, result.error),
+      );
     return result;
   }
 
