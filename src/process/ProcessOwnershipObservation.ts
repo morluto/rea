@@ -2,6 +2,7 @@ import { readProcessInspectionFile } from "./ProcessInspectionFile.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   describeSystemPs,
+  PROCESS_INVENTORY_PS_ARGUMENTS,
   LINUX_SYSTEM_PS_LOCATIONS,
   resolveSystemPs,
   type SystemPs,
@@ -1240,7 +1241,7 @@ export const createSystemProcessOwnershipHost = (
     try {
       ({ stdout } = await execFileOutput(
         ps.command,
-        ["-axo", "pid=,ppid=,pgid=,uid=,stat=,command="],
+        PROCESS_INVENTORY_PS_ARGUMENTS,
         {
           env: hostEnvironment,
           stopSignal: "SIGTERM",

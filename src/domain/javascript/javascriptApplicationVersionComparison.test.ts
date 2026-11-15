@@ -439,3 +439,90 @@ describe("application version comparison graph ownership", () => {
     ).toThrow("Comparison coverage must match source graph completeness");
   });
 });
+
+describe("version comparison coverage", () => {
+  const withCoverage = (
+    graph: JavaScriptApplicationGraph,
+    coverage: JavaScriptApplicationGraph["coverage"],
+  ): JavaScriptApplicationGraph => {
+    const { graph_id: _graphId, ...input } = graph;
+    return createJavaScriptApplicationGraph({
+      ...input,
+      coverage,
+      limitations: ["Fixture graph coverage is incomplete."],
+    });
+  };
+  const compareWith = (
+    left: JavaScriptApplicationGraph["coverage"],
+    right: JavaScriptApplicationGraph["coverage"],
+  ) =>
+    compareJavaScriptApplicationVersions({
+      left: {
+        evidenceId: `ev_${"1".repeat(64)}`,
+        rootArtifactSha256: LEFT_SHA,
+        graph: withCoverage(buildGraph(LEFT_SHA, 1), left),
+      },
+      right: {
+        evidenceId: `ev_${"2".repeat(64)}`,
+        rootArtifactSha256: RIGHT_SHA,
+        graph: withCoverage(buildGraph(RIGHT_SHA, 2), right),
+      },
+      leftNativeEvidence: [],
+      rightNativeEvidence: [],
+    });
+  type Coverage = JavaScriptApplicationGraph["coverage"];
+  const unknown = (status: "unknown" | "unavailable"): Coverage => ({
+    status,
+    truncated: false,
+    omitted_count: null,
+    limits: [],
+  });
+  const truncated: Coverage = {
+    status: "partial",
+    truncated: true,
+    omitted_count: 3,
+    limits: [{ name: "modules", value: 3, unit: "items" }],
+  };
+
+  it.each(["unknown", "unavailable"] as const)(
+    "reports unknown, not a known gap, when a source graph is %s",
+    (status) => {
+      const result = compareWith(completeCoverage, unknown(status));
+      expect(result.coverage).toMatchObject({
+        right_graph_status: status,
+        status: "unknown",
+      });
+      // The change graph and each changed_from edge make the same claim.
+      expect(result.graph.coverage).toMatchObject({
+        status: "unknown",
+        omitted_count: null,
+      });
+      const changed = result.graph.edges.filter(
+        ({ relation }) => relation === "changed_from",
+      );
+      expect(changed.length).toBeGreaterThan(0);
+      for (const edge of changed)
+        expect(edge.evidence.coverage.status).toBe("unknown");
+      // Unknown wins over a known truncation on the other side.
+      expect(compareWith(truncated, unknown(status)).coverage.status).toBe(
+        "unknown",
+      );
+    },
+  );
+
+  it("keeps a known truncation when both graphs report their coverage", () => {
+    expect(compareWith(truncated, completeCoverage).coverage.status).toBe(
+      "truncated",
+    );
+  });
+
+  it("refuses an unknown status that the source graphs do not support", () => {
+    const result = compare();
+    expect(() =>
+      ownedApplicationVersionComparisonResultSchema.parse({
+        ...result,
+        coverage: { ...result.coverage, status: "unknown" },
+      }),
+    ).toThrow(/unknown exactly when/u);
+  });
+});

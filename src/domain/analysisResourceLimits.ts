@@ -29,6 +29,20 @@ export const MAXIMUM_GHIDRA_VALUE_FLOW_RECORDS = 2_147_483_647;
 /** Ghidra 12.1.4 shifts MiB by 20 into a signed Java int response capacity. */
 export const MAXIMUM_GHIDRA_DECOMPILE_PAYLOAD_MIB = 2_047;
 
+/**
+ * Alias states one JavaScript source's member-mutation phase may schedule by
+ * default. Each state is retained until its query finishes, at roughly
+ * 1–2 KiB, so the default stays well below the default 1 GiB worker heap.
+ * Published bundles up to 395 KB schedule at most about 123,000 states.
+ */
+export const DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES = 524_288;
+
+/**
+ * At about 2 KiB per retained state this is 16 GiB, the largest JavaScript
+ * worker heap `max_heap_mb` admits; a larger allowance could only exhaust it.
+ */
+export const MAXIMUM_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES = 8_388_608;
+
 /** Native function-matching representation admitted when the setting is unset. */
 export const DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES = 96 * 1024 * 1024;
 
