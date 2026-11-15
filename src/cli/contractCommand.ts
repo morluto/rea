@@ -9,7 +9,12 @@ import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import type { CallerInputPaths, Evidence } from "../domain/evidence.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
-import { deliverCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
+import type { ArtifactAnalysisOperation } from "../contracts/artifactToolContracts.js";
+import { openBinaryTargetSelection } from "../contracts/sessionLifecycleInputs.js";
+import {
+  deliverCliAnalysisEvidence,
+  publishCliAnalysisEvidence,
+} from "./analysisEvidenceDelivery.js";
 import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { withCommandCancellation } from "./commandCancellation.js";
@@ -26,6 +31,7 @@ import {
   type CliOptionShape,
   type CliOptionValues,
   type ContractCliDescription,
+  type ContractCliSessionTarget,
   type ContractField,
   type ProjectedContract,
 } from "./contractCliDescription.js";
@@ -54,6 +60,11 @@ export interface ContractCommandContext<
    * `sessionTarget`; undefined otherwise.
    */
   readonly sessionTarget: string | undefined;
+  /**
+   * The session target's opening fields the caller selected, in the opening
+   * contract's spelling; empty without `sessionTarget.open`.
+   */
+  readonly opening: Readonly<Record<string, unknown>>;
   /** Contract fields the CLI spells differently, for input issue paths. */
   readonly inputBinding: ContractCliDescription["inputBinding"];
   /** The admitted delivery, for a projection with `evidenceDelivery`. */
@@ -120,26 +131,54 @@ export const inspectWithService =
   };
 
 /**
- * Open the session target as an MCP session would hold it, run the contract
- * operation on the remaining input, and name renamed fields by their CLI key
- * in input issues.
+ * Open the session target as an MCP session would hold it, with the opening
+ * fields the caller selected, and run the contract operation on the
+ * remaining input. Input issues name renamed fields by their CLI key; a
+ * projection with `evidenceDelivery` delivers complete Evidence or a summary
+ * beside its bundle.
  */
 export const runOnSessionTarget =
   (
     runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
     logger: Logger,
+    providerId?: string,
   ) =>
-  (input: object, context: ContractCommandContext) => {
-    if (context.sessionTarget === undefined)
-      throw new Error(`${context.operation} declares no session target`);
-    return runProviderAnalysis(
-      context.sessionTarget,
-      context.operation as SessionTargetOperation,
-      // Argv values are decoded text, and absent options are left out.
-      input as Readonly<Record<string, JsonValue>>,
-      logger,
-      context.signal,
-    ).then((result) => projectCliAnalysisResult(result, context.inputBinding));
+  async (input: object, context: ContractCommandContext) => {
+    const { sessionTarget, operation, signal, delivery, opening } = context;
+    if (sessionTarget === undefined)
+      throw new Error(`${operation} declares no session target`);
+    // Argv values are decoded text, and absent options are left out.
+    const values = input as Readonly<Record<string, JsonValue>>;
+    const result = await (Object.keys(opening).length === 0
+      ? runProviderAnalysis(
+          sessionTarget,
+          operation as SessionTargetOperation,
+          values,
+          logger,
+          signal,
+        )
+      : runProviderAnalysis(
+          sessionTarget,
+          // Only artifact operations take an opening selection.
+          operation as ArtifactAnalysisOperation,
+          values,
+          logger,
+          signal,
+          undefined,
+          openBinaryTargetSelection(opening),
+        ));
+    if (delivery === undefined)
+      return projectCliAnalysisResult(result, context.inputBinding);
+    if (providerId === undefined)
+      throw new Error(`${operation} delivers Evidence without a provider`);
+    return publishCliAnalysisEvidence(result, {
+      providerId,
+      operation,
+      signal,
+      detail: delivery.detail,
+      evidenceOutput: delivery.evidenceOutput,
+      ...(delivery.view === undefined ? {} : { view: delivery.view }),
+    });
   };
 
 /** Operations `runProviderAnalysis` runs on an opened session target. */
@@ -195,6 +234,18 @@ export const deliverWithService =
     });
   };
 
+/** The session target's opening fields, when the command declares any. */
+const admitOpening = (
+  description: {
+    readonly contract: { readonly name: string };
+    readonly sessionTarget: ContractCliSessionTarget | undefined;
+  },
+  values: Readonly<Record<string, unknown>>,
+): Result<Readonly<Record<string, unknown>>, AnalysisError> =>
+  description.sessionTarget === undefined
+    ? { ok: true, value: {} }
+    : description.sessionTarget.admitOpening(description.contract.name, values);
+
 const descriptions = new WeakMap<CliInstance, ContractCliDescription[]>();
 
 /** Commands registered on this CLI through `registerContractCommand`. */
@@ -208,6 +259,9 @@ const incurOptions = (description: ContractCliDescription): z.ZodType => {
       ...description.parameters
         .filter(({ positional }) => !positional)
         .map(({ key, schema }) => [key, schema] as const),
+      ...(description.sessionTarget?.options ?? []).map(
+        ({ key, schema }) => [key, schema] as const,
+      ),
       ...description.cliOnlyOptions.map(
         ({ key, schema }) => [key, schema] as const,
       ),
@@ -281,6 +335,8 @@ export const registerContractCommand = <
         logCliCommand(logger, description.command, async () => {
           const admitted = description.admit(values);
           if (!admitted.ok) return projectAnalysisError(admitted.error);
+          const opening = admitOpening(description, values);
+          if (!opening.ok) return projectAnalysisError(opening.error);
           return run(admitted.value.input as z.input<Contract["inputSchema"]>, {
             signal,
             operation: contract.name,
@@ -289,6 +345,7 @@ export const registerContractCommand = <
               description.sessionTarget === undefined
                 ? undefined
                 : (values[description.sessionTarget.key] as string),
+            opening: opening.value,
             inputBinding: description.inputBinding,
             delivery: admitted.value.delivery,
             cliOptions: description.cliOptionValues(
@@ -330,6 +387,11 @@ export interface ContractDocumentContext<
    * `sessionTarget`; undefined otherwise.
    */
   readonly sessionTarget: string | undefined;
+  /**
+   * The session target's opening fields the caller selected, in the opening
+   * contract's spelling; empty without `sessionTarget.open`.
+   */
+  readonly opening: Readonly<Record<string, unknown>>;
 }
 
 const documentDescriptions = new WeakMap<
@@ -386,9 +448,11 @@ export const registerContractDocumentCommand = <
 ): void => {
   const description = describeContractDocumentCommand(contract, projection);
   const options = Object.fromEntries(
-    [...description.deliveryOptions, ...description.cliOnlyOptions].map(
-      ({ key, schema }) => [key, schema],
-    ),
+    [
+      ...(description.sessionTarget?.options ?? []),
+      ...description.deliveryOptions,
+      ...description.cliOnlyOptions,
+    ].map(({ key, schema }) => [key, schema]),
   );
   cli.command(description.command, {
     description: description.description,
@@ -418,6 +482,8 @@ export const registerContractDocumentCommand = <
           // Delivery options are checked before the document is read.
           const delivery = description.admitDelivery(values);
           if (!delivery.ok) return projectAnalysisError(delivery.error);
+          const opening = admitOpening(description, { ...values, ...args });
+          if (!opening.ok) return projectAnalysisError(opening.error);
           const decoded = await parseCliJsonInput(
             args[description.key]!,
             contract.name,
@@ -443,6 +509,7 @@ export const registerContractDocumentCommand = <
               spelled: decoded.value,
               frame: description.content,
               delivery: delivery.value,
+              opening: opening.value,
               sessionTarget:
                 description.sessionTarget === undefined
                   ? undefined
