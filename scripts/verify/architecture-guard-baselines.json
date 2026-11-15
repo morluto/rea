@@ -301,7 +301,6 @@
     "src/providers/AnalysisClientCreation.ts": 3,
     "src/providers/AnalysisClientFailure.ts": 1,
     "src/providers/OwnedCommandCleanup.ts": 1,
-    "src/providers/runOwned.ts": 1,
     "src/rizin/RizinDebugSessionManager.ts": 1,
     "src/server/registerCloseLifecycleTool.ts": 1,
     "src/server/registerResetInvestigationTool.ts": 1,
