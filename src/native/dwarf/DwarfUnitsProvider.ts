@@ -6,6 +6,7 @@ import {
   stableArtifactInputFailure,
 } from "../../artifacts/StableArtifactFailure.js";
 import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
+import type { StableArtifactSnapshot } from "../../artifacts/readStableArtifact.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
 import {
@@ -70,9 +71,12 @@ export class DwarfUnitsProvider {
     input: InspectDwarfUnitsInput,
     options?: { readonly signal?: AbortSignal },
   ) {
+    // Kept outside the read so a later decoding failure still reports the
+    // file identity the read established.
+    let snapshot: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
-        const snapshot = await readStableArtifact(
+        snapshot = await readStableArtifact(
           input.path,
           input.max_file_bytes,
           options?.signal,
@@ -98,7 +102,7 @@ export class DwarfUnitsProvider {
         return ok(report);
       });
     } catch (cause) {
-      return err(dwarfUnitsFailure(cause, input));
+      return err(dwarfUnitsFailure(cause, input, snapshot));
     }
   }
 }
@@ -313,7 +317,11 @@ const dwarfUnitsFailurePrimary = (
   );
 };
 
-const dwarfUnitsFailure = (cause: unknown, input: InspectDwarfUnitsInput) => {
+const dwarfUnitsFailure = (
+  cause: unknown,
+  input: InspectDwarfUnitsInput,
+  snapshot: StableArtifactSnapshot | undefined,
+) => {
   const primary = dwarfUnitsFailurePrimary(
     artifactFilePrimaryFacts(cause),
     input,
@@ -324,5 +332,6 @@ const dwarfUnitsFailure = (cause: unknown, input: InspectDwarfUnitsInput) => {
     input.path,
     DWARF_UNITS_PROVIDER.id,
     OPERATION,
+    snapshot,
   );
 };

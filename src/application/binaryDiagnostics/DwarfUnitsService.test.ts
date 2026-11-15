@@ -130,3 +130,30 @@ it("discards an observation if the caller cancels while the provider completes",
   expect(result.ok).toBe(false);
   if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisCancelledError);
 });
+
+it("accepts an arm64e request answered by its arm64-family slice", async () => {
+  const result = await new DwarfUnitsService({
+    identity,
+    inspect: () =>
+      Promise.resolve(
+        ok({
+          ...report,
+          format: "macho",
+          architecture: "arm64",
+          selected_slice: {
+            kind: "macho-selected-image-v1",
+            container: "fat",
+            offset: 4096,
+            byte_length: 128,
+            cpu_type: 0x0100000c,
+            cpu_subtype: 2,
+            container_table_sha256: "b".repeat(64),
+          },
+        }),
+      ),
+  }).inspect({ path: report.artifact.path, architecture: "arm64e" });
+  if (!result.ok) throw result.error;
+  expect(result.value).toMatchObject({
+    normalized_result: { architecture: "arm64" },
+  });
+});

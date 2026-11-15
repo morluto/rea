@@ -1,7 +1,9 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { toolContract } from "../../src/contracts/toolContracts.js";
+import { contractNamed } from "../../src/cli/contractCliDescription.js";
+import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../../src/contracts/native/binaryDiagnosticsToolContracts.js";
+
 import {
   elfDebugImage,
   elfImage,
@@ -16,6 +18,11 @@ import {
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
+const dwarfUnitsContract = contractNamed(
+  BINARY_DIAGNOSTICS_TOOL_CONTRACTS,
+  "inspect_dwarf_units",
+);
+
 cliTest("reports a compile unit through the public CLI", async ({ cli }) => {
   const root = await createTestTempDirectory("rea-dwarf-units-cli-");
   const path = join(root, "program");
@@ -24,9 +31,7 @@ cliTest("reports a compile unit through the public CLI", async ({ cli }) => {
     arguments: ["inspect-dwarf-units", path, "--json"],
   });
   expect(result.exitCode, result.stderr).toBe(0);
-  const evidence = toolContract("inspect_dwarf_units").outputSchema.parse(
-    result.json,
-  );
+  const evidence = dwarfUnitsContract.outputSchema.parse(result.json);
   expect(evidence.normalized_result.units[0]?.name).toEqual({
     state: "present",
     value: "main.c",
@@ -45,9 +50,7 @@ cliTest(
       cwd: root,
     });
     expect(result.exitCode, result.stderr).toBe(0);
-    const evidence = toolContract("inspect_dwarf_units").outputSchema.parse(
-      result.json,
-    );
+    const evidence = dwarfUnitsContract.outputSchema.parse(result.json);
     expect(evidence.normalized_result.coverage.status).toBe("no_debug_info");
     expect(evidence.subject?.local_path).toBe(join(root, "plain"));
   },

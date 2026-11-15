@@ -1,3 +1,4 @@
+import { machoSliceFamily } from "../../domain/apple/machoTargetSelection.js";
 import { isAbsolute } from "node:path";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { DwarfUnitsPort } from "./DwarfUnitsPort.js";
@@ -127,5 +128,9 @@ const validReport = (
   const requested = input.architecture;
   const slice = report.selected_slice;
   if ((requested === undefined) !== (slice === undefined)) return false;
-  return requested === undefined || report.architecture === requested;
+  // Reports name the CPU family; arm64e selects an arm64 slice.
+  return (
+    requested === undefined ||
+    report.architecture === machoSliceFamily(requested)
+  );
 };

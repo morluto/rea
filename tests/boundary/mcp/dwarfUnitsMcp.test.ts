@@ -1,7 +1,9 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { contractNamed } from "../../../src/cli/contractCliDescription.js";
+import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../../../src/contracts/native/binaryDiagnosticsToolContracts.js";
+
 import {
   elfDebugImage,
   namedUnit,
@@ -11,6 +13,11 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest, type TestMcp } from "../../support/mcp/mcpFixture.js";
+
+const dwarfUnitsContract = contractNamed(
+  BINARY_DIAGNOSTICS_TOOL_CONTRACTS,
+  "inspect_dwarf_units",
+);
 
 const connect = async (mcp: TestMcp) => {
   const session = createTestBinarySession(() => {
@@ -40,7 +47,7 @@ mcpTest(
         arguments: { path },
       });
       expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
-      const evidence = toolContract("inspect_dwarf_units").outputSchema.parse(
+      const evidence = dwarfUnitsContract.outputSchema.parse(
         response.structuredContent,
       );
       expect(evidence.normalized_result.units[0]?.name.value).toBe("main.c");
