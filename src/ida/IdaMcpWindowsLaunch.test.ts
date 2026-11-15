@@ -37,7 +37,14 @@ const observeLaunch = async (
     throw new Error("launch observed");
   };
   const connection = createIdaMcpConnection(
-    { command, args: ["--stdio"], env: {}, mode: "attached", timeoutMs: 5000 },
+    {
+      command,
+      args: ["--stdio"],
+      env: {},
+      protocol: "legacy",
+      mode: "attached",
+      timeoutMs: 5000,
+    },
     environment,
     { platform: "win32", launcher },
   );
@@ -100,6 +107,7 @@ it("closes while a Windows command lookup is stalled on an unreachable PATH dire
       command: "ida-mcp",
       args: [],
       env: {},
+      protocol: "legacy",
       mode: "attached",
       timeoutMs: 5000,
     },
@@ -133,7 +141,14 @@ it("ends a stalled Windows command lookup at the registration timeout", async ()
   files.stalled.add("\\\\offline\\tools\\ida-mcp.EXE");
   const launches: unknown[] = [];
   const connection = createIdaMcpConnection(
-    { command: "ida-mcp", args: [], env: {}, mode: "attached", timeoutMs: 50 },
+    {
+      command: "ida-mcp",
+      args: [],
+      env: {},
+      protocol: "legacy",
+      mode: "attached",
+      timeoutMs: 50,
+    },
     {
       SYSTEMROOT: "C:\\Windows",
       PATH: "\\\\offline\\tools",

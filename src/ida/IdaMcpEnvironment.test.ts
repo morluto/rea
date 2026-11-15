@@ -100,6 +100,7 @@ input.on('line', (line) => {
       command: process.execPath,
       args: [script],
       env: {},
+      protocol: "legacy",
       mode: "attached",
       timeoutMs: 5000,
     },

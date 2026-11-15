@@ -62,6 +62,7 @@ it("keeps a failed handshake's incomplete cleanup observable with the redacted s
       command: "/opt/ida-mcp/server",
       args: [],
       env: {},
+      protocol: "legacy",
       mode: "attached",
       timeoutMs: 5000,
     },
