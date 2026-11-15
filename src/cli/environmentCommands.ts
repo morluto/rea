@@ -25,7 +25,7 @@ import {
   type McpHttpEndpoint,
 } from "../config/mcpHttpEndpoint.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import type { StreamableHttpListenError } from "../server/http/streamableHttpListenError.js";
 import {
   AnalysisInputError,
@@ -241,11 +241,11 @@ const serveEnvironmentCommand = async (
     if (!(cause instanceof AnalysisError)) throw cause;
     if (listenerError !== undefined)
       return cliError(
-        analysisErrorWithCleanupFailure(
+        analysisErrorWithCleanupDependencies(
           listenerError,
           cause,
           CLI_COMMANDS.environmentServe,
-        ).bindCleanupDependencies([cause]),
+        ),
       );
     cause.retainDiagnostics({
       shutdown_observation: { status: "shutdown_requested", ...observation },

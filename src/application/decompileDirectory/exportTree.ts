@@ -35,7 +35,7 @@ import {
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { isPathWithinRoot } from "../../domain/localPath.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
@@ -356,11 +356,11 @@ export class DecompileExport {
       return closed.ok
         ? opened
         : err(
-            analysisErrorWithCleanupFailure(
+            analysisErrorWithCleanupDependencies(
               opened.error,
               closed.error,
               "decompile_all",
-            ).bindCleanupDependencies([closed.error]),
+            ),
           );
     }
     return ok(

@@ -62,7 +62,7 @@ import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import {
   analysisClientFailureContext,
   analysisClientFailureForOperation,
@@ -548,11 +548,11 @@ export class IdaSessionClient implements AnalysisClient {
           { operation, cause: read },
         );
         bindArtifactFileCleanup(read, cleanup);
-        return analysisErrorWithCleanupFailure(
+        return analysisErrorWithCleanupDependencies(
           primary ?? adapterFailure(read),
           cleanup,
           operation,
-        ).bindCleanupDependencies([cleanup]);
+        );
       },
       unclassified: adapterFailure,
     });
