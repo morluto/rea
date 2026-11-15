@@ -21,8 +21,6 @@
     "cli <-> cliEvidenceCommands.ts",
     "cli <-> cliObservationOptions.ts",
     "cli <-> cliOutput.ts",
-    "config <-> filesystem",
-    "main <-> server",
-    "process <-> windows"
+    "main <-> server"
   ]
 }

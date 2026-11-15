@@ -55,7 +55,7 @@ import { javaScriptRuntime } from "../../domain/runtimeVersion.js";
 import {
   RuntimeControlUnavailableError,
   runtimeControlCapabilityError,
-} from "../../process/RuntimeControlUnavailableError.js";
+} from "../../domain/runtimeControlUnavailableError.js";
 import { javaScriptWorkerMemoryLimitBytes } from "../../process/JavaScriptWorkerMemoryLimit.js";
 import {
   spawnOwnedProviderProcess,

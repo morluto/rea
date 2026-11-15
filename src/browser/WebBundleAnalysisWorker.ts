@@ -71,7 +71,7 @@ import {
 import {
   RuntimeControlUnavailableError,
   runtimeControlCapabilityError,
-} from "../process/RuntimeControlUnavailableError.js";
+} from "../domain/runtimeControlUnavailableError.js";
 import { spawnOwnedProviderProcess } from "../process/ProviderProcess.js";
 import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
 import { prepareProcessOwnershipInspection } from "../process/ProcessOwnershipObservation.js";

@@ -36,7 +36,7 @@ import { ProcessAdmissionError } from "../../process/ProcessAdmissionError.js";
 import {
   RuntimeControlUnavailableError,
   runtimeControlCapabilityError,
-} from "../../process/RuntimeControlUnavailableError.js";
+} from "../../domain/runtimeControlUnavailableError.js";
 import { ProviderStartupDeadline } from "../../process/ProviderDeadline.js";
 import { javaScriptWorkerMemoryLimitBytes } from "../../process/JavaScriptWorkerMemoryLimit.js";
 import { cleanupOwnedProcessGroup } from "../../process/ProcessOwnership.js";
