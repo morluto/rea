@@ -171,13 +171,16 @@ export const classifyProviderOutcome = (
               outcome.exhaustion,
             ),
           },
-          ...(area === "native-thread"
-            ? {
-                retryable: true,
-                remediationAction:
-                  "Reduce concurrent analysis processes or review the host's available thread and process capacity, then retry.",
-              }
-            : reported?.recovery),
+          // The provider's recovery names the setting that governs the
+          // reported area; the generic capacity advice is only a fallback.
+          ...(reported?.recovery ??
+            (area === "native-thread"
+              ? {
+                  retryable: true,
+                  remediationAction:
+                    "Reduce concurrent analysis processes or review the host's available thread and process capacity, then retry.",
+                }
+              : {})),
         },
       );
     }
