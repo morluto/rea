@@ -25,8 +25,6 @@ import { safeResponseMetadata } from "./CdpSafeMetadata.js";
 import {
   allowedSanitizedUrl,
   isHttpUrl,
-  numberValue,
-  recordValue,
   cdpStringValue,
   type UnknownRecord,
 } from "./CdpCaptureValues.js";
