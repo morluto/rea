@@ -257,7 +257,7 @@ it.skipIf(process.platform === "win32")(
     const parent = spawn(
       "/bin/sh",
       ["-c", "sleep 60 & echo $!; exec sleep 60"],
-      { stdio: ["ignore", "pipe", "ignore"] },
+      { detached: true, stdio: ["ignore", "pipe", "ignore"] },
     );
     try {
       const [line] = (await once(parent.stdout!, "data")) as [Buffer];
@@ -290,6 +290,10 @@ it.skipIf(process.platform === "win32")(
         await client.close();
       }
     } finally {
+      // The unreaped parent still holds its process group, so this stops the
+      // background target too even when setup failed before the tracer ran.
+      if (parent.exitCode === null && parent.signalCode === null)
+        process.kill(-parent.pid!, "SIGKILL");
       await stopChild(parent);
     }
   },

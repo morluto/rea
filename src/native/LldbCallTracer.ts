@@ -7,7 +7,7 @@ import { translateNativeCommandFailure } from "./NativeCommandAnalysisError.js";
 import { DEFAULT_NATIVE_COMMAND_TIMEOUT_MS } from "../domain/native/nativeDeadlines.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { randomUUID } from "node:crypto";
-import { writeFile } from "node:fs/promises";
+import { rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -1541,11 +1541,15 @@ const runLldb = async (
         }
         if (observation?.state === "readable")
           targetIdentity = observation.identity;
+        // The bridge polls for the acknowledgement's name, so publish it
+        // complete: a reader must never see the created but unwritten file.
+        const stagedAck = `${options.identityAckPath}.partial`;
         await writeFile(
-          options.identityAckPath,
+          stagedAck,
           observation?.state === "readable" ? "readable" : "unavailable",
           { mode: 0o600 },
         );
+        await rename(stagedAck, options.identityAckPath);
         identityAckWritten = true;
       }
       const interruption = deadline.interruption;
