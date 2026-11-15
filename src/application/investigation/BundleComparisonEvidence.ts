@@ -1,10 +1,10 @@
 import { bundleComparisonMcpInputSchema } from "../../contracts/sessionToolSchemas.js";
-import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { compareBundles } from "../../domain/bundleComparison.js";
 import { createEvidence } from "../../domain/evidence.js";
 import type { EvidenceBundle } from "../../domain/evidenceBundle.js";
 import { BUNDLE_COMPARISON_PROVIDER } from "../../domain/investigationProviders.js";
-import { ok, type Result } from "../../domain/result.js";
+import { err, ok, type Result } from "../../domain/result.js";
 import { unknownTarget } from "../../domain/targetIdentity.js";
 import type { ArtifactResourceScope } from "../../resources/index.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
@@ -62,7 +62,14 @@ export const bundleComparisonExecution = ({
   InvestigationWorkflowExecution,
   AnalysisError
 > => {
-  const comparison = compareBundles(left, right, recordPairs);
+  let comparison: ReturnType<typeof compareBundles>;
+  try {
+    comparison = compareBundles(left, right, recordPairs);
+  } catch (cause: unknown) {
+    // Missing or repeated record pairs are typed input failures.
+    if (cause instanceof AnalysisError) return err(cause);
+    throw cause;
+  }
   const sources = [
     ...new Map(
       [...left.records, ...right.records].map((record) => [
