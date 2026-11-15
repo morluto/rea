@@ -118,17 +118,6 @@ export const invalidateSemanticRequireDelegateWrites = (
   moduleReturnedReferences.delete(state);
 };
 
-/**
- * Whether an assignment to the unbound `require` may run before `read`. The
- * loader fact and the origin of the same call ask this one question, so they
- * use one ordering: activation timing, which also orders reads before writes
- * in later or empty loops and inside the assignment's own right-hand side.
- */
-const requireRebindingMayPrecede = (
-  read: t.Node,
-  state: JavaScriptSemanticAnalysisState,
-): boolean => ambientBindingMayObserveWriteAt(state, read, "require");
-
 const commonJsDelegateChangedAt = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
@@ -194,7 +183,7 @@ const requireLoaderValueAt = (
       semanticResolutionBlocked(state, loader, "require")
     )
       return "unknown";
-    return requireRebindingMayPrecede(node, state)
+    return ambientBindingMayObserveWriteAt(state, node, "require")
       ? "unknown"
       : commonJsLoaderAt(node, state);
   }
@@ -1630,13 +1619,8 @@ export const semanticOriginalGlobalProcessAt = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): boolean =>
-  !ambientPathMayObserveAt(
-    state,
-    node,
-    ["global", "process"],
-    "value",
-    "top-level",
-  ) && !ambientBindingMayObserveWriteAt(state, node, "process", "top-level");
+  !ambientPathMayObserveAt(state, node, ["global", "process"]) &&
+  !ambientBindingMayObserveWriteAt(state, node, "process");
 
 /** Node's unbound process reference shares the cached process exports object. */
 export const semanticGlobalProcessOrigin = (
@@ -1704,7 +1688,7 @@ const isConditionalRequireAt = (
         )))
   )
     return false;
-  return !requireRebindingMayPrecede(node, state);
+  return !ambientBindingMayObserveWriteAt(state, node, "require");
 };
 
 /** Recover an unshadowed literal require origin and its exact member path. */
@@ -1746,7 +1730,7 @@ export const semanticRequireOriginCandidate = (
         (binding === undefined &&
           (javaScriptRuntimeContext(state.program) === "module" ||
             semanticResolutionBlocked(state, current.callee, "require"))) ||
-        requireRebindingMayPrecede(current, state)
+        ambientBindingMayObserveWriteAt(state, current, "require")
   )
     return undefined;
   const specifier = stringValue(current.arguments[0]);
