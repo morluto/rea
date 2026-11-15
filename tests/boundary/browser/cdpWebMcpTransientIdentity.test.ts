@@ -265,10 +265,12 @@ it.each([
     invalid: true,
   },
   {
+    // Another root frame proves the selected document changed, even though
+    // the final frame tree shows the selected root again.
     kind: "full navigation becomes root",
     event: "Page.frameNavigated",
     fields: { id: "child" },
-    tools: ["current"],
+    tools: "target_changed",
     invalid: false,
   },
   {
@@ -344,6 +346,13 @@ it.each([
         observation_ms: 0,
       }),
     );
+    if (tools === "target_changed") {
+      expect(result).toMatchObject({
+        ok: false,
+        error: { reason: "target_changed" },
+      });
+      return;
+    }
     if (!result.ok) throw result.error;
     expect(result.value.tools.items.map(({ name }) => name)).toEqual(tools);
     expect(
