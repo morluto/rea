@@ -121,6 +121,11 @@ export interface AnalysisCleanupResourceOwner {
   readonly cleanupResources: readonly string[] | undefined;
 }
 
+/** A lease-backed claim whose owner records the confirmed release. */
+export interface AnalysisCleanupReleaseClaim {
+  readonly cleanupReleased: boolean;
+}
+
 /** Result completed before its source Evidence could be published. */
 export type SourcePublicationCompletion =
   | {
@@ -192,6 +197,7 @@ export abstract class AnalysisError extends Error {
   #ownedCleanupResources: readonly string[];
   #cleanupResourceOwner: AnalysisCleanupResourceOwner | undefined;
   #cleanupCompletionOwner: AnalysisCleanupResourceOwner | undefined;
+  readonly #cleanupReleaseClaims: AnalysisCleanupReleaseClaim[] = [];
   #cleanupRetry: AnalysisCleanupRetry | undefined;
   #secondaryFailures: AnalysisError[] = [];
   constructor(message: string, options?: AnalysisErrorOptions) {
@@ -242,18 +248,30 @@ export abstract class AnalysisError extends Error {
   }
 
   /**
-   * Whether owned resources remain unreleased. Bound dependencies decide it
-   * once bound; completion is monotonic, so a later binding cannot reopen it.
+   * Whether owned resources remain unreleased, read from the owners when
+   * asked. Bound dependencies decide it once bound; otherwise a released
+   * lease claim completes it. Completion is monotonic, so a later binding
+   * cannot reopen it.
    */
   get cleanupIncomplete(): boolean {
     if (!this.#cleanupIncomplete) return false;
     const dependencies = this.#cleanupDependencies;
-    if (dependencies === undefined) return true;
-    for (const dependency of dependencies)
-      if (dependency.cleanupIncomplete) return true;
+    if (dependencies === undefined) {
+      if (!this.#cleanupReleaseClaims.some((claim) => claim.cleanupReleased))
+        return true;
+    } else
+      for (const dependency of dependencies)
+        if (dependency.cleanupIncomplete) return true;
     this.#cleanupIncomplete = false;
-    dependencies.clear();
+    dependencies?.clear();
+    this.#cleanupReleaseClaims.length = 0;
     return false;
+  }
+
+  /** Read completion from a lease owner instead of having it pushed here. */
+  bindCleanupReleaseClaim(claim: AnalysisCleanupReleaseClaim): this {
+    this.#cleanupReleaseClaims.push(claim);
+    return this;
   }
 
   /** A subclass whose own resources are unreleased when it is constructed. */
