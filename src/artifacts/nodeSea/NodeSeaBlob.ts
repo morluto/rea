@@ -3,12 +3,12 @@ import { setImmediate } from "node:timers/promises";
 import {
   assertArtifactReadActive,
   ArtifactReaderFailure,
+  artifactReaderLimitFailure,
 } from "../../resources/index.js";
 import {
   DEFAULT_NODE_SEA_READER_LIMITS,
   type NodeSeaReaderLimits,
 } from "../../domain/artifactReaderLimits.js";
-import { artifactReaderLimitFailure } from "../ArtifactReaderLimits.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 
 /** Node `SeaBlob::kMagic` from `src/node_sea.h` (v24). */
