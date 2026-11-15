@@ -13,23 +13,29 @@ import { cliTest } from "../support/cli/cliFixture.js";
 
 const oracle = z
   .object({
-    samples: z.array(
-      z.object({
-        mode: z.enum(["embedded", "offset", "position"]),
-        size: z.int().positive(),
-        sha256: z.string(),
-        deflate_base64: z.string(),
-        images: z.array(
-          z.object({
-            name: z.string(),
-            load: z.string(),
-            entry: z.string(),
-            size: z.int().positive(),
-            sha256: z.string(),
-          }),
-        ),
-      }),
-    ),
+    samples: z
+      .array(
+        z.object({
+          mode: z.enum(["embedded", "offset", "position"]),
+          size: z.int().positive(),
+          sha256: z.string(),
+          deflate_base64: z.string(),
+          images: z.array(
+            z.object({
+              name: z.string(),
+              load: z.string(),
+              entry: z.string(),
+              size: z.int().positive(),
+              sha256: z.string(),
+            }),
+          ),
+        }),
+      )
+      .length(3)
+      .refine(
+        (samples) => new Set(samples.map(({ mode }) => mode)).size === 3,
+        "Expected embedded, offset and position producer witnesses",
+      ),
   })
   .parse(
     JSON.parse(
