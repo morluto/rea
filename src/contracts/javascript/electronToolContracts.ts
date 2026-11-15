@@ -112,6 +112,7 @@ export const ELECTRON_TOOL_CONTRACTS = [
   },
   {
     name: "analyze_javascript_application",
+    availability: "standalone",
     ...toolContractMetadata("analyze_javascript_application"),
     description:
       'Build a static application graph from a local ASAR or extracted JavaScript app without executing it. Supply input_path, e.g. {input_path:"/apps/client",source_paths:["main.js"],detail:"summary"}. Copy source_paths exactly from the inventory, not host-absolute paths inferred from input_path. Returns nodes, edges, semantic relations, integrity contradictions, coverage and unknowns. source_paths limits source analysis to exact inventoried paths without narrowing inventory or artifact identity; dependencies are not implicitly analyzed and unselected sources remain unknown. detail summary reduces delivery, retaining complete Evidence for inspect_analysis_view; it does not reduce analysis. With summary detail, view {kind:"javascript-routes",collection:"routes",offset:0,limit:64} selects static route patterns; static routes do not prove reachability or the complete route set. Integrity mismatches fail by default; record-and-continue retains untrusted observed bytes and partial coverage. analysis_timeout_ms is a per-source provider budget. A host-only timeout needs a longer client deadline, not that budget; do not repeat unchanged work or assume it stopped. If configuration cannot be edited, report the host setting (Codex: mcp_servers.<server>.tool_timeout_sec, seconds).',
@@ -146,6 +147,7 @@ export const ELECTRON_TOOL_CONTRACTS = [
   },
   {
     name: "reconcile_javascript_runtime",
+    availability: "standalone",
     ...toolContractMetadata("reconcile_javascript_runtime"),
     description:
       "Reconcile verified static JavaScript application graphs with existing passive web/Electron CDP, passive V8 Inspector, or provider-owned active Electron Evidence. Active Electron captures contribute an explicitly partial target-only runtime record; they never invent renderer scripts, frames, workers, or execution claims. Exact captured-source digests take priority over caller-declared file/URL mappings; target, frame, script, and worker ambiguity remains explicit, and source-map authority stays separate.",
@@ -173,6 +175,7 @@ export const ELECTRON_TOOL_CONTRACTS = [
   },
   {
     name: "inspect_electron_fuses",
+    availability: "standalone",
     ...toolContractMetadata("inspect_electron_fuses"),
     kind: "artifact-provider",
     requiresActiveTarget: true,

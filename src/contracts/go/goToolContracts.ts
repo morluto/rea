@@ -11,6 +11,7 @@ import { goBinarySummaryViewResultSchema } from "../../domain/analysisView/analy
 export const GO_TOOL_CONTRACTS = [
   {
     name: "inspect_go_binary",
+    availability: "standalone",
     ...toolContractMetadata("inspect_go_binary"),
     kind: "artifact-provider",
     requiresActiveTarget: true,
