@@ -6,6 +6,13 @@ import type { ArtifactReaderLimits } from "../../domain/artifactReaderLimits.js"
 
 /** Options shared by artifact inventory scans. */
 export interface ArtifactInventoryOptions {
+  /** Optional acquisition bounds; exhaustion retains a partial inventory. */
+  readonly acquisitionLimits?:
+    | {
+        readonly maximumEntries: number;
+        readonly maximumBytes: number;
+      }
+    | undefined;
   readonly readerLimits?: ArtifactReaderLimits | undefined;
   readonly resourceScope: ArtifactResourceScope;
   /** Identity of a previously admitted file root; directory roots have no file digest. */

@@ -247,12 +247,9 @@ rea inspect-dart-aot app.apk --pool-policy '{"contains":"package:","uri_limit":2
 ```
 
 The equivalent MCP input is `pool_policy: {contains: "package:", uri_limit: 2048}`.
-This recovers all bounded package-URI observations in the measured Gallery and
-LocalSend APKs. Check the result's limits and coverage for other targets; long
-runs and unsupported snapshot layouts remain separate limitations. The
-[calibration report](../../verification/flutter-budget-calibration.md)
-keeps the default at 500 because increasing every complete overview also delivers
-more strings when they are unnecessary. Use `detail: "summary"` for the MCP
+Check the result's limits and coverage; long runs and unsupported snapshot
+layouts remain separate limitations. The default is 500; raising it can deliver
+more strings than a complete overview needs. Use `detail: "summary"` for the MCP
 identity/count task described above.
 
 These controls do not raise APK, ELF, library or response budgets, deserialize

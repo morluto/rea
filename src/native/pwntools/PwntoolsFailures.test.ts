@@ -2,11 +2,9 @@ import { expect, it } from "vitest";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
-import {
-  pwntoolsHostRequirement,
-  pwntoolsHostSupported,
-} from "./PwntoolsDecoder.js";
+import { pwntoolsHostSupported } from "./PwntoolsDecoder.js";
 import { pwntoolsDecoderFailure } from "./PwntoolsFailures.js";
+import { resolvePwntoolsLimits } from "../../domain/native/pwntoolsResourceLimits.js";
 
 it.each([undefined, null, false, 0, "stop", { stop: true }, new Error("stop")])(
   "preserves opaque cancellation from command and artifact owners: %s",
@@ -28,6 +26,74 @@ it.each([undefined, null, false, 0, "stop", { stop: true }, new Error("stop")])(
     }
   },
 );
+
+it("keeps the caller-selected pwntools input-limit source", () => {
+  const projected = projectAnalysisError(
+    pwntoolsDecoderFailure(
+      new ArtifactReaderFailure(
+        "limit",
+        "artifact exceeds the input allowance",
+        {},
+      ),
+      "artifact-read",
+      "/selected",
+      "/python",
+      {},
+      {
+        operation: "inspect_binary_layout",
+        providerId: "pwntools",
+        producerLimits: resolvePwntoolsLimits(undefined, 4096),
+        inputBytesSource: "request",
+      },
+    ),
+  );
+  expect(projected.details?.limit).toMatchObject({
+    setting: "pwntools.max_input_bytes",
+    effective_value: 4096,
+    source: "request",
+    update_mode: "parameter",
+    pending_restart: false,
+    parameter: "producer_limits.input_bytes",
+  });
+  expect(projected.remediation.action).toContain(
+    "producer_limits.input_bytes is 4096 bytes",
+  );
+  expect(projected.remediation.action).not.toContain("launch default of");
+});
+
+it("names a runtime pwntools ceiling instead of the built-in default", () => {
+  const projected = projectAnalysisError(
+    pwntoolsDecoderFailure(
+      new ArtifactReaderFailure(
+        "limit",
+        "artifact exceeds the input allowance",
+        {},
+      ),
+      "artifact-read",
+      "/selected",
+      "/python",
+      {},
+      {
+        operation: "inspect_binary_layout",
+        providerId: "pwntools",
+        producerLimits: resolvePwntoolsLimits(undefined, 67_108_864),
+        inputBytesSource: "runtime",
+      },
+    ),
+  );
+  expect(projected.details?.limit).toMatchObject({
+    effective_value: 67_108_864,
+    source: "runtime",
+    update_mode: "runtime",
+  });
+  expect(projected.remediation.action).toContain(
+    "67108864 bytes (source runtime)",
+  );
+  expect(projected.remediation.action).toContain("update_analysis_settings");
+  expect(projected.message).not.toContain(
+    "Selected producer_limits.input_bytes is",
+  );
+});
 
 it("distinguishes the wall deadline from caller-selected producer resource budgets", () => {
   const projected = projectAnalysisError(
@@ -155,10 +221,8 @@ it("retains legacy owner causes without guessing cancellation from error text", 
   );
 });
 
-it("names the refused host instead of implying the target was refused", () => {
+it("restricts the verified host profile to Linux x64", () => {
+  expect(pwntoolsHostSupported("linux", "x64")).toBe(true);
   expect(pwntoolsHostSupported("linux", "arm64")).toBe(false);
-  const message = pwntoolsHostRequirement("linux", "arm64");
-  expect(message).toContain("Linux x64 host");
-  expect(message).toContain("this host is linux/arm64");
-  expect(message).toContain("The selected target was not read.");
+  expect(pwntoolsHostSupported("darwin", "x64")).toBe(false);
 });

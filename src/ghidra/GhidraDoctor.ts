@@ -67,7 +67,7 @@ export const projectGhidraDoctorInspection = (
               code: !readiness.available ? readiness.code : null,
               detail: !readiness.available
                 ? readiness.reason
-                : "Verified Windows native Job Object, private DACL, and reparse-safe handle controls; local NTFS only.",
+                : "Verified Windows native Job Object, private DACL, and reparse-safe handle controls; local NTFS/ReFS only.",
               remediation: !readiness.available ? readiness.remediation : null,
               classification:
                 !readiness.available && readiness.code === "runtime_unavailable"
@@ -120,9 +120,6 @@ export const inspectSystemGhidraProvider = async (
   environment: Readonly<NodeJS.ProcessEnv>,
   resourceOwner: RetainedResourceScope,
   signal?: AbortSignal,
-  probeTemporaryDirectory: (
-    resourceOwner: RetainedResourceScope,
-  ) => Promise<GhidraTemporaryDirectoryProbe> = probeGhidraTemporaryDirectory,
 ): Promise<DoctorProviderInspection> => {
   try {
     const installation = await inspectGhidraInstallation({
@@ -139,7 +136,7 @@ export const inspectSystemGhidraProvider = async (
     // The restricted-host denial reported for #7075 is Windows-specific.
     const temporaryDirectory =
       installation.status === "available" && installation.platform === "win32"
-        ? await probeTemporaryDirectory(resourceOwner)
+        ? await probeGhidraTemporaryDirectory(resourceOwner)
         : undefined;
     return projectGhidraDoctorInspection(installation, temporaryDirectory);
   } catch (cause: unknown) {

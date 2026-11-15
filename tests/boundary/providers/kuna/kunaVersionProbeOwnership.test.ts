@@ -249,6 +249,7 @@ it.skipIf(process.platform === "win32")(
         },
       );
       await waitForFile(parentExited);
+      await launcher.exits[0];
       controller.abort(reason);
       const cause = await pending.catch((error: unknown) => error);
       const cancellation = kunaInstallationCancellation(cause);
@@ -315,7 +316,7 @@ it.skipIf(process.platform === "win32")(
     });
     const provider = new KunaProvider(
       { REA_KUNA_COMMAND: executable, REA_KUNA_CACHE_DIR: join(root, "cache") },
-      { launcher: launcher.launcher, probeTimeoutMs: 2_500 },
+      { launcher: launcher.launcher },
     );
     const input = target(join(root, "target"));
     await writeFile(input.path, "target");

@@ -138,7 +138,9 @@ describe("CdpBrowserProvider: approved accessibility and source capture", () => 
         error: {
           operation: "inspect_web_page",
           reason: "protocol_error",
-          userMessage: expect.stringContaining("scriptSource must be a string"),
+          userMessage: expect.stringContaining(
+            "Debugger.getScriptSource returned a malformed result at /scriptSource",
+          ),
         },
       });
       expect(browser.commands.map(({ method }) => method)).toContain(
@@ -318,11 +320,16 @@ it.each(
         method === "Page.getFrameTree"
           ? {
               frameTree: {
-                frame: { id: "frame-main", url: `${origin}/app` },
+                frame: {
+                  id: "frame-main",
+                  loaderId: "loader-frame-main",
+                  url: `${origin}/app`,
+                },
                 childFrames: [
                   {
                     frame: {
                       id: "child",
+                      loaderId: "loader-child",
                       parentId: "frame-main",
                       url: `${origin}/child`,
                     },
@@ -416,7 +423,11 @@ it.each(
         method === "Page.getFrameTree"
           ? {
               frameTree: {
-                frame: { id: "frame-main", url: `${origin}/app` },
+                frame: {
+                  id: "frame-main",
+                  loaderId: "loader-frame-main",
+                  url: `${origin}/app`,
+                },
                 childFrames: [
                   {
                     frame: {
@@ -1213,7 +1224,11 @@ it.each([undefined, 7, ""])(
         method === "Page.getFrameTree"
           ? {
               frameTree: {
-                frame: { id: "frame-main", url: `${origin}/app` },
+                frame: {
+                  id: "frame-main",
+                  loaderId: "loader-frame-main",
+                  url: `${origin}/app`,
+                },
                 childFrames: [
                   {
                     frame: {

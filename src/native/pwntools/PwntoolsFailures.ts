@@ -1,3 +1,4 @@
+import { analysisSettingLimit } from "../../domain/analysisSettingDefinitions.js";
 import {
   PWNTOOLS_LIMITS,
   resolvePwntoolsLimits,
@@ -44,7 +45,43 @@ export interface PwntoolsFailureContext {
   readonly configurationKey?: string;
   readonly timeoutMs?: number;
   readonly producerLimits?: PwntoolsProducerLimits;
+  readonly inputBytesSource?:
+    | "default"
+    | "setting"
+    | "runtime"
+    | "request"
+    | undefined;
 }
+
+const pwntoolsInputLimitFact = (
+  bytes: number,
+  source: PwntoolsFailureContext["inputBytesSource"],
+): string => {
+  const effective = String(bytes);
+  if (source === "request")
+    return `Selected producer_limits.input_bytes is ${effective} bytes.`;
+  if (source === "runtime")
+    return `The runtime pwntools.max_input_bytes ceiling is ${effective} bytes.`;
+  if (source === "setting")
+    return `REA_PWNTOOLS_MAX_INPUT_BYTES selected ${effective} bytes.`;
+  return `The launch default pwntools.max_input_bytes ceiling is ${effective} bytes.`;
+};
+
+const pwntoolsInputLimitRecovery = (
+  bytes: number,
+  source: PwntoolsFailureContext["inputBytesSource"],
+): string => {
+  const effective = String(bytes);
+  const shared =
+    "CPU, memory, output and transport allowances remain independent.";
+  if (source === "request")
+    return `producer_limits.input_bytes is ${effective} bytes for this call. Raise it on the next call (CLI --producer-limits JSON). ${shared}`;
+  if (source === "runtime")
+    return `pwntools.max_input_bytes is ${effective} bytes (source runtime) and can be changed with update_analysis_settings. The launch seed is REA_PWNTOOLS_MAX_INPUT_BYTES. producer_limits.input_bytes overrides that ceiling on the next call. ${shared}`;
+  if (source === "setting")
+    return `REA_PWNTOOLS_MAX_INPUT_BYTES is ${effective} bytes (source setting). Change pwntools.max_input_bytes with update_analysis_settings, or set producer_limits.input_bytes on the next call. The built-in default is ${String(PWNTOOLS_LIMITS.input_bytes)} bytes. ${shared}`;
+  return `pwntools.max_input_bytes is the launch default of ${effective} bytes and can be changed with update_analysis_settings. The launch seed is REA_PWNTOOLS_MAX_INPUT_BYTES. producer_limits.input_bytes overrides that default on the next call. ${shared}`;
+};
 
 /** Recovery identifies the selected controls rather than unrelated wall deadlines. */
 export const pwntoolsBudgetRecovery = (
@@ -295,8 +332,16 @@ const classifyPwntoolsDecoderFailure = (
           ...stableArtifactInputRecovery(cause),
           ...(cause.reason === "limit"
             ? {
-                userMessage: `${cause.message} Selected producer_limits.input_bytes is ${String(limits.input_bytes)} bytes. ${budgetRecovery}`,
-                remediationAction: `Increase producer_limits.input_bytes above ${String(limits.input_bytes)} on the next call (CLI --producer-limits JSON). No restart is required. Changing REA_PWNTOOLS_MAX_INPUT_BYTES affects the launch default instead. CPU, memory, output and transport allowances remain independent.`,
+                userMessage: `${cause.message} ${pwntoolsInputLimitFact(limits.input_bytes, context.inputBytesSource)} ${budgetRecovery}`,
+                remediationAction: pwntoolsInputLimitRecovery(
+                  limits.input_bytes,
+                  context.inputBytesSource,
+                ),
+                limit: analysisSettingLimit(
+                  "pwntools.max_input_bytes",
+                  limits.input_bytes,
+                  context.inputBytesSource,
+                ),
               }
             : {}),
         },

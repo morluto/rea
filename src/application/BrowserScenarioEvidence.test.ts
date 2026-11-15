@@ -5,6 +5,9 @@ import { browserScenarioSchema } from "../domain/browserScenario.js";
 import { digestCanonicalValue } from "../domain/canonicalDigest.js";
 import { createBrowserScenarioEvidence } from "./BrowserScenarioEvidence.js";
 
+import { jsonValueSchema } from "../domain/jsonValue.js";
+
+const capture = scenarioCaptureFixture();
 const ORIGIN = "http://127.0.0.1:3101";
 
 const parameters = (actions: readonly unknown[]) =>
@@ -14,7 +17,7 @@ const parameters = (actions: readonly unknown[]) =>
       start_url: { url: `${ORIGIN}/` },
       actions,
     }),
-    scenarioCaptureFixture(),
+    { source: jsonValueSchema.parse(capture), facts: capture },
     { id: "fixture", name: "fixture", version: "1" },
   ).parameters;
 

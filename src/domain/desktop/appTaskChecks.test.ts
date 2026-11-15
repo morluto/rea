@@ -13,8 +13,6 @@ import { elementText } from "./viewPointer.js";
 
 import { redactSecretsInJson } from "./buildSecrets.js";
 
-const portable = (name: string) => /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(name);
-
 it("redacts full check values before shortening descriptions without changing the verdict", () => {
   const secret = "e-Plum7-Kite-Throwaway-42";
   const actual = `${"x".repeat(180)}${secret}`;
@@ -53,10 +51,7 @@ const expectOutcome = (
 };
 
 const task = (checks: readonly unknown[]) =>
-  parseDesktopTask(
-    { name: "edit-notes", prompt: "Edit my notes.", checks },
-    portable,
-  );
+  parseDesktopTask({ name: "edit-notes", prompt: "Edit my notes.", checks });
 
 /** Task changes the parser refuses, each with part of its message. */
 const REFUSALS: readonly (readonly [Record<string, unknown>, string])[] = [
@@ -1071,22 +1066,19 @@ describe("evaluateTaskChecks whole text", () => {
 
 describe("parseDesktopTask", () => {
   it("settles ids and keeps the prompt trimmed", () => {
-    const parsed = parseDesktopTask(
-      {
-        name: "add-milk",
-        prompt: "  Add milk.\n",
-        checks: [
-          { kind: "file_present", file: "Documents/todo.txt" },
-          {
-            id: "milk",
-            kind: "lines_present",
-            file: "Documents/todo.txt",
-            lines: ["milk"],
-          },
-        ],
-      },
-      portable,
-    );
+    const parsed = parseDesktopTask({
+      name: "add-milk",
+      prompt: "  Add milk.\n",
+      checks: [
+        { kind: "file_present", file: "Documents/todo.txt" },
+        {
+          id: "milk",
+          kind: "lines_present",
+          file: "Documents/todo.txt",
+          lines: ["milk"],
+        },
+      ],
+    });
 
     expect(parsed).toMatchObject({
       ok: true,
@@ -1098,15 +1090,12 @@ describe("parseDesktopTask", () => {
   });
 
   it.each(REFUSALS)("refuses %j", (change, message) => {
-    const parsed = parseDesktopTask(
-      {
-        name: "add-milk",
-        prompt: "Add milk.",
-        checks: [{ kind: "file_present", file: "a" }],
-        ...change,
-      },
-      portable,
-    );
+    const parsed = parseDesktopTask({
+      name: "add-milk",
+      prompt: "Add milk.",
+      checks: [{ kind: "file_present", file: "a" }],
+      ...change,
+    });
 
     expect(parsed.ok).toBe(false);
     if (!parsed.ok) expect(parsed.error).toContain(message);

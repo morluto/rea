@@ -12,7 +12,6 @@ import { gzipSync } from "node:zlib";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { expect, it, vi } from "vitest";
 
-import { isPortableBundleName } from "../../../src/application/environment/environmentBundle.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { parseDesktopTask } from "../../../src/domain/desktop/appTask.js";
 import {
@@ -142,7 +141,7 @@ const lines = (...text: string[]) => ({
 
 /** A bundle folder holding TASK as the export writes it for the app. */
 const taskBundle = async (app: string) => {
-  const parsed = parseDesktopTask(TASK, isPortableBundleName);
+  const parsed = parseDesktopTask(TASK);
   if (!parsed.ok) throw new Error(parsed.error);
   const bundle = await bundleFolder();
   const verifier = join(

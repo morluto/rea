@@ -1,4 +1,5 @@
-import { Readable, Transform, pipeline } from "node:stream";
+import { ArtifactPreparation } from "./ArtifactPreparation.js";
+import { Readable, Transform } from "node:stream";
 import { crc32 } from "node:zlib";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
 import { setImmediate } from "node:timers/promises";
@@ -8,10 +9,7 @@ import type {
   UImageMetadata,
 } from "../domain/artifactFormatMetadata.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
-import {
-  artifactReadCancelledBy,
-  assertArtifactReadActive,
-} from "./ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import {
   ArtifactReaderFailure,
   copyArtifactEntry,
@@ -21,6 +19,7 @@ import {
   type ArtifactTraversalOptions,
 } from "./ArtifactReader.js";
 import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+import { ownArtifactStream } from "./OwnedArtifactStream.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import {
@@ -50,9 +49,7 @@ export class UImageArtifactReader implements ArtifactReader {
   readonly #entries = new Map<string, UImageEntry>();
   readonly #streams = new Set<Readable>();
   readonly #source: ArtifactFileSource;
-  #prepared:
-    | { signal: AbortSignal | undefined; promise: Promise<void> }
-    | undefined;
+  readonly #preparation = new ArtifactPreparation();
   #header: UImageMetadata | undefined;
   #closing = false;
 
@@ -80,27 +77,11 @@ export class UImageArtifactReader implements ArtifactReader {
   ): AsyncIterable<ArtifactEntry> {
     await this.#scope.run(async () => {
       this.#assertOpen(signal);
-      for (;;) {
-        const pending = (this.#prepared ??= {
-          signal,
-          promise: this.#prepare(signal),
-        });
-        try {
-          await pending.promise;
-          break;
-        } catch (cause: unknown) {
-          if (this.#prepared === pending) this.#prepared = undefined;
-          if (
-            pending.signal !== signal &&
-            signal?.aborted !== true &&
-            artifactReadCancelledBy(cause, pending.signal)
-          ) {
-            this.#assertOpen(signal);
-            continue;
-          }
-          throw cause;
-        }
-      }
+      await this.#preparation.run(
+        signal,
+        () => this.#prepare(signal),
+        () => this.#assertOpen(signal),
+      );
       await this.#source.read(signal);
     });
     this.#assertOpen(signal);
@@ -134,6 +115,10 @@ export class UImageArtifactReader implements ArtifactReader {
         );
       const { handle } = await this.#source.read(signal);
       this.#assertOpen(signal);
+      const cancellationFailure = (reason: unknown): ArtifactReaderFailure =>
+        new ArtifactReaderFailure("cancelled", "uImage read cancelled", {
+          cause: reason,
+        });
       const source =
         stored.declaredSize === 0
           ? Readable.from([])
@@ -141,60 +126,16 @@ export class UImageArtifactReader implements ArtifactReader {
               start: stored.byteOffset,
               end: stored.byteOffset + stored.declaredSize - 1,
               signal,
-              cancellationFailure: (reason) =>
-                new ArtifactReaderFailure(
-                  "cancelled",
-                  "uImage read cancelled",
-                  {
-                    cause: reason,
-                  },
-                ),
+              cancellationFailure,
             });
       const output = this.#memberStream(stored, signal);
-      output.on("error", () => undefined);
-      this.#streams.add(output);
-      let producerComplete = false;
-      const onAbort = (): void => {
-        // Active reads/validation own failure precedence. After they complete,
-        // cancellation must still retire any unconsumed readable bytes.
-        if (!producerComplete || output.destroyed) return;
-        output.destroy(
-          new ArtifactReaderFailure("cancelled", "uImage read cancelled", {
-            cause: signal?.reason,
-          }),
-        );
-      };
-      const retired = new Promise<void>((resolve) => {
-        output.once("close", () => {
-          this.#streams.delete(output);
-          signal?.removeEventListener("abort", onAbort);
-          resolve();
-        });
+      ownArtifactStream(source, output, {
+        scope: this.#scope,
+        streams: this.#streams,
+        signal,
+        cancellationFailure,
+        label: "uImage",
       });
-      signal?.addEventListener("abort", onAbort, { once: true });
-      if (signal?.aborted) onAbort();
-      void this.#scope
-        .run(async () => {
-          // Writable completion can leave readable bytes buffered. Retain both
-          // producer I/O and the caller's stream until consumption or closure.
-          await Promise.all([
-            new Promise<void>((resolve) =>
-              pipeline(source, output, () => {
-                producerComplete = true;
-                if (signal?.aborted) onAbort();
-                resolve();
-              }),
-            ),
-            retired,
-          ]);
-        })
-        .catch((cause: unknown) =>
-          output.destroy(
-            cause instanceof Error
-              ? cause
-              : new Error("uImage stream ownership failed", { cause }),
-          ),
-        );
       return output;
     });
   }

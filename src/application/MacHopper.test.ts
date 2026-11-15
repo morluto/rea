@@ -613,3 +613,57 @@ it("retains the completed installation but skips opening when cancelled during i
   expect(host.unmounts).toBe(1);
   expect(host.cleanups).toBe(1);
 });
+
+it.each(["physical", "abort-name", "caller", "node-wrapper"] as const)(
+  "attributes a rejected package write and retains cleanup (%s)",
+  async (kind) => {
+    const host = new FakeMacHopperHost();
+    const controller = new AbortController();
+    const reason = { caller: "stop during package write" };
+    const physical = Object.assign(new Error("package write denied"), {
+      name: kind === "abort-name" ? "AbortError" : "Error",
+    });
+    const wrapped = Object.assign(
+      new Error("operation aborted", { cause: reason }),
+      {
+        name: "AbortError",
+        code: "ABORT_ERR",
+      },
+    );
+    host.writePackage = async () => {
+      controller.abort(reason);
+      throw kind === "caller"
+        ? reason
+        : kind === "node-wrapper"
+          ? wrapped
+          : physical;
+    };
+    let retained: (() => Promise<void>) | undefined;
+    let release = false;
+    host.cleanup = async () => {
+      if (!release) throw new Error("temporary root busy");
+    };
+    const result = await installMacHopper(
+      { signal: controller.signal },
+      {
+        ...host,
+        retainCleanup: (cleanup, resources) => {
+          expect(resources).toEqual(["/tmp/rea-hopper-test"]);
+          retained = cleanup;
+        },
+      },
+    );
+    expect(result).toMatchObject({
+      status: "failed",
+      reason:
+        kind === "caller" || kind === "node-wrapper" ? "cancelled" : "mount",
+      cleanupFailure: expect.stringContaining("temporary root busy"),
+    });
+    if (kind === "physical" || kind === "abort-name")
+      expect(result).toMatchObject({ diagnostic: physical.message });
+    expect(host.installs).toBe(0);
+    expect(retained).toBeTypeOf("function");
+    release = true;
+    await retained?.();
+  },
+);

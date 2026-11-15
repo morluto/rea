@@ -22,6 +22,7 @@ import { macDeveloperIdRequirement } from "../process/MacCodeSignature.js";
 import { macHopperUserApplicationPath } from "./MacHopperPaths.js";
 import {
   downloadHopperPackage,
+  isHopperRequestCancellation,
   HOPPER_METADATA_TIMEOUT_MS,
   type HopperDownload,
   type HopperRequestFailure,
@@ -310,7 +311,9 @@ export const installMacHopper = async (
   } catch (cause: unknown) {
     result = {
       status: "failed",
-      reason: options.signal?.aborted === true ? "cancelled" : installStage,
+      reason: isHopperRequestCancellation(cause, options.signal)
+        ? "cancelled"
+        : installStage,
       diagnostic: failureMessage(cause),
     };
   }

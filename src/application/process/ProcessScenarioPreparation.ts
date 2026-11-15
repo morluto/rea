@@ -53,7 +53,7 @@ export const prepareProcessScenarioPlan = async (
       await resolveProcessScenarioRuntimePaths(scenario, environment, platform);
     if (aborted()) return cancelled();
     const privacy = createProcessSensitiveOutput(scenario);
-    if (!privacy.ok) return err(privacy.error);
+    if (!privacy.ok) return privacy;
     const admitted = await admitFilesystemObservationRoots(resolved, signal);
     if (!admitted.ok) return aborted() ? cancelled() : admitted;
     if (aborted()) return cancelled();

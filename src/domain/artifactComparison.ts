@@ -74,23 +74,42 @@ const artifactChangeSchema = z.object({
 });
 
 /** Deterministic artifact comparison with every change returned inline. */
-export const artifactComparisonResultSchema = z.object({
-  status: comparisonStatusSchema,
-  left_manifest_id: prefixedDigestSchema("agm"),
-  right_manifest_id: prefixedDigestSchema("agm"),
-  summary: z.object({
-    unchanged: z.int().min(0),
-    added: z.int().min(0),
-    removed: z.int().min(0),
-    changed: z.int().min(0),
-    unknown: z.int().min(0),
-    contradiction: z.int().min(0).default(0),
-  }),
-  changes: z.array(artifactChangeSchema),
-  // Absent on legacy records; absence does not identify a contradicting side.
-  integrity_mismatch_evidence_ids: z.array(evidenceIdSchema).optional(),
-  limitations: z.array(z.string()),
-});
+export const artifactComparisonResultSchema = z
+  .object({
+    status: comparisonStatusSchema,
+    left_manifest_id: prefixedDigestSchema("agm"),
+    right_manifest_id: prefixedDigestSchema("agm"),
+    summary: z.object({
+      unchanged: z.int().min(0),
+      added: z.int().min(0),
+      removed: z.int().min(0),
+      changed: z.int().min(0),
+      unknown: z.int().min(0),
+      contradiction: z.int().min(0).default(0),
+    }),
+    changes: z.array(artifactChangeSchema),
+    // Absent on legacy records; absence does not identify a contradicting side.
+    integrity_mismatch_evidence_ids: z.array(evidenceIdSchema).optional(),
+    limitations: z.array(z.string()),
+  })
+  .superRefine((result, context) => {
+    if (
+      result.status === "unchanged" &&
+      (result.changes.length > 0 ||
+        result.summary.added > 0 ||
+        result.summary.removed > 0 ||
+        result.summary.changed > 0 ||
+        result.summary.unknown > 0 ||
+        result.summary.contradiction > 0 ||
+        (result.integrity_mismatch_evidence_ids?.length ?? 0) > 0)
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["status"],
+        message:
+          "An unchanged artifact comparison cannot retain changes, non-zero change counts, or integrity mismatches.",
+      });
+  });
 
 export type ArtifactComparisonResult = z.infer<
   typeof artifactComparisonResultSchema
@@ -98,7 +117,7 @@ export type ArtifactComparisonResult = z.infer<
 type ArtifactChange = z.infer<typeof artifactChangeSchema>;
 
 /** Comparison limitation when a path's format declarations cannot be compared. */
-export const FORMAT_DECLARATION_UNKNOWN_LIMITATION =
+const FORMAT_DECLARATION_UNKNOWN_LIMITATION =
   "Format metadata declarations are missing on one side or differ in kind for matching paths; omitted metadata may be a legacy or non-container observation and leaves the complete declaration unavailable.";
 
 const comparisonInventory = (input: unknown, side: "left" | "right") => {
@@ -650,19 +669,17 @@ const classifyDeclarationRecord = (
 
 /**
  * Without observed content on both sides, the containers' declared digests
- * are the remaining content evidence. Claims of one algorithm that differ
- * are a metadata difference, but they are unverified, so they do not make
- * the path changed; equal claims add nothing. Observed bytes replace both.
+ * are the remaining content evidence. Claims of one algorithm that differ,
+ * and a claim present on only one side, are a metadata difference. They are
+ * unverified, so they do not make the path changed. Equal claims add nothing.
+ * The signal is the structured claim, not a reader limitation that restates it.
+ * Observed bytes replace both.
  */
 const declaredDigestsDiffer = (input: OccurrencePair): boolean => {
   const left = input.leftOccurrence?.declared_integrity;
   const right = input.rightOccurrence?.declared_integrity;
-  return (
-    left !== undefined &&
-    right !== undefined &&
-    left.algorithm === right.algorithm &&
-    left.digest !== right.digest
-  );
+  if (left === undefined || right === undefined) return left !== right;
+  return left.algorithm === right.algorithm && left.digest !== right.digest;
 };
 
 const changedDimensions = (input: {

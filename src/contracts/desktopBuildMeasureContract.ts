@@ -1,3 +1,4 @@
+import { portableBundleNameSchema } from "../domain/portableBundleName.js";
 import { z } from "zod";
 
 import { absoluteLocalPathStringSchema } from "../domain/localPath.js";
@@ -42,10 +43,9 @@ export const MEASURE_BUILD_TASK_CONTRACT = {
     bundle: absoluteLocalPathStringSchema.describe(
       "The exported bundle's folder on this host.",
     ),
-    task: z
-      .string()
-      .min(1)
-      .describe("The task's name, as its tasks/<name>.json names it."),
+    task: portableBundleNameSchema.describe(
+      "The task's name, as its tasks/<name>.json names it.",
+    ),
     model: z
       .string()
       .min(1)

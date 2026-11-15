@@ -1,12 +1,15 @@
+import type { InterfaceBuilderAnalysis } from "./apple/interfaceBuilderGraph.js";
 import type { PartialTaskMeasurement } from "./desktop/taskDifficulty.js";
 import type { AppleIpsPartialObservation } from "./native/appleIps.js";
 import type { PlaywrightTrace } from "./playwrightTrace/playwrightTrace.js";
+import type { ApiContract } from "./apiContract/apiContract.js";
 import type { GraphqlContract } from "./apiContract/graphqlContract.js";
 import type { SavedAnalysisSnapshotPartialObservation } from "./savedAnalysisSnapshot.js";
 import type { AnalysisSettingLimit } from "./analysisSettings.js";
 import type { JsonValue } from "./jsonValue.js";
 import type { AnalysisCleanupRetry } from "./analysisErrorRecovery.js";
 import type { EnvironmentBundlePublication } from "./environmentBundleExport.js";
+import type { HistoricalSourceGraph } from "./referenceSourceGraph.js";
 
 /** Stable tags exposed by safe analysis-error projections. */
 const ANALYSIS_ERROR_TAGS = [
@@ -436,7 +439,10 @@ import type {
 import type { FileOffsetPartialObservation } from "./native/fileOffsetPartialObservation.js";
 import type { NativeCallPartialObservation } from "./native/nativeCallPartialObservation.js";
 import type { HopperCallerReconciliationPartial } from "./native/hopperCallerReconciliation.js";
-import type { ElectronActivePartialObservation } from "./javascript/electronActiveObservation.js";
+import type {
+  ElectronActiveObservationResult,
+  ElectronActivePartialObservation,
+} from "./javascript/electronActiveObservation.js";
 import type { JavaScriptRuntimeObservation } from "./javascript/javascriptRuntimeObservation.js";
 import type {
   ArtifactInventoryPartialObservation,
@@ -446,7 +452,10 @@ import type { WebScriptExportPartialObservation } from "./webScriptExport.js";
 import type { JavaScriptRecoveryPartialObservation } from "./javascript/javascriptRecovery.js";
 import type { BrowserScenarioPartialObservation } from "./browserScenarioCapture.js";
 import type { Evidence } from "./evidence.js";
-import type { ElectronPagePartialObservation } from "./javascript/electronObservation.js";
+import type {
+  ElectronPageInspection,
+  ElectronPagePartialObservation,
+} from "./javascript/electronObservation.js";
 import type { AndroidPartialObservation } from "./android/androidPartialObservation.js";
 import type { FirmwarePartialObservation } from "./firmware/firmwareAnalysis.js";
 import type {
@@ -489,6 +498,7 @@ import type { WebArtifactAcquisition } from "./webArtifactAcquisition.js";
 
 /** Provider-neutral evidence collected before a typed analysis failure. */
 export type AnalysisPartialObservation =
+  | InterfaceBuilderAnalysis
   | PartialTaskMeasurement
   | {
       readonly kind: "omitted-observation";
@@ -498,6 +508,7 @@ export type AnalysisPartialObservation =
     }
   | { readonly kind: "unretained-evidence"; readonly evidence: Evidence }
   | { readonly kind: "retained-evidence"; readonly evidence_id: string }
+  | ApiContract
   | GraphqlContract
   | PlaywrightTrace
   | SavedAnalysisSnapshotPartialObservation
@@ -507,6 +518,7 @@ export type AnalysisPartialObservation =
   | FridaDeviceList
   | FridaProcessList
   | WebModuleResolutionObservation
+  | HistoricalSourceGraph
   | WebNetworkCapture
   | NativeLoadImagePartialObservation
   | NativeAotSnapshotObservation
@@ -516,6 +528,7 @@ export type AnalysisPartialObservation =
   | HopperCallerReconciliationPartial
   | FileOffsetPartialObservation
   | ElectronActivePartialObservation
+  | ElectronActiveObservationResult
   | BrowserScenarioPartialObservation
   | WebPageInspection
   | WebBundleAnalysis
@@ -541,6 +554,7 @@ export type AnalysisPartialObservation =
   | InspectSignature
   | InspectMacho
   | ElectronPagePartialObservation
+  | ElectronPageInspection
   | AdbActivityStartPartialObservation
   | AdbAcquiredFilePartialObservation
   | AdbPackagePullPartialObservation

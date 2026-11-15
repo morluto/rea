@@ -8,7 +8,6 @@ import {
   createHistoricalSourceManifest,
   historicalSourceGraphSchema,
   historicalSourceParseFailureKey,
-  parseHistoricalSourceGraph,
   type HistoricalSourceGraphInput,
 } from "./referenceSourceGraph.js";
 
@@ -129,7 +128,7 @@ const registerSourceCommitmentTests = (): void => {
       manifest_id: `hsm_${createHash("sha256").update(semanticJson).digest("hex")}`,
     });
     expect(first).toEqual(second);
-    expect(parseHistoricalSourceGraph(graph)).toEqual(graph);
+    expect(historicalSourceGraphSchema.parse(graph)).toEqual(graph);
     expect(() =>
       createHistoricalSourceGraph({
         ...graphInput(),
@@ -145,7 +144,7 @@ const registerSourceCommitmentTests = (): void => {
   it("rejects stale roots and commits file, directory, and symlink semantics", () => {
     const original = createHistoricalSourceGraph(graphInput());
     expect(() =>
-      parseHistoricalSourceGraph({ ...original, root_sha256: HASH_A }),
+      historicalSourceGraphSchema.parse({ ...original, root_sha256: HASH_A }),
     ).toThrow(/root commitment/u);
 
     for (const mutate of [
@@ -214,7 +213,7 @@ describe("historical source graph", () => {
       manifests: paths,
     };
     const graph = createHistoricalSourceGraph(input);
-    expect(parseHistoricalSourceGraph(graph)).toEqual(graph);
+    expect(historicalSourceGraphSchema.parse(graph)).toEqual(graph);
     expect(() =>
       createHistoricalSourceGraph({
         ...input,

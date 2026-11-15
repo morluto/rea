@@ -213,10 +213,7 @@ import {
   artifactGraphManifestSchema,
   artifactInventoryCoverageSchema,
 } from "../artifactGraph.js";
-import {
-  apiSurfaceFields,
-  apiSurfaceViewSchema,
-} from "./webNetworkApiSurfaceView.js";
+import { apiSurfaceFields, apiSurfaceViewSchema } from "./apiSurfaceSchema.js";
 import {
   evmViewRequestSchema,
   evmViewItemSchema,
@@ -261,10 +258,8 @@ import {
   captureViewItemsSchema,
   captureSummarySchema,
 } from "./webNetworkCaptureView.js";
-import {
-  environmentManifestFields,
-  environmentManifestViewRequestSchema,
-} from "./environmentManifestView.js";
+import { environmentManifestFields } from "./environmentManifestSchema.js";
+import { environmentManifestViewRequestSchema } from "./environmentManifestView.js";
 import {
   environmentStateFields,
   environmentStateViewRequestSchema,
@@ -286,13 +281,15 @@ import {
 import {
   androidPackageSummarySchema,
   androidManifestViewItemSchema,
-  androidManifestViewRequestSchema,
-  androidComponentsViewRequestSchema,
-  androidComponentSummaryViewRequestSchema,
   androidComponentViewRowSchema,
   androidComponentViewContextSchema,
   androidComponentSummarySchema,
 } from "./androidPackageView.js";
+import {
+  androidManifestViewRequestSchema,
+  androidComponentsViewRequestSchema,
+  androidComponentSummaryViewRequestSchema,
+} from "../android/androidPackageQuery.js";
 import {
   androidClassSummarySchema,
   androidMethodSummarySchema,
@@ -559,6 +556,7 @@ export const erlangBeamSummaryViewResultSchema = z.strictObject({
 });
 export const erlangBeamTableViewResultSchema = z.strictObject({
   ...viewResultBase,
+  coverage: nullableCollectionViewCoverageSchema,
   kind: z.literal("beam"),
   parent_operation: z.literal("inspect_erlang_beam"),
   view: erlangBeamViewRequestSchema,
@@ -624,6 +622,7 @@ export const rustBinarySummaryViewResultSchema = z.strictObject({
 
 export const rustBinaryPageViewResultSchema = z.strictObject({
   ...viewResultBase,
+  coverage: nullableCollectionViewCoverageSchema,
   ...rustBinaryViewContextSchema.shape,
   kind: z.literal("rust"),
   parent_operation: z.literal("inspect_rust_binary"),
@@ -1506,6 +1505,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     ...viewResultBase,
     ...goBinaryViewContextSchema.shape,
+    coverage: nullableCollectionViewCoverageSchema,
     kind: z.literal("go"),
     parent_operation: z.literal("inspect_go_binary"),
     view: goBinaryViewRequestSchema,

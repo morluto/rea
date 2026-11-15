@@ -13,7 +13,6 @@ import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { readStableArtifact } from "../../../src/artifacts/readStableArtifact.js";
 import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
-import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import type { ExecutionOptions } from "../../../src/application/AnalysisProvider.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 

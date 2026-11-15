@@ -51,7 +51,10 @@ installation or connection and requires its own explicit approval. It can also
 save verified paths for an existing Ghidra installation.
 
 After selection, review the plan's exact paths and changes and approve before
-REA writes files or installs Hopper. You can cancel at any prompt.
+REA writes files or installs Hopper. The approval view also shows known manual
+completion steps for selected clients, such as Grok Bot's hosted connector.
+Approving the local changes does not complete those manual steps. You can cancel
+at any prompt.
 
 Before applying changes, REA checks your current configuration. The plan lists:
 
@@ -482,6 +485,12 @@ updated stops the remaining removals. Uninstall reports each candidate
 their individual `actions` alongside its aggregate status and detail,
 including earlier removals when a later file fails. The paths name
 the discovered configuration candidates, not resolved physical file identities.
+If resource cleanup remains incomplete, uninstall reports a failed
+`uninstall_cleanup` item alongside the completed removals, with a structured
+`cleanup` observation naming the outstanding resources. An embedded host retains
+the exact cleanup owners: retrying that host's `close()` updates previously
+returned cleanup observations when release is confirmed. A new CLI invocation
+does not inherit those owners; inspect the reported resources before proceeding.
 For JSON clients, uninstall removes every repeated `rea` member in the effective
 server table only when each registration is REA-owned. An unowned earlier
 member, or an unowned OpenCode V1 entry that removing V2 would expose, stops
@@ -677,6 +686,7 @@ hosted connector; see [its configuration](client-configuration.md#other-client-s
 | Codex              | `codex`          |
 | Cursor             | `cursor`         |
 | CodeBuddy          | `codebuddy`      |
+| Cline CLI          | `cline`          |
 | Gemini CLI         | `gemini_cli`     |
 | Windsurf           | `windsurf`       |
 | Devin              | `devin`          |
@@ -968,8 +978,16 @@ reports `busy` at stage `launch`; `analysis_activity` describes bridge requests
 and can remain idle until the socket is ready. Cleanup work reports `busy` at
 stage `connection`.
 
-If macOS denies Apple Events, allow the application that starts REA under
-**System Settings → Privacy & Security → Automation**, then retry. REA releases
+If macOS denies Apple Events, REA reports
+`details.launch_rejection.boundary: "apple_events_authorization"` with
+`reason: "not_authorized"`, category `unavailable`, and `retryable: false`.
+Allow the application that starts REA under
+**System Settings → Privacy & Security → Automation** when that client can be
+authorized. A hardened-runtime application requires the
+`com.apple.security.automation.apple-events` entitlement before macOS will
+prompt; without it, ask the client developer to add the entitlement or start
+REA from a client macOS can authorize, such as Terminal. Retrying from the same
+unauthorized client will not succeed until authorization changes. REA releases
 the target reservation when the native helper reports its complete authorization
 rejection after literal argument admission. Before application handoff, REA refuses
 double quotes, backslashes, or line breaks in the final launcher path or arguments,
@@ -1036,14 +1054,17 @@ Loader selection reads the Mach-O container header, including FAT files with a
 single architecture. For FAT32 and FAT64 containers, REA validates the
 architecture table and selected Mach-O header, prepares a private thin image,
 and loads it with Hopper's native Mach-O loader instead of Hopper's implicit
-FAT slice choice. For arm64 targets, REA ranks subtype bases 0 (plain arm64) and
-2 (arm64e), ignoring capability bits for ranking while retaining the raw subtype
-for slice identity. These slices' function-entry encodings decode under
-`--aarch64`, ahead of Apple's arm64e.x1 variant (base subtype 12), which is
-selected only when it is the arm64 family's only candidate. REA checks the
-entire source's SHA-256 while copying the slice; source identity and reported
-offsets still refer to the original container. Any other ambiguous architecture
-subtype requires an explicitly extracted thin image; REA does not guess.
+FAT slice choice. Hopper reads the slice that `open_binary` admitted for the
+session, the same slice other tools and the session's Evidence name; it does not
+rank slices again. For arm64 targets, admission prefers subtype bases 0 (plain
+arm64), then 2 (arm64e), then 1 (arm64v8), ignoring capability bits for ranking
+while retaining the raw subtype for slice identity. These slices'
+function-entry encodings decode under `--aarch64`, ahead of Apple's arm64e.x1
+variant (base subtype 12), which is selected only when no preferred subtype is
+present. REA checks the entire source's SHA-256 while copying the slice; source
+identity and reported offsets still refer to the original container. When
+admission cannot choose one slice, open an explicitly extracted thin image; REA
+does not guess.
 Set `HOPPER_LOADER_ARGS_JSON` in REA's launch environment to a JSON array of
 strings to override the derived Hopper loader arguments, for example
 `["-l","Mach-O"]`. Empty string elements are preserved; NUL bytes are not
@@ -1192,7 +1213,7 @@ require Hopper; Windows P0 remains read-only.
 Windows P0 admits native x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs,
 [DOS MZ executables](../providers/ghidra-dos.md), plus explicitly
 selected [raw NMOS 6502 images](../providers/raw-binary.md#nmos-6502) with a caller-supplied
-entry at file offset 0, on fixed local NTFS volumes. Other raw CPU families remain
+entry at file offset 0, on fixed local NTFS/ReFS volumes. Other raw CPU families remain
 unsupported on Windows.
 The npm package bundles native Job Object ownership, protected private runtime
 DACLs, and handle-based path admission; no separate addon installation is needed.
@@ -1241,17 +1262,43 @@ installation remains unavailable on Windows. Setup never installs Ghidra,
 Java, or Python. It preserves valid detected Ghidra/JDK settings in agent
 registrations. See [Windows Ghidra P0](../providers/windows-ghidra-p0.md) for provider diagnostics.
 
-The separate `rea mcp add` builtin delegates most clients to Incur's package-runner
-child launcher. Run that acquisition from a trusted directory; prefer managed
-`rea setup` when supported. That child launcher can fail on Windows with `MCP_ADD_FAILED: spawn npx ENOENT`
-before registering a client. REA's setup path is unaffected. For a client supported
-by setup, review `rea setup --client opencode --skill=false --dry-run --json`
-(substitute its client ID), then use the same scoped command without `--dry-run`
-and approve the displayed plan. Non-interactive application additionally needs
-`--yes`. This configures setup's user-level client location; it does not replace
-`mcp add --no-global`, arbitrary `--command` registrations, or unsupported clients.
-The builtin launcher defect remains pending a dependency fix; a successful setup
-run does not verify that `mcp add` works on Windows.
+`rea mcp add` registers the selected server launcher directly in client settings.
+It does not acquire a package or start the server. Omit `--command` to register
+the runtime and REA entrypoint currently executing the CLI. Use `--agent` to
+select clients; repeat it for a mixed selection. With no selection, REA uses
+detected user-level clients and Amp; if none of the other supported clients are
+detected, it selects their full registration catalog and Amp.
+
+REA preserves existing environment overrides, client policy, peer servers and
+unrelated settings. A changed existing file gets a private backup; an identical
+repeat keeps the file and creates no new backup. The result reports exact
+`command` and `args`, each selected client's effective scope, and configured,
+unchanged, failed or not-started outcomes. A partial failure returns a nonzero
+status while retaining successful client outcomes and recovery paths.
+
+User-level registration for a client that `rea setup` also supports uses that
+client's setup definition, so the same native read rules apply. Gemini CLI
+registration fails without writing when Gemini's system, defaults or trusted
+workspace settings exclude `rea`, leave it off a nonempty allowlist, or define
+a different `rea` entry with higher precedence. On Windows, registration refuses
+to write a Claude Desktop MSIX configuration the running app could overwrite,
+or any file this process's MSIX AppData redirection would divert.
+
+`--no-global` writes only project-level settings. A selection containing Amp or
+another client without project storage fails before any writes; select those
+clients in a separate global registration. Managed `rea setup` remains available
+for its supported clients and additional setup tasks. Registration preserves
+Windows launcher paths and arguments as data. Windows ACL privacy cannot be
+verified through POSIX mode bits; Fx results distinguish requested Windows modes
+from verified POSIX modes. Controlled source tests do not establish real Windows
+client behavior.
+
+`rea mcp add --command` accepts stdio launcher text. An HTTP(S) URL in the
+executable position is refused before any settings change; configure remote MCP
+transport in the client's own settings. Earlier delegated registration could
+interpret a URL as remote transport for some clients while storing it as an
+executable for Amp. That inconsistent URL interpretation and package acquisition
+are removed. Launcher arguments that happen to contain URLs remain arguments.
 
 When `GHIDRA_INSTALL_DIR` is unset, doctor and the Ghidra provider also search
 `PATH` for `ghidra` or `ghidraRun`, resolve the selected launcher through its
@@ -1680,6 +1727,8 @@ Each line is `address<TAB>kind[<TAB>name]`, where kind is `function`, `code` or 
 
 Label seeds can name mapped uninitialized storage such as `.bss`; function and code seeds require initialized bytes.
 
+When Ghidra has no function for a requested procedure, the error's remediation names this seed recovery. A `resolve_containing_procedure` result of `not_in_procedure` carries it as a limitation. Neither establishes that the address holds code. Seeds apply only to a fresh import, so a session with `REA_GHIDRA_PROJECT_PATH` or `REA_GHIDRA_CHECKPOINT_DIR` names the setting to unset first.
+
 To skip a named Ghidra auto-analyzer (for example, when default auto-analysis
 stalls in one analyzer on a Swift/Objective-C arm64 Mach-O):
 
@@ -1902,7 +1951,7 @@ terminal, use the package runner at the version the plugin pins:
 <!-- x-release-please-start-version -->
 
 ```bash
-npx -y rea-agents@6.8.0 doctor --provider ghidra --json
+npx -y rea-agents@6.9.0 doctor --provider ghidra --json
 ```
 
 <!-- x-release-please-end -->
@@ -1935,7 +1984,7 @@ therefore runs the published package instead of a local build:
   "mcpServers": {
     "rea": {
       "command": "npx",
-      "args": ["-y", "rea-agents@6.8.0", "mcp"]
+      "args": ["-y", "rea-agents@6.9.0", "mcp"]
     }
   }
 }

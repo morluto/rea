@@ -19,7 +19,9 @@ import {
 } from "../../artifacts/ArtifactResourceScope.js";
 import type { DesktopApplicationCapture } from "../../domain/desktop/desktopCapture.js";
 import type { Evidence } from "../../domain/evidence.js";
+import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { exportDesktopApplication } from "./DesktopApplicationExport.js";
 import { draftDesktopApplicationTask } from "./DesktopTaskDraft.js";
@@ -164,7 +166,7 @@ const evidence = (result: Evidence | Error): Evidence => {
   return result;
 };
 
-it("reports the published bundle when the withheld copy destination is occupied", async () => {
+it("refuses an occupied withheld copy destination before writing the bundle", async () => {
   const root = await createTestTempDirectory("desktop-copy-refusal-");
   const occupied = join(root, "occupied");
   await mkdir(occupied);
@@ -173,21 +175,31 @@ it("reports the published bundle when the withheld copy destination is occupied"
     withhold: { paths: [SETTINGS] },
     withheldCopy: occupied,
   });
-  expect(result).toMatchObject({
-    partialObservation: {
-      operation: "export_desktop_application",
-      normalized_result: { directory },
-    },
-  });
-  expect(await exists(join(directory, "README.md"))).toBe(true);
+  expect(result).toBeInstanceOf(AnalysisError);
+  expect(await exists(directory)).toBe(false);
   expect(await readFile(join(occupied, "keep"), "utf8")).toBe("existing");
+  const occupiedFile = join(root, "file");
+  await writeFile(occupiedFile, "existing file");
+  const file = await exportWithheld({
+    withhold: { paths: [SETTINGS] },
+    withheldCopy: occupiedFile,
+  });
+  expect(file.result).toBeInstanceOf(AnalysisError);
+  expect(await exists(file.directory)).toBe(false);
+  expect(await readFile(occupiedFile, "utf8")).toBe("existing file");
 });
 
 it("retains the bundle cleanup owner when a later withheld copy fails", async () => {
   const root = await createTestTempDirectory("desktop-copy-close-");
   const occupied = join(root, "occupied");
   await mkdir(occupied);
-  await writeFile(join(occupied, "keep"), "existing");
+  const commit = SafeOutputTree.prototype.commit;
+  vi.spyOn(SafeOutputTree.prototype, "commit").mockImplementationOnce(
+    async function (this: SafeOutputTree, signal) {
+      await commit.call(this, signal);
+      await writeFile(join(occupied, "keep"), "existing");
+    },
+  );
   const original = SafeOutputTree.prototype.closeHandles;
   const release = ArtifactResourceScope.prototype.release;
   const failures: Extract<ArtifactCleanupAttempt, { kind: "failed" }>[] = [];
@@ -240,6 +252,215 @@ it("retains the bundle cleanup owner when a later withheld copy fails", async ()
     normalized_result: { directory },
   });
 });
+
+it.skipIf(process.platform === "win32")(
+  "keeps published bundle close failure primary when the withheld copy is cancelled before acquisition",
+  async () => {
+    const root = await createTestTempDirectory("desktop-copy-cancel-");
+    const directory = join(root, "bundle");
+    const withheldCopy = join(root, "withheld");
+    const controller = new AbortController();
+    const reason = new Error("cancel after bundle publication");
+    const closeFailure = new Error("bundle descriptor cannot close");
+    let isPublished = () => false;
+    const failures: Extract<ArtifactCleanupAttempt, { kind: "failed" }>[] = [];
+    const commit = SafeOutputTree.prototype.commit;
+    vi.spyOn(SafeOutputTree.prototype, "commit").mockImplementation(
+      async function (this: SafeOutputTree, ...args) {
+        isPublished = () => this.published;
+        return commit.apply(this, args);
+      },
+    );
+    const close = OwnedFileHandle.prototype.close;
+    const closing = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementation(async function (this: OwnedFileHandle) {
+        if (!isPublished()) return close.call(this);
+        controller.abort(reason);
+        throw closeFailure;
+      });
+    const release = ArtifactResourceScope.prototype.release;
+    vi.spyOn(ArtifactResourceScope.prototype, "release").mockImplementation(
+      async function (this: ArtifactResourceScope, owner) {
+        const result = await release.call(this, owner);
+        if (result.kind === "failed") failures.push(result);
+        return result;
+      },
+    );
+    try {
+      const result = await exportDesktopApplication(
+        {
+          capture: await writeCaptureFolder(capture()),
+          directory,
+          withheldCopy,
+          name: undefined,
+          tasks: [],
+          withhold: { paths: [SETTINGS] },
+        },
+        readers,
+        controller.signal,
+      );
+      expect(result).toBeInstanceOf(AnalysisError);
+      if (!(result instanceof AnalysisError))
+        throw new Error("expected output failure");
+      expect(result).toMatchObject({ _tag: "ProviderAdapterError" });
+      expect(result.cause).toBeInstanceOf(AggregateError);
+      if (!(result.cause instanceof AggregateError))
+        throw new Error("expected exact close cause");
+      expect(result.cause.errors).toContain(closeFailure);
+      expect(result.cleanupPrimary).toBeUndefined();
+      expect(result.secondaryFailures).toEqual([
+        expect.objectContaining({
+          _tag: "AnalysisCancelledError",
+          cause: reason,
+        }),
+      ]);
+      expect(result.partialObservation).toMatchObject({
+        normalized_result: { directory },
+      });
+      expect(result.cleanupResources).toEqual([directory]);
+      expect(await exists(join(directory, "README.md"))).toBe(true);
+      expect(await exists(withheldCopy)).toBe(false);
+      expect(failures).toHaveLength(1);
+      expect(failures[0]?.owner.resource).toBe(directory);
+      closing.mockRestore();
+      await failures[0]!.lease.release();
+      expect(result.cleanupIncomplete).toBe(false);
+      expect(await exists(join(directory, "README.md"))).toBe(true);
+    } finally {
+      closing.mockRestore();
+      for (const failure of failures) await failure.lease.release();
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "projects withheld-close cancellation beside both published cleanup owners",
+  async () => {
+    const root = await createTestTempDirectory("desktop-two-close-cancel-");
+    const directory = join(root, "bundle");
+    const withheldCopy = join(root, "withheld");
+    const controller = new AbortController();
+    const reason = new Error(
+      "cancel only while closing published withheld copy",
+    );
+    const bundleClose = new Error("bundle physical descriptor close failed");
+    const copyClose = new Error("withheld physical descriptor close failed");
+    const failures: Extract<ArtifactCleanupAttempt, { kind: "failed" }>[] = [];
+    let isPublished = () => false;
+    let closingPublished = false;
+    let output = 0;
+    const commit = SafeOutputTree.prototype.commit;
+    vi.spyOn(SafeOutputTree.prototype, "commit").mockImplementation(
+      async function (this: SafeOutputTree, ...args) {
+        output += 1;
+        isPublished = () => this.published;
+        closingPublished = true;
+        try {
+          return await commit.apply(this, args);
+        } finally {
+          closingPublished = false;
+        }
+      },
+    );
+    const close = OwnedFileHandle.prototype.close;
+    const closing = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementation(async function (this: OwnedFileHandle) {
+        if (!closingPublished || !isPublished()) return close.call(this);
+        if (output === 2) controller.abort(reason);
+        throw output === 1 ? bundleClose : copyClose;
+      });
+    const release = ArtifactResourceScope.prototype.release;
+    vi.spyOn(ArtifactResourceScope.prototype, "release").mockImplementation(
+      async function (this: ArtifactResourceScope, owner) {
+        if (owner.kind === "output-tree") {
+          const tree = owner.tree;
+          isPublished = () => tree.published;
+          closingPublished = true;
+        }
+        try {
+          const result = await release.call(this, owner);
+          if (result.kind === "failed") failures.push(result);
+          return result;
+        } finally {
+          if (owner.kind === "output-tree") closingPublished = false;
+        }
+      },
+    );
+    try {
+      const result = await exportDesktopApplication(
+        {
+          capture: await writeCaptureFolder(capture()),
+          directory,
+          withheldCopy,
+          name: undefined,
+          tasks: [],
+          withhold: { paths: [SETTINGS] },
+        },
+        readers,
+        controller.signal,
+      );
+      if (!(result instanceof AnalysisError))
+        throw new Error("expected both cleanup failures");
+      expect(output).toBe(2);
+      expect(controller.signal.aborted).toBe(true);
+      expect(failures).toHaveLength(2);
+      for (const { owner } of failures) {
+        expect(owner.kind).toBe("output-tree");
+        if (owner.kind === "output-tree")
+          expect(owner.tree.published).toBe(true);
+      }
+      for (const cause of [bundleClose, copyClose])
+        expect(
+          result.secondaryFailures.some(
+            (failure) =>
+              failure.cause instanceof AggregateError &&
+              failure.cause.errors.includes(cause),
+          ),
+        ).toBe(true);
+      expect(projectAnalysisError(result)).toMatchObject({
+        code: "cleanup_incomplete",
+        category: "execution_failure",
+        details: {
+          resources: expect.arrayContaining([directory, withheldCopy]),
+          partial_observation: { normalized_result: { directory } },
+          secondary_failures: expect.arrayContaining([
+            expect.objectContaining({ code: "cancelled" }),
+          ]),
+        },
+      });
+      const cancellation = result.secondaryFailures.filter(
+        (failure) => failure instanceof AnalysisCancelledError,
+      );
+      expect(cancellation).toHaveLength(1);
+      expect(cancellation[0]?.cause).toBe(reason);
+      const bundle = failures.find(({ owner }) => owner.resource === directory);
+      const copy = failures.find(
+        ({ owner }) => owner.resource === withheldCopy,
+      );
+      if (bundle === undefined || copy === undefined)
+        throw new Error("expected exact output owners");
+      expect(await readFile(join(withheldCopy, SETTINGS), "utf8")).toBe(
+        "[ui]\nwrap=false\n",
+      );
+      closing.mockRestore();
+      await bundle.lease.release();
+      expect(result.cleanupIncomplete).toBe(true);
+      expect(result.cleanupResources).toEqual([withheldCopy]);
+      await copy.lease.release();
+      expect(result.cleanupIncomplete).toBe(false);
+      expect(await exists(join(directory, "README.md"))).toBe(true);
+      expect(await exists(join(withheldCopy, SETTINGS))).toBe(true);
+      expect(
+        projectAnalysisError(result).details?.secondary_failures,
+      ).toContainEqual(expect.objectContaining({ code: "cancelled" }));
+    } finally {
+      closing.mockRestore();
+      for (const failure of failures) await failure.lease.release();
+    }
+  },
+);
 
 it.each(["bundle", "copy"] as const)(
   "retains both published output owners when %s closes first",
@@ -562,7 +783,9 @@ describe("exportDesktopApplication of withheld paths and copies", () => {
     ).toContain("49152");
     expect(await exists(directory)).toBe(false);
   });
+});
 
+describe("exportDesktopApplication withheld copy destinations", () => {
   it("refuses a withheld copy inside the bundle, also through a link, and writes neither", async () => {
     const root = await createTestTempDirectory("desktop-withheld-inside-");
     const directory = join(root, "bundle");
@@ -581,6 +804,38 @@ describe("exportDesktopApplication of withheld paths and copies", () => {
       withheldCopy: join(root, "alias", "private"),
     });
     expect(linked.result).toBeInstanceOf(Error);
+    expect(await readdir(directory)).toEqual([]);
+    await mkdir(join(root, "outside"));
+    await symlink(directory, join(root, "outside", "link"));
+    const parentTraversal = await exportWithheld({
+      withhold: { paths: [SETTINGS] },
+      directory,
+      withheldCopy: `${root}/outside/link/../bundle/private`,
+    });
+    expect(parentTraversal.result).toBeInstanceOf(Error);
+    expect(await readdir(directory)).toEqual([]);
+    const unresolved = await exportWithheld({
+      withhold: { paths: [SETTINGS] },
+      directory: join(root, "new-bundle"),
+      withheldCopy: `${root}/missing/../private`,
+    });
+    expect(unresolved.result).toBeInstanceOf(Error);
+    expect(await exists(join(root, "missing"))).toBe(false);
+    expect(await exists(join(root, "new-bundle"))).toBe(false);
+    await symlink(join(root, "absent"), join(root, "dangling"));
+    const dangling = await exportWithheld({
+      withhold: { paths: [SETTINGS] },
+      directory: join(root, "new-bundle"),
+      withheldCopy: join(root, "dangling", "private"),
+    });
+    expect(dangling.result).toBeInstanceOf(AnalysisError);
+    expect(await exists(join(root, "new-bundle"))).toBe(false);
+    const leafLink = await exportWithheld({
+      withhold: { paths: [SETTINGS] },
+      directory: `${root}/alias//`,
+      withheldCopy: join(root, "outside-copy"),
+    });
+    expect(leafLink.result).toBeInstanceOf(Error);
     expect(await readdir(directory)).toEqual([]);
   });
 

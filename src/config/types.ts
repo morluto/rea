@@ -12,6 +12,8 @@ import type { BridgeMaxRequestBytes } from "./bridgeMaxRequestBytes.js";
 import type { RegexMatchingDeadline } from "./regexMatchingDeadline.js";
 import type { RegexWorkerHeapRequest } from "./regexWorkerHeapRequest.js";
 import type { HopperCallerScanBudget } from "./hopperCallerScanBudget.js";
+import type { ConfigurationError } from "../domain/configurationErrors.js";
+import type { AnalysisSettingId } from "../domain/analysisSettings.js";
 
 export interface AppConfig {
   readonly mcpToolFamilies?: readonly McpToolFamilies[number][];
@@ -41,6 +43,8 @@ export interface AppConfig {
   readonly ilspyCmdPath: string | undefined;
   readonly hopperLauncherPath: string;
   readonly hopperStartupTimeoutMs: number;
+  /** Whether `hopperStartupTimeoutMs` came from the launch environment. */
+  readonly hopperStartupTimeoutSource: "default" | "setting" | "runtime";
   /** Cooperative per-operation budget for forward caller reconciliation. */
   readonly hopperCallerScanBudget: HopperCallerScanBudget;
   readonly hopperTargetPath: string | undefined;
@@ -54,4 +58,12 @@ export interface AppConfig {
   readonly regexMatchingDeadline: RegexMatchingDeadline;
   /** Regex worker old-generation request resolved at startup. */
   readonly regexWorkerHeapRequest: RegexWorkerHeapRequest;
+  /**
+   * Malformed runtime launch seeds. The numeric fields keep a placeholder so
+   * startup can spread this object; the operation view rejects the seed unless
+   * a snapshot override is active.
+   */
+  readonly invalidRuntimeSeeds?: Readonly<
+    Partial<Record<AnalysisSettingId, ConfigurationError>>
+  >;
 }

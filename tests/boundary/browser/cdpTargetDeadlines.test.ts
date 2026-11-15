@@ -29,6 +29,7 @@ import { V8InspectorProvider } from "../../../src/inspector/V8InspectorProvider.
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 import { startRuntimeBrowser } from "../../fixtures/webRuntime.js";
 import { startFakeV8Inspector } from "../../fixtures/inspector/fakeV8Inspector.js";
+import { waitFor } from "../../support/testWait.js";
 
 // Keep real socket scheduling; expire only a timer whose owning phase is ready.
 beforeEach(() => {
@@ -96,10 +97,10 @@ it("bounds a stalled WebSocket handshake and releases its socket", async () => {
         AbortSignal.timeout(10_000),
       ),
     ).rejects.toMatchObject({ reason: "timeout" });
-    await vi.waitFor(() => expect(sockets.size).toBe(1), { timeout: 5_000 });
+    await waitFor(() => expect(sockets.size).toBe(1));
     expireTimer(WEB_RUNTIME_LIMITS.commandTimeoutMs);
     await rejection;
-    await vi.waitFor(() => expect(sockets.size).toBe(0));
+    await waitFor(() => expect(sockets.size).toBe(0));
   } finally {
     for (const socket of sockets) socket.destroy();
     await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -119,12 +120,10 @@ it.each(["Target.attachToTarget", "Page.enable", "Runtime.enable"])(
         }),
         { signal: AbortSignal.timeout(10_000) },
       );
-      await vi.waitFor(
-        () =>
-          expect(browser.commands.map(({ method }) => method)).toContain(
-            hangOnMethod,
-          ),
-        { timeout: 5_000 },
+      await waitFor(() =>
+        expect(browser.commands.map(({ method }) => method)).toContain(
+          hangOnMethod,
+        ),
       );
       expireTimer(WEB_RUNTIME_LIMITS.commandTimeoutMs);
       const result = await pending;
@@ -136,7 +135,7 @@ it.each(["Target.attachToTarget", "Page.enable", "Runtime.enable"])(
       expect(browser.commands.map(({ method }) => method)).toContain(
         hangOnMethod,
       );
-      await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+      await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
     } finally {
       await browser.close();
     }
@@ -158,9 +157,7 @@ it("ignores a late timed-out reply and keeps following commands correlated", asy
         AbortSignal.timeout(10_000),
       ),
     ).rejects.toMatchObject({ reason: "timeout" });
-    await vi.waitFor(() => expect(browser.commands).toHaveLength(1), {
-      timeout: 5_000,
-    });
+    await waitFor(() => expect(browser.commands).toHaveLength(1));
     expireTimer(WEB_RUNTIME_LIMITS.commandTimeoutMs);
     await rejection;
     const command = browser.commands[0];
@@ -208,9 +205,7 @@ it.each(["success", "rejection", "abort", "disconnect"])(
                   : "BrowserObservationError",
             });
       if (outcome === "success") {
-        await vi.waitFor(() => expect(browser.commands).toHaveLength(1), {
-          timeout: 5_000,
-        });
+        await waitFor(() => expect(browser.commands).toHaveLength(1));
         // A healthy reply may take longer than the former 100 ms test budget.
         await new Promise<void>((resolve) => setTimeout(resolve, 250));
         const command = browser.commands[0];
@@ -253,12 +248,10 @@ it.each(["Runtime.enable", "Debugger.enable"])(
         },
         { signal: AbortSignal.timeout(10_000) },
       );
-      await vi.waitFor(
-        () =>
-          expect(inspector.commands.map(({ method }) => method)).toContain(
-            hangOnMethod,
-          ),
-        { timeout: 5_000 },
+      await waitFor(() =>
+        expect(inspector.commands.map(({ method }) => method)).toContain(
+          hangOnMethod,
+        ),
       );
       expireTimer(WEB_RUNTIME_LIMITS.commandTimeoutMs);
       const result = await pending;
@@ -295,12 +288,7 @@ it("keeps the chosen observation window independent of command deadlines", async
         observation_ms: observationMs,
       }),
     );
-    await vi.waitFor(
-      () => expect(activeTimers(observationMs)).toHaveLength(1),
-      {
-        timeout: 5_000,
-      },
-    );
+    await waitFor(() => expect(activeTimers(observationMs)).toHaveLength(1));
     expect(activeTimers(WEB_RUNTIME_LIMITS.commandTimeoutMs)).toHaveLength(0);
     expireTimer(observationMs);
     const result = await pending;
@@ -339,7 +327,7 @@ it("keeps a short command deadline off HTTP discovery and names Page.getFrameTre
     expect(browser.httpRequests.map(({ url }) => url)).toEqual(
       expect.arrayContaining(["/json/version", "/json/list"]),
     );
-    await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+    await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
   } finally {
     await provider.close();
     await browser.close();
@@ -363,12 +351,10 @@ it("gives browser-socket attach its own command deadline after the handshake", a
       }),
       { signal: AbortSignal.timeout(10_000) },
     );
-    await vi.waitFor(
-      () =>
-        expect(browser.commands.map(({ method }) => method)).toContain(
-          "Target.attachToTarget",
-        ),
-      { timeout: 5_000 },
+    await waitFor(() =>
+      expect(browser.commands.map(({ method }) => method)).toContain(
+        "Target.attachToTarget",
+      ),
     );
     expect(activeTimers(commandTimeoutMs)).toHaveLength(1);
     expireTimer(commandTimeoutMs);
@@ -379,7 +365,7 @@ it("gives browser-socket attach its own command deadline after the handshake", a
       `CDP command Target.attachToTarget exceeded its ${String(commandTimeoutMs)} ms command_timeout_ms`,
     );
     expect(text).not.toContain("WebSocket handshake exceeded");
-    await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+    await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
   } finally {
     await provider.close();
     await browser.close();
@@ -410,7 +396,7 @@ it("stops a stalled blocked-service-worker check before discovery", async () => 
   const clock = vi.spyOn(performance, "now").mockReturnValue(1_000);
   const pending = workers.initialize();
   try {
-    await vi.waitFor(() =>
+    await waitFor(() =>
       expect(activeTimers(SERVICE_WORKER_POLICY_CHECK_TIMEOUT_MS)).toHaveLength(
         1,
       ),
@@ -464,12 +450,10 @@ it("keeps blocked service-worker attachment outside the discovery deadline", asy
   );
   const pending = workers.initialize();
   try {
-    await vi.waitFor(
-      () =>
-        expect(browser.commands.map(({ method }) => method)).toContain(
-          "Target.attachToTarget",
-        ),
-      { timeout: 5_000 },
+    await waitFor(() =>
+      expect(browser.commands.map(({ method }) => method)).toContain(
+        "Target.attachToTarget",
+      ),
     );
     expect(activeTimers(CDP_DISCOVERY_RESPONSE_TIMEOUT_MS)).toHaveLength(0);
     expect(activeTimers(commandTimeoutMs)).toHaveLength(1);
@@ -554,14 +538,14 @@ it("applies a non-default handshake deadline and releases its socket", async () 
     const rejection = expect(pending).rejects.toMatchObject({
       reason: "timeout",
     });
-    await vi.waitFor(() => expect(sockets.size).toBe(1), { timeout: 5_000 });
+    await waitFor(() => expect(sockets.size).toBe(1));
     expireTimer(1_500);
     await rejection;
     expect(captured).toBeInstanceOf(BrowserObservationError);
     if (!(captured instanceof BrowserObservationError))
       throw new Error("Expected a handshake deadline");
     expect(captured.userMessage).toContain("1500 ms command_timeout_ms");
-    await vi.waitFor(() => expect(sockets.size).toBe(0));
+    await waitFor(() => expect(sockets.size).toBe(0));
   } finally {
     for (const socket of sockets) socket.destroy();
     await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -580,12 +564,10 @@ it("applies a non-default command deadline after HTTP discovery", async () => {
       }),
       { signal: AbortSignal.timeout(10_000) },
     );
-    await vi.waitFor(
-      () =>
-        expect(browser.commands.map(({ method }) => method)).toContain(
-          "Page.enable",
-        ),
-      { timeout: 5_000 },
+    await waitFor(() =>
+      expect(browser.commands.map(({ method }) => method)).toContain(
+        "Page.enable",
+      ),
     );
     expireTimer(1_500);
     const result = await pending;
@@ -593,7 +575,7 @@ it("applies a non-default command deadline after HTTP discovery", async () => {
     expect(result.error.userMessage ?? "").toContain(
       "1500 ms command_timeout_ms",
     );
-    await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+    await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
   } finally {
     await browser.close();
   }
@@ -609,9 +591,7 @@ it("reschedules a raised command deadline onto the fixed cleanup grace", async (
   );
   try {
     const pending = connection.send("Runtime.enable");
-    await vi.waitFor(() => expect(browser.commands).toHaveLength(1), {
-      timeout: 5_000,
-    });
+    await waitFor(() => expect(browser.commands).toHaveLength(1));
     expect(activeTimers(60_000)).toHaveLength(1);
     connection.beginCleanupGrace(5_000);
     expect(activeTimers(60_000)).toHaveLength(0);
@@ -645,12 +625,10 @@ it("keeps runtime cleanup on the fixed grace when command_timeout_ms is shorter"
       }),
       { signal: AbortSignal.timeout(10_000) },
     );
-    await vi.waitFor(
-      () =>
-        expect(browser.commands.map(({ method }) => method)).toContain(
-          "Profiler.disable",
-        ),
-      { timeout: 5_000 },
+    await waitFor(() =>
+      expect(browser.commands.map(({ method }) => method)).toContain(
+        "Profiler.disable",
+      ),
     );
     expect(activeTimers(commandTimeoutMs)).toHaveLength(0);
     expect(
@@ -691,12 +669,10 @@ it("names the fixed cleanup grace when runtime restoration stalls", async () => 
       }),
       { signal: AbortSignal.timeout(10_000) },
     );
-    await vi.waitFor(
-      () =>
-        expect(browser.commands.map(({ method }) => method)).toContain(
-          "Profiler.disable",
-        ),
-      { timeout: 5_000 },
+    await waitFor(() =>
+      expect(browser.commands.map(({ method }) => method)).toContain(
+        "Profiler.disable",
+      ),
     );
     expect(activeTimers(commandTimeoutMs)).toHaveLength(0);
     expireEveryTimer(WEB_RUNTIME_LIMITS.cleanupTimeoutMs);
@@ -728,12 +704,10 @@ it("applies caller-selected discovery_timeout_ms to browser-socket discovery", a
         discovery_timeout_ms: discoveryTimeoutMs,
       }),
     );
-    await vi.waitFor(
-      () =>
-        expect(browser.commands.map(({ method }) => method)).toContain(
-          "Target.getTargets",
-        ),
-      { timeout: 5_000 },
+    await waitFor(() =>
+      expect(browser.commands.map(({ method }) => method)).toContain(
+        "Target.getTargets",
+      ),
     );
     expect(activeTimers(CDP_DISCOVERY_RESPONSE_TIMEOUT_MS)).toHaveLength(0);
     expect(activeTimers(discoveryTimeoutMs)).not.toHaveLength(0);
@@ -750,7 +724,7 @@ it("applies caller-selected discovery_timeout_ms to browser-socket discovery", a
       `Increase discovery_timeout_ms above ${String(discoveryTimeoutMs)}`,
     );
     expect(projected.remediation?.action).toContain("--discovery-timeout-ms");
-    await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+    await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
   } finally {
     await provider.close();
     await browser.close();
@@ -779,9 +753,7 @@ it("applies caller-selected discovery_timeout_ms to HTTP discovery independently
         command_timeout_ms: commandTimeoutMs,
       }),
     );
-    await vi.waitFor(() => expect(versionRequested).toBe(true), {
-      timeout: 5_000,
-    });
+    await waitFor(() => expect(versionRequested).toBe(true));
     expect(activeTimers(CDP_DISCOVERY_RESPONSE_TIMEOUT_MS)).toHaveLength(0);
     expect(activeTimers(commandTimeoutMs)).toHaveLength(0);
     expect(activeTimers(discoveryTimeoutMs)).toHaveLength(1);
@@ -850,7 +822,7 @@ it("clamps browser-socket handshake timers at MAX_BROWSER_DEADLINE_MS without 32
       undefined,
       MAX_BROWSER_DEADLINE_MS,
     ).catch((cause: unknown) => cause);
-    await vi.waitFor(() => expect(sockets.size).toBe(1), { timeout: 5_000 });
+    await waitFor(() => expect(sockets.size).toBe(1));
     expireEveryTimer(MAX_BROWSER_DEADLINE_MS);
     const failure = await pending;
     expect(failure).toBeInstanceOf(BrowserObservationError);

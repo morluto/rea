@@ -1,3 +1,5 @@
+import { Ajv2020 } from "ajv/dist/2020.js";
+import type { AnySchema } from "ajv";
 import { functionSnapshotFixture } from "../../../src/domain/functionDossierEvidence.fixture.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { describe, expect, it, onTestFinished } from "vitest";
@@ -51,6 +53,7 @@ it.each([
       value.referenced_names = [
         { address: "rom:0xa000", source_address: site, value: "helper" },
       ];
+      value.swift_string_literal_omissions = [];
       value.swift_string_literals = [
         {
           source_address: site,
@@ -545,3 +548,32 @@ it.each([
     await harness.client.ping();
   },
 );
+
+it("advertises Swift literal coverage as a pair through the MCP SDK", async () => {
+  const harness = await createApplicationMcpHarness();
+  const tool = (await harness.client.listTools()).tools.find(
+    ({ name }) => name === "analyze_function",
+  );
+  if (tool?.outputSchema === undefined)
+    throw new Error("Missing output schema");
+  const validate = new Ajv2020({
+    strict: false,
+    validateFormats: false,
+  }).compile(tool.outputSchema as AnySchema);
+  const original = FUNCTION_COMPARISON_EXAMPLE.left;
+  for (const [literals, omissions, valid] of [
+    [false, false, true],
+    [true, true, true],
+    [true, false, false],
+    [false, true, false],
+  ] as const) {
+    const dossier = {
+      ...functionDossierSchema.parse(original.normalized_result),
+      ...(literals ? { swift_string_literals: [] } : {}),
+      ...(omissions ? { swift_string_literal_omissions: [] } : {}),
+    };
+    const evidence = { ...original, normalized_result: dossier };
+    expect(functionDossierSchema.safeParse(dossier).success).toBe(valid);
+    expect(validate(evidence), JSON.stringify(validate.errors)).toBe(valid);
+  }
+});

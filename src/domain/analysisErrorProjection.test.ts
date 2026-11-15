@@ -16,7 +16,6 @@ import {
 import { BrowserObservationError } from "./browserObservationError.js";
 import { EvidenceFileError, EvidenceIntegrityError } from "./evidenceErrors.js";
 import {
-  HOPPER_STARTUP_TIMEOUT_CONTINUING_REMEDIATION,
   HOPPER_STARTUP_TIMEOUT_REMEDIATION,
   HopperProcessError,
   HopperRemoteError,
@@ -849,6 +848,64 @@ describe("analysis error projection: Hopper provider failures", () => {
     });
   });
 
+  it("projects an Apple Events denial as unavailable and not retryable from the same client", () => {
+    const projected = projectAnalysisError(
+      new HopperStartError({
+        launchRejection: {
+          boundary: "apple_events_authorization",
+          reason: "not_authorized",
+        },
+        launcherFailure: {
+          exit_code: 2,
+          signal: null,
+          stdout: { text: "", bytes: 0, retained_bytes: 0 },
+          stderr: {
+            text: "Cannot launch Hopper!\nNot authorized to send Apple events to Hopper Disassembler.\n",
+            bytes: 90,
+            retained_bytes: 90,
+          },
+          output_closed: true,
+          diagnostic_truncated: false,
+        },
+      }),
+    );
+    expect(projected).toMatchObject({
+      code: "provider_unavailable",
+      category: "unavailable",
+      retryable: false,
+      details: {
+        stage: "launch",
+        provider_state: "unknown",
+        retry_action: "unknown",
+        launch_rejection: {
+          boundary: "apple_events_authorization",
+          reason: "not_authorized",
+        },
+        launcher: { exit_code: 2, signal: null },
+      },
+    });
+    expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
+  });
+
+  it("keeps an ordinary Hopper start failure retryable", () => {
+    const projected = projectAnalysisError(
+      new HopperStartError({
+        userMessage: "Hopper's launcher helper failed before bridge readiness.",
+      }),
+    );
+    expect(projected).toMatchObject({
+      code: "provider_unavailable",
+      category: "unavailable",
+      retryable: true,
+      details: {
+        stage: "launch",
+        provider_state: "unknown",
+        retry_action: "retry",
+      },
+    });
+    expect(projected.details).not.toHaveProperty("launch_rejection");
+  });
+
   it("retains the Hopper request and provider diagnostic on a remote failure", () => {
     expect(
       projectAnalysisError(
@@ -1512,7 +1569,8 @@ describe("analysis error projection: caller lifetime", () => {
       minimum: limit.minimum,
       maximum: limit.maximum,
       agent_editable: true,
-      rea_restart_required: false,
+      update_mode: "runtime",
+      pending_restart: false,
       applies_at: "next_invocation",
       scope: "rea-invocation",
       environment: "REA_REGEX_MATCHING_DEADLINE_MS",
@@ -1529,11 +1587,25 @@ describe("analysis error projection: caller lifetime", () => {
       expect.objectContaining({
         setting: "wasm.command_timeout_ms",
         source: "request",
+        update_mode: "parameter",
         parameter: "command_timeout_ms",
         applies_at: "next_invocation",
         scope: "rea-invocation",
       }),
     );
+    expect(
+      analysisSettingLimit("wasm.command_timeout_ms", 100, "runtime"),
+    ).toMatchObject({ source: "runtime", update_mode: "runtime" });
+    expect(
+      analysisSettingLimit("javascript.max_heap_mb", 128, "request"),
+    ).toMatchObject({
+      source: "request",
+      update_mode: "parameter",
+      parameter: "max_heap_mb",
+    });
+    expect(
+      analysisSettingLimit("javascript.analysis_timeout_ms", 1, "default"),
+    ).toMatchObject({ source: "default", update_mode: "runtime" });
     expect(
       projectAnalysisError(error, "invocation").details?.limit,
     ).not.toHaveProperty("environment");
@@ -1555,8 +1627,8 @@ describe("analysis error projection: caller lifetime", () => {
         ),
       },
     );
-    expect(projectAnalysisError(error).remediation.action).toBe(
-      HOPPER_STARTUP_TIMEOUT_CONTINUING_REMEDIATION,
+    expect(projectAnalysisError(error).remediation.action).toMatch(
+      /update_analysis_settings.*hopper\.startup_timeout_ms.*without restarting REA/u,
     );
     const invocation = projectAnalysisError(error, "invocation");
     expect(invocation.remediation.action).toBe(

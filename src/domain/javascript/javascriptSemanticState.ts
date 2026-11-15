@@ -535,7 +535,7 @@ const semanticWithPrototypeKind = (
       t.isObjectProperty(property) &&
       !property.computed &&
       !property.shorthand &&
-      t.isIdentifier(property.key, { name: "__proto__" })
+      semanticStaticPropertyKey(property.key, false) === "__proto__"
     )
       return t.isNullLiteral(unwrapJavaScriptExpression(property.value).node)
         ? "null"

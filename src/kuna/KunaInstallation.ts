@@ -9,7 +9,11 @@ import { appendCallerPath } from "../filesystem/callerPath.js";
 
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
+} from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
@@ -170,7 +174,7 @@ export const kunaInstallationCancellation = (
 };
 
 /** One installation inspection's retained owners and originating errors. */
-export interface KunaResourceScope {
+interface KunaResourceScope {
   readonly owner: RetainedResourceScope;
   readonly cleanupResources: readonly string[] | undefined;
   readonly hasPending: boolean;
@@ -188,12 +192,10 @@ export const createKunaResourceScope = (
 ): KunaResourceScope => {
   const leases = new Map<
     Parameters<RetainedResourceScope["retain"]>[0],
-    { readonly lease: AnalysisCleanupLease }
+    AnalysisCleanupLease
   >();
   const pendingLeases = () =>
-    [...leases.values()]
-      .map(({ lease }) => lease)
-      .filter((lease) => !lease.released);
+    [...leases.values()].filter((lease) => !lease.released);
   const bindPendingFailure = (error: AnalysisError) => {
     const retained = pendingLeases();
     if (retained.length > 0) new AnalysisCleanupLeaseGroup(error, retained);
@@ -218,8 +220,7 @@ export const createKunaResourceScope = (
       const cancellation = kunaInstallationCancellation(cause);
       if (cancellation === undefined) return undefined;
       const pending = pendingLeases();
-      const error = new AnalysisCancelledError(operation, {
-        cause: cancellation.reason,
+      const error = cancelledBy(operation, carriedReason(cancellation.reason), {
         diagnostics: cancellation.diagnostics,
         ...(pending.length === 0
           ? {}
@@ -236,7 +237,7 @@ export const createKunaResourceScope = (
     owner: {
       retain: (owner, resource) => {
         const lease = AnalysisCleanupLease.forCloseOwner(owner, resource);
-        leases.set(owner, { lease });
+        leases.set(owner, lease);
         parent.retain(
           {
             close: () => lease.release(),

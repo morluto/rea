@@ -1,3 +1,5 @@
+import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { translateNativeCommandFailure } from "./NativeCommandAnalysisError.js";
 import { DEFAULT_NATIVE_COMMAND_TIMEOUT_MS } from "../domain/native/nativeDeadlines.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
@@ -219,6 +221,7 @@ export class LldbCallTracer implements NativeCallTracer {
   private readonly environment: NodeJS.ProcessEnv;
   #tail: Promise<void> = Promise.resolve();
   #pendingCleanup: RetainedLldbResources | undefined;
+  readonly #inspectionResources = new ArtifactResourceScope();
   /** Resolver supervisors owned by this tracer, distinct from the shared Darwin reader. */
   readonly #resolverCleanup = new Map<
     ProviderProcessSupervisor,
@@ -550,6 +553,7 @@ export class LldbCallTracer implements NativeCallTracer {
     const error = translateNativeCommandFailure(
       OPERATION,
       failure,
+      this.#inspectionResources,
       DEFAULT_NATIVE_COMMAND_TIMEOUT_MS,
       {
         unavailableMessage: LLDB_REQUIREMENT,
@@ -568,8 +572,19 @@ export class LldbCallTracer implements NativeCallTracer {
   /** Retry only resolver processes this tracer spawned. */
   async #retryResolverCleanup(): Promise<ProviderCleanupError | undefined> {
     const retained = [...this.#resolverCleanup];
-    if (retained.length === 0) return undefined;
     const unresolved: ProviderCleanupError[] = [];
+    try {
+      await this.#inspectionResources.retryCleanup();
+    } catch (cause: unknown) {
+      const failure = new ProviderCleanupError(
+        PROVIDER,
+        this.#inspectionResources.cleanupResources,
+        { reason: "LLDB discovery inspection cleanup remains incomplete" },
+        { operation: OPERATION, cause },
+      );
+      bindArtifactFileCleanup(cause, failure);
+      unresolved.push(failure);
+    }
     for (const [owner, marker] of retained) {
       let released = false;
       try {

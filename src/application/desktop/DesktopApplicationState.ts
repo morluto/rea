@@ -9,7 +9,12 @@ import { join } from "node:path";
 
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisInputError,
+} from "../../domain/analysisErrorCore.js";
+import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
+import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import {
   desktopApplicationCaptureSchema,
@@ -65,6 +70,8 @@ const OPERATION = "inspect_desktop_application_state";
 /**
  * Readers for formats that need a tool or worker, supplied by composition. Each
  * database is staged with its retained log in a private directory the caller removes.
+ * Expected format/read failures return an error result. Cancellation throws a typed
+ * AnalysisCancelledError or ArtifactReaderFailure; cleanup failures retain their owner.
  */
 export interface DesktopStateReaders {
   readonly sqlite: (
@@ -92,44 +99,93 @@ export const readDesktopCapture = async (
   signal: AbortSignal | undefined,
 ): Promise<{ evidence: Evidence; capture: DesktopApplicationCapture }> => {
   const resources = new ArtifactResourceScope();
+  const outcome = await resources
+    .run(async () => {
+      const loaded = await readJsonFile(
+        join(folder, "capture.json"),
+        signal,
+        resources,
+        OPERATION,
+      );
+      if (!loaded.ok) {
+        if (loaded.error instanceof AnalysisError) throw loaded.error;
+        throw inputError(
+          `${join(folder, "capture.json")} could not be read as JSON.`,
+          "Pass a folder written by capture-desktop-application.",
+        );
+      }
+      const evidence = safeParseEvidence(loaded.value);
+      if (
+        !evidence.ok ||
+        evidence.value.operation !== DESKTOP_OPERATION ||
+        evidence.value.predicate_type !== "rea.desktop-application-capture" ||
+        evidence.value.provider.id !== DESKTOP_PROVIDER.id ||
+        evidence.value.provider.version !== DESKTOP_PROVIDER.version
+      )
+        throw inputError(
+          "capture.json is not desktop application capture Evidence.",
+          "Pass a folder written by capture-desktop-application.",
+        );
+      const capture = desktopApplicationCaptureSchema.safeParse(
+        evidence.value.normalized_result,
+      );
+      if (!capture.success)
+        throw inputError(
+          `The capture result is malformed (${describeValidationFailure(capture.error)}).`,
+          "Capture the application again.",
+        );
+      return { evidence: evidence.value, capture: capture.data };
+    })
+    .then(ok, (cause: unknown) => err(cause));
   try {
-    const loaded = await readJsonFile(
-      join(folder, "capture.json"),
-      signal,
-      resources,
-      OPERATION,
-    );
-    if (!loaded.ok) {
-      if (loaded.error instanceof AnalysisError) throw loaded.error;
-      throw inputError(
-        `${join(folder, "capture.json")} could not be read as JSON.`,
-        "Pass a folder written by capture-desktop-application.",
-      );
-    }
-    const evidence = safeParseEvidence(loaded.value);
-    if (
-      !evidence.ok ||
-      evidence.value.operation !== DESKTOP_OPERATION ||
-      evidence.value.predicate_type !== "rea.desktop-application-capture" ||
-      evidence.value.provider.id !== DESKTOP_PROVIDER.id ||
-      evidence.value.provider.version !== DESKTOP_PROVIDER.version
-    )
-      throw inputError(
-        "capture.json is not desktop application capture Evidence.",
-        "Pass a folder written by capture-desktop-application.",
-      );
-    const capture = desktopApplicationCaptureSchema.safeParse(
-      evidence.value.normalized_result,
-    );
-    if (!capture.success)
-      throw inputError(
-        `The capture result is malformed (${describeValidationFailure(capture.error)}).`,
-        "Capture the application again.",
-      );
-    return { evidence: evidence.value, capture: capture.data };
-  } finally {
     await resources.close();
+  } catch (cause: unknown) {
+    const cleanup = desktopOperationFailure(
+      cause,
+      signal,
+      OPERATION,
+      "Desktop capture input",
+    );
+    if (outcome.ok && !signal?.aborted)
+      throw cleanup.retainPartialObservation(outcome.value.evidence);
+    const primary = outcome.ok
+      ? new AnalysisCancelledError(OPERATION, {
+          cause: signal?.reason,
+        }).retainPartialObservation(outcome.value.evidence)
+      : desktopOperationFailure(
+          outcome.error,
+          undefined,
+          OPERATION,
+          "Desktop capture input",
+        );
+    if (!outcome.ok && signal?.aborted)
+      analysisErrorWithCancellation(
+        primary,
+        new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
+      );
+    throw analysisErrorWithCleanupFailure(
+      primary,
+      cleanup,
+      OPERATION,
+    ).bindCleanupDependencies([primary, cleanup]);
   }
+  if (!outcome.ok) {
+    if (!signal?.aborted) throw outcome.error;
+    throw analysisErrorWithCancellation(
+      desktopOperationFailure(
+        outcome.error,
+        undefined,
+        OPERATION,
+        "Desktop capture input",
+      ),
+      new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
+    );
+  }
+  if (signal?.aborted)
+    throw new AnalysisCancelledError(OPERATION, {
+      cause: signal.reason,
+    }).retainPartialObservation(outcome.value.evidence);
+  return outcome.value;
 };
 
 interface ViewContext {
@@ -345,7 +401,10 @@ const readVersion = async (
   path: string,
   context: ViewContext,
 ): Promise<void> => {
-  context.signal?.throwIfAborted();
+  if (context.signal?.aborted === true)
+    throw new AnalysisCancelledError(OPERATION, {
+      cause: context.signal.reason,
+    });
   if (!version.present) return;
   if (version.sha256 === null) {
     version.view_error = "content not retained";
@@ -496,7 +555,8 @@ const inspectState = async (
     paths,
     limitations,
   };
-  signal?.throwIfAborted();
+  if (signal?.aborted === true)
+    throw new AnalysisCancelledError(OPERATION, { cause: signal.reason });
   return createEvidence(undefined, DESKTOP_PROVIDER, {
     predicateType: "rea.desktop-application-state",
     operation: OPERATION,

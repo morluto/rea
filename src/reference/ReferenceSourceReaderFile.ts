@@ -173,7 +173,16 @@ const finalizeFileRead = async (
     dirname(absolute),
     request.signal,
   );
-  if (!parentAfter.ok || !sameFile(parentBefore.stats, parentAfter.stats))
+  if (!parentAfter.ok)
+    return entryFailure(
+      path,
+      "file",
+      parentAfter.code,
+      parentAfter.message,
+      total,
+      parentAfter.localDiagnostic,
+    );
+  if (!sameFile(parentBefore.stats, parentAfter.stats))
     return entryFailure(
       path,
       "file",
@@ -274,12 +283,13 @@ const readStableFileEntry = async (
       total: contents.total,
       ...(signal === undefined ? {} : { signal }),
     });
-  } catch (cause: unknown) {
+  } catch (caught: unknown) {
+    let cause = caught;
     if (cause instanceof RegularFileAdmissionFailure) {
       retain(cause.owner);
       cause = cause.cause;
     }
-    if (regularFileCancellation(cause) !== undefined || isAborted(signal))
+    if (regularFileCancellation(cause) !== undefined)
       return entryFailure(
         path,
         "file",

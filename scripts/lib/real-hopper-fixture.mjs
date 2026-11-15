@@ -3,14 +3,15 @@ import { dirname } from "node:path";
 import {
   bindConformanceFixtureArtifact,
   resolveConformanceFixturePath,
+  parseConformanceFixtureManifest,
 } from "./conformance-fixtures.mjs";
 
 /** Bind the real-Hopper semantic verifier to source-owned manifest artifacts. */
 export async function loadRealHopperFixtureTargets(manifestPath) {
   const canonicalManifest = await realpath(manifestPath);
-  const manifest = JSON.parse(await readFile(canonicalManifest, "utf8"));
-  if (!Array.isArray(manifest?.fixtures))
-    throw new Error("Invalid conformance fixture manifest");
+  const manifest = parseConformanceFixtureManifest(
+    JSON.parse(await readFile(canonicalManifest, "utf8")),
+  );
   const primary = fixtureEntry(manifest.fixtures, "c");
   const secondary = fixtureEntry(manifest.fixtures, "version-v2");
   const large = fixtureEntry(manifest.fixtures, "large");

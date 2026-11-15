@@ -201,6 +201,64 @@ it.skipIf(process.platform !== "darwin")(
   },
 );
 
+it("classifies a pre-handoff Apple Events denial as not retryable from the same client", async () => {
+  const stderr =
+    "Cannot launch Hopper!\nNot authorized to send Apple events to Hopper Disassembler.\n";
+  const launcher: BridgeLauncher = {
+    launch() {
+      return Promise.resolve(
+        ok({
+          process: spawn(
+            process.execPath,
+            [
+              "-e",
+              `process.stderr.write(${JSON.stringify(stderr)}, () => process.exit(2));`,
+            ],
+            { stdio: ["ignore", "pipe", "pipe"] },
+          ),
+          ownsProcessLifetime: false as const,
+          providerLifetime: "external-application" as const,
+          shutdownMode: "bridge-request" as const,
+          authorizationDenialBeforeHandoff: true as const,
+        }),
+      );
+    },
+  };
+  const client = new HopperClient({ launcher, startupTimeoutMs: 10_000 });
+  onTestFinished(async () => {
+    const closed = await client.close();
+    if (!closed.ok) throw closed.error;
+  });
+  const failed = await client.start();
+  expect(failed).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "HopperStartError",
+      cleanupIncomplete: false,
+      launchRejection: {
+        boundary: "apple_events_authorization",
+        reason: "not_authorized",
+      },
+    },
+  });
+  if (failed.ok) throw new Error("Expected Apple Events denial");
+  expect(projectAnalysisError(failed.error)).toMatchObject({
+    code: "provider_unavailable",
+    category: "unavailable",
+    retryable: false,
+    details: {
+      stage: "launch",
+      provider_state: "unknown",
+      retry_action: "unknown",
+      launch_rejection: {
+        boundary: "apple_events_authorization",
+        reason: "not_authorized",
+      },
+      launcher: { exit_code: 2, signal: null },
+    },
+  });
+});
+
 it.each(["exit", "signal", "exit75"] as const)(
   "reports a failed non-owning launcher %s without waiting for bridge timeout or inventing a GUI exit",
   async (termination) => {

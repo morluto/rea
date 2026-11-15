@@ -1,3 +1,4 @@
+import { processInspectionCancellationError } from "../providers/OwnedCommandCleanup.js";
 import { APKTOOL_PROVIDER_IDENTITY } from "./ApktoolProviderIdentity.js";
 import { countDecodedFiles } from "./ApktoolDecodedInventory.js";
 import { ApktoolWorkspace } from "./ApktoolWorkspace.js";
@@ -40,11 +41,13 @@ import {
 import { projectApktoolStringTables } from "./ApktoolStringTables.js";
 import {
   AnalysisCapabilityUnavailableError,
-  AnalysisCancelledError,
   AnalysisProtocolError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
   AnalysisUnsupportedTargetError,
+  cancelledBy,
+  OwnerCancellation,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
@@ -92,8 +95,7 @@ const throwIfCancelled = (
   operation: string,
   signal: AbortSignal | undefined,
 ): void => {
-  if (signal?.aborted === true)
-    throw new AnalysisCancelledError(operation, { cause: signal.reason });
+  if (signal?.aborted === true) throw cancelledBy(operation, signal);
 };
 
 interface DecodeLimits {
@@ -112,10 +114,7 @@ const runApktool = async (
   commands: ApktoolCommandCleanup,
   root: string,
 ): Promise<Result<{ stdout: string; stderr: string }, AnalysisError>> => {
-  if (signal?.aborted === true)
-    return err(
-      new AnalysisCancelledError(operation, { cause: signal?.reason }),
-    );
+  if (signal?.aborted === true) return err(cancelledBy(operation, signal));
   let invocation: ReturnType<typeof apktoolInvocation>;
   try {
     invocation = apktoolInvocation(selection, arguments_, environment);
@@ -170,6 +169,12 @@ const apktoolCommandFailure = (
   limits: DecodeLimits,
 ): AnalysisError => {
   const capturedOutput = capturedApktoolFailureOutput(cause);
+  const inspectionCancellation =
+    !(cause instanceof OwnedCommandFailure) ||
+    cause.preparationFailure !== undefined
+      ? processInspectionCancellationError(cause, operation)
+      : undefined;
+  if (inspectionCancellation !== undefined) return inspectionCancellation;
   if (!(cause instanceof OwnedCommandFailure))
     return new ProviderAdapterError("apktool", operation, {
       cause,
@@ -181,11 +186,12 @@ const apktoolCommandFailure = (
     });
 
   const output = cause.snapshot;
-  if (cause.reason === "cancelled")
-    return new AnalysisCancelledError(operation, {
-      cause: cause.cancellation?.reason,
-      ...(capturedOutput === undefined ? {} : { capturedOutput }),
-    });
+  if (cause.reason === "cancelled" && cause.cancellation !== undefined)
+    return cancelledBy(
+      operation,
+      carriedReason(cause.cancellation.reason),
+      capturedOutput === undefined ? {} : { capturedOutput },
+    );
   if (cause.reason === "timeout")
     return new AnalysisTimeoutError(operation, limits.timeoutMs, {
       cause,
@@ -293,7 +299,7 @@ export class ApktoolProvider {
   inspectAvailability(signal?: AbortSignal): Promise<ProviderAvailability> {
     if (this.#closing)
       return Promise.reject(
-        new AnalysisCancelledError("inspect_apktool_client"),
+        cancelledBy("inspect_apktool_client", OwnerCancellation.ownerClosed),
       );
     const operationSignal =
       signal === undefined
@@ -355,7 +361,7 @@ export class ApktoolProvider {
   /** Retain failed cleanup ownership and retry it on close. */
   async close(): Promise<void> {
     this.#closing = true;
-    this.#shutdown.abort();
+    this.#shutdown.abort(OwnerCancellation.ownerClosed);
     this.#closePromise ??= this.#drainAndClean().catch((cause: unknown) => {
       this.#closePromise = undefined;
       throw cause;
@@ -369,7 +375,7 @@ export class ApktoolProvider {
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     if (this.#closing)
       return Promise.resolve(
-        err(new AnalysisCancelledError(request.operation)),
+        err(cancelledBy(request.operation, OwnerCancellation.ownerClosed)),
       );
     const signal =
       options?.signal === undefined
@@ -398,9 +404,7 @@ export class ApktoolProvider {
     signal: AbortSignal,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     if (signal?.aborted === true)
-      return err(
-        new AnalysisCancelledError(request.operation, { cause: signal.reason }),
-      );
+      return err(cancelledBy(request.operation, signal));
     const environment = this.operationEnvironment();
     let selection: ApktoolCommandSelection;
     let identity: ApktoolClientIdentity;
@@ -439,10 +443,7 @@ export class ApktoolProvider {
         ),
       );
     }
-    if (signal.aborted)
-      return err(
-        new AnalysisCancelledError(request.operation, { cause: signal.reason }),
-      );
+    if (signal.aborted) return err(cancelledBy(request.operation, signal));
     const client = {
       command: selection.command,
       command_source: selection.commandSource,
@@ -689,9 +690,10 @@ export class ApktoolProvider {
           : origin === "owned-or-classified" &&
               physical instanceof ArtifactReaderFailure &&
               physical.reason === "cancelled"
-            ? new AnalysisCancelledError(operation, {
-                cause: artifactFileCancellationCause(physical),
-              })
+            ? cancelledBy(
+                operation,
+                carriedReason(artifactFileCancellationCause(physical)),
+              )
             : new AnalysisProtocolError("Apktool resource projection failed", {
                 cause: physical,
               });
@@ -766,10 +768,7 @@ export class ApktoolProvider {
         : undefined;
     if (result.ok && signal?.aborted)
       result = err(
-        new AnalysisCancelledError(operation, {
-          cause: signal.reason,
-          partialObservation: observation,
-        }),
+        cancelledBy(operation, signal, { partialObservation: observation }),
       );
     if (released.kind === "failed") {
       const cleanup = new ProviderCleanupError(

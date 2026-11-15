@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 
@@ -208,6 +208,66 @@ it("answers absent for a file the home does not hold, without running the reader
   expect(readerAnswerView(stdout)).toBeUndefined();
   await expect(access(join(home, "ran"))).rejects.toThrow();
 });
+
+it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "keeps an inaccessible source unknown instead of answering absent",
+  async () => {
+    const { home, app } = await computer();
+    const documents = join(home, "Documents");
+    await chmod(documents, 0);
+    try {
+      const view = readerAnswerView(await run(home, reporting(app)));
+      expect(view).toMatchObject({ format: null, view: null });
+      expect(view?.error).toContain("cannot inspect");
+    } finally {
+      await chmod(documents, 0o700);
+    }
+  },
+);
+
+it.each(["json", "lines"] as const)(
+  "refuses malformed UTF-8 in marked %s output while preserving literal replacement characters",
+  async (output) => {
+    const { home } = await computer();
+    const reader = (bytes: string): DesktopTaskReader => ({
+      id: "encoding",
+      file: NOTE,
+      argv: [
+        "python3",
+        "-I",
+        "-c",
+        `import sys; sys.stdout.buffer.write(${bytes})`,
+        "{file}",
+      ],
+      output,
+    });
+    const malformed = readerAnswerView(
+      await run(home, reader(String.raw`b'REA {"value":"\xff"}\n'`)),
+    );
+    expect(malformed).toMatchObject({ format: null, view: null });
+    expect(malformed?.error).toContain("UTF-8");
+    const valid = readerAnswerView(
+      await run(
+        home,
+        reader(
+          String.raw`b'\xff ignored banner\nREA {"value":"\xef\xbf\xbd"}\r\n'`,
+        ),
+      ),
+    );
+    expect(valid).toMatchObject(
+      output === "json"
+        ? { format: "json", view: { value: "\ufffd" } }
+        : {
+            format: "text",
+            view: {
+              lines: ['{"value":"\ufffd"}'],
+              line_count: 1,
+              truncated: false,
+            },
+          },
+    );
+  },
+);
 
 it.each([
   [

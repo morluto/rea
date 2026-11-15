@@ -1,16 +1,16 @@
-import {
-  type Client,
-  DEFAULT_REQUEST_TIMEOUT_MSEC,
-} from "@modelcontextprotocol/client";
+import type { Client } from "@modelcontextprotocol/client";
 import {
   mcpToolResultSchema,
   mcpTextBlocks,
-  parseMcpJsonOrText,
+  decodeMcpTextReply,
 } from "../providers/McpToolResult.js";
 import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import {
   AnalysisCancelledError,
   AnalysisProtocolError,
+  cancelledBy,
+  carriedReason,
+  OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import type { JebOperation } from "../domain/jeb/jebAnalysis.js";
 import {
@@ -22,7 +22,7 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { JebMcpDeadline } from "./JebMcpDeadline.js";
+import { JebMcpDeadline, selectedJebMcpTimeout } from "./JebMcpDeadline.js";
 
 /** Upstream protocol names for the operations REA exposes. */
 export const JEB_ENGINE_TOOLS = {
@@ -54,7 +54,11 @@ const toolResultSchema = mcpToolResultSchema.extend({
   content: mcpToolResultSchema.shape.content.default([]),
 });
 
-/** Decode a JEB MCP tool result without inventing an empty observation. */
+/**
+ * Decode a JEB MCP tool result without inventing an empty observation. Every
+ * JEB tool replies with a JSON envelope; only an error-marked reply may carry
+ * plain engine text, which is reported as the tool failure.
+ */
 export const decodeJebToolResult = (input: unknown): JsonValue => {
   const result = toolResultSchema.parse(input);
   const blocks = mcpTextBlocks(result.content);
@@ -66,7 +70,13 @@ export const decodeJebToolResult = (input: unknown): JsonValue => {
       throw new AnalysisProtocolError(
         "JEB MCP omitted a single structured or text result; unsupported content cannot establish an empty observation.",
       );
-    decoded = parseMcpJsonOrText(blocks[0]!);
+    const text = decodeMcpTextReply(blocks[0]!, "json");
+    if (!text.ok && result.isError !== true)
+      throw new AnalysisProtocolError("JEB MCP returned malformed JSON text", {
+        cause: text.error.cause,
+        diagnostics: { upstream_response: blocks[0]! },
+      });
+    decoded = text.ok ? text.value : blocks[0]!;
   }
   if (result.isError === true && !isJebFailureEnvelope(decoded))
     throw new AnalysisProtocolError(
@@ -99,10 +109,10 @@ export const createStreamableHttpJebMcpConnection: JebMcpConnectionFactory = (
   endpoint,
   timeouts,
 ) => {
-  const discoveryTimeoutMs =
-    timeouts?.discoveryTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MSEC;
-  const requestTimeoutMs =
-    timeouts?.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MSEC;
+  const discoveryTimeout = () =>
+    selectedJebMcpTimeout(timeouts?.discoveryTimeoutMs);
+  const requestTimeout = () =>
+    selectedJebMcpTimeout(timeouts?.requestTimeoutMs);
   let state: JebMcpConnectionOwner | undefined;
   let sessionGeneration = 0;
   let closing: Promise<void> | undefined;
@@ -124,9 +134,7 @@ export const createStreamableHttpJebMcpConnection: JebMcpConnectionFactory = (
         : waited.value;
     if (outcome !== undefined && !outcome.ok) throw outcome.error;
     if (outcome === undefined || signal?.aborted === true)
-      throw new AnalysisCancelledError("jeb_mcp_catalog", {
-        cause: signal?.reason,
-      });
+      throw cancelledBy("jeb_mcp_catalog", carriedReason(signal?.reason));
     return outcome.value;
   };
 
@@ -187,10 +195,7 @@ export const createStreamableHttpJebMcpConnection: JebMcpConnectionFactory = (
   };
 
   const connect = async (signal?: AbortSignal): Promise<readonly string[]> => {
-    if (signal?.aborted === true)
-      throw new AnalysisCancelledError("jeb_mcp_catalog", {
-        cause: signal.reason,
-      });
+    if (signal?.aborted === true) throw cancelledBy("jeb_mcp_catalog", signal);
     if (closing !== undefined) await closing;
     if (closed) {
       if (state !== undefined) await dispose(state);
@@ -210,10 +215,12 @@ export const createStreamableHttpJebMcpConnection: JebMcpConnectionFactory = (
     const acquisition = new SharedStartupAttempt<
       Result<readonly string[], unknown>
     >(async (startupSignal) => {
+      const selected = discoveryTimeout();
       const deadline = new JebMcpDeadline(
-        discoveryTimeoutMs,
+        selected.ms,
         startupSignal,
         "discovery",
+        selected.source,
       );
       try {
         await owner.client.connect(owner.transport, {
@@ -247,14 +254,10 @@ export const createStreamableHttpJebMcpConnection: JebMcpConnectionFactory = (
       }
     }, owner.signal.signal);
     owner.acquisition = acquisition;
-    void acquisition.promise.then(
-      () => {
-        if (owner.acquisition === acquisition) owner.acquisition = undefined;
-      },
-      () => {
-        if (owner.acquisition === acquisition) owner.acquisition = undefined;
-      },
-    );
+    const clearAcquisition = (): void => {
+      if (owner.acquisition === acquisition) owner.acquisition = undefined;
+    };
+    void acquisition.promise.then(clearAcquisition, clearAcquisition);
     return waitForAcquisition(owner, acquisition, signal);
   };
 
@@ -276,10 +279,12 @@ export const createStreamableHttpJebMcpConnection: JebMcpConnectionFactory = (
         signal === undefined
           ? owner.signal.signal
           : AbortSignal.any([signal, owner.signal.signal]);
+      const selected = discoveryTimeout();
       const deadline = new JebMcpDeadline(
-        discoveryTimeoutMs,
+        selected.ms,
         discoverySignal,
         "discovery",
+        selected.source,
       );
       try {
         const refreshed = await readToolNames(owner.client, deadline);
@@ -307,7 +312,13 @@ export const createStreamableHttpJebMcpConnection: JebMcpConnectionFactory = (
         signal === undefined
           ? owner.signal.signal
           : AbortSignal.any([signal, owner.signal.signal]);
-      const deadline = new JebMcpDeadline(requestTimeoutMs, requestSignal);
+      const selected = requestTimeout();
+      const deadline = new JebMcpDeadline(
+        selected.ms,
+        requestSignal,
+        "tools/call",
+        selected.source,
+      );
       let result: unknown;
       try {
         result = await owner.client.callTool(
@@ -335,7 +346,7 @@ export const createStreamableHttpJebMcpConnection: JebMcpConnectionFactory = (
         const owner = state;
         if (owner === undefined) return;
         owner.tools = undefined;
-        owner.signal.abort();
+        owner.signal.abort(OwnerCancellation.ownerClosed);
         if (owner.acquisition !== undefined)
           await owner.acquisition.promise.catch(() => undefined);
         if (state === owner) await dispose(owner);

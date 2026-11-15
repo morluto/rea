@@ -194,6 +194,47 @@ describe("native UI screenshot validation", () => {
   });
 });
 
+it.each(["observe_native_ui", "capture_native_ui_scenario"] as const)(
+  "keeps the rejected capture mode reason and field corrections for %s",
+  async (operation) => {
+    const result = await observeNativeUi(
+      target,
+      operation,
+      {
+        pid: 123,
+        window_id: 456,
+        screenshot: false,
+        accessibility: false,
+        ...(operation === "capture_native_ui_scenario"
+          ? { steps: [{ kind: "wait", milliseconds: 0 }] }
+          : {}),
+      },
+      {
+        environment: {},
+        invoke: async () => {
+          throw new Error("No native helper should run for this refusal");
+        },
+      },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected capture mode refusal");
+    const projected = projectAnalysisError(result.error);
+    expect(projected).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+      details: {
+        issues: [
+          { path: ["screenshot"], reason: "invalid_value" },
+          { path: ["accessibility"], reason: "invalid_value" },
+        ],
+      },
+    });
+    expect(projected.message).toMatch(/screenshot.*accessibility/iu);
+    expect(projected.remediation.action).toMatch(/screenshot.*accessibility/iu);
+    expect(projected.remediation.action).toMatch(/true/iu);
+  },
+);
+
 describe("native UI capture selection and budgets", () => {
   it("accepts observations and scenarios without compatibility flags", async () => {
     let calls = 0;
@@ -332,14 +373,7 @@ describe("native UI deadline execution", () => {
       },
       {
         environment: {},
-        runtime: {
-          signal: new AbortController().signal,
-          deadlineMs: 2_500,
-          invoke: async () => ({ ok: true, result: snapshot }),
-          cleanupLease: new AnalysisCleanupLease(async () => undefined),
-          close: async () => undefined,
-          resources: () => [],
-        },
+        invoke: async () => ({ ok: true, result: snapshot }),
       },
     );
     if (!result.ok) throw new Error("expected a completed scenario");
@@ -350,6 +384,27 @@ describe("native UI deadline execution", () => {
     expect(limitation).toMatch(
       /wait step.*capped at 180000 ms.*no runtime override/iu,
     );
+  });
+
+  it("enforces the selected owned deadline and retains the completed capture", async () => {
+    const result = await observeNativeUi(
+      target,
+      "observe_native_ui",
+      { ...scope, native_ui_deadline_ms: 1 },
+      {
+        environment: {},
+        invoke: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          return { ok: true, result: snapshot };
+        },
+      },
+    );
+    if (result.ok) throw new Error("Expected selected owned deadline");
+    expect(result.error).toBeInstanceOf(AnalysisTimeoutError);
+    expect(result.error).toMatchObject({
+      timeoutMs: 1,
+      partialObservation: { initial: snapshot },
+    });
   });
 
   it("states the omitted 180000 ms deadline separately from the wait-step cap", async () => {

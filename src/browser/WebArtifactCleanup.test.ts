@@ -3,6 +3,8 @@ import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { LocalWebScriptArtifacts } from "./assets/LocalWebScriptArtifacts.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { WebArtifactCleanup } from "./WebArtifactCleanup.js";
+import { LocalWebModuleArtifacts } from "./modules/WebModuleArtifacts.js";
+import { LocalWebSourceLocationArtifacts } from "./assets/WebSourceLocationArtifacts.js";
 
 it("closes a shared script/resource scope once", async () => {
   const resources = new ArtifactResourceScope();
@@ -110,46 +112,80 @@ it.each(["resources", "scripts"] as const)(
   },
 );
 
-it("retains exact child labels until every failed owner releases", async () => {
-  const resources = new ArtifactResourceScope();
-  const scripts = new LocalWebScriptArtifacts(
-    "trace_web_module_imports",
-    new ArtifactResourceScope(),
-  );
-  const resourceClose = vi.spyOn(resources, "close").mockResolvedValue();
-  const scriptClose = vi.spyOn(scripts, "close").mockResolvedValue();
-  resourceClose.mockRejectedValueOnce(
-    new ProviderCleanupError("fixture", ["selected-map-handle"], {}),
-  );
-  scriptClose.mockRejectedValueOnce(
-    new ProviderCleanupError("fixture", ["captured-script-handle"], {}),
-  );
-  const cleanup = new WebArtifactCleanup(
-    "web-module-artifacts",
-    resources,
-    scripts,
-  );
-  const first = await cleanup.close().catch((cause: unknown) => cause);
-  expect(first).toMatchObject({
-    cleanupResources: ["selected-map-handle", "captured-script-handle"],
-  });
-  scriptClose.mockRejectedValueOnce(
-    new ProviderCleanupError("fixture", ["captured-script-handle"], {}),
-  );
-  const second = await cleanup.close().catch((cause: unknown) => cause);
-  expect(first).toMatchObject({
-    cleanupIncomplete: true,
-    cleanupResources: ["captured-script-handle"],
-  });
-  await cleanup.close();
-  expect(first).toMatchObject({
-    cleanupIncomplete: false,
-    cleanupResources: [],
-  });
-  expect(second).toMatchObject({
-    cleanupIncomplete: false,
-    cleanupResources: [],
-  });
-  expect(resourceClose).toHaveBeenCalledTimes(2);
-  expect(scriptClose).toHaveBeenCalledTimes(3);
-});
+it.each([
+  ["web module", LocalWebModuleArtifacts],
+  ["web source location", LocalWebSourceLocationArtifacts],
+] as const)(
+  "resolves exact child errors through %s artifact cleanup retries",
+  async (_name, Artifacts) => {
+    const resources = new ArtifactResourceScope();
+    const scriptResources = new ArtifactResourceScope();
+    const scripts = new LocalWebScriptArtifacts(
+      "trace_web_module_imports",
+      scriptResources,
+    );
+    const resourceFailure = new ProviderCleanupError(
+      "fixture",
+      ["selected-map-handle"],
+      {},
+    );
+    const scriptFailure = new ProviderCleanupError(
+      "fixture",
+      ["captured-script-handle"],
+      {},
+    );
+    let resourceDenied = true;
+    let scriptDenied = true;
+    let resourceCloses = 0;
+    let scriptCloses = 0;
+    resources.addCloseHook(async () => {
+      resourceCloses++;
+      if (resourceDenied) throw resourceFailure;
+    });
+    scriptResources.addCloseHook(async () => {
+      scriptCloses++;
+      if (scriptDenied) throw scriptFailure;
+    });
+    const artifacts = new Artifacts(scripts, resources);
+    try {
+      const first = await artifacts.close().catch((cause: unknown) => cause);
+      expect(first).toMatchObject({
+        cleanupIncomplete: true,
+        cleanupResources: ["selected-map-handle", "captured-script-handle"],
+      });
+      expect(resourceFailure.cleanupResources).toEqual(["selected-map-handle"]);
+      expect(scriptFailure.cleanupResources).toEqual([
+        "captured-script-handle",
+      ]);
+      resourceDenied = false;
+      const second = await artifacts.close().catch((cause: unknown) => cause);
+      expect(resourceFailure.cleanupIncomplete).toBe(false);
+      expect(scriptFailure.cleanupIncomplete).toBe(true);
+      expect(scriptFailure.cleanupResources).toEqual([
+        "captured-script-handle",
+      ]);
+      expect(first).toMatchObject({
+        cleanupIncomplete: true,
+        cleanupResources: ["captured-script-handle"],
+      });
+      scriptDenied = false;
+      await artifacts.close();
+      expect(scriptFailure.cleanupIncomplete).toBe(false);
+      expect(first).toMatchObject({
+        cleanupIncomplete: false,
+        cleanupResources: [],
+      });
+      expect(second).toMatchObject({
+        cleanupIncomplete: false,
+        cleanupResources: [],
+      });
+      await artifacts.close();
+      expect(resourceCloses).toBe(2);
+      expect(scriptCloses).toBe(3);
+    } finally {
+      resourceDenied = false;
+      scriptDenied = false;
+      await artifacts.close();
+    }
+  },
+);

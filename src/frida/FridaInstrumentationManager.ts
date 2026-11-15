@@ -31,6 +31,8 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { isValidFridaRemoteAddress } from "../domain/fridaRemoteAddress.js";
@@ -1537,6 +1539,11 @@ const boundedJsonValue = (
           break;
         }
         const key = boundedKey.value;
+        // Redaction can collapse source names; never replace a retained fact.
+        if (Object.hasOwn(output, key)) {
+          limit ??= "unrepresentable";
+          break;
+        }
         const keyBytes = jsonStringByteLength(key) + 1;
         const remaining = budget - usedBytes - separatorBytes - keyBytes - 1;
         if (remaining < 8) {
@@ -1681,8 +1688,7 @@ const providerError = (
           }),
     });
   if (cause instanceof AnalysisCancelledError)
-    return new AnalysisCancelledError(operation, {
-      cause: cause.cause,
+    return cancelledBy(operation, carriedReason(cause.cause), {
       diagnostics,
       ...(cleanupReason === undefined
         ? {}
@@ -1722,8 +1728,7 @@ const errorMessage = (cause: unknown): string =>
 const cancelledOperation = (
   operation: string,
   signal: AbortSignal,
-): AnalysisCancelledError =>
-  new AnalysisCancelledError(operation, { cause: signal.reason });
+): AnalysisCancelledError => cancelledBy(operation, signal);
 
 interface CapturedMessage {
   readonly observation: JsonValue;

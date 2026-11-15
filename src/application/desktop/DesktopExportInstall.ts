@@ -1,7 +1,13 @@
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisInputError,
+} from "../../domain/analysisErrorCore.js";
 import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
-import { readRegularFileText } from "../RegularFileRead.js";
+import {
+  readRegularFileText,
+  RegularFileReadFailure,
+} from "../RegularFileRead.js";
 import {
   downloadInstallFiles,
   downloadInstallSchema,
@@ -19,7 +25,7 @@ import {
   withExtraPackages,
 } from "../../domain/desktop/appExportInstall.js";
 import type { DesktopApplicationCapture } from "../../domain/desktop/desktopCapture.js";
-import { isPortableBundleName } from "../environment/environmentBundle.js";
+import { isPortableBundleName } from "../../domain/portableBundleName.js";
 
 const OPERATION = "export_desktop_application";
 const MAX_DOWNLOAD_INSTALL_BYTES = 64 * 1024;
@@ -78,17 +84,20 @@ export const readDownloadInstall = async (
   try {
     text = await readRegularFileText(path, {
       signal,
+      cancellationFailure: (reason) =>
+        new AnalysisCancelledError(OPERATION, { cause: reason }),
       admit: (state) => {
         if (state.size > MAX_DOWNLOAD_INSTALL_BYTES) throw unreadable();
       },
     });
   } catch (cause: unknown) {
+    const failure =
+      cause instanceof RegularFileReadFailure ? cause.operationCause : cause;
     if (
-      signal?.aborted === true ||
-      cause instanceof AnalysisError ||
-      cause instanceof RegularFileCleanupFailure
+      failure instanceof AnalysisError ||
+      failure instanceof RegularFileCleanupFailure
     )
-      throw cause;
+      throw failure;
     throw unreadable();
   }
   let value: unknown;

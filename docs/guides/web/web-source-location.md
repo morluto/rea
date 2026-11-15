@@ -115,9 +115,7 @@ are made.
 ## Compact point delivery and retained source text
 
 Summary delivery is useful for large point answers. Complete output can answer
-a small-map task with fewer calls. The
-[delivery qualification](../../verification/source-location-delivery.md)
-records measured task costs and first-use discovery tradeoffs.
+a small-map task with fewer calls.
 
 Complete delivery remains the default and includes raw map text and embedded source
 content. Select `detail: "summary"` in MCP, or `--detail summary` with
@@ -199,16 +197,12 @@ budgets.
 | `codec_heap_mib`   | 192      | Local codec old-generation request; process-memory enforcement remains host dependent |
 | `fetch_bytes`      | 67108864 | Aggregate response bytes and, independently, resolved-identity bytes                  |
 
-The local 8 MiB admission covers the pinned 4,284,329-byte main map and 5,529,840-byte
-DateSelect map from Actual Budget without an admission retry. This is an artifact
-compatibility allowance, not a context or latency optimization: complete Evidence
-retains raw map text, and those two measured replies estimate 1.59 and 2.23 million
-tokens. A smaller admission refuses the map; it does not compact successful
-Evidence. MCP retains complete Evidence before encoding; an oversized response
+The local map admission defaults to 8 MiB. Complete Evidence retains raw map
+text, so a larger admitted map can produce a large response. MCP retains complete
+Evidence before encoding; an oversized response
 returns its retained reference for `export_evidence_bundle`, or callers can use
 complete CLI JSON. Select opt-in compact delivery above to keep complete Evidence accessible while returning only point metadata or an explicitly selected text page.
-Browser collection keeps its separate conservative defaults; see the
-[calibration record](../../verification/source-map-budget-calibration.md).
+Browser collection keeps its separate conservative defaults.
 
 Local tracing accepts all listed fields except `fetch_bytes`. Bundle fetching
 accepts all except `map_bytes` and `codec_heap_mib`: it uses its existing

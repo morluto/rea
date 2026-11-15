@@ -10,6 +10,7 @@ import {
   mkdtemp,
   readFile,
   rm,
+  stat,
   symlink,
   truncate,
   writeFile,
@@ -32,6 +33,7 @@ import { decodeHarCapture } from "../../../src/browser/history/HarCapture.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { primaryAnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
+import { waitFor } from "../../support/testWait.js";
 
 const linux = it.skipIf(process.platform !== "linux");
 
@@ -335,12 +337,9 @@ it.each(["cancelled", "process"] as const)(
       sensitive_values: ["capture-private-runtime"],
     });
     const target = decoder.inspect(input, { signal: controller.signal });
-    await vi.waitFor(
-      async () => {
-        targetPid = JSON.parse(await readFile(markerPath, "utf8"));
-      },
-      { timeout: 5000 },
-    );
+    await waitFor(async () => {
+      targetPid = JSON.parse(await readFile(markerPath, "utf8"));
+    });
     const peer = decoder.inspect(input);
     await peerEntered.promise;
     if (outcome === "cancelled") controller.abort(reason);
@@ -391,7 +390,6 @@ it.each(["cancelled", "process"] as const)(
       outcome === "cancelled" ? "cancelled" : "execution_failure",
     );
   },
-  15000,
 );
 
 it("applies a non-default capture deadline and releases its runtime", async () => {
@@ -434,7 +432,7 @@ it("applies a non-default capture deadline and releases its runtime", async () =
   expect(result.error.userMessage).toContain("capture_timeout_ms");
   if (runtimePath === undefined) throw new Error("runtime was not acquired");
   await expect(access(runtimePath)).rejects.toMatchObject({ code: "ENOENT" });
-}, 8_000);
+});
 
 it.each([true, false])(
   "binds decoder replies to the complete selected provider identity (matching name: %s)",
@@ -1219,17 +1217,28 @@ it.each([
     const controller = new AbortController();
     const reason = { caller: "reply descriptor close" };
     const originalClose = OwnedFileHandle.prototype.close;
-    let closes = 0;
+    let replyPath: string | undefined;
+    let replyCloses = 0;
     const close = vi
       .spyOn(OwnedFileHandle.prototype, "close")
       .mockImplementation(async function (this: OwnedFileHandle) {
-        closes += 1;
-        if (closes === 2 && closeFails) {
+        let isReply = false;
+        if (replyPath !== undefined) {
+          try {
+            const named = await stat(replyPath);
+            const opened = await this.handle.stat();
+            isReply = named.dev === opened.dev && named.ino === opened.ino;
+          } catch (cause) {
+            if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
+          }
+        }
+        if (isReply) replyCloses += 1;
+        if (isReply && replyCloses === 1 && closeFails) {
           controller.abort(reason);
           throw new Error("controlled reply close denial");
         }
         await originalClose.call(this);
-        if (closes === 2) controller.abort(reason);
+        if (isReply && replyCloses === 1) controller.abort(reason);
       });
     const decoder = new HistoricalCaptureDecoder(
       [
@@ -1237,6 +1246,7 @@ it.each([
           format: "har",
           identity: HAR_CAPTURE_PROVIDER_IDENTITY,
           command: async (_, runtimePath) => {
+            replyPath = join(runtimePath, "reply.json");
             const bytes =
               reply === "malformed UTF-8"
                 ? Buffer.concat([
@@ -1265,7 +1275,7 @@ it.each([
               arguments: [
                 "-e",
                 `require('node:fs').writeFileSync(process.argv[1],Buffer.from(${JSON.stringify(bytes.toString("base64"))},'base64'))`,
-                join(runtimePath, "reply.json"),
+                replyPath,
               ],
             };
           },
@@ -1326,7 +1336,7 @@ it.each([
         if (reply === "malformed schema")
           expect(primary.message).toContain("Reply violates its schema");
       } else expect(primary.cause).toBe(reason);
-      expect(closes).toBe(closeFails ? 3 : 2);
+      expect(replyCloses).toBe(closeFails ? 2 : 1);
     } finally {
       close.mockRestore();
       await decoder.close();

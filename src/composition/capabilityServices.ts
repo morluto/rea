@@ -12,18 +12,17 @@ import {
 } from "./capabilityDeclarations.js";
 import { isAbsolute } from "node:path";
 import { createGpuCodeObjectsService } from "./gpu.js";
-import { createPacketCaptureService, tsharkHostSupported } from "./captures.js";
-import {
-  createSignalRecordingService,
-  sigrokHostSupported,
-} from "./signals.js";
+import { createPacketCaptureService } from "./captures.js";
+import { tsharkHostSupported } from "../captures/TsharkCaptureProvider.js";
+import { createSignalRecordingService } from "./signals.js";
+import { sigrokHostSupported } from "../signals/SigrokRecordingProvider.js";
 import { wasmArtifactModule } from "./wasm.js";
 import { apkSignatureModule } from "./apkSignature.js";
+import { evmInterfaceModule } from "./evm.js";
 import {
-  evmInterfaceModule,
   evmHostSupported,
   evmLimiterAvailability,
-} from "./evm.js";
+} from "../evm/EvmoleInterfaceProvider.js";
 import { createSqliteDatabaseService } from "./sqlite.js";
 import { createDesktopApplicationService } from "./desktop.js";
 import { DesktopBuildComputers } from "../application/desktop/DesktopBuildComputers.js";
@@ -34,15 +33,14 @@ import { createV8CodeCacheService } from "./v8CodeCache.js";
 import { createModelArtifactService } from "./model.js";
 import { createIl2cppMetadataService } from "./il2cpp.js";
 import { createElectronFuseService } from "./electronFuses.js";
+import { createReleaseExposureService } from "./releaseExposure.js";
 import { createPythonPycService } from "./pythonPyc.js";
 import { createWebNetworkCaptureService } from "./webNetworkCaptures.js";
 import { createWebSourceLocationService } from "./webSourceLocations.js";
 import { createWebModuleTraceService } from "./webModules.js";
 import { createWebRuntimeService } from "./webRuntime.js";
-import {
-  createJavaScriptRecoveryProvider,
-  wakaruHostSupported,
-} from "./javascriptRecovery.js";
+import { createJavaScriptRecoveryProvider } from "./javascriptRecovery.js";
+import { wakaruHostSupported } from "../javascript/recovery/WakaruCommand.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { createReverseEngineeringService } from "./reverseEngineering.js";
 import type {
@@ -50,10 +48,8 @@ import type {
   CommandProviderLaunchFailures,
 } from "../application/reverse/ReverseEngineeringService.js";
 import { FirmwareAnalysisService } from "../application/firmware/FirmwareAnalysisService.js";
-import {
-  createFirmwareAnalysisProvider,
-  firmwareHostSupported,
-} from "./firmware.js";
+import { createFirmwareAnalysisProvider } from "./firmware.js";
+import { firmwareHostSupported } from "../firmware/FirmwareCommand.js";
 import { createAndroidAnalysisProvider } from "./android.js";
 import { createPcapAnalysisProvider } from "./pcap.js";
 import { createFlutterBuildAnalysisProvider } from "./flutter.js";
@@ -78,7 +74,6 @@ import {
   createWindowsShortcutService,
   createRecordedCrashService,
   createBinaryLayoutService,
-  pwntoolsHostSupported,
   createDevicetreeService,
   createElfNotesService,
   createNativeInitializersService,
@@ -87,6 +82,7 @@ import {
   createKernelModuleService,
   createKernelBuildConfigService,
 } from "./binaryDiagnostics.js";
+import { pwntoolsHostSupported } from "../native/pwntools/PwntoolsDecoder.js";
 
 import type { PacketCaptureService } from "../application/captures/PacketCaptureService.js";
 import type { SignalRecordingService } from "../application/signals/SignalRecordingService.js";
@@ -380,6 +376,9 @@ const modules = {
   electronFuses: service(
     ({ options }) => options.electronFuses ?? createElectronFuseService(),
   ),
+  releaseExposure: service(({ environment, settings }) =>
+    createReleaseExposureService(environment, settings),
+  ),
   pythonPyc: service(
     ({ options }) => options.pythonPyc ?? createPythonPycService(),
   ),
@@ -569,8 +568,8 @@ const modules = {
       },
     }),
   ),
-  cutter: service(({ providerEnvironment }) =>
-    createCutterBridgeService(providerEnvironment),
+  cutter: service(({ providerEnvironment, settings }) =>
+    createCutterBridgeService(providerEnvironment, { read: settings }),
   ),
   browserObservation: capability(
     ({ options }) => options.browserObservation,

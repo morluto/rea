@@ -1,3 +1,4 @@
+import { escapeJsonPointerToken } from "../../domain/jsonPointer.js";
 import { isSafeNumber, type LosslessNumber } from "lossless-json";
 import type { WebNetworkCaptureRecord } from "../../domain/webNetworkCapture.js";
 import { parseRecordedTransportUrl } from "../../domain/recordedTransportUrl.js";
@@ -149,7 +150,7 @@ export class CaptureRedaction {
 
 /** Escape a producer property for an RFC 6901 location. */
 export const capturePointer = (parent: string, key: string): string =>
-  `${parent}/${key.replaceAll("~", "~0").replaceAll("/", "~1")}`;
+  `${parent}/${escapeJsonPointerToken(key)}`;
 
 /** Structural record guard does not duck-type number/byte sidecar markers. */
 export const captureObject = (

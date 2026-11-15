@@ -7,12 +7,14 @@ import {
 } from "../../domain/desktop/desktopCapture.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
-import type { ControlledComputer } from "../../desktop/BuildComputerController.js";
+import type {
+  Answer,
+  ControlledComputer,
+} from "../../desktop/BuildComputerController.js";
 import {
   adapterError,
   readOutput,
   reportedFailure,
-  type Answer,
 } from "./DesktopBuildCommands.js";
 
 /** The most lines, and characters, a message quotes from the end of the app's stderr. */

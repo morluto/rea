@@ -15,6 +15,7 @@ export function parseDevelopmentTestRequest(
 export function developmentTestPlan(
   request: DevelopmentTestRequest,
   baseCommit?: string,
+  resolvedPaths?: readonly string[],
 ): {
   readonly needsBuild: boolean;
   readonly artifactTasks: readonly string[];

@@ -152,6 +152,10 @@ Exhausted traversals with deliberately omitted filesystem entries retain
 socket and device entries are not opened. Case-distinct archive members remain
 separate observations. Their case-insensitive materialization diagnostic does
 not reduce traversal coverage when both spellings were read.
+Each container reader declares its own traversal coverage, including complete
+coverage. A traversal that ends without that declaration, or that stops before
+its reader finishes, is `unknown` with a limitation naming the reader format;
+a complete traversal of one container never covers another.
 PyInstaller inventory also preserves distinct table rows that share a logical
 path, including decoded children beneath a colliding file/directory path.
 Inventory coverage describes observed archive facts; extraction still refuses
@@ -222,7 +226,7 @@ cannot answer, such as an address without one exact file offset, omits this
 hint; follow its `remediation.action`. `recovery.kind=inspect_timeout_state` names
 the operation and the REA server/provider deadline. Inspect partial Evidence
 and reported cleanup state, then follow the returned remediation. Change a
-request field or REA_* setting only when the returned remediation explicitly
+request field or REA\_\* setting only when the returned remediation explicitly
 recommends that change. Restart REA when that text says the value is read at
 startup. A mention that a control does not raise the deadline is not a
 recommendation to change it. When it names no setting, reduce supported work;
@@ -866,8 +870,9 @@ and provider identities:
 
 Page `coverage` counts the selection only: exhausting it establishes nothing
 about functions outside the batch. Evidence `limitations` aggregate every item's
-provider observations and are not attributed to one successful item; unavailable and error
-items keep their own. A page over the response budget offers a smaller selection
+provider observations; every item, successful or not, also keeps its own
+observation's limitations, and an unavailable item keeps the provider's
+`pseudocode_absence` reason when one was reported. A page over the response budget offers a smaller selection
 from the same `source`: fewer rows, or one body's `pseudocode` pages when a single
 row does not fit. An inline source offers none, because the record cannot be
 repeated in that reply; resend it with a smaller selection.
@@ -1065,6 +1070,17 @@ from an older request does not override a newer outcome. Request deadlines and
 cancellations neither mark nor clear availability. A new provider client starts
 without these outcomes.
 
+A `provider_missing` group may also list `alternatives`: advertised tools the
+current provider makes available for part of that operation's question. When
+the provider does not declare `next_address` or `prev_address`, they list
+whichever of `inspect_native_instruction`, `read_function_instructions` and
+`procedure_assembly` qualify. These answer instruction-level questions only:
+none navigates arbitrary analyzed objects such as data or addresses outside a
+procedure, and neither listing order nor address plus length proves executed
+control flow. Calling the missing operation returns `capability_unavailable`
+with the same tools in `details.alternatives` and a remediation stating each
+one's scope. Without a qualifying alternative, both keep their generic advice.
+
 Standalone command operations (such as `inspect_with_objdump` and
 `execute_rizin_command`) similarly reflect observed executable launch failures:
 an unprobed executable is reported available; once a launch failure is observed,
@@ -1237,6 +1253,11 @@ provenance and use a null Evidence subject when executable identity is unknown.
 Binary-only operations and binary analysis snapshots do not apply in this
 session. `open_binary` can switch back to executable analysis, and
 `close_binary` retires either session kind.
+
+Both open operations can retire the previous analysis provider. That cleanup
+can discard ephemeral Ghidra edits or save a configured checkpoint, so their
+advertised effects include filesystem writes and possible data loss. The
+resource readers remain read-only within the selected bundle.
 
 `inspect_plist` requires an open binary or bundle-resource session. An explicit
 `path` selects a plist in that context and does not create a session;
@@ -1624,6 +1645,16 @@ or `unrepresentable` (beyond the exact JSON integer range). Initialization, not
 the loaded flag, decides whether source bytes can exist, so an initialized
 file-backed overlay still maps.
 
+`search_bytes` continuations reuse `cursor`. The bridge binds that cursor to
+the target, analysis profile (including a selected Ghidra project), pattern,
+mask, bounds, and document. A mismatch returns `invalid_request` attributed to
+`cursor`. The message names that binding and states that the one-way cursor
+does not identify which value differs. Select the original context or omit
+the cursor. The call still matches the input schema, so there is no
+`inspect_input_contract` recovery.
+`details.issues[0].observed.differing_component` is `unknown`, and `bound_to`
+lists the bound components.
+
 For constructor-populated pointer or resource slots, a static zero is not proof
 of a later null value. Inspect the slot's `xrefs` and the writer's assembly or
 pseudocode, retaining uncertainty about execution order and runtime values.
@@ -1906,13 +1937,10 @@ support for omitted historical values.
 known and differ. If only one value is known, storage comparison is unknown;
 when both are omitted, storage is not compared.
 
-<!-- BEGIN:compare-artifacts:compared-format-metadata-kinds -->
-
-`compare_artifacts` also compares the declarations in the `format_metadata`
-of UnityFS members (`unityfs-entry`), PyInstaller entries
+`compare_artifacts` also compares the declarations in the `format_metadata` of <!-- BEGIN:compare-artifacts:compared-format-metadata-kinds -->UnityFS members (`unityfs-entry`), PyInstaller entries
 (`pyinstaller-entry`), Node SEA members (`node-sea-entry`),
 ESP image segments (`esp-image-segment`), DfuSe elements (`dfuse-element`),
-ESP flash partitions (`esp-flash-partition`) and FIT images (`fit-image`);
+ESP flash partitions (`esp-flash-partition`) and FIT images (`fit-image`)<!-- END:compare-artifacts:compared-format-metadata-kinds -->;
 each format's guide names the compared fields. A changed declaration is a
 metadata change, including when content is unavailable. A declaration that
 only one side records, or that the other side records as another kind, is
@@ -1922,8 +1950,6 @@ their fields record layout, come from the bytes of the artifact or its
 container or from caller options that identify the target, or repeat
 occurrence fields, except Godot PCK source paths, which
 [Godot PCK archives](../godot-pck.md) explains.
-
-<!-- END:compare-artifacts:compared-format-metadata-kinds -->
 
 Every occurrence records `entry_kind`, `executable` and `encrypted`. A
 different entry kind or `encrypted` value is a `metadata` difference, and a

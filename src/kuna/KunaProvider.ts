@@ -9,7 +9,7 @@ import type {
   ProviderAvailability,
   ProviderTargetSupport,
 } from "../application/AnalysisProvider.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { cancelledBy } from "../domain/analysisErrorCore.js";
 import {
   createAnalysisProfile,
   type AnalysisProfileCommitment,
@@ -44,7 +44,6 @@ import { kunaCapabilities } from "./KunaProviderCapabilities.js";
 import { KUNA_PROVIDER_IDENTITY } from "./KunaProviderMetadata.js";
 import {
   KUNA_COMMAND_REMEDIATION,
-  KUNA_PROVIDER_ID,
   KUNA_RELEASE_VERIFICATION_EXPLANATION,
   KUNA_UNVERIFIED_VERSION_REMEDIATION,
   KUNA_VERIFIED_VERSION,
@@ -70,7 +69,6 @@ export class KunaProvider implements AnalysisProviderCandidate {
   readonly #heapRequest: RegexWorkerHeapRequest;
   readonly #platform: NodeJS.Platform;
   readonly #launcher: KunaProcessLauncher | undefined;
-  readonly #probeTimeoutMs: number | undefined;
   readonly #singleFunctionRuns: number | undefined;
   #cache: KunaProjectCache | undefined;
   #runSlots: KunaRunSlots | undefined;
@@ -80,8 +78,6 @@ export class KunaProvider implements AnalysisProviderCandidate {
     options: {
       readonly platform?: NodeJS.Platform;
       readonly launcher?: KunaProcessLauncher;
-      /** Test seam for bounded installation-probe lifecycle cases. */
-      readonly probeTimeoutMs?: number;
       /** Test seam for foreground native runs; production derives it from the host. */
       readonly singleFunctionRuns?: number;
       /**
@@ -105,7 +101,6 @@ export class KunaProvider implements AnalysisProviderCandidate {
       options.regexWorkerHeapRequest ??
       resolveRegexWorkerHeapRequest(this.#environment);
     this.#launcher = options.launcher;
-    this.#probeTimeoutMs = options.probeTimeoutMs;
     this.#singleFunctionRuns = options.singleFunctionRuns;
   }
 
@@ -202,11 +197,7 @@ export class KunaProvider implements AnalysisProviderCandidate {
     options?: AnalysisProfileResolutionOptions,
   ) {
     if (options?.signal?.aborted === true)
-      return err(
-        new AnalysisCancelledError("kuna:profile", {
-          cause: options.signal.reason,
-        }),
-      );
+      return err(cancelledBy("kuna:profile", options.signal));
     let installation: Awaited<ReturnType<typeof inspectKunaInstallation>>;
     const resourceScope = options?.resourceScope;
     if (resourceScope === undefined)
@@ -225,9 +216,6 @@ export class KunaProvider implements AnalysisProviderCandidate {
         ...(this.#launcher === undefined
           ? {}
           : { processLauncher: this.#launcher }),
-        ...(this.#probeTimeoutMs === undefined
-          ? {}
-          : { probeTimeoutMs: this.#probeTimeoutMs }),
       });
     } catch (cause: unknown) {
       const retainedCleanup = kunaRetainedResourceCleanupError(

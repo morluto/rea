@@ -111,6 +111,26 @@ describe("web resource comparison identity and optional size", () => {
   });
 });
 
+it("does not claim membership from an unavailable resource inventory", () => {
+  const before = capture([resource(128)]);
+  const after = capture([
+    resource(128),
+    resource(256, "https://app.example.test/child.css"),
+  ]);
+  after.completeness.unavailable_sections.push("resources");
+  for (const [left, right] of [
+    [before, after],
+    [after, before],
+    [after, after],
+  ] as const)
+    expect(compareResources(left, right)).toMatchObject({
+      status: "unknown",
+      total_changes: 0,
+      changes: [],
+      reason: expect.stringContaining("Resource inventory"),
+    });
+});
+
 it.each([
   [[128, 256], [128], [false, true], "unknown"],
   [[128], [256], [true, true], "unknown"],

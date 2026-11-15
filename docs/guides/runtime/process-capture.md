@@ -639,6 +639,31 @@ current token proof is still required before signaling. Swept cleanup verifies t
 remaining family after its group signals. Coverage is bounded by the native
 snapshots and generations inspected; sampled group IDs select candidates.
 
+Settlement records the observation before final owned-process cleanup. Even a
+quiesced sampled group can have token-owned descendants discovered during that
+cleanup. If the ownership layer reports that cleanup sent termination signals,
+`settlement.cleanup_outcome` is `cleaned` on success, and process residual
+unknowns explain that the intervention may have ended further terminal or
+filesystem work. Failed resource cleanup remains `failed` and retains the same
+intervention fact in partial observations. This does not establish how an
+uncaptured run would have continued or change which processes REA may signal.
+
+An observed signal is retained even if a later group signal or final ownership
+verification fails. It does not establish complete cleanup: the failed resource,
+original diagnostic, and retry authority remain visible. A successful retry can
+clear the live cleanup status without rewriting the earlier partial observations.
+
+If capture completion fails before a capture exists, the intervention is retained
+in `partial_observation.observations.residual_unknowns`, alongside the available
+observations and explicit unavailable fields. Older records may omit this optional
+array. No intervention entry is added without an observed signaling fact; absence
+does not prove that cleanup sent no signals.
+
+Readers that previously accepted only `not_required` for a quiesced settlement
+must refresh the advertised MCP schema or update their saved-capture reader to
+accept `cleaned` as well. Existing saved captures remain valid and keep their
+recorded outcome; missing historical signal facts are not reconstructed.
+
 When the host withholds an unrelated process's ownership token, REA leaves that
 process untouched and records its PID and reason in `cleanup.unverified_processes`
 and process residual unknowns. Successful cleanup verifies the owned group;
@@ -757,7 +782,8 @@ and cache settings.
 Symlink observations preserve their stored target bytes in `symlink_target_hex`
 (lowercase hexadecimal). `symlink_target` retains valid UTF-8 text and is `null`
 when the target bytes cannot be decoded as UTF-8. Filesystem effects compare
-these exact bytes without resolving the link. Older captures without the hex
-field still parse; a legacy target containing U+FFFD has ambiguous byte identity,
-so matching target text alone produces an `unknown` effect. Symlink descendants
-remain outside filesystem observation regardless of target encoding.
+these exact bytes without resolving the link. Every retained symlink requires
+the hex field; captures without it must be captured again before comparison.
+Saved Evidence remains unchanged, and target bytes are never inferred from
+display text. Unreadable targets remain explicit enumeration omissions. Symlink
+descendants remain outside filesystem observation regardless of target encoding.

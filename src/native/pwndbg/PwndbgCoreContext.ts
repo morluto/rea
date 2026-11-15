@@ -74,7 +74,6 @@ export const inspectPwndbgCore = async ({
   options,
   runCommand,
   timeoutMs,
-  probePath,
   producerLimits = resolvePwntoolsLimits(),
 }: {
   readonly environment: Readonly<NodeJS.ProcessEnv>;
@@ -87,11 +86,6 @@ export const inspectPwndbgCore = async ({
   /** Effective `pwntools_timeout_ms` for this debugger command. */
   readonly timeoutMs: number;
   readonly producerLimits?: PwntoolsProducerLimits;
-  readonly probePath?: (
-    path: string,
-    kind: "file" | "directory",
-    mode: number,
-  ) => Promise<void>;
 }): Promise<PwndbgCoreInspection> => {
   const gdb = environment.REA_PWNDBG_GDB ?? "/usr/bin/gdb";
   const entry = environment.REA_PWNDBG_GDBINIT ?? "";
@@ -120,18 +114,12 @@ export const inspectPwndbgCore = async ({
       if (!isAbsolute(path))
         throw new Error("Expected an absolute caller-supplied path.");
       const mode = key === "REA_PWNDBG_GDB" ? constants.X_OK : constants.R_OK;
-      if (probePath !== undefined) {
-        await probePath(path, kind, mode);
-      } else {
-        await access(path, mode);
-        checkCancelled();
-        const information = await stat(path);
-        checkCancelled();
-        if (
-          kind === "file" ? !information.isFile() : !information.isDirectory()
-        )
-          throw new Error(`Expected a ${kind}.`);
-      }
+      await access(path, mode);
+      checkCancelled();
+      const information = await stat(path);
+      checkCancelled();
+      if (kind === "file" ? !information.isFile() : !information.isDirectory())
+        throw new Error(`Expected a ${kind}.`);
       checkCancelled();
     } catch (cause: unknown) {
       if (cause instanceof AnalysisCancelledError) throw cause;

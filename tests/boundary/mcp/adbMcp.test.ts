@@ -8,6 +8,7 @@ import { ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { assertAdvertisedMcpContracts } from "./mcpContractHarness.js";
 
 const identity = { id: "adb", name: "Android Debug Bridge", version: null };
@@ -34,9 +35,31 @@ const results: Readonly<Record<string, unknown>> = {
         product: "sdk_gphone64_x86_64",
         model: "sdk_gphone64_x86_64",
         device: "emu64xa",
-        transport_id: 1,
+        transport_identity: {
+          status: "reported",
+          decimal: "1",
+          source_token: "1",
+          source_line: "emulator-5554 device transport_id:1",
+        },
         kind: "emulator",
         kind_basis: "emulator_serial_prefix",
+      },
+      {
+        serial: "exact-serial",
+        state: "device",
+        transport: "usb",
+        product: "product",
+        model: "Pixel",
+        device: "device",
+        transport_identity: {
+          status: "reported",
+          decimal: "18446744073709551615",
+          source_token: "18446744073709551615",
+          source_line:
+            "exact-serial device model:Pixel transport_id:18446744073709551615",
+        },
+        kind: "physical",
+        kind_basis: "usb_transport",
       },
     ],
     may_have_started_adb_server: false,
@@ -342,6 +365,49 @@ it("advertises exact valid ADB schemas and records inline evidence through MCP",
   for (const name of operationNames) expect(names, name).toContain(name);
 
   assertAdvertisedMcpContracts(operationNames, tools);
+  const listed = await client.callTool({
+    name: "list_adb_devices",
+    arguments: {},
+  });
+  expect(listed.isError).not.toBe(true);
+  const listing = parseEvidence(listed.structuredContent);
+  expect(listing.normalized_result).toMatchObject({
+    devices: [
+      {
+        serial: "emulator-5554",
+        transport_id: 1,
+        transport_id_text: "1",
+        transport_id_status: "reported",
+      },
+      {
+        serial: "exact-serial",
+        transport_id: null,
+        transport_id_text: "18446744073709551615",
+        transport_id_status: "reported",
+      },
+    ],
+  });
+  expect(listing.raw_result).toMatchObject({
+    transport_id_observations: [
+      { serial: "emulator-5554", source_token: "1" },
+      { serial: "exact-serial", source_token: "18446744073709551615" },
+    ],
+  });
+  const listingSchema = tools.find(
+    ({ name }) => name === "list_adb_devices",
+  )?.outputSchema;
+  if (listingSchema === undefined)
+    throw new Error("Missing listing output schema");
+  const validation = createMcpSchemaValidation();
+  onTestFinished(() => validation.clear());
+  expect(validation.assertions.validateSchema(listingSchema)).toBe(true);
+  expect(validation.assertions.validate(listingSchema, listing)).toBe(true);
+  const malformed = structuredClone(listing);
+  const report = malformed.normalized_result as {
+    devices: { transport_id_text: string | null }[];
+  };
+  report.devices[1]!.transport_id_text = "not-a-decimal";
+  expect(validation.assertions.validate(listingSchema, malformed)).toBe(false);
 
   const pulled = await client.callTool({
     name: "pull_adb_package",

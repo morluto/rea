@@ -29,7 +29,10 @@ import {
   type LinuxCgroupMemoryState,
 } from "../process/LinuxCgroupMemory.js";
 import { PendingOperations } from "../process/PendingOperations.js";
-import { DecodedNdjsonLineBuffer } from "../process/DecodedNdjsonLineBuffer.js";
+import {
+  Utf8NdjsonLineBuffer,
+  Utf8NdjsonDecodingError,
+} from "../process/Utf8NdjsonLineBuffer.js";
 import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
 import {
   SharedStartupAttempt,
@@ -187,10 +190,23 @@ export class GhidraClient {
       }),
     protocolFailure: (message, cause) => this.#abortProtocol(message, cause),
   });
-  readonly #responseLines = new DecodedNdjsonLineBuffer();
-  readonly #onSocketData = (chunk: string): void => {
-    for (const line of this.#responseLines.push(chunk))
-      this.#responseRouter.route(line);
+  readonly #responseLines = new Utf8NdjsonLineBuffer();
+  readonly #onSocketData = (chunk: Buffer): void => {
+    try {
+      for (const line of this.#responseLines.push(chunk))
+        this.#responseRouter.route(line);
+    } catch (cause: unknown) {
+      if (!(cause instanceof Utf8NdjsonDecodingError)) throw cause;
+      this.#abortProtocol("Ghidra bridge response is not valid UTF-8", cause);
+    }
+  };
+  readonly #onSocketEnd = (): void => {
+    try {
+      this.#responseLines.finish();
+    } catch (cause: unknown) {
+      if (!(cause instanceof Utf8NdjsonDecodingError)) throw cause;
+      this.#abortProtocol("Ghidra bridge response is not valid UTF-8", cause);
+    }
   };
   readonly #onSocketError = (): void => {
     this.#failAll(this.#failure("process", "Ghidra bridge socket failed"));
@@ -1257,6 +1273,7 @@ export class GhidraClient {
       startupTimeoutMs: deadline.timeoutMs,
       handlers: {
         data: this.#onSocketData,
+        end: this.#onSocketEnd,
         error: this.#onSocketError,
         close: this.#onSocketClose,
       },
@@ -1501,7 +1518,9 @@ export class GhidraClient {
   }
 
   #abortProtocol(message: string, cause?: Error): void {
-    this.#failAll(this.#failure("protocol", message, cause));
+    const failure = this.#failure("protocol", message, cause);
+    this.#requestQueue.failQueued(failure);
+    this.#failAll(failure);
     this.#socket?.destroy();
   }
 

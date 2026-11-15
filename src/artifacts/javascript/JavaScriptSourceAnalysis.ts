@@ -130,7 +130,12 @@ const sameLimits = (
   left: JavaScriptSourceAnalysisLimits,
   right: JavaScriptSourceAnalysisLimits,
 ): boolean => {
-  if (left.heapMb !== right.heapMb || left.timeoutMs !== right.timeoutMs)
+  if (
+    left.heapMb !== right.heapMb ||
+    left.timeoutMs !== right.timeoutMs ||
+    left.heapSource !== right.heapSource ||
+    left.timeoutSource !== right.timeoutSource
+  )
     return false;
   const leftPrecision = resolveJavaScriptSemanticPrecision(
     left.semanticPrecision,

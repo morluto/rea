@@ -75,6 +75,12 @@ export const getNavigationContext = async (
   input: { readonly document?: string | undefined },
   signal?: AbortSignal,
 ): Promise<Result<JsonValue, AnalysisError>> => {
+  if (signal?.aborted)
+    return err(
+      new AnalysisCancelledError("get_navigation_context", {
+        cause: signal.reason,
+      }),
+    );
   const document =
     input.document ??
     (await analysis.execute("current_document", {}, executionOptions(signal)));
@@ -88,6 +94,12 @@ export const getNavigationContext = async (
         "expected a document identity string",
       ),
     );
+  if (signal?.aborted)
+    return err(
+      new AnalysisCancelledError("get_navigation_context", {
+        cause: signal.reason,
+      }),
+    );
   const documentArgs = parameters(documentName);
   const address = await analysis.execute(
     "current_address",
@@ -99,6 +111,12 @@ export const getNavigationContext = async (
     return err(
       new AnalysisOutputError("current_address", "expected an address string"),
     );
+  if (signal?.aborted)
+    return err(
+      new AnalysisCancelledError("get_navigation_context", {
+        cause: signal.reason,
+      }),
+    );
   const procedure = await analysis.execute(
     "resolve_containing_procedure",
     parameters(documentName, address.value.result),
@@ -107,6 +125,12 @@ export const getNavigationContext = async (
   if (!procedure.ok) return procedure;
   const resolution = parseContainingProcedureResolution(procedure.value.result);
   if (!resolution.ok) return resolution;
+  if (signal?.aborted)
+    return err(
+      new AnalysisCancelledError("get_navigation_context", {
+        cause: signal.reason,
+      }),
+    );
   return ok({
     document: documentName,
     address: address.value.result,

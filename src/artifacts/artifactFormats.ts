@@ -134,7 +134,7 @@ function admittedAs(
 }
 
 /** One capability row for every ZIP-backed package family. */
-export const ZIP_FAMILY_CAPABILITIES = {
+const ZIP_FAMILY_CAPABILITIES = {
   zipFamily: true,
   occurrenceContainer: true,
   roleContainer: false,

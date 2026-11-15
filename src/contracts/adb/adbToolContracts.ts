@@ -22,7 +22,7 @@ export const ADB_TOOL_CONTRACTS = [
     name: "list_adb_devices",
     ...toolContractMetadata("list_adb_devices"),
     description:
-      "List attached devices exactly as `adb devices -l` reports them: serial, state, transport, model metadata, and an inferred emulator/physical kind with its evidence basis. Emulators and USB or network devices appear alike; REA neither starts nor manages them. May start the local adb server on first use.",
+      "List attached devices exactly as `adb devices -l` reports them: serial, state, transport, model metadata, and an inferred emulator/physical kind with its evidence basis. Emulators and USB or network devices appear alike; REA neither starts nor manages them. transport_id_text preserves exact full-range transport identity; transport_id is its safe numeric projection or null. May start the local adb server on first use.",
     kind: "adb-provider",
     inputSchema: adbInputSchemas.list_adb_devices,
     outputSchema: evidenceResultOf(adbResultSchemas.list_adb_devices),

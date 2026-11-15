@@ -52,7 +52,8 @@ it.each(["configuration", "producer"] as const)(
               limit: {
                 setting: "wasm.command_timeout_ms",
                 effective_value: 1234,
-                rea_restart_required: false,
+                update_mode: "runtime",
+                pending_restart: false,
               },
             },
             recovery: { kind: "inspect_timeout_state", timeout_ms: 1234 },
@@ -115,10 +116,29 @@ it.each([1234, 2_147_483_647])(
           parameter: "command_timeout_ms",
           applies_at: "next_operation",
           agent_editable: true,
-          rea_restart_required: false,
+          update_mode: "runtime",
+          pending_restart: false,
         },
       },
       recovery: { kind: "inspect_timeout_state", timeout_ms: commandTimeoutMs },
+    });
+    expect(
+      projectAnalysisError(
+        wabtFailure(
+          new OwnedCommandFailure("timeout", "deadline"),
+          "producer",
+          "/module.wasm",
+          { commandTimeoutMs, commandTimeoutSource: "request" },
+        ),
+      ),
+    ).toMatchObject({
+      details: {
+        limit: {
+          source: "request",
+          update_mode: "parameter",
+          effective_value: commandTimeoutMs,
+        },
+      },
     });
   },
 );

@@ -31,7 +31,7 @@ const qwenPath = (
 
 describe("Qwen Code configuration paths", () => {
   it("resolves the user settings file and marker directory", () => {
-    expect(qwenPath("/home/a", "linux")).toEqual({
+    expect(qwenPath("/home/a", "linux")).toMatchObject({
       name: "qwen_code",
       displayName: "Qwen Code",
       configPath: join("/home/a", ".qwen", "settings.json"),

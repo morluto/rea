@@ -1,3 +1,4 @@
+import { javaScriptWorkerMemoryLimitBytes } from "../../process/JavaScriptWorkerMemoryLimit.js";
 import { captureBudgets } from "./CaptureBudgets.js";
 import { analysisSettingLimit } from "../../domain/analysisSettingDefinitions.js";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
@@ -30,17 +31,53 @@ import {
   type InspectWebNetworkCaptureInput,
 } from "../../domain/webNetworkCapture.js";
 import {
+  captureDecoderHeapContinuingRecovery,
   captureDecoderHeapRecovery,
   DEFAULT_CAPTURE_DECODER_HEAP,
   type CaptureDecoderHeap,
 } from "../../config/captureDecoderHeap.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
+import { NODE_CAPTURE_HEAP_ENFORCED } from "./CaptureRelease.js";
+import { CAPTURE_DECODER_SEMI_SPACE_MIB } from "../../domain/analysisResourceLimits.js";
 import {
-  NODE_CAPTURE_HEAP_ENFORCED,
-  NODE_CAPTURE_HEAP_LIMITS,
-  captureDecoderProcessMemoryLimitBytes,
-} from "./CaptureRelease.js";
+  CAPTURE_LIMITS,
+  type CaptureFormatError,
+} from "./CaptureFormatError.js";
 const OPERATION = "inspect_web_network_capture";
+
+/** A refused protobuf body decode; a limit names the budget that owns it. */
+export const protobufCaptureFailure = (
+  input: InspectWebNetworkCaptureInput,
+  cause: CaptureFormatError,
+): AnalysisError => {
+  const { limit } = cause;
+  if (limit === undefined)
+    return new AnalysisInputError(OPERATION, undefined, [
+      {
+        path: ["protobuf"],
+        reason: "invalid_format",
+        message: cause.message,
+      },
+    ]);
+  const { parameter, expected } = CAPTURE_LIMITS[limit.name];
+  return new AnalysisResourceConstraintError(
+    OPERATION,
+    "capacity",
+    cause.message,
+    { [expected]: limit.maximum },
+    {
+      retryable: false,
+      ...(parameter === null
+        ? {}
+        : {
+            remediationAction: webNetworkCaptureBudgetRecovery(
+              input,
+              parameter,
+            ),
+          }),
+    },
+  );
+};
 
 /** Reason for a decoder whose owned process tree reached its Job Object commit limit. */
 export const CAPTURE_PROCESS_MEMORY_LIMIT_REASON =
@@ -295,10 +332,11 @@ export const captureMemoryFailure = (
   cause?: unknown,
   heap: CaptureDecoderHeap = DEFAULT_CAPTURE_DECODER_HEAP,
 ): AnalysisResourceConstraintError => {
-  const processMemoryLimitBytes = captureDecoderProcessMemoryLimitBytes(
+  const processMemoryLimitBytes = javaScriptWorkerMemoryLimitBytes(
     heap.oldGenerationMiB,
   );
   const recovery = captureDecoderHeapRecovery(heap);
+  const continuingRecovery = captureDecoderHeapContinuingRecovery(heap);
   return new AnalysisResourceConstraintError(
     OPERATION,
     "memory",
@@ -313,7 +351,7 @@ export const captureMemoryFailure = (
         ? {
             old_generation_heap_mib: heap.oldGenerationMiB,
             old_generation_heap_source: heap.source,
-            semi_space_heap_mib: NODE_CAPTURE_HEAP_LIMITS.semiSpaceMiB,
+            semi_space_heap_mib: CAPTURE_DECODER_SEMI_SPACE_MIB,
           }
         : {}),
       ...(input.format !== "mitmproxy" && processMemoryLimitBytes !== null
@@ -341,6 +379,13 @@ export const captureMemoryFailure = (
           }
         : {}),
       remediationAction: `Use a smaller capture exported by its producer, or another decoder with sufficient capacity for the original capture. Preserve the original for provenance; a subset does not establish complete-capture coverage.${input.format !== "mitmproxy" ? ` ${recovery}` : ""}${input.format !== "mitmproxy" && processMemoryLimitBytes !== null ? ` The Windows Job Object commit limit for this decoder is ${String(processMemoryLimitBytes)} bytes, ${String(heap.oldGenerationMiB)} MiB plus a 512 MiB Bun reserve.` : ""}`,
+      ...(input.format === "mitmproxy"
+        ? {}
+        : {
+            continuingCallerGuidance: {
+              remediationAction: `Use a smaller capture exported by its producer, or another decoder with sufficient capacity for the original capture. Preserve the original for provenance; a subset does not establish complete-capture coverage. ${continuingRecovery}${processMemoryLimitBytes !== null ? ` The Windows Job Object commit limit for this decoder is ${String(processMemoryLimitBytes)} bytes, ${String(heap.oldGenerationMiB)} MiB plus a 512 MiB Bun reserve.` : ""}`,
+            },
+          }),
       ...(cause instanceof OwnedCommandFailure && cause.snapshot !== null
         ? {
             capturedOutput: {

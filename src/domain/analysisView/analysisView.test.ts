@@ -27,13 +27,10 @@ import {
 } from "../javascript/javascriptSemanticGraph.js";
 import { sourceMapReference } from "../javascript/javascriptApplicationGraph.fixture.js";
 import { createArtifactInspection } from "../artifactInspection.js";
-import { javascriptModulePaths } from "./javascriptApplicationView.js";
-import {
-  analysisViewResultSchema,
-  inspectAnalysisViewInputSchema,
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "./analysisView.js";
+import { inspectAnalysisViewInputSchema } from "./analysisViewRequest.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import { analysisViewResultSchema } from "./analysisViewResult.js";
 
 const layoutParent = (): AnalysisViewParent => {
   const evidence = analysisViewLayoutEvidence();
@@ -445,6 +442,7 @@ it("pages every retained dossier collection and the native API record", () => {
     page("swift_string_literals", {
       ...original,
       swift_string_literals: [literal],
+      swift_string_literal_omissions: [],
     }),
   ).toMatchObject({ item: [literal], coverage: { total: 1 } });
   expect(page("swift_string_literals")).toMatchObject({
@@ -792,9 +790,6 @@ it("projects JavaScript summary and preserves selected module observations", () 
     selector: { path: "renderer.js" },
   });
   if (!item.ok) throw item.error;
-  const moduleNode = analysis.graph.nodes[0];
-  if (moduleNode === undefined) throw new Error("missing module");
-  expect(javascriptModulePaths(moduleNode)).toEqual(["renderer.js"]);
   if (item.value.kind !== "item") throw new Error("expected item view");
   expect(item.value.item).toMatchObject({
     path: "renderer.js",

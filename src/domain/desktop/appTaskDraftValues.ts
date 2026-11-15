@@ -1,3 +1,4 @@
+import { escapeJsonPointerToken } from "../jsonPointer.js";
 import { z } from "zod";
 
 import { jsonValueSchema, type JsonValue } from "../jsonValue.js";
@@ -14,12 +15,7 @@ import { recordListsOf } from "./appTaskDraftNested.js";
 import { holdsFields, isRecordAt } from "./appTaskDraftText.js";
 import { attributesOf, compactValue, previewWriter } from "./compactValue.js";
 import { pairMembers, pairedAtSeed } from "./memberPairing.js";
-import {
-  escapeToken,
-  isXmlElement,
-  locatePointer,
-  resolvePointer,
-} from "./viewPointer.js";
+import { isXmlElement, locatePointer, resolvePointer } from "./viewPointer.js";
 
 /** Why a value's pointer cannot go into a check as it is, or why the value is noise. */
 export const VALUE_NOTES = ["by_position", ...NOISE_REASONS] as const;
@@ -476,7 +472,12 @@ const fieldsOf = (view: JsonValue | null, pointer: string): string[] => {
     return (isXmlElement(element) ? element.children : []).flatMap(
       (child, index) =>
         isXmlElement(child)
-          ? [{ child, key: escapeToken(keys[index] ?? String(index)) }]
+          ? [
+              {
+                child,
+                key: escapeJsonPointerToken(keys[index] ?? String(index)),
+              },
+            ]
           : [],
     );
   };
@@ -554,9 +555,9 @@ export const draftValues = (
       .map((pointer) => entryOf(context, references, pointer, "removed")),
   ].toSorted((left, right) => rank(left) - rank(right));
   const values: DraftValue[] = [];
-  let bytes = 0;
+  let bytes = 2; // The serialized values array's brackets.
   for (const entry of entries) {
-    const size = byteLength(entry);
+    const size = byteLength(entry) + (values.length === 0 ? 0 : 1);
     if (
       values.length >= VALUE_LIMITS.entries ||
       bytes + size > VALUE_LIMITS.fileBytes
@@ -606,11 +607,12 @@ export const withinDraftBudget = <
 >(
   files: readonly File[],
 ): File[] => {
-  let left = VALUE_LIMITS.draftBytes;
+  // Reserve every file's array brackets before assigning entry bytes in file order.
+  let left = VALUE_LIMITS.draftBytes - files.length * 2;
   return files.map((file) => {
     const kept: DraftValue[] = [];
     for (const entry of file.values) {
-      const size = byteLength(entry);
+      const size = byteLength(entry) + (kept.length === 0 ? 0 : 1);
       if (size > left) break;
       kept.push(entry);
       left -= size;

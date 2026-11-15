@@ -12,6 +12,7 @@ result, the solver's turns and cost from its trajectory when that is a local fil
 from __future__ import annotations
 
 import json
+import math
 import os
 import sys
 from importlib import metadata
@@ -56,14 +57,23 @@ def _trajectory_end(context) -> tuple:
     return None, None
 
 
-def _checks(context, task: str) -> list:
-    """Each check's result as the task's verifier recorded it under the instance's verifications."""
-    verifications = (_field(context, "metadata") or {}).get("verifications") or {}
-    found = verifications.get(task) or next(iter(verifications.values()), {})
+def _solve_facts(run, task: str) -> tuple[str, list]:
+    """The selected verifier owns checks and score; run failures still take precedence."""
+    verifications = (_field(run.context, "metadata") or {}).get("verifications") or {}
+    found = verifications.get(task)
     results = found.get("results") if isinstance(found, dict) else None
-    return [{"id": str(result.get("id")), "passed": result.get("result") is True,
-             "description": str(result.get("description", ""))[:MAX_TEXT]}
-            for result in results or [] if isinstance(result, dict)]
+    checks = [{"id": str(result.get("id")), "passed": result.get("result") is True,
+               "description": str(result.get("description", ""))[:MAX_TEXT]}
+              for result in results or [] if isinstance(result, dict)]
+    outcome = run.outcome.value
+    if outcome not in ("failed", "cancelled"):
+        score = found.get("score") if isinstance(found, dict) else None
+        outcome = "unscored"
+        # Match TaskRun's score >= 1 rule without borrowing another verifier's
+        # score or claiming success when no selected checks were observed.
+        if checks and type(score) in (int, float) and math.isfinite(score):
+            outcome = "passed" if score >= 1 else "scored below 1"
+    return outcome, checks
 
 
 def _version() -> str | None:
@@ -108,9 +118,10 @@ def main(argv: list[str]) -> int:
         _say(protocol, {"error": "the bundle ran no task", "cleanup": _cleanup(result)})
         return 2
     turns, usd = _trajectory_end(run.context)
+    outcome, checks = _solve_facts(run, task)
     error = getattr(run, "error", None)
-    _say(protocol, {"outcome": run.outcome.value, "instance_id": run.instance_id,
-                    "seconds": round(float(run.duration), 1), "checks": _checks(run.context, task),
+    _say(protocol, {"outcome": outcome, "instance_id": run.instance_id,
+                    "seconds": round(float(run.duration), 1), "checks": checks,
                     "turns": turns, "usd": usd, "agentenv": _version(),
                     "error": None if error is None else f"{type(error).__name__}: {error}"[:MAX_TEXT],
                     "cleanup": _cleanup(result)})

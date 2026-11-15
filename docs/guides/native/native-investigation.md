@@ -247,8 +247,10 @@ observation's own `limitations`, so a reason the provider reported for that
 entry, such as a Kuna export failure or a missing body, stays with the item.
 Null pseudocode is `capability_unavailable`; empty or non-text pseudocode is
 `unreadable_output`. Provider failures keep their typed error. Successful items
-do not repeat limitations; the batch Evidence aggregates every observation's
-limitations by provider and operation.
+also keep their own observation's limitations, so repeated selectors that the
+provider answered differently stay distinguishable, and an unavailable item
+keeps the provider's `pseudocode_absence` reason. The batch Evidence still
+aggregates every observation's limitations by provider and operation.
 Resolved entries also appear in the composed Evidence locations. New batch
 Evidence commits the revised workflow profile; retained historical Evidence
 remains valid. This tool
@@ -321,7 +323,12 @@ the others. A function that `procedure_info` classifies as external, such as an
 import, is counted as `external` and recorded with that status and the body
 fact as observed. It gets no file, no pseudocode is requested, and a resume
 skips it. A function whose classification is unknown is decompiled as usual;
-a provider that returns null pseudocode for it is reported as `no_pseudocode`. Inventory rows without an address are counted in the limitations. `--layout dwarf`
+a provider that returns null pseudocode for it is reported as `no_pseudocode`. Inventory rows without an address are counted in the limitations.
+The top-level `limitations` of the manifest and index count every retained
+non-external function record whose body is unavailable, including records an
+earlier run wrote, and repeat the reason when all of them share one. A resume
+that skips every file therefore keeps the caveat until a later attempt records
+a known body. `--layout dwarf`
 reports that compilation-unit paths are unavailable and still names files by
 address. Filters are a case-sensitive name substring, a case-sensitive name
 prefix, an inclusive address range (including uppercase hexadecimal input), and a positive safe-integer attempt limit. The limit does not allocate space in proportion to its value. Cancellation leaves
@@ -462,7 +469,9 @@ most 64 procedures and retains at most 4 MiB of encoded scan results. A composed
 workflow reuses its own index and clears it when the workflow finishes. The
 default cooperative scan budget is
 2,000 ms; set `REA_HOPPER_CALLER_SCAN_BUDGET_MS` to a positive integer number of
-milliseconds before starting REA to change it. The default limits additional
+milliseconds before starting REA to change the launch value, or use
+`update_analysis_settings` with `hopper.caller_scan_budget_ms` for newly accepted
+operations. The default limits additional
 work on the serial Hopper bridge; larger documents may need a higher setting.
 Results report the examined procedure count and any budget interruption.
 An individual page, native caller list, and target instruction list each have
@@ -531,6 +540,24 @@ nodes and edges. Node payloads are bounded to 8 MiB and serialized results to
 32 MiB. Pagination returns edges whose source is on the node page and preserves
 stable IDs for endpoints outside that page.
 
+After fully examining and retaining a callee's parameters, an unmatched
+recovered CALL operand is reported at the caller's call-site address in
+`unknowns[].call_inputs`. One group lists its `input_indices` (positive p-code
+input positions; input 0 is the destination), `call_node_id`, exact resolved
+`destination` selector and caller `evidence_id`. The operands themselves stay
+in the retained call node and source Evidence. For example, a three-argument
+call with only parameter ordinal 0 recovered retains the index-1 binding and
+reports indices `[2, 3]` together. This does not establish a variadic signature
+or invent formal parameters.
+
+A depth, function, node or edge refusal, unavailable value flow, or truncated
+callee recovery does not establish such an examined gap. Those conditions
+keep their existing unknowns and traversal reasons. Call-input groups remain
+available when paging omits their call node; follow `call_node_id` in subsequent
+pages or the source Evidence. Older traces may omit `call_inputs`. Parameter
+and return bindings use canonical procedure addresses established by analyzed
+dossiers while preserving the provider's destination selector.
+
 Procedure, node and edge `evidence_id` values identify the source function
 observations used by the trace. In an MCP session, retrieve them from the
 Evidence bundle for inspection or export. A replayed source keeps the original
@@ -571,8 +598,10 @@ truncation; a depth or candidate limit is reported only when no other path
 analyzes or queues that destination. `total_nodes` and `total_edges` count
 retained rows. `truncated` remains true for either kind of omission. Failed
 analyses and unresolved calls stay in `unknowns` and do not truncate the
-traversal. Each page reruns analysis; pages are not pinned to one snapshot
-across session edits.
+traversal. A provider-classified thunk whose target the trace did not reach
+by any path adds an unknown that names the target in `related_procedure`; the
+target is reported, not traversed. Each page reruns analysis; pages are not
+pinned to one snapshot across session edits.
 
 The raw Java `is_dead` flag can remain set after Ghidra decodes a live block;
 `block_membership` reports actual syntax-tree membership separately.
@@ -1108,7 +1137,9 @@ complete observation.
   offers direct metadata inspection or a `list_names` symbol inventory. The
   workflow tries direct metadata first and uses the symbol fallback only when
   that operation is unavailable; runtime failures remain failures rather than
-  being replaced by symbol-only results.
+  being replaced by symbol-only results. If the symbol fallback then fails or
+  returns an invalid inventory, the error also keeps the direct operation's
+  refusal under `details.diagnostics.binary_metadata_failure`.
 
 `get_objc_classes` keeps names from the provider inventory. It coalesces rows
 only when their exact selected-image pointer slots decode to the same class
@@ -1321,7 +1352,7 @@ the matching native decompiler. Experimental Windows x64 P0 admits native
 x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs, [DOS MZ
 executables](../../providers/ghidra-dos.md), plus explicitly selected
 [raw NMOS 6502 images](../../providers/raw-binary.md#nmos-6502) with a caller-supplied load address,
-on fixed local NTFS volumes. Other raw CPU families remain unsupported on Windows.
+on fixed local NTFS/ReFS volumes. Other raw CPU families remain unsupported on Windows.
 The boundary uses bundled Job Object ownership, protected runtime DACLs, and
 handle-based path admission. See [Windows Ghidra P0](../../providers/windows-ghidra-p0.md) and
 [issue #527](https://github.com/morluto/rea/issues/527).
@@ -1576,10 +1607,12 @@ returns ordered addresses with segments, source file offsets and containing
 procedures. The CLI equivalent is
 `rea search-bytes ./program '48 8B ?? ?? 89' --provider ghidra`.
 Use `start`/`end` to constrain the inclusive address window, and continue with
-`next_cursor` until `complete` is true. Inspect `searched` for page coverage and
-skipped uninitialized blocks. A missing match does not establish absence from
-uninitialized or excluded memory. See
-[Ghidra byte search](../../providers/ghidra-provider.md#masked-byte-search) for mask and coverage
+`next_cursor` until `complete` is true. A cursor from another target, analysis
+profile or project, pattern, mask, bounds, or document is rejected without
+schema-repair guidance; the error does not claim which of those differs.
+Inspect `searched` for page coverage and skipped uninitialized blocks. A
+missing match does not establish absence from uninitialized or excluded memory.
+See [Ghidra byte search](../../providers/ghidra-provider.md#masked-byte-search) for mask and coverage
 semantics. This query never executes or modifies target bytes.
 
 Exact-name xref lookup reports distinct candidate addresses as an input ambiguity;

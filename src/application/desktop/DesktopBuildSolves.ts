@@ -1,3 +1,7 @@
+import {
+  parsePortableBundleName,
+  PORTABLE_BUNDLE_NAME_CONSTRAINT,
+} from "../../domain/portableBundleName.js";
 import { createHash } from "node:crypto";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import {
@@ -88,6 +92,24 @@ const refused = (userMessage: string, remediationAction: string) =>
     remediationAction,
     conformsToInputContract: true,
   });
+
+/** Refuse malformed lookup identity before reading files or resolving a solver. */
+const admitTaskName = (name: string): Result<string, AnalysisError> => {
+  const parsed = parsePortableBundleName(name);
+  if (parsed.ok) return parsed;
+  const message = `Task ${JSON.stringify(name)} must be ${PORTABLE_BUNDLE_NAME_CONSTRAINT}.`;
+  return err(
+    new AnalysisInputError(
+      MEASURE,
+      {
+        userMessage: message,
+        remediationAction:
+          "Select the exact portable task name written under the bundle's tasks directory.",
+      },
+      [{ path: ["task"], reason: "invalid_value", message }],
+    ),
+  );
+};
 
 /** The records a difficulty file holds, each read only as far as the README names it. */
 const recordsSchema = z.looseObject({
@@ -271,13 +293,16 @@ export const measureBuildTask = async (
   progress: ProgressReporter = silentProgressReporter,
   resources: ArtifactResourceScope = new ArtifactResourceScope(),
 ): Promise<Result<MeasuredTask, AnalysisError>> => {
+  const taskName = admitTaskName(request.task);
+  if (!taskName.ok) return taskName;
+  const task = taskName.value;
   const solves: SolveRecord[] = [];
   const retainSolves = (failure: AnalysisError): AnalysisError => {
     if (solves.length > 0)
       failure.retainPartialObservation({
         kind: "partial-task-measurement",
         bundle: request.bundle,
-        task: request.task,
+        task: task,
         solves: [...solves],
       });
     return failure;
@@ -285,7 +310,7 @@ export const measureBuildTask = async (
   let agentenv: string | null = null;
   let stopped: StopReason = "decided";
   try {
-    const digest = await taskDigest(request.bundle, request.task, signal);
+    const digest = await taskDigest(request.bundle, task, signal);
     if (!digest.ok) return digest;
     // Refuse records REA could not keep before any solve is paid for.
     const records = await readRecords(request.bundle, signal);
@@ -301,15 +326,15 @@ export const measureBuildTask = async (
           phase: MEASURE,
           completed: solves.length,
           total: null,
-          message: `solve ${String(solves.length + 1)} of ${request.task} with ${request.model}`,
+          message: `solve ${String(solves.length + 1)} of ${task} with ${request.model}`,
         })
         .catch(() => undefined);
-      const report = await solver(request, signal);
+      const report = await solver({ ...request, task }, signal);
       if (!("outcome" in report))
         return err(
           retainSolves(
             refused(
-              `A solve of ${request.task} did not run: ${report.error}`,
+              `A solve of ${task} did not run: ${report.error}`,
               "Fix what the error names, such as the model endpoint agentenv needs (LITELLM_BASE_URL and LITELLM_API_KEY where REA starts, or [model] in .agentenv/config.toml), and measure again.",
             ),
           ),
@@ -329,7 +354,7 @@ export const measureBuildTask = async (
     });
     const file = await recordMeasure(
       request.bundle,
-      request.task,
+      task,
       record,
       signal,
       resources,
@@ -338,7 +363,7 @@ export const measureBuildTask = async (
     const { versions: _versions, ...reported } = record;
     return ok({
       bundle: request.bundle,
-      task: request.task,
+      task: task,
       ...reported,
       difficulty_file: file.value,
     });
@@ -374,7 +399,7 @@ export const measureBuildTask = async (
             cleanup,
           })
         : new ProviderAdapterError(AGENTENV_PROVIDER, MEASURE, {
-            userMessage: `Measuring ${request.task} could not close an input file.`,
+            userMessage: `Measuring ${task} could not close an input file.`,
             cause,
             cleanup,
           });
@@ -387,7 +412,7 @@ export const measureBuildTask = async (
         : signal.aborted
           ? new AnalysisCancelledError(MEASURE, { cause: signal.reason })
           : new ProviderAdapterError(AGENTENV_PROVIDER, MEASURE, {
-              userMessage: `Measuring ${request.task} failed after ${String(solves.length)} solve(s): ${errorText(cause)}`,
+              userMessage: `Measuring ${task} failed after ${String(solves.length)} solve(s): ${errorText(cause)}`,
               remediationAction:
                 "Check the bundle files and host I/O error, then retry or retain the completed solve results.",
               cause,
@@ -408,13 +433,15 @@ export const measureInFreshComputers = async (
   signal: AbortSignal,
   progress?: ProgressReporter,
 ): Promise<Result<MeasuredTask, AnalysisError>> => {
+  const taskName = admitTaskName(request.task);
+  if (!taskName.ok) return taskName;
   const environment = await resolveBuildComputerEnvironment(
     host.environment,
     process.platform,
     host.defaults,
   );
   return measureBuildTask(
-    request,
+    { ...request, task: taskName.value },
     (solve, turn) =>
       runSolveHelper({
         ...solve,

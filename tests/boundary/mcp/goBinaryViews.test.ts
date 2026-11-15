@@ -11,7 +11,7 @@ import { goBinarySchema } from "../../../src/domain/go/goBinary.js";
 import {
   analysisViewResultSchema,
   goBinarySummaryViewResultSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+} from "../../../src/domain/analysisView/analysisViewResult.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import {
@@ -368,7 +368,7 @@ mcpTest(
       const page = goPage(parseEvidence(empty.structuredContent));
       expect(page).toMatchObject({
         page: { rows: [] },
-        coverage: { total: 0 },
+        coverage: { status: "unavailable", total: null, exhausted: false },
         source_coverage: {
           build_info_available: false,
           module_parse_complete: null,

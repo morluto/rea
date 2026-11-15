@@ -1,4 +1,4 @@
-import { StateResponseCleanup } from "./StateResponseCleanup.js";
+import { ResponseBodyCleanup } from "../../providers/ResponseBodyCleanup.js";
 import type { HttpHostname } from "../../domain/httpHostname.js";
 import { STATE_INTAKE_LIMIT_BYTES } from "../../application/environment/environmentStateDocument.js";
 import {
@@ -85,7 +85,7 @@ const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** At most this many messages in one data-plane batch; a larger batch is refused whole. */
-export const MAX_RPC_BATCH_MESSAGES = 100;
+const MAX_RPC_BATCH_MESSAGES = 100;
 
 /** A JSON-RPC 2.0 request or notification: an id, when present, is a string, number or null; params are structured. */
 const isRpcMessage = (
@@ -479,7 +479,9 @@ export const serveEnvironment = async (
   // A state file whose close failed stays owned here: later file reads retry it, and close reports it if it is still open.
   const stateFiles = new ArtifactResourceScope();
   let responseStateChanged = (): void => undefined;
-  const stateResponses = new StateResponseCleanup(() => responseStateChanged());
+  const stateResponses = new ResponseBodyCleanup("state response body", () =>
+    responseStateChanged(),
+  );
   const served = await serveStreamableHttp({
     host,
     port,

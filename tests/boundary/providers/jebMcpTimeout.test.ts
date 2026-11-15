@@ -58,7 +58,16 @@ it.each([
       expect(projected.remediation.action).toContain("REA_JEB_MCP_TIMEOUT_MS");
       expect(projected.remediation.action).toContain("2147483647");
       expect(projected.remediation.action).toContain("60000");
-      expect(projected.remediation.action).toContain("restart");
+      expect(projected.remediation.action).toContain(
+        "update_analysis_settings",
+      );
+      expect(projected.details?.limit).toMatchObject({
+        setting: "jeb.mcp_timeout_ms",
+        effective_value: 100,
+        source: "setting",
+        update_mode: "runtime",
+        pending_restart: false,
+      });
       expect(result.error.cause).toBeDefined();
       expect(result.error.cleanupIncomplete).toBe(false);
     }, [

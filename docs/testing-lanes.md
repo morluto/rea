@@ -75,7 +75,7 @@ adds in-place reparse, breakaway, environment, and token observations.
 The separate `scripts/verify-windows-native-inspection.mjs` lane uses the
 `.cache/windows-native-inspection-fixture` artifact built on Linux with
 `node scripts/build-windows-native.mjs --inspection-fixture`. Its controlled
-first deletion failure checks retained NTFS ownership across a same-volume
+first deletion failure checks retained NTFS/ReFS ownership across a same-volume
 rename, later-query handle-based recovery, successful-admission caching, and
 environment-teardown cleanup. It neither
 establishes the cause of the intermittent #1701 host failure nor replaces
@@ -549,6 +549,26 @@ does not call CLI `search-bytes`, and does not page an overlay search across a
 snapshot reopen. AArch64 remains covered by deterministic tests rather than this
 real-provider lane. See [raw binary analysis](providers/raw-binary.md).
 
+`npm run verify:ghidra:loader-relocation` runs
+`tests/conformance/ghidra/ReaLoaderRelocationProbe.java` inside a real Linux
+Ghidra ELF import. The source-owned PIE fixture reads a `const` object from a
+provider library, which the linker copies into `.data.rel.ro` with a copy
+relocation that Ghidra imports as unapplied, the shape of #4177. The probe
+requires that relocation and the reader's read reference to it, a non-writable
+file-backed block, and the bridge's volatile marking and limitation. Source
+`FileBytes` and block permissions must be unchanged. Applied GOT relocations
+must stay non-volatile, and a full-RELRO `-fno-plt` GOT caller must decompile
+identically before and after protection. Ghidra 12.1.4 already shows this
+x86-64 read by name without protection, so the report records whether the
+baseline folded the file-backed zero and compares before and after only when it
+did. The decompiler effect on the original MIPS case was observed on the
+reporter's binary, not in this lane. The lane never executes the fixture and
+needs Ghidra/JDK with the native decompiler and a Linux C compiler. The
+change-selected [Ghidra bridge CI lane](https://github.com/morluto/rea/blob/main/.github/workflows/ghidra-bridge-sources.yml)
+runs it with its checksum-verified Ghidra distribution. Read-only sessions
+(Windows P0 and caller-owned existing projects) record the same limitation but
+do not mark blocks volatile; no real-provider lane covers them.
+
 `npm run verify:ghidra:address-context` runs on Linux with a caller-installed
 Ghidra, full JDK, and an x86-64 ELF GCC toolchain (`CC` selects another compatible
 compiler). It builds
@@ -719,7 +739,7 @@ push: changes from failed or cancelled intermediate runs remain in scope.
 Missing, untrusted, or non-ancestor history selects the fast Linux x64
 baseline: portable checks and the Linux runtime lane. The lookup is
 bounded to the last 100 successful push runs; lookup failures broaden selection.
-Every code change still selects the source group and all eight fast built shards, without coverage
+Every code change still selects the source group and every fast built shard, without coverage
 instrumentation in this fast tier. Ordinary PR matrices cancel remaining
 shards after the first failure; passing PRs execute the complete suite. Main,
 `ci:full`, scheduled, manual, and release qualification retain every shard's
@@ -842,30 +862,16 @@ branches are not producers. A tier with no qualifying artifact leaves history
 unset, and Vitest uses its own assignment. A later schedule that reuses
 qualification without uploading timings leaves the previous artifact in place.
 
-On 2026-10-21 the newest full history was run
-`39545047294`, recorded before compiled-CLI session reuse. Fast run
-`39552964873` packed its eight built shards from that history, and those shard
-jobs executed for 319–591 seconds. Replaying that run's file durations through
-the sequencer's two-worker schedule balances every shard at about 404 seconds
-of file time. The same replay with the stale history weights leaves the slowest
-shard near 547 seconds and the fastest near 293. That spread is file-schedule
-time, not runner queue, which is why each tier keeps its own history.
-CI assigns discovered files by historical duration, with a deterministic
-fallback weight for new files, rather than dividing only by file count.
-Each file keeps its full duration on one worker. Extra workers overlap other
-files in the same sequence group, and `process-boundary` runs after that
-group. History published before the competing-loader split still names only
-`javascriptLiteralPercentPaths.test.ts`. Until an artifact records
-`javascriptLiteralLoaderOwnership.test.ts`, the sequencer assigns that
-recorded duration by the pre-split case counts: 54/192 stays with the
-percent-path file and 138/192 goes to the consolidated loader file. History
-that names the retired Early, Middle, and Late shards sums those durations
-onto the consolidated file instead, and scales a partial set as three equal
-shares. That weight is the old dual-surface cost. The demoted file runs every
-loader once through the shared stdio MCP session, so the first schedule
-overestimates it. Every discovered file still belongs to exactly one shard;
+Each tier keeps its own history because stale weights from another tier, or
+from before a large test change, unbalance the shards.
+CI assigns discovered files by historical duration rather than dividing only
+by file count. A file with no recorded duration, such as a newly added or
+renamed test, is weighted at the median recorded duration until a published
+artifact records it. Each file keeps its full duration on one worker. Extra
+workers overlap other files in the same sequence group, and `process-boundary`
+runs after that group. Every discovered file still belongs to exactly one shard;
 worker limits and project ordering remain unchanged. Fast qualification keeps
-eight built shards without coverage. The merge job rejects successful reports
+twelve built shards without coverage. The merge job rejects successful reports
 with missing, unexpected, or duplicate portable files. Coverage instrumentation
 and aggregate thresholds remain enforced in full qualification.
 Missing or unusable history falls back to Vitest's default assignment. Only

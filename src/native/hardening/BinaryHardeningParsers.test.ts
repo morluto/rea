@@ -1089,14 +1089,18 @@ it("leaves GNU property rows unknown behind a compressed note section", () => {
   });
 });
 
-it("admits a hostile section table without rescanning every span", () => {
-  const started = performance.now();
-  const image = readElfHardening(
-    elfHardeningFixture({ disjointNoteSections: 65000 }),
-  );
-  expect(performance.now() - started).toBeLessThan(5000);
-  expect(findRow(image.rows, "cet_ibt_shstk").state).toBe("unknown");
-}, 60000);
+it(
+  "admits a hostile section table without rescanning every span",
+  { tags: ["long-running"] },
+  () => {
+    const started = performance.now();
+    const image = readElfHardening(
+      elfHardeningFixture({ disjointNoteSections: 65000 }),
+    );
+    expect(performance.now() - started).toBeLessThan(5000);
+    expect(findRow(image.rows, "cet_ibt_shstk").state).toBe("unknown");
+  },
+);
 
 it("cites a non-ASCII import name by its source bytes", () => {
   const name = "__\u00ff_chk";
@@ -1106,6 +1110,19 @@ it("cites a non-ASCII import name by its source bytes", () => {
   expect(row).toMatchObject({ state: "enabled", location: { bytes: 7 } });
   const at = row.location?.offset ?? 0;
   expect(bytes.subarray(at, at + 7).toString("latin1")).toBe(name);
+});
+
+it("treats the __chk_fail handler import as a FORTIFY sign", () => {
+  const bytes = elfHardeningFixture({
+    fortify: true,
+    fortifyName: "__chk_fail",
+  });
+  const image = readElfHardening(bytes);
+  const row = findRow(image.rows, "fortify");
+  expect(row).toMatchObject({ state: "enabled", location: { bytes: 10 } });
+  expect(row.basis).toContain("__chk_fail");
+  const at = row.location?.offset ?? 0;
+  expect(bytes.subarray(at, at + 10).toString("latin1")).toBe("__chk_fail");
 });
 
 it("keeps malformed name offsets malformed in both formats", async () => {
@@ -1419,13 +1436,40 @@ it("sizes an empty DT_GNU_HASH table only from an agreeing SHT_DYNSYM", () => {
     strings.readBigUInt64LE(elfSectionAt(strings, SHT_STRTAB) + 32) - 1n,
     elfSectionAt(strings, SHT_STRTAB) + 32,
   );
-  for (const bytes of [moved, offset, strings])
+  const compressedSymbols = Buffer.from(agreeing);
+  compressedSymbols.writeBigUInt64LE(0x800n, section + 8);
+  const compressedStrings = Buffer.from(agreeing);
+  compressedStrings.writeBigUInt64LE(
+    0x800n,
+    elfSectionAt(compressedStrings, SHT_STRTAB) + 8,
+  );
+  const wrongStringType = Buffer.from(agreeing);
+  wrongStringType.writeUInt32LE(
+    1,
+    elfSectionAt(wrongStringType, SHT_STRTAB) + 4,
+  );
+  for (const bytes of [
+    moved,
+    offset,
+    strings,
+    compressedSymbols,
+    compressedStrings,
+    wrongStringType,
+  ])
     expect(
       findRow(readElfHardening(bytes).rows, "stack_protector"),
     ).toMatchObject({
       state: "unknown",
       note: expect.stringContaining("DT_GNU_HASH"),
     });
+  // A loader-owned hash count needs no section fallback, so compressed section
+  // declarations cannot hide imports named by DT_SYMTAB and DT_STRTAB.
+  const hashed = elfHardeningFixture({ stackChk: true });
+  for (const type of [SHT_DYNSYM, SHT_STRTAB])
+    hashed.writeBigUInt64LE(0x800n, elfSectionAt(hashed, type) + 8);
+  expect(findRow(readElfHardening(hashed).rows, "stack_protector").state).toBe(
+    "enabled",
+  );
 });
 
 it.each([32, 64] as const)(

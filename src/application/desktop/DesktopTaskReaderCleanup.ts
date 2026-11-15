@@ -106,7 +106,8 @@ export const retainReaderCleanup = (
   folderFailure?: { readonly cause: unknown },
 ): ProviderCleanupError | undefined => {
   const owner = new RetainedCommandCleanup(folder, cause);
-  if (!owner.hasProcess && folderFailure === undefined) return undefined;
+  if (!owner.hasPendingCommandResources && folderFailure === undefined)
+    return undefined;
   const original = primaryFailure(cause);
   const resources = owner.cleanupResources;
   const problem =

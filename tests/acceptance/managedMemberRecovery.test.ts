@@ -13,7 +13,7 @@ import { managedMemberInspectionSchema } from "../../src/domain/managed/managedA
 import {
   analysisViewResultSchema,
   managedMemberSummaryViewResultSchema,
-} from "../../src/domain/analysisView/analysisView.js";
+} from "../../src/domain/analysisView/analysisViewResult.js";
 import { buildManagedMemberCapacityFixture } from "../fixtures/managedMemberCapacity.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";

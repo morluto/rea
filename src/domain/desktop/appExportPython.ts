@@ -218,9 +218,9 @@ def _cell(value, encoding: str):
         return _sqlite_text(data, encoding) if value[0] == "t" else {"blob_hex": data.hex()}
     if isinstance(value, int) and abs(value) > MAX_SAFE_INTEGER:
         return {"integer": str(value)}
-    # JSON has no infinities or negative zero; REA's SQLite reader spells them as strings.
+    # Keep JSON's missing REAL values distinct from literal TEXT spellings.
     if isinstance(value, float) and (math.isinf(value) or (value == 0 and math.copysign(1, value) < 0)):
-        return "Infinity" if value == math.inf else "-Infinity" if value == -math.inf else "-0"
+        return {"real": "Infinity" if value == math.inf else "-Infinity" if value == -math.inf else "-0"}
     return value
 
 

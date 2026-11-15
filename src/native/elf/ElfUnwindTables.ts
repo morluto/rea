@@ -34,6 +34,7 @@ const AUG_R = 0x52;
 const AUG_S = 0x53;
 const AUG_B = 0x42;
 const SHT_SYMTAB = 2;
+const SHT_STRTAB = 3;
 const SHT_DYNAMIC = 6;
 const SHT_NOBITS = 8;
 const SHT_DYNSYM = 11;
@@ -49,7 +50,6 @@ const SHN_ABS = 0xfff1;
 const SHN_LORESERVE = 0xff00;
 const SHF_ALLOC = 2n;
 const SHF_EXECINSTR = 4n;
-const SHF_COMPRESSED = 0x800n;
 
 const {
   cfa: CFA_LIMITATION,
@@ -481,11 +481,18 @@ export const parseElfUnwindRanges = (
     while (pos < end && pos < bytes.length && shift <= 63n) {
       byte = bytes[pos] ?? 0;
       pos += 1;
-      result |= BigInt(byte & 0x7f) << shift;
+      // At bit 63 only one value bit remains; signed padding repeats that bit.
+      const payload = byte & 0x7f;
+      if (
+        shift === 63n &&
+        (signed ? payload !== 0 && payload !== 0x7f : payload > 1)
+      )
+        return null;
+      result |= BigInt(payload) << shift;
       shift += 7n;
       if ((byte & 0x80) === 0) {
-        if (signed && shift < 64n && (byte & 0x40) !== 0)
-          result |= -1n << shift;
+        // Ten-byte signed operands have 70 encoded bits, including sign padding.
+        if (signed && (byte & 0x40) !== 0) result |= -1n << shift;
         return { value: result, next: pos };
       }
     }
@@ -639,7 +646,7 @@ export const parseElfUnwindRanges = (
           ? ".eh_frame_hdr is declared but not file-backed."
           : ".eh_frame_hdr extends past the end of the file and was not decoded.",
       );
-    } else if ((hdrSection.flags & SHF_COMPRESSED) !== 0n) {
+    } else if (hdrSection.compressed) {
       headerLocation = placement.location;
       headerStatus = "incomplete";
       fail(".eh_frame_hdr is SHF_COMPRESSED and was not decompressed.");
@@ -705,7 +712,7 @@ export const parseElfUnwindRanges = (
     } else if (frameLocation === null) {
       frameStatus = "incomplete";
       fail(".eh_frame lies outside the file.");
-    } else if ((ehSection.flags & SHF_COMPRESSED) !== 0n) {
+    } else if (ehSection.compressed) {
       frameStatus = "incomplete";
       fail(".eh_frame is SHF_COMPRESSED and was not decompressed.");
     } else {
@@ -1135,7 +1142,12 @@ const resolveGotBase = (
       ? undefined
       : { offset: dynamicProgram.offset, fileSize: dynamicProgram.size }) ??
     directory.sections
-      .filter((section) => section.type === SHT_DYNAMIC && section.file_backed)
+      .filter(
+        (section) =>
+          section.type === SHT_DYNAMIC &&
+          section.file_backed &&
+          !section.compressed,
+      )
       .map((section) => ({
         offset: section.offset,
         fileSize: section.size,
@@ -1814,6 +1826,10 @@ const scanSymbols = (
   let remaining = MAX_ELF_UNWIND_SYMBOLS;
   for (const table of tables) {
     assertArtifactReadActive(signal);
+    if (table.compressed) {
+      fail("A symbol table is SHF_COMPRESSED and was not decompressed.");
+      continue;
+    }
     const width = table.entry_size === 0n ? standard : Number(table.entry_size);
     if (width !== standard) {
       fail(
@@ -1829,6 +1845,15 @@ const scanSymbols = (
     const size = Number(table.size);
     if (size % width !== 0)
       fail("A symbol table size is not a multiple of its entry width.");
+    const strings = byIndex.get(table.link);
+    if (strings?.type !== SHT_STRTAB || !strings.file_backed) {
+      fail("A symbol table does not link to a file-backed SHT_STRTAB section.");
+      continue;
+    }
+    if (strings.compressed) {
+      fail("A symbol string table is SHF_COMPRESSED and was not decompressed.");
+      continue;
+    }
     let count = Math.floor(size / width);
     if (count > remaining) {
       fail(
@@ -1837,15 +1862,10 @@ const scanSymbols = (
       count = remaining;
     }
     remaining -= count;
-    const strings = byIndex.get(table.link);
-    const stringBytes =
-      strings !== undefined && strings.file_backed
-        ? bytes.subarray(
-            Number(strings.offset),
-            Number(strings.offset + strings.size),
-          )
-        : null;
-    if (stringBytes === null) fail("A symbol string table could not be read.");
+    const stringBytes = bytes.subarray(
+      Number(strings.offset),
+      Number(strings.offset + strings.size),
+    );
     // Observation per string-table offset; null when the name is unreadable.
     const names = new Map<number, SymbolName | null>();
     for (let index = 0; index < count; index += 1) {
@@ -1878,7 +1898,7 @@ const scanSymbols = (
         if (owner !== undefined) address += owner.address;
       }
       // Only a symbol at a decoded FDE start can name a range.
-      if (stringBytes === null || !wanted.has(address)) continue;
+      if (!wanted.has(address)) continue;
       let name = names.get(symbol.name_offset);
       if (name === undefined) {
         const observed = observeElfStringTableEntry(

@@ -1,22 +1,23 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { isUtf8 } from "node:buffer";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { goBinarySchema } from "../dist/domain/go/goBinary.js";
 import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
+import { AnalysisCleanupLease } from "../dist/artifacts/AnalysisCleanupLease.js";
 import { artifactMcpCall } from "./lib/artifact-e2e.mjs";
 import { requireMcpOutput } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { createOwnedMcpStdioTransport } from "./lib/owned-mcp-stdio.mjs";
+import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
 
-const execute = promisify(execFile);
+const commands = await createVerifierCommands();
 const compiler = process.env.REA_VERIFY_GO_COMMAND ?? "go";
 if (process.env.REA_VERIFY_GO_COMMAND !== undefined && !isAbsolute(compiler))
   throw new Error(
@@ -51,13 +52,16 @@ const goEnvironment = {
   // Go's own verifier seam isolates telemetry; no global configuration is changed.
   TEST_TELEMETRY_DIR: join(root.path, "telemetry"),
 };
-const client = new Client({ name: "go-binary-verifier", version: "1" });
-const transport = new StdioClientTransport({
-  command: process.execPath,
-  args: [entrypoint, "mcp"],
-  env: environment,
-  stderr: "pipe",
-});
+let client;
+let transport;
+const cleanup = new AnalysisCleanupLease(async () => {
+  await closeVerifierResources([
+    () => client?.close(),
+    () => transport?.close(),
+    () => commands.close(),
+  ]);
+  await root.close();
+}, [root.path]);
 const targets = [
   ["linux", "amd64", "elf", 64, "little"],
   ["linux", "386", "elf", 32, "little"],
@@ -73,10 +77,19 @@ const verified = [];
 const omittedCoverage = [];
 const failures = [];
 try {
+  client = new Client({ name: "go-binary-verifier", version: "1" });
+  transport = await createOwnedMcpStdioTransport({
+    command: process.execPath,
+    arguments: [entrypoint, "mcp"],
+    hostEnvironment: environment,
+    cwd: process.cwd(),
+    expectedCommand: null,
+    sweepTokenOwnedProcesses: true,
+  });
   await prepareFixture();
   try {
     compilerVersion = (
-      await execute(compiler, ["version"], {
+      await commands.exec(compiler, ["version"], {
         cwd: root.path,
         env: goEnvironment,
         timeout: 10_000,
@@ -185,7 +198,7 @@ try {
     const path = join(root.path, "linux-amd64-byte-strings");
     const expected = JSON.parse(
       (
-        await execute(oracle, ["--build-byte-fixture", compiler, path], {
+        await commands.exec(oracle, ["--build-byte-fixture", compiler, path], {
           cwd: sourceRoot,
           env: { ...goEnvironment, GOOS: "linux", GOARCH: "amd64" },
           timeout: 120_000,
@@ -198,21 +211,16 @@ try {
 } catch (cause) {
   failures.push(cause);
 } finally {
-  for (const close of [
-    () => client.close(),
-    () => transport.close(),
-    () => root.close(),
-  ]) {
-    try {
-      await close();
-    } catch (cause) {
-      failures.push(cause);
-    }
+  try {
+    await cleanup.release();
+  } catch (cause) {
+    failures.push(cause);
   }
 }
 const verifier = await completeVerifierRun(run);
 try {
-  await assert.rejects(lstat(root.path), { code: "ENOENT" });
+  if (cleanup.released)
+    await assert.rejects(lstat(root.path), { code: "ENOENT" });
   if (verifier.process_lineage.status === "verified")
     assert.deepEqual(verifier.process_lineage.descendants, []);
 } catch (cause) {
@@ -226,15 +234,21 @@ if (failures.length > 0) {
         compiler: compilerVersion,
         verified,
         omitted_coverage: omittedCoverage,
+        retained_root: cleanup.released ? null : root.path,
         verifier,
       },
       null,
       2,
     ),
   );
-  throw new AggregateError(
-    failures,
-    "Real Go metadata verification failed; cleanup failures are retained.",
+  throw Object.assign(
+    new AggregateError(
+      failures,
+      cleanup.released
+        ? "Real Go metadata verification failed; cleanup failures are retained."
+        : `Real Go metadata verification failed; cleanup is incomplete at ${root.path}.`,
+    ),
+    { cleanupLeases: cleanup.released ? [] : [cleanup] },
   );
 }
 console.log(
@@ -256,7 +270,7 @@ console.log(
 );
 
 async function go(args, overrides = {}) {
-  return execute(compiler, args, {
+  return commands.exec(compiler, args, {
     cwd: sourceRoot,
     env: { ...goEnvironment, ...overrides },
     timeout: 120_000,
@@ -356,7 +370,7 @@ async function inspect(mode, path, includeStringLiterals = false) {
       ...(includeStringLiterals ? ["--include-string-literals"] : []),
       "--json",
     ];
-    const { stdout } = await execute(process.execPath, args, {
+    const { stdout } = await commands.exec(process.execPath, args, {
       env: environment,
       timeout: 30_000,
       maxBuffer: 16 * 1024 * 1024,
@@ -424,7 +438,7 @@ async function verify(
     byteExpected ??
     JSON.parse(
       (
-        await execute(oracle, [oraclePath], {
+        await commands.exec(oracle, [oraclePath], {
           timeout: 10_000,
           maxBuffer: 1024 * 1024,
         })

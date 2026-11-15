@@ -257,6 +257,7 @@ const pathRequests: readonly [string, Record<string, unknown>][] = [
   ["inspect_kernel_module", { path: nul }],
   ["inspect_kernel_build_config", { path: nul }],
   ["inspect_pe_load_config", { path: nul }],
+  ["audit_release_exposure", { path: nul }],
   ["inspect_binary_hardening", { path: nul }],
   ["inspect_python_pyc", { path: nul }],
   ["inspect_erlang_beam", { path: nul }],
@@ -412,7 +413,7 @@ it("rejects OS-invalid local inputs through the real advertised MCP contracts", 
       ],
     },
   });
-}, 60_000);
+});
 
 const ignoredOptions = [
   { terminal: { columns: 80, row: 12 } },
@@ -582,9 +583,6 @@ captureTest(
       },
     });
   },
-  // 22 malformed requests plus two filesystem errors each start a fresh CLI.
-  // Cache compilation, but allow for startup at the bounded fanout of two.
-  120_000,
 );
 
 captureTest.each(["untruncated", "truncated"] as const)(

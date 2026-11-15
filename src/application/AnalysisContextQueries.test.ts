@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 
 import {
   getNavigationContext,
@@ -500,7 +501,16 @@ it("waits for late facet cleanup after cancellation and retains its owner", asyn
     settled = true;
     return result;
   });
-  await started.promise;
+  onTestFinished(async () => {
+    controller.abort();
+    late.resolve(err(failure));
+    try {
+      await pending;
+    } finally {
+      await lease.release();
+    }
+  });
+  await awaitAcknowledgement(started.promise, pending, "facet execution");
   controller.abort();
   await Promise.resolve();
   expect(settled).toBe(false);
@@ -530,7 +540,12 @@ it("reports cancellation after a late successful facet that ignored its signal",
     { address: "0x401000", document: "fixture" },
     controller.signal,
   );
-  await started.promise;
+  onTestFinished(async () => {
+    controller.abort();
+    late.resolve(ok(createAnalysisExecution("finished", provider)));
+    await pending;
+  });
+  await awaitAcknowledgement(started.promise, pending, "facet execution");
   controller.abort();
   late.resolve(ok(createAnalysisExecution("finished", provider)));
   const result = await pending;
@@ -586,7 +601,11 @@ it("preserves a provider's cancellation for the same signal", async () => {
     { address: "0x401000", document: "fixture" },
     controller.signal,
   );
-  await started.promise;
+  onTestFinished(async () => {
+    controller.abort(reason);
+    await pending;
+  });
+  await awaitAcknowledgement(started.promise, pending, "provider execution");
   controller.abort(reason);
   const result = await pending;
   if (result.ok) throw new Error("expected cancellation");
@@ -668,3 +687,79 @@ it.each([false, true])(
     );
   },
 );
+
+it.each([
+  "admission",
+  "current_document",
+  "current_address",
+  "resolve_containing_procedure",
+])(
+  "stops navigation at cancelled %s without dispatching another observation",
+  async (stage) => {
+    const controller = new AbortController();
+    const reason = { requested: stage };
+    if (stage === "admission") controller.abort(reason);
+    const calls: string[] = [];
+    const operations = [
+      "current_document",
+      "current_address",
+      "resolve_containing_procedure",
+    ];
+    const result = await getNavigationContext(
+      {
+        execute: async (operation) => {
+          calls.push(operation);
+          if (operation === stage) controller.abort(reason);
+          return ok(
+            createAnalysisExecution(
+              operation === "current_document"
+                ? "fixture"
+                : operation === "current_address"
+                  ? "0x1000"
+                  : {
+                      query_address: "0x1000",
+                      found: false,
+                      procedure: null,
+                      reason: "not_in_procedure",
+                    },
+              provider,
+            ),
+          );
+        },
+      },
+      {},
+      controller.signal,
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError", cause: reason },
+    });
+    expect(calls).toEqual(
+      stage === "admission"
+        ? []
+        : operations.slice(0, operations.indexOf(stage) + 1),
+    );
+  },
+);
+
+it("preserves a physical navigation failure delivered with cancellation", async () => {
+  const controller = new AbortController();
+  const failure = new AnalysisOutputError(
+    "current_address",
+    "physical observation failure",
+  );
+  const calls: string[] = [];
+  const result = await getNavigationContext(
+    {
+      execute: async (operation) => {
+        calls.push(operation);
+        controller.abort(failure);
+        return err(failure);
+      },
+    },
+    { document: "fixture" },
+    controller.signal,
+  );
+  expect(result).toEqual(err(failure));
+  expect(calls).toEqual(["current_address"]);
+});

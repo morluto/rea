@@ -6,7 +6,7 @@ import {
   artifactFilePrimaryFacts,
   bindArtifactFileCleanup,
 } from "../artifacts/ArtifactFileOperation.js";
-import { boundedUtf8Text } from "../process/boundedUtf8Text.js";
+import { utf8HeadExcerpt } from "../domain/utf8HeadExcerpt.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
 import {
   AnalysisError,
@@ -60,6 +60,12 @@ export type WabtVersionProbe = {
 
 type WabtFailureContext = {
   readonly commandTimeoutMs: number;
+  readonly commandTimeoutSource?:
+    | "default"
+    | "setting"
+    | "runtime"
+    | "request"
+    | undefined;
   readonly limits?: WasmResourceLimits;
   readonly versionProbe?: WabtVersionProbe;
   readonly inputField?: readonly (string | number)[];
@@ -82,9 +88,9 @@ export const wabtConfigurationRecoveryAction = (cause?: unknown): string => {
 };
 /** Past the output budget, retained text is a prefix of an oversized stream; keep a bounded excerpt of each. */
 const outputLimitExcerpt = (snapshot: ProviderProcessSnapshot) => ({
-  stdout: boundedUtf8Text(snapshot.stdout.text, OUTPUT_LIMIT_EXCERPT_BYTES)
+  stdout: utf8HeadExcerpt(snapshot.stdout.text, OUTPUT_LIMIT_EXCERPT_BYTES)
     .text,
-  stderr: boundedUtf8Text(snapshot.stderr.text, OUTPUT_LIMIT_EXCERPT_BYTES)
+  stderr: utf8HeadExcerpt(snapshot.stderr.text, OUTPUT_LIMIT_EXCERPT_BYTES)
     .text,
   // The command reports output-limit only after retention was truncated.
   truncated: true,
@@ -179,13 +185,17 @@ const classifyWabtFailure = (
     // Classify once before cleanup takes precedence, so the primary remains actionable.
     const timeoutMs =
       execution?.commandTimeoutMs ?? DEFAULT_WASM_COMMAND_TIMEOUT_MS;
+    const timeoutSource =
+      execution?.commandTimeoutMs === undefined
+        ? "default"
+        : execution.commandTimeoutSource;
     const timeout =
       cause.reason === "timeout"
         ? new AnalysisTimeoutError("inspect_wasm_artifact", timeoutMs, {
             limit: analysisSettingLimit(
               "wasm.command_timeout_ms",
               timeoutMs,
-              undefined,
+              timeoutSource,
             ),
             ...options,
             // The cleanup wrapper retains output once; its nested primary needs only recovery facts.

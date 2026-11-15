@@ -7,6 +7,7 @@ import type {
   JavaScriptSemanticChildProcessSpawn,
 } from "./javascriptSemanticIr.js";
 import { createSemanticCallableIdStack } from "./javascriptSemanticCallableStack.js";
+import { rejectsSemanticEventListener } from "./javascriptSemanticAsyncEffects.js";
 import {
   createSemanticExpressionShapeResolver,
   optionsAfterOptionalArgv,
@@ -78,7 +79,8 @@ export const collectJavaScriptSemanticChildProcesses = (
       !forkRejectsStdioArray(candidate, context) &&
       !rejectsStdioLiteral(candidate, context) &&
       !rejectsProcessOptionLiteral(candidate, context) &&
-      !rejectsOptionsShape(candidate, context, state),
+      !rejectsOptionsShape(candidate, context, state) &&
+      !rejectsCallback(candidate, context),
   );
   const childProcessSpawns = candidates.map((candidate) =>
     immutableSpawn(candidate, context, state),
@@ -225,6 +227,11 @@ const childInteraction = (
   const method = semanticStaticPropertyName(member.property, member.computed);
   const classification = classifyInteraction(method, node.arguments[0]);
   if (classification === null) return null;
+  if (
+    classification.kind === "listener" &&
+    rejectsSemanticEventListener(node.arguments[1])
+  )
+    return null;
   const binding = objectBinding(member.object, state);
   const { candidates: linked, complete } = resolveChildCandidates(
     member.object,
@@ -641,6 +648,13 @@ const rejectsOptionsShape = (
   if (options === undefined) return false;
   const value = unwrapJavaScriptExpression(options).node;
   if (context.isArray(value)) return true;
+  if (
+    candidate.method !== "execFile" &&
+    (t.isFunctionExpression(value) ||
+      t.isArrowFunctionExpression(value) ||
+      t.isClassExpression(value))
+  )
+    return true;
   const literal = readExactJavaScriptLiteral(value);
   if (literal.found)
     return !(candidate.method !== "spawn" && literal.value === null);
@@ -656,6 +670,52 @@ const rejectsOptionsShape = (
   return isUnpricedPrimitiveLiteral(value);
 };
 
+/** Select only callback slots whose overload is established by source syntax. */
+const rejectsCallback = (
+  candidate: SpawnCandidate,
+  context: ChildSpawnContext,
+): boolean => {
+  if (candidate.method !== "exec" && candidate.method !== "execFile")
+    return false;
+  const args = candidate.node.arguments;
+  if (args.slice(0, 4).some((argument) => t.isSpreadElement(argument)))
+    return false;
+  const second = args[1] && unwrapJavaScriptExpression(args[1]).node;
+  const third = args[2] && unwrapJavaScriptExpression(args[2]).node;
+  let callback: t.Node | undefined;
+  if (candidate.method === "exec") {
+    // A function in slot 1 replaces slot 2, even when slot 2 is not callable.
+    if (
+      second !== undefined &&
+      !context.isNullish(second) &&
+      !rejectsSemanticEventListener(second)
+    )
+      return false;
+    callback = third;
+  } else if (t.isObjectExpression(second) || t.isRegExpLiteral(second)) {
+    callback = third;
+  } else if (
+    second === undefined ||
+    context.isArray(second) ||
+    context.isNullish(second)
+  ) {
+    // With argv present, a third-slot function replaces the fourth callback.
+    if (
+      third !== undefined &&
+      !context.isNullish(third) &&
+      !rejectsSemanticEventListener(third)
+    )
+      return false;
+    callback = args[3];
+  } else {
+    return false;
+  }
+  return (
+    callback !== undefined &&
+    !context.isNullish(callback) &&
+    rejectsSemanticEventListener(callback)
+  );
+};
 /**
  * The exact-value reader deliberately refuses to price a BigInt, a non-finite
  * numeric literal such as `1e400`, and a negated numeric literal such as `-0`.

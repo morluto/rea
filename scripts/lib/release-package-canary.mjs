@@ -79,7 +79,11 @@ export async function verifyInstalledCanaryPackage(
   return withVerifierCleanup(async () => {
     try {
       await owner.open(client, transport);
-      const toolNames = await verifyCompleteToolCatalog(client);
+      const toolNames = await verifyCompleteToolCatalog(
+        client,
+        undefined,
+        environment,
+      );
       return {
         mcpTools: toolNames.length,
         canonicalMcpTools: FULL_CATALOG_IDENTITY.counts.mcp_tools,

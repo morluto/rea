@@ -783,6 +783,7 @@ export class PcapProvider {
         : cause instanceof PcapConfigurationFailure
           ? pcapToolUnavailable(operation, cause.message, {
               cause,
+              diagnostics: cause.diagnostics,
             })
           : new AnalysisProtocolError(
               `Packet-capture analysis failed: ${cause instanceof Error ? cause.message : String(cause)}`,
@@ -1194,12 +1195,12 @@ export class PcapProvider {
         ...(dnsLimitation === undefined ? [] : [dnsLimitation]),
         ...this.nativeLimitations,
         "Both tools read one owned snapshot; target identity comes from its admitted source descriptor",
-        "DNS address attribution requires one wire-identified question in one complete DNS message; only matching answer owners or unambiguous answer-section CNAME chains are associated. Authority, additional, unrelated and ambiguous addresses are retained separately as unattributed; these packet-local relationships do not prove final resolution",
+        "DNS address attribution requires one wire-identified question in one decoded DNS message; declared truncation marks coverage partial. Only matching answer owners or unambiguous answer-section CNAME chains are associated. Authority, additional, unrelated and ambiguous addresses are retained separately as unattributed; these packet-local relationships do not prove final resolution",
         "Only bytes present in the saved capture are examined; encryption and capture truncation can hide higher-level fields",
         "HTTP URI inventory examines decoded HTTP/1 and HTTP/2 request fields; HTTP/3 URI semantics are outside this profile",
         ...(fields.partial
           ? [
-              "One or more projected categories were capped, credential-bearing URIs were omitted or coalesced, or DNS address attribution or HTTP URI targets remain unresolved; counts retain the examined totals",
+              "One or more projected categories were capped, credential-bearing URIs were omitted or coalesced, DNS messages declare truncation, or DNS address attribution or HTTP URI targets remain unresolved; counts retain the examined totals",
             ]
           : []),
         ...(fields.httpUriRedactionCount > 0

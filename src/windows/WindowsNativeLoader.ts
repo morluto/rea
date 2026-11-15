@@ -18,11 +18,11 @@ export const windowsHandleSchema = z.custom<object>(
     typeof value === "object" && value !== null && !Array.isArray(value),
 );
 
-/** Observed identity of an opened local NTFS object. */
+/** Observed identity of an opened local NTFS or ReFS object. */
 export const windowsFileIdentitySchema = z.strictObject({
   requestedPath: z.string(),
   finalPath: z.string(),
-  filesystem: z.literal("NTFS"),
+  filesystem: z.enum(["NTFS", "ReFS"]),
   volumeSerial: z.string().regex(/^[a-f0-9]{16}$/u),
   fileId: z.string().regex(/^[a-f0-9]{32}$/u),
   size: z.int().nonnegative().max(Number.MAX_SAFE_INTEGER),
@@ -110,7 +110,7 @@ export const windowsNativeFailureRemediation = (
         ? "Use the matching Windows x64 REA package, or restore native/windows/build/manifest.json and native/windows/build/rea-windows-x64.node from the same-version rea-agents tarball or build them with native/windows/README.md. The loader checks version, ABI, architecture, and digest before granting authority; no download or install is performed automatically."
         : failureStage === "inspection"
           ? "Install the matching Windows x64 REA package; its native inspection must prove every required security control."
-          : "Inspect the preserved native self-test error. Check that the process's temporary directory is writable local NTFS and that its filesystem, DACL, Job Object, and cleanup operations are permitted. Resolve the reported constraint, then rerun rea doctor; reinstalling Ghidra or Java cannot fix this self-test.";
+          : "Inspect the preserved native self-test error. Check that the process has a writable local NTFS/ReFS temporary directory and that its filesystem, DACL, Job Object, and cleanup operations are permitted. Resolve the reported constraint, then rerun rea doctor; reinstalling Ghidra or Java cannot fix this self-test.";
 
 /** Refusal when the Windows native authority cannot be loaded or self-tested before launch. */
 export class WindowsNativeAuthorityUnavailableError extends RuntimeControlUnavailableError {

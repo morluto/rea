@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { constants } from "node:fs";
 import {
+  chmod,
   mkdir,
   open,
   readFile,
@@ -66,6 +67,75 @@ const readFacts = async (
     await host.close?.();
   }
 };
+
+it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "keeps disk and archive permission failures distinct from missing paths",
+  async () => {
+    const root = await createTestTempDirectory("rea-doctor-disk-permission-");
+    const docker = join(root, "docker");
+    const denied = join(root, "denied");
+    const target = join(denied, "docker");
+    const archive = join(denied, "runtime.tar.xz");
+    await program(docker, "exit 0");
+    await mkdir(target, { recursive: true });
+    await writeFile(archive, "unreadable archive");
+    const resources = new ArtifactResourceScope();
+    const factsAt = (directory: string, selectedArchive: string) =>
+      readDesktopBuildFacts({
+        environment: {
+          HOME: root,
+          PATH: "",
+          REA_DOCKER_COMMAND: docker,
+          REA_BUILD_COMPUTER_REA_ARCHIVE: selectedArchive,
+        },
+        platform: process.platform,
+        resources,
+        signal: new AbortController().signal,
+        run: async (_command, args) => {
+          const stdout = args[0] === "info" ? `${directory}\n` : "";
+          return {
+            stdout,
+            stderr: "",
+            stdoutBytes: Buffer.byteLength(stdout),
+            stderrBytes: 0,
+          };
+        },
+        clientIds: [],
+        registrations: async () => [],
+      });
+    await chmod(denied, 0);
+    try {
+      const facts = await factsAt(target, archive);
+      expect(facts.disk).toMatchObject({
+        path: target,
+        error: expect.stringContaining("EACCES"),
+      });
+      expect(facts.disk).not.toHaveProperty("freeBytes");
+      expect(facts.archive).toMatchObject({
+        path: archive,
+        status: "unknown",
+        detail: expect.stringContaining("EACCES"),
+      });
+      const missingArchive = join(root, "missing", "runtime.tar.xz");
+      const missing = await factsAt(
+        join(root, "missing", "docker"),
+        missingArchive,
+      );
+      expect(missing.disk).toMatchObject({
+        path: root,
+        freeBytes: expect.any(Number),
+      });
+      expect(missing.disk).not.toHaveProperty("error");
+      expect(missing.archive).toMatchObject({
+        path: missingArchive,
+        status: "missing",
+      });
+    } finally {
+      await chmod(denied, 0o700);
+      await resources.close();
+    }
+  },
+);
 
 it.skipIf(process.platform === "win32")(
   "refuses a FIFO model configuration without waiting for a writer",

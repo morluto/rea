@@ -186,7 +186,8 @@ for (const reader of readers)
           effective_value: reader.value,
           applies_at: "next_operation",
           agent_editable: true,
-          rea_restart_required: false,
+          update_mode: "parameter",
+          pending_restart: false,
         },
       },
     });

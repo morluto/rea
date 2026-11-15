@@ -78,7 +78,7 @@ import { PWNTOOLS_PROVIDER_IDENTITY } from "./PwntoolsProviderIdentity.js";
 import { pwntoolsInputBytes } from "./PwntoolsInputLimit.js";
 
 /** Names the detected host so a host refusal is not read as a target refusal. */
-export const pwntoolsHostRequirement = (
+const pwntoolsHostRequirement = (
   platform: NodeJS.Platform,
   arch: string,
 ): string =>
@@ -278,12 +278,21 @@ export class PwntoolsDecoder<
       ...resolvePwntoolsLimits(selectedLimits.data),
       command_timeout_ms: timeoutMs,
     };
+    let inputBytesSource:
+      | "default"
+      | "setting"
+      | "runtime"
+      | "request"
+      | undefined;
     const context = {
       operation: OPERATION,
       providerId: this.identity.id,
       timeoutMs,
       get producerLimits() {
         return producerLimits;
+      },
+      get inputBytesSource() {
+        return inputBytesSource;
       },
     };
     const replySchema = z.discriminatedUnion("ok", [
@@ -314,12 +323,11 @@ export class PwntoolsDecoder<
     let replyFinalization: AnalysisError | undefined;
     let phase: "configuration" | "artifact-read" | "decoder" = "configuration";
     const executablePath = environment.REA_PWNTOOLS_PYTHON ?? "";
-    let selectedPath = executablePath;
     const failure = (cause: unknown) =>
       pwntoolsDecoderFailure(
         cause,
         phase,
-        selectedPath,
+        phase === "configuration" ? executablePath : input.path,
         executablePath,
         {},
         context,
@@ -341,20 +349,20 @@ export class PwntoolsDecoder<
           { userMessage: requirement },
         );
       }
-      if (!isAbsolute(selectedPath))
+      if (!isAbsolute(executablePath))
         throw pwntoolsUnavailable(
           "Set REA_PWNTOOLS_PYTHON to an absolute caller-supplied Python executable with pwntools 4.15.0, pyelftools 0.33 and Unicorn 2.1.2; REA never installs Python or packages.",
-          selectedPath,
+          executablePath,
           undefined,
           undefined,
           context,
         );
-      await access(selectedPath, constants.X_OK);
-      if (!(await stat(selectedPath)).isFile())
+      await access(executablePath, constants.X_OK);
+      if (!(await stat(executablePath)).isFile())
         throw pwntoolsUnavailable(
           "Selected Python executable must be a regular executable file, not a directory: " +
-            selectedPath,
-          selectedPath,
+            executablePath,
+          executablePath,
           undefined,
           undefined,
           context,
@@ -365,11 +373,12 @@ export class PwntoolsDecoder<
           : {
               configured: true as const,
               bytes: selectedLimits.data.input_bytes,
+              source: "request" as const,
             };
       if (!inputLimit.configured)
         throw pwntoolsUnavailable(
           inputLimit.error,
-          selectedPath,
+          executablePath,
           undefined,
           undefined,
           {
@@ -377,12 +386,12 @@ export class PwntoolsDecoder<
             configurationKey: "REA_PWNTOOLS_MAX_INPUT_BYTES",
           },
         );
+      inputBytesSource = inputLimit.source;
       phase = "artifact-read";
       producerLimits = {
         ...resolvePwntoolsLimits(selectedLimits.data, inputLimit.bytes),
         command_timeout_ms: timeoutMs,
       };
-      selectedPath = input.path;
       const snapshot = await readStableArtifact(
         input.path,
         inputLimit.bytes,
@@ -640,7 +649,8 @@ export class PwntoolsDecoder<
               }),
         );
       }
-    } catch (cause: unknown) {
+    } catch (caught: unknown) {
+      let cause = caught;
       if (replyFinalization !== undefined && cause !== replyFinalization) {
         const primary = failure(cause);
         cause = replyFinalization.cleanupIncomplete
@@ -672,7 +682,7 @@ export class PwntoolsDecoder<
       const primary = pwntoolsDecoderFailure(
         cause,
         phase,
-        selectedPath,
+        phase === "configuration" ? executablePath : input.path,
         executablePath,
         evidence,
         context,

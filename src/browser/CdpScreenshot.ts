@@ -11,19 +11,13 @@ import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { cdpOriginScopeRefusal } from "./CdpOriginScopeError.js";
 import {
   selectCdpFrameIdentity,
-  cdpFrameRecordFacts,
   cdpFrameEventFacts,
 } from "./CdpFrameIdentity.js";
+import type { CdpFrameTree } from "./protocol/CdpFrameTree.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
 import type { CdpConnection, CdpEvent } from "./CdpConnection.js";
 import {
-  recordValue,
-  cdpStringValue,
-  numberValue,
-} from "./CdpCaptureValues.js";
-import {
   observeCdpFrameUrl,
-  observeMainFrameUrl,
   classifyCdpFrameUrl,
 } from "./CdpCaptureDocuments.js";
 
@@ -63,10 +57,7 @@ export const captureCdpScreenshot = async (
     context.sessionId,
     context.signal,
   );
-  const initialFrame = recordValue(
-    recordValue(recordValue(before)?.frameTree)?.frame,
-  );
-  const beforeObservation = observeCdpFrameUrl(initialFrame);
+  const beforeObservation = before.root.url;
   const beforeFacts = classifyCdpFrameUrl(beforeObservation, origins);
   if (
     beforeFacts.scope === "outside_policy" ||
@@ -76,12 +67,13 @@ export const captureCdpScreenshot = async (
   if (beforeObservation.kind !== "observed")
     throw new BrowserObservationError("inspect_web_page", "protocol_error");
   const beforeUrl = beforeFacts.url;
-  const mainFrame = cdpFrameRecordFacts(initialFrame);
+  const mainFrame = before.root.facts;
   if (
     beforeUrl === undefined ||
     beforeFacts.origin === null ||
     mainFrame.frameId === null ||
     mainFrame.identityIssue !== null ||
+    mainFrame.loaderIssue !== null ||
     mainFrame.parentRelation !== "root"
   )
     throw new BrowserObservationError(
@@ -97,6 +89,9 @@ export const captureCdpScreenshot = async (
     loaderId: mainFrame.loaderId,
     completeness: new CdpCaptureCompleteness(),
   };
+  const unknownInitialLoader =
+    mainFrame.loaderId === undefined || mainFrame.loaderId === "";
+  if (unknownInitialLoader) navigation.completeness.attachLimited("screenshot");
   const removeListener = context.connection.onEvent((event) => {
     if (event.sessionId !== context.sessionId) return;
     observeScreenshotNavigation(event, origins, navigation);
@@ -110,7 +105,7 @@ export const captureCdpScreenshot = async (
       throw new BrowserObservationError("inspect_web_page", "target_changed");
   };
   let screenshot: Awaited<ReturnType<typeof captureScreenshotImage>>;
-  let after: unknown;
+  let after: CdpFrameTree;
   try {
     const viewport = await readScreenshotViewport(context);
     assertCurrentDocument();
@@ -149,7 +144,7 @@ export const captureCdpScreenshot = async (
   assertCurrentDocument();
   if (navigation.leftScope)
     throw cdpOriginScopeRefusal("capture_web_screenshot");
-  const afterObservation = observeMainFrameUrl(after);
+  const afterObservation = after.root.url;
   const afterFacts = classifyCdpFrameUrl(afterObservation, origins);
   if (
     afterFacts.scope === "outside_policy" ||
@@ -159,8 +154,43 @@ export const captureCdpScreenshot = async (
   if (navigation.invalidIdentity || afterObservation.kind !== "observed")
     throw new BrowserObservationError("inspect_web_page", "protocol_error");
   const afterUrl = afterFacts.url;
-  if (navigation.changed || afterUrl !== beforeUrl || afterUrl === undefined)
+  const afterFrame = after.root.facts;
+  if (
+    afterFrame.identityIssue !== null ||
+    afterFrame.parentRelation !== "root" ||
+    afterFrame.loaderIssue !== null
+  )
+    throw new BrowserObservationError(
+      "capture_web_screenshot",
+      "protocol_error",
+    );
+  if (
+    navigation.changed ||
+    afterUrl !== beforeUrl ||
+    afterUrl === undefined ||
+    afterFrame.frameId !== mainFrame.frameId ||
+    (mainFrame.loaderId !== undefined &&
+      mainFrame.loaderId !== "" &&
+      afterFrame.loaderId !== undefined &&
+      afterFrame.loaderId !== "" &&
+      afterFrame.loaderId !== mainFrame.loaderId)
+  )
     throw new BrowserObservationError("inspect_web_page", "target_changed");
+  if (
+    mainFrame.loaderId !== undefined &&
+    mainFrame.loaderId !== "" &&
+    (afterFrame.loaderId === undefined || afterFrame.loaderId === "")
+  )
+    throw new BrowserObservationError(
+      "capture_web_screenshot",
+      "protocol_error",
+      {
+        detail:
+          "CDP omitted the final document loader identity, so screenshot stability could not be verified.",
+        remediationAction:
+          "Retry after the selected page has finished loading.",
+      },
+    );
   await context.progress?.report({
     phase: "browser_observation",
     completed: 2,
@@ -180,6 +210,11 @@ export const captureCdpScreenshot = async (
     artifact: createWebScreenshotArtifact(screenshot.bytes),
     completeness: navigation.completeness.snapshot(),
     limitations: [
+      ...(unknownInitialLoader
+        ? [
+            "The initial document loader identity was unavailable, so document stability could not be verified. Retry after the page finishes loading.",
+          ]
+        : []),
       "The screenshot contains the visible viewport, including on-screen content.",
       "REA does not scroll, evaluate JavaScript, or capture beyond the current viewport.",
     ],
@@ -188,39 +223,22 @@ export const captureCdpScreenshot = async (
 
 /** Parse CSS clip geometry and device-pixel coverage at their owning boundary. */
 const readScreenshotViewport = async (context: ScreenshotContext) => {
-  const metrics = recordValue(
-    await context.connection.send(
-      "Page.getLayoutMetrics",
-      {},
-      context.sessionId,
-      context.signal,
-    ),
+  const { visualViewport, cssVisualViewport } = await context.connection.send(
+    "Page.getLayoutMetrics",
+    {},
+    context.sessionId,
+    context.signal,
   );
-  const visualViewport = recordValue(metrics?.visualViewport);
-  const cssViewport = recordValue(metrics?.cssVisualViewport);
-  const pageX = numberValue(cssViewport?.pageX);
-  const pageY = numberValue(cssViewport?.pageY);
-  const width = numberValue(cssViewport?.clientWidth);
-  const height = numberValue(cssViewport?.clientHeight);
-  const scale = numberValue(cssViewport?.scale);
-  const pixelWidth = numberValue(visualViewport?.clientWidth);
-  const pixelHeight = numberValue(visualViewport?.clientHeight);
-  const pixelScale = numberValue(visualViewport?.scale);
-  if (
-    pageX === undefined ||
-    pageY === undefined ||
-    width === undefined ||
-    height === undefined ||
-    scale === undefined ||
-    pixelWidth === undefined ||
-    pixelHeight === undefined ||
-    pixelScale !== scale ||
-    width <= 0 ||
-    height <= 0 ||
-    scale <= 0 ||
-    pixelWidth <= 0 ||
-    pixelHeight <= 0
-  )
+  const {
+    pageX,
+    pageY,
+    clientWidth: width,
+    clientHeight: height,
+    scale,
+  } = cssVisualViewport;
+  const { clientWidth: pixelWidth, clientHeight: pixelHeight } = visualViewport;
+  // Both viewports describe one page zoom; disagreement is incoherent geometry.
+  if (visualViewport.scale !== scale)
     throw new BrowserObservationError("inspect_web_page", "protocol_error");
   // Keep ordinary surface captures, including their scrollbars and pixel
   // density. The visual viewport excludes scrollbars and supplies only a
@@ -281,36 +299,32 @@ const captureScreenshotImage = async (
   context: ScreenshotContext,
   clip?: ScreenshotClip,
 ) => {
-  const result = recordValue(
-    await context.connection.send(
-      "Page.captureScreenshot",
-      {
-        format: "png",
-        fromSurface: true,
-        captureBeyondViewport: clip !== undefined,
-        ...(clip === undefined ? {} : { clip }),
-      },
-      context.sessionId,
-      context.signal,
-    ),
+  const { data } = await context.connection.send(
+    "Page.captureScreenshot",
+    {
+      format: "png",
+      fromSurface: true,
+      captureBeyondViewport: clip !== undefined,
+      ...(clip === undefined ? {} : { clip }),
+    },
+    context.sessionId,
+    context.signal,
   );
-  const screenshot = decodeScreenshot(result);
+  const screenshot = decodeScreenshot(data);
   if (screenshot === undefined)
     throw new BrowserObservationError("inspect_web_page", "protocol_error");
   return screenshot;
 };
 
 const decodeScreenshot = (
-  result: ReturnType<typeof recordValue>,
+  encoded: string,
 ):
   | {
       readonly bytes: Buffer;
       readonly dimensions: { width: number; height: number };
     }
   | undefined => {
-  const encoded = cdpStringValue(result?.data);
-  const bytes =
-    encoded === undefined ? undefined : decodeCanonicalBase64(encoded);
+  const bytes = decodeCanonicalBase64(encoded);
   if (bytes === undefined) return undefined;
   const dimensions = readPngHeaderDimensions(bytes);
   return dimensions === undefined ? undefined : { bytes, dimensions };

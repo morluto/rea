@@ -23,8 +23,9 @@ import {
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { InvestigationStatistics } from "../../domain/investigationLifecycle.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
+  cancelledBy,
+  OwnerCancellation,
 } from "../../domain/analysisErrorCore.js";
 import type { UnknownRegistryError } from "../../domain/unknownRegistryError.js";
 import type {
@@ -156,7 +157,7 @@ export abstract class BinarySessionRecords {
     evidence: Evidence,
   ): Result<"added" | "duplicate", AnalysisError> {
     if (this.#investigationDisposed)
-      return err(new AnalysisCancelledError("record_evidence"));
+      return err(cancelledBy("record_evidence", OwnerCancellation.ownerClosed));
     // Selection facts belong to the session that admitted the observation, so
     // every record stays attributable to the exact engine that produced it.
     // Attribution seals its result, and a sealed record skips the owning
@@ -280,7 +281,9 @@ export abstract class BinarySessionRecords {
     bundle: unknown,
   ): Result<EvidenceImportReceipt, AnalysisError> {
     if (this.#investigationDisposed)
-      return err(new AnalysisCancelledError("import_evidence_bundle"));
+      return err(
+        cancelledBy("import_evidence_bundle", OwnerCancellation.ownerClosed),
+      );
     const importable = this.#attributeImportedBundle(
       bundle,
       "import_evidence_bundle",
@@ -370,7 +373,9 @@ export abstract class BinarySessionRecords {
     snapshot: AnalysisSnapshot,
   ): Result<number, AnalysisError> {
     if (this.#investigationDisposed)
-      return err(new AnalysisCancelledError("import_analysis_snapshot"));
+      return err(
+        cancelledBy("import_analysis_snapshot", OwnerCancellation.ownerClosed),
+      );
     const active = this.activeAnalysisBinding();
     if (active !== undefined && this.#snapshotInvalidated)
       return err(
@@ -574,7 +579,7 @@ export abstract class BinarySessionRecords {
     input: RecordUnknownInput,
   ): Result<ResidualUnknown, AnalysisError> {
     if (this.#investigationDisposed)
-      return err(new AnalysisCancelledError("record_unknown"));
+      return err(cancelledBy("record_unknown", OwnerCancellation.ownerClosed));
     const binding = this.activeAnalysisBinding();
     const recorded = this.#records.recordUnknown(
       input,
@@ -590,7 +595,12 @@ export abstract class BinarySessionRecords {
     input: RecordUnknownInput,
   ): Result<ResidualUnknown | null, AnalysisError> {
     if (this.#investigationDisposed)
-      return err(new AnalysisCancelledError("record_evidence_with_unknown"));
+      return err(
+        cancelledBy(
+          "record_evidence_with_unknown",
+          OwnerCancellation.ownerClosed,
+        ),
+      );
     // The mutation record carries the same session attribution as the sibling
     // recordUnknown/updateUnknown paths; otherwise this atomic workflow is the
     // one place an exported record has no provider selection.
@@ -607,7 +617,7 @@ export abstract class BinarySessionRecords {
     input: UpdateUnknownInput,
   ): Result<ResidualUnknown, AnalysisError> {
     if (this.#investigationDisposed)
-      return err(new AnalysisCancelledError("update_unknown"));
+      return err(cancelledBy("update_unknown", OwnerCancellation.ownerClosed));
     const binding = this.activeAnalysisBinding();
     const updated = this.#records.updateUnknown(
       input,

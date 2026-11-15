@@ -169,7 +169,10 @@ export class DesktopBuildSecrets {
 
   /** Every secret no bundle may hold: each value typed or kept here, then each the folder holds now, readable by others or not. */
   async all(signal?: AbortSignal): Promise<KnownSecret[]> {
-    signal?.throwIfAborted();
+    if (signal?.aborted)
+      throw new AnalysisCancelledError("export_build_environment", {
+        cause: signal.reason,
+      });
     let handles: string[];
     try {
       handles = await listBuildSecretHandles(this.directory);
@@ -196,7 +199,10 @@ export class DesktopBuildSecrets {
           }),
         ),
       });
-    signal?.throwIfAborted();
+    if (signal?.aborted)
+      throw new AnalysisCancelledError("export_build_environment", {
+        cause: signal.reason,
+      });
     const refused = read.find(({ file }) => !file.ok);
     if (refused !== undefined && !refused.file.ok)
       throw new AnalysisInputError("export_build_environment", {

@@ -1,3 +1,8 @@
+import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
+import {
+  hashArtifactRange,
+  readArtifactRange as readExact,
+} from "../ArtifactCarrierRange.js";
 import { readMachoSegmentHeader } from "../../domain/apple/machoSegmentHeader.js";
 import { readMachoSectionHeader } from "../../domain/apple/machoSectionHeader.js";
 import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
@@ -48,8 +53,6 @@ import {
   type NodeSeaFuseObservation,
 } from "./NodeSeaBlob.js";
 
-const LC_SEGMENT = 0x1;
-const LC_SEGMENT_64 = 0x19;
 const PT_NOTE = 4;
 const SHT_NOTE = 7;
 const RT_RCDATA = 10;
@@ -214,8 +217,11 @@ const collapseRanges = async (
   if (chosen === undefined) return undefined;
   if (unique.length > 1) {
     const hashes = new Set<string>();
-    for (const range of unique)
-      hashes.add(await digestRange(carrier, range.offset, range.length));
+    for (const range of unique) {
+      const hash = await hashArtifactRange(carrier, range.offset, range.length);
+      if (hash === undefined) throw formatFailure(NODE_SEA_TRUNCATED);
+      hashes.add(hash);
+    }
     if (hashes.size !== 1) throw formatFailure(NODE_SEA_DUPLICATE_BLOB);
   }
   return {
@@ -250,7 +256,12 @@ const locateFatMachO = async (
   const found: BlobRange[] = [];
   for (const [index, slice] of header.slices.entries()) {
     if (slice === undefined || header.rangeIssues[index] != null) continue;
-    found.push(...(await locateThinMachO(carrier, slice.offset, slice.size)));
+    for (const range of await locateThinMachO(
+      carrier,
+      slice.offset,
+      slice.size,
+    ))
+      found.push(range);
   }
   return found;
 };
@@ -302,8 +313,8 @@ const locateThinMachO = async (
         throw formatFailure(NODE_SEA_MACHO_COMMANDS_TRUNCATED);
       return found;
     }
-    if (cmd === LC_SEGMENT || cmd === LC_SEGMENT_64) {
-      const segment64 = cmd === LC_SEGMENT_64;
+    if (cmd === LC.SEGMENT || cmd === LC.SEGMENT_64) {
+      const segment64 = cmd === LC.SEGMENT_64;
       const sectionSize = segment64 ? 80 : 68;
       const parsedSegment = readMachoSegmentHeader(
         commands.subarray(offset, offset + cmdsize),
@@ -435,7 +446,7 @@ const locateElfNotes = async (
         found.length > 0,
       );
       if (scanned === undefined) opaque = true;
-      else found.push(...scanned);
+      else for (const range of scanned) found.push(range);
     }
   // The runtime locates the blob through PT_NOTE segments. Injectors can
   // leave stale or misaligned SHT_NOTE entries, so section notes are only a
@@ -483,7 +494,7 @@ const locateElfNotes = async (
         found.length > 0,
       );
       if (scanned === undefined) opaque = true;
-      else found.push(...scanned);
+      else for (const range of scanned) found.push(range);
     }
   if (found.length > 0 && opaque)
     throw formatFailure(NODE_SEA_ELF_TABLE_TRUNCATED);
@@ -692,58 +703,6 @@ const locatePeResources = async (carrier: Carrier): Promise<BlobRange[]> => {
     admitBlobBytes(carrier, range.bytes);
     return [{ offset: range.offset, length: range.bytes }];
   });
-};
-
-const digestRange = async (
-  carrier: Carrier,
-  offset: number,
-  length: number,
-): Promise<string> => {
-  const hash = createHash("sha256");
-  let remaining = length;
-  let position = offset;
-  while (remaining > 0) {
-    const chunkLength = Math.min(64 * 1024, remaining);
-    const chunk = await readExact(carrier, position, chunkLength);
-    if (chunk === undefined) throw formatFailure(NODE_SEA_TRUNCATED);
-    hash.update(chunk);
-    position += chunkLength;
-    remaining -= chunkLength;
-  }
-  return hash.digest("hex");
-};
-
-const readExact = async (
-  carrier: Carrier,
-  offset: number,
-  length: number,
-): Promise<Buffer | undefined> => {
-  abortIfNeeded(carrier.signal);
-  if (
-    !Number.isSafeInteger(offset) ||
-    !Number.isSafeInteger(length) ||
-    offset < 0 ||
-    length < 0 ||
-    offset > carrier.fileSize ||
-    length > carrier.fileSize - offset
-  )
-    return undefined;
-  if (length === 0) return Buffer.alloc(0);
-  const bytes = Buffer.alloc(length);
-  let filled = 0;
-  while (filled < length) {
-    abortIfNeeded(carrier.signal);
-    const read = await carrier.handle.read(
-      bytes,
-      filled,
-      length - filled,
-      offset + filled,
-    );
-    abortIfNeeded(carrier.signal);
-    if (read.bytesRead === 0) return undefined;
-    filled += read.bytesRead;
-  }
-  return bytes;
 };
 
 const cString = (bytes: Buffer, offset: number, length: number): string => {
