@@ -256,9 +256,17 @@ export const mergeClientConfigurationDocuments = (
     for (const name of names) {
       const previous = servers[name];
       const next = effectiveClientServer(document, name);
-      const merged = mergeConfigurationValue(previous, next);
+      // Goose overlays each extension one field deep (`merge_nested_entries`),
+      // replacing nested values such as `envs` whole.
+      const goose = document.dialect === "goose";
+      const merged = goose
+        ? isObject(previous) && isObject(next)
+          ? { ...previous, ...next }
+          : next
+        : mergeConfigurationValue(previous, next);
       const key = document.environmentKey;
       if (
+        !goose &&
         name === PRODUCT_IDENTITY.mcpServerKey &&
         isObject(merged) &&
         isObject(merged[key])

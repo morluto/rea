@@ -793,7 +793,9 @@ export const systemUninstallHost = (
  */
 const uninstallConfigPaths = (client: SetupClient): readonly string[] => [
   ...new Set([
-    ...(client.configPaths ?? [client.configPath]),
+    ...(client.readOnlyLowerLayers === true
+      ? [client.configPath]
+      : (client.configPaths ?? [client.configPath])),
     ...(client.msixPackage === undefined
       ? []
       : [

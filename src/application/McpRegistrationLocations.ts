@@ -1,13 +1,8 @@
 import { lstat } from "node:fs/promises";
-import { dirname, join, posix, win32 } from "node:path";
 
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
-import {
-  absoluteXdgConfigHome,
-  type ClientRootContext,
-} from "./ClientConfigRoots.js";
-import { windowsAppDataRoots } from "./MsixPackageStorage.js";
+import type { ClientRootContext } from "./ClientConfigRoots.js";
 import type { SetupClient, SupportedClientName } from "./SupportedClients.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import type { ClientConfigurationDocument } from "./ClientConfigurationDocument.js";
@@ -80,18 +75,6 @@ export const rootContext = ({
   env: environment,
 });
 
-/** Windows roaming application data, read as setup reads it. */
-const windowsRoaming = (context: McpRegistrationLocationContext): string =>
-  windowsAppDataRoots(context.home, context.environment).roaming;
-
-const location = (
-  path: string,
-  marker = dirname(path),
-): McpRegistrationGlobalLocation => ({
-  configPath: path,
-  markers: [marker],
-});
-
 export const present = async (path: string): Promise<boolean> => {
   try {
     await lstat(path);
@@ -115,27 +98,6 @@ export const firstExisting = async (
   return fallback;
 };
 
-export const gooseLocation = async (
-  context: McpRegistrationLocationContext,
-): Promise<McpRegistrationGlobalLocation> => {
-  const { home, platform, environment } = context;
-  const pathApi = platform === "win32" ? win32 : posix;
-  const root = environment.GOOSE_PATH_ROOT;
-  if (root && pathApi.isAbsolute(root)) {
-    const selected = pathApi.join(root, "config", "config.yaml");
-    return location(selected, selected);
-  }
-  // etcetera's Windows and XDG strategies; only an absolute XDG root counts.
-  const path =
-    platform === "win32"
-      ? join(windowsRoaming(context), "Block", "goose", "config", "config.yaml")
-      : join(
-          absoluteXdgConfigHome({ home, env: environment }),
-          "goose",
-          "config.yaml",
-        );
-  return location(path, path);
-};
 /** Fixed relative target precedence used by clients with a single project document. */
 export const fixedProjectLocation =
   (candidates: readonly [string, ...string[]]) =>
