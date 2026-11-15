@@ -117,8 +117,6 @@
     "src/native/MachoCommandNames.ts": 1,
     "src/native/NativeMachoInspection.ts": 4,
     "src/native/NativeUiHelperRuntime.ts": 1,
-    "src/native/parsers/demangle.ts": 3,
-    "src/native/parsers/lipo.ts": 1,
     "src/native/pwntools/PwntoolsDecoder.ts": 1
   },
   "raw-buffer-read": {
