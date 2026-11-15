@@ -8,6 +8,9 @@ import {
   HopperRemoteError,
   HopperStartError,
   HopperTimeoutError,
+  HopperCancelledError,
+  HopperProtocolError,
+  hopperErrorCatalogue,
 } from "./HopperErrors.js";
 import {
   DEFAULT_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
@@ -510,4 +513,54 @@ describe("analysis error projection: Hopper caller lifetime", () => {
       projectAnalysisError(composed).details?.cleanup_history,
     ).toMatchObject({ primary_error: continuingPrimary });
   });
+});
+
+describe("Hopper error catalogue", () => {
+  it.each([
+    ["", new HopperTimeoutError(30_000, "search_strings", 1, "busy")],
+    ["", new HopperCancelledError()],
+    ["", new HopperProtocolError("bad reply")],
+    ...(
+      [
+        "remote",
+        "authorization",
+        "invalid_request",
+        "capability_unavailable",
+        "bridge_exception",
+      ] as const
+    ).map(
+      (diagnosticType) =>
+        [
+          `diagnostic_type=${diagnosticType}`,
+          new HopperRemoteError(7, "failed", { diagnosticType }),
+        ] as const,
+    ),
+    ["", new HopperProcessError(7, { operation: "search_strings" })],
+    ["", new HopperStartError()],
+    [
+      "Apple Events authorization denied",
+      new HopperStartError({
+        launchRejection: {
+          boundary: "apple_events_authorization",
+          reason: "not_authorized",
+        },
+      }),
+    ],
+  ] as const)(
+    "lists the projected code, category and retryability (%s)",
+    (discriminant, error) => {
+      const projected = projectAnalysisError(error);
+      expect(
+        hopperErrorCatalogue().find(
+          (row) => row.tag === error._tag && row.discriminant === discriminant,
+        ),
+      ).toEqual({
+        tag: error._tag,
+        discriminant,
+        code: projected.code,
+        category: projected.category,
+        retryableByDefault: projected.retryable,
+      });
+    },
+  );
 });

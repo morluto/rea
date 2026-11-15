@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 
 import { analysisErrorJsonSchema } from "../dist/contracts/errorSchemas.js";
 import { analysisErrorCatalogue } from "../dist/domain/analysisErrorClassification.js";
+import { hopperErrorCatalogue } from "../dist/hopper/HopperErrors.js";
 import { formatGeneratedFile } from "./lib/format-generated-file.mjs";
 import { ensureGeneratedFile } from "./lib/generated-file.mjs";
 
@@ -39,7 +40,8 @@ await ensureGeneratedFile({
   path: join(root, "docs/user-visible-errors.csv"),
   source: [
     Object.keys(columns).join(","),
-    ...analysisErrorCatalogue().map((entry) =>
+    // Provider-owned errors present themselves; their providers list their rows.
+    ...[...analysisErrorCatalogue(), ...hopperErrorCatalogue()].map((entry) =>
       Object.values(columns)
         .map((field) => csvField(entry[field]))
         .join(","),

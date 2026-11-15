@@ -3,6 +3,7 @@ import {
   domainErrorTag,
   type AnalysisError,
   type AnalysisErrorTag,
+  type ProviderErrorTag,
 } from "./analysisErrorBase.js";
 import type { AnalysisErrorProjection } from "./analysisErrorProjection.js";
 import { ArtifactOperationError } from "./artifactOperationError.js";
@@ -297,7 +298,7 @@ export const classifyAnalysisError = (
 
 /** One row of the generated error catalogue. */
 export interface AnalysisErrorCatalogueEntry extends AnalysisErrorClassification {
-  readonly tag: AnalysisErrorTag;
+  readonly tag: AnalysisErrorTag | ProviderErrorTag;
   /** The fact that selects this row; empty when the tag alone does. */
   readonly discriminant: string;
   /**
@@ -308,8 +309,12 @@ export interface AnalysisErrorCatalogueEntry extends AnalysisErrorClassification
   readonly retryableByDefault: boolean;
 }
 
-const row = (
-  tag: AnalysisErrorTag,
+/**
+ * One catalogue row. A provider that presents its own errors lists them
+ * through this, so its rows read like the domain's.
+ */
+export const catalogueRow = (
+  tag: AnalysisErrorTag | ProviderErrorTag,
   discriminant: string,
   classification: AnalysisErrorClassification,
   retryableByDefault = RETRYABLE_CODES.has(classification.code),
@@ -325,28 +330,28 @@ const reasonRows = (
   table: Readonly<Record<string, AnalysisErrorClassification>>,
 ): AnalysisErrorCatalogueEntry[] =>
   Object.entries(table).map(([reason, classification]) =>
-    row(tag, `reason=${reason}`, classification),
+    catalogueRow(tag, `reason=${reason}`, classification),
   );
 
 /**
  * Every domain error case and its caller-facing code and category. A
- * provider-owned error presents itself and is not listed. Cleanup that did
- * not complete reports `cleanup_incomplete` above any row.
+ * provider-owned error presents itself, and its provider lists its rows.
+ * Cleanup that did not complete reports `cleanup_incomplete` above any row.
  */
 export const analysisErrorCatalogue =
   (): readonly AnalysisErrorCatalogueEntry[] => [
     ...Object.entries(STATIC_ERROR_CLASSIFICATIONS).map(
       ([tag, classification]) =>
-        row(tag as AnalysisErrorTag, "", classification),
+        catalogueRow(tag as AnalysisErrorTag, "", classification),
     ),
-    row(
+    catalogueRow(
       "AnalysisCapabilityUnavailableError",
       "retryable=true",
       RETRYABLE_CAPABILITY_UNAVAILABLE,
       true,
     ),
     ...reasonRows("ArtifactOperationError", ARTIFACT_OPERATION_CLASSIFICATIONS),
-    row(
+    catalogueRow(
       "ArtifactOperationError",
       "reason=integrity; artifact identity reported",
       ARTIFACT_IDENTITY_MISMATCH,
@@ -356,11 +361,11 @@ export const analysisErrorCatalogue =
       const allowed = binaryTargetClassification(constraint, false);
       const denied = binaryTargetClassification(constraint, true);
       return [
-        row("BinaryTargetError", `constraint=${constraint}`, allowed),
+        catalogueRow("BinaryTargetError", `constraint=${constraint}`, allowed),
         ...(denied.code === allowed.code
           ? []
           : [
-              row(
+              catalogueRow(
                 "BinaryTargetError",
                 `constraint=${constraint}; read permission denied`,
                 denied,
@@ -372,10 +377,14 @@ export const analysisErrorCatalogue =
       "BrowserObservationError",
       BROWSER_OBSERVATION_CLASSIFICATIONS,
     ),
-    row("BrowserObservationError", "caused by cancellation", CANCELLED),
+    catalogueRow(
+      "BrowserObservationError",
+      "caused by cancellation",
+      CANCELLED,
+    ),
     ...reasonRows("EvidenceFileError", EVIDENCE_FILE_CLASSIFICATIONS),
-    row("ProcessCaptureError", "", PROCESS_CAPTURE_FAILED),
-    row("ProcessCaptureError", "caused by cancellation", CANCELLED),
+    catalogueRow("ProcessCaptureError", "", PROCESS_CAPTURE_FAILED),
+    catalogueRow("ProcessCaptureError", "caused by cancellation", CANCELLED),
     ...reasonRows("ProviderSelectionError", PROVIDER_SELECTION_CLASSIFICATIONS),
     ...reasonRows("UnknownRegistryError", UNKNOWN_REGISTRY_CLASSIFICATIONS),
   ];
