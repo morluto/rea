@@ -824,6 +824,38 @@ const scriptlets = (
   return rows.length === 0 ? null : rows;
 };
 
+/** Every signature-header fact, read before the main header so later failures keep it. */
+const signatureObservation = (
+  signatureHeader: DecodedHeader,
+  padBytes: number,
+) => {
+  const md5 = binValue(signatureHeader, RPM_SIG_TAG.md5);
+  if (md5 !== undefined && md5.length !== 16)
+    fail("RPM MD5 signature tag is not 16 bytes.", {
+      field: "signature md5",
+    });
+  const blobs = [
+    signatureBlob(signatureHeader, RPM_SIG_TAG.pgp, "pgp"),
+    signatureBlob(signatureHeader, RPM_SIG_TAG.gpg, "gpg"),
+    signatureBlob(signatureHeader, RPM_SIG_TAG.rsaHeader, "rsa"),
+    signatureBlob(signatureHeader, RPM_SIG_TAG.dsaHeader, "dsa"),
+  ].filter((blob): blob is RpmSignatureBlob => blob !== undefined);
+  return {
+    location: signatureHeader.location,
+    pad_bytes: padBytes,
+    index_entries: signatureHeader.indexEntries,
+    store_bytes: signatureHeader.storeBytes,
+    size: intValue(signatureHeader, RPM_SIG_TAG.size) ?? null,
+    md5: md5 === undefined ? null : hex(md5),
+    sha1_header: text(stringValue(signatureHeader, RPM_SIG_TAG.sha1Header)),
+    sha256_header: text(stringValue(signatureHeader, RPM_SIG_TAG.sha256Header)),
+    payload_digest: text(stringValue(signatureHeader, RPM_TAG.payloadDigest)),
+    payload_digest_algorithm:
+      intValue(signatureHeader, RPM_TAG.payloadDigestAlgo) ?? null,
+    blobs,
+  };
+};
+
 const pad8 = (offset: number): number => (8 - (offset % 8)) % 8;
 
 const dependencyCount = (
@@ -875,14 +907,18 @@ export const parseRpmPackage = (
   const padBytes = pad8(signatureHeader.location.bytes);
   const headerStart =
     signatureHeader.location.offset + signatureHeader.location.bytes + padBytes;
-  const withSignature = {
-    ...observed,
-    signature: {
-      offset: signatureHeader.location.offset,
-      bytes: signatureHeader.location.bytes,
-      index_entries: signatureHeader.indexEntries,
+  const signatureFacts = observing(
+    {
+      ...observed,
+      signature: {
+        offset: signatureHeader.location.offset,
+        bytes: signatureHeader.location.bytes,
+        index_entries: signatureHeader.indexEntries,
+      },
     },
-  };
+    () => signatureObservation(signatureHeader, padBytes),
+  );
+  const withSignature = { ...observed, signature: signatureFacts };
   signal?.throwIfAborted();
   return observing(withSignature, (): RpmPackage => {
     const mainHeader = parseHeader(
@@ -955,17 +991,6 @@ export const parseRpmPackage = (
       input.include_script_text,
       input.max_script_bytes,
     );
-    const blobs = [
-      signatureBlob(signatureHeader, RPM_SIG_TAG.pgp, "pgp"),
-      signatureBlob(signatureHeader, RPM_SIG_TAG.gpg, "gpg"),
-      signatureBlob(signatureHeader, RPM_SIG_TAG.rsaHeader, "rsa"),
-      signatureBlob(signatureHeader, RPM_SIG_TAG.dsaHeader, "dsa"),
-    ].filter((blob): blob is RpmSignatureBlob => blob !== undefined);
-    const md5 = binValue(signatureHeader, RPM_SIG_TAG.md5);
-    if (md5 !== undefined && md5.length !== 16)
-      fail("RPM MD5 signature tag is not 16 bytes.", {
-        field: "signature md5",
-      });
     const payloadFormat =
       stringValue(mainHeader, RPM_TAG.payloadFormat) ?? null;
     const payloadCompressor =
@@ -983,25 +1008,14 @@ export const parseRpmPackage = (
       artifact,
       lead,
       signature: {
-        location: signatureHeader.location,
-        pad_bytes: padBytes,
-        index_entries: signatureHeader.indexEntries,
-        store_bytes: signatureHeader.storeBytes,
-        size: intValue(signatureHeader, RPM_SIG_TAG.size) ?? null,
-        md5: md5 === undefined ? null : hex(md5),
-        sha1_header: text(stringValue(signatureHeader, RPM_SIG_TAG.sha1Header)),
-        sha256_header: text(
-          stringValue(signatureHeader, RPM_SIG_TAG.sha256Header),
-        ),
-        payload_digest: text(
-          stringValue(signatureHeader, RPM_TAG.payloadDigest) ??
-            stringValue(mainHeader, RPM_TAG.payloadDigest),
-        ),
+        ...signatureFacts,
+        payload_digest:
+          signatureFacts.payload_digest ??
+          text(stringValue(mainHeader, RPM_TAG.payloadDigest)),
         payload_digest_algorithm:
-          intValue(signatureHeader, RPM_TAG.payloadDigestAlgo) ??
+          signatureFacts.payload_digest_algorithm ??
           intValue(mainHeader, RPM_TAG.payloadDigestAlgo) ??
           null,
-        blobs,
       },
       header: {
         location: mainHeader.location,

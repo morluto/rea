@@ -14,6 +14,7 @@ import {
   rpmSourcePackageFixture,
   rpmSparsePackageFixture,
   rpmTruncatedHeaderFixture,
+  rpmTruncatedMainHeaderFixture,
   rpmUtf8PackageFixture,
   RPM_SIG_TAG,
   RPM_TAG,
@@ -243,6 +244,32 @@ it("reports a truncated header as truncated and keeps the lead", () => {
       kind: "truncated",
       format: "rpm",
       observed: { lead: { magic: "edabeedb", type: "binary" } },
+    });
+  }
+});
+
+it("keeps read signature facts when the main header is truncated", () => {
+  try {
+    parse(rpmTruncatedMainHeaderFixture());
+    throw new Error("expected truncated main header refusal");
+  } catch (cause) {
+    expect(cause).toBeInstanceOf(ParseFailureError);
+    if (!(cause instanceof ParseFailureError)) return;
+    expect(cause.failure).toMatchObject({
+      kind: "truncated",
+      format: "rpm",
+      observed: {
+        lead: { magic: "edabeedb" },
+        signature: {
+          size: 256,
+          md5: "ee".repeat(16),
+          sha1_header: "cd".repeat(20),
+          sha256_header: "ab".repeat(32),
+          payload_digest: "ef".repeat(32),
+          payload_digest_algorithm: 8,
+          blobs: [{ present: true, tag: "rsa", key_id: "a1b2c3d4e5f60708" }],
+        },
+      },
     });
   }
 });

@@ -493,3 +493,12 @@ export const rpmTruncatedHeaderFixture = (): Buffer => {
   const complete = rpmBinaryPackageFixture();
   return complete.subarray(0, RPM_LEAD_SIZE + 32);
 };
+
+/** Complete signature header followed by a main header cut inside its index. */
+export const rpmTruncatedMainHeaderFixture = (): Buffer => {
+  const signature = padSignature(encodeRpmHeader(defaultSignatureTags()));
+  return rpmBinaryPackageFixture().subarray(
+    0,
+    RPM_LEAD_SIZE + signature.length + 32,
+  );
+};
