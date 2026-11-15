@@ -33,7 +33,10 @@ import {
   MAX_SQLITE_WORKER_TIMEOUT_MS,
 } from "../domain/sqlite/sqliteDatabase.js";
 import { SQLITE_PROVIDER_IDENTITY } from "../domain/sqlite/SqliteProviderIdentity.js";
-import { SQLITE_DATABASE_LIMITS } from "./SqliteDatabaseLimits.js";
+import {
+  SQLITE_DATABASE_LIMITS,
+  SQLITE_WORKER_HEAP_BYTES,
+} from "./SqliteDatabaseLimits.js";
 import { SqliteSnapshotAcquisitionFailure } from "./SqliteDatabaseSnapshot.js";
 import {
   classifyProviderFailure,
@@ -263,7 +266,7 @@ const ownedCommandFailure = (
       "memory",
       "Owned SQLite worker reported JavaScript heap exhaustion.",
       {
-        javascript_heap_bytes: 256 * 1024 * 1024,
+        javascript_heap_bytes: SQLITE_WORKER_HEAP_BYTES,
       },
       {
         ...options,
