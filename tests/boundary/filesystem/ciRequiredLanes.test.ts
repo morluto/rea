@@ -909,3 +909,31 @@ it("binds each canonical lane to its explicit fast and full workflow jobs", asyn
     ).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining(name) });
   }
 });
+
+it("requires every client schema engine in the build job of every code change", async () => {
+  const steps = z
+    .array(
+      z
+        .object({
+          if: z.string().optional(),
+          run: z.string().optional(),
+          env: z.record(z.string(), z.string()).optional(),
+          "continue-on-error": z.unknown().optional(),
+        })
+        .passthrough(),
+    )
+    .parse((await workflow()).jobs.build?.steps);
+  const checks = steps.filter((step) =>
+    step.run?.includes("node scripts/verify-advertised-schemas.mjs"),
+  );
+  expect(checks).toHaveLength(1);
+  const [check] = checks;
+  expect(check?.if).toBe("needs.changes.outputs.code == 'true'");
+  expect(check?.["continue-on-error"]).toBeUndefined();
+  expect(check?.env?.REA_REQUIRE_SCHEMA_ENGINES).toBe("1");
+  // Full qualification adds the Python jsonschema meta-validation.
+  expect(check?.env?.SCHEMA_CHECK_OPTIONS).toBe(
+    "${{ needs.changes.outputs.tier == 'full' && '--complete' || '' }}",
+  );
+  expect(check?.run).toContain("$SCHEMA_CHECK_OPTIONS");
+});

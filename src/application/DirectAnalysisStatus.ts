@@ -9,7 +9,7 @@ import { sqliteDatabaseCapability } from "./sqlite/SqliteDatabaseCapability.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 import { catalogIdentityForToolFamilies } from "../catalogIdentity.js";
 import { progressiveCatalogIdentity } from "../catalogDiscovery.js";
-import { compactPresentationForMcpInputSchemaProfile } from "../config/mcpInputSchemaProfile.js";
+import { COMPACT_INPUT_SCHEMA_PRESENTATION } from "../config/mcpInputSchemaProfile.js";
 import { resolveMcpOutputSchemaProfile } from "../config/mcpOutputSchemaProfile.js";
 import {
   directAnalysisCleanupFailure,
@@ -34,9 +34,7 @@ export const runSessionStatus = async (
     async () => {
       const status = jsonObjectSchema.parse(await session.status());
       const catalog = catalogIdentityForToolFamilies(
-        compactPresentationForMcpInputSchemaProfile(
-          config.value.mcpInputSchemaProfile,
-        ),
+        COMPACT_INPUT_SCHEMA_PRESENTATION,
         resolveMcpOutputSchemaProfile(config.value.mcpOutputSchemaProfile),
         config.value.mcpToolFamilies === undefined
           ? undefined

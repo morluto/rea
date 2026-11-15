@@ -49,7 +49,7 @@ import {
   type AnalysisError,
   type AnalysisErrorOptions,
 } from "./analysisErrorBase.js";
-import { invocationSettingLimit } from "./analysisSettingDefinitions.js";
+import { invocationLimit } from "./analysisSettingDefinitions.js";
 import { analysisErrorRefusal } from "./analysisErrorRefusal.js";
 import { analysisRefusalDetails } from "./analysisRefusal.js";
 import {
@@ -422,7 +422,7 @@ const projectError = (
       : {
           limit:
             callerLifetime === "invocation"
-              ? { ...invocationSettingLimit(primary.limit) }
+              ? { ...invocationLimit(primary.limit) }
               : { ...primary.limit },
         }),
     ...(refusal === undefined
@@ -595,6 +595,9 @@ const requestErrorDetails = (
       resource: error.resource,
       reason: error.reason,
       reported_limits: error.reportedLimits,
+      ...(error.requestSent === undefined
+        ? {}
+        : { request_sent: error.requestSent }),
     };
   if (error instanceof AnalysisArtifactChangedError)
     return {

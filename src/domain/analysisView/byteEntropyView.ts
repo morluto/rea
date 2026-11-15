@@ -55,10 +55,7 @@ export const projectByteEntropyView = (
         .sort((a, b) => b.length - a.length || a.offset - b.offset)
         .slice(0, 10),
     },
-    coverage: completeWithinViewCoverage(
-      report.blocks.length,
-      report.blocks.length,
-    ),
+    coverage: completeWithinViewCoverage(report.blocks.length),
     limitations: [
       ...new Set([...parent.limitations, ...report.limitations]),
     ].sort(),

@@ -1,6 +1,8 @@
 import { z } from "zod";
 import type {
+  AnalysisControlLimit,
   AnalysisInvocationSettingLimit,
+  AnalysisLimit,
   AnalysisSettingId,
   AnalysisSettingLimit,
 } from "./analysisSettings.js";
@@ -31,6 +33,8 @@ import {
   DEFAULT_JADX_OPERATION_TIMEOUT_MS,
   DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES,
   MAXIMUM_NATIVE_MATCHING_REPRESENTATION_BYTES,
+  DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES,
+  MAXIMUM_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES,
   DEFAULT_BRIDGE_MAX_REQUEST_BYTES,
   MINIMUM_BRIDGE_MAX_REQUEST_BYTES,
   MAXIMUM_BRIDGE_MAX_REQUEST_BYTES,
@@ -400,6 +404,18 @@ export const ANALYSIS_SETTINGS = {
     operations: ["analyze_javascript_application"],
     parameter: "max_heap_mb",
   },
+  "javascript.member_mutation_alias_states": {
+    updateMode: "runtime",
+    environment: "REA_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES",
+    defaultValue: DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES,
+    minimum: 1,
+    maximum: MAXIMUM_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES,
+    unit: "count",
+    appliesAt: "next_operation",
+    provider: "rea-javascript-application",
+    relatedProviders: ["web-bundle-static-analysis"],
+    operations: ["analyze_javascript_application", "analyze_web_bundle"],
+  },
   "wasm.command_timeout_ms": {
     updateMode: "runtime",
     ...timer,
@@ -592,6 +608,23 @@ export const analysisSettingIds = Object.keys(
   ANALYSIS_SETTINGS,
 ) as AnalysisSettingId[];
 export const analysisSettingIdSchema = z.enum(analysisSettingIds);
+
+/** Limit facts a result carries when it records a refusal as a value. */
+export const analysisSettingLimitSchema = z.strictObject({
+  setting: analysisSettingIdSchema,
+  effective_value: z.number().nullable(),
+  unit: z.enum(["bytes", "ms", "seconds", "MiB", "count"]),
+  minimum: z.number(),
+  maximum: z.number(),
+  source: z.enum(["default", "setting", "runtime", "request"]).exactOptional(),
+  applies_at: z.enum(["next_operation", "next_worker", "next_startup"]),
+  agent_editable: z.literal(true),
+  scope: z.literal("rea-runtime"),
+  update_mode: z.enum(["runtime", "restart", "parameter"]),
+  pending_restart: z.literal(false),
+  required_value: z.number().exactOptional(),
+  parameter: z.string().exactOptional(),
+}) satisfies z.ZodType<AnalysisSettingLimit>;
 export const analysisSettingDefinition = (
   id: AnalysisSettingId,
 ): SettingDefinition => ANALYSIS_SETTINGS[id];
@@ -650,7 +683,17 @@ export const analysisSettingLimit = (
 };
 
 /** Re-scope an enforced limit for a caller whose runtime ended with this invocation. */
-export const invocationSettingLimit = ({
+export const invocationLimit = (
+  limit: AnalysisLimit,
+): AnalysisInvocationSettingLimit | AnalysisControlLimit => {
+  if (!("control_kind" in limit)) return invocationSettingLimit(limit);
+  // A new invocation reads its environment without restarting a running REA.
+  return limit.control_kind === "environment"
+    ? { ...limit, applies_at: "next_invocation" }
+    : { ...limit };
+};
+
+const invocationSettingLimit = ({
   applies_at: _appliesAt,
   scope: _scope,
   ...facts

@@ -66,9 +66,6 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
       // Recorded tools carry their presented schemas. The selected presentation
       // still applies to transport discovery, which is not recorded.
       readonly compactPresentation?: CompactInputSchemaPresentation | undefined;
-      // Recorded tools carry complete output schemas; `off` omits them from
-      // listings while the runtime still validates structured results.
-      readonly outputSchemaProfile?: "full" | "off" | undefined;
       readonly identity?: RecordedMcpCatalog["identity"] | undefined;
     } = {},
   ) {
@@ -84,7 +81,10 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
       undefined,
       delivery,
       options.compactPresentation,
-      options.outputSchemaProfile ?? "full",
+      // Recorded tools carry complete output schemas; the default `off`
+      // profile omits them from listings while the runtime still validates
+      // structured results.
+      "off",
       options.identity ?? catalog.identity,
     );
     for (const name of catalog.evidenceReferenceAlternatives)
@@ -226,13 +226,12 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
    */
   protected override describeTool(
     name: string,
-    description: string | undefined,
-    guidance: () => readonly string[],
+    advertised: () => string | undefined,
   ): { description?: string } {
     const recorded = this.tools.get(name)?.registered.description;
     if (this.materializing && recorded !== undefined)
       return { description: recorded };
-    return super.describeTool(name, description, guidance);
+    return super.describeTool(name, advertised);
   }
 
   protected override bindTool(
