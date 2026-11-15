@@ -125,6 +125,7 @@ export const functionComparisonResultSchema = z
           code: "custom",
           path: ["dimensions", index, "dimension"],
           message: "Function comparison dimensions must occur exactly once.",
+          params: { constraint: "dimensions-unique" },
         });
       dimensions.set(dimension.dimension, dimension);
     }
@@ -135,6 +136,7 @@ export const functionComparisonResultSchema = z
           code: "custom",
           path: ["summary", status],
           message: "Function comparison summary must count its dimensions.",
+          params: { constraint: "summary-counts-dimensions" },
         });
     const changes = new Set<DimensionName>();
     for (const [index, change] of result.changes.entries()) {
@@ -150,6 +152,7 @@ export const functionComparisonResultSchema = z
           path: ["changes", index],
           message:
             "Function comparison changes must cite each changed or unknown dimension exactly as recorded.",
+          params: { constraint: "changes-cite-dimensions" },
         });
       changes.add(change.dimension);
     }
@@ -164,6 +167,7 @@ export const functionComparisonResultSchema = z
         path: ["changes"],
         message:
           "Function comparison changes must include every changed or unknown dimension.",
+        params: { constraint: "changes-cover-dimensions" },
       });
     if (
       result.status !==
