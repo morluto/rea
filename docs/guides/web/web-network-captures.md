@@ -383,7 +383,7 @@ member names that look like credentials (whole name segments such as `token`,
 retained value are counted in a limitation that lists up to 20 of them by
 record and pointer (`record 3 request header X-Api-Key`) within about 1 KiB
 of text, says how many are not listed, and never names a value; the
-[environment build](agent-environments.md) runs the same scan as its
+[environment build](../../agent-environments.md) runs the same scan as its
 `credential-named-members` warning. Values already excluded, such as the
 standard authentication headers or declared sensitive values, are not counted.
 The scan reads at most 524288 values in all across the selected records: a
