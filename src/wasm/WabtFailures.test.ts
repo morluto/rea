@@ -46,26 +46,26 @@ it.each(["configuration", "producer"] as const)(
     const failure = wabtFailure(cause, phase, "/module.wasm", {
       commandTimeoutMs: 1234,
     });
-    expect(failure.cause).toBe(cause);
+    // The typed timeout stays the cleanup primary, so its control is the
+    // composite's own limit.
+    expect(failure.cleanupPrimary?.cause).toBe(cause);
     const projected = projectAnalysisError(failure);
     expect(projected).toMatchObject({
       code: "cleanup_incomplete",
       retryable: false,
       details: {
         resources: ["pid:owned-fixture"],
+        limit: {
+          setting: "wasm.command_timeout_ms",
+          effective_value: 1234,
+          parameter: "command_timeout_ms",
+          update_mode: "runtime",
+          pending_restart: false,
+        },
         diagnostics: {
-          previous_error: {
+          primary_error: {
             code: "provider_timeout",
-            details: {
-              timeout_ms: 1234,
-              limit: {
-                setting: "wasm.command_timeout_ms",
-                effective_value: 1234,
-                update_mode: "runtime",
-                pending_restart: false,
-              },
-            },
-            recovery: { kind: "inspect_timeout_state", timeout_ms: 1234 },
+            details: { timeout_ms: 1234 },
           },
         },
       },
@@ -183,10 +183,17 @@ it.each([
     const original = wabtFailure(cause, "configuration", "/selected.wasm");
     expect(failure._tag).toBe(original._tag);
     expect(failure.cleanupIncomplete).toBe(original.cleanupIncomplete);
-    expect(failure.cause).toBe(original.cause);
+    // A cleanup failure composes around the typed primary that owns the cause.
+    const primary = (error: typeof failure) => error.cleanupPrimary ?? error;
+    expect(primary(failure).cause).toBe(primary(original).cause);
     expect(projectAnalysisError(failure)).toMatchObject({
       code,
-      details: { diagnostics: probe },
+      details: {
+        diagnostics:
+          cleanup === null
+            ? probe
+            : { primary_error: { details: { diagnostics: probe } } },
+      },
     });
   },
 );

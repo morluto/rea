@@ -4,17 +4,12 @@ import {
 } from "../domain/analysisResourceLimits.js";
 import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import type { EvmWorkerLimits } from "./EvmWorkerLimits.js";
-import type {
-  AnalysisCapturedOutput,
-  AnalysisErrorOptions,
-} from "../domain/analysisErrorBase.js";
-import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
+import type { AnalysisErrorOptions } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
-import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { ProviderOutcomeContext } from "../process/classifyProviderOutcome.js";
 import type { ProviderFailureDialect } from "../providers/classifyProviderFailure.js";
 import {
@@ -101,28 +96,6 @@ export const evmFailureDialect = (
     providerId: EVMOLE_PROVIDER_IDENTITY.id,
     operation: OPERATION,
     command: () => evmCommandContext(resolved),
-    commandCleanup: (failure) =>
-      new ProviderCleanupError(
-        EVMOLE_PROVIDER_IDENTITY.id,
-        failure.resources,
-        {
-          reason: failure.cleanupFailure,
-          ...(failure.snapshot === null
-            ? {}
-            : {
-                captured_output: {
-                  ...capturedProviderOutput(failure.snapshot),
-                },
-              }),
-          previous_error: {
-            failure_kind: failure.reason,
-            message: failure.message,
-            exit_code: failure.snapshot?.exitCode ?? null,
-            signal: failure.snapshot?.signal ?? null,
-          },
-        },
-        { operation: OPERATION, cause: failure },
-      ),
     ...(phase === "artifact-read"
       ? {
           file: {

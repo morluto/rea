@@ -7,15 +7,12 @@ import {
 import { utf8HeadExcerpt } from "../domain/utf8HeadExcerpt.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
 import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
-  AnalysisTimeoutError,
   AnalysisCapabilityUnavailableError,
 } from "../domain/analysisErrorCore.js";
-import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { ProviderOutcome } from "../process/ProviderOutcome.js";
 import type { ProviderFailureDialect } from "../providers/classifyProviderFailure.js";
 import {
@@ -277,37 +274,6 @@ export const wabtFailureDialect = (
             )
           : new AnalysisOutputError(OPERATION, exit.message, details),
     }),
-    commandCleanup: (command, primary, outcome) =>
-      new ProviderCleanupError(
-        WABT_PROVIDER_IDENTITY.id,
-        command.resources,
-        {
-          ...versionProbe,
-          reason: command.cleanupFailure,
-          previous_error:
-            primary instanceof AnalysisTimeoutError
-              ? projectAnalysisError(primary)
-              : outcome.kind === "output-limit"
-                ? {
-                    failure_kind: "output-limit",
-                    message: outputLimitReason,
-                    max_output_bytes: limits.outputBytes,
-                    remediation_action: byteBudgetRecovery(
-                      "max_output_bytes",
-                      limits.outputBytes,
-                    ),
-                  }
-                : outcome.message,
-          ...(outcome.output === undefined
-            ? {}
-            : {
-                captured_output: capturedOutput(outcome.kind)(
-                  outcome.output.snapshot,
-                ),
-              }),
-        },
-        { operation: OPERATION, cause: command },
-      ),
     ...(phase === "artifact"
       ? {
           file: {
