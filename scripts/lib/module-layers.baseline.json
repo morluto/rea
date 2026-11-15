@@ -1,6 +1,5 @@
 {
   "upward": {
-    "application -> mcpStartupPolicy.ts": 3,
     "artifacts -> application": 1,
     "dotnet -> application": 1
   },
