@@ -16,9 +16,6 @@
 const namedAllowance =
   /this\.#?\w*(?:[Rr]emaining|[Rr]etained|[Uu]sed)\w*\s*[-+]=/gu;
 
-const budgetClass =
-  /^(?:export\s+)?class\s+\w*Budget\b[^\n]*\{\n([\s\S]*?)^\}/gmu;
-
 const adjusted = /(?:\+\+|--)this\.(#?\w+)|this\.(#?\w+)\s*(?:[-+]=|\+\+|--)/gu;
 
 const escape = (name) => name.replaceAll("$", "\\$");
@@ -33,41 +30,53 @@ const comparedIn = (body, name) => {
   ).test(body);
 };
 
+// Limit names in any case: `maxBytes`, `MAX_BYTES`, `FACT_BUDGET`, `capacity`.
 const limitName =
-  "\\b\\w*(?:[Mm]ax|[Ll]imit|MAX_|LIMIT|[Aa]llowance|[Bb]udget|[Cc]apacity)\\w*";
+  "\\b\\w*(?:[Mm][Aa][Xx]|[Ll][Ii][Mm][Ii][Tt]|[Aa][Ll][Ll][Oo][Ww][Aa][Nn][Cc][Ee]|[Bb][Uu][Dd][Gg][Ee][Tt]|[Cc][Aa][Pp][Aa][Cc][Ii][Tt][Yy])\\w*";
 
 // `<`, `>`, `<=` or `>=` between the field and a limit-named value, one line.
-const comparedWithLimit = (content, name) => {
+const comparedWithLimit = (scope, name) => {
   const field = `this\\.${escape(name)}\\b`;
   const comparison = "(?<![=<>])[<>]=?(?![<>])";
   return new RegExp(
     `${field}[^;\\n]*${comparison}[^;\\n]*${limitName}|${limitName}[^;\\n]*${comparison}[^;\\n]*${field}`,
     "u",
-  ).test(content);
+  ).test(scope);
 };
 
 const isNamedAllowance = (text) =>
   new RegExp(`^${namedAllowance.source}$`, "u").test(text);
 
+// Top-level classes (declaration and closing brace at column 0). A field
+// belongs to its class, so each class is its own scope; code outside any
+// class is one more scope.
+const topLevelClass =
+  /^(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+(\w+)[^\n]*\{\n([\s\S]*?)^\}/gmu;
+
+/** Distinct limit-compared fields adjusted by hand within one scope. */
+const limitedFields = (scope) => {
+  const limited = new Set();
+  for (const match of scope.matchAll(adjusted)) {
+    const name = match[1] ?? match[2];
+    if (isNamedAllowance(match[0]) || limited.has(name)) continue;
+    if (comparedWithLimit(scope, name)) limited.add(name);
+  }
+  return limited.size;
+};
+
 /** @param {string} content comment-stripped source */
 export const budgetArithmeticCount = (content) => {
   let count = content.match(namedAllowance)?.length ?? 0;
-  const inBudgetClass = new Set();
-  for (const [, body] of content.matchAll(budgetClass)) {
-    for (const match of body.matchAll(adjusted)) {
-      const name = match[1] ?? match[2];
-      inBudgetClass.add(name);
-      // Already counted as a named allowance.
-      if (isNamedAllowance(match[0])) continue;
-      if (comparedIn(body, name)) count += 1;
-    }
+  let outside = content;
+  for (const [whole, name, body] of content.matchAll(topLevelClass)) {
+    outside = outside.replace(whole, "");
+    if (name.endsWith("Budget")) {
+      for (const match of body.matchAll(adjusted)) {
+        // Already counted as a named allowance.
+        if (isNamedAllowance(match[0])) continue;
+        if (comparedIn(body, match[1] ?? match[2])) count += 1;
+      }
+    } else count += limitedFields(body);
   }
-  const limited = new Set();
-  for (const match of content.matchAll(adjusted)) {
-    const name = match[1] ?? match[2];
-    if (isNamedAllowance(match[0]) || inBudgetClass.has(name)) continue;
-    if (limited.has(name)) continue;
-    if (comparedWithLimit(content, name)) limited.add(name);
-  }
-  return count + limited.size;
+  return count + limitedFields(outside);
 };

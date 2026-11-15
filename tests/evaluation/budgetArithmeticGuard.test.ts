@@ -59,3 +59,45 @@ it("counts a field outside Budget classes compared with a limit once", () => {
   ].join("\n");
   expect(budgetArithmeticCount(reader)).toBe(2);
 });
+
+it("counts the same field name separately in each class", () => {
+  const readers = [
+    "class First {",
+    "  read(size: number): void {",
+    "    if (this.#bytes + size > LIMIT) throw failure();",
+    "    this.#bytes += size;",
+    "  }",
+    "}",
+    "class SecondBudget {",
+    "  #bytes = 0;",
+    "  observe(size: number): void {",
+    "    this.#bytes += size;",
+    "  }",
+    "}",
+    "class Third {",
+    "  read(size: number): void {",
+    "    this.#bytes += size;",
+    "    if (this.#bytes > LIMIT) throw failure();",
+    "  }",
+    "}",
+  ].join("\n");
+  expect(budgetArithmeticCount(readers)).toBe(2);
+});
+
+it.each([
+  "CAPACITY",
+  "FACT_ALLOWANCE",
+  "FACT_BUDGET",
+  "MAX_BYTES",
+  "byteLimit",
+])("counts a field compared with %s", (limit) => {
+  const reader = [
+    "class Reader {",
+    "  read(size: number): void {",
+    "    this.#facts += size;",
+    `    if (this.#facts > ${limit}) throw failure();`,
+    "  }",
+    "}",
+  ].join("\n");
+  expect(budgetArithmeticCount(reader)).toBe(1);
+});
