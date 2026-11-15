@@ -148,7 +148,15 @@ export const kiloDefaultLocation = (
       ),
     ],
     markerPath: root,
-    discoveryPaths: [kiloExtensionStorage(context.root)],
+    // Evidence replaces the default probe of every candidate layer, so it
+    // names each folder Kilo reads besides its extension storage.
+    discoveryPaths: [
+      root,
+      ...homes,
+      ...(explicit === undefined ? [] : [explicit]),
+      ...(custom === undefined ? [] : [custom]),
+      kiloExtensionStorage(context.root),
+    ],
   };
 };
 

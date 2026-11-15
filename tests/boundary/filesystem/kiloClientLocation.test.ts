@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
@@ -7,6 +7,7 @@ import {
   resolveSupportedClients,
   supportedClients,
 } from "../../../src/application/SupportedClients.js";
+import { detectClients } from "../../../src/application/SetupHost.js";
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -62,6 +63,11 @@ it("selects the last present Kilo layer, as rea mcp add does", async () => {
     configPaths: [join(root, "config.json"), join(legacy, "kilo.jsonc")],
   });
   expect(await mcpAddTarget(home, {})).toBe(row?.configPath);
+  // Any folder Kilo reads is evidence that setup should offer it.
+  await rm(root, { recursive: true });
+  expect(
+    (await detectClients(home, platform, {})).map(({ name }) => name),
+  ).toContain("kilo");
 });
 
 it("plans kilo.json in an empty KILO_CONFIG_DIR", async () => {
