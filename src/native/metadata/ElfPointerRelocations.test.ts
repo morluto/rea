@@ -141,6 +141,13 @@ const symbolicImage = (
     readonly destination?: bigint;
     readonly records?: number;
     readonly symbolIndex?: number;
+    readonly definition?: {
+      readonly value: bigint;
+      readonly type?: number;
+      readonly section?: number;
+    };
+    readonly addend?: bigint;
+    readonly hash?: "sysv" | "gnu" | "none";
   } = {},
 ): Buffer => {
   const records = layout.records ?? 1;
@@ -152,6 +159,14 @@ const symbolicImage = (
     ...(layout.symbolTags ?? [
       [6n, 0x200n],
       [11n, 24n],
+      ...(layout.definition === undefined || layout.hash === "none"
+        ? []
+        : [
+            [layout.hash === "gnu" ? 0x6ffffef5n : 4n, 0x280n] as [
+              bigint,
+              bigint,
+            ],
+          ]),
     ]),
     [0n, 0n],
   ];
@@ -165,8 +180,19 @@ const symbolicImage = (
       (BigInt(layout.symbolIndex ?? 1) << 32n) | kind,
       0x108 + record * 24,
     );
+    bytes.writeBigInt64LE(layout.addend ?? 0n, 0x110 + record * 24);
   }
   bytes.writeBigUInt64LE(symbolSize, 0x200 + 24 + 16);
+  if (layout.definition !== undefined) {
+    bytes[0x200 + 24 + 4] = 0x10 | (layout.definition.type ?? 1);
+    bytes.writeUInt16LE(layout.definition.section ?? 1, 0x200 + 24 + 6);
+    bytes.writeBigUInt64LE(layout.definition.value, 0x200 + 24 + 8);
+    const words =
+      layout.hash === "gnu" ? [1, 1, 1, 0, 0, 0, 1, 1] : [1, 2, 1, 0, 0];
+    words.forEach((value, index) =>
+      bytes.writeUInt32LE(value, 0x280 + index * 4),
+    );
+  }
   return bytes;
 };
 
@@ -198,6 +224,7 @@ const walker =
     unsupported?: "record",
     machine = EM_X86_64,
     bits: 32 | 64 = 64,
+    imageDefinitions = false,
   ) => {
     const writes: ElfPointerWrite[] = [];
     const steps = readElfRelocationWritesSteps(
@@ -210,7 +237,13 @@ const walker =
         mappings: [{ address: 0n, offset: 0, size: bytes.length }],
         zeroFills: [],
       },
-      { wholeExtents, ...(unsupported === undefined ? {} : { unsupported }) },
+      {
+        wholeExtents,
+        ...(unsupported === undefined ? {} : { unsupported }),
+        ...(imageDefinitions
+          ? { symbolResolution: "image-definitions" as const }
+          : {}),
+      },
     );
     let next = steps.next();
     for (; !next.done; next = steps.next())
@@ -221,6 +254,120 @@ const walker =
 const walk = walker(true);
 /** A consumer that tracks one pointer per write. */
 const walkPointers = walker(false);
+
+it.each([
+  ["AArch64 ABS64", 183, 257, 0x4020n],
+  ["AArch64 GLOB_DAT", 183, 1025, 0x4020n],
+  ["x86-64 absolute", 62, 1, 0x4020n],
+  ["x86-64 GLOB_DAT", 62, 6, 0x4000n],
+] as const)(
+  "derives %s from image definitions only when requested",
+  (_name, machine, kind, expected) => {
+    const bytes = symbolicImage(BigInt(kind), 0n, {
+      definition: { value: 0x4000n },
+      addend: 0x20n,
+    });
+    expect(walk(bytes, undefined, machine).writes[0]?.value).toBeNull();
+    const { writes, result } = walk(bytes, undefined, machine, 64, true);
+    expect(writes[0]).toMatchObject({
+      value: expected,
+      symbol_index: 1,
+      addend: 0x20n,
+    });
+    expect(result.pointer_coverage_known).toBe(true);
+  },
+);
+
+it.each(["sysv", "gnu"] as const)(
+  "bounds image definitions with the %s hash table",
+  (hash) => {
+    const bytes = symbolicImage(1025n, 0n, {
+      definition: { value: 0x4000n },
+      hash,
+    });
+    expect(walk(bytes, undefined, 183, 64, true).writes[0]?.value).toBe(
+      0x4000n,
+    );
+    // A mapped, plausible record beyond the declared table is not another symbol.
+    bytes.writeUInt16LE(1, 0x200 + 48 + 6);
+    bytes.writeBigUInt64LE(0x5000n, 0x200 + 48 + 8);
+    bytes.writeBigUInt64LE((2n << 32n) | 1025n, 0x108);
+    expect(walk(bytes, undefined, 183, 64, true).writes[0]?.value).toBeNull();
+  },
+);
+
+it.each([
+  [183, 257],
+  [62, 1],
+] as const)(
+  "reads a 64-bit REL in-place addend for machine %d",
+  (machine, kind) => {
+    const bytes = symbolicImage(BigInt(kind), 0n, {
+      definition: { value: 0x4000n },
+    });
+    for (const [at, tag, value] of [
+      [0, 17n, 0x100n],
+      [16, 18n, 16n],
+      [32, 19n, 16n],
+    ] as const) {
+      bytes.writeBigUInt64LE(tag, at);
+      bytes.writeBigUInt64LE(value, at + 8);
+    }
+    bytes.writeBigUInt64LE(0x20n, 0x300);
+    expect(walk(bytes, undefined, machine, 64, true).writes[0]).toMatchObject({
+      value: 0x4020n,
+      addend: null,
+      source: { encoding: "rel" },
+    });
+  },
+);
+
+it.each([
+  ["undefined", 0, 1],
+  ["absolute section", 0xfff1, 1],
+  ["common", 0xfff2, 1],
+  ["TLS", 1, 6],
+  ["IFUNC", 1, 10],
+] as const)("keeps %s symbol addresses unknown", (_name, section, type) => {
+  const bytes = symbolicImage(1025n, 0n, {
+    definition: { value: 0x4000n, section, type },
+  });
+  expect(walk(bytes, undefined, 183, 64, true).writes[0]?.value).toBeNull();
+});
+
+it("keeps an unbounded symbol table unknown without losing RELATIVE facts", () => {
+  const bytes = symbolicImage(1025n, 0n, {
+    definition: { value: 0x4000n },
+    hash: "none",
+    records: 2,
+  });
+  bytes.writeBigUInt64LE(1027n, 0x120);
+  bytes.writeBigInt64LE(0x1234n, 0x128);
+  expect(
+    walk(bytes, undefined, 183, 64, true).writes.map(({ value }) => value),
+  ).toEqual([null, 0x1234n]);
+});
+
+it.each(["unmapped hash", "truncated symbols", "conflicting hashes"] as const)(
+  "keeps image definitions unknown for %s",
+  (failure) => {
+    const bytes = symbolicImage(1025n, 0n, {
+      definition: { value: 0x4000n },
+    });
+    if (failure === "unmapped hash") {
+      bytes.writeBigUInt64LE(0x400n, 5 * 16 + 8);
+    } else if (failure === "truncated symbols") {
+      bytes.writeUInt32LE(32, 0x280 + 4);
+    } else {
+      bytes.writeBigUInt64LE(0x6ffffef5n, 6 * 16);
+      bytes.writeBigUInt64LE(0x2b0n, 6 * 16 + 8);
+      [1, 1, 1, 0, 0, 0, 2, 0, 1].forEach((value, index) =>
+        bytes.writeUInt32LE(value, 0x2b0 + index * 4),
+      );
+    }
+    expect(walk(bytes, undefined, 183, 64, true).writes[0]?.value).toBeNull();
+  },
+);
 
 it.each([
   ["an x86-64 COPY", symbolicImage(5n, 8n), [62, 64, 5]],
