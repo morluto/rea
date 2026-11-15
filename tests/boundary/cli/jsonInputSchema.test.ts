@@ -330,6 +330,7 @@ it("validates representative parsed documents with the advertised schema", async
     validateFormats: false,
   }).compile(input.contentSchema as AnySchema);
   const evidence_bundle = {
+    evidence_format: 1,
     artifacts: [],
     providers: [],
     environments: [],
