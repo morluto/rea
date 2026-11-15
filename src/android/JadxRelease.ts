@@ -20,12 +20,52 @@ export interface JadxBridgeIdentity {
   readonly version: string;
 }
 
-const declaredString = (source: string, constant: string): string => {
+/**
+ * The top-level class body of a Java source with comments removed and nested
+ * bodies blanked, so only the outer class's own member declarations remain.
+ * String and character literals are kept, and braces inside them are not
+ * counted. Text blocks are not handled; the bridge source does not use them.
+ */
+const topLevelClassMembers = (source: string): string => {
+  let members = "";
+  let depth = 0;
+  let index = 0;
+  while (index < source.length) {
+    const character = source[index] ?? "";
+    const next = source[index + 1];
+    if (character === "/" && next === "/") {
+      const end = source.indexOf("\n", index);
+      index = end === -1 ? source.length : end;
+      continue;
+    }
+    if (character === "/" && next === "*") {
+      const end = source.indexOf("*/", index + 2);
+      index = end === -1 ? source.length : end + 2;
+      if (depth === 1) members += " ";
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      let end = index + 1;
+      while (end < source.length && source[end] !== character)
+        end += source[end] === "\\" ? 2 : 1;
+      if (depth === 1) members += source.slice(index, end + 1);
+      index = end + 1;
+      continue;
+    }
+    if (character === "}") depth -= 1;
+    if (depth === 1) members += character === "{" ? " " : character;
+    if (character === "{") depth += 1;
+    index += 1;
+  }
+  return members;
+};
+
+const declaredString = (members: string, constant: string): string => {
   const matches = [
-    ...source.matchAll(
+    ...members.matchAll(
       new RegExp(
-        `^ {2}static final String ${constant} = "([A-Za-z0-9._-]+)";$`,
-        "gmu",
+        String.raw`(?:^|[;\s])(?:(?:public|protected|private|static|final)\s+)*String\s+${constant}\s*=\s*"([A-Za-z0-9._-]+)"\s*;`,
+        "gu",
       ),
     ),
   ];
@@ -38,11 +78,13 @@ const declaredString = (source: string, constant: string): string => {
 };
 
 /** Read the bridge identity the bridge source itself declares. */
-export const parseJadxBridgeIdentity = (source: string): JadxBridgeIdentity =>
-  Object.freeze({
-    name: declaredString(source, "BRIDGE_NAME"),
-    version: declaredString(source, "BRIDGE_VERSION"),
+export const parseJadxBridgeIdentity = (source: string): JadxBridgeIdentity => {
+  const members = topLevelClassMembers(source);
+  return Object.freeze({
+    name: declaredString(members, "BRIDGE_NAME"),
+    version: declaredString(members, "BRIDGE_VERSION"),
   });
+};
 
 let bridgeIdentity: JadxBridgeIdentity | undefined;
 

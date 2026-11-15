@@ -19,8 +19,36 @@ it("refuses a bridge source that does not declare its identity exactly once", ()
   expect(() => parseJadxBridgeIdentity("class ReaJadxBridge {}\n")).toThrow(
     /BRIDGE_NAME exactly once; found 0/u,
   );
-  const duplicated = `${declaration("rea-jadx-bridge", "12")}  static final String BRIDGE_VERSION = "13";\n`;
+  const duplicated = declaration("rea-jadx-bridge", "12").replace(
+    "}\n",
+    '  static final String BRIDGE_VERSION = "13";\n}\n',
+  );
   expect(() => parseJadxBridgeIdentity(duplicated)).toThrow(
     /BRIDGE_VERSION exactly once; found 2/u,
   );
+});
+
+it("reads only the outer class's own fields, whatever their formatting", () => {
+  const source = [
+    '// static final String BRIDGE_VERSION = "line-comment";',
+    "class ReaJadxBridge {",
+    '  /* static final String BRIDGE_VERSION = "block-comment"; */',
+    '  private   static final String BRIDGE_NAME="rea-jadx-bridge" ;',
+    "  public static final String",
+    '      BRIDGE_VERSION = "12";',
+    '  static final String BRACE = "}{";',
+    "  private static final class Nested {",
+    '    static final String BRIDGE_VERSION = "nested";',
+    "  }",
+    "  void run() {",
+    '    String BRIDGE_NAME = "local";',
+    "  }",
+    "}",
+    "",
+  ].join("\n");
+
+  expect(parseJadxBridgeIdentity(source)).toEqual({
+    name: "rea-jadx-bridge",
+    version: "12",
+  });
 });
