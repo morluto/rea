@@ -13,8 +13,9 @@ import {
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
-  AnalysisCancelledError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
@@ -263,9 +264,7 @@ export class JadxSession {
                               ...jadxOperationTimeoutGuidance(timeoutMs),
                             },
                           )
-                        : new AnalysisCancelledError(request.operation, {
-                            cause: reason,
-                          }),
+                        : cancelledBy(request.operation, carriedReason(reason)),
                   });
                   if (
                     value.inventory.status === "complete" &&
