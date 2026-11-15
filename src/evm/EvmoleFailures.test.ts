@@ -330,3 +330,20 @@ it("does not report a private storage errno as a limiter launch refusal", async 
     diagnostics: { phase: "worker" },
   });
 });
+
+it("keeps the recorded exit status when collecting worker output failed", () => {
+  const failure = evmInterfaceFailure(
+    new OwnedCommandFailure(
+      "process",
+      "stdout stream failed",
+      { ...snapshot, exitCode: 3 },
+      null,
+      { collectionFailure: true },
+    ),
+    { phase: "worker", path: "/selected.hex" },
+  );
+  expect(failure).toMatchObject({
+    _tag: "ProviderAdapterError",
+    diagnostics: { failure_kind: "protocol", exit_code: 3, signal: null },
+  });
+});

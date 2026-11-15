@@ -291,9 +291,14 @@ const evmCommandFailure = (
           ...evmWorkerDiagnostics(context),
           reason: outcome.message,
           failure_kind: outcome.kind,
-          ...(outcome.kind === "exited"
-            ? { exit_code: outcome.exitCode, signal: outcome.signal }
-            : {}),
+          // A stream failure is not an ordinary exit, but its recorded
+          // status remains evidence.
+          ...(outcome.output === undefined
+            ? {}
+            : {
+                exit_code: outcome.output.snapshot.exitCode ?? null,
+                signal: outcome.output.snapshot.signal ?? null,
+              }),
         },
       });
     },
