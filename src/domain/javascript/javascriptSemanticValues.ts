@@ -1,8 +1,7 @@
 import type { JavaScriptSemanticPrecision } from "./javascriptSemanticPrecision.js";
 import {
-  semanticBindingMayHaveOpaqueEffect,
-  semanticBindingCanBeRebound,
-  semanticOpaqueBindingReadMayHaveChanged,
+  opaqueCodeMayReachBindingReference,
+  opaqueCodeMayRebindBinding,
 } from "./javascriptSemanticOpaqueEffects.js";
 import * as t from "@babel/types";
 import { semanticKnownSymbolKey } from "./javascriptSemanticPropertyKeys.js";
@@ -233,8 +232,7 @@ export const evaluateSemanticBinding = (
   binding: JavaScriptSemanticBindingState,
   state: JavaScriptSemanticAnalysisState,
 ): JavaScriptSemanticValue =>
-  semanticBindingCanBeRebound(binding) &&
-  semanticBindingMayHaveOpaqueEffect(binding, state)
+  opaqueCodeMayRebindBinding(binding, state)
     ? {
         status: "unknown",
         reason: "Direct eval may have changed this lexical binding.",
@@ -297,8 +295,7 @@ export const evaluateSemanticProvenance = (
     dependence: { lowest: CALLER_INDEPENDENT },
     memo: createEvaluationMemo(state),
   });
-  return semanticBindingCanBeRebound(binding) &&
-    semanticBindingMayHaveOpaqueEffect(binding, state)
+  return opaqueCodeMayRebindBinding(binding, state)
     ? semanticAmbiguousProvenance(
         provenance.origins,
         "Direct eval may have changed this runtime value.",
@@ -584,11 +581,10 @@ const evaluateBinding = (
   }
   if (
     (projected.status === "object" || projected.status === "array") &&
-    semanticBindingMayHaveOpaqueEffect(
+    opaqueCodeMayReachBindingReference(
       binding,
       context.state,
       context.capturePoint,
-      "reference",
     )
   )
     projected = {
@@ -708,10 +704,10 @@ const evaluateExpressionValue = (
     }
     const atRead = read.binding;
     if (
-      semanticOpaqueBindingReadMayHaveChanged(
+      opaqueCodeMayRebindBinding(
         binding,
-        context.capturePoint ?? node,
         context.state,
+        context.capturePoint ?? node,
       )
     )
       return {
@@ -1410,7 +1406,7 @@ const provenanceForBindingAtRead = (
   read: t.Identifier,
   context: EvaluationContext,
 ): JavaScriptBindingProvenance => {
-  if (semanticOpaqueBindingReadMayHaveChanged(binding, read, context.state))
+  if (opaqueCodeMayRebindBinding(binding, context.state, read))
     return semanticAmbiguousProvenance(
       provenanceForBinding(binding, context).origins,
       "Direct eval may have changed this runtime value.",

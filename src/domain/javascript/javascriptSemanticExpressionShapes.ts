@@ -1,4 +1,4 @@
-import { semanticOpaqueBindingReadMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
+import { opaqueCodeMayRebindBinding } from "./javascriptSemanticOpaqueEffects.js";
 import { opaqueCodeMayChangeGlobalRead } from "./javascriptSemanticGlobalReference.js";
 import * as t from "@babel/types";
 
@@ -87,7 +87,7 @@ export const createSemanticExpressionShapeResolver = (
       }
       if (
         namedProofBlocked() ||
-        semanticOpaqueBindingReadMayHaveChanged(binding, node, state)
+        opaqueCodeMayRebindBinding(binding, state, node)
       )
         return "unknown";
       const initializer = semanticStableInitializer(binding, state);
