@@ -48,6 +48,9 @@ describe("Hopper launcher failure through the one-shot CLI", () => {
               "hopper",
               "--json",
             ],
+            // Process exit is what releases a retained Hopper lease, so the
+            // file's shared CLI process cannot stand in for one-shot exit.
+            freshProcess: true,
             environment: {
               ...workspace.environment,
               HOPPER_LAUNCHER_PATH: launcherPath,
