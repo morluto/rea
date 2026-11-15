@@ -8,7 +8,15 @@ import {
   type CapabilityDeclaration,
 } from "../../src/composition/capabilityDeclarations.js";
 import { TOOL_CONTRACT_GROUPS } from "../../src/contracts/toolContracts.js";
+import { projectForTest } from "../../scripts/lib/test-projects.mjs";
 import { PROVIDER_CAPABILITY_CONFORMANCE } from "./providerCapabilityCases.js";
+
+/** Test projects that run REA through its public CLI or MCP workflows. */
+const PUBLIC_WORKFLOW_PROJECTS = new Set([
+  "acceptance",
+  "cli-boundary",
+  "mcp-boundary",
+]);
 
 const repositoryFile = (path: string): string | undefined => {
   try {
@@ -81,7 +89,10 @@ describe("provider capability conformance", () => {
       }
       const surface = declaredSurface(declaration);
       for (const path of entry.cases) {
-        expect(path).toMatch(/^tests\/.+\.test\.ts$/u);
+        expect(
+          PUBLIC_WORKFLOW_PROJECTS.has(projectForTest(path).name),
+          `${path} runs a public CLI or MCP workflow`,
+        ).toBe(true);
         const text = repositoryFile(path);
         expect(text, `${path} exists`).toBeDefined();
         expect(
