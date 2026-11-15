@@ -195,6 +195,28 @@ const emptyGradleVersion = {
   rejects: [] as string[],
 };
 
+/** An absent collection is empty; a present one must be a JSON array. */
+const gradleArray = (value: unknown, field: string): readonly unknown[] => {
+  if (value === undefined) return [];
+  if (Array.isArray(value)) return value;
+  throw malformedInput(
+    MAVEN_GRADLE_METADATA_FORMAT,
+    `Gradle module metadata ${field} is present but is not a JSON array.`,
+  );
+};
+
+const gradleObjects = (
+  value: unknown,
+  field: string,
+): readonly Record<string, unknown>[] =>
+  gradleArray(value, field).map((entry, index) => {
+    if (isRecord(entry)) return entry;
+    throw malformedInput(
+      MAVEN_GRADLE_METADATA_FORMAT,
+      `Gradle module metadata ${field}[${String(index)}] is not a JSON object.`,
+    );
+  });
+
 const gradleVersionOf = (
   value: unknown,
 ): MavenGradleDependency["gradle_version"] => {
@@ -205,12 +227,16 @@ const gradleVersionOf = (
       : { ...emptyGradleVersion, requires };
   }
   if (!isRecord(value)) return { ...emptyGradleVersion };
-  const rejects = Array.isArray(value.rejects)
-    ? value.rejects.flatMap((entry) => {
-        const text = textOf(entry);
-        return text === null ? [] : [text];
-      })
-    : [];
+  const rejects = gradleArray(value.rejects, "version.rejects").map(
+    (entry, index) => {
+      const text = textOf(entry);
+      if (text !== null) return text;
+      throw malformedInput(
+        MAVEN_GRADLE_METADATA_FORMAT,
+        `Gradle module metadata version.rejects[${String(index)}] is not a non-empty string.`,
+      );
+    },
+  );
   return {
     requires: textOf(value.requires),
     prefers: textOf(value.prefers),
@@ -435,7 +461,7 @@ const parseGradleDependency = (
     index,
     false,
   );
-  const excludes = Array.isArray(record.excludes) ? record.excludes : [];
+  const excludes = gradleObjects(record.excludes, "excludes");
   return {
     group_id,
     artifact_id,
@@ -447,44 +473,16 @@ const parseGradleDependency = (
     optional: null,
     optional_spelling: null,
     classifier: null,
-    exclusions: excludes.flatMap((entry) =>
-      isRecord(entry)
-        ? [
-            {
-              group_id: textOf(entry.group),
-              artifact_id: textOf(entry.module),
-            },
-          ]
-        : [],
-    ),
+    exclusions: excludes.map((entry) => ({
+      group_id: textOf(entry.group),
+      artifact_id: textOf(entry.module),
+    })),
     origin,
     variant,
     bom_import: false,
     platform,
   };
 };
-
-/** An absent collection is empty; a present one must be a JSON array. */
-const gradleArray = (value: unknown, field: string): readonly unknown[] => {
-  if (value === undefined) return [];
-  if (Array.isArray(value)) return value;
-  throw malformedInput(
-    MAVEN_GRADLE_METADATA_FORMAT,
-    `Gradle module metadata ${field} is present but is not a JSON array.`,
-  );
-};
-
-const gradleObjects = (
-  value: unknown,
-  field: string,
-): readonly Record<string, unknown>[] =>
-  gradleArray(value, field).map((entry, index) => {
-    if (isRecord(entry)) return entry;
-    throw malformedInput(
-      MAVEN_GRADLE_METADATA_FORMAT,
-      `Gradle module metadata ${field}[${String(index)}] is not a JSON object.`,
-    );
-  });
 
 const parseGradle = (
   source: string,
