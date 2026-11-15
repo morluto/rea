@@ -5,6 +5,7 @@ import {
   binaryTargetIdentity,
   sameTargetIdentity,
   targetIdentityKey,
+  urlTargetIdentitySchema,
   type FileTargetIdentity,
 } from "./targetIdentity.js";
 
@@ -122,5 +123,29 @@ describe("target identity key", () => {
       cpu_type: null,
       cpu_subtype: null,
     });
+  });
+});
+
+describe("URL target identity", () => {
+  const page = {
+    kind: "url",
+    url: "https://app.example.test/orders?id=1",
+    origin: "https://app.example.test",
+  } as const;
+
+  it("separates two pages of one origin", () => {
+    expect(urlTargetIdentitySchema.parse(page)).toEqual(page);
+    expect(
+      sameTargetIdentity(page, { ...page, url: "https://app.example.test/" }),
+    ).toBe(false);
+  });
+
+  it.each([
+    ["userinfo", { ...page, url: "https://user:pass@app.example.test/" }],
+    ["a URL that does not parse", { ...page, url: "not a url" }],
+    ["an origin the URL does not have", { ...page, origin: "https://x.test" }],
+    ["a null origin for a tuple origin", { ...page, origin: null }],
+  ])("refuses %s", (_case, identity) => {
+    expect(urlTargetIdentitySchema.safeParse(identity).success).toBe(false);
   });
 });
