@@ -2050,7 +2050,12 @@ describe("FAT64 dispatch slice validation", () => {
     // are read whole and refused as an unsupported header.
     expect(() =>
       decodeAppleDispatchMetadata(wrapped().subarray(0, 32), 100, provenance),
-    ).toThrow("Only little-endian 64-bit Mach-O metadata is supported");
+    ).toThrow(
+      expect.objectContaining({
+        kind: "unsupported",
+        message: "Only little-endian 64-bit Mach-O metadata is supported",
+      }),
+    );
     expect(
       refusalOf(() => decodeAdmitted(wrapped().subarray(0, 32), admitted())),
     ).toMatchObject({ refusal: "admitted_slice_mismatch" });

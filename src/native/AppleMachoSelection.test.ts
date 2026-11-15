@@ -50,7 +50,8 @@ it("keeps unknown magic distinct from recognized unsupported Mach-O formats", ()
   } catch (error) {
     failure = error;
   }
-  expect(failure).toBeInstanceOf(TypeError);
+  expect(failure).toBeInstanceOf(ParseFailureError);
+  expect(failure).toMatchObject({ kind: "unsupported" });
   expect(failure).not.toBeInstanceOf(UnsupportedMachoMetadataFormatError);
 });
 

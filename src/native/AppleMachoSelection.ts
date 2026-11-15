@@ -1,4 +1,8 @@
-import { malformedInput, truncatedInput } from "../domain/parseFailure.js";
+import {
+  malformedInput,
+  truncatedInput,
+  unsupportedInput,
+} from "../domain/parseFailure.js";
 import { LC } from "../domain/apple/machoLoadCommandCodes.js";
 import type {
   FileMapping,
@@ -96,7 +100,10 @@ export const parseMachoLayout = (
   if (declarations.value === null) {
     if (selectedBytes.length < 32)
       throw truncatedInput("macho", "Truncated Mach-O header");
-    throw new TypeError(
+    // No Mach-O magic this reader knows: an unsupported header, and not a
+    // recognized class with a metadata capability limit.
+    throw unsupportedInput(
+      "macho",
       "Only little-endian 64-bit Mach-O metadata is supported",
     );
   }
