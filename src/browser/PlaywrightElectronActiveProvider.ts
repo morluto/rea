@@ -50,6 +50,7 @@ import {
   runElectronActions,
   readApplicationState,
   readFinalApplicationState,
+  type ElectronHookSnapshot,
 } from "./PlaywrightElectronActiveActions.js";
 import { projectElectronActiveCapture } from "./PlaywrightElectronActiveProjection.js";
 import { readElectronFuseImage } from "../electron/ElectronFuseReader.js";
@@ -229,6 +230,7 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         options.signal,
         startupDeadline,
       );
+      refuseHandedOffInstance(initialState.hookSnapshot);
       const actionOutcome = await runElectronActions(
         application,
         input,
@@ -242,6 +244,7 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         application,
         options.signal,
       );
+      refuseHandedOffInstance(state.hookSnapshot);
       capture = projectElectronActiveCapture(paths, actions, state);
       outcome = ok(capture);
     } catch (cause: unknown) {
@@ -345,6 +348,24 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
     return captureOutcomeWithCancellation(outcome, options.signal);
   }
 }
+
+/**
+ * A launch that was refused the app's single-instance lock was handed to the
+ * instance holding it; the launched process is not the target, so stop.
+ */
+const refuseHandedOffInstance = (snapshot: ElectronHookSnapshot): void => {
+  if (snapshot.single_instance_lock_refused === true)
+    throw new BrowserObservationError(
+      OPERATION,
+      "application_already_running",
+      {
+        detail:
+          "The application is already running: the launched instance did not obtain the app's single-instance lock, so Electron handed this launch and its arguments to the running instance. REA stopped the launched instance at that call and failed the capture; it did not observe or drive the running instance.",
+        remediationAction:
+          "Close the running application, or wait for another capture of the same application to finish, then retry.",
+      },
+    );
+};
 
 /** Normalize only explicit facts emitted by the inspection owner. */
 const inspectOwnership = async <T>(

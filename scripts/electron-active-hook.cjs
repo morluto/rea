@@ -1195,6 +1195,39 @@ const patchWebContents = (webContents, windowId) => {
   boundaries.patchWindowOpenHandler(webContents, contentsId);
 };
 
+// When another instance holds the app's single-instance lock, Electron has
+// already handed this launch's arguments to that instance, and the launched
+// process is no longer the capture target. Stop the application's calling path
+// and keep the process alive so the provider reads the refusal, fails the
+// capture, and terminates the process it owns.
+let singleInstanceLockRefused = false;
+const singleInstanceLockRefusal = new Error(
+  "Another instance holds this application's single-instance lock",
+);
+const patchSingleInstanceLock = (app) => {
+  const request = app?.requestSingleInstanceLock;
+  if (typeof request !== "function") return;
+  app.requestSingleInstanceLock = function requestSingleInstanceLock() {
+    const held = applyFunction(request, this, arguments);
+    if (held !== false) return held;
+    if (!singleInstanceLockRefused) {
+      singleInstanceLockRefused = true;
+      recordRuntime("app-lifecycle", "requestSingleInstanceLock", "blocked", {
+        target: "app",
+        process_type: "main",
+        error: true,
+      });
+      // The stopped path surfaces as an uncaught exception; without a
+      // listener, Electron would show a modal error dialog or exit first.
+      applyFunction(nodeEventEmitterMethods.on ?? process.on, process, [
+        "uncaughtException",
+        () => undefined,
+      ]);
+    }
+    throw singleInstanceLockRefusal;
+  };
+};
+
 const patchWindows = (app) => {
   if (app === null || app === undefined) return;
   app.on("browser-window-created", (_event, window) => {
@@ -1318,6 +1351,7 @@ try {
   boundaries.patchIpcRenderer(electron.ipcRenderer);
   boundaries.patchContextBridge(electron.contextBridge);
   patchWindows(electron.app);
+  patchSingleInstanceLock(electron.app);
   boundaries.patchUtilityProcess(electron.utilityProcess);
   boundaries.patchShell(electron.shell);
   boundaries.patchSessionManager(electron.session, electron.app);
@@ -1388,4 +1422,5 @@ globalThis.__reaElectronActiveSnapshot = () => ({
   observed_ipc: observedIpc,
   observed_runtime: observedRuntime,
   hook_error: globalThis.__reaElectronActiveHookError === true,
+  single_instance_lock_refused: singleInstanceLockRefused,
 });

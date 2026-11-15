@@ -18,6 +18,7 @@ app.isReady = () => true;
 app.relaunch = () => undefined;
 app.setAsDefaultProtocolClient = () => true;
 app.setLoginItemSettings = () => undefined;
+app.requestSingleInstanceLock = () => globalThis.__singleInstanceLockHeld !== false;
 app.moveToApplicationsFolder = () => {
   throw new Error("moveToApplicationsFolder must not run");
 };
@@ -392,6 +393,58 @@ process.stdout.write(JSON.stringify({
   expect(JSON.stringify(result.snapshot)).not.toContain("payload.exe");
   electronActiveTimelineEventSchema.array().parse(result.snapshot.events);
 });
+
+it.each([
+  { held: true, refused: false },
+  { held: false, refused: true },
+])(
+  "stops an application handed off by its single-instance lock (held: $held)",
+  async ({ held, refused }) => {
+    const root = await createTestTempDirectory("rea-electron-hook-lock-");
+    temporary.push(root);
+    await writeElectronFixture(root);
+    const script = join(root, "lock.cjs");
+    await writeFile(
+      script,
+      `const { app } = require("electron");
+globalThis.__singleInstanceLockHeld = ${String(held)};
+setImmediate(() => {
+  const snapshot = globalThis.__reaElectronActiveSnapshot();
+  process.stdout.write(JSON.stringify({
+    refused: snapshot.single_instance_lock_refused,
+    events: snapshot.events.filter((event) => event.event === "requestSingleInstanceLock"),
+  }) + "\\n");
+});
+const primary = app.requestSingleInstanceLock();
+process.stdout.write(JSON.stringify({ application_continued: primary }) + "\\n");
+`,
+    );
+    const execution = await runNode(script, root);
+    expect(execution.code, execution.stderr).toBe(0);
+    const lines = execution.stdout
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    // A refused launch belongs to the running instance: application code
+    // after the lock request must not run, and the process stays readable.
+    expect(lines).toEqual([
+      ...(held ? [{ application_continued: true }] : []),
+      {
+        refused,
+        events: refused
+          ? [
+              expect.objectContaining({
+                kind: "app-lifecycle",
+                phase: "blocked",
+                target: "app",
+                error: true,
+              }),
+            ]
+          : [],
+      },
+    ]);
+  },
+);
 
 it("blocks trashItem asynchronously, records the attempt, and preserves the selected file", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-trash-");

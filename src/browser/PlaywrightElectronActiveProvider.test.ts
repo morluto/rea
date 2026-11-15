@@ -439,6 +439,7 @@ const emptyHookSnapshot = () => ({
   observed_ipc: 0,
   observed_runtime: 0,
   hook_error: false,
+  single_instance_lock_refused: false,
 });
 
 it.each([
@@ -692,6 +693,67 @@ it("retains the initial snapshot when the final state read fails", async () => {
     },
   });
 });
+
+it.each(["initial", "final"] as const)(
+  "refuses an application handed off to a running instance at the %s snapshot",
+  async (stage) => {
+    const state = (refused: boolean) => ({
+      windows: [],
+      metrics: [],
+      electronVersion: "44.0.0",
+      hookSnapshot: {
+        ...emptyHookSnapshot(),
+        single_instance_lock_refused: refused,
+      },
+    });
+    vi.spyOn(electronActions, "readApplicationState").mockResolvedValueOnce(
+      state(stage === "initial"),
+    );
+    vi.spyOn(
+      electronActions,
+      "readFinalApplicationState",
+    ).mockResolvedValueOnce(state(stage === "final"));
+    const runActions = vi
+      .spyOn(electronActions, "runElectronActions")
+      .mockResolvedValue({ actions: [] });
+    const application = {
+      process: () => ({ pid: 424242 }),
+      close: vi.fn(async () => undefined),
+      windows: () => [],
+    };
+    const provider = new PlaywrightElectronActiveProvider(
+      {},
+      async () =>
+        application as unknown as Awaited<
+          ReturnType<typeof import("playwright-core")._electron.launch>
+        >,
+    );
+
+    const result = await provider.capture({
+      ...electronActiveObservationInputSchema.parse({
+        executable_path: process.execPath,
+        application_path: process.execPath,
+      }),
+      application_root: dirname(process.execPath),
+    });
+
+    if (result.ok) throw new Error("Expected the handed-off launch to fail");
+    expect(runActions).toHaveBeenCalledTimes(stage === "initial" ? 0 : 1);
+    expect(application.close).toHaveBeenCalled();
+    expect(result.error).toMatchObject({
+      _tag: "BrowserObservationError",
+      reason: "application_already_running",
+    });
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "target_unavailable",
+      category: "unavailable",
+      message: expect.stringContaining("The application is already running"),
+      remediation: {
+        action: expect.stringContaining("Close the running application"),
+      },
+    });
+  },
+);
 
 it("rejects active capture before launch when EnableNodeCliInspectArguments fuse is disabled", async () => {
   const root = await createTestTempDirectory("rea-active-provider-fuse-");

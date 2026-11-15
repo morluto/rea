@@ -50,6 +50,8 @@ const hookSnapshotSchema = z.strictObject({
   observed_ipc: retention.observed_ipc,
   observed_runtime: retention.observed_runtime,
   hook_error: z.boolean(),
+  /** Null when the hook did not run, so the lock outcome is unknown. */
+  single_instance_lock_refused: z.boolean().nullable(),
 });
 
 type ElectronAction = ElectronActiveObservationInput["actions"][number];
@@ -456,6 +458,7 @@ export const readApplicationState = async (
             observed_ipc: 0,
             observed_runtime: 0,
             hook_error: true,
+            single_instance_lock_refused: null,
           };
     })
     .then((value) => hookSnapshotSchema.parse(value));
