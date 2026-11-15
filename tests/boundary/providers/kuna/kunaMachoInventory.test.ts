@@ -178,6 +178,55 @@ it("keeps code, stubs and import slots but omits Mach-O data symbols from proced
   }
 });
 
+it("keeps the executable-segment caveat when a refused name is shared by data entries", async () => {
+  const shared = (executable: boolean) =>
+    session(
+      "rea-kuna-macho-shared-data-",
+      {
+        functions: MACHO_FUNCTIONS,
+        inventoryEntries: MACHO_INVENTORY_ENTRIES.map((entry) =>
+          entry.name === "global_count" ||
+          entry.name === "message" ||
+          (executable && entry.name === "table")
+            ? { ...entry, name: "shared" }
+            : entry,
+        ),
+        inventoryImports: false,
+      },
+      {},
+      undefined,
+      undefined,
+      { bytes: machoInventoryImage(), format: "mach-o", architecture: "arm64" },
+    );
+  for (const executable of [true, false]) {
+    const { open } = await shared(executable);
+    const client = open();
+    try {
+      const refused = await client.execute("procedure_address", {
+        procedure: "shared",
+      });
+      if (refused.ok) throw new Error("Expected a data refusal");
+      const remediation = projectAnalysisError(refused.error).remediation
+        .action;
+      if (executable) {
+        expect(refused.error.userMessage).toBe(
+          "shared names 3 Kuna entries that lie in Mach-O data regions (0x1000004a0, 0x100008000, 0x100008008), so REA's Kuna lane treats none of them as a procedure. At least one lies in an executable segment, where a section declaration alone does not prove the bytes are not code. address_name and xrefs accept their addresses.",
+        );
+        expect(remediation).toContain(
+          "To decode one as code, open the target with the Ghidra provider.",
+        );
+      } else {
+        expect(refused.error.userMessage).toBe(
+          "shared names 2 Kuna entries that lie in Mach-O data regions (0x100008000, 0x100008008); they are data, not procedures.",
+        );
+        expect(remediation).not.toContain("Ghidra");
+      }
+    } finally {
+      expect(await client.close()).toEqual({ ok: true, value: null });
+    }
+  }
+});
+
 it("resolves a data symbol's name for xrefs, which accept data addresses", async () => {
   const { kuna, open } = await machoSession("rea-kuna-macho-xrefs-");
   const client = open();

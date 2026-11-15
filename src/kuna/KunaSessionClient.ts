@@ -85,6 +85,8 @@ import {
 } from "./KunaProjectFiles.js";
 import {
   KUNA_LAYOUT_NOT_APPLICABLE,
+  kunaDataEntriesMessage,
+  kunaDataEntriesRemediation,
   kunaDataEntryMessage,
   kunaDataEntryRemediation,
   kunaDataNameLimitation,
@@ -1329,6 +1331,9 @@ export class KunaSessionClient implements AnalysisClient {
       return dataRefusal(named[0]);
     const missing = named.length === 0;
     const ambiguous = matches.length > 1;
+    // Read only when every named entry was refused, so each has a data placement.
+    const dataEntries = () =>
+      named.map((entry) => ({ entry, placement: index.data.get(entry)! }));
     const procedureLookupFailure =
       field === "procedure" && (missing || ambiguous);
     const message = missing
@@ -1336,7 +1341,7 @@ export class KunaSessionClient implements AnalysisClient {
         ? missingKunaXrefNameMessage(selector)
         : `Kuna found no procedure named ${selector}; search_procedures finds similar names.`
       : matches.length === 0
-        ? `${selector} names ${String(named.length)} Kuna entries that lie in Mach-O data regions (${named.map(({ address }) => address).join(", ")}); they are data, not procedures.`
+        ? kunaDataEntriesMessage(selector, dataEntries())
         : ambiguousKunaNameMessage(
             selector,
             matches.map(({ address }) => address),
@@ -1351,7 +1356,9 @@ export class KunaSessionClient implements AnalysisClient {
         : procedureLookupFailure
           ? KUNA_PROCEDURE_MISSING_NAME_REMEDIATION
           : matches.length === 0
-            ? "Inspect the data addresses with address_name or xrefs, or select a procedure entry from list_procedures. Do not repeat the unchanged call."
+            ? kunaDataEntriesRemediation(
+                dataEntries().map(({ placement }) => placement),
+              )
             : undefined;
     return err(
       new AnalysisInputError(

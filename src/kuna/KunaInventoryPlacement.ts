@@ -293,13 +293,47 @@ export const kunaDataEntryMessage = (
     ? `${entry.name} (${entry.address}) lies in ${describeRegion(placement.region)}, so REA's Kuna lane does not treat it as a procedure.${executableDataNote(placement)} address_name and xrefs accept its address.`
     : `${entry.name} (${entry.address}) lies in ${describeRegion(placement.region)}, so it is data that Kuna lists, not a procedure. address_name and xrefs accept its address.`;
 
+/**
+ * Why a procedure operation refuses a name whose every entry lies in a data
+ * region. With an entry in an executable segment it keeps the same caveat as
+ * one refused entry instead of calling them all data.
+ */
+export const kunaDataEntriesMessage = (
+  selector: string,
+  entries: readonly {
+    readonly entry: KunaInventoryFunction;
+    readonly placement: KunaDataPlacement;
+  }[],
+): string => {
+  const addresses = entries.map(({ entry }) => entry.address).join(", ");
+  return entries.some(({ placement }) => placement.codePossible)
+    ? `${selector} names ${String(entries.length)} Kuna entries that lie in Mach-O data regions (${addresses}), so REA's Kuna lane treats none of them as a procedure. At least one lies in an executable segment, where a section declaration alone does not prove the bytes are not code. address_name and xrefs accept their addresses.`
+    : `${selector} names ${String(entries.length)} Kuna entries that lie in Mach-O data regions (${addresses}); they are data, not procedures.`;
+};
+
 /** The recovery a refused data entry offers; executable placements may be decoded elsewhere. */
 export const kunaDataEntryRemediation = (
   placement: KunaDataPlacement,
+): string => dataRemediation("the data address", "it", placement.codePossible);
+
+/** The recovery a name whose entries all lie in data regions offers. */
+export const kunaDataEntriesRemediation = (
+  placements: readonly KunaDataPlacement[],
 ): string =>
-  `Inspect the data address with address_name or xrefs, or select a procedure entry from list_procedures.${
-    placement.codePossible
-      ? " To decode it as code, open the target with the Ghidra provider."
+  dataRemediation(
+    "the data addresses",
+    "one",
+    placements.some(({ codePossible }) => codePossible),
+  );
+
+const dataRemediation = (
+  addresses: string,
+  target: string,
+  codePossible: boolean,
+): string =>
+  `Inspect ${addresses} with address_name or xrefs, or select a procedure entry from list_procedures.${
+    codePossible
+      ? ` To decode ${target} as code, open the target with the Ghidra provider.`
       : ""
   } Do not repeat the unchanged call.`;
 
