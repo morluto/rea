@@ -319,6 +319,12 @@ const unboundRequireCases = [
     precedes: true,
     why: "a hoisted function may run before the call",
   },
+  {
+    source:
+      'class C { fs = require("fs"); } for (const x of [1]) require = custom; const c = new C();',
+    precedes: true,
+    why: "an instance field runs on construction, after the loop",
+  },
 ] as const;
 
 const unboundRequireCall = (

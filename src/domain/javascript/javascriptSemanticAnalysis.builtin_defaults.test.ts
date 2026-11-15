@@ -97,6 +97,11 @@ it.each([
     keys: [],
     why: "the loop body runs before the read",
   },
+  {
+    source: `class Box { value = process.env.wrong; } for (const x of [1]) process = other; new Box();`,
+    keys: [],
+    why: "an instance field runs on construction, after the loop",
+  },
 ])(
   "orders process replacement by activation: $source ($why)",
   ({ source, keys }) => {
