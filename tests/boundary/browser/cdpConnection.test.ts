@@ -235,7 +235,7 @@ describe("CDP connection response correlation", () => {
       const eventPromise = new Promise<CdpTransportEvent>((resolve) => {
         connection.onEvent((event) => {
           deliveredEvents += 1;
-          if (event.method === "Fixture.event") resolve(event);
+          if (event.domain === "Fixture") resolve(event);
         });
       });
       browser.emitRawMessage(eventMessage);
@@ -243,10 +243,12 @@ describe("CDP connection response correlation", () => {
 
       expect(event.wireBytes).toBe(Buffer.byteLength(eventMessage, "utf8"));
       expect(event).toMatchObject({
+        domain: "Fixture",
         sessionId: "session-1",
         registered: undefined,
       });
       expect(event).not.toHaveProperty("params");
+      expect(event).not.toHaveProperty("method");
       expect(deliveredEvents).toBe(1);
 
       const protocolFailure = new Promise((resolve) =>
@@ -281,7 +283,8 @@ describe("CDP connection event admission", () => {
       const subscriber = () =>
         new Promise<CdpTransportEvent>((resolve) => {
           connection.onEvent((event) => {
-            if (event.method === "Page.frameNavigated") resolve(event);
+            if (event.registered?.method === "Page.frameNavigated")
+              resolve(event);
           });
         });
       const first = subscriber();

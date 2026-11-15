@@ -392,10 +392,7 @@ it("keeps cancellation authoritative while an over-budget clock request is pendi
     .mockImplementation(function (this: CdpConnection, listener) {
       return onEvent.call(this, (event) => {
         listener(event);
-        if (
-          event.method === "Page.frameNavigated" &&
-          cdpFrameEvent(event)?.facts.loaderId === "oversized-before-clock"
-        )
+        if (cdpFrameEvent(event)?.facts.loaderId === "oversized-before-clock")
           // All subscribers finish synchronously before this microtask, including
           // the timeline owner that admits or rejects the received payload.
           queueMicrotask(() => {

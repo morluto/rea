@@ -224,6 +224,7 @@ const CDP_EVENT_PAYLOADS = {
     .transform(readCdpExecutionContextDestroyed),
   "Runtime.consoleAPICalled": consoleApiCalled,
   "Runtime.executionContextsCleared": z.unknown().transform(() => ({})),
+  "Inspector.targetCrashed": z.unknown().transform(() => ({})),
   "Debugger.paused": debuggerPaused,
   "Target.receivedMessageFromTarget": targetMessage,
   "Network.requestWillBeSent": requestWillBeSent,

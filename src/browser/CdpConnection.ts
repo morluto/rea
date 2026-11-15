@@ -40,12 +40,15 @@ export interface CdpEvent {
 }
 
 /**
- * An event as subscribers receive it. The raw payload is not part of this
- * type or object: subscribers read only its registered parse, so malformed
- * members cannot be reinterpreted, dropped or defaulted by each subscriber.
+ * An event as subscribers receive it. Neither the raw payload nor the wire
+ * method name is part of this type or object: subscribers select events by
+ * `registered.method`, whose type is the registered event names, so a
+ * misspelt or unregistered name does not compile, and malformed members
+ * cannot be reinterpreted, dropped or defaulted by each subscriber.
  */
 export interface CdpReceivedEvent {
-  readonly method: string;
+  /** The protocol domain of the wire method (`"Network"` for `Network.dataReceived`), registered or not. */
+  readonly domain: string;
   readonly sessionId?: string | undefined;
   /** The payload parsed once by its registered schema; undefined for an unregistered event. */
   readonly registered: CdpRegisteredEvent | undefined;
@@ -57,7 +60,7 @@ export const receiveCdpEvent = ({
   params,
   sessionId,
 }: CdpEvent): CdpReceivedEvent => ({
-  method,
+  domain: method.split(".", 1)[0] ?? method,
   ...(sessionId === undefined ? {} : { sessionId }),
   registered: registeredCdpEvent(method, params),
 });
