@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
@@ -249,6 +249,12 @@ it("selects the Zed configuration a Linux Flatpak Zed reads", async () => {
   expect(zed()?.configPath).toBe(join(sandboxed, "settings.json"));
   await mkdir(native, { recursive: true });
   expect(zed()?.configPathError).toContain("cannot tell which Zed");
+  // A native folder linked to the Flatpak folder is one configuration.
+  await rm(native, { recursive: true });
+  await symlink(sandboxed, native, "dir");
+  expect(zed()?.configPath).toBe(join(native, "settings.json"));
+  await rm(native);
+  await mkdir(native, { recursive: true });
   // An XDG_CONFIG_HOME naming the Flatpak folder is one folder, not two.
   expect(
     zed({ XDG_CONFIG_HOME: join(home, ".var", "app", "dev.zed.Zed", "config") })

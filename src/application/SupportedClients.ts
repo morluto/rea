@@ -5,7 +5,7 @@ import type {
 import type { ClientConfigurationFormat } from "./ClientConfigurationDocument.js";
 import { dirname, isAbsolute, join, posix, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
-import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, statSync } from "node:fs";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   HermesClientPathError,
@@ -566,6 +566,29 @@ const directoryPresent = (path: string): Result<boolean, ClientPathFailure> => {
   }
 };
 
+/** Whether two existing paths resolve to the same folder, by device and inode. */
+const sameDirectory = (
+  first: string,
+  second: string,
+): Result<boolean, ClientPathFailure> => {
+  const identities: { dev: bigint; ino: bigint }[] = [];
+  for (const path of [first, second]) {
+    try {
+      const { dev, ino } = statSync(path, { bigint: true });
+      identities.push({ dev, ino });
+    } catch (cause: unknown) {
+      return err({
+        path,
+        message: `Cannot resolve ${path}: ${cause instanceof Error ? cause.message : String(cause)}. Repair it before configuring Zed.`,
+      });
+    }
+  }
+  const [a, b] = identities;
+  return ok(
+    a !== undefined && b !== undefined && a.dev === b.dev && a.ino === b.ino,
+  );
+};
+
 /**
  * Zed's `paths::config_dir`. On Windows it reads the RoamingAppData known
  * folder, which APPDATA normally names. On Linux and FreeBSD,
@@ -597,19 +620,21 @@ const zedLocation = ({
         });
   const native = join(absoluteXdgConfigHome({ home, env }), "zed");
   const sandboxed = join(home, ...ZED_FLATPAK_CONFIG, "zed");
-  // XDG_CONFIG_HOME may itself name the Flatpak folder.
-  if (native === sandboxed) return ok(at(native));
   const flatpak = directoryPresent(sandboxed);
   if (!flatpak.ok) return flatpak;
   if (!flatpak.value) return ok(at(native));
   const nativePresent = directoryPresent(native);
   if (!nativePresent.ok) return nativePresent;
-  return nativePresent.value
-    ? err({
+  if (!nativePresent.value) return ok(at(sandboxed));
+  // XDG_CONFIG_HOME or a link may make both names one folder.
+  const same = sameDirectory(native, sandboxed);
+  if (!same.ok) return same;
+  return same.value
+    ? ok(at(native))
+    : err({
         path: sandboxed,
         message: `Both ${native} and the Flatpak Zed folder ${sandboxed} exist, so REA cannot tell which Zed you use. Remove the configuration of the Zed you no longer use, then configure Zed again.`,
-      })
-    : ok(at(sandboxed));
+      });
 };
 
 /**
