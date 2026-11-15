@@ -7,6 +7,10 @@ import { webModuleResolutionObservationSchema } from "../../domain/webModuleTrac
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 
 import { completedModuleResolverLauncher } from "../../../tests/fixtures/webModuleTrace.js";
+import {
+  controlledCleanup,
+  phaseGate,
+} from "../../../tests/support/lifecycleHarness.js";
 
 const input = {
   importerUrl: "https://app.test/main.js",
@@ -114,8 +118,11 @@ describe("native module resolver cleanup ownership", () => {
 describe("native module resolver cleanup retry", () => {
   it("retries retained browser cleanup before launching the next resolution", async () => {
     let launches = 0;
-    let closes = 0;
-    let cleanupAllowed = false;
+    const cleanup = controlledCleanup({
+      refused: true,
+      failure: new Error("fixture owned cleanup refusal"),
+    });
+    const retriedClose = phaseGate<number>();
     const completed = completedModuleResolverLauncher(input, async () => {});
     const provider = new NativeModuleResolver(
       { REA_BROWSER_EXECUTABLE: "/browser" },
@@ -126,21 +133,25 @@ describe("native module resolver cleanup retry", () => {
           version: () => "fixture",
           newContext: () =>
             Promise.reject(new Error("fixture context failure")),
-          close: async () => {
-            closes += 1;
-            if (!cleanupAllowed)
-              throw new Error("fixture owned cleanup refusal");
-          },
+          close: () => cleanup.close(() => retriedClose.hold(launches)),
         };
       },
     );
     const first = await provider.resolve(input);
     if (first.ok) throw new Error("expected retained browser cleanup");
     expect(first.error.cleanupIncomplete).toBe(true);
-    cleanupAllowed = true;
-    const retried = await provider.resolve(input);
+    cleanup.allow();
+    const retrying = provider.resolve(input);
+    // The retained close is still running: no replacement browser yet.
+    expect(
+      await retriedClose.reached(retrying, "retained browser close retry"),
+    ).toBe(1);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(launches).toBe(1);
+    retriedClose.release();
+    const retried = await retrying;
     if (!retried.ok) throw retried.error;
-    expect(closes).toBe(2);
+    expect(cleanup.attempts).toBe(2);
     expect(launches).toBe(2);
     expect(first.error.cleanupIncomplete).toBe(false);
     expect(first.error.cleanupResources).toEqual([]);

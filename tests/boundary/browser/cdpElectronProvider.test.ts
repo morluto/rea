@@ -627,15 +627,22 @@ describe("CdpElectronProvider transport lifecycle", () => {
     const originalClose = CdpConnection.prototype.close;
     let denyClose = true;
     let closes = 0;
+    // The first close after denial ends is the retained transport's retry.
+    const retriedClose = phaseGate<number>();
+    let retryHeld = false;
+    // Each transport connect, observed when it is requested.
+    const connectSpy = vi.spyOn(CdpConnection, "connect");
     const closeSpy = vi
       .spyOn(CdpConnection.prototype, "close")
-      .mockImplementation(function (this: CdpConnection) {
+      .mockImplementation(async function (this: CdpConnection) {
         closes += 1;
-        return denyClose
-          ? Promise.reject(
-              new Error("controlled Electron transport close failure"),
-            )
-          : originalClose.call(this);
+        if (denyClose)
+          throw new Error("controlled Electron transport close failure");
+        if (!retryHeld) {
+          retryHeld = true;
+          await retriedClose.hold(connectSpy.mock.calls.length);
+        }
+        return originalClose.call(this);
       });
     try {
       const first = await provider.inspectPage(inspectInput(browser.endpoint));
@@ -647,10 +654,18 @@ describe("CdpElectronProvider transport lifecycle", () => {
       });
       const failedCloses = closes;
 
+      const connectsBeforeRetry = connectSpy.mock.calls.length;
+
       denyClose = false;
-      const retried = await provider.inspectPage(
-        inspectInput(browser.endpoint),
-      );
+      const retrying = provider.inspectPage(inspectInput(browser.endpoint));
+      // The retained close is still running: no replacement connect yet.
+      expect(
+        await retriedClose.reached(retrying, "retained transport close retry"),
+      ).toBe(connectsBeforeRetry);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(connectSpy).toHaveBeenCalledTimes(connectsBeforeRetry);
+      retriedClose.release();
+      const retried = await retrying;
       if (!retried.ok) throw retried.error;
       expect(closes).toBeGreaterThan(failedCloses + 1);
       expect(first.error.cleanupIncomplete).toBe(false);
@@ -662,7 +677,9 @@ describe("CdpElectronProvider transport lifecycle", () => {
       );
     } finally {
       denyClose = false;
+      retriedClose.release();
       closeSpy.mockRestore();
+      connectSpy.mockRestore();
       await provider.close().catch(() => undefined);
     }
   });

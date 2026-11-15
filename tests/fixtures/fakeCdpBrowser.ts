@@ -4,6 +4,8 @@ import {
   type ServerResponse,
 } from "node:http";
 
+import type { Duplex } from "node:stream";
+
 import { WebSocket, WebSocketServer } from "ws";
 
 import { emitEvents } from "./fakeCdpBrowserEvents.js";
@@ -28,6 +30,8 @@ export const startFakeCdpBrowser = async (
     referer: string | undefined;
   }[] = [];
   const sockets = new Set<WebSocket>();
+  // Upgrades a handshake gate holds; close() destroys them.
+  const heldUpgrades = new Set<Duplex>();
   let openedConnections = 0;
   let frameTreeReads = 0;
   let port = 0;
@@ -55,9 +59,15 @@ export const startFakeCdpBrowser = async (
       // Flowing, so a client that abandons the handshake is observed.
       socket.resume();
       socket.once("end", () => socket.destroy());
-      void options.handshakeGate.hold(request.url ?? "").then(accept, () => {
-        socket.destroy();
-      });
+      heldUpgrades.add(socket);
+      socket.once("close", () => heldUpgrades.delete(socket));
+      void options.handshakeGate.hold(request.url ?? "").then(
+        () => {
+          heldUpgrades.delete(socket);
+          accept();
+        },
+        () => socket.destroy(),
+      );
       return;
     }
     if (options.handshakeDelayMs === undefined) {
@@ -141,6 +151,7 @@ export const startFakeCdpBrowser = async (
     },
     httpRequests,
     async close() {
+      for (const socket of heldUpgrades) socket.destroy();
       for (const socket of sockets) socket.terminate();
       await new Promise<void>((resolve) => webSockets.close(() => resolve()));
       await new Promise<void>((resolve, reject) =>
