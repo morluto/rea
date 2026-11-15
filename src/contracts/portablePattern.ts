@@ -225,10 +225,12 @@ class Projector {
 
   #literal(code: number): string {
     if (code < 0x80) return emitOutside(code);
-    this.#widen();
     // V8 without `u` reads an astral literal as two UTF-16 units, so one
-    // non-ASCII unit would reject it there.
-    return code > 0xffff ? `(?:${NON_ASCII}{1,2})` : NON_ASCII;
+    // non-ASCII unit would reject it there, and a one-or-two-unit atom
+    // backtracks exponentially under a repeat.
+    if (code > 0xffff) throw new Unexpressible();
+    this.#widen();
+    return NON_ASCII;
   }
 
   #parenthesized():
