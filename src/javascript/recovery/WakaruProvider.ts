@@ -3,7 +3,7 @@ import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { JavaScriptRecoveryPort } from "../../application/javascript/JavaScriptRecoveryPort.js";
+import type { JavaScriptRecoveryPort } from "../../ports/javascript/JavaScriptRecoveryPort.js";
 import type {
   AnalysisExecution,
   ExecutionOptions,

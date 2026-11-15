@@ -10,7 +10,7 @@ import {
 import { err, type Result } from "../../domain/result.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
-import type { JavaScriptRecoveryPort } from "./JavaScriptRecoveryPort.js";
+import type { JavaScriptRecoveryPort } from "../../ports/javascript/JavaScriptRecoveryPort.js";
 
 const OPERATION = "recover_javascript_sources";
 

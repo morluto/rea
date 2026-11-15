@@ -9,7 +9,7 @@ import {
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { AndroidAnalysisService } from "../../../src/application/android/AndroidAnalysisService.js";
-import type { AndroidAnalysisPort } from "../../../src/application/android/AndroidAnalysisPort.js";
+import type { AndroidAnalysisPort } from "../../../src/ports/android/AndroidAnalysisPort.js";
 import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { inspectAndroidPackage } from "../../../src/application/android/AndroidPackageInspection.js";
 import { inspectAnalysisView } from "../../../src/application/analysisView/AnalysisViewService.js";

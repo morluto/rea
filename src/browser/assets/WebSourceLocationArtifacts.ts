@@ -2,8 +2,8 @@ import {
   selectedSourceMapLimits,
   sourceMapLimitRecovery,
 } from "../../domain/sourceMapLimits.js";
-import type { WebSourceLocationArtifactPort } from "../../application/WebSourceLocationPorts.js";
-import type { WebScriptArtifactPort } from "../../application/WebScriptArtifactPort.js";
+import type { WebSourceLocationArtifactPort } from "../../ports/WebSourceLocationPorts.js";
+import type { WebScriptArtifactPort } from "../../ports/WebScriptArtifactPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import type { WebSourceLocationInput } from "../../domain/webSourceLocation.js";

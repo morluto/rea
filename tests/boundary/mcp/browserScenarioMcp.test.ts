@@ -3,7 +3,7 @@ import { describe, expect, test } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { z } from "zod";
 
-import type { BrowserScenarioCapturePort } from "../../../src/application/BrowserScenarioCapturePort.js";
+import type { BrowserScenarioCapturePort } from "../../../src/ports/BrowserScenarioCapturePort.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import type {
   ExecutionOptions,

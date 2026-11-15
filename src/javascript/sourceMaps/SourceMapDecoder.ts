@@ -4,7 +4,7 @@ import {
   sourceMapLimitRecovery,
 } from "../../domain/sourceMapLimits.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
-import type { WebSourceMapPort } from "../../application/WebSourceLocationPorts.js";
+import type { WebSourceMapPort } from "../../ports/WebSourceLocationPorts.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import {

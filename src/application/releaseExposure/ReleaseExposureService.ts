@@ -54,7 +54,7 @@ import {
 import { err, ok, type Result } from "../../domain/result.js";
 import { goBuildPaths } from "../../domain/releaseExposureGoPaths.js";
 import { rustBinarySchema } from "../../domain/rust/rustBinary.js";
-import type { ReleaseExposurePort } from "./ReleaseExposurePort.js";
+import type { ReleaseExposurePort } from "../../ports/releaseExposure/ReleaseExposurePort.js";
 
 export interface ReleaseExposureOwners {
   readonly reader: ReleaseExposurePort;

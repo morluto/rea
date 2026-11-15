@@ -1,5 +1,5 @@
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
-import type { RecordedCrashPort } from "./RecordedCrashPort.js";
+import type { RecordedCrashPort } from "../../ports/binaryDiagnostics/RecordedCrashPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";

@@ -38,7 +38,7 @@ import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type {
   WebModuleArtifactPort,
   WebModuleResolutionPort,
-} from "./WebModulePorts.js";
+} from "../ports/WebModulePorts.js";
 
 import { completeProviderEvidence } from "./ProviderOperationExecution.js";
 import { parseAnalysisInput } from "./AnalysisInput.js";

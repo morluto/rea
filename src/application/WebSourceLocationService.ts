@@ -39,7 +39,7 @@ import {
 import type {
   WebSourceLocationArtifactPort,
   WebSourceMapPort,
-} from "./WebSourceLocationPorts.js";
+} from "../ports/WebSourceLocationPorts.js";
 import { completeProviderEvidence } from "./ProviderOperationExecution.js";
 import { parseAnalysisInput } from "./AnalysisInput.js";
 

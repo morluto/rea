@@ -6,7 +6,7 @@ import {
   analysisExecutionEnvelopeForAdmission,
   createAnalysisExecutionEvidence,
 } from "../../domain/analysisObservation.js";
-import type { WasmArtifactPort } from "./WasmArtifactPort.js";
+import type { WasmArtifactPort } from "../../ports/wasm/WasmArtifactPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisOutputError,

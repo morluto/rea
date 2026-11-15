@@ -7,7 +7,7 @@ import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import type { ProviderAvailability } from "../ports/AnalysisProvider.js";
-import type { JebAnalysisAvailability } from "../application/jeb/JebAnalysisPort.js";
+import type { JebAnalysisAvailability } from "../ports/jeb/JebAnalysisPort.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";

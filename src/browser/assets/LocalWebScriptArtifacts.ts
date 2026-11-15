@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { normalizeArtifactPath } from "../../artifacts/ArtifactPaths.js";
-import type { WebScriptArtifactPort } from "../../application/WebScriptArtifactPort.js";
+import type { WebScriptArtifactPort } from "../../ports/WebScriptArtifactPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import {
   AnalysisCapabilityUnavailableError,

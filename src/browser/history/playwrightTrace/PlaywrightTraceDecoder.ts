@@ -1,5 +1,5 @@
 import type { StableRegularFileDescriptor } from "../../../filesystem/RegularFile.js";
-import type { PlaywrightTracePort } from "../../../application/playwrightTrace/PlaywrightTracePort.js";
+import type { PlaywrightTracePort } from "../../../ports/playwrightTrace/PlaywrightTracePort.js";
 import { ArtifactResourceScope } from "../../../artifacts/ArtifactResourceScope.js";
 import type { ArtifactEntry } from "../../../artifacts/ArtifactReader.js";
 import { ZipArtifactReader } from "../../../artifacts/ZipArtifactReader.js";
