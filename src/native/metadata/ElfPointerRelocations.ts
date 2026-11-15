@@ -6,6 +6,12 @@ import { readElfDynamicEntry } from "../../domain/elfDynamicEntry.js";
 import { readElfRelocationEntry } from "../../domain/elfRelocation.js";
 import { readElfSymbol } from "../../domain/elfSymbol.js";
 import {
+  readElfHashSymbolCount,
+  readElfGnuHashSymbolCount,
+  type ElfHashWordReader,
+} from "../../domain/elfHashSymbolCount.js";
+import { err, ok } from "../../domain/result.js";
+import {
   BinaryMappingFailure,
   createFileMappingIndex,
   isZeroFilledSpan,
@@ -126,7 +132,9 @@ const DT_RELRSZ = 35n,
   DT_RELR = 36n,
   DT_RELRENT = 37n;
 const DT_SYMTAB = 6n,
-  DT_SYMENT = 11n;
+  DT_SYMENT = 11n,
+  DT_HASH = 4n,
+  DT_GNU_HASH = 0x6ffffef5n;
 const PACKED_TAGS = [0x6000000fn, 0x60000010n, 0x60000011n, 0x60000012n];
 const ANDROID_RELR_TAGS = [0x6fffe000n, 0x6fffe001n, 0x6fffe003n];
 const UNIQUE_TAGS = new Set([
@@ -145,9 +153,9 @@ const UNIQUE_TAGS = new Set([
   ...PACKED_TAGS,
   ...ANDROID_RELR_TAGS,
 ]);
-// Only COPY extents read the dynamic symbol table, so a redeclared tag leaves
-// those extents unknown without rejecting unambiguous relocation tables.
-const SYMBOL_TABLE_TAGS = new Set([DT_SYMTAB, DT_SYMENT]);
+// Ambiguous symbol declarations leave symbolic writes unknown without
+// rejecting independently decoded relative relocations.
+const SYMBOL_TABLE_TAGS = new Set([DT_SYMTAB, DT_SYMENT, DT_HASH, DT_GNU_HASH]);
 const malformed = (message: string): never => {
   throw new ElfPointerRelocationFailure("malformed-container", message);
 };
@@ -279,15 +287,22 @@ export const elfRelocationWidth = (
 ): number | undefined =>
   type === 0 ? 0 : RELOCATION_KINDS.get(machine)?.widths.get(type);
 
+type DynamicTags = {
+  readonly values: ReadonlyMap<bigint, bigint>;
+  /** An omitted value can mean an absent or an ambiguous declaration. */
+  readonly ambiguous: ReadonlySet<bigint>;
+};
+
 function* dynamicTags(
   bytes: Buffer,
   input: ElfPointerRelocationInput,
-): Generator<undefined, Map<bigint, bigint>> {
+): Generator<undefined, DynamicTags> {
   yield;
   if (input.dynamicSegments.length > 1)
     malformed("multiple PT_DYNAMIC segments");
   const declaration = input.dynamicSegments[0];
-  if (declaration === undefined) return new Map();
+  if (declaration === undefined)
+    return { values: new Map(), ambiguous: new Set() };
   const width = input.bits / 4;
   if (declaration.size > 16n * 1024n * 1024n)
     throw new ElfPointerRelocationFailure(
@@ -317,7 +332,7 @@ function* dynamicTags(
     const { tag, value } = parsed.value;
     if (tag === 0n) {
       for (const symbolTag of redeclared) tags.delete(symbolTag);
-      return tags;
+      return { values: tags, ambiguous: redeclared };
     }
     if (SYMBOL_TABLE_TAGS.has(tag)) {
       if (tags.has(tag)) redeclared.add(tag);
@@ -344,6 +359,11 @@ type RelocationOptions = {
   readonly unsupported?: "reject" | "record";
   readonly requireDynamic?: boolean;
   /**
+   * Static link-image arithmetic using this file's definitions, not proof of
+   * runtime symbol binding. Unset, symbolic pointer values remain unknown.
+   */
+  readonly symbolResolution?: "image-definitions";
+  /**
    * Yield COPY and TLS descriptor records as writes of unknown value over
    * their whole extent, which can exceed one pointer. Unset, they stay
    * undecoded kinds, for consumers that track one pointer per write.
@@ -364,6 +384,7 @@ export function* readElfRelocationWritesSteps(
       "ELF relative pointers require a matching AArch64, x86-64, ARM or i386 image",
     );
   const relative = kinds.relative;
+  const absolute = kinds.absolute;
   const wholeExtents = options.wholeExtents === true;
   const copy = wholeExtents ? kinds.copy : undefined;
   const unknownWidths = kinds.widths;
@@ -372,8 +393,11 @@ export function* readElfRelocationWritesSteps(
       "unsupported-container",
       "ELF image has no PT_DYNAMIC segment",
     );
-  const tags = yield* dynamicTags(bytes, input);
-  const word = input.bits / 8;
+  const { values: tags, ambiguous: ambiguousTags } = yield* dynamicTags(
+    bytes,
+    input,
+  );
+  const word = input.bits === 64 ? 8 : 4;
   const index = createFileMappingIndex(input.mappings, input.zeroFills);
   const fileOffset = (address: bigint, width: number): number | null => {
     try {
@@ -438,15 +462,7 @@ export function* readElfRelocationWritesSteps(
     tags.get(DT_SYMENT) === BigInt(symbolBytes)
       ? tags.get(DT_SYMTAB)
       : undefined;
-  /**
-   * Bytes a COPY relocation can write: the loader copies at most the size this
-   * image's own dynamic symbol records. Undefined when that size is unreadable
-   * or the span leaves the address space.
-   */
-  const copyWidth = (
-    destination: bigint,
-    symbolIndex: number,
-  ): number | undefined => {
+  const dynamicSymbol = (symbolIndex: number) => {
     if (symbolTable === undefined || symbolIndex === 0) return undefined;
     let at: number;
     try {
@@ -458,13 +474,99 @@ export function* readElfRelocationWritesSteps(
       if (cause instanceof BinaryMappingFailure) return undefined;
       throw cause;
     }
-    const symbol = readElfSymbol(
+    const parsed = readElfSymbol(
       bytes.subarray(at, at + symbolBytes),
       input.bits,
       input.little,
     );
-    if (!symbol.ok) return undefined;
-    const { size } = symbol.value;
+    return parsed.ok ? parsed.value : undefined;
+  };
+  const hashWords =
+    (address: bigint): ElfHashWordReader =>
+    (offset) => {
+      try {
+        // Hash walks skip bloom/bucket words; their whole prefix must be mapped.
+        const at = index.offset(address, offset + 4) + offset;
+        return ok(
+          input.little ? bytes.readUInt32LE(at) : bytes.readUInt32BE(at),
+        );
+      } catch (cause) {
+        if (cause instanceof BinaryMappingFailure) return err(cause.message);
+        throw cause;
+      }
+    };
+  function* countSymbols(): Generator<undefined, number | undefined> {
+    if (ambiguousTags.has(DT_HASH) || ambiguousTags.has(DT_GNU_HASH))
+      return undefined;
+    const maximum = Math.floor(bytes.length / 4);
+    let count: number | undefined;
+    const classic = tags.get(DT_HASH);
+    if (classic !== undefined) {
+      const parsed = readElfHashSymbolCount(hashWords(classic), maximum);
+      if (!parsed.ok) return undefined;
+      count = parsed.value;
+    }
+    const gnu = tags.get(DT_GNU_HASH);
+    if (gnu !== undefined) {
+      const steps = readElfGnuHashSymbolCount(hashWords(gnu), word, maximum);
+      let next = steps.next();
+      while (!next.done) {
+        yield;
+        next = steps.next();
+      }
+      if (!next.value.ok) return undefined;
+      const value = next.value.value;
+      if (value !== null) {
+        if (count !== undefined && count !== value) return undefined;
+        count = value;
+      }
+    }
+    // Mapping a complete declared table bounds every later indexed read.
+    if (symbolTable === undefined || count === undefined || count === 0)
+      return undefined;
+    try {
+      index.offset(symbolTable, count * symbolBytes);
+    } catch (cause) {
+      if (cause instanceof BinaryMappingFailure) return undefined;
+      throw cause;
+    }
+    return count;
+  }
+  let symbolCountRead = false;
+  let symbolCount: number | undefined;
+  function* symbolLinkValue(
+    symbolIndex: number,
+  ): Generator<undefined, bigint | undefined> {
+    if (symbolIndex === 0) return 0n;
+    if (!symbolCountRead) {
+      symbolCountRead = true;
+      symbolCount = yield* countSymbols();
+    }
+    if (symbolCount === undefined || symbolIndex >= symbolCount)
+      return undefined;
+    const symbol = dynamicSymbol(symbolIndex);
+    if (symbol === undefined) return undefined;
+    const { section_index, type, value } = symbol;
+    // Undefined/reserved sections, TLS offsets and IFUNC resolvers do not
+    // supply an ordinary link-image address for this file.
+    return section_index !== 0 &&
+      section_index < 0xff00 &&
+      (type === 0 || type === 1 || type === 2)
+      ? value
+      : undefined;
+  }
+  /**
+   * Bytes a COPY relocation can write: the loader copies at most the size this
+   * image's own dynamic symbol records. Undefined when that size is unreadable
+   * or the span leaves the address space.
+   */
+  const copyWidth = (
+    destination: bigint,
+    symbolIndex: number,
+  ): number | undefined => {
+    const symbol = dynamicSymbol(symbolIndex);
+    if (symbol === undefined) return undefined;
+    const { size } = symbol;
     return size <= BigInt(Number.MAX_SAFE_INTEGER) &&
       destination + size <= 1n << BigInt(input.bits)
       ? Number(size)
@@ -547,6 +649,31 @@ export function* readElfRelocationWritesSteps(
         continue;
       }
       if (kind !== relative || symbolIndex !== 0) {
+        const globalData = input.machine === 183 ? 1025 : 6;
+        if (
+          options.symbolResolution === "image-definitions" &&
+          input.bits === 64 &&
+          (kind === absolute || kind === globalData)
+        ) {
+          const value = yield* symbolLinkValue(symbolIndex);
+          if (value !== undefined) {
+            // AArch64 ABS64/GLOB_DAT and x86-64 R_X86_64_64 use S + A.
+            // R_X86_64_GLOB_DAT uses S, ignoring even a nonzero addend.
+            const slot =
+              explicitAddend === undefined ? target(destination, word) : null;
+            const addend =
+              input.machine === 62 && kind === globalData
+                ? 0n
+                : (explicitAddend ?? (slot === null ? 0n : rawWord(slot)));
+            yield write(
+              destination,
+              word,
+              BigInt.asUintN(input.bits, value + addend),
+              record,
+            );
+            continue;
+          }
+        }
         const width = unknownWidths.get(kind);
         if (width === undefined || (width > word && !wholeExtents)) {
           unsupported(`ELF relocation kind ${kind} is not decoded`);
@@ -900,6 +1027,7 @@ export function* readElfPointerValuesSteps(
   bytes: Buffer,
   input: ElfPointerRelocationInput,
   maximumIndexBytes: number,
+  options: Pick<RelocationOptions, "symbolResolution"> = {},
 ): Generator<void, ElfVirtualPointerWrites> {
   const index = new ElfVirtualWriteIndex(
     input.bits === 64 ? 8 : 4,
@@ -909,6 +1037,7 @@ export function* readElfPointerValuesSteps(
   const zeroFill = new Set<bigint>();
   const steps = readElfRelocationWritesSteps(bytes, input, {
     requireDynamic: true,
+    ...options,
   });
   let next = steps.next();
   while (!next.done) {

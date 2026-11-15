@@ -1,3 +1,4 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
@@ -147,10 +148,7 @@ const readArgumentFile = (
         throw new GhidraAdmissionError("argument_files_exceed_bound", {
           budget_bytes: OPTIONS_BYTES,
         });
-      const text = new TextDecoder("utf-8", {
-        fatal: true,
-        ignoreBOM: true,
-      }).decode(data);
+      const text = decodeStrictUtf8(data, "preserve");
       const tokens = argumentFileTokens(text);
       if (tokens.some(fileReference))
         throw new GhidraAdmissionError("nested_argument_file");

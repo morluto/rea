@@ -37,6 +37,7 @@ import {
   type ManagedRuntime,
   type RuntimeExhaustion,
 } from "./RuntimeExhaustion.js";
+import { isStrictUtf8 } from "../domain/strictUtf8.js";
 
 const DEFAULT_TERMINATION_GRACE_MS = 250;
 const DEFAULT_KILL_GRACE_MS = 1_000;
@@ -1143,12 +1144,7 @@ class ProcessOutputCapture {
     observedBytes: number,
   ): ProviderProcessSnapshot["stdout"] {
     const text = buffer.toString("utf8");
-    let invalidUtf8 = false;
-    try {
-      new TextDecoder("utf-8", { fatal: true }).decode(buffer);
-    } catch {
-      invalidUtf8 = true;
-    }
+    const invalidUtf8 = !isStrictUtf8(buffer);
     return {
       text,
       bytes: buffer.byteLength,

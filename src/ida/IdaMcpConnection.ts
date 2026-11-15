@@ -2,7 +2,6 @@ import {
   ArtifactResourceScope,
   type ArtifactResourceOwner,
 } from "../artifacts/ArtifactResourceScope.js";
-import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { ResponseBodyCleanup } from "../providers/ResponseBodyCleanup.js";
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -97,10 +96,11 @@ export interface IdaMcpConnection {
 export type IdaMcpConnectionDependencies = Readonly<{
   createDiagnosticRedactor?: typeof createIdaDiagnosticRedactor;
   /**
-   * Host platform that selects the Windows launch resolution. Composition
-   * passes the running host; omitted, stdio registrations launch directly.
+   * Host platform that selects the Windows launch resolution and the
+   * environment-name semantics of the child's environment snapshot.
+   * Composition passes the running host.
    */
-  platform?: NodeJS.Platform;
+  platform: NodeJS.Platform;
   /** Owned process acquisition for a stdio registration. */
   launcher?: OwnedMcpLauncher;
   /** Largest stdio JSON-RPC message accepted from the upstream server. */
@@ -133,7 +133,7 @@ const IDA_STDERR_TAIL_BYTES = 16_384;
  */
 const idaStdioLauncher =
   (
-    platform: NodeJS.Platform | undefined,
+    platform: NodeJS.Platform,
     launch: OwnedMcpLauncher,
     timeoutMs: number,
   ): OwnedMcpLauncher =>
@@ -511,7 +511,7 @@ const retainedTransportCause = (cause: unknown, message: string): Error => {
 export const createIdaMcpConnection = (
   config: IdaConfiguration,
   environment: Readonly<NodeJS.ProcessEnv>,
-  dependencies: IdaMcpConnectionDependencies = {},
+  dependencies: IdaMcpConnectionDependencies,
 ): IdaMcpConnection => {
   const client = new StructuredContentMcpClient({
     name: "rea-ida-provider",
@@ -675,11 +675,11 @@ export const createIdaMcpConnection = (
             // Only the selected snapshot reaches the child, never REA's ambient environment.
             hostEnvironment: snapshotEnvironment(
               environment,
-              HOST_PLATFORM.platform,
+              dependencies.platform,
             ),
             env: {
               IDA_MCP_MAX_WORKERS: "1",
-              ...snapshotEnvironment(config.env, HOST_PLATFORM.platform),
+              ...snapshotEnvironment(config.env, dependencies.platform),
             },
             // Registrations commonly launch interpreter-driven scripts.
             expectedCommand: null,

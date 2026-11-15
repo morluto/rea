@@ -43,6 +43,9 @@ export const translateArtifactFailure = (
         ...(cause.readerLimit === undefined
           ? {}
           : { readerLimit: cause.readerLimit }),
+        ...(cause.integrityCheck === undefined
+          ? {}
+          : { integrityCheck: cause.integrityCheck }),
       },
     );
     if (cause.admission !== undefined)

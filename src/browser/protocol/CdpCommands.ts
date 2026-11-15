@@ -335,6 +335,21 @@ export const parseCdpCommandResult = <M extends CdpCommand>(
  * Playwright CDP sessions both call this. Only registered commands can be
  * sent, so every reply is parsed or rejected here.
  */
+/**
+ * Refuse a command without a registered result schema before it reaches the
+ * browser. TypeScript callers cannot name one; JavaScript verifiers can, and
+ * the effects of a command REA cannot admit a reply for are not reviewed.
+ */
+export function assertCdpCommand(
+  method: string,
+  operation: BrowserObservationOperation,
+): asserts method is CdpCommand {
+  if (!isCdpCommand(method))
+    throw new BrowserObservationError(operation, "protocol_error", {
+      detail: `REA refused to send CDP command ${JSON.stringify(method)}: no result schema is registered for it.`,
+    });
+}
+
 export const admitCdpReply = <M extends CdpCommand>(
   method: M,
   reply: unknown,

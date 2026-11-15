@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 
-import { z } from "zod";
 import type { Frame, Page } from "playwright-core";
 
 import {
@@ -14,6 +13,7 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { browserObservationEndpointSchema } from "../domain/browserObservation.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
+import { isCdpSessionGoneRejection } from "./CdpCommandRejection.js";
 import { CdpTargetSessionOwner } from "./CdpTargetSessionOwner.js";
 import {
   withCdpDiscoveryDeadline,
@@ -54,11 +54,6 @@ const serviceWorkerPolicyCheckTimeout = (): AnalysisTimeoutError => {
   });
 };
 
-const attachedEvent = z.object({
-  sessionId: z.string(),
-  targetInfo: z.object({ type: z.string() }),
-});
-const detachedEvent = z.object({ sessionId: z.string() });
 type PolicyTarget = {
   readonly id: string;
   readonly detached: Promise<void>;
@@ -86,6 +81,15 @@ export class PlaywrightScenarioServiceWorkers {
   #stopRequested = false;
   #stopPromise: Promise<void> | undefined;
   #removeListener: (() => void) | undefined;
+  #removeProtocolFailure: (() => void) | undefined;
+  #removeDisconnect: (() => void) | undefined;
+  /**
+   * The first loss of the policy connection: a protocol failure (including a
+   * malformed target event the listener rejected), the socket closing, or the
+   * policy session detaching before REA released it. Later documents would
+   * not be protected, so the next policy check and the next step report it.
+   */
+  #failure: BrowserObservationError | undefined;
   #setup = new AbortController();
 
   constructor(
@@ -172,18 +176,36 @@ export class PlaywrightScenarioServiceWorkers {
       );
     }
     const connection = this.#session.connection;
+    this.#removeProtocolFailure = connection.onProtocolFailure((error) => {
+      this.#failure ??= error;
+    });
+    this.#removeDisconnect = connection.onDisconnect((error) => {
+      if (!this.#closed) this.#failure ??= error;
+    });
     this.#removeListener = connection.onEvent((event) => {
+      const registered = event.registered;
       if (
-        event.method === "Target.attachedToTarget" &&
+        registered?.method === "Target.attachedToTarget" &&
         this.#targets.has(event.sessionId ?? "")
       ) {
-        const { sessionId, targetInfo } = attachedEvent.parse(event.params);
-        if (targetInfo.type === "iframe") this.addTarget(sessionId);
-      } else if (event.method === "Target.detachedFromTarget") {
-        const id = detachedEvent.parse(event.params).sessionId;
+        const { sessionId, targetType } = registered.payload;
+        if (sessionId === undefined || targetType === undefined)
+          throw new BrowserObservationError(OPERATION, "protocol_error");
+        if (targetType === "iframe") this.addTarget(sessionId);
+      } else if (registered?.method === "Target.detachedFromTarget") {
+        const id = registered.payload.sessionId;
+        if (id === undefined)
+          throw new BrowserObservationError(OPERATION, "protocol_error");
         this.#targets.get(id)?.markDetached();
         this.#targets.delete(id);
-        if (id === this.#session?.sessionId) this.#detached = true;
+        if (id === this.#session?.sessionId) {
+          this.#detached = true;
+          if (!this.#closed)
+            this.#failure ??= new BrowserObservationError(
+              OPERATION,
+              "target_session_detached",
+            );
+        }
       }
     });
     const id = this.#session.sessionId;
@@ -358,8 +380,15 @@ export class PlaywrightScenarioServiceWorkers {
     }
   }
 
+  /** Report a policy connection lost since installation, without page reads. */
+  assertConnected(): void {
+    if (this.#failure !== undefined) throw this.#failure;
+  }
+
   async assertBlocked(): Promise<void> {
+    if (this.#failure !== undefined) throw this.#failure;
     if (this.#session !== undefined) await this.settle();
+    if (this.#failure !== undefined) throw this.#failure;
     for (const frame of this.page.frames()) {
       let failure: unknown;
       try {
@@ -470,7 +499,17 @@ export class PlaywrightScenarioServiceWorkers {
               { identifier: target.identifier },
             );
           } catch (cause: unknown) {
-            if (this.#targets.get(target.id) === target) throw cause;
+            // A child target can detach while event delivery is stopped by a
+            // listener failure, so its detach notice never retires it. CDP
+            // confirming the session is gone retires it here instead.
+            const gone =
+              target.id !== session.sessionId &&
+              isCdpSessionGoneRejection(cause);
+            if (!gone && this.#targets.get(target.id) === target) throw cause;
+            if (gone) {
+              target.markDetached();
+              this.#targets.delete(target.id);
+            }
           }
           delete target.identifier;
         }
@@ -505,6 +544,8 @@ export class PlaywrightScenarioServiceWorkers {
       this.#detached = true;
     }
     this.#removeListener?.();
+    this.#removeProtocolFailure?.();
+    this.#removeDisconnect?.();
     await this.#transportOwner.finish(session.connection);
     await this.#transportOwner.close();
     this.#released = true;
