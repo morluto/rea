@@ -77,6 +77,22 @@
     },
     {
       "files": [
+        "src/**/*.ts",
+        "scripts/lib/browser-*-e2e.mjs",
+        "scripts/verify-browser-dom-destinations.mjs"
+      ],
+      "rules": { "rea/no-raw-cdp-session": "error" }
+    },
+    {
+      "files": [
+        "src/browser/PlaywrightCdpSession.ts",
+        "src/**/*.test.ts",
+        "src/**/*.fixture.ts"
+      ],
+      "rules": { "rea/no-raw-cdp-session": "off" }
+    },
+    {
+      "files": [
         "scripts/electron-active-hook*.cjs",
         "tests/conformance/readiness/electron/*.js",
         "website/public/examples/notes-electron/*.js"

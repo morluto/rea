@@ -7,8 +7,9 @@ import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { CdpCommandRejection } from "./CdpCommandRejection.js";
 import {
   admitCdpReply,
-  type CdpSendParams,
-  type CdpSendResult,
+  type CdpCommand,
+  type CdpCommandParams,
+  type CdpCommandResult,
 } from "./protocol/CdpCommands.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import {
@@ -587,12 +588,12 @@ export class CdpConnection {
    * window. A registered command's reply is parsed by its result schema; a
    * mismatch rejects that command with `CdpMalformedReply`.
    */
-  async send<M extends string>(
+  async send<M extends CdpCommand>(
     method: M,
-    params?: CdpSendParams<M>,
+    params?: CdpCommandParams<M>,
     sessionId?: string,
     signal?: AbortSignal,
-  ): Promise<CdpSendResult<M>> {
+  ): Promise<CdpCommandResult<M>> {
     const reply = await this.core.send(
       method,
       params ?? {},

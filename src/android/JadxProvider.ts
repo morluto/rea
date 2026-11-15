@@ -56,10 +56,13 @@ import type { JadxLauncher } from "./JadxMcpTransport.js";
 import { JadxSession } from "./JadxSession.js";
 import { captureJadxFailure } from "./JadxFailure.js";
 import { awaitPredecessor } from "../domain/awaitPredecessor.js";
+import {
+  JADX_BRIDGE_SOURCE_URL,
+  jadxBridgeIdentity,
+  type JadxBridgeIdentity,
+} from "./JadxRelease.js";
 
-const BRIDGE_SOURCE = fileURLToPath(
-  new URL("../../bridge/android/ReaJadxBridge.java", import.meta.url),
-);
+const BRIDGE_SOURCE = fileURLToPath(JADX_BRIDGE_SOURCE_URL);
 type Outcome = Awaited<ReturnType<AndroidAnalysisPort["execute"]>>;
 
 const waitForTurn = (
@@ -259,6 +262,7 @@ interface RetainedSession {
   readonly snapshot: string;
   readonly jarHash: string;
   readonly bridgeHash: string;
+  readonly bridgeIdentity: JadxBridgeIdentity;
 }
 
 /** One serialized, immutable APK session per REA instance, retired on idle or shutdown. */
@@ -547,6 +551,16 @@ export class JadxProvider implements AndroidAnalysisPort {
         signal,
         retainFailedClose(BRIDGE_SOURCE),
       );
+      // Read before any child or workspace exists, so a malformed packaged
+      // bridge is refused without resources to clean up.
+      const identity = jadxBridgeIdentity();
+      if (!identity.ok)
+        throw new AnalysisCapabilityUnavailableError(
+          "jadx",
+          request.operation,
+          `${identity.error} (${BRIDGE_SOURCE}); reinstall REA to restore the packaged JADX bridge.`,
+        );
+      const bridgeIdentity = identity.value;
       let targetHash: string;
       try {
         targetHash = (
@@ -660,6 +674,7 @@ export class JadxProvider implements AndroidAnalysisPort {
           snapshot,
           jarHash: engine.sha256,
           bridgeHash,
+          bridgeIdentity,
         };
       }
       root = retained.root;
@@ -676,6 +691,7 @@ export class JadxProvider implements AndroidAnalysisPort {
           snapshot,
           jarHash: retained.jarHash,
           bridgeHash: retained.bridgeHash,
+          bridgeIdentity: retained.bridgeIdentity,
           signal: activeSignal,
           timeoutMs: timeoutMs.value,
           mapping: mapping.value,
