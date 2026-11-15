@@ -1,6 +1,7 @@
 import { posix } from "node:path";
 
 import { logicalPathNfc } from "../domain/artifactIdentity.js";
+import { quotedExcerpt } from "../domain/excerpt.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import {
   ArtifactReaderFailure,
@@ -14,9 +15,7 @@ const ABSOLUTE_DRIVE_PATH = /^[A-Za-z]:[\\/]/u;
 // a presentation budget, never a limit on accepted paths or retained facts.
 const PATH_DIAGNOSTIC_CODE_UNITS = 128;
 const pathDiagnostic = (path: string): string =>
-  path.length <= PATH_DIAGNOSTIC_CODE_UNITS
-    ? JSON.stringify(path)
-    : `${JSON.stringify(path.slice(0, PATH_DIAGNOSTIC_CODE_UNITS))}… (${String(path.length)} UTF-16 code units)`;
+  quotedExcerpt(path, PATH_DIAGNOSTIC_CODE_UNITS);
 
 type DestinationEntryKind = Exclude<ArtifactEntry["kind"], "metadata">;
 

@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 
 import { compactStringIdentityKey } from "./compactStringIdentity.js";
-import { ellipsisExcerpt } from "./excerpt.js";
+import { ellipsisExcerpt, quotedExcerpt } from "./excerpt.js";
 import { utf8TailExcerpt } from "./utf8Excerpt.js";
 import { utf8HeadExcerpt } from "./utf8HeadExcerpt.js";
 
@@ -28,4 +28,11 @@ it("cuts display text with an ellipsis without splitting a surrogate pair", () =
   expect(ellipsisExcerpt("a\u{1F600}b", 2)).toBe("a…");
   expect(ellipsisExcerpt("a\u{1F600}b", 3)).toBe("a\u{1F600}…");
   expect(ellipsisExcerpt("abc", 0)).toBe("…");
+});
+
+it("quotes a diagnostic value with its full length when cut", () => {
+  expect(quotedExcerpt('a"b', 3)).toBe('"a\\"b"');
+  expect(quotedExcerpt("abcdef", 3)).toBe('"abc"… (6 UTF-16 code units)');
+  // A cut inside a surrogate pair would quote a lone high surrogate as \ud83d.
+  expect(quotedExcerpt("a\u{1F600}b", 2)).toBe('"a"… (4 UTF-16 code units)');
 });

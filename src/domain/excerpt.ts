@@ -22,11 +22,25 @@ export const excerptText = (text: string): ExcerptText => text as ExcerptText;
  * splitting a surrogate pair, with "…" appended when anything was dropped.
  * Text that fits is returned whole.
  */
-export const ellipsisExcerpt = (text: string, maximum: number): ExcerptText => {
-  if (text.length <= maximum) return excerptText(text);
-  const end =
-    maximum > 0 && /[\uD800-\uDBFF]/u.test(text.charAt(maximum - 1))
-      ? maximum - 1
-      : Math.max(0, maximum);
-  return excerptText(`${text.slice(0, end)}…`);
-};
+export const ellipsisExcerpt = (text: string, maximum: number): ExcerptText =>
+  text.length <= maximum
+    ? excerptText(text)
+    : excerptText(`${text.slice(0, excerptEnd(text, maximum))}…`);
+
+/**
+ * `text` quoted as a JSON string for a diagnostic. Text longer than `maximum`
+ * UTF-16 code units is cut as by {@link ellipsisExcerpt} and keeps its full
+ * length: `"abc"… (300 UTF-16 code units)`.
+ */
+export const quotedExcerpt = (text: string, maximum: number): ExcerptText =>
+  text.length <= maximum
+    ? excerptText(JSON.stringify(text))
+    : excerptText(
+        `${JSON.stringify(text.slice(0, excerptEnd(text, maximum)))}… (${String(text.length)} UTF-16 code units)`,
+      );
+
+/** Where a cut to `maximum` code units ends without splitting a surrogate pair. */
+const excerptEnd = (text: string, maximum: number): number =>
+  maximum > 0 && /[\uD800-\uDBFF]/u.test(text.charAt(maximum - 1))
+    ? maximum - 1
+    : Math.max(0, maximum);
