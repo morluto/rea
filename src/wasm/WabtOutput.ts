@@ -1,5 +1,6 @@
 import { WabtAdmissionError } from "./WabtAdmissionError.js";
 import { readLeb128, ULEB32 } from "../domain/leb128.js";
+import { isStrictUtf8 } from "../domain/strictUtf8.js";
 
 /** WABT prints names with %.*s, so an embedded NUL ends their display. */
 const wabtDisplayedName = (name: string | undefined): string | undefined =>
@@ -104,12 +105,5 @@ const invalidCustomNameEnd = (
   if ("failure" in read) return undefined;
   const nameEnd = read.next + Number(read.value);
   if (nameEnd > end) return undefined;
-  try {
-    new TextDecoder("utf-8", { fatal: true }).decode(
-      bytes.subarray(read.next, nameEnd),
-    );
-    return undefined;
-  } catch {
-    return nameEnd;
-  }
+  return isStrictUtf8(bytes.subarray(read.next, nameEnd)) ? undefined : nameEnd;
 };

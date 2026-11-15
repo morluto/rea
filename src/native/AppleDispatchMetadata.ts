@@ -1,3 +1,4 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import {
   malformedInput,
   parseFailureFromCause,
@@ -165,9 +166,7 @@ export function* decodeAppleDispatchMetadataSteps(
       );
     offset(address, end - start + 1);
     // A metadata C string owns every code point, including an initial U+FEFF.
-    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-      bytes.subarray(start, end),
-    );
+    return decodeStrictUtf8(bytes.subarray(start, end), "preserve");
   };
   const result = objcSwiftMetadataSchema.parse({
     db_save_result: null,

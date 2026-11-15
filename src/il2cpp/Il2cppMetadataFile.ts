@@ -1,3 +1,4 @@
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 import {
   checkRange,
   checkedSectionCount,
@@ -355,7 +356,7 @@ const createStringReader = (
 ) => {
   const stringEnd = strings.offset + strings.size;
   const pool = bytes.subarray(strings.offset, stringEnd);
-  const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+  const decoder = strictUtf8Decoder("preserve");
   const cache = new Map<number, string>();
   return (index: number, label: string) => {
     const cached = cache.get(index);

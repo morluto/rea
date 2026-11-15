@@ -1,7 +1,8 @@
 import { err, ok, type Result } from "../result.js";
+import { strictUtf8Decoder } from "../strictUtf8.js";
 import { invariantViolation } from "../internalInvariant.js";
 
-const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const UTF8 = strictUtf8Decoder("preserve");
 
 export interface DecodedMarshalUtf8 {
   readonly text: string;

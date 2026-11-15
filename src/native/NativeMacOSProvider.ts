@@ -1,6 +1,9 @@
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { withArtifactTargetIdentity } from "../artifacts/withArtifactTargetIdentity.js";
-import { invariantViolation } from "../domain/internalInvariant.js";
+import {
+  invariantViolation,
+  InternalInvariantError,
+} from "../domain/internalInvariant.js";
 import { translateNativeCommandFailure } from "./NativeCommandAnalysisError.js";
 import {
   plistSourceFormat,
@@ -114,7 +117,6 @@ import {
   type NativeCommandInvocation,
 } from "../domain/native/nativeInspection.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { InternalInvariantError } from "../domain/internalInvariant.js";
 import {
   NativeCommandFailure,
   NATIVE_COMMAND_OUTPUT_BUDGET_BYTES,

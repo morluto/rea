@@ -52,12 +52,10 @@ import { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
 
-const ZIP_UTF8_DECODER = new TextDecoder("utf-8", {
-  fatal: true,
-  ignoreBOM: true,
-});
+const ZIP_UTF8_DECODER = strictUtf8Decoder("preserve");
 
 /** Fixed method-93 decoder window: 2^27 bytes, matching the ELF/GPU decoders. */
 const ZIP_ZSTANDARD_WINDOW_LOG_MAX = 27;

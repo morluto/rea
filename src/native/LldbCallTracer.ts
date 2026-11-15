@@ -1,3 +1,4 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
@@ -1198,9 +1199,7 @@ const readTracerOutput = async (
   if (!bytes.value.ok) return bytes.value;
   let text: string;
   try {
-    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-      bytes.value.value,
-    );
+    text = decodeStrictUtf8(bytes.value.value, "preserve");
   } catch (cause: unknown) {
     return err(cause);
   }

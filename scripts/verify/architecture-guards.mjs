@@ -330,6 +330,19 @@ checkCounted(
   ["src/pcap/TsharkJsonPackets.ts"],
 );
 
+// Strict UTF-8 decoding has one owner, src/domain/strictUtf8.ts, which makes
+// each site state its byte-order-mark policy. A local fatal decoder silently
+// strips a leading BOM unless it remembers ignoreBOM. The pattern matches the
+// options in any order and an omitted label. The remaining copy runs inside a
+// browser page through page.evaluate, which cannot import the owner.
+checkCounted(
+  "local strict UTF-8 TextDecoder (use strictUtf8Decoder, decodeStrictUtf8 or isStrictUtf8 from src/domain/strictUtf8)",
+  "strict-utf8-decoder",
+  files,
+  /new TextDecoder\(\s*(?:(?:["'`]utf-?8["'`]|undefined)\s*,\s*)?\{[^}]*\bfatal:\s*true/giu,
+  ["src/domain/strictUtf8.ts"],
+);
+
 // Turning a completed result into a cancellation after cleanup is the
 // finalization precedence that runOwned owns (src/providers/runOwned.ts).
 checkCounted(
