@@ -22,6 +22,9 @@ const corpus = JSON.parse(
   }[];
 };
 
+// Both channel layouts must remain covered independently of fixture contents.
+expect(corpus.vectors.map(({ mode }) => mode).sort()).toEqual(["RGB", "RGBA"]);
+
 for (const vector of corpus.vectors) {
   cliTest(
     `compares independently decoded ${vector.mode} scanline filters against literal pixels`,
