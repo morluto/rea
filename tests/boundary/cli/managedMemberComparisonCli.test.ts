@@ -263,8 +263,8 @@ cliTest(
               basis: "exact-il-signature",
               confidence: "exact",
             }),
-            limitations: malformed
-              ? [expect.stringMatching(/^signature-malformed:/)]
+            limitation_reasons: malformed
+              ? [{ code: "signature-malformed" }]
               : [],
           }),
         ]);

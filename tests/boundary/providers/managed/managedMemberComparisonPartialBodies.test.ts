@@ -55,7 +55,9 @@ describe("managed member partial body comparison", () => {
     expect(compareManagedMembers(left, right).methods[0]).toMatchObject({
       status: "changed",
       dimensions: ["metadata", "body-coverage"],
-      limitations: expect.arrayContaining([expect.stringContaining("unknown")]),
+      limitation_reasons: expect.arrayContaining([
+        { code: "body-unavailable" },
+      ]),
     });
   });
 

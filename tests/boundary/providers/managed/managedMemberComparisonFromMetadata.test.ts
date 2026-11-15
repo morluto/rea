@@ -1104,7 +1104,7 @@ describe("managed LocalVarSig comparison", () => {
       status: "changed",
       dimensions: ["metadata"],
       match: { basis: "exact-il-signature" },
-      limitations: [expect.stringContaining("encoding difference")],
+      limitation_reasons: [{ code: "local-signature-bytes-changed" }],
     });
   });
 
@@ -1126,11 +1126,7 @@ describe("managed LocalVarSig comparison", () => {
       expect(compareManagedMembers(left, right).methods[0]).toMatchObject({
         status: "changed",
         dimensions: ["metadata", "availability"],
-        limitations: [
-          expect.stringContaining(
-            "Local variable signature identity is unknown",
-          ),
-        ],
+        limitation_reasons: [{ code: "local-signature-unknown" }],
       });
       const sameHeader = observe(
         signature,
@@ -1289,6 +1285,10 @@ describe("managed member comparison", () => {
       status: "changed",
       match: { status: "matched", basis: "exact-signature" },
       dimensions: ["cil", "availability"],
+      limitation_reasons: [
+        { code: "call-target-unavailable" },
+        { code: "field-target-unavailable" },
+      ],
     });
   });
 
@@ -1324,6 +1324,41 @@ describe("managed member comparison", () => {
         ],
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("managed member comparison limitation reasons", () => {
+  it("states one reason per limitation and reads older Evidence as reasons unknown", () => {
+    const left = inspect(buildManagedPeFixture(), "/tmp/left.dll");
+    const right = inspect(
+      buildManagedPeFixture({
+        ilBody: Buffer.from([
+          0x32, 0x02, 0x7b, 0x02, 0x00, 0x00, 0x04, 0x28, 0x02, 0x00, 0x00,
+          0x0a, 0x2a,
+        ]),
+      }),
+      "/tmp/right.dll",
+    );
+    const result = compareManagedMembers(
+      { evidenceId: left.evidenceId, result: left.result },
+      { evidenceId: right.evidenceId, result: right.result },
+    );
+    for (const item of [...result.methods, ...result.fields])
+      expect(item.limitation_reasons).toHaveLength(item.limitations.length);
+    // Evidence recorded before reasons existed still reads; its reasons are unknown.
+    const stored = managedMemberComparisonResultSchema.parse({
+      ...result,
+      methods: result.methods.map(
+        ({ limitation_reasons: _reasons, ...item }) => item,
+      ),
+      fields: result.fields.map(
+        ({ limitation_reasons: _reasons, ...item }) => item,
+      ),
+    });
+    expect(stored.methods[0]).not.toHaveProperty("limitation_reasons");
+    expect(stored.methods[0]?.limitations).toEqual(
+      result.methods[0]?.limitations,
+    );
   });
 });
 
@@ -1518,16 +1553,16 @@ describe("managed member comparison uncertainty", () => {
       status: "unknown",
       left: { token: "0x06000001" },
       right: null,
-      limitations: [
-        expect.stringContaining("unknown-within-incomplete-metadata"),
+      limitation_reasons: [
+        { code: "unknown-within-incomplete-metadata", side: "right" },
       ],
     });
     expect(result.fields[0]).toMatchObject({
       status: "unknown",
       left: null,
       right: { token: "0x04000001" },
-      limitations: [
-        expect.stringContaining("unknown-within-incomplete-metadata"),
+      limitation_reasons: [
+        { code: "unknown-within-incomplete-metadata", side: "left" },
       ],
     });
     expect(result.coverage).toEqual({
@@ -1585,9 +1620,7 @@ describe("managed member comparison uncertainty", () => {
           candidate_left_tokens: ["0x04000001", "0x04000002"],
           candidate_right_tokens: ["0x04000001", "0x04000002"],
         }),
-        limitations: [
-          "Multiple managed fields share the same signature; REA did not guess a token remap.",
-        ],
+        limitation_reasons: [{ code: "ambiguous-signature" }],
       }),
     ]);
   });
@@ -1650,7 +1683,7 @@ it.each([
       expect(item).toMatchObject({
         status: "unknown",
         match: { status: "matched", confidence: "exact" },
-        limitations: [expect.stringMatching(/^signature-malformed:/)],
+        limitation_reasons: [{ code: "signature-malformed" }],
       });
   },
 );
@@ -1767,7 +1800,7 @@ describe("managed member comparison of undecoded signatures", () => {
       expect(item).toMatchObject({
         status: "unknown",
         match: { status: "unmatched" },
-        limitations: [expect.stringContaining("signature-not-decoded")],
+        limitation_reasons: [{ code: "signature-not-decoded" }],
       });
   });
 
@@ -1790,12 +1823,10 @@ describe("managed member comparison of undecoded signatures", () => {
       expect(item).toMatchObject({
         status: "unknown",
         match: { status: "unmatched" },
-        limitations: [
-          expect.stringMatching(
-            item.left === null
-              ? /^signature-not-decoded:/
-              : /^counterpart-signature-not-decoded: The right (method|field) inventory/,
-          ),
+        limitation_reasons: [
+          item.left === null
+            ? { code: "signature-not-decoded" }
+            : { code: "counterpart-signature-not-decoded", side: "right" },
         ],
       });
   });
@@ -1842,17 +1873,13 @@ describe("managed member comparison of ambiguous undecoded signatures", () => {
             status: "ambiguous",
             basis: "exact-il-signature",
           }),
-          limitations: [
-            "Multiple managed methods share the same CIL and signature; REA did not guess a token remap.",
-          ],
+          limitation_reasons: [{ code: "ambiguous-il-signature" }],
         }),
         expect.objectContaining({
           status: "unknown",
           left: expect.objectContaining({ token: "0x06000002" }),
-          limitations: [
-            expect.stringMatching(
-              /^counterpart-signature-not-decoded: The right method inventory has an unpaired member/u,
-            ),
+          limitation_reasons: [
+            { code: "counterpart-signature-not-decoded", side: "right" },
           ],
         }),
       ]),
@@ -2154,9 +2181,7 @@ describe("managed member comparison remaps around kept identities", () => {
           status: "ambiguous",
           basis: "structural-method-shape",
         }),
-        limitations: [
-          "Multiple managed methods share the same structural shape; REA did not guess a token remap.",
-        ],
+        limitation_reasons: [{ code: "ambiguous-method-shape" }],
       }),
     ]);
   });
@@ -2561,9 +2586,7 @@ it("keeps a lone ownerless member unknown despite an identical payload", () => {
       candidate_left_tokens: [ownerless.token],
       candidate_right_tokens: [ownerless.token],
     },
-    limitations: [
-      expect.stringContaining("Declared type identity remains unresolved"),
-    ],
+    limitation_reasons: [{ code: "declaring-type-name-not-resolved" }],
   });
   expect(result.summary).toMatchObject({
     unchanged: 0,
@@ -3176,16 +3199,18 @@ describe("managed member comparison of unresolved signatures", () => {
     methodSignature: Buffer.from([0x00, 0x00, 0x12, leftTypes.program]),
   };
   const methodLimitations = (result: ReturnType<typeof compareBuilds>) =>
-    result.methods.map(({ status, limitations }) => [status, limitations]);
+    result.methods.map(({ status, limitation_reasons: reasons }) => [
+      status,
+      reasons,
+    ]);
+  const notResolved = [{ code: "signature-not-resolved" }];
 
   it("does not establish unchanged signatures from identical unresolved row bytes", () => {
     const result = compareBuilds(unresolvedAt(1), {
       ...unresolvedAt(1),
       typeSpecSignatures: [...typeSpecs].reverse(),
     });
-    expect(methodLimitations(result)).toEqual([
-      ["unknown", [expect.stringMatching(/^signature-not-resolved:/u)]],
-    ]);
+    expect(methodLimitations(result)).toEqual([["unknown", notResolved]]);
   });
 
   it("retains a known CIL change beside an unresolved signature", () => {
@@ -3193,9 +3218,7 @@ describe("managed member comparison of unresolved signatures", () => {
       ...unresolvedAt(1),
       ilBody: Buffer.from([0x0a, 0x17, 0x2a]),
     });
-    expect(methodLimitations(result)).toEqual([
-      ["changed", [expect.stringMatching(/^signature-not-resolved:/u)]],
-    ]);
+    expect(methodLimitations(result)).toEqual([["changed", notResolved]]);
     expect(result.methods[0]?.dimensions).toContain("cil");
   });
 
@@ -3208,7 +3231,7 @@ describe("managed member comparison of unresolved signatures", () => {
     expect(result.fields).toEqual([
       expect.objectContaining({
         status: "unknown",
-        limitations: [expect.stringMatching(/^signature-not-resolved:/u)],
+        limitation_reasons: [{ code: "signature-not-resolved" }],
       }),
     ]);
   });
@@ -3230,8 +3253,8 @@ describe("managed member comparison of unresolved signatures", () => {
       compareBuilds(unresolvedAt(2), unresolvedAt(1)),
     ])
       expect(methodLimitations(result)).toEqual([
-        ["unknown", [expect.stringMatching(/^signature-not-resolved:/u)]],
-        ["unknown", [expect.stringMatching(/^signature-not-resolved:/u)]],
+        ["unknown", notResolved],
+        ["unknown", notResolved],
       ]);
   });
 
@@ -3243,30 +3266,26 @@ describe("managed member comparison of unresolved signatures", () => {
       const result = compareBuilds(left, right);
       const unresolvedSide = left === resolved ? "right" : "left";
       expect(
-        result.methods.map(({ status, left: leftItem, limitations }) => [
-          status,
-          (leftItem === null) === (unresolvedSide === "left")
-            ? "resolved"
-            : "unresolved",
-          limitations,
-        ]),
+        result.methods.map(
+          ({ status, left: leftItem, limitation_reasons: reasons }) => [
+            status,
+            (leftItem === null) === (unresolvedSide === "left")
+              ? "resolved"
+              : "unresolved",
+            reasons,
+          ],
+        ),
       ).toEqual(
         expect.arrayContaining([
-          [
-            "unknown",
-            "unresolved",
-            [expect.stringMatching(/^signature-not-resolved:/u)],
-          ],
+          ["unknown", "unresolved", notResolved],
           [
             "unknown",
             "resolved",
             [
-              expect.stringMatching(
-                new RegExp(
-                  `^counterpart-signature-not-resolved: The ${unresolvedSide} method inventory`,
-                  "u",
-                ),
-              ),
+              {
+                code: "counterpart-signature-not-resolved",
+                side: unresolvedSide,
+              },
             ],
           ],
         ]),

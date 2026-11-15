@@ -132,9 +132,46 @@ const comparisonItemSchema = <
     }),
   ]);
 
+/** Stable codes for why one comparison item's facts stayed limited. */
+export const MANAGED_MEMBER_COMPARISON_LIMITATION_CODES = [
+  "declaring-type-name-not-resolved",
+  "counterpart-declaring-type-name-not-resolved",
+  "unknown-within-incomplete-metadata",
+  "signature-not-decoded",
+  "counterpart-signature-not-decoded",
+  "signature-not-resolved",
+  "counterpart-signature-not-resolved",
+  "signature-malformed",
+  "ambiguous-signature",
+  "ambiguous-il-signature",
+  "ambiguous-method-shape",
+  "local-signature-unknown",
+  "local-signature-bytes-changed",
+  "body-unavailable",
+  "call-target-unavailable",
+  "field-target-unavailable",
+  "catch-type-unavailable",
+] as const;
+
 const comparisonItemContextShape = {
   evidence_links: z.array(evidenceIdSchema).length(2),
   limitations: z.array(nonEmptyTextSchema),
+  limitation_reasons: z
+    .array(
+      z.strictObject({
+        code: z.enum(MANAGED_MEMBER_COMPARISON_LIMITATION_CODES),
+        side: z
+          .enum(["left", "right"])
+          .optional()
+          .describe(
+            "The inventory this reason concerns when it is the other side's, such as an incomplete or ambiguous counterpart inventory.",
+          ),
+      }),
+    )
+    .optional()
+    .describe(
+      "One structured reason per limitations entry, in the same order. Absent in Evidence recorded before this field: the reasons are unknown, not none.",
+    ),
 };
 
 const methodComparisonItemSchema = comparisonItemSchema(
