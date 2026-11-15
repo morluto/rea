@@ -5,7 +5,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { afterAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { FULL_CATALOG_IDENTITY } from "../../../src/catalogIdentity.js";
+import { DEFAULT_CATALOG_IDENTITY } from "../../../src/catalogIdentity.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import {
   evidenceResultOf,
@@ -56,7 +56,7 @@ const expectAvailableToolInventory = async (
   expect(
     availability.length,
     "compiled tool inventory is stale; run npm run build:cached",
-  ).toBe(FULL_CATALOG_IDENTITY.counts.mcp_tools);
+  ).toBe(DEFAULT_CATALOG_IDENTITY.counts.mcp_tools);
   expect(new Set(listed.tools.map(({ name }) => name))).toEqual(
     new Set(TOOL_CONTRACTS.map(({ name }) => name)),
   );

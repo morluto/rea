@@ -46,7 +46,7 @@ it.each(["tables", "inline table"] as const)(
         currentClientRegistrationCommand(),
       ),
     ).toEqual({ status: "already_current" });
-    const overrides = { REA_MCP_INPUT_SCHEMA_PROFILE: "full" };
+    const overrides = { REA_MCP_INPUT_SCHEMA_PROFILE: "compact" };
     expect(
       await configureClientConfiguration(
         client,

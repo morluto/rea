@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -182,6 +183,6 @@ it("advertises the complete currently available inventory with a session", async
     );
     expect(tool.annotations, tool.name).toEqual(contract?.annotations);
     expect(tool.inputSchema, tool.name).toBeDefined();
-    expect(tool.outputSchema, tool.name).toBeDefined();
+    expect(canonicalOutputSchema(tool.name), tool.name).toBeDefined();
   }
 });

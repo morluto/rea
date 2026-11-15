@@ -101,7 +101,7 @@ const createContextRecoverySession = () => {
   }));
 };
 
-it.each(["compact", "full"] as const)(
+it.each(["compact"] as const)(
   "offers a conditional containing-function comment route (%s)",
   async (profile) => {
     const directory = await createTestTempDirectory("rea-context-comment-");
@@ -238,9 +238,7 @@ it.each(["compact", "full"] as const)(
 it.each([
   ["compact", false, "comment"],
   ["compact", true, "comment"],
-  ["full", false, "comment"],
-  ["full", true, "comment"],
-  ["full", false, "list_bookmarks"],
+  ["compact", false, "list_bookmarks"],
 ] as const)(
   "preserves a local input refusal alongside successful facets (%s, conforms=%s, operation=%s)",
   async (profile, conforms, rejectedOperation) => {

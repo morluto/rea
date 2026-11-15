@@ -19,7 +19,7 @@ import { createServer } from "../../../src/server/createServer.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 
-it.each(["compact", "full"] as const)(
+it.each(["compact"] as const)(
   "delivers authenticated but unretained provider Evidence inline (%s schema)",
   async (profile) => {
     const identity = {

@@ -96,7 +96,6 @@ const verifyContext = (
 
 it.each([
   ["compact", false],
-  ["full", false],
   ["compact", true],
 ] as const)(
   "keeps context and smaller partials when unretained observations exceed the MCP budget (%s, two large=%s)",

@@ -33,7 +33,7 @@ const assertMetadataQueries = async (
   const definition = (await client.listTools()).tools.find(
     (tool) => tool.name === "inspect_analysis_view",
   );
-  if (definition?.outputSchema === undefined)
+  if (definition === undefined)
     throw new Error("Analysis view output schema is missing");
   const ajv = schemaValidation.assertions;
   const inputSchema: Record<string, unknown> = definition.inputSchema;

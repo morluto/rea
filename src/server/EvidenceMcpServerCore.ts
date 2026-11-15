@@ -34,9 +34,11 @@ import {
 } from "../contracts/compactInputSchema.js";
 import { presentAdvertisedOutputSchema } from "../contracts/compactOutputSchema.js";
 import {
-  compactPresentationForMcpOutputSchemaProfile,
+  COMPACT_OUTPUT_SCHEMA_PRESENTATION,
+  resolveMcpOutputSchemaProfile,
   type McpOutputSchemaProfile,
 } from "../config/mcpOutputSchemaProfile.js";
+import { COMPACT_INPUT_SCHEMA_PRESENTATION } from "../config/mcpInputSchemaProfile.js";
 import type { createCatalogIdentity } from "../catalogIdentity.js";
 import { transformAdvertisedInputJsonSchema } from "../contracts/toolSchemaMetadata.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
@@ -243,22 +245,19 @@ const presentOutputSchemasForToolsList = (
   compactedSchemas: WeakMap<Record<string, unknown>, Record<string, unknown>>,
 ): JSONRPCMessage => {
   if (
-    profile === "full" ||
     !isJSONRPCResultResponse(message) ||
     message.id !== requestId ||
     !isRecord(message.result) ||
     !Array.isArray(message.result.tools)
   )
     return message;
-  const compactPresentation =
-    compactPresentationForMcpOutputSchemaProfile(profile);
   return {
     ...message,
     result: {
       ...message.result,
       tools: message.result.tools.map((tool: unknown) => {
         if (!isRecord(tool)) return tool;
-        if (compactPresentation === undefined) {
+        if (profile === "off") {
           const { outputSchema: _outputSchema, ...advertisedTool } = tool;
           return advertisedTool;
         }
@@ -267,7 +266,7 @@ const presentOutputSchemasForToolsList = (
         if (outputSchema === undefined) {
           outputSchema = presentAdvertisedOutputSchema(
             tool.outputSchema,
-            compactPresentation,
+            COMPACT_OUTPUT_SCHEMA_PRESENTATION,
           );
           compactedSchemas.set(tool.outputSchema, outputSchema);
         }
@@ -392,9 +391,7 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
   ): RegisteredPrompt {
     return super.registerPrompt(name, config, callback);
   }
-  private readonly compactPresentation:
-    | CompactInputSchemaPresentation
-    | undefined;
+  private readonly compactPresentation: CompactInputSchemaPresentation;
   private readonly maximumInputElements: number;
   private readonly evidenceReferenceAlternatives = new Set<string>();
 
@@ -407,8 +404,10 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     options: McpServerOptions,
     private recordEvidence: EvidenceWriter["recordEvidence"] | undefined,
     public delivery: ToolResultDelivery,
-    compactPresentation: CompactInputSchemaPresentation | undefined = undefined,
-    private readonly outputSchemaProfile: McpOutputSchemaProfile = "full",
+    compactPresentation: CompactInputSchemaPresentation = COMPACT_INPUT_SCHEMA_PRESENTATION,
+    private readonly outputSchemaProfile: McpOutputSchemaProfile = resolveMcpOutputSchemaProfile(
+      undefined,
+    ),
     identity?: ReturnType<typeof createCatalogIdentity>,
     readonly advertisedToolFamilies:
       | ReadonlySet<string>
@@ -418,10 +417,9 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
       options.maxToolInputElements ?? DEFAULT_MCP_MAX_INPUT_ELEMENTS;
     super(info, { ...options, maxToolInputElements: maximumInputElements });
     this.maximumInputElements = maximumInputElements;
-    this.compactPresentation =
-      compactPresentation === undefined
-        ? undefined
-        : { budgetBytes: compactPresentation.budgetBytes };
+    this.compactPresentation = {
+      budgetBytes: compactPresentation.budgetBytes,
+    };
     this.identity = identity;
   }
 
@@ -488,8 +486,9 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
 
   /**
    * The input schema and tool description this server advertises for one
-   * registration: the selected compact presentation, whose guidance joins
-   * the description, or both unchanged. Every listed tool, including
+   * registration: the compact presentation, whose guidance joins the
+   * description. A registration without an input schema is unchanged. Every
+   * listed tool, including
    * transport discovery, takes this one path.
    */
   private presentInput<Schema>(
@@ -498,11 +497,7 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
   ): { description?: string; inputSchema?: Schema } {
     const { description, inputSchema } = config;
     const presentation = this.compactPresentation;
-    if (
-      presentation === undefined ||
-      inputSchema === undefined ||
-      !hasAdvertisedInputJsonSchema(inputSchema)
-    )
+    if (inputSchema === undefined || !hasAdvertisedInputJsonSchema(inputSchema))
       return config;
     const present = (projected: Record<string, unknown>) =>
       presentAdvertisedInput(projected, presentation);
@@ -749,9 +744,7 @@ class ErrorEvidenceTransport implements Transport {
         : (this.pendingValidation.get(id) ??
           (scopedRequest?.id === id ? scopedRequest : undefined));
     const rewritesOutputSchemas =
-      this.outputSchemaProfile !== "full" &&
-      id !== undefined &&
-      this.pendingToolLists.has(id);
+      id !== undefined && this.pendingToolLists.has(id);
     try {
       const publish = async (): Promise<void> => {
         const recovered = this.recoverProtocolError(message, tool);

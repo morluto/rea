@@ -34,7 +34,7 @@ const connect = async () => {
   const { client } = await createApplicationMcpHarness({
     session,
     serverOptions: {
-      environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
+      environment: { ...process.env },
     },
     clientIdentity: { name: "web-bundle-view-mcp", version: "1" },
     schemaValidator: schemaValidation,
