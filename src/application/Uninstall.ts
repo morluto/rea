@@ -6,6 +6,7 @@ import {
 import {
   ClientConfigurationShapeError,
   clientConfigurationServersKey,
+  clientConfigurationSyntaxName,
   parseClientConfiguration,
   serializeClientConfiguration,
   clientServerPath,
@@ -888,7 +889,8 @@ const readClientConfiguration = async (
     );
   if (client.configPathError !== undefined)
     return configurationFailure(client.configPathError);
-  if (client.format === "unsupported")
+  const { format } = client;
+  if (format === "unsupported")
     return itemRead(
       item(
         client.name,
@@ -910,14 +912,16 @@ const readClientConfiguration = async (
   });
   if (typeof original !== "string") return original;
   try {
-    const parsed = parseClientConfiguration(original, client.format);
+    const parsed = parseClientConfiguration(original, format);
     return { kind: "configuration", transactionPath, original, parsed };
   } catch (cause: unknown) {
     return configurationFailure(
       cause instanceof ClientConfigurationShapeError ||
         cause instanceof ConfigurationError
         ? `Configuration was not changed: ${cause.message}. Repair it, then rerun uninstall.`
-        : `Configuration is not valid ${client.format === "toml" || client.format === "grok" ? "TOML" : client.format === "opencode" ? "JSONC" : client.format === "hermes" || client.format === "dsh" ? "YAML" : "JSON"} and was not changed. Repair it, then rerun uninstall.`,
+        : format === undefined
+          ? "This client's configuration syntax is unknown, so its configuration was not changed."
+          : `Configuration is not valid ${clientConfigurationSyntaxName(format)} and was not changed. Repair it, then rerun uninstall.`,
     );
   }
 };

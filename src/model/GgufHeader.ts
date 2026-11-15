@@ -8,10 +8,12 @@ import type {
   ModelArtifactPartialTensor,
 } from "../domain/model/modelArtifact.js";
 import { ModelHeaderReader } from "./ModelHeaderReader.js";
+import { unsupportedInput } from "../domain/parseFailure.js";
 import {
   MODEL_ARRAY_PREVIEW,
   MODEL_METADATA_NESTING,
-  ModelFormatFailure,
+  MODEL_FORMAT,
+  modelCapacityFailure,
   ModelReportBudget,
   rejectModel,
 } from "./ModelFormat.js";
@@ -104,7 +106,7 @@ export class GgufHeader {
   async #value(
     type: number,
     retain: boolean,
-    depth = 0,
+    enclosingFrames = 0,
   ): Promise<{
     value: JsonValue;
     element_type: string | null;
@@ -113,12 +115,6 @@ export class GgufHeader {
   }> {
     if (NAMES[type] === undefined)
       rejectModel(`Unknown GGUF metadata type ${String(type)}`);
-    if (depth > MODEL_METADATA_NESTING)
-      throw new ModelFormatFailure(
-        "capacity",
-        `GGUF metadata nesting exceeds ${String(MODEL_METADATA_NESTING)} array frames`,
-        "metadata-nesting",
-      );
     if (type === 8)
       return {
         value: await this.#text(retain),
@@ -127,6 +123,14 @@ export class GgufHeader {
         complete: true,
       };
     if (type === 9) {
+      // The frame is the counted unit and an empty innermost array still
+      // occupies one, so charge it on entry instead of on a child visit.
+      const frames = enclosingFrames + 1;
+      if (frames > MODEL_METADATA_NESTING)
+        throw modelCapacityFailure(
+          "metadata-nesting",
+          `GGUF metadata nesting exceeds ${String(MODEL_METADATA_NESTING)} array frames`,
+        );
       const element = Number(await this.#unsigned(4));
       const rawCount = await this.#unsigned(8);
       const minimum = WIDTHS[element];
@@ -157,7 +161,7 @@ export class GgufHeader {
           break;
         }
         const keep = retain && index < MODEL_ARRAY_PREVIEW;
-        const value = await this.#value(element, keep, depth + 1);
+        const value = await this.#value(element, keep, frames);
         if (keep)
           preview.push(
             element === 9
@@ -259,8 +263,8 @@ export class GgufHeader {
       this.#little = false;
       version = bigVersion;
     } else {
-      throw new ModelFormatFailure(
-        "unsupported",
+      throw unsupportedInput(
+        MODEL_FORMAT,
         `GGUF version bytes ${versionBytes.toString("hex")} are unsupported (little-endian ${String(littleVersion)}, big-endian ${String(bigVersion)}; byte order unknown); supported versions are 2 and 3`,
       );
     }

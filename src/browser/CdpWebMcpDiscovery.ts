@@ -1,8 +1,4 @@
-import {
-  cdpFrameRecordFacts,
-  cdpFrameEventFacts,
-  type CdpFrameFacts,
-} from "./CdpFrameIdentity.js";
+import { cdpFrameEventFacts, type CdpFrameFacts } from "./CdpFrameIdentity.js";
 import { createHash } from "node:crypto";
 
 import type { ProgressReporter } from "../application/ProgressReporter.js";
@@ -32,10 +28,12 @@ import {
 import {
   classifyCdpFrameUrl,
   observeCdpFrameUrl,
-  mainFrameUrl,
-  observeMainFrameUrl,
-  walkFrameTrees,
+  type CdpFrameUrlObservation,
 } from "./CdpCaptureDocuments.js";
+import {
+  observedFrameUrl,
+  type CdpFrameTree,
+} from "./protocol/CdpFrameTree.js";
 import { optionalCdpCommand } from "./CdpOptionalCommand.js";
 import {
   cdpSourceCoordinates,
@@ -129,7 +127,10 @@ export const discoverWebMcp = async (
       {},
       limitations,
     );
-    const available = enabled !== undefined;
+    // WebMCP.enable is an acknowledgement; a malformed one is a protocol error.
+    if (!enabled.ok && enabled.error._tag === "CdpMalformedReply")
+      throw enabled.error.reply;
+    const available = enabled.ok;
     if (!available) {
       completeness.unavailable("webmcp_tools");
     } else
@@ -180,27 +181,18 @@ interface FrameScopeFrame {
 }
 
 const ingestInitialFrameTree = (
-  frameTree: unknown,
+  frameTree: CdpFrameTree,
   state: FrameScopeState,
 ): void => {
-  const root = recordValue(recordValue(frameTree)?.frameTree);
-  if (root === undefined) {
-    state.completeness.exclude("webmcp_tools", "invalid_protocol_value");
-    return;
-  }
-  for (const tree of walkFrameTrees(root, (omittedCount) =>
-    state.completeness.exclude(
-      "webmcp_tools",
-      "invalid_protocol_value",
-      omittedCount,
-    ),
-  )) {
-    const facts = cdpFrameRecordFacts(recordValue(tree.frame));
-    if (tree !== root && facts.parentRelation === "root") {
+  if (frameTree.omittedFrames)
+    state.completeness.exclude("webmcp_tools", "invalid_protocol_value", null);
+  for (const node of frameTree.frames) {
+    const { facts } = node;
+    if (node !== frameTree.root && facts.parentRelation === "root") {
       invalidateFrameFacts(facts, state);
       continue;
     }
-    handleFrameUpdate(facts, state, true);
+    handleFrameUpdate(facts, state, true, node.url);
   }
 };
 
@@ -244,6 +236,7 @@ const handleFrameUpdate = (
   sourceFacts: CdpFrameFacts,
   state: FrameScopeState,
   documentCommitted: boolean,
+  observation: CdpFrameUrlObservation = observeCdpFrameUrl(sourceFacts.source),
 ): boolean => {
   const frameId = sourceFacts.frameId;
   if (
@@ -255,7 +248,6 @@ const handleFrameUpdate = (
     invalidateFrameFacts(sourceFacts, state);
     return true;
   }
-  const observation = observeCdpFrameUrl(sourceFacts.source);
   const facts = classifyCdpFrameUrl(observation, state.origins);
   if (observation.kind !== "observed") {
     removeFrameTools(frameId, state.tools);
@@ -413,10 +405,10 @@ const assertStableAuthorizedFrame = async (
 };
 
 const requiredDiscoveryFrame = (
-  result: unknown,
+  tree: CdpFrameTree,
   origins: ReadonlySet<string>,
 ) => {
-  const observed = observeMainFrameUrl(result);
+  const observed = tree.root.url;
   const facts = classifyCdpFrameUrl(observed, origins);
   if (facts.scope === "outside_policy" || facts.scope === "unsupported")
     throw cdpOriginScopeRefusal("discover_webmcp_tools");
@@ -424,9 +416,7 @@ const requiredDiscoveryFrame = (
     throw new BrowserObservationError("inspect_web_page", "protocol_error");
   if (facts.url === undefined)
     throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
-  const frame = cdpFrameRecordFacts(
-    recordValue(recordValue(recordValue(result)?.frameTree)?.frame),
-  );
+  const frame = tree.root.facts;
   if (
     frame.frameId === null ||
     frame.identityIssue !== null ||
@@ -622,7 +612,7 @@ const registrationSource = (
 
 interface WebMcpResultOptions {
   readonly context: DiscoveryContext;
-  readonly frameTree: unknown;
+  readonly frameTree: CdpFrameTree;
   readonly tools: ReadonlyMap<
     string,
     WebMcpDiscovery["tools"]["items"][number]
@@ -635,7 +625,7 @@ interface WebMcpResultOptions {
 const buildWebMcpResult = (options: WebMcpResultOptions): WebMcpDiscovery => {
   const { context, frameTree, tools, completeness, limitations, available } =
     options;
-  const targetUrl = mainFrameUrl(frameTree) ?? context.target.url;
+  const targetUrl = observedFrameUrl(frameTree.root.url) ?? context.target.url;
   const sanitized = allowedSanitizedUrl(
     targetUrl,
     new Set(context.input.allowed_origins),

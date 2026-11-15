@@ -14,10 +14,11 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import type { ApkSchemeError } from "../domain/apkSignature/apkSignatureSchemes.js";
 import type { ApkSigningBlockError } from "../domain/apkSignature/apkSigningBlock.js";
@@ -53,6 +54,13 @@ export const mapApkBlockError = (
         OPERATION,
         path,
         `This archive uses a Zip64 structure this reader does not decode (${error.detail}).`,
+      );
+    case "multi-disk-unsupported":
+      return new AnalysisUnsupportedTargetError(
+        OPERATION,
+        path,
+        `The selected archive declares an unsupported multi-disk ZIP layout (${error.detail}).`,
+        { remediationAction: "Select a complete single-disk APK/ZIP archive." },
       );
     case "malformed-zip":
       return inputError(
@@ -215,9 +223,10 @@ const artifactReaderFailure = (
         cause,
       });
     case "cancelled":
-      return new AnalysisCancelledError(OPERATION, {
-        cause: artifactFileCancellationCause(cause),
-      });
+      return cancelledBy(
+        OPERATION,
+        carriedReason(artifactFileCancellationCause(cause)),
+      );
     case "limit":
       return new AnalysisResourceConstraintError(
         OPERATION,

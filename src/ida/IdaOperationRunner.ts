@@ -1,3 +1,4 @@
+import type { McpTextReplyKind } from "../providers/McpToolResult.js";
 import type { RegexMatchingDeadline } from "../config/regexMatchingDeadline.js";
 import type { RegexWorkerHeapRequest } from "../config/regexWorkerHeapRequest.js";
 import { z } from "zod";
@@ -19,8 +20,8 @@ import {
 } from "../process/RegexMatcher.js";
 import {
   AnalysisInputError,
-  AnalysisCancelledError,
   AnalysisProtocolError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import {
   functionDossierSchema,
@@ -129,21 +130,19 @@ export class IdaOperationRunner {
   async call(
     tool: string,
     args: Readonly<Record<string, JsonValue>>,
+    reply?: McpTextReplyKind,
   ): Promise<JsonValue> {
     if (this.options.signal?.aborted)
-      throw new AnalysisCancelledError(tool, {
-        cause: this.options.signal.reason,
-      });
+      throw cancelledBy(tool, this.options.signal);
     const scoped =
       this.database === undefined ? args : { ...args, database: this.database };
     const result = await this.connection.call(tool, scoped, {
       signal: this.options.signal,
+      ...(reply === undefined ? {} : { reply }),
     });
     this.raw.push({ tool, arguments: scoped, result });
     if (this.options.signal?.aborted)
-      throw new AnalysisCancelledError(tool, {
-        cause: this.options.signal.reason,
-      });
+      throw cancelledBy(tool, this.options.signal);
     return result;
   }
 
@@ -423,7 +422,14 @@ export class IdaOperationRunner {
       return z
         .string()
         .nullable()
-        .parse(await this.call("decompile_function", { address: fn.address }));
+        .parse(
+          // Legacy decompilation returns plain-text pseudocode.
+          await this.call(
+            "decompile_function",
+            { address: fn.address },
+            "text",
+          ),
+        );
     if (this.protocol === "native") {
       const page = nativeDecompileSchema.parse(
         await this.call("decompile", { addr: fn.address }),
@@ -504,7 +510,9 @@ export class IdaOperationRunner {
       return {
         items: [...result.values()],
         coverage,
+        // An observed graph is available even when its coverage is unknown.
         availability:
+          this.options.callGraphAvailable === false &&
           coverage.status === "unknown"
             ? { available: false, reason: coverage.reason }
             : { available: true },

@@ -1,9 +1,8 @@
 import { z } from "zod";
 import { javascriptSourceRangeSchema } from "./javascriptSourceCoordinates.js";
 import { digestSchema, prefixedDigestSchema } from "../digests.js";
+import { nonEmptyTextSchema } from "../textSchemas.js";
 
-const boundedTextSchema = z.string().min(1);
-const boundedKeySchema = z.string().min(1);
 const unsafePathSegments = new Set(["", ".", ".."]);
 const isSafeRelativePath = (path: string): boolean => {
   if (path.startsWith("/")) return false;
@@ -63,7 +62,7 @@ const applicationUnavailableReasonSchema = z.enum([
 const unavailableFactSchema = z.strictObject({
   available: z.literal(false),
   reason: applicationUnavailableReasonSchema,
-  detail: boundedTextSchema,
+  detail: nonEmptyTextSchema,
 });
 
 const availableArtifactSchema = z
@@ -89,7 +88,7 @@ const applicationArtifactReferenceSchema = z.discriminatedUnion("available", [
 
 const sourceRangeSchema = javascriptSourceRangeSchema.safeExtend({
   kind: z.literal("source-range"),
-  source: boundedTextSchema,
+  source: nonEmptyTextSchema,
 });
 
 const fileOffsetRangeSchema = z
@@ -122,19 +121,19 @@ const applicationLocationSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     kind: z.literal("runtime"),
     capture_sha256: digestSchema,
-    target_key: boundedKeySchema,
-    frame_key: boundedKeySchema.nullable(),
-    script_key: boundedKeySchema.nullable(),
+    target_key: nonEmptyTextSchema,
+    frame_key: nonEmptyTextSchema.nullable(),
+    script_key: nonEmptyTextSchema.nullable(),
   }),
   z.strictObject({
     kind: z.literal("native-address"),
-    address: boundedKeySchema,
-    symbol: boundedTextSchema.nullable(),
+    address: nonEmptyTextSchema,
+    symbol: nonEmptyTextSchema.nullable(),
   }),
   z.strictObject({
     kind: z.literal("package-export"),
-    package_name: boundedKeySchema,
-    export_path: boundedTextSchema,
+    package_name: nonEmptyTextSchema,
+    export_path: nonEmptyTextSchema,
   }),
 ]);
 
@@ -247,7 +246,7 @@ const applicationGraphEvidenceBaseSchema = z.strictObject({
   location: applicationGraphEvidenceLocationSchema,
   extractor: applicationExtractorSchema,
   coverage: applicationCoverageSchema,
-  limitations: z.array(boundedTextSchema),
+  limitations: z.array(nonEmptyTextSchema),
   evidence_ids: z.array(prefixedDigestSchema("ev")),
 });
 
@@ -439,7 +438,7 @@ export const applicationNodeIdentitySchema = z.discriminatedUnion("strategy", [
     strategy: z.literal("artifact-local-key"),
     stability: z.literal("artifact-version"),
     artifact_sha256: digestSchema,
-    namespace: boundedKeySchema,
+    namespace: nonEmptyTextSchema,
     // The exact artifact-local value, such as `""` from `fetch("")`.
     key: z.string(),
   }),
@@ -448,13 +447,13 @@ export const applicationNodeIdentitySchema = z.discriminatedUnion("strategy", [
     stability: z.literal("capture-only"),
     capture_evidence_id: prefixedDigestSchema("ev"),
     capture_sha256: digestSchema,
-    runtime_key: boundedTextSchema,
+    runtime_key: nonEmptyTextSchema,
   }),
   z.strictObject({
     strategy: z.literal("observation-fingerprint"),
     stability: z.literal("observation-only"),
     observation_sha256: digestSchema,
-    scope: boundedTextSchema,
+    scope: nonEmptyTextSchema,
   }),
 ]);
 

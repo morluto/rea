@@ -23,7 +23,6 @@ import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
   AnalysisOutputError,
-  AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -45,6 +44,8 @@ import type {
   ProviderProcessSupervisor,
 } from "./ProviderProcess.js";
 import { OwnedCommandFailure, ownedCommandResources } from "./OwnedCommand.js";
+import { providerOutcomeOf } from "./ProviderOutcome.js";
+import { classifyProviderOutcome } from "./classifyProviderOutcome.js";
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 
 /** Limitations shared by resource-limited artifact producer observations. */
@@ -127,6 +128,7 @@ export class ArtifactAnalysisResources {
             "capacity",
             this.capacity.message,
             this.capacity.details,
+            { measuredExhaustion: true },
           ),
         ),
       );
@@ -514,38 +516,21 @@ export class ArtifactAnalysisResources {
     operation = this.operation,
     budgetParameter?: "producer_limits",
   ): AnalysisError {
-    const capturedOutput =
-      cause.snapshot === null
-        ? undefined
-        : artifactCommandOutput(cause.snapshot);
-    const detail = {
-      cause,
-      ...(capturedOutput === undefined ? {} : { capturedOutput }),
-    };
-    if (cause.reason === "cancelled")
-      return new AnalysisCancelledError(operation, {
-        ...detail,
-        cause:
-          cause.cancellation === undefined ? cause : cause.cancellation.reason,
-      });
-    if (cause.reason === "timeout")
-      return new AnalysisTimeoutError(operation, limits.command_timeout_ms, {
-        ...detail,
+    return classifyProviderOutcome(providerOutcomeOf(cause), {
+      operation,
+      capturedOutput: artifactCommandOutput,
+      timeout: {
+        ms: limits.command_timeout_ms,
         userMessage: `The owned producer command reached its ${String(limits.command_timeout_ms)} ms deadline. This is not a client-side timeout; extending only the MCP client's deadline does not change this budget.`,
         remediationAction:
           budgetParameter === undefined
             ? `REA's fixed producer command deadline is ${String(limits.command_timeout_ms)} ms and this release has no runtime override. Inspect any partial output and cleanup before retrying. Repeating the unchanged request reaches the same deadline.`
             : `${limits.command_timeout_ms < MAX_NODE_TIMER_DELAY_MS ? `Increase ${budgetParameter}.command_timeout_ms above ${String(limits.command_timeout_ms)} milliseconds on the next call (range 1..${String(MAX_NODE_TIMER_DELAY_MS)}); no restart is required.` : `${budgetParameter}.command_timeout_ms is already at the runtime timer maximum ${String(MAX_NODE_TIMER_DELAY_MS)} milliseconds; no higher deadline is supported. Narrow the selected work if that preserves the required observation.`} Inspect retained observations and confirm cleanup before retrying. This does not raise CPU, memory, output, parser or external client limits.`,
-      });
-    if (cause.reason === "output-limit")
-      return new AnalysisResourceConstraintError(
-        operation,
-        "memory",
-        cause.message,
-        { output_bytes: limits.output_bytes },
-        {
-          ...detail,
-          ...(budgetParameter === undefined
+      },
+      outputLimit: {
+        limits: { output_bytes: limits.output_bytes },
+        recovery:
+          budgetParameter === undefined
             ? fixedAllowanceOptions(
                 `The retained command-output allowance of ${String(limits.output_bytes)} bytes (this release has no runtime override)`,
                 "capture",
@@ -553,34 +538,26 @@ export class ArtifactAnalysisResources {
             : {
                 retryable: false,
                 remediationAction: `Increase ${budgetParameter}.output_bytes above ${String(limits.output_bytes)} bytes on the next call; no restart is required. Inspect captured output and confirm cleanup before retrying. This controls collection, not parser, transport, host memory or inherited OS limits. Repeating the unchanged request cannot raise it.`,
-              }),
-        },
-      );
-    if (
-      cause.reason === "process" &&
-      (cause.snapshot?.signal === "SIGXFSZ" ||
-        cause.snapshot?.signal === "SIGXCPU")
-    ) {
-      const signal = cause.snapshot.signal;
-      const reported =
-        effectiveLimits === undefined
-          ? "The effective inherited limit was not reported."
-          : `The effective inherited limits are ${String(effectiveLimits.address_space_bytes)} bytes of address space, ${String(effectiveLimits.file_bytes)} bytes per file, and ${String(effectiveLimits.cpu_seconds)} CPU seconds.`;
-      // A producer can raise SIGXCPU/SIGXFSZ without exhausting the retained
-      // rlimit, so an unchanged retry is not a proven failure.
-      return new AnalysisResourceConstraintError(
-        operation,
-        signal === "SIGXFSZ" ? "file-size" : "cpu",
-        `Producer terminated with ${signal}; the signal's exact cause is not independently established.`,
-        effectiveLimits === undefined ? null : { ...effectiveLimits },
-        {
-          ...detail,
-          retryable: true,
-          remediationAction: `${reported} REA retains the tighter inherited limit. ${budgetParameter === undefined ? "This release has no runtime override for that ceiling." : `Review ${budgetParameter}.${signal === "SIGXFSZ" ? "file_bytes" : "cpu_seconds"} for a new call; a higher requested policy cannot raise a tighter inherited soft or hard limit. No REA restart is needed for a per-call update.`} A smaller artifact may finish inside the retained limit. The signal does not prove that ceiling was exhausted, so an unchanged retry may succeed or may fail the same way.`,
-        },
-      );
-    }
-    return new AnalysisOutputError(operation, cause.message, detail);
+              },
+      },
+      resourceSignal: (signal) => {
+        const reported =
+          effectiveLimits === undefined
+            ? "The effective inherited limit was not reported."
+            : `The effective inherited limits are ${String(effectiveLimits.address_space_bytes)} bytes of address space, ${String(effectiveLimits.file_bytes)} bytes per file, and ${String(effectiveLimits.cpu_seconds)} CPU seconds.`;
+        // A producer can raise SIGXCPU/SIGXFSZ without exhausting the retained
+        // rlimit, so an unchanged retry is not a proven failure.
+        return {
+          limits: effectiveLimits === undefined ? null : { ...effectiveLimits },
+          recovery: {
+            retryable: true,
+            remediationAction: `${reported} REA retains the tighter inherited limit. ${budgetParameter === undefined ? "This release has no runtime override for that ceiling." : `Review ${budgetParameter}.${signal === "SIGXFSZ" ? "file_bytes" : "cpu_seconds"} for a new call; a higher requested policy cannot raise a tighter inherited soft or hard limit. No REA restart is needed for a per-call update.`} A smaller artifact may finish inside the retained limit. The signal does not prove that ceiling was exhausted, so an unchanged retry may succeed or may fail the same way.`,
+          },
+        };
+      },
+      dialect: (outcome, details) =>
+        new AnalysisOutputError(operation, outcome.message, details),
+    });
   }
 
   async finish<T>(

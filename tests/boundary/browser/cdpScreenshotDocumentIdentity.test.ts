@@ -334,13 +334,49 @@ describe("screenshot viewport freshness", () => {
     });
     expect(result).toMatchObject({
       ok: false,
-      error: { reason: "protocol_error" },
+      error: {
+        reason: "protocol_error",
+        command: "Page.getLayoutMetrics",
+        pointer: "/visualViewport",
+      },
     });
     expect(
       browser.commands.filter(
         ({ method }) => method === "Page.captureScreenshot",
       ),
     ).toHaveLength(stage - 1);
+  });
+
+  it("reports a screenshot reply without image data at the protocol boundary", async () => {
+    const { browser, result } = await captureWithFake({
+      commandResult: ({ method }) =>
+        method === "Page.getLayoutMetrics"
+          ? withCssViewport({
+              visualViewport: {
+                pageX: 0,
+                pageY: 0,
+                clientWidth: 2,
+                clientHeight: 2,
+                scale: 1,
+              },
+            })
+          : method === "Page.captureScreenshot"
+            ? { data: 5 }
+            : undefined,
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        reason: "protocol_error",
+        command: "Page.captureScreenshot",
+        pointer: "/data",
+      },
+    });
+    expect(
+      browser.commands.some(
+        ({ method }) => method === "Target.detachFromTarget",
+      ),
+    ).toBe(true);
   });
 });
 
