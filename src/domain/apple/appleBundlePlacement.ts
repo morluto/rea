@@ -53,7 +53,10 @@ const NOT_EVALUATED: Partial<Readonly<Record<PlacementRule, string>>> = {
 };
 
 const pathSchema = z.string().min(1);
-const machOFormatSchema = z.enum(["mach-o", "mach-o-universal"]);
+const machOImageSchema = z.strictObject({
+  path: pathSchema,
+  format: z.enum(["mach-o", "mach-o-universal"]),
+});
 
 const placementFindingSchema = z.strictObject({
   rules: z.array(z.enum(PLACEMENT_RULES)).min(1),
@@ -62,9 +65,8 @@ const placementFindingSchema = z.strictObject({
   location: pathSchema,
   path: pathSchema,
   entry_kind: z.enum(["file", "directory", "symlink"]),
-  mach_o_images: z.array(
-    z.strictObject({ path: pathSchema, format: machOFormatSchema }),
-  ),
+  /** Placed Mach-O images at or below `path`; `mach_o_images` lists each once. */
+  mach_o_image_count: z.int().min(0),
 });
 
 /** Static mismatches between observed placement and Apple's documented bundle layout. */
@@ -80,13 +82,15 @@ export const appleBundlePlacementSchema = z.strictObject({
     }),
   ),
   findings: z.array(placementFindingSchema),
+  /** Each Mach-O image under a finding's path, once, however many findings contain it. */
+  mach_o_images: z.array(machOImageSchema),
 });
 
 type AppleBundlePlacement = z.infer<typeof appleBundlePlacementSchema>;
 type Finding = z.infer<typeof placementFindingSchema>;
 type Bundle = z.infer<typeof appleBundleSchema>;
 type EntryKind = Finding["entry_kind"];
-type Image = Finding["mach_o_images"][number];
+type Image = z.infer<typeof machOImageSchema>;
 
 /** Code locations from Apple's table, relative to a bundle's content directory. */
 const MACOS_CODE_LOCATIONS = [
@@ -132,7 +136,7 @@ export const projectAppleBundlePlacement = (
       groupingDirectories(bundle, tree, bundlePaths),
     ),
   ];
-  const resources = scanEntries(
+  const scanned = scanEntries(
     tree,
     placement,
     new Map(
@@ -144,32 +148,25 @@ export const projectAppleBundlePlacement = (
     ),
     { bundlePaths, targets },
   );
-  const grouping = targets.filter(({ finding }) =>
-    finding.rules.includes("grouping-directory-in-code-location"),
-  );
-  const groupingUnknown = grouping.flatMap(({ unknown }) => unknown);
   const groupingBundles = evaluated.filter(
     (bundle) => codeLocationNames(bundle).length > 0,
   ).length;
   const coverage = ruleCoverage(inventoryComplete);
   const findings = [
-    ...resources.findings,
-    ...targets.flatMap(({ finding }) =>
-      finding.rules.includes("framework-root-content") ||
-      finding.mach_o_images.length > 0
-        ? [finding]
-        : [],
+    ...scanned.findings,
+    ...targets.filter(
+      (finding) =>
+        finding.rules.includes("framework-root-content") ||
+        finding.mach_o_image_count > 0,
     ),
   ];
-  for (const finding of findings)
-    finding.mach_o_images.sort((left, right) => compare(left.path, right.path));
   return {
     reference: APPLE_BUNDLE_PLACEMENT_REFERENCE,
     rules: [
       coverage(
         "code-in-resource-location",
         evaluated.filter(({ layout }) => layout !== "shallow").length,
-        resources.unknown,
+        scanned.resourceUnknown,
       ),
       coverage("standalone-dynamic-library", 0, []),
       coverage("framework-in-nested-bundle", 0, []),
@@ -181,14 +178,21 @@ export const projectAppleBundlePlacement = (
       coverage(
         "grouping-directory-in-code-location",
         groupingBundles,
-        groupingUnknown,
+        scanned.groupingUnknown,
       ),
-      coverage("dotted-directory-name", groupingBundles, groupingUnknown),
+      coverage(
+        "dotted-directory-name",
+        groupingBundles,
+        scanned.groupingUnknown,
+      ),
     ],
     findings: findings.sort(
       (left, right) =>
         compare(left.path, right.path) ||
         compare(left.rules[0] ?? "", right.rules[0] ?? ""),
+    ),
+    mach_o_images: scanned.images.sort((left, right) =>
+      compare(left.path, right.path),
     ),
   };
 };
@@ -219,7 +223,9 @@ const placementScope = ({
 
 /**
  * One pass over file entries: report each outermost Mach-O item under a
- * resource location, and collect Mach-O images under every target directory.
+ * resource location, and count the Mach-O images under every finding. Nested
+ * findings contain the same image, so the image record is retained once and
+ * each containing finding only counts it.
  */
 const scanEntries = (
   tree: AppleBundleTree,
@@ -227,17 +233,24 @@ const scanEntries = (
   resources: ReadonlyMap<string, Bundle>,
   context: {
     readonly bundlePaths: ReadonlySet<string>;
-    readonly targets: readonly Target[];
+    readonly targets: readonly Finding[];
   },
-): { readonly findings: Finding[]; readonly unknown: string[] } => {
-  const targets = new Map<string, Target[]>();
+): {
+  readonly findings: Finding[];
+  readonly images: Image[];
+  readonly resourceUnknown: string[];
+  readonly groupingUnknown: string[];
+} => {
+  const targets = new Map<string, Finding[]>();
   for (const target of context.targets) {
-    const scoped = targets.get(target.finding.path) ?? [];
+    const scoped = targets.get(target.path) ?? [];
     scoped.push(target);
-    targets.set(target.finding.path, scoped);
+    targets.set(target.path, scoped);
   }
   const findings = new Map<string, Finding>();
-  const unknown: string[] = [];
+  const images: Image[] = [];
+  const resourceUnknown: string[] = [];
+  const groupingUnknown: string[] = [];
   for (const entry of fileEntries(tree)) {
     // The index keeps one occurrence of a repeated path, so its content is unknown.
     const content = tree.duplicateFiles.has(entry.path)
@@ -246,36 +259,48 @@ const scanEntries = (
     if (content === "other") continue;
     const ancestors = placement.ancestors(entry.path);
     if (ancestors === null) continue;
-    const image =
-      content === "unknown" ? null : { path: entry.path, format: content };
-    for (const path of [...ancestors, entry.path])
-      for (const target of targets.get(path) ?? [])
-        if (image === null) target.unknown.push(entry.path);
-        else target.finding.mach_o_images.push(image);
+    const containing = [...ancestors, entry.path].flatMap(
+      (path) => targets.get(path) ?? [],
+    );
     const index = ancestors.findIndex((path) => resources.has(path));
     const location = ancestors[index];
     const owner = location === undefined ? undefined : resources.get(location);
-    if (location === undefined || owner === undefined) continue;
-    if (image === null) {
-      unknown.push(entry.path);
+    if (content === "unknown") {
+      if (owner !== undefined) resourceUnknown.push(entry.path);
+      if (
+        containing.some(({ rules }) =>
+          rules.includes("grouping-directory-in-code-location"),
+        )
+      )
+        groupingUnknown.push(entry.path);
       continue;
     }
-    // The outermost nested bundle is the misplaced item; otherwise the file is.
-    const item =
-      ancestors
-        .slice(index + 1)
-        .find((path) => context.bundlePaths.has(path)) ?? entry.path;
-    const finding =
-      findings.get(item) ??
-      createFinding(["code-in-resource-location"], owner, {
-        location,
-        path: item,
-        kind: item === entry.path ? "file" : "directory",
-      });
-    finding.mach_o_images.push(image);
-    findings.set(item, finding);
+    if (location !== undefined && owner !== undefined) {
+      // The outermost nested bundle is the misplaced item; otherwise the file is.
+      const item =
+        ancestors
+          .slice(index + 1)
+          .find((path) => context.bundlePaths.has(path)) ?? entry.path;
+      const finding =
+        findings.get(item) ??
+        createFinding(["code-in-resource-location"], owner, {
+          location,
+          path: item,
+          kind: item === entry.path ? "file" : "directory",
+        });
+      findings.set(item, finding);
+      containing.push(finding);
+    }
+    if (containing.length === 0) continue;
+    images.push({ path: entry.path, format: content });
+    for (const finding of containing) finding.mach_o_image_count += 1;
   }
-  return { findings: [...findings.values()], unknown };
+  return {
+    findings: [...findings.values()],
+    images,
+    resourceUnknown,
+    groupingUnknown,
+  };
 };
 
 const ruleCoverage =
@@ -309,12 +334,6 @@ const ruleCoverage =
     };
   };
 
-/** A directory or entry whose Mach-O content is collected in the entry pass. */
-interface Target {
-  readonly finding: Finding;
-  readonly unknown: string[];
-}
-
 const createFinding = (
   rules: Finding["rules"],
   bundle: Bundle,
@@ -334,7 +353,7 @@ const createFinding = (
   location: location === "" ? "." : location,
   path,
   entry_kind: kind,
-  mach_o_images: [],
+  mach_o_image_count: 0,
 });
 
 const fileEntries = (tree: AppleBundleTree): AppleAnatomyEntry[] =>
@@ -412,19 +431,17 @@ const isVersionedFramework = ({ layout, role }: Bundle): boolean =>
 const frameworkRootContent = (
   bundle: Bundle,
   tree: AppleBundleTree,
-): Target[] => {
+): Finding[] => {
   if (!isVersionedFramework(bundle)) return [];
   const root = directoryOf(bundle.path);
   const versions = namedDirectory(tree, root, "Versions");
-  const offender = (location: string, name: string, kind: EntryKind) => ({
-    finding: createFinding(["framework-root-content"], bundle, {
+  const offender = (location: string, name: string, kind: EntryKind) =>
+    createFinding(["framework-root-content"], bundle, {
       location,
       path: joinPath(location, name),
       kind,
-    }),
-    unknown: [],
-  });
-  const targets: Target[] = [];
+    });
+  const targets: Finding[] = [];
   for (const [name, kind] of childKinds(tree, root))
     if (kind !== "symlink" && joinPath(root, name) !== versions)
       targets.push(offender(root, name, kind));
@@ -460,7 +477,7 @@ const groupingDirectories = (
   bundle: Bundle,
   tree: AppleBundleTree,
   bundlePaths: ReadonlySet<string>,
-): Target[] =>
+): Finding[] =>
   codeLocations(bundle, tree).flatMap((location) =>
     [...childKinds(tree, location)].flatMap(([name, kind]) => {
       const path = joinPath(location, name);
@@ -469,14 +486,7 @@ const groupingDirectories = (
         ? ["grouping-directory-in-code-location", "dotted-directory-name"]
         : ["grouping-directory-in-code-location"];
       return [
-        {
-          finding: createFinding(rules, bundle, {
-            location,
-            path,
-            kind: "directory",
-          }),
-          unknown: [],
-        },
+        createFinding(rules, bundle, { location, path, kind: "directory" }),
       ];
     }),
   );

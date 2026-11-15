@@ -1175,7 +1175,7 @@ describe("Apple bundle placement findings", () => {
         location: `${framework}/Versions/A/Resources`,
         path: `${framework}/Versions/A/Resources/tool`,
         entry_kind: "file",
-        mach_o_images: [image(`${framework}/Versions/A/Resources/tool`)],
+        mach_o_image_count: 1,
       },
       {
         rules: ["framework-root-content"],
@@ -1184,7 +1184,7 @@ describe("Apple bundle placement findings", () => {
         location: framework,
         path: `${framework}/libstray.dylib`,
         entry_kind: "file",
-        mach_o_images: [image(`${framework}/libstray.dylib`)],
+        mach_o_image_count: 1,
       },
       {
         rules: ["grouping-directory-in-code-location", "dotted-directory-name"],
@@ -1193,9 +1193,7 @@ describe("Apple bundle placement findings", () => {
         location: "Contents/PlugIns",
         path: "Contents/PlugIns/Group.v2",
         entry_kind: "directory",
-        mach_o_images: [
-          image("Contents/PlugIns/Group.v2/Inner.bundle/Contents/MacOS/Inner"),
-        ],
+        mach_o_image_count: 1,
       },
       {
         rules: ["grouping-directory-in-code-location"],
@@ -1204,11 +1202,7 @@ describe("Apple bundle placement findings", () => {
         location: "Contents/PlugIns",
         path: "Contents/PlugIns/Waffles",
         entry_kind: "directory",
-        mach_o_images: [
-          image(
-            "Contents/PlugIns/Waffles/Belgian.plugin/Contents/MacOS/Belgian",
-          ),
-        ],
+        mach_o_image_count: 1,
       },
       {
         rules: ["code-in-resource-location"],
@@ -1217,10 +1211,7 @@ describe("Apple bundle placement findings", () => {
         location: "Contents/Resources",
         path: "Contents/Resources/Nested.bundle",
         entry_kind: "directory",
-        mach_o_images: [
-          image("Contents/Resources/Nested.bundle/Contents/MacOS/Nested"),
-          image("Contents/Resources/Nested.bundle/Contents/MacOS/Tool"),
-        ],
+        mach_o_image_count: 2,
       },
       {
         rules: ["code-in-resource-location"],
@@ -1229,7 +1220,7 @@ describe("Apple bundle placement findings", () => {
         location: "Contents/Resources",
         path: "Contents/Resources/libextra.dylib",
         entry_kind: "file",
-        mach_o_images: [image("Contents/Resources/libextra.dylib")],
+        mach_o_image_count: 1,
       },
       {
         rules: ["code-in-resource-location"],
@@ -1238,7 +1229,7 @@ describe("Apple bundle placement findings", () => {
         location: "Contents/Resources",
         path: "Contents/Resources/payload.dat",
         entry_kind: "file",
-        mach_o_images: [image("Contents/Resources/payload.dat")],
+        mach_o_image_count: 1,
       },
     ]);
     expect(ruleCoverage(result)).toEqual({
@@ -1251,6 +1242,54 @@ describe("Apple bundle placement findings", () => {
     });
     for (const { apple_rule: rule } of placement?.rules ?? [])
       expect(rule.length).toBeGreaterThan(0);
+    // Images outside every finding, such as the main executable, are not listed.
+    expect(placement?.mach_o_images).toEqual([
+      image(`${framework}/Versions/A/Resources/tool`),
+      image(`${framework}/libstray.dylib`),
+      image("Contents/PlugIns/Group.v2/Inner.bundle/Contents/MacOS/Inner"),
+      image("Contents/PlugIns/Waffles/Belgian.plugin/Contents/MacOS/Belgian"),
+      image("Contents/Resources/Nested.bundle/Contents/MacOS/Nested"),
+      image("Contents/Resources/Nested.bundle/Contents/MacOS/Tool"),
+      image("Contents/Resources/libextra.dylib"),
+      image("Contents/Resources/payload.dat"),
+    ]);
+  });
+});
+
+describe("Apple bundle placement image records", () => {
+  it("lists an image once however many nested findings contain it", () => {
+    const outer = "Contents/PlugIns/Group";
+    const inner = `${outer}/Inner.bundle/Contents/PlugIns/Sub`;
+    const result = project(
+      inventoryEvidence("directory", "Fixture.app", [
+        { path: "Contents/Info.plist", format: "plist" },
+        macho("Contents/MacOS/Fixture"),
+        { path: `${outer}/Inner.bundle/Contents/Info.plist`, format: "plist" },
+        macho(`${outer}/Inner.bundle/Contents/MacOS/Inner`),
+        macho(`${inner}/Deep.bundle/Contents/MacOS/Deep`),
+        { path: `${inner}/blob`, format: "unknown" },
+      ]),
+    );
+    const placement = result.bundle_placement;
+    expect(
+      placement?.findings.map(({ path, mach_o_image_count: count }) => [
+        path,
+        count,
+      ]),
+    ).toEqual([
+      [outer, 2],
+      [inner, 1],
+    ]);
+    expect(placement?.mach_o_images).toEqual([
+      image(`${outer}/Inner.bundle/Contents/MacOS/Inner`),
+      image(`${inner}/Deep.bundle/Contents/MacOS/Deep`),
+    ]);
+    const grouping = placement?.rules.find(
+      ({ rule }) => rule === "grouping-directory-in-code-location",
+    );
+    expect(grouping?.limitations).toEqual([
+      expect.stringMatching(/^1 examined file has no byte-established format/u),
+    ]);
   });
 });
 
@@ -1275,14 +1314,8 @@ describe("Apple framework placement", () => {
           location,
           path,
           entry_kind: kind,
-          mach_o_images: images,
-        }) => [
-          rules,
-          location,
-          path,
-          kind,
-          images.map(({ path: imagePath }) => imagePath),
-        ],
+          mach_o_image_count: images,
+        }) => [rules, location, path, kind, images],
       ),
     ).toEqual([
       [
@@ -1290,29 +1323,32 @@ describe("Apple framework placement", () => {
         framework,
         `${framework}/Headers`,
         "directory",
-        [],
+        0,
       ],
       [
         ["framework-root-content"],
         `${framework}/Versions`,
         `${framework}/Versions/B`,
         "symlink",
-        [],
+        0,
       ],
       [
         ["framework-root-content"],
         `${framework}/Versions`,
         `${framework}/Versions/Current`,
         "directory",
-        [`${framework}/Versions/Current/Demo`],
+        1,
       ],
       [
         ["framework-root-content"],
         `${framework}/Versions`,
         `${framework}/Versions/notes.txt`,
         "file",
-        [],
+        0,
       ],
+    ]);
+    expect(result.bundle_placement?.mach_o_images).toEqual([
+      image(`${framework}/Versions/Current/Demo`),
     ]);
   });
 });
@@ -1384,7 +1420,7 @@ describe("Apple bundle placement coverage", () => {
         location: `${app}/PlugIns`,
         path: `${app}/PlugIns/Group`,
         entry_kind: "directory",
-        mach_o_images: [image(`${app}/PlugIns/Group/Late.appex/Late`)],
+        mach_o_image_count: 1,
       },
     ]);
     expect(ruleCoverage(result)).toEqual({

@@ -171,9 +171,7 @@ cliTest(
         location: "Contents/Resources",
         path: "Contents/Resources/payload.dat",
         entry_kind: "file",
-        mach_o_images: [
-          { path: "Contents/Resources/payload.dat", format: "mach-o" },
-        ],
+        mach_o_image_count: 1,
       },
     ]);
   },

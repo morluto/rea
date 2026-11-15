@@ -181,22 +181,28 @@ is static: it never signs, verifies, or launches target code.
 
 Each finding lists the `rules` it cites, the `bundle_path` and `bundle_layout`
 whose rule applies, the examined `location`, the offending `path` and its
-`entry_kind`, and the `mach_o_images` it rests on. A Mach-O image is a file whose
-inventory format, `mach-o` or `mach-o-universal`, comes from its magic bytes. The
-filename extension is never the basis, so scripts and other files are resources.
+`entry_kind`, and `mach_o_image_count`, the number of Mach-O images at or below
+`path`. `mach_o_images` lists each of those images once, with its `path` and
+`format`. A finding rests on the listed images at or below its `path`, so nested
+findings share image records instead of repeating them, and the output grows
+with the inventory rather than with nesting depth.
+
+A Mach-O image is a file whose inventory format, `mach-o` or
+`mach-o-universal`, comes from its magic bytes. The filename extension is never
+the basis, so scripts and other files are resources.
 Members of inventoried archives, such as files inside `app.asar` or an
 application found inside an inventoried `.zip`, are not placed in the bundle and
 are not examined. A path the inventory repeats has no single content identity,
 so it is examined as unknown.
 
-| Rule                                  | Bundles                                                   | Finding                                                                                                                                                                         |
-| ------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `code-in-resource-location`           | `macos-deep`, `versioned-framework`                       | The outermost item under `Contents/Resources/` or `Versions/<version>/Resources/` that is or contains a Mach-O image. A nested bundle is reported once, with all of its images. |
-| `framework-root-content`              | `versioned-framework` with the `framework` role           | A framework root entry other than `Versions/` and symlinks, or a `Versions/` entry other than a version directory and the `Current` symlink.                                    |
-| `grouping-directory-in-code-location` | `macos-deep`, `versioned-framework`, iOS-family `shallow` | A directory directly in a code location that contains a Mach-O image and that `bundles` does not list.                                                                          |
-| `dotted-directory-name`               | As above                                                  | Also cited by a grouping-directory finding whose name contains a dot.                                                                                                           |
-| `standalone-dynamic-library`          | None                                                      | Not evaluated.                                                                                                                                                                  |
-| `framework-in-nested-bundle`          | None                                                      | Not evaluated.                                                                                                                                                                  |
+| Rule                                  | Bundles                                                   | Finding                                                                                                                                                                             |
+| ------------------------------------- | --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `code-in-resource-location`           | `macos-deep`, `versioned-framework`                       | The outermost item under `Contents/Resources/` or `Versions/<version>/Resources/` that is or contains a Mach-O image. A nested bundle is reported once, counting all of its images. |
+| `framework-root-content`              | `versioned-framework` with the `framework` role           | A framework root entry other than `Versions/` and symlinks, or a `Versions/` entry other than a version directory and the `Current` symlink.                                        |
+| `grouping-directory-in-code-location` | `macos-deep`, `versioned-framework`, iOS-family `shallow` | A directory directly in a code location that contains a Mach-O image and that `bundles` does not list.                                                                              |
+| `dotted-directory-name`               | As above                                                  | Also cited by a grouping-directory finding whose name contains a dot.                                                                                                               |
+| `standalone-dynamic-library`          | None                                                      | Not evaluated.                                                                                                                                                                      |
+| `framework-in-nested-bundle`          | None                                                      | Not evaluated.                                                                                                                                                                      |
 
 Code locations follow Apple's table. In a `macos-deep` bundle they are
 `Contents/MacOS/`, `Frameworks/`, `PlugIns/`, `Helpers/`, `XPCServices/`, and
