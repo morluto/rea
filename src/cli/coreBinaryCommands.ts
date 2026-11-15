@@ -381,7 +381,7 @@ const registerSearchCommand = (
   registerContractCommand(
     cli,
     logger,
-    toolContract("search_strings"),
+    contractNamed(OFFICIAL_TOOL_CONTRACTS, "search_strings"),
     {
       command: CLI_COMMANDS.search,
       description: `Search every analyzed string or procedure name. ${patternSelectorGuidance} ${equalSelectorGuidance}`,
@@ -401,7 +401,12 @@ const registerSearchCommand = (
       },
       operationBy: {
         option: "kind",
-        contracts: { procedures: toolContract("search_procedures") },
+        contracts: {
+          procedures: contractNamed(
+            OFFICIAL_TOOL_CONTRACTS,
+            "search_procedures",
+          ),
+        },
       },
       omit: {
         ...noDocument,
