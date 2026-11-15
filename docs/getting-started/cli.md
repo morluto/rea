@@ -220,7 +220,7 @@ or repeat it to select several types.
 Selection limits decoding to the selected types; member references remain an
 assembly-wide inventory, so the output can still be large.
 
-Select `--detail summary --evidence-bundle /absolute/path/members.json` to
+Select `--detail summary --evidence_output /absolute/path/members.json` to
 receive identity, selection, coverage, limitations and collection counts while
 saving the complete original Evidence in a new bundle. Summary requires that
 explicit destination; existing files are preserved. Later

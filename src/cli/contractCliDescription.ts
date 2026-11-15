@@ -196,7 +196,8 @@ export interface CliContractProjection<
    * Checks of `jsonInputs` fields, run on each decoded input as soon as it
    * is read, in argv order, so a refused input stops the command before the
    * next input is read. Each check's value reaches the handler as
-   * `checked`; the contract still admits the whole input afterwards.
+   * `checked`; the contract then admits the remaining input, so a checked
+   * document is not walked and copied twice.
    */
   readonly jsonInputChecks?: { readonly [Key in Field]?: CliJsonInputCheck };
   /**
@@ -2431,6 +2432,7 @@ export const describeContractCommand = <
             sessionTarget === undefined &&
             evidenceTargets === undefined &&
             handlerFields.length === 0,
+          checkedFields: Object.keys(jsonInputChecks),
         },
         selectedValues,
         toContractInput,
@@ -2606,13 +2608,24 @@ const admitInvocation = (
      * target or handler fills one.
      */
     readonly wholeInput: boolean;
+    /**
+     * `jsonInputChecks` fields. Their checks already admitted the decoded
+     * documents, so the whole-input parse does not walk and copy them again.
+     */
+    readonly checkedFields: readonly string[];
   },
   values: Readonly<Record<string, unknown>>,
   toContractInput: ContractCliDescription["toContractInput"],
   rename: (field: string) => string,
 ): Result<ContractCliAdmission, AnalysisInputError> => {
-  const { evidenceDelivery, viewDelivery, parameters, shape, wholeInput } =
-    command;
+  const {
+    evidenceDelivery,
+    viewDelivery,
+    parameters,
+    shape,
+    wholeInput,
+    checkedFields,
+  } = command;
   const inline = decodeInlineJson(contract.name, parameters, values);
   if (!inline.ok) return inline;
   const decoded = inline.value;
@@ -2635,8 +2648,36 @@ const admitInvocation = (
       : { detail }),
     ...(selected === undefined ? {} : { view: selected }),
   };
+  const schema = contract.inputSchema;
+  const unchecked =
+    checkedFields.length > 0 && schema instanceof z.ZodObject
+      ? schema.omit(
+          Object.fromEntries(
+            checkedFields.map((field) => [field, true]),
+          ) as Record<string, true> & Record<number, never>,
+        )
+      : undefined;
   const parseCandidate = (): Result<unknown, AnalysisInputError> => {
-    const admitted = contract.inputSchema.safeParse(candidate);
+    if (unchecked !== undefined) {
+      const rest: Record<string, unknown> = { ...candidate };
+      const documents: Record<string, unknown> = {};
+      for (const field of checkedFields)
+        if (Object.hasOwn(rest, field)) {
+          documents[field] = rest[field];
+          delete rest[field];
+        }
+      const admitted = unchecked.safeParse(rest);
+      return admitted.success
+        ? ok({ ...admitted.data, ...documents })
+        : err(
+            analysisInputErrorFromIssues(
+              contract.name,
+              admitted.error.issues,
+              candidate,
+            ),
+          );
+    }
+    const admitted = schema.safeParse(candidate);
     return admitted.success
       ? ok(admitted.data)
       : err(

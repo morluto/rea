@@ -858,7 +858,13 @@ describe("JSON decoded when contract commands run", () => {
                 ...(detail === undefined ? {} : { detail }),
                 ...supplied,
               }).success;
-            if (description.admit(values).ok !== expected)
+            const admitted = description.admit(values).ok;
+            // A checked JSON input is admitted by its check, which the
+            // command runs as soon as the input is read, and may be
+            // stricter than the contract; the contract admits the rest.
+            const check = parameter.checkJsonInput?.(decoded);
+            const refusedByCheck = check !== undefined && !check.ok;
+            if (expected ? !admitted : admitted && !refusedByCheck)
               mismatches.push(
                 `${parameter.key} ${String(detail)} ${text} expected ${String(expected)}`,
               );
