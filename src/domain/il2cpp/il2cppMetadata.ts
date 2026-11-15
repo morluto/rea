@@ -5,7 +5,24 @@ import {
   localPathStringSchema,
 } from "../localPath.js";
 import { canonicalBase64Schema } from "../stringPatterns.js";
+import type { MachoSliceArchitecture } from "../apple/machoTargetSelection.js";
 import { firstDeclaringTypeCycle } from "./il2cppDeclaringTypes.js";
+
+/** The public `binary_architecture` values, in the native reader's spelling. */
+const IL2CPP_BINARY_ARCHITECTURES = ["arm64", "amd64"] as const;
+
+/**
+ * Each public `binary_architecture` value as the shared Mach-O slice
+ * selector it means; `amd64` is the x86_64 family.
+ */
+export const IL2CPP_SLICE_SELECTORS = {
+  arm64: "arm64",
+  amd64: "x86_64",
+} as const satisfies Record<
+  (typeof IL2CPP_BINARY_ARCHITECTURES)[number],
+  MachoSliceArchitecture
+>;
+export type Il2cppBinaryArchitecture = keyof typeof IL2CPP_SLICE_SELECTORS;
 
 /** Unsigned little-endian signature observed at file offset zero. */
 export const IL2CPP_METADATA_MAGIC = 0xfab11baf;
@@ -106,7 +123,7 @@ export const inspectIl2cppMetadataInputSchema = z
         "Absolute path to the caller-selected matching 64-bit IL2CPP binary (Mach-O GameAssembly.dylib, PE GameAssembly.dll or ELF libil2cpp.so); static reading, never executed",
       ),
     binary_architecture: z
-      .enum(["arm64", "amd64"])
+      .enum(IL2CPP_BINARY_ARCHITECTURES)
       .optional()
       .describe(
         "Slice to read from a universal Mach-O binary_path; required for universal binaries and rejected otherwise",

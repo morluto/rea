@@ -1,3 +1,4 @@
+import { fixedAllowanceOptions } from "../../../domain/fixedAllowanceRemediation.js";
 import { getHeapStatistics } from "node:v8";
 import { LosslessNumber, isSafeNumber } from "lossless-json";
 import type {
@@ -36,6 +37,7 @@ const readRecord = (bytes: Buffer): unknown => {
       "memory",
       "Insufficient heap headroom for trace record expansion.",
       { input_bytes: bytes.length, required_headroom_bytes: required },
+      { measuredExhaustion: true },
     );
   let value: string;
   try {
@@ -141,14 +143,34 @@ class TraceStreamRead {
       raw = readRecord(line.bytes);
     } catch (cause) {
       if (!(cause instanceof CaptureFormatError)) throw cause;
-      if (cause.reason === "input-limit")
+      if (cause.reason === "input-limit") {
+        // The parser names the allowance it exhausted: node count or depth.
+        const allowance = cause.allowance;
         throw new AnalysisResourceConstraintError(
           PLAYWRIGHT_TRACE_OPERATION,
           "memory",
           cause.message,
-          { parser_nodes: PLAYWRIGHT_TRACE_LIMITS.factsBytes / 256 },
-          { cause },
+          allowance === undefined
+            ? null
+            : {
+                [allowance.kind === "parser-nodes"
+                  ? "parser_nodes"
+                  : "nesting_levels"]: allowance.limit,
+              },
+          {
+            cause,
+            ...fixedAllowanceOptions(
+              allowance?.kind === "nesting-depth"
+                ? "The Playwright trace record nesting allowance"
+                : "The Playwright trace record parser allowance",
+              "parser",
+              allowance === undefined
+                ? {}
+                : { limit: allowance.limit, unit: allowance.unit },
+            ),
+          },
         );
+      }
       this.diagnostic(line.line, "malformed-record", cause.message);
       this.#headerSeen = true;
       return;

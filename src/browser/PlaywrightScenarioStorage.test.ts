@@ -61,7 +61,8 @@ class FakeCdp extends EventEmitter {
     if (method === "Storage.getStorageKey")
       return { storageKey: this.storageKey };
     if (method === "Page.getFrameTree") return { frameTree: this.frameTree };
-    if (method === "Debugger.evaluateOnCallFrame") return {};
+    if (method === "Debugger.evaluateOnCallFrame")
+      return { result: { type: "undefined" } };
     return {};
   }
 
