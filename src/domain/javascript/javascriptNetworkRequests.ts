@@ -32,7 +32,7 @@ export const isBrowserNetworkRequest = (
 const isXhrOpenRequest = (
   node: t.Node,
   bindings: JavaScriptSemanticAnalysisState,
-  index?: Pick<JavaScriptBindingIndex, "referenceMayHaveChangedAt">,
+  index?: Pick<JavaScriptBindingIndex, "mayObserve">,
 ): boolean | undefined =>
   (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
   isIntrinsicInstanceMethodCall(

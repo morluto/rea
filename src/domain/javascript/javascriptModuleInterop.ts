@@ -30,7 +30,11 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { semanticKnownArrayIterationAt } from "./javascriptSemanticReferenceSources.js";
-import { opaqueCodeMayRebindBinding } from "./javascriptSemanticEffectLog.js";
+import {
+  opaqueCodeMayRebindBinding,
+  semanticAmbientIntrinsicWrites,
+  semanticAmbientWriteGeneration,
+} from "./javascriptSemanticEffectLog.js";
 import { semanticDirectEvalRecorded } from "./javascriptSemanticEffectRecord.js";
 
 // Match the complete Rolldown runtime operations, including its live getters.
@@ -906,4 +910,30 @@ const controlBodyOperation = (node: t.Node): t.Node => {
     node = statement;
   }
   return node;
+};
+
+const ambientWriteInterops = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  {
+    readonly generation: number;
+    readonly interop: ReturnType<typeof createSemanticModuleInterop>;
+  }
+>();
+
+/**
+ * Module interop that retains every recorded ambient global write, so an
+ * intrinsic invocation is resolved only while its intrinsic is unreplaced at
+ * the call. It is rebuilt when a later ambient write is recorded.
+ */
+export const semanticModuleInteropWithAmbientWrites = (
+  state: JavaScriptSemanticAnalysisState,
+): ReturnType<typeof createSemanticModuleInterop> => {
+  const generation = semanticAmbientWriteGeneration(state);
+  const prior = ambientWriteInterops.get(state);
+  if (prior?.generation === generation) return prior.interop;
+  const interop = createSemanticModuleInterop(state);
+  for (const { site, path } of semanticAmbientIntrinsicWrites(state))
+    interop.retainWrite(site, path);
+  ambientWriteInterops.set(state, { generation, interop });
+  return interop;
 };

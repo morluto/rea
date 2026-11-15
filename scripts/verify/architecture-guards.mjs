@@ -98,7 +98,7 @@ check(
 check(
   "reader-side prototype-link member check (use isIntrinsicInstanceMethodCall)",
   files,
-  /referenceMayHaveChangedAt\([^;]*\["__proto__"\]/u,
+  /mayObserve\([^;]*\["__proto__"\]/u,
   ["src/domain/javascript/javascriptSemanticIntrinsicInstances.ts"],
 );
 

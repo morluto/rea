@@ -53,7 +53,7 @@ export const isIntrinsicInstanceMethodCall = (
   node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
   bindings: JavaScriptSemanticAnalysisState,
   intrinsic: JavaScriptIntrinsicInstanceMethods,
-  index?: Pick<JavaScriptBindingIndex, "referenceMayHaveChangedAt">,
+  index?: Pick<JavaScriptBindingIndex, "mayObserve">,
 ): boolean | undefined => {
   const callee = unwrapJavaScriptExpression(node.callee).node;
   if (!t.isMemberExpression(callee) && !t.isOptionalMemberExpression(callee))
@@ -73,8 +73,8 @@ export const isIntrinsicInstanceMethodCall = (
   while (t.isIdentifier(receiver)) {
     if (
       index !== undefined &&
-      (index.referenceMayHaveChangedAt(node, receiver, [method]) ||
-        index.referenceMayHaveChangedAt(node, receiver, ["__proto__"]))
+      (index.mayObserve(node, receiver, [method]) ||
+        index.mayObserve(node, receiver, ["__proto__"]))
     )
       return false;
     const binding = resolveSemanticBindingState(
@@ -123,7 +123,7 @@ export const isIntrinsicInstanceMethodCall = (
 export const isIntrinsicMapLookup = (
   node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
   bindings: JavaScriptSemanticAnalysisState,
-  index?: Pick<JavaScriptBindingIndex, "referenceMayHaveChangedAt">,
+  index?: Pick<JavaScriptBindingIndex, "mayObserve">,
 ): boolean | undefined =>
   isIntrinsicInstanceMethodCall(
     node,
