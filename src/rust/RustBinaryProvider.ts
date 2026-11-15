@@ -46,6 +46,7 @@ import {
   type RustProducerLimits,
 } from "../domain/rust/rustResourceLimits.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_rust_binary";
 
@@ -389,7 +390,7 @@ const artifactFailure = (
     cause,
     diagnostics: {
       path,
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     },
   });
 };

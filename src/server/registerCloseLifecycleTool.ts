@@ -15,6 +15,7 @@ import { mcpProgressReporter } from "./mcpProgress.js";
 import type { LifecycleToolRegistration } from "./registerSessionTools.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Expected lifecycle failures keep the same typed result when a child rejects. */
 const closeResult = async <Value>(
@@ -55,10 +56,7 @@ export const registerCloseLifecycleTool = ({
       if (resourceClose.status === "rejected")
         logger.warn(
           {
-            error:
-              resourceClose.reason instanceof Error
-                ? resourceClose.reason.message
-                : String(resourceClose.reason),
+            error: errorMessage(resourceClose.reason),
           },
           "Process capture cleanup threw while closing the session",
         );
