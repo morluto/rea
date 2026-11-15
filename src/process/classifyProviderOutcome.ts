@@ -138,7 +138,15 @@ export const classifyProviderOutcome = (
     }
     case "runtime-exhausted": {
       const reported = context.runtimeExhaustion?.(outcome.exhaustion);
-      const { area, runtime, stream, line, lineComplete } = outcome.exhaustion;
+      const {
+        area,
+        runtime,
+        stream,
+        line,
+        lineComplete,
+        truncated,
+        invalidUtf8,
+      } = outcome.exhaustion;
       return new AnalysisResourceConstraintError(
         operation,
         area === "native-thread" ? "capacity" : "memory",
@@ -156,6 +164,9 @@ export const classifyProviderOutcome = (
               stream,
               line,
               line_complete: lineComplete,
+              // The same omission flags as Ghidra's observed-marker projection.
+              ...(truncated ? { truncated: true } : {}),
+              ...(invalidUtf8 ? { invalid_utf8: true } : {}),
             },
           },
           ...(area === "native-thread"

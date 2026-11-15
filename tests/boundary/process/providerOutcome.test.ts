@@ -205,6 +205,23 @@ it("observes a JVM out-of-memory report past the retained output budget", async 
   expect(providerOutcomeOf(unscanned)).toMatchObject({ kind: "output-limit" });
 });
 
+it("keeps the omission of a long out-of-memory line on its report", async () => {
+  const report = `${"x".repeat(2048)} java.lang.OutOfMemoryError: Java heap space`;
+  const script = `process.stderr.write(${JSON.stringify(report)} + "\\n"); process.exitCode = 1`;
+  const failure = await runOwnedCommand(node(script), {
+    timeoutMs: 10_000,
+    diagnosticBytes: 64,
+    runtime: "jvm",
+  }).catch((cause: unknown) => cause);
+  const outcome = providerOutcomeOf(failure);
+  expect(outcome).toMatchObject({
+    kind: "runtime-exhausted",
+    exhaustion: { area: "heap", truncated: true, invalidUtf8: false },
+  });
+  if (outcome?.kind !== "runtime-exhausted") throw failure;
+  expect(outcome.exhaustion.line.length).toBeLessThan(report.length);
+});
+
 it("observes a real V8 heap exhaustion report", async () => {
   const failure = await runOwnedCommand(
     {

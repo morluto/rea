@@ -45,7 +45,12 @@ export interface RuntimeExhaustion {
   readonly stream: "stdout" | "stderr";
   /** The reporting line, bounded; it may be cut on either side. */
   readonly line: string;
+  /** False when the line's end was cut or not yet observed. */
   readonly lineComplete: boolean;
+  /** True when the scanner omitted bytes on either side of the line. */
+  readonly truncated: boolean;
+  /** True when the retained line bytes were not valid UTF-8. */
+  readonly invalidUtf8: boolean;
 }
 
 /** Name the memory area a JVM out-of-memory line reports, if it names one. */
@@ -66,4 +71,6 @@ export const runtimeExhaustion = (
   stream,
   line: token.line,
   lineComplete: token.trailingContextIncomplete !== true,
+  truncated: token.truncated,
+  invalidUtf8: token.invalidUtf8 === true,
 });
