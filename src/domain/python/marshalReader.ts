@@ -423,6 +423,27 @@ export abstract class MarshalReader<V extends { readonly kind: string }> {
     return value;
   }
 
+  /** CPython `TYPE_INT64`: a signed little-endian 64-bit integer. */
+  i64(): bigint {
+    if (this.offset > this.bytes.length - 8)
+      this.malformed(
+        "truncated",
+        "Marshal stream ended inside a 64-bit integer.",
+      );
+    const value = this.bytes.readBigInt64LE(this.offset);
+    this.offset += 8;
+    return value;
+  }
+
+  /** CPython `TYPE_BINARY_FLOAT`: a little-endian IEEE 754 double. */
+  f64(): number {
+    if (this.offset > this.bytes.length - 8)
+      this.malformed("truncated", "Marshal stream ended inside a float.");
+    const value = this.bytes.readDoubleLE(this.offset);
+    this.offset += 8;
+    return value;
+  }
+
   /** CPython `r_long` count fields that its constructors require non-negative. */
   nonNegativeInt32(
     field: string,
