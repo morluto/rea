@@ -88,6 +88,8 @@ export class EvidenceFileError extends AnalysisError {
   /** Schema issues relative to the selected file's JSON root, never the request envelope. */
   readonly contentIssues: readonly AnalysisInputIssue[] | undefined;
   readonly systemCode: "EFBIG" | "ENOSPC" | "EDQUOT" | undefined;
+  /** For `wrong-kind`: the recognized kind the file holds instead, when known. */
+  readonly detectedKind: "analysis-snapshot" | undefined;
 
   constructor(
     readonly operation: "read" | "write",
@@ -107,6 +109,7 @@ export class EvidenceFileError extends AnalysisError {
       readonly userMessage?: string;
       readonly contentIssues?: readonly AnalysisInputIssue[];
       readonly systemCode?: "EFBIG" | "ENOSPC" | "EDQUOT";
+      readonly detectedKind?: "analysis-snapshot";
     },
   ) {
     super(`Evidence bundle ${operation} failed: ${reason}`, options);
@@ -115,5 +118,6 @@ export class EvidenceFileError extends AnalysisError {
     this.userMessage = options?.userMessage;
     this.contentIssues = options?.contentIssues;
     this.systemCode = options?.systemCode;
+    this.detectedKind = options?.detectedKind;
   }
 }

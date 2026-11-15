@@ -1,9 +1,8 @@
-/** A byte decoding failure, separate from exceptions raised by a line consumer. */
-export class Utf8NdjsonDecodingError extends Error {
-  constructor(cause: unknown) {
-    super("NDJSON frame is not valid UTF-8", { cause });
-  }
-}
+import {
+  malformedInput,
+  type ParseFailureError,
+} from "../domain/parseFailure.js";
+import { err, ok, type Result } from "../domain/result.js";
 
 /** One line, or the unterminated tail, reached the caller's byte ceiling. */
 export class Utf8NdjsonOversizeError extends Error {
@@ -16,6 +15,16 @@ export class Utf8NdjsonOversizeError extends Error {
     );
   }
 }
+
+/**
+ * A line, or why framing stopped: bytes that are not UTF-8, or a line above
+ * the ceiling. Failures are values, so they cannot be confused with a
+ * consumer's exception.
+ */
+type Utf8NdjsonLine = Result<
+  string,
+  ParseFailureError<"malformed"> | Utf8NdjsonOversizeError
+>;
 
 /**
  * Frame socket bytes before decoding, so later malformed frames cannot erase
@@ -39,16 +48,18 @@ export class Utf8NdjsonLineBuffer {
 
   /**
    * Yield each complete trimmed nonblank line; preserve unconsumed lines on
-   * early return. Throws `Utf8NdjsonOversizeError`, after discarding every
-   * buffered byte, when a line or the tail still waiting for its LF exceeds
-   * the ceiling.
+   * early return. A line that is not UTF-8 is yielded as a failure and ends
+   * the iteration. A line or the tail still waiting for its LF above the
+   * ceiling is yielded as `Utf8NdjsonOversizeError`, after discarding every
+   * buffered byte, and ends the iteration.
    */
-  *push(chunk: Buffer): Generator<string> {
+  *push(chunk: Buffer): Generator<Utf8NdjsonLine> {
     const maximumBytes = this.#maxLineBytes();
     this.#fragments.push(chunk);
     this.#fragmentBytes += chunk.length;
     if (!chunk.includes(10) && this.#nextNewline < 0) {
-      this.#refuseTail(maximumBytes);
+      const refused = this.#refuseTail(maximumBytes);
+      if (refused !== undefined) yield err(refused);
       return;
     }
     this.#buffer = Buffer.concat([this.#buffer, ...this.#fragments]);
@@ -59,38 +70,51 @@ export class Utf8NdjsonLineBuffer {
       if (this.#nextNewline > maximumBytes) {
         const observedBytes = this.#nextNewline;
         this.reset();
-        throw new Utf8NdjsonOversizeError(maximumBytes, observedBytes);
+        yield err(new Utf8NdjsonOversizeError(maximumBytes, observedBytes));
+        return;
       }
       const encodedLine = this.#buffer.subarray(0, this.#nextNewline);
       const rest = this.#buffer.subarray(this.#nextNewline + 1);
       // An empty view would keep the drained frame's allocation for the session.
       this.#buffer = rest.length === 0 ? Buffer.alloc(0) : rest;
       this.#nextNewline = this.#buffer.indexOf(10);
-      const line = this.#decode(encodedLine).trim();
-      if (line.length > 0) yield line;
+      const line = this.#decode(encodedLine);
+      if (!line.ok) {
+        yield line;
+        return;
+      }
+      const trimmed = line.value.trim();
+      if (trimmed.length > 0) yield ok(trimmed);
     }
-    this.#refuseTail(maximumBytes);
+    const refused = this.#refuseTail(maximumBytes);
+    if (refused !== undefined) yield err(refused);
   }
 
   /** Validate the unfinished tail at EOF without treating it as a complete response. */
-  finish(): void {
-    this.#decode(Buffer.concat([this.#buffer, ...this.#fragments]));
+  finish(): Result<null, ParseFailureError<"malformed">> {
+    const tail = this.#decode(
+      Buffer.concat([this.#buffer, ...this.#fragments]),
+    );
+    return tail.ok ? ok(null) : tail;
   }
 
-  #refuseTail(maximumBytes: number): void {
+  #refuseTail(maximumBytes: number): Utf8NdjsonOversizeError | undefined {
     const pendingBytes = this.#buffer.length + this.#fragmentBytes;
-    if (this.#nextNewline >= 0 || pendingBytes <= maximumBytes) return;
+    if (this.#nextNewline >= 0 || pendingBytes <= maximumBytes)
+      return undefined;
     // Drop the refused bytes rather than retaining them until reconnect.
     this.reset();
-    throw new Utf8NdjsonOversizeError(maximumBytes, pendingBytes);
+    return new Utf8NdjsonOversizeError(maximumBytes, pendingBytes);
   }
 
-  #decode(bytes: Buffer): string {
+  #decode(bytes: Buffer): Result<string, ParseFailureError<"malformed">> {
     try {
-      return this.#decoder.decode(bytes);
+      return ok(this.#decoder.decode(bytes));
     } catch (cause: unknown) {
       if (!(cause instanceof TypeError)) throw cause;
-      throw new Utf8NdjsonDecodingError(cause);
+      return err(
+        malformedInput("ndjson", "NDJSON frame is not valid UTF-8", { cause }),
+      );
     }
   }
 

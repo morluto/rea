@@ -10,7 +10,7 @@ import {
   selectedProviderSettings,
   settingAffectsProbe,
 } from "./doctorRuntime.js";
-import { DOCTOR_PROVIDER_IDS } from "./application/DoctorProviderIds.js";
+import { DOCTOR_PROVIDER_IDS } from "./domain/doctorProviderIds.js";
 import { providerRegistrationEnvironment } from "./application/SetupRegistrationEnvironment.js";
 import { createTestTempDirectory } from "../tests/fixtures/temporaryDirectory.js";
 import { writeJadxJarInventory } from "../tests/fixtures/android/jadxJar.js";

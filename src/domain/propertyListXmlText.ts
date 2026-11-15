@@ -1,6 +1,16 @@
+import { ParseFailureError } from "./parseFailure.js";
 import { byteOrderMarkEncoding } from "./textByteOrderMark.js";
 
-export class XmlPlistTextDecodeError extends TypeError {
+const XML_PLIST_FORMAT = "xml-plist";
+
+/**
+ * XML plist text that cannot be decoded. An unsupported encoding holds text
+ * this decoder cannot read; invalid bytes and a contradicted declaration are
+ * malformed.
+ */
+export class XmlPlistTextDecodeError extends ParseFailureError<
+  "malformed" | "unsupported"
+> {
   constructor(
     readonly reason:
       | "invalid-bytes"
@@ -10,7 +20,17 @@ export class XmlPlistTextDecodeError extends TypeError {
     readonly declaredEncoding?: string,
     options?: ErrorOptions,
   ) {
-    super(message, options);
+    super(
+      reason === "unsupported-encoding"
+        ? {
+            kind: "unsupported",
+            format: XML_PLIST_FORMAT,
+            detail: message,
+            undecodedContent: true,
+          }
+        : { kind: "malformed", format: XML_PLIST_FORMAT, detail: message },
+      options,
+    );
     this.name = "XmlPlistTextDecodeError";
   }
 }

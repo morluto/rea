@@ -1,3 +1,4 @@
+import { schemaVerifierEnvironment } from "./lib/mcp-verification-environment.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -97,7 +98,7 @@ const env = {
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
-  env,
+  env: schemaVerifierEnvironment(env),
   stderr: "pipe",
 });
 const client = new Client({ name: "rea-real-raw-proof", version: "1" });
@@ -736,7 +737,7 @@ async function verifyCrossBlockProject(target, targetSha256) {
     command: process.execPath,
     args: [entrypoint, "mcp"],
     env: {
-      ...env,
+      ...schemaVerifierEnvironment(env),
       REA_GHIDRA_PROJECT_PATH: join(projectDirectory, "Boundary.gpr"),
     },
     stderr: "pipe",

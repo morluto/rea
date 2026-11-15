@@ -1229,7 +1229,8 @@ describe("serveEnvironment state file cleanup", () => {
     await expect(
       add({ kind: "data", data: renamedDocument() }),
     ).resolves.toMatchObject({ result: {} });
-    await expect(environment.close()).rejects.toMatchObject({
+    const reported = await environment.close().catch((cause: unknown) => cause);
+    expect(reported).toMatchObject({
       _tag: "AnalysisOutputError",
       diagnostics: { cleanup_stages: ["state-files"] },
       cause: expect.any(ArtifactResourceRetryFailure),
@@ -1239,6 +1240,8 @@ describe("serveEnvironment state file cleanup", () => {
     failing = false;
     await expect(environment.close()).resolves.toBeUndefined();
     expect(owners[0]?.handle.fd).toBe(-1);
+    // The earlier report reads the confirmed release instead of staying open.
+    expect(reported).toMatchObject({ cleanupIncomplete: false });
   });
 });
 

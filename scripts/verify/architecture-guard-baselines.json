@@ -79,28 +79,11 @@
     "src/application/releaseExposure/ReleaseExposureService.ts": 3,
     "src/application/reverse/ReverseEngineeringService.ts": 12,
     "src/application/wasm/WasmInterfaceComparisonService.ts": 2,
-    "src/gdb/GdbSessionManager.ts": 13,
-    "src/native/AppleDispatchMetadata.ts": 3,
-    "src/native/LldbCallTracer.ts": 2,
-    "src/native/NativeCallObservation.ts": 2,
-    "src/native/NativeCallTarget.ts": 2,
-    "src/native/NativeCommandAnalysisError.ts": 1,
-    "src/native/NativeMacOSProvider.ts": 8,
-    "src/native/NativePlistSource.ts": 2,
-    "src/native/NativeUiInterruptionControl.ts": 1,
-    "src/native/NativeUiObservation.ts": 1,
-    "src/native/pe/PeBinaryFailure.ts": 1,
-    "src/native/pwndbg/PwndbgCoreContext.ts": 3,
-    "src/native/pwntools/PwntoolsDecoder.ts": 8,
-    "src/native/pwntools/PwntoolsRecordedCrashProvider.ts": 1,
-    "src/process/ownedDebuggerSession.ts": 1,
-    "src/rizin/RizinDebugSessionManager.ts": 1
+    "src/gdb/GdbSessionManager.ts": 1,
+    "src/process/ownedDebuggerSession.ts": 1
   },
   "parser-format-failure-class": {
-    "src/browser/assets/WebArtifactReads.ts": 1,
-    "src/domain/xmlDocument.ts": 1,
-    "src/native/AppleMachoSelection.ts": 1,
-    "src/native/MachoCommandNames.ts": 1
+    "src/domain/evidenceFormat.ts": 1
   },
   "parser-json-parse": {
     "src/android/JadxProtocol.ts": 2,
@@ -127,14 +110,6 @@
     "src/artifacts/ReleaseExposureReader.ts": 1,
     "src/artifacts/StreamBytes.ts": 1,
     "src/artifacts/ZipArtifactReader.ts": 1,
-    "src/artifacts/apple/BinaryPlistMaterializer.ts": 4,
-    "src/artifacts/apple/KeyedArchiveReader.ts": 1,
-    "src/artifacts/apple/NibArchive.ts": 19,
-    "src/artifacts/apple/PlistScalars.ts": 3,
-    "src/artifacts/apple/PropertyListDecodeBudget.ts": 25,
-    "src/domain/apple/interfaceBuilderKeyedArchive.ts": 1,
-    "src/domain/apple/keyedArchive.ts": 5,
-    "src/domain/apple/plistValue.ts": 3,
     "src/domain/native/functionByteCoverage.ts": 1,
     "src/domain/python/marshalUtf8.ts": 1,
     "src/dotnet/ManagedArtifactInspector.ts": 1,
@@ -157,7 +132,6 @@
     "src/native/apple/AppleIpsFieldReader.ts": 1,
     "src/native/parsers/demangle.ts": 3,
     "src/native/parsers/lipo.ts": 1,
-    "src/native/parsers/plist.ts": 1,
     "src/native/pwndbg/PwndbgCoreContext.ts": 2,
     "src/native/pwntools/PwntoolsDecoder.ts": 2,
     "src/native/pwntools/PwntoolsResourceLimits.ts": 1
@@ -299,8 +273,6 @@
   },
   "range-error-interpretation": {
     "src/application/JsonInputFile.ts": 1,
-    "src/artifacts/apple/InterfaceBuilderAnalysis.ts": 1,
-    "src/artifacts/apple/KeyedArchiveReader.ts": 1,
     "src/artifacts/nodeSea/NodeSeaBlob.ts": 1,
     "src/browser/WebBundleAnalysisWorkerServer.ts": 1,
     "src/cli/cliResultOutput.ts": 1,
@@ -330,9 +302,7 @@
     "src/kuna/KunaProjectCache.ts": 1,
     "src/native/CommandRunner.ts": 1,
     "src/native/LldbCallTracer.ts": 1,
-    "src/process/OwnedDebuggerSessionRegistry.ts": 1,
     "src/providers/AnalysisClientFailure.ts": 1,
-    "src/server/environment/serveEnvironment.ts": 1,
     "src/sqlite/SqliteDatabaseProvider.ts": 2
   },
   "cleanup-dependency-binding": {
@@ -406,7 +376,7 @@
     "src/firmware/FirmwarePublication.ts": 1,
     "src/flutter/FlutterBuildProvider.ts": 2,
     "src/frida/FridaInstrumentationManager.ts": 1,
-    "src/gdb/GdbSessionManager.ts": 3,
+    "src/gdb/GdbSessionManager.ts": 2,
     "src/ghidra/GhidraFileArtifacts.ts": 1,
     "src/ghidra/GhidraJavaProbe.ts": 1,
     "src/ghidra/GhidraNativeAotSnapshotOwner.ts": 2,
@@ -440,6 +410,7 @@
     "src/pcap/PcapSnapshot.ts": 1,
     "src/process/ArtifactAnalysisResources.ts": 3,
     "src/process/DarwinProcessRunTokenReader.ts": 2,
+    "src/process/OwnedDebuggerSessionRegistry.ts": 1,
     "src/process/capture/FilesystemSnapshot.ts": 1,
     "src/process/capture/ProcessCaptureError.ts": 3,
     "src/process/capture/ProcessCaptureLifecycle.ts": 1,
@@ -455,6 +426,9 @@
     "src/sqlite/SqliteDatabaseProvider.ts": 8,
     "src/sqlite/SqliteDatabaseWorkerExecution.ts": 2,
     "src/wasm/WabtArtifactProvider.ts": 1
+  },
+  "path-search-split": {
+    "src/process/capture/ProcessScenarioRuntimeValidation.ts": 1
   },
   "ambient-host-platform": {
     "src/adb/AdbConfiguration.ts": 1,
@@ -733,5 +707,6 @@
     "scripts/verify/javascript/recovery.mjs": 1,
     "scripts/verify/javascript/retained-facts.mjs": 1,
     "scripts/verify/managed/conformance.mjs": 1
-  }
+  },
+  "macho-load-command-literal": {}
 }

@@ -1,6 +1,5 @@
 import type { Result } from "../domain/result.js";
 import {
-  Utf8NdjsonDecodingError,
   Utf8NdjsonLineBuffer,
   Utf8NdjsonOversizeError,
 } from "./Utf8NdjsonLineBuffer.js";
@@ -67,38 +66,34 @@ export class JsonLineBridgeReader<Message, Failure extends Error> {
 
   push(chunk: Buffer): void {
     if (this.#failed) return;
-    this.#framed(() => {
-      for (const line of this.#lines.push(chunk))
-        if (!this.#route(line)) return;
-    });
+    for (const line of this.#lines.push(chunk)) {
+      if (!line.ok) {
+        this.#fail(
+          line.error instanceof Utf8NdjsonOversizeError
+            ? {
+                kind: "reply_oversize",
+                maximumBytes: line.error.maximumBytes,
+                observedBytes: line.error.observedBytes,
+              }
+            : { kind: "utf8", cause: line.error },
+        );
+        return;
+      }
+      if (!this.#route(line.value)) return;
+    }
   }
 
   /** Validate the unterminated tail at EOF. */
   finish(): void {
     if (this.#failed) return;
-    this.#framed(() => this.#lines.finish());
+    const tail = this.#lines.finish();
+    if (!tail.ok) this.#fail({ kind: "utf8", cause: tail.error });
   }
 
   /** Discard buffered bytes and accept input again for a new connection. */
   reset(): void {
     this.#lines.reset();
     this.#failed = false;
-  }
-
-  #framed(read: () => void): void {
-    try {
-      read();
-    } catch (cause: unknown) {
-      if (cause instanceof Utf8NdjsonOversizeError)
-        this.#fail({
-          kind: "reply_oversize",
-          maximumBytes: cause.maximumBytes,
-          observedBytes: cause.observedBytes,
-        });
-      else if (cause instanceof Utf8NdjsonDecodingError)
-        this.#fail({ kind: "utf8", cause });
-      else throw cause;
-    }
   }
 
   /** Route one complete line; false once the stream has failed. */

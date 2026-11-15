@@ -1,3 +1,4 @@
+import { schemaVerifierEnvironment } from "./mcp-verification-environment.mjs";
 import assert from "node:assert/strict";
 import { requireMcpEvidenceBundle } from "./mcp-verifier-results.mjs";
 import { createHash } from "node:crypto";
@@ -137,7 +138,7 @@ export async function verifyScenarioStorageFingerprints(executable, origin) {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [fileURLToPath(new URL("../rea.mjs", import.meta.url)), "mcp"],
-    env: process.env,
+    env: schemaVerifierEnvironment(process.env),
     stderr: "pipe",
   });
   const client = new Client({

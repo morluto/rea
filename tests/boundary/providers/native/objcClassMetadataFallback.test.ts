@@ -10,10 +10,7 @@ import type {
 } from "../../../../src/application/AnalysisProvider.js";
 import { createAnalysisExecution } from "../../../../src/application/AnalysisProvider.js";
 import { EnhancedTools } from "../../../../src/application/EnhancedTools.js";
-import {
-  UnsupportedMachoMetadataFormatError,
-  parseMachoLayout,
-} from "../../../../src/native/AppleMachoSelection.js";
+import { parseMachoLayout } from "../../../../src/native/AppleMachoSelection.js";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
 import { BinaryFormatFailure } from "../../../../src/native/metadata/BinaryContainer.js";
 import { NativeFixtureRunner } from "../../../fixtures/nativeCommands.js";
@@ -121,7 +118,11 @@ describe("native Objective-C class metadata capability fallback", () => {
     } catch (cause: unknown) {
       failure = cause;
     }
-    expect(failure).toBeInstanceOf(UnsupportedMachoMetadataFormatError);
+    expect(failure).toBeInstanceOf(BinaryFormatFailure);
+    expect(failure).toMatchObject({
+      kind: "unsupported",
+      undecodedContent: true,
+    });
   });
 
   it("keeps truncated 32-bit and 64-bit headers as errors", async () => {
@@ -163,7 +164,11 @@ describe("native Objective-C class metadata capability fallback", () => {
     } catch (cause: unknown) {
       failure = cause;
     }
-    expect(failure).toBeInstanceOf(UnsupportedMachoMetadataFormatError);
+    expect(failure).toBeInstanceOf(BinaryFormatFailure);
+    expect(failure).toMatchObject({
+      kind: "unsupported",
+      undecodedContent: true,
+    });
 
     bytes.writeUInt32BE(0x01000007, 4);
     let mismatchedCpuFailure: unknown;
@@ -174,8 +179,6 @@ describe("native Objective-C class metadata capability fallback", () => {
     }
     expect(mismatchedCpuFailure).toBeInstanceOf(BinaryFormatFailure);
     expect(mismatchedCpuFailure).toMatchObject({ kind: "unsupported" });
-    expect(mismatchedCpuFailure).not.toBeInstanceOf(
-      UnsupportedMachoMetadataFormatError,
-    );
+    expect(mismatchedCpuFailure).toMatchObject({ undecodedContent: false });
   });
 });

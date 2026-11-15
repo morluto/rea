@@ -76,6 +76,8 @@ import {
   AnalysisOutputError,
   AnalysisUnsupportedTargetError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import {
   DEFAULT_NATIVE_COMMAND_TIMEOUT_MS,
@@ -150,8 +152,8 @@ import {
   withNativeMachoSource,
   NativeMachoSourceVerificationFailure,
 } from "./NativeMachoSource.js";
+import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
 import {
-  MachoBinaryFormatError,
   MachoCommandNamesLimitError,
   readMachoCommandNames,
 } from "./MachoCommandNames.js";
@@ -287,9 +289,7 @@ class NativeMacOSClient implements AnalysisClient {
         ),
       );
     if (options?.signal?.aborted === true)
-      return err(
-        new AnalysisCancelledError(operation, { cause: options.signal.reason }),
-      );
+      return err(cancelledBy(operation, options.signal));
     if (operation === "health")
       return ok(createAnalysisExecution(null, IDENTITY));
     if (this.activeTarget === undefined && operation !== "inspect_plist")
@@ -1487,12 +1487,7 @@ class NativeMacOSClient implements AnalysisClient {
   ): Promise<Result<NativeObservation, AnalysisError>> {
     try {
       return await this.#machoOperandResources.run(async () => {
-        if (signal?.aborted)
-          return err(
-            new AnalysisCancelledError("inspect_macho", {
-              cause: signal.reason,
-            }),
-          );
+        if (signal?.aborted) return err(cancelledBy("inspect_macho", signal));
         let root: Pick<PrivateRuntimeRoot, "path" | "close">;
         try {
           root = await (this.privateRuntimeRootFactory?.() ??
@@ -1524,11 +1519,7 @@ class NativeMacOSClient implements AnalysisClient {
           const operand = join(root.path, "artifact.macho");
           await symlink(this.target.path, operand);
           result = signal?.aborted
-            ? err(
-                new AnalysisCancelledError("inspect_macho", {
-                  cause: signal.reason,
-                }),
-              )
+            ? err(cancelledBy("inspect_macho", signal))
             : await inspect(operand);
         } catch (cause: unknown) {
           result = err(
@@ -1558,8 +1549,7 @@ class NativeMacOSClient implements AnalysisClient {
           new AnalysisCleanupLeaseGroup(cleanup, [released.lease]);
           const primary = result.ok
             ? signal?.aborted
-              ? new AnalysisCancelledError("inspect_macho", {
-                  cause: signal.reason,
+              ? cancelledBy("inspect_macho", signal, {
                   partialObservation: inspectMachoSchema.parse(
                     result.value.result,
                   ),
@@ -1578,8 +1568,7 @@ class NativeMacOSClient implements AnalysisClient {
         }
         if (signal?.aborted && result.ok)
           return err(
-            new AnalysisCancelledError("inspect_macho", {
-              cause: signal.reason,
+            cancelledBy("inspect_macho", signal, {
               partialObservation: inspectMachoSchema.parse(result.value.result),
             }),
           );
@@ -1740,8 +1729,6 @@ const nativeMachoSourcePrimary = (
   operation: "inspect_macho" | "list_architectures",
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
-  if (cause instanceof MachoBinaryFormatError)
-    return new AnalysisOutputError(operation, cause.message, { cause });
   if (cause instanceof MachoCommandNamesLimitError)
     return new AnalysisResourceConstraintError(
       operation,
@@ -1750,6 +1737,9 @@ const nativeMachoSourcePrimary = (
       { maximum: cause.maximum, unit: cause.unit },
       { cause, retryable: false },
     );
+  // The selected Mach-O's own bytes failed to parse; a limit falls through.
+  const formatFailure = parseFailureAnalysisError(operation, path, cause);
+  if (formatFailure !== undefined) return formatFailure;
   const completed =
     cause instanceof NativeMachoSourceVerificationFailure
       ? cause.completed
@@ -1765,9 +1755,8 @@ const nativeMachoSourcePrimary = (
       : undefined;
   const completedFailure = nativeMachoCompletedFailure(completed);
   const previous = failed ?? completedFailure;
-  const options = {
-    cause,
-    ...(previous === undefined
+  const optionsWithoutCause =
+    previous === undefined
       ? {}
       : {
           diagnostics: {
@@ -1775,22 +1764,24 @@ const nativeMachoSourcePrimary = (
               projectAnalysisError(previous),
             ),
           },
-        }),
-  };
+        };
+  const options = { cause, ...optionsWithoutCause };
   if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled") {
     // A returned failure is already the producer's physical outcome. A later
     // cancelled identity check must not replace its output or cleanup owner.
     if (completedFailure !== undefined)
       return analysisErrorWithCancellation(
         completedFailure,
-        new AnalysisCancelledError(operation, {
-          cause: artifactFileCancellationCause(cause),
-        }),
+        cancelledBy(
+          operation,
+          carriedReason(artifactFileCancellationCause(cause)),
+        ),
       );
-    return new AnalysisCancelledError(operation, {
-      ...options,
-      cause: artifactFileCancellationCause(cause),
-    });
+    return cancelledBy(
+      operation,
+      carriedReason(artifactFileCancellationCause(cause)),
+      optionsWithoutCause,
+    );
   }
   if (cause instanceof ArtifactReaderFailure && cause.reason === "format")
     return new AnalysisOutputError(operation, cause.message, options);
@@ -1841,12 +1832,13 @@ const nativeMachoCompletion = (
   const completionCancellation =
     completion?.cancellation === undefined
       ? undefined
-      : new AnalysisCancelledError(operation, {
-          cause: completion.cancellation.reason,
-          ...(completedFailure === undefined ||
-          completedFailure.cleanupIncomplete ||
-          (cause instanceof ArtifactReaderFailure &&
-            cause.cleanup !== undefined)
+      : cancelledBy(
+          operation,
+          carriedReason(completion.cancellation.reason),
+          completedFailure === undefined ||
+            completedFailure.cleanupIncomplete ||
+            (cause instanceof ArtifactReaderFailure &&
+              cause.cleanup !== undefined)
             ? {}
             : {
                 diagnostics: {
@@ -1854,8 +1846,8 @@ const nativeMachoCompletion = (
                     projectAnalysisError(completedFailure),
                   ),
                 },
-              }),
-        });
+              },
+        );
   return { observation, completedFailure, completionCancellation };
 };
 
