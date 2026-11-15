@@ -101,18 +101,19 @@ const canonicalJson = (value: unknown): string => {
 const sha256 = (encoded: string): string =>
   createHash("sha256").update(encoded).digest("hex");
 
-const digestCatalogs = (
-  catalog: ReturnType<typeof createToolCatalog>,
+/**
+ * Digests of an already presented tool and prompt catalog. Exported so tests
+ * can compare the composed combined document with whole-document
+ * canonicalization.
+ */
+export const digestPresentedCatalogs = (
+  catalog: ReturnType<typeof presentToolCatalog>,
   prompts: ReturnType<typeof createPromptCatalog>,
-  compactPresentation: CompactInputSchemaPresentation,
   outputSchemaProfile: McpOutputSchemaProfile,
 ) => {
   const tools = canonicalJson({
     output_schema_profile: outputSchemaProfile,
-    catalog: presentToolCatalog(
-      catalog,
-      advertisedToolPresentation(outputSchemaProfile, compactPresentation),
-    ),
+    catalog,
   });
   const promptCatalog = canonicalJson(prompts);
   // RFC 8785 writes an object as its members in key order, each value in its
@@ -125,6 +126,21 @@ const digestCatalogs = (
     combined_sha256: sha256(combined),
   } as const;
 };
+
+const digestCatalogs = (
+  catalog: ReturnType<typeof createToolCatalog>,
+  prompts: ReturnType<typeof createPromptCatalog>,
+  compactPresentation: CompactInputSchemaPresentation,
+  outputSchemaProfile: McpOutputSchemaProfile,
+) =>
+  digestPresentedCatalogs(
+    presentToolCatalog(
+      catalog,
+      advertisedToolPresentation(outputSchemaProfile, compactPresentation),
+    ),
+    prompts,
+    outputSchemaProfile,
+  );
 
 /**
  * Catalog digests over the given tool contracts. Exported so tests can prove
