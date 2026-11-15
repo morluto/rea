@@ -25,7 +25,6 @@ import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { childFailureDiagnostics } from "../domain/analysisErrorProjection.js";
 import { constants, type Stats } from "node:fs";
-import { createHash } from "node:crypto";
 import { access, realpath, stat, type FileHandle } from "node:fs/promises";
 import { extname } from "node:path";
 
@@ -35,6 +34,7 @@ import {
   RegularFileChangedError,
   type StableRegularFileDescriptor,
 } from "../filesystem/RegularFile.js";
+import { hashStableRegularFileDescriptor } from "../filesystem/StableFileHash.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import type {
   BinaryTarget,
@@ -326,7 +326,7 @@ const readOpenedBinaryTarget = async (
     path,
     sourcePath,
     ...bundle,
-    sha256: await sha256Handle(handle, path, metadata, signal),
+    sha256: await sha256Handle(source, path, signal),
   });
   const hostArchitecture = options.hostArchitecture ?? process.arch;
   const { targetKind, formatHint, signal, architecture, entryPoint } = options;
@@ -971,36 +971,20 @@ const readLeadingBytes = async (
   return bytes;
 };
 
+/** The admitted target's SHA-256 from the descriptor that was classified. */
 const sha256Handle = async (
-  handle: FileHandle,
+  source: StableRegularFileDescriptor,
   path: string,
-  initial: Stats,
   signal?: AbortSignal,
 ): Promise<string> => {
-  const hash = createHash("sha256");
-  const chunk = Buffer.allocUnsafe(64 * 1024);
-  let position = 0;
-  while (true) {
-    throwIfTargetResolutionCancelled(signal);
-    const observed = await handle.read(
-      chunk,
-      0,
-      Math.min(chunk.length, initial.size - position + 1),
-      position,
-    );
-    throwIfTargetResolutionCancelled(signal);
-    if (observed.bytesRead === 0) break;
-    hash.update(chunk.subarray(0, observed.bytesRead));
-    position += observed.bytesRead;
-    if (position > initial.size)
-      throw new BinaryTargetError(path, "target grew while being read");
-  }
-  throwIfTargetResolutionCancelled(signal);
   try {
-    await assertStableRegularFileIdentity(handle, path, initial, {
-      symlinks: "reject",
-      ...(signal === undefined ? {} : { signal }),
-    });
+    return (
+      await hashStableRegularFileDescriptor(source, path, {
+        // Target admission refuses a symbolic-link final component.
+        symlinks: "reject",
+        ...(signal === undefined ? {} : { signal }),
+      })
+    ).sha256;
   } catch (cause: unknown) {
     throwIfTargetResolutionCancelled(signal);
     if (cause instanceof RegularFileChangedError)
@@ -1009,10 +993,6 @@ const sha256Handle = async (
       });
     throw cause;
   }
-  throwIfTargetResolutionCancelled(signal);
-  if (position !== initial.size)
-    throw new BinaryTargetError(path, "target changed while being read");
-  return hash.digest("hex");
 };
 
 const resolveAppBundle = async (

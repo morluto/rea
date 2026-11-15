@@ -13,12 +13,13 @@ import {
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { isUtf8 } from "node:buffer";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   reattributedResourceConstraint,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import {
   randomUUID,
@@ -178,10 +179,7 @@ const assertBridgeActive = (
   signal: AbortSignal | undefined,
   operation: "cutter_command" | "list_cutter_sessions",
 ): void => {
-  if (signal?.aborted)
-    throw new AnalysisCancelledError(operation, {
-      cause: signal.reason,
-    });
+  if (signal?.aborted) throw cancelledBy(operation, signal);
 };
 
 const mapDiscovery = async <Input, Output>(
@@ -421,9 +419,10 @@ export class CutterBridgeClient {
           if (cause instanceof AnalysisResourceConstraintError) throw cause;
           if (cause instanceof CutterBridgeRequestFailure) {
             if (cause.cancellation !== undefined)
-              throw new AnalysisCancelledError("list_cutter_sessions", {
-                cause: cause.cancellation.reason,
-              });
+              throw cancelledBy(
+                "list_cutter_sessions",
+                carriedReason(cause.cancellation.reason),
+              );
             if (cause.limit !== undefined)
               throw reattributedResourceConstraint(
                 "list_cutter_sessions",
@@ -604,9 +603,10 @@ export class CutterBridgeClient {
       // A transport failure escaping here precedes command admission.
       if (!(cause instanceof CutterBridgeRequestFailure)) throw cause;
       if (cause.cancellation !== undefined)
-        throw new AnalysisCancelledError("cutter_command", {
-          cause: cause.cancellation.reason,
-        });
+        throw cancelledBy(
+          "cutter_command",
+          carriedReason(cause.cancellation.reason),
+        );
       throw new AnalysisCapabilityUnavailableError(
         "cutter",
         "cutter_command",
@@ -1013,9 +1013,10 @@ export class CutterBridgeClient {
       const onAbort = (): void => {
         settle({
           ok: false,
-          cause: new AnalysisCancelledError("list_cutter_sessions", {
-            cause: signal?.reason,
-          }),
+          cause: cancelledBy(
+            "list_cutter_sessions",
+            carriedReason(signal?.reason),
+          ),
         });
       };
       signal?.addEventListener("abort", onAbort, { once: true });
@@ -1241,9 +1242,7 @@ const discoveryFailure = (
       outcome?.kind === "failed"
         ? discoveryFailure(outcome.cause, operation)
         : cancellation !== undefined
-          ? new AnalysisCancelledError(operation, {
-              cause: cancellation.reason,
-            })
+          ? cancelledBy(operation, carriedReason(cancellation.reason))
           : undefined;
     if (primary === undefined && outcome?.kind !== "failed") return cleanup;
     const original =
@@ -1257,8 +1256,9 @@ const discoveryFailure = (
     ).bindCleanupDependencies([cleanup]);
   }
   if (cause.reason === "cancelled")
-    return new AnalysisCancelledError(operation, {
-      cause: artifactFileCancellationCause(cause),
-    });
+    return cancelledBy(
+      operation,
+      carriedReason(artifactFileCancellationCause(cause)),
+    );
   return cause;
 };

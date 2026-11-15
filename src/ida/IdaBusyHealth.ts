@@ -1,7 +1,7 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import {
-  AnalysisCancelledError,
   AnalysisTimeoutError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { idaRegistrationTimeoutGuidance } from "./IdaConfiguration.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -64,10 +64,7 @@ export const readSettledHealth = async (
   const remaining = (): number => timeoutMs - (clock.now() - started);
   let lastBusy: LastBusyHealth | undefined;
   for (;;) {
-    if (signal?.aborted)
-      throw new AnalysisCancelledError("server_health", {
-        cause: signal.reason,
-      });
+    if (signal?.aborted) throw cancelledBy("server_health", signal);
     const budgetMs = remaining();
     if (budgetMs <= 0)
       throw lastBusy === undefined
@@ -115,15 +112,10 @@ export const readSettledHealth = async (
         cause instanceof Error &&
         cause.name === "AbortError"
       )
-        throw new AnalysisCancelledError("server_health", {
-          cause: signal.reason,
-        });
+        throw cancelledBy("server_health", signal);
       throw cause;
     }
-    if (signal?.aborted)
-      throw new AnalysisCancelledError("server_health", {
-        cause: signal.reason,
-      });
+    if (signal?.aborted) throw cancelledBy("server_health", signal);
     if (remaining() <= 0) throw expired();
   }
 };
