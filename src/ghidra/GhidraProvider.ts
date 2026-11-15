@@ -88,11 +88,11 @@ import {
   admitGhidraClient,
   type GhidraProviderClientFactory,
 } from "./GhidraProviderClient.js";
+import { windowsNativeCapabilities } from "../process/WindowsAuthority.js";
 import {
-  inspectWindowsNativeReadiness,
-  type WindowsNativeReadiness,
-  windowsNativeCapabilities,
-} from "../process/WindowsAuthority.js";
+  admitGhidraInstallation,
+  type GhidraAdmission,
+} from "./GhidraAdmission.js";
 
 const SUPPORTED_ARCHITECTURES = new Set<BinaryArchitecture>([
   "x86",
@@ -196,11 +196,9 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       "binary_session",
       scope,
     );
-    const readiness =
-      installation.platform === "win32"
-        ? inspectWindowsNativeReadiness(installation.platform)
-        : undefined;
-    const availability = this.#availability(installation, readiness);
+    const admission = admitGhidraInstallation(installation);
+    const readiness = admission.windowsNative;
+    const availability = this.#availability(installation, admission);
     if (availability.status === "available" && signal.aborted)
       throw cancelledBy("binary_session", signal, {
         diagnostics: availability.diagnostics,
@@ -220,9 +218,10 @@ export class GhidraProvider implements AnalysisProviderCandidate {
 
   #availability(
     installation: GhidraInstallationInspection,
-    readiness: WindowsNativeReadiness | undefined,
+    admission: GhidraAdmission,
   ): ProviderAvailability {
     const diagnostics = ghidraInstallationDiagnostics(installation);
+    // Runtime configuration doctor does not inspect.
     if (
       this.config.ghidraExistingProject !== undefined &&
       installation.platform === "win32"
@@ -234,34 +233,40 @@ export class GhidraProvider implements AnalysisProviderCandidate {
         remediation: EXISTING_PROJECT_WINDOWS_REMEDIATION,
         diagnostics,
       };
-    if (installation.status === "available" && readiness?.available === false)
-      return {
-        status: "unavailable",
-        code: readiness.code,
-        reason: readiness.reason,
-        remediation: readiness.remediation,
-        diagnostics: {
-          ...diagnostics,
-          windows_security: jsonObjectSchema.parse(
-            windowsNativeCapabilities(installation.platform, readiness),
-          ),
-          windows_native_failure: { stage: readiness.failureStage },
-        },
-      };
-    return installation.status === "available"
-      ? {
-          status: "available",
-          code: null,
-          reason: null,
-          diagnostics,
-        }
-      : {
+    if (admission.admitted)
+      return { status: "available", code: null, reason: null, diagnostics };
+    const { refusal } = admission;
+    switch (refusal.kind) {
+      case "installation_rejected":
+        return {
           status: "unavailable",
-          code: installation.rejection.code,
-          reason: installation.rejection.reason,
-          remediation: installation.rejection.remediation,
+          code: refusal.installation.rejection.code,
+          reason: refusal.installation.rejection.reason,
+          remediation: refusal.installation.rejection.remediation,
           diagnostics,
         };
+      case "windows_native_unavailable":
+        return {
+          status: "unavailable",
+          code: refusal.readiness.code,
+          reason: refusal.readiness.reason,
+          remediation: refusal.readiness.remediation,
+          diagnostics: {
+            ...diagnostics,
+            windows_security: jsonObjectSchema.parse(
+              windowsNativeCapabilities(
+                installation.platform,
+                refusal.readiness,
+              ),
+            ),
+            windows_native_failure: { stage: refusal.readiness.failureStage },
+          },
+        };
+      default: {
+        const unreachable: never = refusal;
+        return unreachable;
+      }
+    }
   }
 
   inspectTargetSupport(target: BinaryTarget): ProviderTargetSupport {
