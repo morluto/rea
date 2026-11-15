@@ -451,12 +451,15 @@ it("waits for the desktop to draw before it returns the first screenshot", async
 
 it("returns the latest frame when a retried screenshot outlasts the wait for the desktop, sending progress meanwhile", async () => {
   // The third screenshot would answer only after the test deadline, so the
-  // call returns only if the 10 s wait abandons it.
+  // call returns only if the shortened drawn wait abandons it.
   const { computer, runner } = await fakes({
     blankFrames: 10_000,
     screenshotDelaysMs: [0, 0, 3_600_000],
   });
-  const client = await connect(runner.environment);
+  const client = await connect(runner.environment, undefined, undefined, {
+    drawnWaitMs: 2_000,
+    progressMs: 250,
+  });
   const progress: { message?: string | undefined }[] = [];
   const started = await client.callTool(
     {
