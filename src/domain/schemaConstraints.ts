@@ -56,6 +56,8 @@ export interface PresenceRule<Field extends string> {
   /** Trigger only when `when` holds exactly this value. */
   readonly equals?: Primitive;
   readonly requires: Field;
+  /** The required property must hold exactly this value. */
+  readonly requiresValue?: Primitive;
   readonly message: string;
   /** Issue path; defaults to `when`. */
   readonly path?: Field;
@@ -69,16 +71,23 @@ const declarePresence = (
   const dependentRequired: Record<string, string[]> = {};
   const conditionals: Declaration[] = [];
   for (const rule of rules) {
-    if (rule.equals === undefined) {
+    if (rule.equals === undefined && rule.requiresValue === undefined) {
       (dependentRequired[rule.when] ??= []).push(rule.requires);
       continue;
     }
     conditionals.push({
       if: {
-        properties: { [rule.when]: { const: rule.equals } },
+        ...(rule.equals === undefined
+          ? {}
+          : { properties: { [rule.when]: { const: rule.equals } } }),
         required: [rule.when],
       },
-      then: { required: [rule.requires] },
+      then: {
+        required: [rule.requires],
+        ...(rule.requiresValue === undefined
+          ? {}
+          : { properties: { [rule.requires]: { const: rule.requiresValue } } }),
+      },
     });
   }
   return {
@@ -95,7 +104,8 @@ const declarePresence = (
 
 /**
  * Require properties together; declared as `dependentRequired` and, for a
- * rule keyed on a value, `if`/`then`. Issues follow the rule order.
+ * rule keyed on a value or requiring one, `if`/`then`. Issues follow the
+ * rule order.
  */
 export const requirePresence = <
   Schema extends z.ZodObject,
@@ -112,7 +122,9 @@ export const requirePresence = <
         if (
           trigger === undefined ||
           (rule.equals !== undefined && trigger !== rule.equals) ||
-          value[rule.requires] !== undefined
+          (rule.requiresValue === undefined
+            ? value[rule.requires] !== undefined
+            : value[rule.requires] === rule.requiresValue)
         )
           continue;
         context.addIssue({
@@ -172,3 +184,18 @@ export const declaredByPatterns = <Schema extends z.ZodString>(
     declaration.relation,
   );
 };
+
+/**
+ * Declare text as a JSON document, with the schema its decoded content
+ * follows when one is known. JSON Schema's `content*` keywords annotate a
+ * string rather than assert it, so the parse adds no check; the consumer that
+ * decodes the text admits its content with the owning schema.
+ */
+export const jsonDocumentText = <Schema extends z.ZodString>(
+  schema: Schema,
+  contentSchema?: Record<string, unknown>,
+): Schema =>
+  schema.meta({
+    contentMediaType: "application/json",
+    ...(contentSchema === undefined ? {} : { contentSchema }),
+  });

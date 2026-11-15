@@ -1,4 +1,9 @@
-import { AnalysisCleanupLease } from "../resources/index.js";
+import {
+  AnalysisCleanupLease,
+  SafeOutputTree,
+  outputDirectoryAdmissionRefusal,
+  SafeOutputTreeCreationFailure,
+} from "../resources/index.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import {
@@ -8,11 +13,6 @@ import {
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { z } from "zod";
-import {
-  SafeOutputTree,
-  outputDirectoryAdmissionRefusal,
-  SafeOutputTreeCreationFailure,
-} from "../resources/index.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";

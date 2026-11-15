@@ -10,7 +10,8 @@ import {
   AnalysisInputError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
-import { evidenceSchema, type Evidence } from "../domain/evidence.js";
+import type { Evidence } from "../domain/evidence.js";
+import { recognizeEvidence } from "../domain/evidenceValidation.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
 import { ok } from "../domain/result.js";
@@ -19,7 +20,7 @@ import { OBJDUMP_ARTIFACT_OPERATIONS } from "../domain/reverseEngineering.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
+import { CLI_COMMANDS } from "../contracts/cliCommandNames.js";
 import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../contracts/reverseEngineeringToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
 import {
@@ -74,14 +75,15 @@ const cleanupOnlyCompleteEvidence = (
     error.partialObservation === undefined
   )
     return undefined;
-  const parsed = evidenceSchema.safeParse(error.partialObservation);
-  if (!parsed.success) return undefined;
-  const normalized = parsed.data.normalized_result;
+  // Only authenticated Evidence is recovered; otherwise the error stands.
+  const parsed = recognizeEvidence(error.partialObservation);
+  if (!parsed.ok || parsed.value === undefined) return undefined;
+  const normalized = parsed.value.normalized_result;
   return typeof normalized === "object" &&
     normalized !== null &&
     !Array.isArray(normalized) &&
     normalized.completion_status !== "unknown"
-    ? parsed.data
+    ? parsed.value
     : undefined;
 };
 

@@ -171,14 +171,14 @@ try {
       const parameters = profile.parameters;
       assert.equal(parameters.language_id, expectedLanguage);
       assert.equal(parameters.compiler_spec_id, "gcc");
-      assert.equal(parameters.language_selection, "provider-pinned-v1");
+      assert.equal(parameters.language_selection, "provider-pinned");
       assert.equal(parameters.riscv_support_lane, want.lane);
       assert.equal(parameters.riscv_calling_convention, want.callingConvention);
       assert.deepEqual(parameters.riscv_elf, want.riscvElf);
     };
     const assertEvidence = (evidence) => {
-      assert.equal(evidence.subject.architecture, "riscv");
-      assert.equal(evidence.subject.digest.sha256, fixture.sha256);
+      assert.equal(evidence.subject.identity.architecture, "riscv");
+      assert.equal(evidence.subject.identity.sha256, fixture.sha256);
       // Composed workflows such as inspect_native_api commit the Ghidra
       // profile as their upstream profile. The residual-unknown registry
       // records what they could not establish, such as the types of a

@@ -349,7 +349,7 @@ describe("Ghidra language override profile", () => {
       loader: "auto-from-header",
       language_id: "x86:LE:32:default",
       compiler_spec_id: "borlandcpp",
-      language_selection: "configured-v1",
+      language_selection: "configured",
     });
     expect(ghidraProfileLanguageOverride(parameters)).toEqual({
       languageId: "x86:LE:32:default",
@@ -374,7 +374,7 @@ describe("Ghidra language override profile", () => {
       expect(resolved.value.profile?.parameters).toMatchObject({
         language_id: "MIPS:LE:32:default",
         compiler_spec_id: "default",
-        language_selection: "configured-v1",
+        language_selection: "configured",
       });
     } finally {
       await rm(mipsLanguages, { recursive: true, force: true });

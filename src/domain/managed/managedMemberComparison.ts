@@ -132,9 +132,42 @@ const comparisonItemSchema = <
     }),
   ]);
 
+/** Stable codes for why one comparison item's facts stayed limited. */
+export const MANAGED_MEMBER_COMPARISON_LIMITATION_CODES = [
+  "declaring-type-name-not-resolved",
+  "counterpart-declaring-type-name-not-resolved",
+  "unknown-within-incomplete-metadata",
+  "signature-not-decoded",
+  "counterpart-signature-not-decoded",
+  "signature-not-resolved",
+  "counterpart-signature-not-resolved",
+  "signature-malformed",
+  "ambiguous-signature",
+  "ambiguous-il-signature",
+  "ambiguous-method-shape",
+  "local-signature-unknown",
+  "local-signature-bytes-changed",
+  "body-unavailable",
+  "call-target-unavailable",
+  "field-target-unavailable",
+  "catch-type-unavailable",
+] as const;
+
+/** One reason a comparison item's facts stayed limited, with its explanation. */
+const comparisonItemLimitationSchema = z.strictObject({
+  code: z.enum(MANAGED_MEMBER_COMPARISON_LIMITATION_CODES),
+  side: z
+    .enum(["left", "right"])
+    .optional()
+    .describe(
+      "The inventory this limitation concerns when it is the other side's, such as an incomplete or ambiguous counterpart inventory.",
+    ),
+  message: nonEmptyTextSchema,
+});
+
 const comparisonItemContextShape = {
   evidence_links: z.array(evidenceIdSchema).length(2),
-  limitations: z.array(nonEmptyTextSchema),
+  limitations: z.array(comparisonItemLimitationSchema),
 };
 
 const methodComparisonItemSchema = comparisonItemSchema(

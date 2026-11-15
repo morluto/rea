@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-import { cliCommandFor } from "../../src/cliCommandNames.js";
+import { cliCommandFor } from "../../src/contracts/cliCommandNames.js";
 import {
   CAPABILITY_DECLARATIONS,
   type CapabilityDeclaration,

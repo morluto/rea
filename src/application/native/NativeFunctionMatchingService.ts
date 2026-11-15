@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { NativeMatchingAdmission } from "./NativeMatchingAdmission.js";
 import { loadNativeMatchingBundleSources } from "./NativeMatchingBundleSources.js";
 import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
@@ -8,7 +9,11 @@ import {
   matchNativeFunctionsInputSchema,
   type MatchNativeFunctionsInput,
 } from "../../contracts/native/functionMatchingContracts.js";
-import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import {
+  createEvidence,
+  evidenceFileTarget,
+  type Evidence,
+} from "../../domain/evidence.js";
 import { readFunctionInventory } from "../../domain/native/functionInventory.js";
 import {
   nativeFunctionMatchingSchema,
@@ -87,9 +92,11 @@ const matchWithAdmission = async (
     rightObservations,
     checkpoint,
   );
+  const leftTarget = evidenceFileTarget(left);
+  const rightTarget = evidenceFileTarget(right);
   const compatible =
-    left.subject?.architecture != null &&
-    left.subject.architecture === right.subject?.architecture;
+    leftTarget?.architecture != null &&
+    leftTarget.architecture === rightTarget?.architecture;
   const { matches, summary } = await matchFunctionInventories(
     leftFunctions,
     rightFunctions,
@@ -145,12 +152,12 @@ const matchWithAdmission = async (
   const report = nativeFunctionMatchingSchema.parse({
     left: {
       evidence_id: left.evidence_id,
-      sha256: left.subject!.digest.sha256,
+      sha256: leftTarget!.sha256,
       functions: leftFunctions.length,
     },
     right: {
       evidence_id: right.evidence_id,
-      sha256: right.subject!.digest.sha256,
+      sha256: rightTarget!.sha256,
       functions: rightFunctions.length,
     },
     scope: "provider-observed-inputs",
@@ -181,22 +188,26 @@ const matchWithAdmission = async (
     limitations,
   });
   await checkpoint();
-  const evidence = createEvidence(undefined, FUNCTION_COMPARISON_PROVIDER, {
-    operation: OPERATION,
-    predicateType: NATIVE_FUNCTION_MATCHING_PREDICATE,
-    confidence: "derived",
-    authority: "analyst-inference",
-    parameters: {
-      left_evidence_id: left.evidence_id,
-      right_evidence_id: right.evidence_id,
-      left_observation_ids: leftObservations.map((x) => x.evidence_id),
-      right_observation_ids: rightObservations.map((x) => x.evidence_id),
-      algorithm: "exact-symbol-body-bytes-and-structural-candidates-v1",
+  const evidence = createEvidence(
+    unknownTarget("derived-from-linked-evidence"),
+    FUNCTION_COMPARISON_PROVIDER,
+    {
+      operation: OPERATION,
+      predicateType: NATIVE_FUNCTION_MATCHING_PREDICATE,
+      confidence: "derived",
+      authority: "analyst-inference",
+      parameters: {
+        left_evidence_id: left.evidence_id,
+        right_evidence_id: right.evidence_id,
+        left_observation_ids: leftObservations.map((x) => x.evidence_id),
+        right_observation_ids: rightObservations.map((x) => x.evidence_id),
+        algorithm: "exact-symbol-body-bytes-and-structural-candidates-v1",
+      },
+      result: report,
+      limitations,
+      evidenceLinks: directLinks,
     },
-    result: report,
-    limitations,
-    evidenceLinks: directLinks,
-  });
+  );
   await checkpoint();
   return { evidence, sources, detail: input.detail };
 };

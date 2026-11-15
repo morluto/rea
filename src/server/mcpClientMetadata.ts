@@ -7,7 +7,7 @@ import {
 } from "@modelcontextprotocol/server";
 
 import type { ClientFeatureAvailability } from "../contracts/toolOutputSchemaPrimitives.js";
-import type { ConnectedClientIdentity } from "../serverIdentity.js";
+import type { ConnectedClientIdentity } from "../process/ServerIdentity.js";
 import { isRecord } from "../domain/isRecord.js";
 
 /** Initialize-scoped client metadata the SDK keeps for a 2025-era connection. */

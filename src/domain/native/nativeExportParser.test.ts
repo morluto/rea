@@ -6,12 +6,12 @@ import {
   elfAliasedVersionImage,
   peExportImage,
 } from "../../../tests/fixtures/binaryDiagnostics/nativeExports.js";
-import * as nativeExportContracts from "../../domain/native/nativeExports.js";
-import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
+import * as nativeExportContracts from "./nativeExports.js";
+import { BinaryFormatFailure } from "../binaryContainer.js";
 import {
   parseNativeExports,
   parseNativeExportsSteps,
-} from "./NativeExportParser.js";
+} from "./nativeExportParser.js";
 
 const artifact = { path: "/fixture/lib", sha256: "a".repeat(64), bytes: 1 };
 const parse = (bytes: Buffer) =>

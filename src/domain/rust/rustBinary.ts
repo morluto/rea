@@ -82,6 +82,15 @@ export const rustcCommitSchema = z.strictObject({
     .min(1),
 });
 
+/**
+ * The complete-report allowance left no room for any compiler path; the
+ * control that bounded it, recorded outside the dropped compiler record.
+ */
+export const rustcCommitOmissionSchema = z.strictObject({
+  reason: z.literal("report_bytes"),
+  limit: analysisParameterLimitSchema,
+});
+
 type RustcCoverage = NonNullable<z.infer<typeof rustcCommitSchema>["coverage"]>;
 
 /**
@@ -147,6 +156,11 @@ export const rustBinarySchema = z
     selected_slice: machoTargetSelectionSchema.exactOptional(),
     auditable_metadata: rustAuditableMetadataSchema.nullable(),
     rustc_commit: rustcCommitSchema.nullable(),
+    /**
+     * Present when the complete-report allowance left no room for any
+     * compiler path, so `rustc_commit` is null: the control that bounded it.
+     */
+    rustc_commit_omission: rustcCommitOmissionSchema.exactOptional(),
     limitations: z.array(z.string()),
   })
   .superRefine((report, context) => {
@@ -156,6 +170,15 @@ export const rustBinarySchema = z
       checkPackages(metadata, context);
     }
     checkRustc(report.artifact.bytes, report.rustc_commit, context);
+    if (
+      report.rustc_commit_omission !== undefined &&
+      report.rustc_commit !== null
+    )
+      issue(
+        context,
+        ["rustc_commit_omission"],
+        "A compiler-path omission is recorded only when no compiler path was retained.",
+      );
     checkSlice(report, context);
   });
 

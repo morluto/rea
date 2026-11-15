@@ -16,7 +16,7 @@ import { registerContractCommand } from "./contractCommand.js";
 import type { CliInstance } from "./types.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
+import { CLI_COMMANDS } from "../contracts/cliCommandNames.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 

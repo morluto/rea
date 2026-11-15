@@ -237,7 +237,8 @@ const createBuildCacheFixture = async (): Promise<string> => {
 await writeFile("resource-controls.json", JSON.stringify(Object.fromEntries(["GOMAXPROCS", "GOMEMLIMIT", "UV_THREADPOOL_SIZE", "REA_TEST_UNLISTED_ENV"].map((name) => [name, process.env[name] ?? null]))));
 await mkdir("dist", { recursive: true });
 await writeFile("dist/cache-fixture.js", "built");
-await writeFile("dist/catalogIdentity.js", "export const DEFAULT_CATALOG_IDENTITY = { counts: { mcp_tools: 1 } };\\n");
+await mkdir("dist/contracts/catalog", { recursive: true });
+await writeFile("dist/contracts/catalog/catalogIdentity.js", "export const DEFAULT_CATALOG_IDENTITY = { counts: { mcp_tools: 1 } };\\n");
 await writeFile("dist/identity.js", ${JSON.stringify(`export const PRODUCT_IDENTITY = ${JSON.stringify({ packageSpecifier: `${packageJson.name}@latest`, registrationPackageSpecifier: `${packageJson.name}@${packageJson.version}` })};\n`)});
 `,
   );

@@ -32,6 +32,11 @@ import {
   projectArtifactCloseFailure,
   projectStableArtifactFailure,
   readerIntegrityFailure,
+  hashStableRootArtifactHandle,
+  openRootArtifact,
+  releaseRootArtifact,
+  asarHeaderAdmissionRecovery,
+  createAsarHeaderSignatureProbe,
 } from "../resources/index.js";
 import { decodeBinaryPlistText } from "../domain/apple/binaryPlistMaterializer.js";
 import {
@@ -40,10 +45,6 @@ import {
 } from "../domain/internalInvariant.js";
 import { ArtifactEmbeddedFormatProbes } from "./ArtifactEmbeddedFormatProbes.js";
 import {
-  asarHeaderAdmissionRecovery,
-  createAsarHeaderSignatureProbe,
-} from "./AsarHeader.js";
-import {
   DEFAULT_ASAR_HEADER_ADMISSION,
   type AsarHeaderAdmission,
 } from "../config/asarHeaderAdmission.js";
@@ -51,11 +52,6 @@ import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { ArtifactTraversalObservation } from "./ArtifactTraversalObservation.js";
 import { classifyEmbeddedExecutablePackage } from "./inventory/classify.js";
 import { inventoryArtifactInScope } from "./inventory/ArtifactInventory.js";
-import {
-  hashStableRootArtifactHandle,
-  openRootArtifact,
-  releaseRootArtifact,
-} from "../resources/index.js";
 import { createArtifactReader } from "./createArtifactReader.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {

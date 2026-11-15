@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { execFile } from "node:child_process";
 import {
   access,
@@ -460,7 +461,7 @@ describe.skipIf(process.platform !== "linux" || process.arch !== "x64")(
       });
       expect(result.value.subject).toMatchObject({
         local_path: selected,
-        digest: { sha256: sources[0]!.sha256 },
+        identity: { sha256: sources[0]!.sha256 },
       });
       for (const [index, module] of value.modules.entries())
         expect(module.provenance).toMatchObject({
@@ -532,7 +533,9 @@ describe.skipIf(process.platform !== "linux" || process.arch !== "x64")(
       expect(await readFile(sources[1]!.published_copy.path, "utf8")).toBe(
         content,
       );
-      expect(result.value.subject?.digest.sha256).toBe(value.source.sha256);
+      expect(fileIdentity(result.value.subject).sha256).toBe(
+        value.source.sha256,
+      );
       for (const [index, module] of value.modules.entries()) {
         const source = sources[index]!;
         expect(source.published_copy.sha256).toBe(source.sha256);

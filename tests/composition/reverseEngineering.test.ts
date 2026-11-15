@@ -1,3 +1,4 @@
+import { fileIdentity } from "../fixtures/evidenceSubject.js";
 import { createHash } from "node:crypto";
 import type { Stats } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -462,7 +463,7 @@ describe("Rizin command service", () => {
       if (!result.ok) return;
       const lookupPath = result.value.subject?.local_path;
       expect(isAbsolute(lookupPath ?? "")).toBe(true);
-      expect(result.value.subject?.digest.sha256).toBe(
+      expect(fileIdentity(result.value.subject).sha256).toBe(
         createHash("sha256").update("fixture").digest("hex"),
       );
       expect(calls).toEqual([
@@ -556,7 +557,7 @@ describe("Rizin command service", () => {
       });
       expect(result.ok).toBe(true);
       if (!result.ok) return;
-      expect(result.value.subject?.digest.sha256).toBe(
+      expect(fileIdentity(result.value.subject).sha256).toBe(
         createHash("sha256").update("before").digest("hex"),
       );
       expect(result.value.raw_result).toMatchObject({

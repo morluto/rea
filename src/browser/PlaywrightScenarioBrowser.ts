@@ -4,7 +4,7 @@ import {
   chromiumLaunchRemediation,
   chromiumSandboxEnabled,
 } from "./ChromiumSandbox.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import {
   AnalysisCleanupLeaseGroup,
@@ -707,11 +707,7 @@ export const failBrowserScenarioOperation = async (
       },
     });
     new AnalysisCleanupLeaseGroup(failure, [cleanup]);
-    throw analysisErrorWithCleanupFailure(
-      primary,
-      failure,
-      OPERATION,
-    ).bindCleanupDependencies([primary, failure]);
+    throw analysisErrorWithCleanupDependencies(primary, failure, OPERATION);
   }
   throw primaryFailure;
 };

@@ -55,11 +55,11 @@ const DEFERRED_IMPORTS = [
   },
   {
     name: "catalog-identity",
-    path: "/dist/catalogIdentity.js",
+    path: "/dist/contracts/catalog/catalogIdentity.js",
   },
   {
     name: "server-identity",
-    path: "/dist/serverIdentity.js",
+    path: "/dist/process/ServerIdentity.js",
   },
   {
     name: "tool-contracts",

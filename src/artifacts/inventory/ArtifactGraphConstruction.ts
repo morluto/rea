@@ -1,8 +1,10 @@
 import { artifactFormatDescriptor } from "../artifactFormats.js";
 import { recognizeArtifactFormat } from "../../domain/artifactFormatRecognition.js";
 import type { ArtifactClassificationEvidence } from "../ArtifactClassificationProbe.js";
-import { asarHeaderAdmissionFailure } from "../AsarHeader.js";
-import { hasDestinationPath } from "../../resources/index.js";
+import {
+  hasDestinationPath,
+  asarHeaderAdmissionFailure,
+} from "../../resources/index.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import { isJavaScriptSourcePath } from "../../domain/javascript/javascriptArtifactFiles.js";
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";

@@ -3,12 +3,10 @@ import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import {
   ArtifactReaderFailure,
   type ArtifactResourceScope,
-} from "../../resources/index.js";
-import type { AnalysisCapturedOutput } from "../../domain/analysisErrorBase.js";
-import {
   normalizeArtifactPath,
   ArtifactPathRegistry,
 } from "../../resources/index.js";
+import type { AnalysisCapturedOutput } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,

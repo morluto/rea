@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { expect, it, vi } from "vitest";
@@ -28,7 +29,7 @@ import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowled
 
 const observation = (label: string) =>
   createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Lifecycle fixture", version: "1" },
     { operation: label, parameters: {}, result: { fixture: label } },
   );

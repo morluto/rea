@@ -10,7 +10,7 @@ import {
   type LipoOutput,
 } from "../../domain/apple/lipo.js";
 import { NATIVE_COMMAND_OUTPUT_BUDGET_BYTES } from "../../domain/native/nativeCommandOutput.js";
-import type { NativeCommandCapture } from "../CommandRunner.js";
+import type { NativeCommandCapture } from "../../providers/NativeCommandRunner.js";
 
 /** Translate classified parse failure into native command output failure. */
 export const parseLipoCapture = (
