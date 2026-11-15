@@ -4,9 +4,14 @@ import {
   semanticProjectedSourceEligibilityAtRead,
   semanticNormalizeCapturedSelections,
   semanticShiftCapturedSelections,
+  hasFreshProjectedReceiver,
   type SemanticCapturedSelection,
 } from "./javascriptSemanticProjectedSources.js";
 import * as t from "@babel/types";
+import {
+  createGlobalPathReader,
+  type GlobalReferenceRead,
+} from "./javascriptSemanticAmbientWrites.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 
 import { BUILTIN_RESOURCE_METHODS } from "./javascriptBuiltinResourceMethods.js";
@@ -1622,15 +1627,59 @@ export const semanticOriginalGlobalProcessAt = (
   !ambientPathMayObserveAt(state, node, ["global", "process"]) &&
   !ambientBindingMayObserveWriteAt(state, node, "process");
 
+const globalProcessReaders = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  (site: t.Node) => GlobalReferenceRead
+>();
+
+/**
+ * Whether a write or escape through the global process object at this source
+ * site may still reach the original object: the global path reader does not
+ * prove a replacement with a fresh object before it. Reads that need a
+ * definite identity ask `semanticOriginalGlobalProcessAt` instead.
+ */
+export const semanticEffectMayReachOriginalGlobalProcess = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  let read = globalProcessReaders.get(state);
+  if (read === undefined) {
+    read = createGlobalPathReader(state, ["process"]);
+    globalProcessReaders.set(state, read);
+  }
+  const fact = read(node);
+  return (
+    fact.status !== "replacement" ||
+    !hasFreshProjectedReceiver(fact.value, [], state)
+  );
+};
+
+/**
+ * What a global process reference is used for. A `"read"` needs the original
+ * object for certain; an `"effect"` (a write or an escape through the
+ * reference) is attributed to it while it may still be the original.
+ */
+export type SemanticGlobalProcessUse = "read" | "effect";
+
+const globalProcessAt = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  use: SemanticGlobalProcessUse,
+): boolean =>
+  use === "read"
+    ? semanticOriginalGlobalProcessAt(node, state)
+    : semanticEffectMayReachOriginalGlobalProcess(node, state);
+
 /** Node's unbound process reference shares the cached process exports object. */
 export const semanticGlobalProcessOrigin = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
+  use: SemanticGlobalProcessUse = "read",
 ): JavaScriptModuleOrigin | undefined =>
   t.isIdentifier(node, { name: "process" }) &&
   resolveSemanticBindingState(state, node, "process") === undefined &&
   !semanticResolutionBlocked(state, node, "process") &&
-  semanticOriginalGlobalProcessAt(node, state)
+  globalProcessAt(node, state, use)
     ? { specifier: "node:process", importedPath: [], resolutionMode: "require" }
     : undefined;
 
@@ -1638,6 +1687,7 @@ export const semanticGlobalProcessOrigin = (
 export const semanticGlobalProcessPathOrigin = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
+  use: SemanticGlobalProcessUse = "read",
 ): JavaScriptModuleOrigin | undefined => {
   const chain = semanticMemberChain(node);
   if (chain === undefined) return undefined;
@@ -1648,7 +1698,7 @@ export const semanticGlobalProcessPathOrigin = (
     resolveSemanticBindingState(state, current, current.name) !== undefined ||
     semanticResolutionBlocked(state, current, current.name) ||
     members[0] !== "process" ||
-    !semanticOriginalGlobalProcessAt(node, state)
+    !globalProcessAt(node, state, use)
   )
     return undefined;
   return {
