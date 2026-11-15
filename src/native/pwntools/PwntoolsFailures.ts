@@ -227,7 +227,6 @@ const pwntoolsCommandContext = (
   const deadline = nativeDeadlineRecovery({
     timeoutMs,
     parameter: "pwntools_timeout_ms",
-    cliFlag: "--pwntools-timeout-ms",
     defaultMs: PWNTOOLS_LIMITS.command_timeout_ms,
     phase: "pwntools command deadline",
     unchanged: budgetRecovery,

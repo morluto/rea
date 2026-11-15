@@ -1,5 +1,7 @@
 import { statSync } from "node:fs";
 import { dirname, basename, resolve } from "node:path";
+
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -41,7 +43,7 @@ const compareServerPaths = (
   // lexically, while Bun follows native traversal through a symlink before `..`.
   const script = normalizeEntrypointPath(expected, runtime) ?? expected;
   if (script === observed) return "aligned";
-  if (process.platform === "win32") return "mismatch";
+  if (HOST_PLATFORM.platform === "win32") return "mismatch";
   try {
     const selected = statSync(script, { bigint: true });
     const running = statSync(observed, { bigint: true });

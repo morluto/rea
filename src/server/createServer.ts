@@ -2,7 +2,7 @@ import {
   createCapabilityServices,
   type CapabilityServiceOptions,
 } from "../composition/capabilityServices.js";
-import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { HOST_PLATFORM, type HostPlatform } from "../platform/HostPlatform.js";
 import { registerToolFamilies } from "../contracts/toolFamilyIds.js";
 import { SCOPED_NO_TARGET_RECOVERY } from "./recoveryInstructions.js";
 import { AnalysisSettings } from "../application/AnalysisSettings.js";
@@ -43,7 +43,6 @@ import { registerElectronTools } from "./registerElectronTools.js";
 import { registerEnhancedTools } from "./registerEnhancedTools.js";
 import { registerJavaScriptRuntimeObservationTools } from "./registerJavaScriptRuntimeObservationTools.js";
 import { registerManagedTools } from "./registerManagedTools.js";
-import { registerAndroidTools } from "./registerAndroidTools.js";
 import { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
 import { JebAnalysisService } from "../application/jeb/JebAnalysisService.js";
 import { PcapAnalysisService } from "../application/pcap/PcapAnalysisService.js";
@@ -81,6 +80,12 @@ export interface CreateServerOptions extends CapabilityServiceOptions {
   readonly providerEnvironment?: Readonly<NodeJS.ProcessEnv>;
   readonly logger?: Logger;
   readonly availabilityPolicy?: () => AvailabilityPolicy;
+  /**
+   * The host the server's integrations run on: it decides environment-name
+   * rules, host-restricted availability and execution checks. Defaults to the
+   * running host; tests select another host here.
+   */
+  readonly host?: HostPlatform;
 }
 
 const createMcpServer = (
@@ -132,9 +137,10 @@ export const createServer = (
 ): EvidenceMcpServer => {
   const session = source.kind === "session" ? source.session : undefined;
   const analysis = source.kind === "session" ? source.session : source.analysis;
+  const host = options.host ?? HOST_PLATFORM;
   const environment = snapshotEnvironment(
     options.environment ?? process.env,
-    HOST_PLATFORM.platform,
+    host.platform,
   );
   const analysisSettings =
     options.analysisSettings ?? new AnalysisSettings(environment);
@@ -149,6 +155,7 @@ export const createServer = (
   const providerEnvironment = captureProviderEnvironment(
     options.providerEnvironment,
     environment,
+    host.platform,
   );
   const baseDelivery = selectToolResultDelivery(environment, options.delivery);
   const delivery =
@@ -162,8 +169,8 @@ export const createServer = (
     providerEnvironment,
     settings: analysisSettings.read,
     options,
-    platform: process.platform,
-    arch: process.arch,
+    platform: host.platform,
+    arch: host.architecture,
   });
   const {
     evmInterface,
@@ -257,6 +264,7 @@ export const createServer = (
               optionalProviderLoadFailures:
                 options.optionalProviderLoadFailures,
             },
+            host.platform,
           );
           return {
             policy: (): AvailabilityPolicy => {
@@ -509,13 +517,12 @@ export const createServer = (
     firmware: () =>
       registerServiceTools(server, { firmwareAnalysis }, contractTools),
     android: () =>
-      registerAndroidTools(
+      registerServiceTools(
         server,
-        new AndroidAnalysisService(android, recordEvidence),
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
-        evidenceById,
+        {
+          androidAnalysis: new AndroidAnalysisService(android, recordEvidence),
+        },
+        contractTools,
       ),
     pcap: () => {
       registerServiceTools(
@@ -633,6 +640,7 @@ export const createServer = (
       if (session === undefined) return;
       registerSessionTools(server, session, toolLogger, {
         environment,
+        platform: host.platform,
         artifactResources,
         ...(availability === undefined
           ? {}

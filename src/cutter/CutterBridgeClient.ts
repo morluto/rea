@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import {
@@ -310,7 +311,7 @@ export class CutterBridgeClient {
     this.#read = options.read;
     const configured = environment.REA_CUTTER_BRIDGE_DIR;
     const localAppData = environment.LOCALAPPDATA;
-    this.#platform = options.platform ?? process.platform;
+    this.#platform = options.platform ?? HOST_PLATFORM.platform;
     this.#windowsPrivateReader =
       options.windowsPrivateReader ??
       (this.#platform === "win32"

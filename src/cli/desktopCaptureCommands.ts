@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { desktopLibraryPolicyInputSchema } from "../domain/desktop/libraryPolicy.js";
 import { desktopViewPolicyInputSchema } from "../domain/desktop/desktopViewPolicy.js";
 import { safeParseJson } from "../domain/safeJson.js";
@@ -553,7 +554,7 @@ export const registerDesktopCaptureCommands = (
                       : absoluteCallerPath(options.packageFile),
                 },
                 {
-                  platform: process.platform,
+                  platform: HOST_PLATFORM.platform,
                   environment,
                   callerDirectory: process.cwd(),
                   nextRequest: () => requests.next(),

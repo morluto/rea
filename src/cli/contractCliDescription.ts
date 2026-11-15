@@ -686,11 +686,14 @@ export interface ContractCliDescription {
   readonly evidenceTargets: ContractCliEvidenceTargets | undefined;
   /**
    * Contract fields the CLI spells differently, so input issues reported
-   * after argv parsing can name the CLI key.
+   * after argv parsing can name the CLI key, and the flag of each contract
+   * field (or `field.member`) the command takes as an option, so a failure
+   * that names a per-call control can name the flag that sets it.
    */
   readonly inputBinding: {
     readonly operation: string;
     readonly fields: Readonly<Record<string, string>>;
+    readonly flags: Readonly<Record<string, string>>;
   };
   /** The command adds `--detail` and `--evidence_output`. */
   readonly evidenceDelivery: boolean;
@@ -2405,6 +2408,18 @@ export const describeContractCommand = <
           ),
           ...(evidenceTargets?.targets ?? []),
         ].flatMap(({ field, key }) => (key === field ? [] : [[field, key]])),
+      ),
+      flags: Object.fromEntries(
+        parameters.flatMap(({ field, key, member, positional, delivery }) =>
+          positional || delivery
+            ? []
+            : [
+                [
+                  member === undefined ? field : [field, ...member].join("."),
+                  `--${kebabCase(key)}`,
+                ],
+              ],
+        ),
       ),
     },
     evidenceDelivery,

@@ -16,7 +16,7 @@ export type BuildComputerSetting = (typeof BUILD_COMPUTER_SETTINGS)[number];
 /** The REA-owned folder `rea setup --desktop-build` packs runtime archives into. */
 export const buildComputerArchiveDirectory = (
   environment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): string =>
   reaCacheDirectory(
     homeDirectoryFromEnvironment(environment, platform),
@@ -28,7 +28,7 @@ export const buildComputerArchiveDirectory = (
 /** The runtime archive packed for this REA version, named by that version. */
 export const defaultBuildComputerArchive = (
   environment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
   directory = buildComputerArchiveDirectory(environment, platform),
 ): string =>
   appendCallerPath(
@@ -94,7 +94,7 @@ export interface BuildComputerDefaults {
  */
 export const resolveBuildComputerEnvironment = async (
   environment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
   sources: BuildComputerDefaults = {},
 ): Promise<Readonly<NodeJS.ProcessEnv>> => {
   const defaults: Record<string, string> = {};

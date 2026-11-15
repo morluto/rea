@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../../src/platform/HostPlatform.js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 const gates = vi.hoisted(() => {
@@ -110,7 +111,11 @@ it
     gates.holdIdentityRead = phase === "identity-read";
     const inspection = inspectKunaInstallation(
       { REA_KUNA_COMMAND: executable },
-      { resourceScope, signal: controller.signal },
+      {
+        platform: HOST_PLATFORM.platform,
+        resourceScope,
+        signal: controller.signal,
+      },
     );
 
     const inspectionOutcome = inspection.then(

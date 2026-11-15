@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY } from "./providerIdentities.js";
 import {
   chromiumLaunchRemediation,
@@ -348,6 +349,7 @@ const acquireAttachedScenario = (
 
 const allowedBrowserEnvironment = (
   environment: Readonly<Record<string, string | undefined>>,
+  platform: NodeJS.Platform,
 ): Record<string, string | undefined> => {
   const allowed = [
     "DBUS_SESSION_BUS_ADDRESS",
@@ -371,7 +373,7 @@ const allowedBrowserEnvironment = (
         (entry): entry is readonly [string, string] => entry[1] !== undefined,
       ),
   );
-  if (process.platform !== "android") return selected;
+  if (platform !== "android") return selected;
 
   // Android rejects execve() for binaries below Termux's application data
   // directory. Termux supplies an exec interceptor that rewrites those calls
@@ -875,9 +877,12 @@ export const openPlaywrightScenarioBrowser = async (
     readonly launcher?: ScenarioBrowserLauncher;
     readonly signal?: AbortSignal | undefined;
     readonly retainCleanup?: (lease: AnalysisCleanupLease) => void;
+    /** The host Chromium launches on; defaults to the running host. */
+    readonly platform?: NodeJS.Platform;
   } = {},
 ): Promise<OpenedScenarioBrowser> => {
   throwIfScenarioCancelled(options.signal);
+  const platform = options.platform ?? HOST_PLATFORM.platform;
   // Load Playwright only when a scenario opens; MCP startup stays off its module graph.
   const launcher =
     options.launcher ?? (await import("playwright-core")).chromium;
@@ -897,7 +902,7 @@ export const openPlaywrightScenarioBrowser = async (
   let context: BrowserContext;
   const executablePath = scenario.browser.executable_path;
   const headless = scenario.browser.headless;
-  const chromiumSandbox = chromiumSandboxEnabled(environment);
+  const chromiumSandbox = chromiumSandboxEnabled(environment, platform);
   let launchStarted = false;
   try {
     await chmod(profilePath, 0o700);
@@ -919,7 +924,7 @@ export const openPlaywrightScenarioBrowser = async (
           colorScheme: scenario.environment.color_scheme,
           reducedMotion: scenario.environment.reduced_motion,
           serviceWorkers: scenario.environment.service_workers,
-          env: allowedBrowserEnvironment(environment),
+          env: allowedBrowserEnvironment(environment, platform),
           handleSIGHUP: false,
           handleSIGINT: false,
           handleSIGTERM: false,
@@ -928,7 +933,7 @@ export const openPlaywrightScenarioBrowser = async (
           // Termux's Chromium cannot create its renderer process through Android's
           // executable boundary. Single-process mode keeps the browser and page in
           // the Termux-launched process so scenario navigation remains available.
-          args: process.platform === "android" ? ["--single-process"] : [],
+          args: platform === "android" ? ["--single-process"] : [],
         }),
       commandTimeoutMs,
       "launch",

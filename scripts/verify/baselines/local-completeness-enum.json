@@ -20,7 +20,6 @@
   "src/domain/managed/managedNativeVerificationSchemas.ts": 1,
   "src/domain/managed/managedReconstruction.ts": 1,
   "src/domain/model/modelArtifact.ts": 1,
-  "src/domain/native/elfUnwindRanges.ts": 1,
   "src/domain/native/kernelBuildConfig.ts": 1,
   "src/domain/native/nativeInitializers.ts": 1,
   "src/domain/sqlite/sqliteDatabase.ts": 1,

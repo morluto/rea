@@ -2,18 +2,18 @@ import { binaryPlistObjectTable } from "../../../tests/fixtures/binaryPlistObjec
 import { describe, expect, it } from "vitest";
 import { parseBinary } from "plist";
 
-import { createPlistNumberProjection } from "../../domain/apple/plistNumbers.js";
-import { projectPlistValue } from "../../domain/apple/plistValue.js";
-import { readBinaryPlistLayout } from "./BinaryPlistLayout.js";
+import { createPlistNumberProjection } from "./plistNumbers.js";
+import { projectPlistValue } from "./plistValue.js";
+import { readBinaryPlistLayout } from "./binaryPlistLayout.js";
 import {
   binaryDateRequiresExactSeconds,
   decodeBinaryPlistScalars,
   scanBinaryPlistScalars,
-} from "./PlistScalars.js";
+} from "./plistScalars.js";
 import {
   estimateBinaryPlistExpansion,
   isPlistDecodeBudgetFailure,
-} from "./PropertyListDecodeBudget.js";
+} from "./propertyListDecodeBudget.js";
 
 const dataObjectWithUnusedOverlappingInteger = (): Buffer => {
   const bytes = Buffer.alloc(66);
