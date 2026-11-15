@@ -20,8 +20,8 @@ import {
 import {
   ArtifactFileCleanupFailure,
   withArtifactFileHandle,
-} from "../artifacts/ArtifactFileOperation.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+  type ArtifactResourceScope,
+} from "../resources/index.js";
 
 const execFileAsync = promisify(execFile);
 

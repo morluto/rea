@@ -1,4 +1,7 @@
-import { canonicalInputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import {
+  canonicalInputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 import { readFile, unlink, writeFile } from "node:fs/promises";
@@ -234,7 +237,7 @@ const createInventoryViewReader = async (
     ).toBe(true);
     const reply = await client.callTool(
       { name: "inspect_analysis_view", arguments: arguments_ },
-      { toolDefinition: advertised },
+      { toolDefinition: withCanonicalOutputSchema(advertised) },
     );
     if (reply.isError)
       throw new Error(JSON.stringify(parseMcpToolError(reply)));

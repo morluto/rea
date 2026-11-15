@@ -7,12 +7,12 @@ import { describe, expect, it } from "vitest";
 import type {
   AnalysisOperation,
   AnalysisOperationPort,
-} from "../../../../src/application/AnalysisProvider.js";
-import { createAnalysisExecution } from "../../../../src/application/AnalysisProvider.js";
+} from "../../../../src/ports/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../../src/ports/AnalysisProvider.js";
 import { EnhancedTools } from "../../../../src/application/EnhancedTools.js";
 import { layoutFor } from "../../../../src/native/AppleMachoSelection.fixture.js";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
-import { BinaryFormatFailure } from "../../../../src/native/metadata/BinaryContainer.js";
+import { BinaryFormatFailure } from "../../../../src/domain/binaryContainer.js";
 import { NativeFixtureRunner } from "../../../fixtures/nativeCommands.js";
 import { ok } from "../../../../src/domain/result.js";
 

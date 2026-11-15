@@ -28,7 +28,7 @@ import {
   runOwnedCommand,
   prepareOwnedCommand,
 } from "../process/OwnedCommand.js";
-import type { ProviderAvailability } from "../application/AnalysisProvider.js";
+import type { ProviderAvailability } from "../ports/AnalysisProvider.js";
 import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { parse } from "semver";

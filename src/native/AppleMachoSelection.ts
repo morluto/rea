@@ -24,7 +24,7 @@ import {
 import {
   BinaryFormatFailure,
   createFileMappingIndex,
-} from "./metadata/BinaryContainer.js";
+} from "../domain/binaryContainer.js";
 
 import type { FixupCommands } from "./AppleMachoFixups.js";
 import { decodeMachoFixedName, decodeMachoName } from "./AppleMachoNames.js";

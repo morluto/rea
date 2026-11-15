@@ -12,7 +12,7 @@ import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { createAnalysisProfile } from "../../domain/analysisProfile.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { err, ok } from "../../domain/result.js";
-import { createAnalysisExecution } from "../AnalysisProvider.js";
+import { createAnalysisExecution } from "../../ports/AnalysisProvider.js";
 import { AnalysisProviderRegistry } from "./AnalysisProviderRegistry.js";
 import { BinarySession } from "./BinarySession.js";
 import { binaryTargetSummary } from "./BinaryTargetSummary.js";

@@ -3,7 +3,7 @@ import { decode } from "@msgpack/msgpack";
 import {
   BinaryResourceFailure,
   BinaryFormatFailure,
-} from "../native/metadata/BinaryContainer.js";
+} from "../domain/binaryContainer.js";
 import { rejectGpu } from "./GpuSource.js";
 
 export const AMD_METADATA_BYTES = 8 * 1024 * 1024;

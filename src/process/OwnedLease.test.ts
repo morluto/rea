@@ -7,8 +7,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { HopperStartError } from "../domain/hopperErrors.js";
 // Unix socket paths have a short platform limit; the canonical system temp path can exceed it.
 const createTestTempDirectory = async (prefix: string): Promise<string> => {

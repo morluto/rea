@@ -2,7 +2,7 @@ import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
-import type { CapabilityDescriptor } from "../../../src/application/AnalysisProvider.js";
+import type { CapabilityDescriptor } from "../../../src/ports/AnalysisProvider.js";
 import { buildCapabilityInventory } from "../../../src/application/CapabilityInventory.js";
 import { providerCapabilitySets } from "../../../src/application/binary/BinarySessionStatus.js";
 import { parseConfig } from "../../../src/config/parseConfig.js";

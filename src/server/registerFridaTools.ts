@@ -5,7 +5,7 @@ import type { Logger } from "pino";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
 import { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";
-import type { FridaInstrumentationPort } from "../application/frida/FridaInstrumentationPort.js";
+import type { FridaInstrumentationPort } from "../ports/frida/FridaInstrumentationPort.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import {

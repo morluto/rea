@@ -21,7 +21,7 @@ import { replaceClientRegistrationLauncher } from "./ClientRegistration.js";
 import { readClientPolicyBlock } from "./GeminiClientSettings.js";
 import { admitClientStdioConnection } from "./ClientRegistrationConnection.js";
 import type { McpRegistrationClient } from "./McpRegistrationCatalog.js";
-import { readRegularFileTextSnapshot } from "./RegularFileRead.js";
+import { readRegularFileTextSnapshot } from "../process/RegularFileRead.js";
 
 const isMissing = (cause: unknown): boolean =>
   cause instanceof Error && "code" in cause && cause.code === "ENOENT";

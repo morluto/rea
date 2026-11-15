@@ -10,7 +10,7 @@ import {
   type AnalysisProviderCandidate,
   type CapabilityDescriptor,
   type ProviderIdentity,
-} from "../../../../src/application/AnalysisProvider.js";
+} from "../../../../src/ports/AnalysisProvider.js";
 import { AnalysisProviderRegistry } from "../../../../src/application/binary/AnalysisProviderRegistry.js";
 import { BinarySession } from "../../../../src/application/binary/BinarySession.js";
 import { SessionProviderRouter } from "../../../../src/application/binary/SessionProviderRouter.js";

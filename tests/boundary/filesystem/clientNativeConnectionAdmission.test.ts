@@ -27,7 +27,7 @@ const PROGRAM = `
   const { supportedClients } = await import(${JSON.stringify(new URL("../../../src/application/SupportedClients.ts", import.meta.url).href)});
   const { registerMcpClient } = await import(${JSON.stringify(new URL("../../../src/application/McpClientRegistration.ts", import.meta.url).href)});
   const { mcpClientRegistrationProfile } = await import(${JSON.stringify(new URL("../../../src/application/McpRegistrationCatalog.ts", import.meta.url).href)});
-  const { ArtifactResourceScope } = await import(${JSON.stringify(new URL("../../../src/artifacts/ArtifactResourceScope.ts", import.meta.url).href)});
+  const { ArtifactResourceScope } = await import(${JSON.stringify(new URL("../../../src/resources/ArtifactResourceScope.ts", import.meta.url).href)});
   const { ConfigurationError } = await import(${JSON.stringify(new URL("../../../src/domain/configurationErrors.ts", import.meta.url).href)});
   const [command, ...args] = currentClientRegistrationCommand();
   if (!command || !CURRENT_ENTRYPOINT_PATH) throw Error('Missing owned fixture entrypoint.');

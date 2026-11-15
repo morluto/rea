@@ -46,7 +46,7 @@ import {
 } from "../../desktop/BuildComputerEnvironment.js";
 import { buildSecretsDirectory } from "../../desktop/BuildSecretFiles.js";
 import type { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
-import type { ProgressReporter } from "../ProgressReporter.js";
+import type { ProgressReporter } from "../../ports/ProgressReporter.js";
 import {
   BuildComputerActionLog,
   type ReadonlyActionLog,

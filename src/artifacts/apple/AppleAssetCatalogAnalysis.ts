@@ -13,9 +13,15 @@ import {
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import { createHash } from "node:crypto";
 import { lstat } from "node:fs/promises";
-import { streamChunkToBuffer } from "../StreamBytes.js";
+import { streamChunkToBuffer } from "../../resources/index.js";
 import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
-import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
+import {
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+  sameArtifactSourceIdentity,
+  type ArtifactEntry,
+  type ArtifactReaderTraversal,
+} from "../../resources/index.js";
 import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
 import { InternalInvariantError } from "../../domain/internalInvariant.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
@@ -25,12 +31,6 @@ import {
   ArtifactTraversalObservation,
   declaredArtifactEntries,
 } from "../ArtifactTraversalObservation.js";
-import {
-  ArtifactReaderFailure,
-  sameArtifactSourceIdentity,
-  type ArtifactEntry,
-  type ArtifactReaderTraversal,
-} from "../ArtifactReader.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { analyzeInterfaceBuilderBundle } from "./InterfaceBuilderAnalysis.js";
 import {
@@ -526,7 +526,7 @@ const assetUtilFailure = (cause: unknown, entry: ArtifactEntry): unknown => {
 
 const digestBounded = async (
   reader: DirectoryArtifactReader,
-  entry: import("../ArtifactReader.js").ArtifactEntry,
+  entry: import("../../resources/index.js").ArtifactEntry,
   signal?: AbortSignal,
 ): Promise<string> => {
   if (entry.declaredSize === null || entry.declaredSize > MAX_CATALOG_BYTES)

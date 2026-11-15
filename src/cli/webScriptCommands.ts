@@ -1,7 +1,7 @@
 import type { Logger } from "pino";
 
 import { exportWebScripts } from "../application/WebScriptExportService.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/index.js";
 import { WEB_SCRIPT_TOOL_CONTRACTS } from "../contracts/webScriptToolContracts.js";
 import { WEB_SCRIPT_EXPORT_PROVIDER } from "../domain/investigationProviders.js";
 import { contractNamed } from "./contractCliDescription.js";

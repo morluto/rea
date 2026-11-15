@@ -14,8 +14,8 @@ import { AnalysisError } from "../../../../src/domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
 
-import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
-import type { RetainedResourceScope } from "../../../../src/application/AnalysisProvider.js";
+import { ArtifactResourceScope } from "../../../../src/resources/ArtifactResourceScope.js";
+import type { RetainedResourceScope } from "../../../../src/ports/AnalysisProvider.js";
 
 const injected = vi.hoisted(() => ({
   failNextClose: false,

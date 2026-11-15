@@ -28,7 +28,7 @@ import { managedReconstructionImportResultSchema } from "../../src/domain/manage
 
 import { captureProcessScenarioFile } from "../../src/application/process/ProcessCli.js";
 import { managedComparisonCommand } from "../fixtures/managedComparisonCommand.js";
-import { RetainedRegularFileCleanupFailure } from "../../src/application/RegularFileRead.js";
+import { RetainedRegularFileCleanupFailure } from "../../src/process/RegularFileRead.js";
 import { OwnedFileHandle } from "../../src/filesystem/OwnedFileHandle.js";
 import { primaryAnalysisError } from "../../src/domain/analysisErrorBase.js";
 import { buildManagedPeFixture } from "../../src/dotnet/ManagedPe.fixture.js";

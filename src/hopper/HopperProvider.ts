@@ -1,11 +1,16 @@
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import {
+  bindArtifactFileCleanup,
+  AnalysisCleanupLease,
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+} from "../resources/index.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { fileURLToPath } from "node:url";
 import { accessSync, constants, statSync } from "node:fs";
 
-import { createAnalysisExecution } from "../application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../ports/AnalysisProvider.js";
 import type {
   AnalysisClient,
   AnalysisOperation,
@@ -17,9 +22,11 @@ import type {
   ProviderIdentity,
   ProviderTargetSupport,
   RetainedResourceScope,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { AppConfig } from "../config/types.js";
+import type { LinuxHopperLauncherVerification } from "../ports/LinuxHopperLauncherVerification.js";
+import { selectedHopperLauncherPath } from "../hopperPaths/HopperLauncherDiscovery.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "pino";
@@ -27,9 +34,6 @@ import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -65,6 +69,8 @@ import { HOPPER_PROVIDER_IDENTITY } from "./HopperProviderMetadata.js";
 /** Concrete analysis provider backed by REA's private Hopper bridge. */
 export class HopperProvider implements AnalysisProviderCandidate {
   private readonly environment: Readonly<NodeJS.ProcessEnv>;
+  /** The configured launcher, else the one automatic discovery selected. */
+  readonly #launcherSpelling: string;
   readonly #launcherPath: string;
   readonly #ownedResources = new ArtifactResourceScope();
   readonly #inspectionOwner: RetainedResourceScope = {
@@ -88,10 +94,20 @@ export class HopperProvider implements AnalysisProviderCandidate {
     private readonly logger: Logger,
     environment: Readonly<NodeJS.ProcessEnv>,
     private readonly platform: NodeJS.Platform = HOST_PLATFORM.platform,
+    /**
+     * Linux launcher authentication from Hopper setup, supplied by
+     * composition. Without it a Linux launch is refused before Hopper runs.
+     */
+    private readonly linuxLauncherVerification?: LinuxHopperLauncherVerification,
   ) {
     this.environment = snapshotEnvironment(environment, platform);
-    // Bind lookup once; retain config's selected spelling for diagnostics.
-    this.#launcherPath = absoluteCallerPath(config.hopperLauncherPath);
+    this.#launcherSpelling = selectedHopperLauncherPath(
+      config.hopperLauncherPath,
+      platform,
+      environment,
+    );
+    // Bind lookup once; retain the selected spelling for diagnostics.
+    this.#launcherPath = absoluteCallerPath(this.#launcherSpelling);
   }
 
   identity(): ProviderIdentity {
@@ -107,7 +123,7 @@ export class HopperProvider implements AnalysisProviderCandidate {
 
   inspectAvailability(): ProviderAvailability {
     const diagnostics = {
-      launcher_path: this.config.hopperLauncherPath,
+      launcher_path: this.#launcherSpelling,
       platform: this.platform,
     };
     if (this.platform !== "darwin" && this.platform !== "linux")
@@ -136,7 +152,7 @@ export class HopperProvider implements AnalysisProviderCandidate {
       return {
         status: "unavailable",
         code: "executable_missing",
-        reason: `Hopper launcher is missing or not executable: ${this.config.hopperLauncherPath}`,
+        reason: `Hopper launcher is missing or not executable: ${this.#launcherSpelling}`,
         remediation:
           "Run rea setup to install Hopper, or set HOPPER_LAUNCHER_PATH to an executable Hopper launcher in the environment that starts REA, then restart REA.",
         diagnostics,
@@ -335,7 +351,16 @@ export class HopperProvider implements AnalysisProviderCandidate {
               }
             : { launchMode: "native" as const }),
         },
-        { platform: this.platform },
+        {
+          platform: this.platform,
+          ...(this.linuxLauncherVerification === undefined
+            ? {}
+            : {
+                verifyLinuxLauncher: this.linuxLauncherVerification.inspect,
+                retryPublisherCleanup:
+                  this.linuxLauncherVerification.retryCleanup,
+              }),
+        },
       ),
       ...(context === undefined ? {} : { runId: context.runId }),
       readStartupTimeoutMs: () => this.config.hopperStartupTimeoutMs,

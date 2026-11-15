@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import { inspectElfNotesInputSchema } from "../../domain/native/elfNotes.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { decodeElfSectionNameTable } from "../metadata/ElfSectionNameTable.js";
 import { readElfDirectoryFromBuffer } from "../metadata/NativeSectionDirectory.js";
 import {

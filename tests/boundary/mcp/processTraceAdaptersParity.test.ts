@@ -7,7 +7,7 @@ import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verifi
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import type { AnalysisClient } from "../../../src/application/AnalysisProvider.js";
+import type { AnalysisClient } from "../../../src/ports/AnalysisProvider.js";
 import { compareProcessCaptureFiles } from "../../support/cli/processComparisonCli.js";
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 import { processTraceCaptureFixture } from "../../../src/domain/process/processCapture.fixture.js";

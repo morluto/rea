@@ -1,3 +1,7 @@
+import {
+  capturedProviderOutput,
+  providerResultDiagnostics,
+} from "../../process/capturedProviderOutput.js";
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import {
   HOST_PLATFORM,
@@ -9,15 +13,16 @@ import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../../artifacts/AnalysisCleanupLease.js";
-import {
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
-} from "../../artifacts/ArtifactFileOperation.js";
+  completedStableArtifact,
+  readStableArtifact,
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+} from "../../resources/index.js";
 import {
   pwntoolsFailureDialect,
   pwntoolsUnavailable,
-  capturedPwntoolsOutput,
   pwntoolsBudgetRecovery,
 } from "./PwntoolsFailures.js";
 import { randomUUID } from "node:crypto";
@@ -29,17 +34,11 @@ import { z } from "zod";
 import type {
   ExecutionOptions,
   ProviderIdentity,
-} from "../../application/AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import type {
   AnalysisCapturedOutput,
   AnalysisPartialObservation,
 } from "../../domain/analysisErrorBase.js";
-import {
-  completedStableArtifact,
-  readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCapabilityUnavailableError,
@@ -82,7 +81,7 @@ import {
 } from "../../domain/native/pwntoolsResourceLimits.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { PWNTOOLS_PROVIDER_IDENTITY } from "./PwntoolsProviderIdentity.js";
-import { pwntoolsInputBytes } from "./PwntoolsInputLimit.js";
+import { pwntoolsInputBytes } from "../../config/pwntoolsInputLimit.js";
 
 /** Names the detected host so a host refusal is not read as a target refusal. */
 const pwntoolsHostRequirement = (
@@ -466,7 +465,7 @@ export class PwntoolsDecoder<
         options,
         failure,
       );
-      const capturedOutput = capturedPwntoolsOutput(execution);
+      const capturedOutput = capturedProviderOutput(execution);
       let reply: z.output<typeof replySchema>;
       try {
         let file;
@@ -624,7 +623,7 @@ export class PwntoolsDecoder<
         input,
         payload: reply.value,
         snapshot,
-        diagnostics: capturedOutput,
+        diagnostics: providerResultDiagnostics(capturedOutput),
       });
       if (replyFinalization !== undefined) {
         result = err(
@@ -880,7 +879,7 @@ export class PwntoolsDecoder<
           reason: cause instanceof Error ? cause.message : String(cause),
           captured_output: {
             ...(pending.diagnostics ??
-              capturedPwntoolsOutput(process.supervisor.snapshot())),
+              capturedProviderOutput(process.supervisor.snapshot())),
           },
           previous_error:
             pending.failure === undefined

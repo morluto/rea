@@ -1,3 +1,4 @@
+import { ellipsisExcerpt } from "../excerpt.js";
 import { jsonPointerTokens } from "../jsonPointer.js";
 import type { JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
@@ -102,13 +103,7 @@ const listed = (members: readonly string[]): string => {
   if (members.length === 0) return "none";
   const shown = members
     .slice(0, LISTED_MEMBERS)
-    .map((member) =>
-      JSON.stringify(
-        member.length > LISTED_NAME_CHARS
-          ? `${member.slice(0, LISTED_NAME_CHARS)}…`
-          : member,
-      ),
-    )
+    .map((member) => JSON.stringify(ellipsisExcerpt(member, LISTED_NAME_CHARS)))
     .join(", ");
   return members.length > LISTED_MEMBERS
     ? `${shown}, … (${String(members.length)} members; all in the state Evidence)`

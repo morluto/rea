@@ -1,5 +1,5 @@
 import { JebAnalysisService } from "../application/jeb/JebAnalysisService.js";
-import type { JebAnalysisPort } from "../application/jeb/JebAnalysisPort.js";
+import type { JebAnalysisPort } from "../ports/jeb/JebAnalysisPort.js";
 import { createJebAnalysisProvider } from "../composition/jeb.js";
 import { JEB_TOOL_CONTRACTS } from "../contracts/jeb/jebToolContracts.js";
 import type { JebOperation } from "../domain/jeb/jebAnalysis.js";

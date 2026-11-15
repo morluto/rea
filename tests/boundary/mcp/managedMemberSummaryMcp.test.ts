@@ -1,4 +1,7 @@
-import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -90,7 +93,7 @@ const verifyProjection = async ({
           },
         },
       },
-      { toolDefinition: viewDefinition },
+      { toolDefinition: withCanonicalOutputSchema(viewDefinition) },
     );
     expect(projectedReply.isError).not.toBe(true);
     const projected = analysisViewResultSchema.parse(
@@ -124,7 +127,7 @@ const verifyProjection = async ({
   ).toBe(true);
   const selectedReply = await client.callTool(
     { name: "inspect_analysis_view", arguments: selectedRequest },
-    { toolDefinition: viewDefinition },
+    { toolDefinition: withCanonicalOutputSchema(viewDefinition) },
   );
   expect(selectedReply.isError).not.toBe(true);
   const selectedEvidence = parseEvidence(selectedReply.structuredContent);
@@ -220,7 +223,7 @@ it("summarizes selected members and pages every original collection after the fi
       name: "inspect_managed_members",
       arguments: { path, type_names, detail: "summary" },
     },
-    { toolDefinition: definition },
+    { toolDefinition: withCanonicalOutputSchema(definition) },
   );
   expect(reply.isError).not.toBe(true);
   const receipt = parseEvidence(reply.structuredContent);

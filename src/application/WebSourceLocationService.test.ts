@@ -17,7 +17,7 @@ import {
   webSourceLocationResultSchema,
 } from "../domain/webSourceLocation.js";
 import { WebSourceLocationService } from "./WebSourceLocationService.js";
-import type { WebSourceMapPort } from "./WebSourceLocationPorts.js";
+import type { WebSourceMapPort } from "../ports/WebSourceLocationPorts.js";
 
 const service = (data = webSourceLocationFixture(), port = decoder) =>
   new WebSourceLocationService({ load: () => Promise.resolve(ok(data)) }, port);
