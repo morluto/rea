@@ -554,6 +554,8 @@ const PARSER_FOLDERS = [
   "src/model/",
   "src/native/",
   "src/python/",
+  // Shared artifact readers (ZIP, directory, ASAR header) live in resources.
+  "src/resources/",
   "src/rust/",
   "src/v8/",
   "src/wasm/",
@@ -572,11 +574,13 @@ const PARSER_FOLDERS = [
     "managed",
     "model",
     "native",
+    "pcap",
     "python",
     "rust",
     "v8",
     "wasm",
     "windows",
+    "zip",
   ].map((folder) => `src/domain/${folder}/`),
 ];
 const parserFiles = files.filter((file) =>

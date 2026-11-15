@@ -35,6 +35,8 @@ import {
   hashStableRootArtifactHandle,
   openRootArtifact,
   releaseRootArtifact,
+  asarHeaderAdmissionRecovery,
+  createAsarHeaderSignatureProbe,
 } from "../resources/index.js";
 import { decodeBinaryPlistText } from "../domain/apple/binaryPlistMaterializer.js";
 import {
@@ -42,10 +44,6 @@ import {
   invariantViolation,
 } from "../domain/internalInvariant.js";
 import { ArtifactEmbeddedFormatProbes } from "./ArtifactEmbeddedFormatProbes.js";
-import {
-  asarHeaderAdmissionRecovery,
-  createAsarHeaderSignatureProbe,
-} from "./AsarHeader.js";
 import {
   DEFAULT_ASAR_HEADER_ADMISSION,
   type AsarHeaderAdmission,
