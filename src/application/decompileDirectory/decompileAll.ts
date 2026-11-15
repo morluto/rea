@@ -30,7 +30,8 @@ import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { procedureInfoSchema } from "../../domain/native/procedureInfo.js";
-import { addressedValueSchema } from "../../domain/native/nativeInventory.js";
+import { listProceduresFact } from "../../domain/native/nativeOperationFacts.js";
+import { executeFact } from "../AnalysisOperationFacts.js";
 import { addressCoordinate } from "../../domain/native/addressCoordinate.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
@@ -305,32 +306,27 @@ const loadProcedures = async (
     AnalysisError
   >
 > => {
-  const observed = await analysis.execute(
-    "list_procedures",
+  const inventory = await executeFact(
+    analysis,
+    listProceduresFact,
     {},
     executionOptions(signal),
   );
-  if (!observed.ok) return observed;
-  const parsed = z.array(addressedValueSchema).safeParse(observed.value.result);
-  if (!parsed.success)
-    return err(
-      new AnalysisOutputError(
-        "list_procedures",
-        "provider returned an invalid procedure inventory",
-      ),
-    );
-  const identity = identityFrom(observed.value, layout);
+  if (!inventory.ok) return inventory;
+  const identity = identityFrom(inventory.value.execution, layout);
   if (!identity.ok) return identity;
   // An empty address cannot name a file or a journal record.
-  const addressed = parsed.data.filter((row) => row.address.length > 0);
+  const addressed = inventory.value.fact.filter(
+    (row) => row.address.length > 0,
+  );
   return ok({
     procedures: addressed.map((row) => ({
       address: row.address,
       name: row.value.length === 0 ? null : row.value,
     })),
     identity: identity.value,
-    unaddressed: parsed.data.length - addressed.length,
-    limitations: observed.value.limitations,
+    unaddressed: inventory.value.fact.length - addressed.length,
+    limitations: inventory.value.execution.limitations,
   });
 };
 
