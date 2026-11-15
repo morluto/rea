@@ -1,4 +1,7 @@
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  type CleanupFailedRead,
+} from "../artifacts/ArtifactReader.js";
 import {
   ArtifactFileCleanupFailure,
   artifactFileCancellationCause,
@@ -15,7 +18,6 @@ import { completedStableArtifactObservation } from "../artifacts/StableArtifactO
 import {
   AnalysisError,
   type AnalysisCapturedOutput,
-  type AnalysisCleanupObservation,
   type AnalysisErrorOptions,
 } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -62,6 +64,12 @@ export interface ProviderFileDialect {
 export interface ProviderFailureDialect {
   readonly providerId: string;
   readonly operation: string;
+  /**
+   * Attribution for a typed failure a lower layer already classified, such as
+   * the accepted operation and the redacted endpoint it reached. Without it a
+   * typed failure passes through unchanged.
+   */
+  readonly attribute?: (failure: AnalysisError) => AnalysisError;
   /**
    * Provider-owned typed failures, examined before the shared file facts.
    * `details` carries the unresolved cleanup of a failed read.
@@ -115,11 +123,6 @@ type CleanupFailedCommand = OwnedCommandFailure & {
   readonly cleanupFailure: string;
 };
 
-/** A selected-file read whose own cleanup failed. */
-export type CleanupFailedRead = ArtifactReaderFailure & {
-  readonly cleanup: AnalysisCleanupObservation;
-};
-
 const cleanupFailedRead = (cause: unknown): cause is CleanupFailedRead =>
   cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined;
 
@@ -137,16 +140,20 @@ const readPrimary = (
   read: CleanupFailedRead,
   dialect: ProviderFailureDialect,
 ): AnalysisError | undefined => {
+  const observed =
+    dialect.observedOutput === undefined
+      ? {}
+      : { capturedOutput: dialect.observedOutput };
   if (read instanceof ArtifactFileCleanupFailure) {
     const outcome = read.fileCleanupFailure.outcome;
     if (outcome.kind === "failed")
       return classifyProviderFailure(outcome.cause, dialect);
     const cancellation = artifactFileCompletion(read)?.cancellation;
     if (cancellation !== undefined)
-      return readCancellation(cancellation.reason, dialect, {});
+      return readCancellation(cancellation.reason, dialect, observed);
   }
   return read.reason === "cancelled"
-    ? readCancellation(artifactFileCancellationCause(read), dialect, {})
+    ? readCancellation(artifactFileCancellationCause(read), dialect, observed)
     : undefined;
 };
 
@@ -244,7 +251,7 @@ const fileFailure = (
 
 /**
  * The one mapping from a raw provider failure to a typed error. Typed analysis
- * errors pass through; supervised command outcomes go to
+ * errors pass through, attributed by the dialect when it says how; supervised command outcomes go to
  * `classifyProviderOutcome`; selected-file failures go to the shared stable
  * artifact projections, keeping the read's cleanup and identity. Only what none of them recognises reaches the
  * provider's `unclassified` report.
@@ -253,13 +260,22 @@ export const classifyProviderFailure = (
   cause: unknown,
   dialect: ProviderFailureDialect,
 ): AnalysisError => {
-  if (cause instanceof AnalysisError) return cause;
+  if (cause instanceof AnalysisError)
+    return dialect.attribute?.(cause) ?? cause;
   const outcome =
     dialect.command === undefined ? undefined : providerOutcomeOf(cause);
   if (outcome !== undefined && dialect.command !== undefined)
     return commandFailure(cause, outcome, dialect, dialect.command);
-  if (dialect.readCleanup !== undefined && cleanupFailedRead(cause))
+  const { file } = dialect;
+  const observation =
+    file?.retainCompletedIdentity === true
+      ? completedStableArtifactObservation(cause, file.path)
+      : undefined;
+  if (dialect.readCleanup !== undefined && cleanupFailedRead(cause)) {
+    // The read's report carries what it completed onto its primary.
+    if (observation !== undefined) cause.retainPartialObservation(observation);
     return dialect.readCleanup(cause, readPrimary(cause, dialect));
+  }
   // A failed read's unresolved cleanup stays on whatever it is reported as.
   const details: AnalysisErrorOptions =
     cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined
@@ -269,11 +285,6 @@ export const classifyProviderFailure = (
     dialect.recognise?.(cause, details) ??
     fileFailure(cause, dialect, details) ??
     dialect.unclassified(cause, details);
-  const { file } = dialect;
-  const observation =
-    file?.retainCompletedIdentity === true
-      ? completedStableArtifactObservation(cause, file.path)
-      : undefined;
   if (observation !== undefined) failure.retainPartialObservation(observation);
   bindArtifactFileCleanup(cause, failure);
   return failure;

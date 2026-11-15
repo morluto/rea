@@ -1,4 +1,5 @@
 import { ghidraAsciiLiteralCandidate } from "./GhidraLiteralSearch.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   fileSnapshotPartialObservationSchema,
   type FileSnapshotPartialObservation,
@@ -33,10 +34,7 @@ import {
   type LinuxCgroupMemoryState,
 } from "../process/LinuxCgroupMemory.js";
 import { PendingOperations } from "../process/PendingOperations.js";
-import {
-  Utf8NdjsonLineBuffer,
-  Utf8NdjsonDecodingError,
-} from "../process/Utf8NdjsonLineBuffer.js";
+import { Utf8NdjsonLineBuffer } from "../process/Utf8NdjsonLineBuffer.js";
 import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
 import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
@@ -130,6 +128,7 @@ const SHUTDOWN_TIMEOUT_MS = 10_000;
  */
 const OUTPUT_DRAIN_MS = 1_000;
 const SESSION_ROOT = ghidraSessionRoot();
+const GHIDRA_RESPONSE_NOT_UTF8 = "Ghidra bridge response is not valid UTF-8";
 
 type GhidraStartupAttempt = SharedStartupAttempt<GhidraStartResult>;
 
@@ -199,21 +198,17 @@ export class GhidraClient {
   });
   readonly #responseLines = new Utf8NdjsonLineBuffer();
   readonly #onSocketData = (chunk: Buffer): void => {
-    try {
-      for (const line of this.#responseLines.push(chunk))
-        this.#responseRouter.route(line);
-    } catch (cause: unknown) {
-      if (!(cause instanceof Utf8NdjsonDecodingError)) throw cause;
-      this.#abortProtocol("Ghidra bridge response is not valid UTF-8", cause);
+    for (const line of this.#responseLines.push(chunk)) {
+      if (!line.ok) {
+        this.#abortProtocol(GHIDRA_RESPONSE_NOT_UTF8, line.error);
+        return;
+      }
+      this.#responseRouter.route(line.value);
     }
   };
   readonly #onSocketEnd = (): void => {
-    try {
-      this.#responseLines.finish();
-    } catch (cause: unknown) {
-      if (!(cause instanceof Utf8NdjsonDecodingError)) throw cause;
-      this.#abortProtocol("Ghidra bridge response is not valid UTF-8", cause);
-    }
+    const tail = this.#responseLines.finish();
+    if (!tail.ok) this.#abortProtocol(GHIDRA_RESPONSE_NOT_UTF8, tail.error);
   };
   readonly #onSocketError = (): void => {
     this.#failAll(this.#failure("process", "Ghidra bridge socket failed"));
@@ -231,7 +226,7 @@ export class GhidraClient {
       ...options,
       startupTimeoutMs:
         options.startupTimeoutMs ?? DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
-      platform: options.platform ?? process.platform,
+      platform: options.platform ?? HOST_PLATFORM.platform,
       transport: options.transport ?? "unix-socket",
     };
     this.#logger = options.logger ?? silentLogger;
@@ -1551,13 +1546,9 @@ export class GhidraClient {
     cause?: unknown,
     cancellation?: { readonly reason: unknown },
   ): GhidraSessionError {
-    if (
-      cancellation !== undefined &&
-      !(
-        deadline.signal.aborted &&
-        cancellation.reason === deadline.signal.reason
-      )
-    )
+    // A producer that cancelled while startup's deadline still ran reports
+    // its own cancellation; once the deadline aborted, the deadline reports.
+    if (cancellation !== undefined && !deadline.signal.aborted)
       return this.#failure("cancelled", "Ghidra startup was cancelled", cause, {
         cancellation,
       });

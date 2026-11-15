@@ -1,15 +1,13 @@
-import { McpServer } from "@modelcontextprotocol/server";
+import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, expectTypeOf, it } from "vitest";
 
 import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/config/mcpInputSchemaProfile.js";
-import { presentAdvertisedInputSchema } from "../../../src/contracts/compactInputSchema.js";
 import { SESSION_TOOL_CONTRACTS } from "../../../src/contracts/sessionToolContracts.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import {
-  advertisedInputJsonSchema,
-  transformAdvertisedInputJsonSchema,
-} from "../../../src/contracts/toolSchemaMetadata.js";
+import { advertisedInputJsonSchema } from "../../../src/contracts/toolSchemaMetadata.js";
+import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
+import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 import { advertisedSchemaErrors } from "../../fixtures/mcpAdvertisedSchemaValidity.js";
 import { mcpTest } from "../../support/mcp/mcpFixture.js";
@@ -69,21 +67,20 @@ describe("Evidence input SDK boundaries", () => {
     "advertises valid reference inputs after actual SDK conversion (%s)",
     async (profile, { mcp }) => {
       const contract = toolContract("build_call_path");
-      const registration = toolRegistrationOptions(contract);
-      const inputSchema =
+      const server = new EvidenceMcpServer(
+        { name: "evidence-contract", version: "1" },
+        { capabilities: {} },
+        undefined,
+        createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
         profile === "compact"
-          ? transformAdvertisedInputJsonSchema(
-              registration.inputSchema,
-              (schema) =>
-                presentAdvertisedInputSchema(schema, {
-                  budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
-                }),
-            )
-          : registration.inputSchema;
-      const server = new McpServer({ name: "evidence-contract", version: "1" });
-      server.registerTool(contract.name, { inputSchema }, async () => ({
-        content: [],
-      }));
+          ? { budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES }
+          : undefined,
+      );
+      server.registerTool(
+        contract.name,
+        toolRegistrationOptions(contract),
+        async () => ({ content: [] }),
+      );
       const client = await mcp.connect(server, {
         name: "evidence-contract",
         version: "1",
@@ -92,10 +89,13 @@ describe("Evidence input SDK boundaries", () => {
       expect(advertisedSchemaErrors(tools)).toEqual([]);
       const tool = tools.find(({ name }) => name === contract.name);
       if (tool === undefined) throw new Error("named contract not advertised");
-      expect(tool.inputSchema.description).toContain(
+      // Compact input guidance is part of the tool description.
+      const guidance =
+        profile === "compact" ? tool.description : tool.inputSchema.description;
+      expect(guidance).toContain(
         '{"kind":"retained-evidence","evidence_id":"ev_..."}',
       );
-      expect(tool.inputSchema.description).toContain("parent_evidence_id");
+      expect(guidance).toContain("parent_evidence_id");
       const validate = new Ajv2020({
         strict: false,
         validateFormats: false,

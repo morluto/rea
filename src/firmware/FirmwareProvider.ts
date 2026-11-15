@@ -1,4 +1,5 @@
 import { FIRMWARE_OPERATION_ENGINES } from "../contracts/firmware/firmwareToolRequirements.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { assertArtifactCommandPath } from "../process/ArtifactCommandPath.js";
 import { join } from "node:path";
@@ -15,7 +16,7 @@ import {
   type FirmwarePartialObservation,
 } from "../domain/firmware/firmwareAnalysis.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
@@ -345,7 +346,10 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
     options?: ExecutionOptions,
   ): Promise<Outcome> {
     // Capture configuration after queue admission; later operations may select updates.
-    const environment = snapshotEnvironment(this.environment);
+    const environment = snapshotEnvironment(
+      this.environment,
+      HOST_PLATFORM.platform,
+    );
     let root: PrivateRuntimeRoot | undefined;
     let rootLease: AnalysisCleanupLease | undefined;
     const engineName = FIRMWARE_OPERATION_ENGINES[request.operation];
@@ -725,21 +729,21 @@ const finishFirmwareWorkspace = async (
         completedFirmwareObservation(outcome.value),
       );
       return err(
-        analysisErrorWithCleanupFailure(
+        analysisErrorWithCleanupDependencies(
           primary,
           cleanup,
           request.operation,
-        ).bindCleanupDependencies([cleanup]),
+        ),
       );
     }
     return err(
       outcome.ok
         ? cleanup
-        : analysisErrorWithCleanupFailure(
+        : analysisErrorWithCleanupDependencies(
             outcome.error,
             cleanup,
             request.operation,
-          ).bindCleanupDependencies([outcome.error, cleanup]),
+          ),
     );
   }
   return outcome;

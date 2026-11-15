@@ -2,10 +2,12 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
   OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
@@ -264,11 +266,7 @@ export const runDoctorOwned = async (
               { operation: "doctor" },
             )
           : cleanup;
-      throw analysisErrorWithCleanupFailure(
-        cause,
-        cleanupError,
-        "doctor",
-      ).bindCleanupDependencies([cause, cleanupError]);
+      throw analysisErrorWithCleanupDependencies(cause, cleanupError, "doctor");
     }
     if (cleanup !== undefined)
       throw new AggregateError(
@@ -280,8 +278,7 @@ export const runDoctorOwned = async (
   }
   const cleanup = await closeDoctorHost(host);
   if (cleanup === undefined && report.healthy && host.signal?.aborted)
-    throw new AnalysisCancelledError("doctor", {
-      cause: host.signal.reason,
+    throw cancelledBy("doctor", host.signal, {
       diagnostics: { doctor_report: jsonValueSchema.parse(report) },
     });
   return cleanup === undefined
@@ -294,8 +291,7 @@ const inspectDoctor = async (
   host: DoctorHost,
   requestedScope?: DoctorScope,
 ): Promise<DoctorReport> => {
-  if (host.signal?.aborted)
-    throw new AnalysisCancelledError("doctor", { cause: host.signal.reason });
+  if (host.signal?.aborted) throw cancelledBy("doctor", host.signal);
   const scope = normalizeDoctorScope(requestedScope, target);
   const {
     checks: diagnosticChecks,
@@ -724,8 +720,7 @@ export const systemDoctorHost = (
           signal: inspectionSignal,
         });
         if (inspectionSignal.aborted)
-          throw new AnalysisCancelledError("doctor", {
-            cause: inspectionSignal.reason,
+          throw cancelledBy("doctor", inspectionSignal, {
             capturedOutput: {
               stdout: output.stdout,
               stderr: output.stderr,
@@ -740,12 +735,13 @@ export const systemDoctorHost = (
       } catch (cause: unknown) {
         if (cause instanceof ExecFileOutputCancelledError) {
           const output = execFileOutputFailure(cause);
-          throw new AnalysisCancelledError("doctor", {
-            cause: cause.cause,
-            ...(output === undefined
+          throw cancelledBy(
+            "doctor",
+            carriedReason(cause.cause),
+            output === undefined
               ? {}
-              : { capturedOutput: execFileFailureCapturedOutput(output) }),
-          });
+              : { capturedOutput: execFileFailureCapturedOutput(output) },
+          );
         }
         throw cause;
       }

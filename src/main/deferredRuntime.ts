@@ -14,6 +14,8 @@ import {
   resolveMcpInputSchemaProfile,
   type McpInputSchemaProfile,
 } from "../config/mcpInputSchemaProfile.js";
+import { resolveMcpOutputSchemaProfile } from "../config/mcpOutputSchemaProfile.js";
+import { RECORDED_CATALOG_DIGEST_PROFILES } from "../recordedCatalogDigests.js";
 import { DeferredEvidenceMcpServer } from "../server/DeferredEvidenceMcpServer.js";
 import { ToolResultDelivery } from "../server/ToolResultDelivery.js";
 import { createLogger } from "../logger.js";
@@ -137,6 +139,11 @@ export const runDeferred = async (
     layer: "server",
   });
   const profile = resolveMcpInputSchemaProfile(config.mcpInputSchemaProfile);
+  // `main.ts` defers only the profiles the recorded catalog can serve.
+  const outputSchemaProfile =
+    resolveMcpOutputSchemaProfile(config.mcpOutputSchemaProfile) === "full"
+      ? "full"
+      : "off";
   let firstCatalog: RecordedMcpCatalog | undefined = readCatalog(profile);
   const servers = new OwnedMcpServers<DeferredEvidenceMcpServer>();
   let handle: McpServerHandle | undefined;
@@ -220,6 +227,14 @@ export const runDeferred = async (
                 maximumInputElements: config.mcpMaxInputElements,
                 compactPresentation:
                   compactPresentationForMcpInputSchemaProfile(profile),
+                outputSchemaProfile,
+                identity: {
+                  ...catalog.identity,
+                  digests:
+                    RECORDED_CATALOG_DIGEST_PROFILES?.[profile][
+                      outputSchemaProfile
+                    ] ?? catalog.identity.digests,
+                },
               },
             );
             if (config.mcpToolCatalogProfile === "hot-cold")

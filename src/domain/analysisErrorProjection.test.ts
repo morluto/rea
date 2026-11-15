@@ -49,6 +49,7 @@ import { redactExplicitText } from "./explicitSensitiveValues.js";
 import { analysisErrorWithCleanupFailure } from "./analysisErrorCleanup.js";
 import type { AnalysisCallerLifetime } from "./analysisErrorBase.js";
 import { ProviderCleanupError } from "./providerCleanupError.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 it("projects nested workflow-publication recovery for the actual caller lifetime", () => {
   const child = new UnknownRegistryError(
@@ -1759,7 +1760,7 @@ describe("analysis error projection: Hopper caller lifetime", () => {
       diagnostics: { primary_error: continuingPrimary },
     });
 
-    cleanup.resolveCleanup();
+    releaseOwnedCleanup(cleanup);
     expect(
       projectAnalysisError(composed, "invocation").details?.cleanup_history,
     ).toMatchObject({ primary_error: invocationPrimary });
@@ -1812,7 +1813,7 @@ describe("analysis error projection: composed failures for a caller lifetime", (
       `Only this request stopped. ${continuingOnly.userMessage}`,
     );
     // After cleanup resolves, history keeps the composition-time snapshot.
-    cleanup.resolveCleanup();
+    releaseOwnedCleanup(cleanup);
     for (const lifetime of ["continuing", "invocation"] as const)
       expect(child(lifetime)?.cleanup_history).toMatchObject({
         primary_error: projectAnalysisError(primary, lifetime),

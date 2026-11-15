@@ -123,6 +123,7 @@ import {
 import { AnalysisSnapshotCache } from "../application/binary/AnalysisSnapshotCache.js";
 import { createEvidence } from "../domain/evidence.js";
 import { createEvidenceBundle } from "../domain/evidenceBundle.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 const GHIDRA_SESSION_RETAINED = "The Ghidra session remains usable.";
 const GHIDRA_ANNOTATIONS_RETAINED =
@@ -4795,6 +4796,22 @@ describe("Ghidra startup deadline for a finished invocation", () => {
       expect(
         invocation.remediation.action.includes("REA_GHIDRA_DISABLED_ANALYZERS"),
       ).toBe(!existingProject);
+      for (const { remediation } of [invocation, continuing]) {
+        if (existingProject) {
+          expect(remediation.action).not.toContain("REA_GHIDRA_CHECKPOINT_DIR");
+        } else {
+          expect(remediation.action).toContain("REA_GHIDRA_CHECKPOINT_DIR");
+          expect(remediation.action).toContain(
+            "--snapshot reuses cached query results, not the analyzed Ghidra Program",
+          );
+          expect(remediation.action).toContain(
+            "Initial analysis must still complete once",
+          );
+          expect(remediation.action).toContain(
+            "Changing startup mode requires a new REA invocation or an MCP server restart",
+          );
+        }
+      }
     },
   );
 
@@ -6854,7 +6871,7 @@ it("session-observation failure clears only its resolved cleanup dependency afte
       close: async () => {
         closes++;
         if (closes === 1) return err(retained);
-        retained.resolveCleanup();
+        releaseOwnedCleanup(retained);
         return ok(null);
       },
     }),

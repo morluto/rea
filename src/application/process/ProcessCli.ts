@@ -1,15 +1,21 @@
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
+  type AnalysisInputIssue,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import type { AnalysisErrorProjection } from "../../domain/analysisErrorProjection.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
-import { describeValidationFailure } from "../../domain/validationFailure.js";
+import {
+  describeValidationFailure,
+  firstValidationIssuePath,
+} from "../../domain/validationFailure.js";
 import { PROCESS_PROVIDER } from "../../domain/process/processEvidenceProvider.js";
 import {
   analysisInputErrorFromIssues,
@@ -46,17 +52,7 @@ import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
 /** Preserve the owning reader's facts when retaining a different cause. */
 const artifactFailureFacts = (failure: ArtifactReaderFailure) => ({
-  ...(failure.userMessage === undefined
-    ? {}
-    : { userMessage: failure.userMessage }),
-  ...(failure.resolvedPath === undefined
-    ? {}
-    : { resolvedPath: failure.resolvedPath }),
-  ...(failure.boundary === undefined ? {} : { boundary: failure.boundary }),
-  ...(failure.admission === undefined ? {} : { admission: failure.admission }),
-  ...(failure.readerLimit === undefined
-    ? {}
-    : { readerLimit: failure.readerLimit }),
+  ...failure.primaryFacts(),
   ...(failure.cleanup === undefined ? {} : { cleanup: failure.cleanup }),
   ...(failure.partialObservation === undefined
     ? {}
@@ -179,11 +175,11 @@ export const captureProcessScenarioFile = async (
           : original instanceof AnalysisError && cause instanceof AnalysisError
             ? original instanceof ProcessCaptureError
               ? original.withFinalization({ cleanupFailure: cause })
-              : analysisErrorWithCleanupFailure(
+              : analysisErrorWithCleanupDependencies(
                   original,
                   cause,
                   "capture_process_scenario",
-                ).bindCleanupDependencies([original, cause])
+                )
             : new AggregateError(
                 [original, cause],
                 "Process capture and cleanup failed",
@@ -308,13 +304,18 @@ const parseTraceSpecification = (input: unknown) => {
   );
 };
 
-const invalidCaptureEvidence = (cause: unknown, side: "left" | "right") =>
-  processInputFailure(
+const invalidCaptureEvidence = (cause: unknown, side: "left" | "right") => {
+  const issuePath = firstValidationIssuePath(cause);
+  return processInputFailure(
     "compare_process_captures",
     `Capture evidence is malformed (${describeValidationFailure(cause)}). Create new capture evidence, then try again.`,
     [side],
     "invalid_value",
+    issuePath === undefined
+      ? undefined
+      : { issue_path: ["normalized_result", ...issuePath] },
   );
+};
 
 const readJson = async (
   path: string,
@@ -322,14 +323,12 @@ const readJson = async (
   signal: AbortSignal | undefined,
   resources: ArtifactResourceScope,
 ): Promise<unknown> => {
-  if (signal?.aborted)
-    throw new AnalysisCancelledError(operation, { cause: signal.reason });
+  if (signal?.aborted) throw cancelledBy(operation, signal);
   const loaded = await readJsonFile(path, signal, resources, operation);
   if (!loaded.ok && loaded.error instanceof AnalysisCancelledError)
-    throw new AnalysisCancelledError(operation, { cause: loaded.error.cause });
+    throw cancelledBy(operation, carriedReason(loaded.error.cause));
   if (loaded.ok) {
-    if (signal?.aborted)
-      throw new AnalysisCancelledError(operation, { cause: signal.reason });
+    if (signal?.aborted) throw cancelledBy(operation, signal);
     return loaded.value;
   }
   if (loaded.error._tag !== "EvidenceFileError") throw loaded.error;
@@ -344,6 +343,8 @@ const readJson = async (
         : `Process input file could not be read: ${path} (${detail}). Check the reported filesystem constraint and retry.`,
     ["input_file"],
     "invalid_value",
+    // Read and parse failures share one issue reason; name which one occurred.
+    { file_reason: loaded.error.reason },
   );
 };
 
@@ -352,9 +353,15 @@ const processInputFailure = (
   userMessage: string,
   path: readonly (string | number)[],
   reason: "invalid_value" | "missing_argument",
+  observed?: AnalysisInputIssue["observed"],
 ): AnalysisInputError =>
   new AnalysisInputError(operation, { userMessage }, [
-    { path, reason, message: userMessage },
+    {
+      path,
+      reason,
+      message: userMessage,
+      ...(observed === undefined ? {} : { observed }),
+    },
   ]);
 
 const cliAnalysisError = (error: AnalysisError): ProcessCliErrorOutput => ({
@@ -399,10 +406,7 @@ const projectProcessCliError = (
         });
   return cliAnalysisError(
     signal?.aborted
-      ? analysisErrorWithCancellation(
-          failure,
-          new AnalysisCancelledError(operation, { cause: signal.reason }),
-        )
+      ? analysisErrorWithCancellation(failure, cancelledBy(operation, signal))
       : failure,
   );
 };
@@ -450,10 +454,11 @@ const withProcessInputResources = async (
       resources.cleanupResources,
     );
     const cancellation = signal?.aborted
-      ? new AnalysisCancelledError(operation, {
-          cause: signal.reason,
-          ...(outcome.ok ? { partialObservation: outcome.value } : {}),
-        })
+      ? cancelledBy(
+          operation,
+          signal,
+          outcome.ok ? { partialObservation: outcome.value } : {},
+        )
       : undefined;
     const primary = outcome.ok
       ? cancellation === undefined

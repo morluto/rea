@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { schemaVerifierEnvironment } from "./lib/mcp-verification-environment.mjs";
 import assert from "node:assert/strict";
 import {
   requireMcpEvidenceBundle,
@@ -79,7 +80,7 @@ const assertRejectedSelector = (
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
-  env: environment,
+  env: schemaVerifierEnvironment(environment),
   stderr: "pipe",
 });
 // The MCP server child reads files under the root until it has exited.

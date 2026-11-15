@@ -279,10 +279,8 @@ class RizinFrameTimeoutError extends Error {
 export class RizinDebugSessionManager {
   readonly #sessions: OwnedDebuggerSessionRegistry<RizinDebugSession>;
   readonly #ttyResources = new ArtifactResourceScope();
-  #activeStarts = 0;
   readonly #environment: Readonly<NodeJS.ProcessEnv>;
   #closingAll = false;
-  readonly #startDrainWaiters: Array<() => void> = [];
   readonly #command: string;
   readonly #launchCommandDeadline: DebuggerAdmissionLimit;
   readonly #startupTimeoutMs: number;
@@ -373,17 +371,28 @@ export class RizinDebugSessionManager {
       AnalysisError
     >
   > {
-    if (this.#closingAll)
-      return err(
-        new AnalysisInputError("start_rizin_debug_session", undefined, [
-          {
-            path: ["inferior_tty"],
-            reason: "missing_argument",
-            message:
-              "Select a persistent readable and writable Linux terminal for inferior input and output.",
-          },
-        ]),
-      );
+    return this.#sessions.start(
+      "start_rizin_debug_session",
+      signal,
+      (started) => this.#startWithReservation(input, started),
+    );
+  }
+
+  async #startWithReservation(
+    input: {
+      readonly path: string;
+      readonly inferior_tty: string;
+      readonly backend?: string;
+    },
+    signal: AbortSignal,
+  ): Promise<
+    Result<
+      { readonly session_id: string; readonly backend: string | null },
+      AnalysisError
+    >
+  > {
+    if (signal.aborted)
+      return err(cancelledBy("start_rizin_debug_session", signal));
     const occupied = this.#sessions.occupied();
     if (occupied >= this.#maxSessions.value)
       return err(
@@ -399,15 +408,11 @@ export class RizinDebugSessionManager {
           },
         ),
       );
-    this.#activeStarts += 1;
     const releaseReservation = this.#sessions.reserve();
     try {
       return await this.#start(input, signal, releaseReservation);
     } finally {
       releaseReservation();
-      this.#activeStarts -= 1;
-      if (this.#activeStarts === 0)
-        for (const resolve of this.#startDrainWaiters.splice(0)) resolve();
     }
   }
 
@@ -417,7 +422,7 @@ export class RizinDebugSessionManager {
       readonly inferior_tty: string;
       readonly backend?: string;
     },
-    signal: AbortSignal | undefined,
+    signal: AbortSignal,
     releaseReservation: () => void,
   ): Promise<
     Result<
@@ -425,8 +430,6 @@ export class RizinDebugSessionManager {
       AnalysisError
     >
   > {
-    if (signal?.aborted)
-      return err(cancelledBy("start_rizin_debug_session", signal));
     if (!persistentDebuggerHostSupported(this.#platform))
       return err(
         new AnalysisCapabilityUnavailableError(
@@ -1190,10 +1193,7 @@ export class RizinDebugSessionManager {
 
   async closeAll(): Promise<void> {
     this.#closingAll = true;
-    if (this.#activeStarts > 0)
-      await new Promise<void>((resolve) =>
-        this.#startDrainWaiters.push(resolve),
-      );
+    await this.#sessions.closeStarts();
     const outcomes = await Promise.allSettled([
       this.#sessions.closeAll(),
       this.#ttyResources.close(),

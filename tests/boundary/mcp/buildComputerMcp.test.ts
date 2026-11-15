@@ -23,6 +23,7 @@ import {
   expectNoToken,
   startBuildComputer,
 } from "../../fixtures/buildComputerMcp.js";
+import { COMPUTER_START_TIMING } from "../../../src/desktop/AgentEnvComputer.js";
 import {
   FAKE_FRAME_PNG,
   type FakeApp,
@@ -695,9 +696,14 @@ it("runs one computer's calls in the order they arrive and another computer's be
 });
 
 it("sends progress while an action waits for the call before it on its computer", async () => {
-  const app = slowApp(14);
+  const app = slowApp(2);
   const { runner } = await fakes({ app });
-  const client = await connect(runner.environment);
+  // A short heartbeat lets the queued action report progress while the reset
+  // before it is still polling the relaunched app.
+  const client = await connect(runner.environment, undefined, undefined, {
+    ...COMPUTER_START_TIMING,
+    progressMs: 100,
+  });
   const id = await startBuildComputer(client, {
     kind: "bundle",
     path: await bundleFolder(),

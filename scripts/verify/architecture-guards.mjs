@@ -330,6 +330,19 @@ checkCounted(
   ["src/pcap/TsharkJsonPackets.ts"],
 );
 
+// Strict UTF-8 decoding has one owner, src/domain/strictUtf8.ts, which makes
+// each site state its byte-order-mark policy. A local fatal decoder silently
+// strips a leading BOM unless it remembers ignoreBOM. The pattern matches the
+// options in any order and an omitted label. The remaining copy runs inside a
+// browser page through page.evaluate, which cannot import the owner.
+checkCounted(
+  "local strict UTF-8 TextDecoder (use strictUtf8Decoder, decodeStrictUtf8 or isStrictUtf8 from src/domain/strictUtf8)",
+  "strict-utf8-decoder",
+  files,
+  /new TextDecoder\(\s*(?:(?:["'`]utf-?8["'`]|undefined)\s*,\s*)?\{[^}]*\bfatal:\s*true/giu,
+  ["src/domain/strictUtf8.ts"],
+);
+
 // Turning a completed result into a cancellation after cleanup is the
 // finalization precedence that runOwned owns (src/providers/runOwned.ts).
 checkCounted(
@@ -422,23 +435,62 @@ checkCounted(
   ["src/native/metadata/BinaryContainer.ts"],
 );
 
+// An input fault is a ParseFailureError; a broken internal assumption is a
+// defect, not an input fault, and throws invariantViolation from
+// src/domain/internalInvariant so callers never read it as bad bytes.
+// Process-lifecycle owners in parser folders read their private helper's
+// replies through schemas; their plain throws report the helper's startup,
+// handshake and cleanup outcomes, which are process failures, not parse faults.
+const PROCESS_LIFECYCLE_OWNERS = [
+  "src/android/JadxWorkspaceRoot.ts",
+  "src/native/pwntools/PwntoolsDecoder.ts",
+];
+const PLAIN_THROW = /throw new (?:Error|TypeError|RangeError)\(/gu;
 checkCounted(
-  "plain Error, TypeError or RangeError thrown by a parser (throw a ParseFailureError from src/domain/parseFailure)",
+  "plain Error, TypeError or RangeError thrown by a parser (throw a ParseFailureError from src/domain/parseFailure for an input fault, or invariantViolation from src/domain/internalInvariant for a broken internal assumption)",
   "parser-plain-throw",
-  parserFiles,
-  /throw new (?:Error|TypeError|RangeError)\(/gu,
+  parserFiles.filter((file) => !PROCESS_LIFECYCLE_OWNERS.includes(file.path)),
+  PLAIN_THROW,
+  [],
+);
+// The lifecycle owners' existing process-failure throws are counted, so a
+// parse fault or defect added there later cannot hide behind the exemption.
+checkCounted(
+  "plain Error, TypeError or RangeError thrown by a parser-folder process-lifecycle owner (keep its existing process-failure throws; throw a ParseFailureError for an input fault or invariantViolation for a broken internal assumption)",
+  "lifecycle-plain-throw",
+  parserFiles.filter((file) => PROCESS_LIFECYCLE_OWNERS.includes(file.path)),
+  PLAIN_THROW,
   [],
 );
 
 // A per-format failure class restates the ParseFailure algebra under its own
 // spelling and needs its own catch-site translation; parsers throw a
-// ParseFailureError (or a subclass of it) instead.
+// ParseFailureError instead. A subclass of ParseFailureError (such as
+// CaptureFormatError) keeps the shared kind and is not counted. The name
+// pattern covers format, parse, document, source, decode and syntax failures,
+// and any property-list or archive failure (such as a nesting limit or an
+// unsupported UID), built on any of the host's general error classes.
 checkCounted(
-  "per-format failure class extending Error (throw a ParseFailureError from src/domain/parseFailure)",
+  "per-format failure class extending a host error (throw a ParseFailureError from src/domain/parseFailure)",
   "parser-format-failure-class",
   files,
-  /class \w*(?:Format|Parse)(?:Failure|Error) extends Error\b/gu,
+  /class (?:\w*(?:Format|Parse|Document|Source|Decode|Decoding|Encoding|Syntax)|\w*(?:Plist|PropertyList|Archive)\w*)(?:Failure|Error|Issue) extends (?:Error|TypeError|RangeError|SyntaxError)\b/gu,
   ["src/domain/parseFailure.ts"],
+);
+
+// Mach-O load-command codes have one table; a literal code in a load-command
+// reader restates it and drifts from the named command it means.
+checkCounted(
+  "literal Mach-O load-command code (use LC from src/domain/apple/machoLoadCommandCodes)",
+  "macho-load-command-literal",
+  files.filter((file) =>
+    /MachoLoadCommandCursor|readMachoLoadCommand|machoLoadCommandCodes/u.test(
+      file.content,
+    ),
+  ),
+  // An equality test, or membership in a literal list of codes.
+  /\b(?:frame\.command|command\.kind|command|cmd)\s*[!=]==\s*(?:0x[0-9a-fA-F]+|\d+)\b|\[\s*(?:0x[0-9a-fA-F]+|\d+)(?:\s*,\s*(?:0x[0-9a-fA-F]+|\d+))*\s*,?\s*\]\s*\.(?:includes|indexOf)\(\s*(?:\w+\.)*(?:command|cmd|kind)\s*\)/gu,
+  ["src/domain/apple/machoLoadCommandCodes.ts"],
 );
 
 // JSON.parse keeps the last of repeated member names without saying so; a
@@ -463,22 +515,26 @@ checkCounted(
   ["src/domain/parseFailure.ts"],
 );
 
-// Cleanup completion is recorded by the owning lease and read by errors when
-// asked. Pushing it with resolveCleanup() and composing dependency sets with
-// bindCleanupDependencies() are being replaced, so neither may spread.
+// Cleanup completion is recorded by the owner and read by errors when asked;
+// AnalysisError has no push API. Composing dependency sets with
+// bindCleanupDependencies() is being replaced, so it may not spread.
 checkCounted(
-  "resolveCleanup() push outside the error base (release the owning AnalysisCleanupLease instead)",
-  "cleanup-resolve-push",
-  files,
-  /\.resolveCleanup\(/gu,
-  ["src/domain/analysisErrorBase.ts"],
-);
-checkCounted(
-  "bindCleanupDependencies() composition outside the error base (compose through runOwned or copy lease claims)",
+  "bindCleanupDependencies() composition outside the error base (compose through analysisErrorWithCleanupDependencies or runOwned, or copy lease claims)",
   "cleanup-dependency-binding",
   files,
   /\.bindCleanupDependencies\(/gu,
-  ["src/domain/analysisErrorBase.ts"],
+  ["src/domain/analysisErrorBase.ts", "src/domain/analysisErrorCleanup.ts"],
+);
+
+// A launcher's PATH search order (POSIX empty and relative entries and `..`;
+// Windows quoted entries and PATHEXT) belongs to src/process/executableSearch;
+// callers choose only how they probe each candidate.
+checkCounted(
+  "PATH or PATHEXT split outside the executable search owner (use posixPathCandidates or windowsPathCandidates from src/process/executableSearch)",
+  "path-search-split",
+  files,
+  /\.split\(\s*(?:posix\.|win32\.)?(?:delimiter|pathDelimiter)\s*\)|\bPATH\b[^\n]{0,12}\.split\(":"\)|\bPATHEXT\b[^\n]{0,60}\.split\(/gu,
+  ["src/process/executableSearch.ts"],
 );
 
 // The running host is read once by src/platform/HostPlatform; composition

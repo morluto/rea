@@ -27,6 +27,7 @@ interface Job {
   readonly path: string;
   readonly token: string;
   readonly stdout: string;
+  /** Failures naming this job, kept to retain its completion receipt. */
   readonly failures: Set<WeakRef<ProviderCleanupError>>;
 }
 
@@ -232,7 +233,6 @@ export class BuildComputerLongRuns {
         const failure = reference.deref();
         if (completed !== undefined)
           failure?.retainDiagnostics({ completed_command: completed });
-        failure?.resolveCleanup();
       }
       return {
         verified: true,
@@ -283,8 +283,15 @@ export class BuildComputerLongRuns {
       },
     );
     failure.bindCleanupResourceOwner(this);
-    for (const pending of job === undefined ? this.#jobs : [job])
-      pending.failures.add(new WeakRef(failure));
-    return failure;
+    const jobs = job === undefined ? [...this.#jobs] : [job];
+    for (const pending of jobs) pending.failures.add(new WeakRef(failure));
+    // Released once every job it names has confirmed its stop. Jobs leave
+    // only after that, and never return, so the release cannot reopen.
+    const owned = this.#jobs;
+    return failure.bindCleanupReleaseClaim({
+      get cleanupReleased() {
+        return jobs.every((pending) => !owned.has(pending));
+      },
+    });
   }
 }

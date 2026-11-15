@@ -19,23 +19,9 @@
 export const ADVERTISED_INPUT_DIALECT_BASELINE: Readonly<
   Record<"compact" | "full", Readonly<Record<string, number>>>
 > = {
-  compact: {
-    "input bound maxItems": 2,
-    "input bound maxLength": 13,
-    "input keyword $schema": 256,
-    "input keyword allOf": 10,
-    "input keyword const": 83,
-    "input keyword exclusiveMinimum": 61,
-    "input keyword format": 20,
-    "input keyword minProperties": 12,
-    "input keyword oneOf": 3,
-    "input keyword prefixItems": 2,
-    "input keyword propertyNames": 3,
-    "input keyword uniqueItems": 2,
-    "input type type-list": 11,
-    "input type type:null": 14,
-    "input type untyped": 38,
-  },
+  // The compact projection (`advertisedDialectProjection.ts`) leaves nothing
+  // outside the dialect.
+  compact: {},
   full: {
     "input any-of fewer-than-two-branches": 176,
     "input any-of untyped-branch": 142,
@@ -63,7 +49,7 @@ export const ADVERTISED_INPUT_DIALECT_BASELINE: Readonly<
     "input keyword then": 7,
     "input keyword uniqueItems": 5,
     "input type type-list": 53,
-    "input type type:null": 386,
-    "input type untyped": 1500,
+    "input type type:null": 6,
+    "input type untyped": 1256,
   },
 };

@@ -1,5 +1,9 @@
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { withArtifactTargetIdentity } from "../artifacts/withArtifactTargetIdentity.js";
+import {
+  invariantViolation,
+  InternalInvariantError,
+} from "../domain/internalInvariant.js";
 import { translateNativeCommandFailure } from "./NativeCommandAnalysisError.js";
 import {
   plistSourceFormat,
@@ -152,8 +156,8 @@ import {
   withNativeMachoSource,
   NativeMachoSourceVerificationFailure,
 } from "./NativeMachoSource.js";
+import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
 import {
-  MachoBinaryFormatError,
   MachoCommandNamesLimitError,
   readMachoCommandNames,
 } from "./MachoCommandNames.js";
@@ -271,7 +275,7 @@ class NativeMacOSClient implements AnalysisClient {
 
   private get target(): BinaryTarget {
     if (this.activeTarget === undefined)
-      throw new Error("This provider client has no executable target");
+      throw invariantViolation("This provider client has no executable target");
     return this.activeTarget;
   }
 
@@ -1441,7 +1445,9 @@ class NativeMacOSClient implements AnalysisClient {
               );
               if (size !== null) {
                 if (selected === undefined)
-                  throw new TypeError("Selected Mach-O slice is unavailable");
+                  throw invariantViolation(
+                    "Selected Mach-O slice is unavailable",
+                  );
                 assertSelectedMachoSlice(source, selected, binary);
               }
               return binary;
@@ -1705,11 +1711,19 @@ const closeNativeFileScope = async (
   }
 };
 
+/**
+ * Project a producer failure. A broken internal assumption is a REA defect, not
+ * native output, so it is rethrown rather than reported as output parsing.
+ */
 const nativeOutputFailure = (
   operation: AnalysisOperation,
   cause: unknown,
-): AnalysisError =>
-  new AnalysisOutputError(operation, "Native output parsing failed", { cause });
+): AnalysisError => {
+  if (cause instanceof InternalInvariantError) throw cause;
+  return new AnalysisOutputError(operation, "Native output parsing failed", {
+    cause,
+  });
+};
 
 const nativeMachoCompletedFailure = (
   value: unknown,
@@ -1729,8 +1743,6 @@ const nativeMachoSourcePrimary = (
   operation: "inspect_macho" | "list_architectures",
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
-  if (cause instanceof MachoBinaryFormatError)
-    return new AnalysisOutputError(operation, cause.message, { cause });
   if (cause instanceof MachoCommandNamesLimitError)
     return new AnalysisResourceConstraintError(
       operation,
@@ -1739,6 +1751,9 @@ const nativeMachoSourcePrimary = (
       { maximum: cause.maximum, unit: cause.unit },
       { cause, retryable: false },
     );
+  // The selected Mach-O's own bytes failed to parse; a limit falls through.
+  const formatFailure = parseFailureAnalysisError(operation, path, cause);
+  if (formatFailure !== undefined) return formatFailure;
   const completed =
     cause instanceof NativeMachoSourceVerificationFailure
       ? cause.completed

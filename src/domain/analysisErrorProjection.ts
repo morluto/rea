@@ -797,7 +797,14 @@ const requestErrorDetails = (
         ? {}
         : { binding_mismatch: jsonValueSchema.parse(error.bindingMismatch) }),
     };
-  if (error instanceof EvidenceIntegrityError) return { reason: error.message };
+  if (error instanceof EvidenceIntegrityError)
+    return {
+      reason: error.message,
+      ...(error.side === undefined ? {} : { side: error.side }),
+      ...(error.issuePath === undefined
+        ? {}
+        : { issue_path: [...error.issuePath] }),
+    };
   return undefined;
 };
 
@@ -805,7 +812,12 @@ const artifactStateErrorDetails = (
   error: AnalysisError,
 ): Readonly<Record<string, JsonValue>> | undefined => {
   if (error instanceof ArtifactOperationError && error.artifactDetails)
-    return projectArtifactIntegrityDetails(error.artifactDetails);
+    return {
+      ...projectArtifactIntegrityDetails(error.artifactDetails),
+      ...(error.integrityCheck === undefined
+        ? {}
+        : { integrity_check: error.integrityCheck }),
+    };
   if (error instanceof ArtifactOperationError)
     return {
       operation: error.operation,
@@ -813,6 +825,9 @@ const artifactStateErrorDetails = (
       ...(error.reason === "limit" ? { truncated: true } : {}),
       ...(error.detail === undefined ? {} : { detail: error.detail }),
       ...(error.boundary === undefined ? {} : { boundary: error.boundary }),
+      ...(error.integrityCheck === undefined
+        ? {}
+        : { integrity_check: error.integrityCheck }),
       ...(error.readerLimit === undefined
         ? {}
         : { reader_limit: { ...error.readerLimit } }),
@@ -845,6 +860,9 @@ const artifactStateErrorDetails = (
       operation: error.operation,
       reason: error.reason,
       ...(error.reason === "path-limit" ? { boundary: "filesystem-path" } : {}),
+      ...(error.detectedKind === undefined
+        ? {}
+        : { detected_kind: error.detectedKind }),
       ...(error.systemCode === undefined
         ? {}
         : { system_code: error.systemCode }),

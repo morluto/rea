@@ -153,8 +153,7 @@ in the MCP client's whole-call deadline; increasing only that deadline does not
 change the worker budget. No server restart is needed.
 
 The result's `worker_timeout_ms` reports the actual parent-supervised budget,
-including the default. Historical Evidence without this field has unknown
-execution settings, not an inferred default. Explicit input selection is also
+including the default, and Evidence without it is malformed. Explicit input selection is also
 retained in Evidence parameters; omission stays omitted. Completed observations
 retained under cancellation or cleanup failure keep the same budget facts.
 Timeout errors name the selected milliseconds, exact CLI/MCP controls, and

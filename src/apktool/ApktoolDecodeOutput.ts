@@ -1,6 +1,10 @@
 import type { Element, Node } from "@xmldom/xmldom";
-import { parseXmlDocument } from "../domain/xmlDocument.js";
+import {
+  parseXmlDocument,
+  type XmlParseFailure,
+} from "../domain/xmlDocument.js";
 import { ok, err, type Result } from "../domain/result.js";
+import { malformedInput } from "../domain/parseFailure.js";
 import {
   isMap,
   isScalar,
@@ -158,18 +162,6 @@ export interface DecodedStringEntry {
   readonly value: string;
 }
 
-/** A whole-document failure does not establish an omitted-entry count. */
-export class ApktoolStringsDocumentError extends Error {
-  readonly _tag = "ApktoolStringsDocumentError";
-  constructor(
-    readonly reason: "malformed" | "wrong_root",
-    message: string,
-    options?: ErrorOptions,
-  ) {
-    super(message, options);
-  }
-}
-
 /**
  * Project direct `<string>` children from decoded resources XML. DOM parsing
  * identifies elements and attributes; text values are sliced from the input
@@ -183,24 +175,21 @@ export const parseDecodedStrings = (
     readonly entries: readonly DecodedStringEntry[];
     readonly unparsedCount: number;
   },
-  ApktoolStringsDocumentError
+  // A whole-document failure does not establish an omitted-entry count.
+  XmlParseFailure
 > => {
   const parsed = parseXmlDocument(stringsXml, {
     doctype: "allow",
     lineEndings: "preserve",
   });
-  if (!parsed.ok)
-    return err(
-      new ApktoolStringsDocumentError("malformed", parsed.error.message, {
-        cause: parsed.error,
-      }),
-    );
+  if (!parsed.ok) return err(parsed.error);
   const root = parsed.value.documentElement;
   if (root === null || root.nodeName !== "resources")
     return err(
-      new ApktoolStringsDocumentError(
-        "wrong_root",
+      malformedInput(
+        "android-string-resources",
         "String resource document root must be <resources>",
+        { field: "documentElement" },
       ),
     );
 

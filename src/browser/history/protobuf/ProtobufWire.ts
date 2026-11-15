@@ -1,3 +1,4 @@
+import { strictUtf8Decoder } from "../../../domain/strictUtf8.js";
 import { captureBudgets } from "../CaptureBudgets.js";
 import { readLeb128, ULEB64 } from "../../../domain/leb128.js";
 import { err, ok, type Result } from "../../../domain/result.js";
@@ -40,7 +41,7 @@ export const readProtobufVarint = (
   return "failure" in read ? undefined : { value: read.value, end: read.next };
 };
 
-const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const utf8 = strictUtf8Decoder("preserve");
 const textOf = (bytes: Uint8Array): string | undefined => {
   try {
     return utf8.decode(bytes);

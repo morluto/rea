@@ -17,7 +17,12 @@ import {
 } from "./JadxInterruption.js";
 import { constants } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
-import { delimiter, isAbsolute, resolve } from "node:path";
+import { isAbsolute } from "node:path";
+import {
+  posixPathCandidates,
+  windowsPathCandidates,
+  type PathSearchCandidate,
+} from "../process/executableSearch.js";
 import { inspectWindowsNativeReadiness } from "../process/WindowsAuthority.js";
 import { systemWindowsNativeAuthority } from "../windows/WindowsNativeLoader.js";
 import { providerStartupTimeoutSchema } from "../config/providerStartupTimeout.js";
@@ -33,7 +38,7 @@ import { err, ok, type Result } from "../domain/result.js";
 import type { ProviderAvailability } from "../application/AnalysisProvider.js";
 import { ownedProcessPrerequisiteAvailability } from "../application/ownedProcessAvailability.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
@@ -417,11 +422,7 @@ const requireEngineArchive = async (
                 },
               );
       if (primary === undefined) throw cleanup;
-      throw analysisErrorWithCleanupFailure(
-        primary,
-        cleanup,
-        operation,
-      ).bindCleanupDependencies([primary, cleanup]);
+      throw analysisErrorWithCleanupDependencies(primary, cleanup, operation);
     }
     if (cause instanceof ArtifactFileCancelled) {
       throw archiveCancellation(cause.fileCancellation.reason, options, {
@@ -592,27 +593,23 @@ const resolveJava = async (
   const executable = process.platform === "win32" ? "java.exe" : "java";
   if (environment.JAVA_HOME === undefined) {
     const windows = process.platform === "win32";
-    const path = windows
-      ? (Object.entries(environment).find(
-          ([key]) => key.toLowerCase() === "path",
-        )?.[1] ?? "")
-      : (environment.PATH ?? "/usr/bin:/bin");
     // Resolve in the caller's directory once. The module probe and the engine
     // run in different directories, and the selected executable also owns the
-    // retained session's cache identity. Empty POSIX PATH components select cwd.
-    const directories = path.split(delimiter);
-    for (const directory of windows
-      ? directories.filter((entry) => entry !== "")
-      : directories) {
+    // retained session's cache identity. Empty POSIX PATH components select
+    // cwd. `java.exe` names its extension, so PATHEXT never fails the search.
+    const windowsSearch = windows
+      ? windowsPathCandidates(executable, environment)
+      : undefined;
+    const candidates: Iterable<PathSearchCandidate> =
+      windowsSearch === undefined
+        ? posixPathCandidates(executable, environment.PATH ?? "/usr/bin:/bin", {
+            relativeEntries: "resolve",
+          })
+        : windowsSearch.ok
+          ? windowsSearch.value
+          : [];
+    for (const { path: candidate } of candidates) {
       throwIfJadxInterrupted(signal);
-      // Windows PATH commonly quotes individual entries containing spaces.
-      const selected =
-        windows && directory.startsWith('"') && directory.endsWith('"')
-          ? directory.slice(1, -1)
-          : directory;
-      const candidate = windows
-        ? resolve(selected, executable)
-        : absoluteCallerPath(appendCallerPath(selected, executable));
       try {
         await access(
           candidate,

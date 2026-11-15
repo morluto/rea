@@ -94,6 +94,19 @@ const SELECTED_REGISTRATION_SETTINGS = [
   "REA_MCP_DOCTOR_DEADLINE_MS",
 ] as const;
 
+/**
+ * Settings setup can add to a registration from provider discovery when the
+ * caller did not select them: Hopper's launcher (doctor's Hopper search) and
+ * Ghidra's installation and Java (Ghidra's inspection). Other providers'
+ * registration settings echo explicit selections. Update maintenance does not
+ * run that discovery, so it cannot tell what setup would write for these.
+ */
+export const DISCOVERED_REGISTRATION_SETTINGS = [
+  "HOPPER_LAUNCHER_PATH",
+  "GHIDRA_INSTALL_DIR",
+  "JAVA_HOME",
+] as const;
+
 /** Explicit selections override discovered defaults even when a provider is unavailable.
  * This is a registration policy, not a prefix match against the ambient environment.
  */
