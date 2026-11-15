@@ -62,6 +62,39 @@ both publication jobs and the published-package canary; a merged PR or GitHub
 tag alone does not establish that publication finished. Retry failed jobs in
 the original run after a partial publication.
 
+## Check the packed catalog with client engines
+
+Before merging a Release Please PR or dispatching `phase=publish`, list the
+packed candidate's tools and check them with an RE2-based and a Rust-based
+client engine. rea-agents 6.9.0 advertised a pattern that RE2 and Rust's
+`regex` cannot compile, so clients rejected the whole tools list
+([#10830](https://github.com/morluto/rea/issues/10830)). CI runs the same check
+on each commit's build; this step covers the archive that will be published.
+It needs Go and Python 3.10 or later on the host, and installs the Python
+engines only into a temporary virtual environment.
+
+```bash
+work="$(mktemp -d)"
+# Prefer the qualified archive from the release run's `verified-release-package`
+# artifact; otherwise pack the release commit.
+npm pack --pack-destination "$work"
+npm install --ignore-scripts --no-save --no-package-lock --no-audit --no-fund \
+  --prefix "$work/prefix" "$work"/rea-agents-*.tgz
+python3 -m venv "$work/engines"
+"$work/engines/bin/pip" install --require-hashes \
+  -r scripts/verify/advertised-schemas/requirements.txt
+REA_REQUIRE_SCHEMA_ENGINES=1 REA_SCHEMA_ENGINES_PYTHON="$work/engines/bin/python" \
+  node scripts/verify-advertised-schemas.mjs \
+  --package-root="$work/prefix/node_modules/rea-agents"
+```
+
+Run it from a checkout of the release commit after `npm run build:cached`; the
+checkout supplies the checker and the profile list, and the installed package
+supplies every listing. The run must report each engine with its version,
+including `go regexp (RE2)`, `re2 (C++)`, `rust regex`, `rust fancy-regex`
+and `rust jsonschema`; a missing engine fails instead of passing. Any refusal
+blocks publication. Record the engine versions with the release outcome.
+
 ## Recover an already published npm release
 
 Rerunning a job uses its original workflow and source revision. When a verifier
