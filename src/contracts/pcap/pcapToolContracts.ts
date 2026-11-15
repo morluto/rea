@@ -25,6 +25,7 @@ export const PCAP_TOOL_CONTRACTS = [
   },
   {
     name: "inspect_pcap_capture",
+    availability: { host: "pcapCapture" },
     ...toolContractMetadata("inspect_pcap_capture"),
     description:
       "Summarize a saved pcap/pcapng snapshot: exact packet count, SHA-256, IP endpoints, DNS questions/addresses, TLS SNI, protocols and HTTP URIs. Use inspect_packet_capture for caller-selected TShark fields or display filters. Default complete returns full Evidence; detail summary retains it for inspect_analysis_view kind pcap. Unknown DNS attribution and excluded credentials stay explicit. Requires caller-supplied capinfos/tshark and Linux prlimit or Windows Job Objects; never captures live traffic.",

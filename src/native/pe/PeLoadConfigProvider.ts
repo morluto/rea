@@ -23,7 +23,7 @@ import { err, ok } from "../../domain/result.js";
 import { PE_LOAD_CONFIG_PROVIDER } from "../../domain/investigationProviders.js";
 import {
   parsePeLoadConfig,
-  PeLoadConfigLimitFailure,
+  PE_LOAD_CONFIG_LIMITS,
   type PeLoadConfigLimit,
 } from "./PeLoadConfigParser.js";
 
@@ -107,8 +107,7 @@ const peLoadConfigFailure = (
           input.max_file_bytes,
           MAX_INSPECT_PE_LOAD_CONFIG_FILE_BYTES,
         ),
-      limit: (failure) =>
-        failure instanceof PeLoadConfigLimitFailure ? failure.limit : null,
+      limits: PE_LOAD_CONFIG_LIMITS,
       limitRecovery: (limit) => limitRecovery(limit, input),
     },
     snapshot,

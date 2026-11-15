@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 
 import { thinFuseImage } from "../../tests/fixtures/electron/fuseImage.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
@@ -337,14 +338,7 @@ it("awaits an admitted preflight's final close before projecting cancellation", 
   const physical = Object.assign(new Error("preflight read failed"), {
     code: "EIO",
   });
-  let releaseClose!: () => void;
-  const closeGate = new Promise<void>((resolve) => {
-    releaseClose = resolve;
-  });
-  let markClose!: () => void;
-  const closeEntered = new Promise<void>((resolve) => {
-    markClose = resolve;
-  });
+  const preflightClose = phaseGate();
   let denied = true;
   const fixture = await faultyFuse({
     read: async () => {
@@ -352,8 +346,7 @@ it("awaits an admitted preflight's final close before projecting cancellation", 
       throw physical;
     },
     close: async () => {
-      markClose();
-      await closeGate;
+      await preflightClose.hold();
       if (denied) throw new Error("preflight close denied");
     },
   });
@@ -377,10 +370,10 @@ it("awaits an admitted preflight's final close before projecting cancellation", 
       return result;
     });
   await withVerifierCleanup(async () => {
-    await awaitAcknowledgement(closeEntered, running, "preflight close");
+    await preflightClose.reached(running, "preflight close");
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(settled).toBe(false);
-    releaseClose();
+    preflightClose.release();
     const result = await running;
     if (result.ok) throw new Error("Expected preflight failure");
     expect(result.error.cleanupIncomplete).toBe(true);
@@ -399,7 +392,7 @@ it("awaits an admitted preflight's final close before projecting cancellation", 
     expect(retry.error.cleanupIncomplete).toBe(false);
   }, [
     () => {
-      releaseClose();
+      preflightClose.release();
       denied = false;
     },
     async () => {
