@@ -142,6 +142,7 @@ const PATH_SCOPES = {
     "tests/boundary/providers/hopper/hopperClient.helperFailure.test.ts",
     "tests/boundary/providers/hopper/bridgeBootstrapCleanup.test.ts",
     "tests/boundary/providers/hopper/bridgeTargetLease.integration.test.ts",
+    "tests/boundary/cli/hopperLaunchFailureCli.test.ts",
     "src/artifacts/NativeDmg*.ts",
     "src/native/Apple*",
     "src/native/NativeMacOS*",
@@ -253,6 +254,17 @@ const PATH_SCOPES = {
     "scripts/lib/runtime-admission.d.mts",
     "install.sh",
     "src/config/**",
+    // The darwin package baseline runs packaged Hopper commands against the
+    // fake bridge, through the reply contracts and the domain schemas they
+    // are built from. Check a change to either side before merge, not after.
+    "tests/fixtures/fakeLauncher.mjs",
+    "tests/fixtures/fakeHopper*.mjs",
+    "bridge/hopper_bridge.py",
+    "src/hopper/HopperReplyContracts.ts",
+    "src/hopper/HopperProvider.ts",
+    // The contracts import native domain schemas transitively; cover them
+    // all rather than a hand list that drifts.
+    "src/domain/native/!(*.test).ts",
     "src/application/Setup*.ts",
     "src/application/Uninstall*.ts",
     "src/application/ClientConfiguration*.ts",
@@ -265,6 +277,13 @@ const PATH_SCOPES = {
     "src/contracts/sessionPathInputs.test.ts",
     "tests/boundary/filesystem/directAnalysisSnapshotReplay.test.ts",
     "tests/boundary/mcp/rawBinaryMcp.test.ts",
+    "src/contracts/advertisedDialect*.ts",
+    "tests/boundary/mcp/advertisedDialect.test.ts",
+    // The advertised absolute-path pattern is host-specific (#7151).
+    "src/domain/localPath*.ts",
+    "tests/boundary/mcp/absoluteLocalPathSchema.test.ts",
+    // Live advertisement, independent of the POSIX-generated catalog.
+    "tests/boundary/mcp/toolSchemaValidity.test.ts",
     "tests/boundary/filesystem/safeOutputTree.test.ts",
     "tests/boundary/providers/native/artifactProvider.archiveSafety.test.ts",
     "tests/boundary/providers/native/artifactProvider.extractionCompleteness.test.ts",

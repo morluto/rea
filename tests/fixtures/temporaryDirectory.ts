@@ -51,7 +51,7 @@ export const createNodeDiscoveryTempDirectory = async (
 ): Promise<string> => {
   if (process.platform === "win32") return createTestTempDirectory(prefix);
   const primary = await realpath(tmpdir());
-  const base = isLosslessNodeDiscoveryPath(primary)
+  const base = isLosslessNodeDiscoveryPath(primary, process.platform)
     ? primary
     : await realpath("/tmp");
   const canonicalDirectory = await realpath(
@@ -60,7 +60,7 @@ export const createNodeDiscoveryTempDirectory = async (
   onTestFinished(async () => {
     await removeTestWorkspace(canonicalDirectory);
   });
-  if (!isLosslessNodeDiscoveryPath(canonicalDirectory))
+  if (!isLosslessNodeDiscoveryPath(canonicalDirectory, process.platform))
     throw new Error(
       `No temporary directory free of '_', '"' and '\\' for Node discovery fixtures: ${canonicalDirectory}`,
     );

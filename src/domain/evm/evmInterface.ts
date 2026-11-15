@@ -1,3 +1,7 @@
+import {
+  MAX_NODE_TIMER_DELAY_MS,
+  timerDurationMsSchema,
+} from "../analysisResourceLimits.js";
 import { z } from "zod";
 
 import { absoluteLocalPathStringSchema } from "../localPath.js";
@@ -43,8 +47,6 @@ const byteOffset = z.int().nonnegative();
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/);
 /** Owned EVMole worker deadline. Omission keeps this value. */
 export const DEFAULT_EVM_TIMEOUT_MS = 30_000;
-/** Largest delay supported without overflowing Node timers. */
-export const MAX_EVM_TIMEOUT_MS = 2_147_483_647;
 
 /** Select the carrier representation explicitly; no RPC or deployed-contract lookup is implied. */
 export const inspectEvmInterfaceInputSchema = z.strictObject({
@@ -61,14 +63,10 @@ export const inspectEvmInterfaceInputSchema = z.strictObject({
     .describe(
       "Per-call carrier/reply/diagnostic bytes, address-space/file bytes and CPU seconds. Omission preserves documented defaults; omitted file_bytes follows selected output_bytes. Tighter inherited Linux limits remain enforced. timeout_ms and the 256 MiB worker heap are independent.",
     ),
-  timeout_ms: z
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_EVM_TIMEOUT_MS)
+  timeout_ms: timerDurationMsSchema
     .optional()
     .describe(
-      `Deadline in milliseconds for the owned EVMole worker command (default ${String(DEFAULT_EVM_TIMEOUT_MS)}), not carrier acquisition or final reply reads. An integer from 1 to ${String(MAX_EVM_TIMEOUT_MS)} applies on the next call. Does not raise the separately selected producer_limits or the 256 MiB worker heap.`,
+      `Deadline in milliseconds for the owned EVMole worker command (default ${String(DEFAULT_EVM_TIMEOUT_MS)}), not carrier acquisition or final reply reads. An integer from 1 to ${String(MAX_NODE_TIMER_DELAY_MS)} applies on the next call. Does not raise the separately selected producer_limits or the 256 MiB worker heap.`,
     ),
 });
 

@@ -186,11 +186,19 @@ export interface ArtifactReaderTraversal {
   readonly examinedEntries?: number;
 }
 
-/** Per-iterator observation sink; adapters report intentional omissions without shared state. */
+/**
+ * Per-iterator observation sink; adapters report intentional omissions without shared state.
+ * A reader declares its coverage through `onCoverage` before its iterator ends,
+ * including complete coverage; consumers that need a completeness claim
+ * iterate through `declaredArtifactEntries`, which treats silence as unknown.
+ */
 export interface ArtifactTraversalOptions {
   readonly onOmission?: (omission: ArtifactTraversalOmission) => void;
   readonly onCoverage?: (coverage: ArtifactReaderTraversal) => void;
 }
+
+/** The sink of a traversal whose coverage feeds a completeness claim. */
+export type ArtifactTraversalSink = Required<ArtifactTraversalOptions>;
 
 /** Read-only adapter over one directory, archive, or virtual container. */
 export interface ArtifactReader {
@@ -235,6 +243,11 @@ export interface ArtifactReader {
 }
 
 /** Typed adapter failure translated at provider boundary. */
+/** A selected-file read whose own cleanup failed. */
+export type CleanupFailedRead = ArtifactReaderFailure & {
+  readonly cleanup: AnalysisCleanupObservation;
+};
+
 export class ArtifactReaderFailure extends Error {
   readonly userMessage: string | undefined;
   readonly resolvedPath: string | undefined;

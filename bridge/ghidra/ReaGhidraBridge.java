@@ -416,7 +416,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     request = parseRequest(line, descriptor.token);
                 }
                 catch (RuntimeException exception) {
-                    writeFailure(writer, 1, "invalid_request", "Bridge request is invalid");
+                    // The request id may not have parsed, so the connection-level
+                    // failure uses id 0, which no client request uses.
+                    writeFailure(writer, CONNECTION_FAILURE_ID, "invalid_request", "Bridge request is invalid");
                     return;
                 }
             }
@@ -5540,6 +5542,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
         response.add("result", result);
         writeResponse(writer, response);
     }
+
+    /** Reserved response id for a failure not tied to one parsed request. */
+    private static final int CONNECTION_FAILURE_ID = 0;
 
     private static void writeFailure(
             BufferedWriter writer,

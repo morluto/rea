@@ -97,6 +97,26 @@ it.each(["list_procedures", "search_procedures"] as const)(
   },
 );
 
+it("names the failing fields when an inventory reply misses its contract", () => {
+  const parsed = parseGhidraInventoryResult(
+    "list_procedures",
+    [{ address: 16, value: "secret-name" }],
+    null,
+  );
+
+  const error = parsed.ok ? undefined : parsed.error;
+  expect(error?.diagnostics).toMatchObject({
+    contract_issues: expect.arrayContaining([
+      expect.objectContaining({
+        path: [0, "address"],
+        code: "invalid_type",
+        received: "number",
+      }),
+    ]),
+  });
+  expect(JSON.stringify(error?.diagnostics)).not.toContain("secret-name");
+});
+
 describe("native load-image result projection", () => {
   it("omits raw bridge output when the observation keeps every reported fact", () => {
     const observations = JSON.parse(

@@ -2,7 +2,7 @@ import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import {
-  firmwareFailure,
+  firmwareFailureDialect,
   firmwarePhaseInterruption,
 } from "./FirmwareFailures.js";
 import { createHash } from "node:crypto";
@@ -10,6 +10,7 @@ import { join } from "node:path";
 import type { z } from "zod";
 import { SafeOutputTree } from "../artifacts/SafeOutputTree.js";
 import { outputDirectoryAdmissionRefusal } from "../artifacts/SafeOutputTreeAdmission.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import { SafeOutputTreeCreationFailure } from "../artifacts/SafeOutputTreeCreationFailure.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -223,19 +224,22 @@ export const publishFirmwareExtraction = async (context: {
         : new AnalysisCleanupLease(async () => {
             await ownedTree.rollback();
           });
-    const primary = firmwareFailure(
+    const primary = classifyProviderFailure(
       outputDirectoryAdmissionRefusal(
         "extract_firmware",
         "output_directory",
         cause,
       ),
-      {
+      firmwareFailureDialect({
         engine: "unblob",
         operation: "extract_firmware",
-        deadline: context.deadline,
+        phase: {
+          signal: context.signal,
+          deadline: context.deadline,
+          publication: progress(),
+        },
         treeCleanupLease: treeLease,
-        publication: progress(),
-      },
+      }),
     );
     try {
       await treeLease?.release();

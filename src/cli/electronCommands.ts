@@ -16,8 +16,9 @@ import {
   listElectronTargetsInputSchema,
 } from "../domain/javascript/electronObservation.js";
 import { electronActiveObservationInputSchema } from "../domain/javascript/electronActiveObservation.js";
-import { reconcileJavaScriptRuntimeRequestSchema } from "../contracts/javascript/applicationWorkflowInputContracts.js";
-import { getEvidenceInputContract } from "../domain/evidenceInputContract.js";
+import { ELECTRON_TOOL_CONTRACTS } from "../contracts/javascript/electronToolContracts.js";
+import { contractNamed } from "./contractCliDescription.js";
+import { registerContractDocumentCommand } from "./contractCommand.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { projectInputIssues } from "../domain/inputIssueProjection.js";
@@ -26,7 +27,7 @@ import type { Logger } from "pino";
 import { cliDomainInput } from "./domainInput.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { createElectronFuseService } from "../composition/electronFuses.js";
-import { parseCliJsonInput, resolveCliJsonPaths } from "../cliJsonInput.js";
+import { parseCliJsonInput } from "../cliJsonInput.js";
 import {
   electronPageInspectionOptions,
   javascriptApplicationOptions,
@@ -44,7 +45,6 @@ import {
   evidenceBundleOption,
   runEvidenceInputCommand,
 } from "./evidenceInputCommand.js";
-import { jsonInputArgument } from "./jsonInputArgument.js";
 
 /** Register CLI equivalents of the Electron MCP tools. */
 export const registerElectronCommands = (
@@ -116,120 +116,90 @@ const registerElectronActiveCommand = (
     ) => ElectronActiveObservationPort;
   },
 ): void => {
-  cli.command(CLI_COMMANDS.captureElectronScenario, {
-    description: "Run one owned Electron scenario with cancellable actions",
-    args: z.object({
-      inputJson: jsonInputArgument(
-        "Inline JSON or a JSON file matching capture_electron_scenario",
-        electronActiveObservationInputSchema,
-      ),
-    }),
-    run: ({ args }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(
-          logger,
-          CLI_COMMANDS.captureElectronScenario,
-          async () => {
-            const input = await parseCliJsonInput(
-              args.inputJson,
-              "capture_electron_scenario",
-              signal,
-            );
-            if (!input.ok) return input.error;
-            const parsed = electronActiveObservationInputSchema.safeParse(
-              resolveCliJsonPaths(input.value, [
-                ["executable_path"],
-                ["application_path"],
-                ["application_root"],
-              ]),
-            );
-            if (!parsed.success)
-              return inputError(
-                "capture_electron_scenario",
-                parsed.error.issues,
-                input.value,
-              );
-            const { captureElectronScenario } =
-              await import("../application/javascript/ElectronActiveObservationService.js");
-            const provider =
-              options.createActiveProvider === undefined
-                ? await import("../composition/electronScenario.js").then(
-                    ({ createElectronScenarioProvider }) =>
-                      createElectronScenarioProvider(environment),
-                  )
-                : options.createActiveProvider(environment);
-            const result = await finishAnalysisCommand(
-              () => captureElectronScenario(provider, parsed.data, { signal }),
-              {
-                close: async () => {
-                  await provider.close?.();
-                },
-              },
-              provider.identity().id,
-              "capture_electron_scenario",
-              signal,
-            );
-            return result.ok
-              ? result.value
-              : { error: "Electron analysis failed", ...result.error };
+  registerContractDocumentCommand(
+    cli,
+    logger,
+    contractNamed(ELECTRON_TOOL_CONTRACTS, "capture_electron_scenario"),
+    {
+      command: CLI_COMMANDS.captureElectronScenario,
+      description: "Run one owned Electron scenario with cancellable actions",
+      document: "Inline JSON or a JSON file matching capture_electron_scenario",
+      callerPaths: [
+        ["executable_path"],
+        ["application_path"],
+        ["application_root"],
+      ],
+    },
+    async (document, { signal, operation, spelled }) => {
+      const parsed = electronActiveObservationInputSchema.safeParse(document);
+      if (!parsed.success)
+        return inputError(operation, parsed.error.issues, spelled);
+      const { captureElectronScenario } =
+        await import("../application/javascript/ElectronActiveObservationService.js");
+      const provider =
+        options.createActiveProvider === undefined
+          ? await import("../composition/electronScenario.js").then(
+              ({ createElectronScenarioProvider }) =>
+                createElectronScenarioProvider(environment),
+            )
+          : options.createActiveProvider(environment);
+      const result = await finishAnalysisCommand(
+        () => captureElectronScenario(provider, parsed.data, { signal }),
+        {
+          close: async () => {
+            await provider.close?.();
           },
-        ),
-      ),
-  });
+        },
+        provider.identity().id,
+        operation,
+        signal,
+      );
+      return result.ok
+        ? result.value
+        : { error: "Electron analysis failed", ...result.error };
+    },
+  );
 };
 
 const registerJavaScriptRuntimeReconciliationCommand = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
-): void => {
-  cli.command(CLI_COMMANDS.reconcileJavaScriptRuntime, {
-    description:
-      "Reconcile static application and passive runtime Evidence JSON",
-    args: z.object({
-      inputJson: jsonInputArgument(
+): void =>
+  registerContractDocumentCommand(
+    cli,
+    logger,
+    contractNamed(ELECTRON_TOOL_CONTRACTS, "reconcile_javascript_runtime"),
+    {
+      command: CLI_COMMANDS.reconcileJavaScriptRuntime,
+      description:
+        "Reconcile static application and passive runtime Evidence JSON",
+      document:
         "Inline JSON or a JSON file path matching reconcile_javascript_runtime",
-        getEvidenceInputContract(reconcileJavaScriptRuntimeRequestSchema)
-          .frameSchema,
-      ),
-    }),
-    options: z.object({ evidenceBundle: evidenceBundleOption }),
-    run: ({ args, options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(
-          logger,
-          CLI_COMMANDS.reconcileJavaScriptRuntime,
-          async () => {
-            const input = await parseCliJsonInput(
-              args.inputJson,
-              "reconcile_javascript_runtime",
-              signal,
-            );
-            if (!input.ok) return input.error;
-            const { reconcileJavaScriptRuntimeEvidence } =
-              await import("../application/javascript/JavaScriptRuntimeReconciliationService.js");
-            const result = await runEvidenceInputCommand(
-              "reconcile_javascript_runtime",
-              options.evidenceBundle,
-              signal,
-              async (lookup) => {
-                const reconciled = reconcileJavaScriptRuntimeEvidence(
-                  input.value,
-                  lookup,
-                  { signal },
-                );
-                return reconciled.ok
-                  ? { ok: true, value: reconciled.value.evidence }
-                  : reconciled;
-              },
-            );
-            return result.ok
-              ? result.value
-              : { error: "Application workflow failed", ...result.error };
-          },
-        ),
-      ),
-  });
-};
+      cliOptions: { evidenceBundle: evidenceBundleOption },
+    },
+    async (document, { signal, operation, cliOptions }) => {
+      const { reconcileJavaScriptRuntimeEvidence } =
+        await import("../application/javascript/JavaScriptRuntimeReconciliationService.js");
+      const result = await runEvidenceInputCommand(
+        operation,
+        cliOptions.evidenceBundle,
+        signal,
+        async (lookup) => {
+          const reconciled = reconcileJavaScriptRuntimeEvidence(
+            document,
+            lookup,
+            { signal },
+          );
+          return reconciled.ok
+            ? { ok: true, value: reconciled.value.evidence }
+            : reconciled;
+        },
+      );
+      return result.ok
+        ? result.value
+        : { error: "Application workflow failed", ...result.error };
+    },
+  );
 
 const registerElectronObservationCommands = (
   cli: ReturnType<typeof Cli.create>,

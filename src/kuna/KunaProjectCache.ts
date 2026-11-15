@@ -33,8 +33,10 @@ import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
+  OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -574,11 +576,7 @@ export class KunaProjectCache {
     request: KunaProjectRequest,
   ): Promise<Result<KunaProject, AnalysisError>> {
     if (request.signal?.aborted === true)
-      return err(
-        new AnalysisCancelledError(KUNA_EXPORT_OPERATION, {
-          cause: request.signal.reason,
-        }),
-      );
+      return err(cancelledBy(KUNA_EXPORT_OPERATION, request.signal));
     const key = kunaProjectKey({
       targetSha256: request.targetSha256,
       targetBasename: basename(request.targetPath),
@@ -951,12 +949,14 @@ export class KunaProjectCache {
         if (settled) return;
         settled = true;
         leave();
-        if (entry.waiters === 0) entry.controller.abort();
+        if (entry.waiters === 0)
+          entry.controller.abort(OwnerCancellation.noLongerNeeded);
         resolve(
           err(
-            new AnalysisCancelledError(KUNA_EXPORT_OPERATION, {
-              cause: request.signal?.reason,
-            }),
+            cancelledBy(
+              KUNA_EXPORT_OPERATION,
+              carriedReason(request.signal?.reason),
+            ),
           ),
         );
       };

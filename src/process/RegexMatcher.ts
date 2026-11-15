@@ -5,12 +5,16 @@ import { Worker } from "node:worker_threads";
 
 import { z } from "zod";
 
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import type {
+  AnalysisError,
+  AnalysisErrorOptions,
+} from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -532,19 +536,20 @@ export const regexWorkerHeapError = (
   );
 /**
  * A pattern the regex engine rejects. The caller sees the engine's syntax
- * error on `pattern` and can retry in literal mode. Providers that check the
- * pattern before starting share this result with the worker.
+ * error on `pattern` and can retry in literal mode. The worker, providers that
+ * check the pattern before starting, and remote engines that report their own
+ * syntax error (whose message then replaces the default) share this result.
  */
 export const invalidRegexPatternError = (
   operation: string,
   reason: string,
-  cause?: unknown,
+  options: AnalysisErrorOptions & { readonly userMessage?: string } = {},
 ): AnalysisInputError =>
   new AnalysisInputError(
     operation,
     {
-      cause,
-      userMessage: `Invalid regex pattern: ${reason}`,
+      ...options,
+      userMessage: options.userMessage ?? `Invalid regex pattern: ${reason}`,
       remediationAction:
         "Correct the pattern using the reported regex syntax error, or select mode literal to search for the text literally, then retry.",
     },
@@ -618,11 +623,7 @@ export const matchRegexValues = async (input: {
   readonly heapRequest?: RegexWorkerHeapRequest | undefined;
 }): Promise<Result<readonly number[], AnalysisError>> => {
   if (input.signal?.aborted)
-    return err(
-      new AnalysisCancelledError(input.operation, {
-        cause: input.signal.reason,
-      }),
-    );
+    return err(cancelledBy(input.operation, input.signal));
   const admitted = snapshotRegexConfiguration(
     input.deadline,
     input.heapRequest,
@@ -660,9 +661,7 @@ export const matchRegexValues = async (input: {
       const onAbort = () =>
         finish(
           err(
-            new AnalysisCancelledError(input.operation, {
-              cause: input.signal?.reason,
-            }),
+            cancelledBy(input.operation, carriedReason(input.signal?.reason)),
           ),
         );
       const timer = setTimeout(

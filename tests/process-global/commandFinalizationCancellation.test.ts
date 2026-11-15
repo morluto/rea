@@ -73,6 +73,7 @@ const cutterDiscoveryFixture = () =>
         current_file: "C:\\Caller files\\token=literal%2F.bin",
         cutter_version: "2.3.4",
         identity_status: "partial",
+        bridge_source: "unknown",
       },
       {
         session_id: "00000000-0000-4000-8000-000000000002",
@@ -81,6 +82,7 @@ const cutterDiscoveryFixture = () =>
         current_file: null,
         cutter_version: null,
         identity_status: "partial",
+        bridge_source: "unknown",
       },
     ],
     bridge_directory: "/caller/Cutter bridge/token=literal%2F/证据",

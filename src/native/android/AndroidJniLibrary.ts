@@ -501,16 +501,17 @@ export const inspectAndroidJniLibrary = async (
       });
     if (
       cause instanceof BinaryResourceFailure ||
-      (cause instanceof ElfPointerRelocationFailure &&
-        cause.reason === "native-index-capacity")
+      (cause instanceof ElfPointerRelocationFailure && cause.kind === "limit")
     )
       return err({ kind: "capacity", message: cause.message });
     if (cause instanceof BinaryFormatFailure)
-      return err({ kind: cause.kind, message: cause.message });
+      return err({
+        kind: cause.kind === "unsupported" ? "unsupported" : "malformed",
+        message: cause.message,
+      });
     if (cause instanceof ElfPointerRelocationFailure)
       return err({
-        kind:
-          cause.reason === "malformed-container" ? "malformed" : "unsupported",
+        kind: cause.kind === "malformed" ? "malformed" : "unsupported",
         message: cause.message,
       });
     throw cause;

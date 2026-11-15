@@ -11,9 +11,34 @@ import {
   isZeroFilledSpan,
   type ElfDynamicSegment,
 } from "./BinaryContainer.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 
-/** Shared loader interpretation; language adapters choose their public errors. */
-export class ElfPointerRelocationFailure extends Error {
+/** The ParseFailure format of ELF loader pointer interpretation. */
+export const ELF_POINTER_RELOCATION_FORMAT = "elf-pointer-relocations";
+
+/**
+ * Shared loader interpretation; language adapters choose their public errors.
+ * The stable `reason` names the loader rule; `native-index-capacity` is a
+ * ParseFailure `limit` carrying the exceeded maximum.
+ */
+export class ElfPointerRelocationFailure extends ParseFailureError<
+  "malformed" | "unsupported" | "limit"
+> {
+  /** What the limit's maximum counts, set only for `native-index-capacity`. */
+  readonly unit: "entries" | "bytes" | undefined;
+  constructor(
+    reason:
+      | "malformed-container"
+      | "unsupported-container"
+      | "unsupported-pointer-encoding",
+    message: string,
+  );
+  constructor(
+    reason: "native-index-capacity",
+    message: string,
+    maximum: number,
+    unit: "entries" | "bytes",
+  );
   constructor(
     readonly reason:
       | "malformed-container"
@@ -21,8 +46,24 @@ export class ElfPointerRelocationFailure extends Error {
       | "unsupported-pointer-encoding"
       | "native-index-capacity",
     message: string,
+    maximum?: number,
+    unit?: "entries" | "bytes",
   ) {
-    super(message);
+    const facts = { format: ELF_POINTER_RELOCATION_FORMAT, detail: message };
+    super(
+      maximum !== undefined
+        ? { ...facts, kind: "limit", limit: { name: reason, maximum } }
+        : reason === "malformed-container"
+          ? { ...facts, kind: "malformed" }
+          : {
+              ...facts,
+              kind: "unsupported",
+              // A pointer the loader encodes in an unread form still ships.
+              undecodedContent: reason === "unsupported-pointer-encoding",
+            },
+    );
+    this.unit = unit;
+    this.name = "ElfPointerRelocationFailure";
   }
 }
 export interface ElfPointerRelocationSource {
@@ -252,6 +293,8 @@ function* dynamicTags(
     throw new ElfPointerRelocationFailure(
       "native-index-capacity",
       "ELF dynamic directory exceeds the 16 MiB structural allowance",
+      16 * 1024 * 1024,
+      "bytes",
     );
   if (
     declaration.size % BigInt(width) !== 0n ||
@@ -659,6 +702,8 @@ class ElfVirtualWriteIndex {
         throw new ElfPointerRelocationFailure(
           "native-index-capacity",
           `ELF virtual pointer index exceeds ${this.maximumBytes} estimated representation bytes (${ELF_POINTER_INDEX_ENTRY_BYTES} reserved per virtual address, including lookup workspace)`,
+          this.maximumBytes,
+          "bytes",
         );
       this.#reservedBytes += ELF_POINTER_INDEX_ENTRY_BYTES;
     }
@@ -809,6 +854,8 @@ export function* readElfPointerRelocationsSteps(
         throw new ElfPointerRelocationFailure(
           "native-index-capacity",
           `ELF sparse relocation index exceeds ${MAX_RELOCATION_RECORDS} retained writes`,
+          MAX_RELOCATION_RECORDS,
+          "entries",
         );
       writes.push(write);
       index.add(write);
@@ -874,7 +921,9 @@ export function* readElfPointerValuesSteps(
       if (index.unresolvedSize + zeroFill.size > MAX_RELOCATION_RECORDS)
         throw new ElfPointerRelocationFailure(
           "native-index-capacity",
-          "ELF unresolved and zero-fill overlay exceeds 65536 entries",
+          `ELF unresolved and zero-fill overlay exceeds ${MAX_RELOCATION_RECORDS} entries`,
+          MAX_RELOCATION_RECORDS,
+          "entries",
         );
     }
     next = steps.next();
