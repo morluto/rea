@@ -1,4 +1,6 @@
 // Imported directly by pre-install fixture scripts; keep this module dependency-free.
+import { readFileSync } from "node:fs";
+
 /** Audited upstream release; source remains unmodified in the Git submodule. */
 export const JADX_RELEASE = Object.freeze({
   version: "0.7.1",
@@ -7,11 +9,54 @@ export const JADX_RELEASE = Object.freeze({
   url: "https://github.com/1013503897/jadx-headless-mcp/releases/download/v0.7.1/jadx-headless-mcp-0.7.1-all.jar",
 });
 
-/** Identity of REA's metadata bridge, distinct from the producing engine. */
-export const JADX_BRIDGE_IDENTITY = Object.freeze({
-  name: "rea-jadx-bridge",
-  version: "11",
-});
+/** Packaged single-file bridge source that REA copies and launches. */
+export const JADX_BRIDGE_SOURCE_URL = new URL(
+  "../../bridge/android/ReaJadxBridge.java",
+  import.meta.url,
+);
+
+export interface JadxBridgeIdentity {
+  readonly name: string;
+  readonly version: string;
+}
+
+const declaredString = (source: string, constant: string): string => {
+  const matches = [
+    ...source.matchAll(
+      new RegExp(
+        `^ {2}static final String ${constant} = "([A-Za-z0-9._-]+)";$`,
+        "gmu",
+      ),
+    ),
+  ];
+  const value = matches.length === 1 ? matches[0]?.[1] : undefined;
+  if (value === undefined)
+    throw new Error(
+      `REA's JADX bridge source must declare ${constant} exactly once; found ${String(matches.length)}`,
+    );
+  return value;
+};
+
+/** Read the bridge identity the bridge source itself declares. */
+export const parseJadxBridgeIdentity = (source: string): JadxBridgeIdentity =>
+  Object.freeze({
+    name: declaredString(source, "BRIDGE_NAME"),
+    version: declaredString(source, "BRIDGE_VERSION"),
+  });
+
+let bridgeIdentity: JadxBridgeIdentity | undefined;
+
+/**
+ * Identity of REA's metadata bridge, distinct from the producing engine. The
+ * bridge source owns it; REA reads it from the packaged copy it launches, so a
+ * version bump cannot be made in one place and missed in the other.
+ */
+export const jadxBridgeIdentity = (): JadxBridgeIdentity => {
+  bridgeIdentity ??= parseJadxBridgeIdentity(
+    readFileSync(JADX_BRIDGE_SOURCE_URL, "utf8"),
+  );
+  return bridgeIdentity;
+};
 
 /** Remediation when `REA_JADX_MCP_JAR` is missing or not an absolute path. */
 export const JADX_JAR_CONFIGURATION_REMEDIATION = `Download the jadx-headless-mcp ${JADX_RELEASE.version} release JAR from ${JADX_RELEASE.url}, verify SHA-256 ${JADX_RELEASE.sha256}, and set REA_JADX_MCP_JAR to its absolute path. REA does not download or install it.`;
