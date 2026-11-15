@@ -46,6 +46,20 @@ const exempted = ({ codeLines, lineComments }, index, names) => {
 };
 
 /**
+ * The code of each line a marker exempts, comments blanked.
+ * @param {string} raw
+ * @param {readonly string[]} names
+ * @returns {string[]}
+ */
+export const markedCodeLines = (raw, names) => {
+  const { code, lineComments } = scan(raw);
+  const source = { codeLines: code.split("\n"), lineComments };
+  return source.codeLines.filter(
+    (text, index) => text.trim() !== "" && exempted(source, index, names),
+  );
+};
+
+/**
  * @param {string} raw
  * @param {RegExp} pattern a global pattern
  * @param {readonly string[]} names
