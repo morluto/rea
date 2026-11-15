@@ -1,9 +1,9 @@
 import { isatty } from "node:tty";
 import { open } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { createInjectedProcess } from "./RizinDebugSessionCoverage.fixtures.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { RizinDebugSessionManager } from "../../../src/rizin/RizinDebugSessionManager.js";
 
 vi.mock("node:tty", async (importOriginal) => {
@@ -248,9 +248,8 @@ it.skipIf(process.platform === "win32")(
         "node:fs/promises",
       );
     vi.mocked(isatty).mockReturnValue(true);
-    const directory = await actual.mkdtemp(
-      join(tmpdir(), "rea-rizin-launch-close-"),
-    );
+    // Registered first, so its removal runs after the descriptor release.
+    const directory = await createTestTempDirectory("rea-rizin-launch-close-");
     const launchFile = join(directory, "target.bin");
     await actual.writeFile(launchFile, "launch bytes");
     let allowClose = false;
@@ -274,7 +273,6 @@ it.skipIf(process.platform === "win32")(
     onTestFinished(async () => {
       await releaseFixture?.().catch(() => undefined);
       vi.restoreAllMocks();
-      await actual.rm(directory, { recursive: true, force: true });
     });
     let spawned = false;
     const manager = new RizinDebugSessionManager(

@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, expect, it, onTestFinished, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { phaseGate } from "../../support/lifecycleHarness.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
@@ -703,8 +703,7 @@ it.skipIf(process.platform === "win32").each([false, true])(
 it.skipIf(process.platform === "win32")(
   "binds command Evidence to the session and the launch file hashed before Rizin starts",
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-rizin-launch-"));
-    onTestFinished(() => rm(directory, { recursive: true, force: true }));
+    const directory = await createTestTempDirectory("rea-rizin-launch-");
     const launchFile = join(directory, "target.bin");
     await writeFile(launchFile, "launch bytes");
     const missing = join(directory, "missing.bin");
