@@ -1,4 +1,5 @@
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
+import { isRecord } from "../domain/isRecord.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 /**
@@ -30,9 +31,6 @@ export type TsharkJsonFailure =
   | { readonly kind: "cancelled"; readonly cause: unknown }
   | { readonly kind: "json-bytes"; readonly maxBytes: number }
   | { readonly kind: "json-expansion"; readonly maxDecodedBytes: number };
-
-const object = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const YIELD_INTERVAL = 65_536;
 
@@ -96,9 +94,9 @@ export const parseTsharkJsonPackets = (
   const packets: TsharkPacketLayers[] = [];
   for (const [index, packet] of decoded.entries()) {
     if (
-      !object(packet) ||
-      !object(packet._source) ||
-      !object(packet._source.layers)
+      !isRecord(packet) ||
+      !isRecord(packet._source) ||
+      !isRecord(packet._source.layers)
     )
       return err({
         kind: "malformed-packet",
