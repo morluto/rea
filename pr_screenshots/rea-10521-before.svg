@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700" viewBox="0 0 1200 700">
+  <rect width="1200" height="700" rx="18" fill="#111827"/>
+  <rect width="1200" height="56" rx="18" fill="#1f2937"/>
+  <rect y="38" width="1200" height="18" fill="#1f2937"/>
+  <circle cx="28" cy="28" r="8" fill="#ef4444"/>
+  <circle cx="54" cy="28" r="8" fill="#f59e0b"/>
+  <circle cx="80" cy="28" r="8" fill="#22c55e"/>
+  <text x="108" y="34" fill="#d1d5db" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="18">REA · decompile_all resume · BEFORE</text>
+  <text x="48" y="104" fill="#fca5a5" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="28" font-weight="700">Append-only handle also used for repair</text>
+  <text x="48" y="146" fill="#9ca3af" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="18">Source snapshot of the path reported in issue #10521</text>
+  <text x="60" y="218" fill="#93c5fd" font-family="SFMono-Regular,Menlo,Monaco,Consolas,monospace" font-size="24">const handle = await openJournal(root, "a");</text>
+  <text x="60" y="258" fill="#d1d5db" font-family="SFMono-Regular,Menlo,Monaco,Consolas,monospace" font-size="24">// O_WRONLY | O_APPEND</text>
+  <text x="60" y="338" fill="#fbbf24" font-family="SFMono-Regular,Menlo,Monaco,Consolas,monospace" font-size="24">await handle.value.truncate(committedBytes);</text>
+  <rect x="48" y="380" width="1104" height="132" rx="10" fill="#3f1d2e" stroke="#be123c" stroke-width="2"/>
+  <text x="72" y="422" fill="#fecdd3" font-family="SFMono-Regular,Menlo,Monaco,Consolas,monospace" font-size="22">Windows: append-only descriptor cannot truncate</text>
+  <text x="72" y="462" fill="#fda4af" font-family="SFMono-Regular,Menlo,Monaco,Consolas,monospace" font-size="22">EPERM / FILE_APPEND_DATA lacks write-data access</text>
+  <text x="72" y="502" fill="#fda4af" font-family="SFMono-Regular,Menlo,Monaco,Consolas,monospace" font-size="22">Resume returns: journal could not be repaired</text>
+  <text x="48" y="602" fill="#9ca3af" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="18">Evidence note: Linux/macOS tests pass before the fix; Windows failure is from the issue report.</text>
+  <text x="48" y="638" fill="#6b7280" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="16">Not a Windows run performed on this host.</text>
+</svg>

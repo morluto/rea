@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700" viewBox="0 0 1200 700">
+  <rect width="1200" height="700" rx="18" fill="#111827"/>
+  <rect width="1200" height="56" rx="18" fill="#1f2937"/>
+  <rect y="38" width="1200" height="18" fill="#1f2937"/>
+  <circle cx="28" cy="28" r="8" fill="#ef4444"/>
+  <circle cx="54" cy="28" r="8" fill="#f59e0b"/>
+  <circle cx="80" cy="28" r="8" fill="#22c55e"/>
+  <text x="108" y="34" fill="#d1d5db" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="18">REA · decompile_all resume · AFTER</text>
+  <text x="48" y="104" fill="#86efac" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="28" font-weight="700">Repair handle separated from append handle</text>
+  <text x="48" y="146" fill="#9ca3af" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="18">The journal is repaired before opening the append-only writer</text>
+  <text x="60" y="218" fill="#93c5fd" font-family="SFMono-Regular,Menlo,Monaco,Consolas,monospace" font-size="24">const repair = await openJournal(root, "repair");</text>
+  <text x="60" y="258" fill="#d1d5db" font-family="SFMono-Regular,Menlo,Monaco,Consolas,monospace" font-size="24">// O_WRONLY | NO_FOLLOW</text>
+  <text x="60" y="298" fill="#86efac" font-family="SFMono-Regular,Menlo,Monaco,Consolas,monospace" font-size="24">await repair.value.truncate(committedBytes);</text>
+  <text x="60" y="338" fill="#d1d5db" font-family="SFMono-Regular,Menlo,Monaco,Consolas,monospace" font-size="24">await close();</text>
+  <text x="60" y="378" fill="#93c5fd" font-family="SFMono-Regular,Menlo,Monaco,Consolas,monospace" font-size="24">const handle = await openJournal(root, "a");</text>
+  <rect x="48" y="424" width="1104" height="120" rx="10" fill="#123524" stroke="#16a34a" stroke-width="2"/>
+  <text x="72" y="465" fill="#bbf7d0" font-family="SFMono-Regular,Menlo,Monaco,Consolas,monospace" font-size="22">✓ decompileAll.test.ts · 75 tests passed</text>
+  <text x="72" y="505" fill="#bbf7d0" font-family="SFMono-Regular,Menlo,Monaco,Consolas,monospace" font-size="22">✓ check:fast · typecheck + lint · 2 successful</text>
+  <text x="48" y="602" fill="#9ca3af" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="18">Verification on this host covers source behavior and static checks.</text>
+  <text x="48" y="638" fill="#6b7280" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="16">Windows-specific runtime confirmation remains a CI/maintainer check.</text>
+</svg>

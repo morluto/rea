@@ -390,20 +390,8 @@ const openResumedJournal = async (
   if (!opened.ok) return opened;
   const functions = await prepareFunctionsDirectory(root, resources);
   if (!functions.ok) return functions;
-  const handle = await openJournal(root, "a");
-  if (!handle.ok) return handle;
-  resources.ownFile(
-    handle.value,
-    join(root, DECOMPILE_DIRECTORY_JOURNAL_NAME),
-    true,
-  );
   // Drop a torn final line left by a crash so the next append starts a line.
-  const repaired =
-    opened.value.committedBytes === opened.value.journalBytes ||
-    (await handle.value.truncate(opened.value.committedBytes).then(
-      () => true,
-      () => false,
-    ));
+  const repaired = await repairJournalIfNeeded(root, opened.value, resources);
   if (!repaired) {
     return err(
       decompileInputError(
@@ -412,6 +400,13 @@ const openResumedJournal = async (
       ),
     );
   }
+  const handle = await openJournal(root, "a");
+  if (!handle.ok) return handle;
+  resources.ownFile(
+    handle.value,
+    join(root, DECOMPILE_DIRECTORY_JOURNAL_NAME),
+    true,
+  );
   return ok({ handle: handle.value, journal: opened.value });
 };
 
@@ -637,12 +632,13 @@ const NO_FOLLOW = constants.O_NOFOLLOW ?? 0;
 const JOURNAL_FLAGS = {
   wx: constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | NO_FOLLOW,
   a: constants.O_WRONLY | constants.O_APPEND | NO_FOLLOW,
+  repair: constants.O_WRONLY | NO_FOLLOW,
 } as const;
 
 /** The journal is never opened through a symlink: repair truncates it. */
 const openJournal = async (
   root: string,
-  flag: "wx" | "a",
+  flag: keyof typeof JOURNAL_FLAGS,
 ): Promise<Result<FileHandle, AnalysisError>> => {
   const handle = await open(
     join(root, DECOMPILE_DIRECTORY_JOURNAL_NAME),
@@ -857,6 +853,27 @@ const journalIdentityMismatch = (
       },
     ],
   );
+};
+
+const repairJournalIfNeeded = async (
+  root: string,
+  journal: Pick<OpenedJournal, "committedBytes" | "journalBytes">,
+  resources: ExportResources,
+): Promise<boolean> => {
+  if (journal.committedBytes === journal.journalBytes) return true;
+  const repair = await openJournal(root, "repair");
+  if (!repair.ok) return false;
+  const close = resources.ownFile(
+    repair.value,
+    join(root, DECOMPILE_DIRECTORY_JOURNAL_NAME),
+    true,
+  );
+  const truncated = await repair.value.truncate(journal.committedBytes).then(
+    () => true,
+    () => false,
+  );
+  const closed = await close();
+  return truncated && closed;
 };
 
 const incompatibleJournal = (): AnalysisInputError => {
