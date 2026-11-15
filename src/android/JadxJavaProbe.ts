@@ -13,6 +13,10 @@ import {
   carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import {
+  InternalInvariantError,
+  invariantViolation,
+} from "../domain/internalInvariant.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -145,8 +149,11 @@ export const inspectJadxJava = async (
               : { launcher: options.launcher }),
           },
         );
+        // runOwnedCommand observes every completed run before it resolves.
         if (observed === undefined)
-          throw new Error("Java probe completed without an observation");
+          throw invariantViolation(
+            "Java probe completed without an observation",
+          );
         return observed;
       } catch (cause: unknown) {
         const command =
@@ -242,6 +249,12 @@ export const inspectJadxJava = async (
           });
         } else if (cause instanceof AnalysisError) {
           primary = cause;
+        } else if (cause instanceof InternalInvariantError) {
+          // A REA defect says nothing about the selected Java runtime.
+          primary = new ProviderAdapterError("jadx", operation, {
+            cause,
+            ...(output === undefined ? {} : { capturedOutput: output }),
+          });
         } else {
           const failure = commandProbeRefusal(
             java,

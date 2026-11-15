@@ -63,12 +63,11 @@ export class NativeUiInterruptionControl {
     operation: string,
     partialObservation?: AnalysisPartialObservation,
   ): AnalysisTimeoutError | AnalysisCancelledError {
-    if (this.#interruption === undefined)
-      this.#interrupt("deadline", this.#deadline.reason);
-    const error = this.error(operation, partialObservation);
-    if (error === undefined)
-      throw new Error("UI deadline failure requires an interruption.");
-    return error;
+    return this.#errorFor(
+      this.#interrupt("deadline", this.#deadline.reason),
+      operation,
+      partialObservation,
+    );
   }
 
   error(
@@ -76,7 +75,16 @@ export class NativeUiInterruptionControl {
     partialObservation?: AnalysisPartialObservation,
   ): AnalysisCancelledError | AnalysisTimeoutError | undefined {
     const interruption = this.#interruption;
-    if (interruption === undefined) return undefined;
+    return interruption === undefined
+      ? undefined
+      : this.#errorFor(interruption, operation, partialObservation);
+  }
+
+  #errorFor(
+    interruption: Interruption,
+    operation: string,
+    partialObservation: AnalysisPartialObservation | undefined,
+  ): AnalysisCancelledError | AnalysisTimeoutError {
     return interruption.kind === "deadline"
       ? new AnalysisTimeoutError(operation, this.#deadlineMs, {
           cause: interruption.reason,
@@ -102,9 +110,12 @@ export class NativeUiInterruptionControl {
     this.#deadline.removeEventListener("abort", this.#onDeadlineAbort);
   }
 
-  #interrupt(kind: Interruption["kind"], reason: unknown): void {
-    if (this.#interruption !== undefined) return;
-    this.#interruption = { kind, reason };
+  /** Record the first interruption; a later one leaves it primary. */
+  #interrupt(kind: Interruption["kind"], reason: unknown): Interruption {
+    if (this.#interruption !== undefined) return this.#interruption;
+    const interruption = { kind, reason };
+    this.#interruption = interruption;
     this.#controller.abort(reason);
+    return interruption;
   }
 }

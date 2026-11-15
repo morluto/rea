@@ -1,4 +1,5 @@
 import { ProcessAdmissionError } from "../ProcessAdmissionError.js";
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import type { IPty } from "@lydell/node-pty";
 import type { ProcessCapture } from "../../domain/process/processCaptureParsing.js";
 import type { ProcessScenario } from "../../domain/process/processScenario.js";
@@ -731,7 +732,10 @@ const completeCapture = async (options: {
       runtime.startedAt,
       new Date(),
       runtime.executableIdentity,
-      { platform: options.hostPlatform, architecture: process.arch },
+      {
+        platform: options.hostPlatform,
+        architecture: HOST_PLATFORM.architecture,
+      },
     );
   } catch (cause: unknown) {
     options.observationBuffer.manifest = {
@@ -981,8 +985,8 @@ const runProcessScenario = async (
 /** Execute one scenario through a typed expected-failure channel. */
 export const captureProcessScenario = async (
   scenario: ProcessScenario,
-  signal?: AbortSignal,
-  platform: NodeJS.Platform = process.platform,
+  signal: AbortSignal | undefined,
+  platform: NodeJS.Platform,
   environment: Readonly<Record<string, string | undefined>> = process.env,
   captureSnapshot?: typeof snapshotRoots,
   cleanupHost?: ProcessCaptureCleanupHost,
@@ -1009,6 +1013,7 @@ export const captureProcessScenario = async (
       const resolvedScenario = await resolveProcessScenarioRuntimePaths(
         scenario,
         environment,
+        platform,
       );
       const capture = await runProcessScenario(
         runResourceScope,

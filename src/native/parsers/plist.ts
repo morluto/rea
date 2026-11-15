@@ -24,6 +24,7 @@ import {
 } from "../../domain/apple/plistValue.js";
 import { parseXmlPropertyList } from "../../domain/propertyListKeys.js";
 import { malformedInput } from "../../domain/parseFailure.js";
+import { InternalInvariantError } from "../../domain/internalInvariant.js";
 import { err, ok, type Result } from "../../domain/result.js";
 
 import {
@@ -129,14 +130,20 @@ const plistDecodeBudgetError = (
     },
   );
 
-const plistOutputError = (cause: unknown, reason?: string): PlistParseError =>
-  cause instanceof PlistNestingLimitError
+/**
+ * Project a decode failure. A broken internal assumption is a REA defect, not
+ * a plist fault, so it is rethrown rather than reported as plist output.
+ */
+const plistOutputError = (cause: unknown, reason?: string): PlistParseError => {
+  if (cause instanceof InternalInvariantError) throw cause;
+  return cause instanceof PlistNestingLimitError
     ? plistNestingError(cause)
     : new AnalysisOutputError(
         "inspect_plist",
         reason ?? (cause instanceof Error ? cause.message : String(cause)),
         { cause },
       );
+};
 
 /**
  * Read plutil JSON once, retaining exact unsafe integral literals. Optional XML
@@ -411,17 +418,9 @@ export const parsePlistBinary = (
     });
   } catch (cause: unknown) {
     if (cause instanceof UnsupportedBinaryPlistUidError) return err(cause);
-    if (cause instanceof PlistNestingLimitError)
-      return err(plistNestingError(cause));
     if (isPlistDecodeBudgetFailure(cause))
       return err(plistDecodeBudgetError(cause, "binary"));
-    return err(
-      new AnalysisOutputError(
-        "inspect_plist",
-        cause instanceof Error ? cause.message : String(cause),
-        { cause },
-      ),
-    );
+    return err(plistOutputError(cause));
   }
 };
 

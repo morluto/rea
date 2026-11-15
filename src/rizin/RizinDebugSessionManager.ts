@@ -371,17 +371,28 @@ export class RizinDebugSessionManager {
       AnalysisError
     >
   > {
-    if (this.#closingAll)
-      return err(
-        new AnalysisInputError("start_rizin_debug_session", undefined, [
-          {
-            path: ["inferior_tty"],
-            reason: "missing_argument",
-            message:
-              "Select a persistent readable and writable Linux terminal for inferior input and output.",
-          },
-        ]),
-      );
+    return this.#sessions.start(
+      "start_rizin_debug_session",
+      signal,
+      (started) => this.#startWithReservation(input, started),
+    );
+  }
+
+  async #startWithReservation(
+    input: {
+      readonly path: string;
+      readonly inferior_tty: string;
+      readonly backend?: string;
+    },
+    signal: AbortSignal,
+  ): Promise<
+    Result<
+      { readonly session_id: string; readonly backend: string | null },
+      AnalysisError
+    >
+  > {
+    if (signal.aborted)
+      return err(cancelledBy("start_rizin_debug_session", signal));
     const occupied = this.#sessions.occupied();
     if (occupied >= this.#maxSessions.value)
       return err(
@@ -398,11 +409,11 @@ export class RizinDebugSessionManager {
         ),
       );
     const releaseReservation = this.#sessions.reserve();
-    return this.#sessions
-      .start("start_rizin_debug_session", signal, (started) =>
-        this.#start(input, started, releaseReservation),
-      )
-      .finally(releaseReservation);
+    try {
+      return await this.#start(input, signal, releaseReservation);
+    } finally {
+      releaseReservation();
+    }
   }
 
   async #start(
@@ -411,7 +422,7 @@ export class RizinDebugSessionManager {
       readonly inferior_tty: string;
       readonly backend?: string;
     },
-    signal: AbortSignal | undefined,
+    signal: AbortSignal,
     releaseReservation: () => void,
   ): Promise<
     Result<
@@ -419,8 +430,6 @@ export class RizinDebugSessionManager {
       AnalysisError
     >
   > {
-    if (signal?.aborted)
-      return err(cancelledBy("start_rizin_debug_session", signal));
     if (!persistentDebuggerHostSupported(this.#platform))
       return err(
         new AnalysisCapabilityUnavailableError(
@@ -1184,7 +1193,7 @@ export class RizinDebugSessionManager {
 
   async closeAll(): Promise<void> {
     this.#closingAll = true;
-    await this.#sessions.abortStarts();
+    await this.#sessions.closeStarts();
     const outcomes = await Promise.allSettled([
       this.#sessions.closeAll(),
       this.#ttyResources.close(),

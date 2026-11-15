@@ -1,4 +1,5 @@
 import { rethrowProcessInspectionFailure } from "./ProcessInspectionCleanup.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { execFile } from "node:child_process";
 import { performance } from "node:perf_hooks";
 import { promisify } from "node:util";
@@ -1596,7 +1597,7 @@ const recheckOwnershipFailures = async (
     return failures;
   try {
     let processes = await host.listProcesses();
-    const isDarwin = (host.platform ?? process.platform) === "darwin";
+    const isDarwin = (host.platform ?? HOST_PLATFORM.platform) === "darwin";
     for (
       let attempt = 0;
       isDarwin &&

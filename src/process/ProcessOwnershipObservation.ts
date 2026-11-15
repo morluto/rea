@@ -1,4 +1,5 @@
 import { readProcessInspectionFile } from "./ProcessInspectionFile.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   describeSystemPs,
   LINUX_SYSTEM_PS_LOCATIONS,
@@ -862,7 +863,7 @@ export const settleVanishedTokenFacts = async (
   budget: ProcessExitSettlementBudget,
   signal?: AbortSignal,
 ): Promise<readonly ProcessOwnershipFact[]> => {
-  if ((host.platform ?? process.platform) !== "linux") return facts;
+  if ((host.platform ?? HOST_PLATFORM.platform) !== "linux") return facts;
   let pending = facts
     .filter(
       ({ token, identityAfter }) =>
@@ -985,7 +986,7 @@ export const readProcessOwnershipFacts = async (
   // missing procfs entry with signal-zero ESRCH. Keep the previous live
   // observation if the refresh is unreadable; PID reuse remains a mismatch.
   let finalObservedAfter = observedAfter;
-  if ((host.platform ?? process.platform) === "linux") {
+  if ((host.platform ?? HOST_PLATFORM.platform) === "linux") {
     const disappearing = processes.filter(({ pid }) => {
       const token = tokens.get(pid);
       return (
@@ -1180,7 +1181,7 @@ export const reobserveUnavailableTokenFacts = async (
 
 /** Create the operating-system process inspector for an explicit host context. */
 export const createSystemProcessOwnershipHost = (
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
   hostEnvironment: NodeJS.ProcessEnv = process.env,
   options: {
     /** Override the compiler executable used by the Darwin native reader. */
@@ -1709,7 +1710,9 @@ export const createSystemProcessOwnershipHost = (
   };
 };
 
-export const systemProcessOwnershipHost = createSystemProcessOwnershipHost();
+export const systemProcessOwnershipHost = createSystemProcessOwnershipHost(
+  HOST_PLATFORM.platform,
+);
 
 /**
  * Observe a live PID's start identity, optionally binding it to an owned run.
@@ -1904,7 +1907,7 @@ export const DARWIN_PROCESS_OWNERSHIP_REMEDIATION =
 export const processOwnershipAdmissionRecovery = (
   code: string,
   platform: NodeJS.Platform = systemProcessOwnershipHost.platform ??
-    process.platform,
+    HOST_PLATFORM.platform,
   systemCode?: string,
 ): string => {
   if (code === "identity_snapshot_unavailable")
