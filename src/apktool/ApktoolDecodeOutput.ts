@@ -4,10 +4,7 @@ import {
   type XmlParseFailure,
 } from "../domain/xmlDocument.js";
 import { ok, err, type Result } from "../domain/result.js";
-import {
-  malformedInput,
-  type ParseFailureError,
-} from "../domain/parseFailure.js";
+import { malformedInput } from "../domain/parseFailure.js";
 import {
   isMap,
   isScalar,
