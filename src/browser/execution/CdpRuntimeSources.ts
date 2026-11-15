@@ -38,11 +38,7 @@ export class CdpRuntimeSources {
 
   /** Subscribe before enabling Debugger; existing uncollected scripts are replayed by the producer. */
   ingest(event: CdpReceivedEvent, retainNewMetadata = true): void {
-    if (
-      event.sessionId !== this.session.transport.sessionId ||
-      this.#failure !== undefined
-    )
-      return;
+    if (this.#failure !== undefined) return;
     const registered = event.registered;
     try {
       if (registered?.method === "Runtime.executionContextCreated") {

@@ -8,6 +8,7 @@ import type { BrowserObservationOperation } from "../domain/browserObservationEr
 import { stableWebResources } from "../domain/webInventory.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
 import { CdpConnection } from "./CdpConnection.js";
+import { onCdpTargetEvent } from "./CdpTargetEvents.js";
 import { CdpCaptureEvents } from "./CdpCaptureEvents.js";
 import { authorizedMainFrame } from "./CdpAuthorizedMainFrame.js";
 import { cdpOriginScopeRefusal } from "./CdpOriginScopeError.js";
@@ -89,10 +90,11 @@ export const capturePage = async (
 ): Promise<CapturedPage> => {
   const allowedOrigins = new Set(context.input.allowed_origins);
   const events = new CdpCaptureEvents(context.input, allowedOrigins);
-  const removeListener = context.connection.onEvent((event) => {
-    if (event.sessionId !== context.sessionId) return;
-    events.ingest(event);
-  });
+  const removeListener = onCdpTargetEvent(
+    context.connection,
+    context.sessionId,
+    (event) => events.ingest(event),
+  );
   const state: CaptureState = {
     context,
     events,

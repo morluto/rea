@@ -41,15 +41,13 @@ vi.mock("./CdpTargetSession.js", () => ({
     owner: import("./CdpTargetSessionOwner.js").CdpTargetSessionOwner,
   ) => {
     // Admit fake events as CdpConnection does: subscribers read `registered`.
-    const { receiveCdpEvent } = await import("./CdpConnection.js");
+    const { fakeCdpEvents } =
+      await import("../../tests/fixtures/fakeCdpEvents.js");
+    const events = fakeCdpEvents();
+    mocks.policyEvent = events.emit;
     const connection = {
       send: mocks.policySend,
-      onEvent: (
-        listener: (event: ReturnType<typeof receiveCdpEvent>) => void,
-      ) => {
-        mocks.policyEvent = (event) => listener(receiveCdpEvent(event));
-        return () => undefined;
-      },
+      onEvent: events.onEvent,
       onProtocolFailure: () => () => undefined,
       close: mocks.policyTransportClose,
       beginCleanupGrace: mocks.policyBeginCleanupGrace,
