@@ -90,6 +90,12 @@ const contextIdentity = (reported: unknown) => {
   };
 };
 
+export type CdpExecutionContextIdentity = ReturnType<typeof contextIdentity>;
+export type CdpExecutionContextCreatedFacts = ReturnType<
+  typeof readCdpExecutionContextCreated
+>;
+export type CdpScriptParsedFacts = ReturnType<typeof readCdpScriptParsed>;
+
 export const readCdpExecutionContextCreated = (params: unknown) => {
   const context = recordValue(recordValue(params)?.context);
   return {

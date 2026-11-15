@@ -145,25 +145,31 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
       if (event.method.startsWith("Runtime."))
         this.markDomainEnabled("Runtime");
     }
-    if (event.registered?.method === "Page.frameNavigated") {
-      handlers.handleFrameNavigated(this, event.registered.payload);
+    const registered = event.registered;
+    switch (registered?.method) {
+      case "Page.frameNavigated":
+        handlers.handleFrameNavigated(this, registered.payload);
+        return;
+      case "Runtime.executionContextCreated":
+        handlers.handleExecutionContextCreated(this, registered.payload.facts);
+        return;
+      case "Runtime.executionContextDestroyed":
+        handlers.handleExecutionContextDestroyed(this, registered.payload);
+        return;
+      case "Debugger.scriptParsed":
+        handlers.handleScriptParsed(this, registered.payload.facts);
+        return;
+      case "Runtime.consoleAPICalled":
+        handlers.handleConsoleAPICalled(this, registered.payload);
+        return;
+    }
+    if (event.method === "Runtime.executionContextsCleared") {
+      this.executionContextFrames.clear();
       return;
     }
     const params = recordValue(event.params);
     if (params === undefined) return;
     switch (event.method) {
-      case "Runtime.executionContextCreated":
-        handlers.handleExecutionContextCreated(this, params);
-        break;
-      case "Runtime.executionContextDestroyed":
-        handlers.handleExecutionContextDestroyed(this, params);
-        break;
-      case "Runtime.executionContextsCleared":
-        this.executionContextFrames.clear();
-        break;
-      case "Debugger.scriptParsed":
-        handlers.handleScriptParsed(this, params);
-        break;
       case "Network.requestWillBeSent": {
         const facts = readCdpRequestWillBeSent(params);
         const requestId = facts.requestId;
@@ -182,9 +188,6 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
         break;
       case "Network.loadingFinished":
         handlers.handleLoadingFinished(this, params);
-        break;
-      case "Runtime.consoleAPICalled":
-        handlers.handleConsoleAPICalled(this, params);
         break;
       case "Network.webSocketCreated":
         handlers.handleWebSocketCreated(this, params);

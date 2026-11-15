@@ -25,12 +25,11 @@ import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { delayWithCancellation } from "../browser/CdpCaptureValues.js";
-import {
-  readCdpScriptParsed,
-  readCdpExecutionContextCreated,
-  readCdpExecutionContextDestroyed,
-} from "../browser/CdpScriptContextFacts.js";
-import type { CdpConnection, CdpEvent } from "../browser/CdpConnection.js";
+import type { CdpScriptParsedFacts } from "../browser/CdpScriptContextFacts.js";
+import type {
+  CdpConnection,
+  CdpReceivedEvent,
+} from "../browser/CdpConnection.js";
 import {
   ElectronFileScope,
   mapElectronFileAuthorizationFailure,
@@ -637,7 +636,7 @@ const emptyCaptureState = (): CaptureState => ({
   truncationReasons: new Set(),
 });
 
-const ingestEvent = (event: CdpEvent, state: CaptureState): void => {
+const ingestEvent = (event: CdpReceivedEvent, state: CaptureState): void => {
   if (
     event.method !== "Debugger.scriptParsed" &&
     event.method !== "Debugger.scriptFailedToParse" &&
@@ -647,12 +646,12 @@ const ingestEvent = (event: CdpEvent, state: CaptureState): void => {
   )
     return;
   state.eventsObserved += 1;
-  if (event.method === "Debugger.scriptParsed") {
-    ingestScript(event, state);
+  if (event.registered?.method === "Debugger.scriptParsed") {
+    ingestScript(event.registered.payload.facts, state);
     return;
   }
-  if (event.method === "Debugger.scriptFailedToParse") {
-    const facts = readCdpScriptParsed(event.params);
+  if (event.registered?.method === "Debugger.scriptFailedToParse") {
+    const { facts } = event.registered.payload;
     if (facts.scriptId === undefined || facts.url === undefined) {
       state.invalidScripts += 1;
       retainEvent(state, 0);
@@ -665,9 +664,11 @@ const ingestEvent = (event: CdpEvent, state: CaptureState): void => {
   ingestContext(event, state);
 };
 
-const ingestScript = (event: CdpEvent, state: CaptureState): void => {
+const ingestScript = (
+  facts: CdpScriptParsedFacts,
+  state: CaptureState,
+): void => {
   state.scriptsObserved += 1;
-  const facts = readCdpScriptParsed(event.params);
   const rawUrl = facts.url;
   if (rawUrl === undefined) {
     state.invalidScripts += 1;
@@ -694,7 +695,7 @@ const ingestScript = (event: CdpEvent, state: CaptureState): void => {
   state.scripts.push(draft);
 };
 
-const ingestContext = (event: CdpEvent, state: CaptureState): void => {
+const ingestContext = (event: CdpReceivedEvent, state: CaptureState): void => {
   if (event.method === "Runtime.executionContextsCleared") {
     for (const context of state.latestContexts.values()) {
       if (context.state === "created") context.state = "cleared";
@@ -703,12 +704,18 @@ const ingestContext = (event: CdpEvent, state: CaptureState): void => {
     retainEvent(state, 0);
     return;
   }
-  const created = event.method === "Runtime.executionContextCreated";
-  const createdContext = created
-    ? readCdpExecutionContextCreated(event.params)
-    : undefined;
+  const registered = event.registered;
+  const createdContext =
+    registered?.method === "Runtime.executionContextCreated"
+      ? registered.payload.facts
+      : undefined;
   const identity =
-    createdContext ?? readCdpExecutionContextDestroyed(event.params);
+    createdContext ??
+    (registered?.method === "Runtime.executionContextDestroyed"
+      ? registered.payload
+      : undefined);
+  if (identity === undefined) return;
+  const created = createdContext !== undefined;
   const key = identity.contextKey;
   if (key === null || identity.id === undefined) {
     state.invalidContexts += 1;
