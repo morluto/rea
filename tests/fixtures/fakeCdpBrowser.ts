@@ -51,6 +51,15 @@ export const startFakeCdpBrowser = async (
         webSockets.emit("connection", webSocket, request),
       );
     };
+    if (options.handshakeGate !== undefined) {
+      // Flowing, so a client that abandons the handshake is observed.
+      socket.resume();
+      socket.once("end", () => socket.destroy());
+      void options.handshakeGate.hold(request.url ?? "").then(accept, () => {
+        socket.destroy();
+      });
+      return;
+    }
     if (options.handshakeDelayMs === undefined) {
       accept();
       return;

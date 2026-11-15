@@ -3,10 +3,13 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { createPackage } from "@electron/asar";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 
+import { CdpConnection } from "../../../src/browser/CdpConnection.js";
 import { CdpElectronProvider } from "../../../src/browser/CdpElectronProvider.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import {
@@ -559,6 +562,109 @@ describe("CdpElectronProvider target access", () => {
     expect(listed.value.targets).toHaveLength(206);
     expect(listed.value.targets[0]?.target_id).toBe("electron-page");
     expect(listed.value.targets.at(-1)?.target_id).toBe("electron-page-0204");
+  });
+});
+
+describe("CdpElectronProvider transport lifecycle", () => {
+  const inspectInput = (endpoint: string) =>
+    inspectElectronPageInputSchema.parse({
+      cdp_endpoint: endpoint,
+      target_id: "electron-page",
+      observation_ms: 0,
+    });
+  const connectionsClosed = (browser: FakeCdpBrowser): Promise<void> =>
+    new Promise((resolve) => {
+      const poll = (): void => {
+        if (browser.activeConnectionCount() === 0) resolve();
+        else setTimeout(poll, 5);
+      };
+      poll();
+    });
+
+  it("cancels a held Electron CDP handshake and admits the next inspection", async () => {
+    const root = await electronFixture();
+    const handshake = phaseGate<string>();
+    const browser = await startFakeCdpBrowser({
+      electronFileUrl: pathToFileURL(join(root, "index.html")).href,
+      handshakeGate: handshake,
+    });
+    browsers.push(browser);
+    const provider = new CdpElectronProvider();
+    const controller = new AbortController();
+    const reason = new Error("cancelled during the Electron handshake");
+    const inspecting = provider.inspectPage(inspectInput(browser.endpoint), {
+      signal: controller.signal,
+    });
+    await handshake.reached(inspecting, "Electron CDP WebSocket handshake");
+    controller.abort(reason);
+    const cancelled = await inspecting;
+    if (cancelled.ok) throw new Error("Expected handshake cancellation");
+    expect(cancelled.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(cancelled.error.cause).toBe(reason);
+    expect(cancelled.error.cleanupIncomplete).toBe(false);
+    expect(browser.openedConnectionCount()).toBe(0);
+
+    handshake.release();
+    const inspected = await provider.inspectPage(
+      inspectInput(browser.endpoint),
+    );
+    if (!inspected.ok) throw inspected.error;
+    await provider.close();
+    await awaitAcknowledgement(
+      connectionsClosed(browser),
+      new Promise(() => undefined),
+      "Electron transports closed",
+    );
+  });
+
+  it("retains a failed Electron transport close and retries it before the next inspection", async () => {
+    const root = await electronFixture();
+    const browser = await startFakeCdpBrowser({
+      electronFileUrl: pathToFileURL(join(root, "index.html")).href,
+    });
+    browsers.push(browser);
+    const provider = new CdpElectronProvider();
+    const originalClose = CdpConnection.prototype.close;
+    let denyClose = true;
+    let closes = 0;
+    const closeSpy = vi
+      .spyOn(CdpConnection.prototype, "close")
+      .mockImplementation(function (this: CdpConnection) {
+        closes += 1;
+        return denyClose
+          ? Promise.reject(
+              new Error("controlled Electron transport close failure"),
+            )
+          : originalClose.call(this);
+      });
+    try {
+      const first = await provider.inspectPage(inspectInput(browser.endpoint));
+      if (first.ok) throw new Error("Expected incomplete transport cleanup");
+      expect(first.error.cleanupIncomplete).toBe(true);
+      expect(first.error.partialObservation).toMatchObject({
+        kind: "electron-page-observation",
+        inspection: { target: { file_path: join(root, "index.html") } },
+      });
+      const failedCloses = closes;
+
+      denyClose = false;
+      const retried = await provider.inspectPage(
+        inspectInput(browser.endpoint),
+      );
+      if (!retried.ok) throw retried.error;
+      expect(closes).toBeGreaterThan(failedCloses + 1);
+      expect(first.error.cleanupIncomplete).toBe(false);
+      await provider.close();
+      await awaitAcknowledgement(
+        connectionsClosed(browser),
+        new Promise(() => undefined),
+        "Electron transports closed",
+      );
+    } finally {
+      denyClose = false;
+      closeSpy.mockRestore();
+      await provider.close().catch(() => undefined);
+    }
   });
 });
 

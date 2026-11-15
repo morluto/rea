@@ -1174,8 +1174,11 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     ownership: "connection",
     stages: {
       launch: ATTACH_ONLY,
-      handshake: gap(
-        "No Electron-provider regression for a late, absent or failed CDP handshake.",
+      handshake: covered(
+        test(
+          "tests/boundary/browser/cdpElectronProvider.test.ts",
+          "cancels a held Electron CDP handshake and admits the next inspection",
+        ),
       ),
       operation: covered(
         test(
@@ -1193,10 +1196,18 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
           "classifies cancellation that arrives during final Electron detach",
         ),
       ),
-      cleanup: gap(
-        "No regression retains a failed Electron inspection cleanup; the cleanup tests cover cancellation during a successful close.",
+      cleanup: covered(
+        test(
+          "tests/boundary/browser/cdpElectronProvider.test.ts",
+          "retains a failed Electron transport close and retries it before the next inspection",
+        ),
       ),
-      retry: gap("No regression for Electron inspection cleanup retry."),
+      retry: covered(
+        test(
+          "tests/boundary/browser/cdpElectronProvider.test.ts",
+          "retains a failed Electron transport close and retries it before the next inspection",
+        ),
+      ),
     },
   },
   "rea-devicetree": inProcess(
@@ -1530,8 +1541,11 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     ownership: "connection",
     stages: {
       launch: ATTACH_ONLY,
-      handshake: gap(
-        "No regression for a late, absent or failed inspector WebSocket handshake.",
+      handshake: covered(
+        test(
+          "src/inspector/V8InspectorProvider.handshake.test.ts",
+          "cancels a held inspector WebSocket handshake and admits the next observation",
+        ),
       ),
       operation: covered(
         test(
@@ -1568,8 +1582,15 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
           "retains the selected executable and actual startup diagnostic",
         ),
       ),
-      handshake: gap(
-        "No regression for a late or failed browser-engine connection after Chromium launches.",
+      handshake: covered(
+        test(
+          "src/browser/modules/NativeModuleResolver.test.ts",
+          "closes a browser whose connection completes after cancellation",
+        ),
+        test(
+          "src/browser/modules/NativeModuleResolver.test.ts",
+          "reports failed cleanup of a browser whose connection completes after cancellation",
+        ),
       ),
       operation: covered(
         test(
@@ -1593,8 +1614,11 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
           "returns cleanup_incomplete when owned cleanup fails after an engine error",
         ),
       ),
-      retry: gap(
-        "The resolver retries retained browser cleanup before later work, but no regression names that retry.",
+      retry: covered(
+        test(
+          "src/browser/modules/NativeModuleResolver.test.ts",
+          "retries retained browser cleanup before launching the next resolution",
+        ),
       ),
     },
   },
@@ -1985,9 +2009,6 @@ export const PROVIDER_LIFECYCLE_GAPS: readonly string[] = [
   "rea-apple-application:cleanup",
   "rea-apple-application:launch",
   "rea-apple-application:retry",
-  "rea-cdp-electron:cleanup",
-  "rea-cdp-electron:handshake",
-  "rea-cdp-electron:retry",
   "rea-dotnet-workflows:cancel",
   "rea-harmony-application:cancel",
   "rea-javascript-application-workflows:cancel",
@@ -1996,8 +2017,5 @@ export const PROVIDER_LIFECYCLE_GAPS: readonly string[] = [
   "rea-javascript-runtime-reconciliation:cancel",
   "rea-pe-certificates:operation",
   "rea-v8-code-cache:cancel",
-  "rea-v8-inspector:handshake",
-  "rea-web-module-trace:handshake",
-  "rea-web-module-trace:retry",
   "sqlite:launch",
 ];

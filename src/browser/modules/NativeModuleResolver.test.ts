@@ -13,46 +13,50 @@ const input = {
   importMap: null,
   specifiers: ["./dep.js"],
 };
-describe("native module resolver cleanup ownership", () => {
-  it.each([false, true])(
-    "awaits owned cleanup when acquisition is cancelled (cleanup fails: %s)",
-    async (cleanupFails) => {
-      const controller = new AbortController();
-      let closed = false;
-      const provider = new NativeModuleResolver(
-        { REA_BROWSER_EXECUTABLE: "/browser" },
-        () => {
-          controller.abort();
-          return Promise.resolve({
-            version: () => "fixture",
-            newContext: () => {
-              throw new Error("must not acquire context");
-            },
-            close: () => {
-              closed = true;
-              if (cleanupFails)
-                return Promise.reject(new Error("fixture cleanup refusal"));
-              return Promise.resolve();
-            },
-          });
+/** The browser connection completes after the caller cancelled acquisition. */
+const resolveWithLateBrowserConnection = async (
+  cleanupFails: boolean,
+): Promise<void> => {
+  const controller = new AbortController();
+  let closed = false;
+  const provider = new NativeModuleResolver(
+    { REA_BROWSER_EXECUTABLE: "/browser" },
+    () => {
+      controller.abort();
+      return Promise.resolve({
+        version: () => "fixture",
+        newContext: () => {
+          throw new Error("must not acquire context");
         },
-      );
-      const result = await provider.resolve(input, {
-        signal: controller.signal,
+        close: () => {
+          closed = true;
+          if (cleanupFails)
+            return Promise.reject(new Error("fixture cleanup refusal"));
+          return Promise.resolve();
+        },
       });
-      expect(closed).toBe(true);
-      if (result.ok) throw new Error("expected cancelled result");
-      const projected = projectAnalysisError(result.error);
-      expect(projected.code).toBe(
-        cleanupFails ? "cleanup_incomplete" : "cancelled",
-      );
-      if (cleanupFails) {
-        expect(projected.details).toMatchObject({
-          diagnostics: { primary_error: { code: "cancelled" } },
-        });
-      }
     },
   );
+  const result = await provider.resolve(input, {
+    signal: controller.signal,
+  });
+  expect(closed).toBe(true);
+  if (result.ok) throw new Error("expected cancelled result");
+  const projected = projectAnalysisError(result.error);
+  expect(projected.code).toBe(
+    cleanupFails ? "cleanup_incomplete" : "cancelled",
+  );
+  if (cleanupFails) {
+    expect(projected.details).toMatchObject({
+      diagnostics: { primary_error: { code: "cancelled" } },
+    });
+  }
+};
+describe("native module resolver cleanup ownership", () => {
+  it("closes a browser whose connection completes after cancellation", () =>
+    resolveWithLateBrowserConnection(false));
+  it("reports failed cleanup of a browser whose connection completes after cancellation", () =>
+    resolveWithLateBrowserConnection(true));
   it("returns cleanup_incomplete when owned cleanup fails after an engine error", async () => {
     let launches = 0;
     let closes = 0;
@@ -104,6 +108,43 @@ describe("native module resolver cleanup ownership", () => {
     expect(result.error.cleanupIncomplete).toBe(false);
     expect(result.error.cleanupResources).toEqual([]);
     if (!blocked.ok) expect(blocked.error.cleanupIncomplete).toBe(false);
+  });
+});
+
+describe("native module resolver cleanup retry", () => {
+  it("retries retained browser cleanup before launching the next resolution", async () => {
+    let launches = 0;
+    let closes = 0;
+    let cleanupAllowed = false;
+    const completed = completedModuleResolverLauncher(input, async () => {});
+    const provider = new NativeModuleResolver(
+      { REA_BROWSER_EXECUTABLE: "/browser" },
+      async (...args) => {
+        launches += 1;
+        if (launches > 1) return completed(...args);
+        return {
+          version: () => "fixture",
+          newContext: () =>
+            Promise.reject(new Error("fixture context failure")),
+          close: async () => {
+            closes += 1;
+            if (!cleanupAllowed)
+              throw new Error("fixture owned cleanup refusal");
+          },
+        };
+      },
+    );
+    const first = await provider.resolve(input);
+    if (first.ok) throw new Error("expected retained browser cleanup");
+    expect(first.error.cleanupIncomplete).toBe(true);
+    cleanupAllowed = true;
+    const retried = await provider.resolve(input);
+    if (!retried.ok) throw retried.error;
+    expect(closes).toBe(2);
+    expect(launches).toBe(2);
+    expect(first.error.cleanupIncomplete).toBe(false);
+    expect(first.error.cleanupResources).toEqual([]);
+    await provider.close();
   });
 });
 
