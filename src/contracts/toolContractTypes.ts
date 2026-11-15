@@ -1,6 +1,7 @@
 import type { z } from "zod";
 
 import type { JsonValue } from "../domain/jsonValue.js";
+import type { ToolAvailabilityDeclaration } from "./toolAvailability.js";
 import type { DerivedToolAnnotations, ToolEffects } from "./toolEffects.js";
 
 /** One validated example request for an MCP tool contract. */
@@ -47,6 +48,8 @@ export interface ToolContract<
   readonly title: string;
   readonly description: string;
   readonly kind: ToolKind;
+  /** What the tool needs before it can run; see ToolAvailabilityDeclaration. */
+  readonly availability?: ToolAvailabilityDeclaration;
   /** This handler dispatches through the active binary-analysis session. */
   readonly requiresActiveTarget?: boolean;
   /** Adapter delivery of a retained summary; detail never reaches analysis. */

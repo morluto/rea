@@ -9,6 +9,7 @@ import {
   debPackageFixture,
   notArBytes,
 } from "../../../src/deb/DebPackage.fixture.js";
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
@@ -53,10 +54,13 @@ it("advertises inspect_deb_package and reads package identity", async () => {
       readOnlyHint: false,
       idempotentHint: true,
     });
-    if (advertised?.outputSchema === undefined)
-      throw new Error("Missing inspect_deb_package output schema");
+    if (advertised === undefined)
+      throw new Error("Missing advertised inspect_deb_package tool");
+    expect(advertised.outputSchema).toBeUndefined();
     expect(
-      schemaValidation.assertions.validateSchema(advertised.outputSchema),
+      schemaValidation.assertions.validateSchema(
+        canonicalOutputSchema(advertised.name),
+      ),
     ).toBe(true);
     const root = await createTestTempDirectory("rea-deb-mcp-");
     const path = join(root, "hello_2.03-1_all.deb");

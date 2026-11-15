@@ -20,6 +20,7 @@ const evmInterfaceInspectionInputSchema = inspectEvmInterfaceInputSchema.extend(
 /** Target-free EVM capabilities are independent of archive/Apple artifact providers. */
 export const INSPECT_EVM_INTERFACE_CONTRACT = {
   name: "inspect_evm_interface",
+  availability: { host: "evmInterface" },
   ...toolContractMetadata("inspect_evm_interface"),
   kind: "artifact-provider",
   requiresActiveTarget: true,

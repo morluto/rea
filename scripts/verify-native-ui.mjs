@@ -1,7 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -10,12 +9,17 @@ import { observeNativeUi } from "../dist/native/NativeUiObservation.js";
 import { NATIVE_UI_HELPER_MAX_BUFFER } from "../dist/native/NativeUiOutputBudget.js";
 import { artifactMcpResult, withArtifactMcp } from "./lib/artifact-e2e.mjs";
 import { observeProcessStartIdentity } from "../dist/process/ProcessOwnershipObservation.js";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 if (process.platform !== "darwin")
   throw new Error(
     "Native UI verification requires macOS, an interactive desktop and Xcode command-line tools",
   );
-const root = await mkdtemp(join(tmpdir(), "rea-ui-fixture-"));
+const rootFixture = await VerifierFixture.open({
+  prefix: "rea-ui-fixture-",
+  private: false,
+});
+const root = rootFixture.path;
 let child;
 let childExit;
 let fixturePid;
@@ -294,7 +298,7 @@ try {
   }
   const fixtureExited =
     child === undefined || (await openExitedWithFixture(child, childExit));
-  if (fixtureExited) await rm(root, { recursive: true, force: true });
+  if (fixtureExited) await rootFixture.release();
   else {
     // The app may have been reparented away from `open`; stopping `open`
     // does not prove the fixture exited, so its root stays in place.

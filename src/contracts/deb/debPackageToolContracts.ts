@@ -10,6 +10,7 @@ import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 export const DEB_PACKAGE_TOOL_CONTRACTS = [
   {
     name: "inspect_deb_package",
+    availability: "standalone",
     ...toolContractMetadata("inspect_deb_package"),
     kind: "artifact-provider",
     requiresActiveTarget: true,

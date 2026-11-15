@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import { decodeNibArchive } from "./NibArchive.js";
 import { encodeNibArchiveFixture as encodeArchive } from "./NibArchive.fixture.js";
-import { InterfaceBuilderDecodeBudgetExceeded } from "./InterfaceBuilderDecodeBudget.js";
 import { ParseFailureError } from "../../domain/parseFailure.js";
 
 const archiveWithOverlappingObjectRanges = (objectCount: number): Buffer => {
@@ -178,10 +177,15 @@ describe("NIBArchive decoder", () => {
     } catch (cause: unknown) {
       thrown = cause;
     }
-    expect(thrown).toBeInstanceOf(InterfaceBuilderDecodeBudgetExceeded);
+    expect(thrown).toBeInstanceOf(ParseFailureError);
     expect(thrown).toHaveProperty(
-      "message",
-      expect.stringMatching(/projected field ranges/u),
+      "failure",
+      expect.objectContaining({
+        kind: "limit",
+        format: "nib-archive",
+        detail: expect.stringMatching(/projected field ranges/u),
+        limit: { name: "aggregate-decode-bytes", maximum: expect.any(Number) },
+      }),
     );
   });
 });

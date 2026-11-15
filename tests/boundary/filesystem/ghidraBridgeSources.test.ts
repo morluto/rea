@@ -148,11 +148,16 @@ it.skipIf(process.platform === "win32").each([
   "rejects a $action launcher source before compilation: $source",
   async ({ source, action }) => {
     const repository = await createTestTempDirectory("rea-ghidra-source-set-");
-    await mkdir(join(repository, "scripts"));
+    await mkdir(join(repository, "scripts/lib"), { recursive: true });
     await mkdir(join(repository, "src/ghidra"), { recursive: true });
     await writeFile(join(repository, "package.json"), '{"type":"module"}\n');
     for (const path of [
       "scripts/verify-ghidra-bridge-sources.mjs",
+      // The verifier's scratch fixture and its static imports.
+      "scripts/lib/verifier-fixture.mjs",
+      "scripts/lib/canonical-temporary-directory.mjs",
+      "scripts/lib/verifier-cleanup.mjs",
+      "scripts/lib/verifier-source-loader.mjs",
       "src/ghidra/GhidraBridgeSources.ts",
       "src/ghidra/GhidraJavaProperties.ts",
       "src/ghidra/GhidraReleasePolicy.ts",
