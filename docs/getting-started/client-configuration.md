@@ -901,6 +901,20 @@ a registration Junie would not load: `JUNIE_MCP_DEFAULT_LOCATIONS=false`, or
 A `--mcp-default-locations=false` command-line option is not visible to REA.
 Project registration writes `.junie/mcp/mcp.json`.
 
+## Goose
+
+Setup and `rea mcp add` write `extensions.rea` into Goose's user file:
+`~/.config/goose/config.yaml` (an absolute `XDG_CONFIG_HOME` replaces
+`~/.config`), `%APPDATA%\Block\goose\config\config.yaml` on Windows, or
+`$GOOSE_PATH_ROOT/config/config.yaml` when that root is absolute. Goose also
+loads `/etc/goose/config.yaml` (`%PROGRAMDATA%\goose\config.yaml` on Windows)
+and each `GOOSE_ADDITIONAL_CONFIG_FILES` entry beneath the user file, merging
+each extension one field deep. Doctor reports the effective registration across
+those layers, for example `enabled: false` from a lower layer. Setup, update and
+uninstall change only the user file. A relative additional entry depends on
+Goose's working directory, so REA refuses it. Goose reads its configuration at
+startup; restart it after setup.
+
 ## WorkBuddy
 
 For [WorkBuddy](https://www.workbuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/MCP-Guide), setup writes `mcpServers.rea` into the

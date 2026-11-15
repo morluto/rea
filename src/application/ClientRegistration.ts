@@ -204,8 +204,9 @@ export const parseClientRegistrationPolicy = (
       .safeParse(value);
     if (!entry.success) return err(registrationError(entry.error));
     value = entry.data;
-  } else if (client.format === "fx") {
-    // fx's native launcher is the dialect's own shape; normalize it once.
+  } else if (client.format === "fx" || client.format === "goose") {
+    // fx's command array and Goose's `cmd` are dialect launcher shapes;
+    // normalize them once through the launcher owner.
     const launcher = parseClientRegistrationLauncher(value, {
       dialect: client.format,
       profile: client.registrationProfile,
