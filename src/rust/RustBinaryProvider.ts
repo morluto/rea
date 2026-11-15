@@ -326,8 +326,16 @@ const retainCompilerPathsWithinReport = (
     retainedBytes += bytes;
     count++;
   }
-  report.rustc_commit =
-    count === 0 ? null : { ...empty, hashes: commit.hashes.slice(0, count) };
+  if (count === 0) {
+    // The control stays recorded although no compiler record survives.
+    report.rustc_commit = null;
+    if (empty.coverage.limit !== undefined)
+      report.rustc_commit_omission = {
+        reason: "report_bytes",
+        limit: empty.coverage.limit,
+      };
+  } else
+    report.rustc_commit = { ...empty, hashes: commit.hashes.slice(0, count) };
   report.limitations = baseline.limitations;
 };
 

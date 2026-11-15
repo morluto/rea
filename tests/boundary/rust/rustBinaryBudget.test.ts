@@ -152,6 +152,16 @@ it("describes compiler coverage from the retained result when report trimming dr
       "Compiler paths were omitted to preserve dependency facts",
     );
     expect(text).toContain("producer_limits.output_bytes");
+    // The control that omitted every path stays recorded outside the
+    // dropped compiler record, at a position the output schema declares.
+    expect(trimmed.value.rustc_commit_omission).toEqual({
+      reason: "report_bytes",
+      limit: expect.objectContaining({
+        control_kind: "parameter",
+        parameter: "producer_limits.output_bytes",
+        effective_value: admitted,
+      }),
+    });
   } finally {
     await provider.close();
   }
