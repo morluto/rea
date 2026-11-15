@@ -1919,70 +1919,82 @@ export const describeContractCommand = <
       Object.keys(memberShape).toSorted().join()
     )
       throw new Error(`${contract.name}.${name} flattens other members`);
-    return Object.entries(memberShape).flatMap(([member, memberDeclared]) => {
-      const projected = members[member]!;
-      const memberPath = [...path, member];
-      const memberName = [field, ...memberPath].join(".");
-      if ("flatten" in projected) {
-        if (positional)
-          throw new Error(
-            `${contract.name}.${memberName} is a positional object`,
+    const memberParameterList = Object.entries(memberShape).flatMap(
+      ([member, memberDeclared]) => {
+        const projected = members[member]!;
+        const memberPath = [...path, member];
+        const memberName = [field, ...memberPath].join(".");
+        if ("flatten" in projected) {
+          if (positional)
+            throw new Error(
+              `${contract.name}.${memberName} is a positional object`,
+            );
+          return memberParameters(
+            field,
+            memberPath,
+            memberDeclared,
+            projected.flatten,
+            required,
           );
-        return memberParameters(
-          field,
-          memberPath,
-          memberDeclared,
-          projected.flatten,
-          required,
-        );
-      }
-      const memberRequired = required && !admitsOmission(memberDeclared);
-      if (positional && !memberRequired)
-        throw new Error(
-          `${contract.name}.${memberName} is an optional positional`,
-        );
-      const omittable = (schema: z.ZodType) =>
-        memberRequired ? schema : schema.optional();
-      const callerPath = projected.callerPath === true;
-      let schema: z.ZodType;
-      if (callerPath) {
-        if (!(core(memberDeclared) instanceof z.ZodString))
-          throw new Error(`${contract.name}.${memberName} is not a path`);
-        schema = omittable(localPathStringSchema);
-      } else {
-        assertArgvField(contract.name, memberName, memberDeclared);
-        // An omitted member stays omitted; the contract applies its default.
-        schema = argvDecimal(omittable(withoutDefault(memberDeclared)));
-      }
-      const description = projected.description ?? memberDeclared.description;
-      if (description !== undefined) schema = schema.describe(description);
-      const value = core(memberDeclared);
-      return [
-        {
-          field,
-          key: projected.name ?? camelCase(member),
-          positional,
-          alias: projected.alias,
-          description,
-          schema,
-          inbound: false,
-          booleanFlag: value instanceof z.ZodBoolean,
-          cliDefault: undefined,
-          repeatable: value instanceof z.ZodArray,
-          decimal: value instanceof z.ZodNumber,
-          callerPath,
-          delivery: false,
-          jsonText: false,
-          viewSelection: false,
-          runtimeJson: undefined,
-          jsonInput: false,
-          checkJsonInput: undefined,
-          nullFlag: undefined,
-          member: memberPath,
-          selectorOption: undefined,
-        },
-      ];
-    });
+        }
+        const memberRequired = required && !admitsOmission(memberDeclared);
+        if (positional && !memberRequired)
+          throw new Error(
+            `${contract.name}.${memberName} is an optional positional`,
+          );
+        const omittable = (schema: z.ZodType) =>
+          memberRequired ? schema : schema.optional();
+        const callerPath = projected.callerPath === true;
+        let schema: z.ZodType;
+        if (callerPath) {
+          if (!(core(memberDeclared) instanceof z.ZodString))
+            throw new Error(`${contract.name}.${memberName} is not a path`);
+          schema = omittable(localPathStringSchema);
+        } else {
+          assertArgvField(contract.name, memberName, memberDeclared);
+          // An omitted member stays omitted; the contract applies its default.
+          schema = argvDecimal(omittable(withoutDefault(memberDeclared)));
+        }
+        const description = projected.description ?? memberDeclared.description;
+        if (description !== undefined) schema = schema.describe(description);
+        const value = core(memberDeclared);
+        return [
+          {
+            field,
+            key: projected.name ?? camelCase(member),
+            positional,
+            alias: projected.alias,
+            description,
+            schema,
+            inbound: false,
+            booleanFlag: value instanceof z.ZodBoolean,
+            cliDefault: undefined,
+            repeatable: value instanceof z.ZodArray,
+            decimal: value instanceof z.ZodNumber,
+            callerPath,
+            delivery: false,
+            jsonText: false,
+            viewSelection: false,
+            runtimeJson: undefined,
+            jsonInput: false,
+            checkJsonInput: undefined,
+            nullFlag: undefined,
+            member: memberPath,
+            selectorOption: undefined,
+          },
+        ];
+      },
+    );
+    // Argv supplies an object only through its given members, so a required
+    // object needs a required member; otherwise omitting them all drops it.
+    if (
+      required &&
+      memberParameterList.every(
+        ({ schema }) => schema.safeParse(undefined).success,
+      )
+    )
+      throw new Error(`${contract.name}.${name} has no required member`);
+    return memberParameterList;
   };
   const parameters = [
     ...positionals,

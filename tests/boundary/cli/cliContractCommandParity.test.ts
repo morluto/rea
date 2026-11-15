@@ -1015,6 +1015,22 @@ describe("Flattened object fields of contract commands", () => {
         },
       ),
     ).toThrow("probe.position.line is an optional positional");
+    // Omitting every member would drop a required object argv cannot spell.
+    expect(() =>
+      describeContractCommand(
+        {
+          name: "probe",
+          inputSchema: z.strictObject({
+            limits: z.strictObject({ bytes: z.int().optional() }),
+          }),
+        },
+        {
+          command: "probe",
+          description: "Probe",
+          flatten: { limits: { bytes: {} } },
+        },
+      ),
+    ).toThrow("probe.limits has no required member");
   });
 });
 
