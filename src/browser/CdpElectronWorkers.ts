@@ -5,12 +5,11 @@ import type {
 } from "../domain/javascript/electronObservation.js";
 import type { CdpConnection } from "./CdpConnection.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
-import { recordValue } from "./CdpCaptureValues.js";
 import type { CdpEndpointTarget } from "./CdpEndpoint.js";
 import { optionalCdpCommand } from "./CdpOptionalCommand.js";
 import { authorizedElectronFile } from "./ElectronFileScope.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { cancelledBy } from "../domain/analysisErrorCore.js";
 import {
   parseCdpWorkerTarget,
   workerTargetOwnership,
@@ -38,16 +37,14 @@ export const captureElectronWorkers = async (input: {
     input.limitations,
   );
   if (!result.ok) {
-    input.completeness.unavailable("workers");
+    // A malformed target list is unreadable, not empty.
+    if (result.error._tag === "CdpMalformedReply")
+      input.completeness.exclude("workers", "invalid_protocol_value", null);
+    else input.completeness.unavailable("workers");
     return [];
   }
   const workers: ElectronPageInspection["workers"] = [];
-  // A missing target list or a non-record entry is unreadable, not empty.
-  const targetInfos = recordValue(result.value)?.targetInfos;
-  if (!Array.isArray(targetInfos)) {
-    input.completeness.exclude("workers", "invalid_protocol_value", null);
-    return [];
-  }
+  const { targetInfos } = result.value;
   for (const entry of targetInfos) {
     throwIfElectronWorkerCaptureCancelled(input.signal);
     const parsed = parseCdpWorkerTarget(entry);
@@ -95,7 +92,5 @@ export const captureElectronWorkers = async (input: {
 
 const throwIfElectronWorkerCaptureCancelled = (signal?: AbortSignal): void => {
   if (signal?.aborted === true)
-    throw new AnalysisCancelledError("inspect_electron_page", {
-      cause: signal.reason,
-    });
+    throw cancelledBy("inspect_electron_page", signal);
 };

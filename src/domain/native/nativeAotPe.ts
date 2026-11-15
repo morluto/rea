@@ -7,6 +7,7 @@ import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../analysisErrorCore.js";
+import { allKeyed, keyedBy, uniqueKeyed } from "../keyedCollection.js";
 import type { NativeMetadataRecovery } from "./nativeMetadataRecovery.js";
 import {
   NativeAotAdmissionError,
@@ -911,7 +912,12 @@ const findDirectory = (
           break;
         }
         if (isConsumedRange || isTypeManagerIndirection) {
-          if (rows.some((existing) => existing.type === type)) {
+          // A repeated frozen region is kept for the consumer to report as
+          // ambiguous; other repeated rows disqualify the candidate.
+          if (
+            type !== FROZEN_OBJECT_REGION &&
+            rows.some((existing) => existing.type === type)
+          ) {
             valid = false;
             break;
           }
@@ -1288,21 +1294,21 @@ const discoverTables = (
       });
     }
   }
-  if (hydrated !== null) {
-    const section = image.sections.find(
+  if (
+    hydrated !== null &&
+    image.sections.some(
       (candidate) =>
         (candidate.characteristics & 0x40000000) !== 0 &&
         (candidate.characteristics & 0x20000000) === 0 &&
         hydrated.base >= image.addressForRva(candidate.rva) &&
         hydrated.base + BigInt(hydrated.sizeBytes) <=
           image.addressForRva(candidate.rva + virtualExtent(candidate)),
-    );
-    if (section !== undefined)
-      ranges.push({
-        start: hydrated.base,
-        end: hydrated.base + BigInt(hydrated.sizeBytes),
-      });
-  }
+    )
+  )
+    ranges.push({
+      start: hydrated.base,
+      end: hydrated.base + BigInt(hydrated.sizeBytes),
+    });
   ranges.sort((left, right) => (left.start < right.start ? -1 : 1));
   const merged: { start: bigint; end: bigint }[] = [];
   for (const range of ranges) {
@@ -1543,9 +1549,8 @@ export const parseNativeAotPe = (
       },
       maximumSummaryBytes,
     );
-  const dehydrated = directory.sections.filter(
-    (section) => section.type === DEHYDRATED_DATA,
-  );
+  const byType = keyedBy(directory.sections, ({ type }) => type);
+  const dehydrated = allKeyed(byType, DEHYDRATED_DATA);
   if (dehydrated.length !== 1)
     return parsedSummary(
       {
@@ -1570,9 +1575,10 @@ export const parseNativeAotPe = (
     hydration = nativeAotHydrationFailure(cause, budget);
   }
   const discovered = discoverTables(image, overlay, budget);
-  const frozen = directory.sections.find(
-    (section) => section.type === FROZEN_OBJECT_REGION,
-  );
+  // Repeated regions are ambiguous: the scan reads neither rather than
+  // choosing one by position, and the report is partial.
+  const frozenRegion = uniqueKeyed(byType, FROZEN_OBJECT_REGION);
+  const frozen = frozenRegion.ok ? frozenRegion.value : undefined;
   const isRecoveredStringTable = (address: bigint): boolean => {
     const index = discovered.tables.find(address, budget);
     if (
@@ -1616,18 +1622,24 @@ export const parseNativeAotPe = (
         }
       : discovered.tables.includedCount === 0
         ? { code: "no_system_object_root", ...hydrationAttachment }
-        : hydration === null
-          ? null
-          : nativeAotHydrationReason(hydration);
+        : hydration !== null
+          ? nativeAotHydrationReason(hydration)
+          : frozenRegion.ok
+            ? null
+            : { code: "ambiguous_frozen_object_region" };
   const reportLimitations = [
     "Only x64 PE32+ with RTR 9.1 is supported.",
     "No Ghidra database types, labels, functions, or bytes are created or changed.",
     "Names are address identities; original managed type names are unavailable.",
     "Metadata rows omitted to fit the NativeAOT report-byte budget are counted explicitly.",
     "Parser work, parser-owned typed buffers, NativeAOT report JSON, and MCP delivery have separate byte budgets; incomplete scans report examined and unexamined coverage.",
-    ...(frozen === undefined
-      ? ["The RTR directory has no FROZEN_OBJECT_REGION section."]
-      : []),
+    ...(!frozenRegion.ok
+      ? [
+          `The RTR directory declares ${String(frozenRegion.error.ordinals.length)} FROZEN_OBJECT_REGION sections, so none was read.`,
+        ]
+      : frozen === undefined
+        ? ["The RTR directory has no FROZEN_OBJECT_REGION section."]
+        : []),
   ];
   const reportFacts = {
     format: "dotnet-nativeaot" as const,
@@ -1803,8 +1815,7 @@ export const parseNativeAotPe = (
     (typesOmitted > 0 || frozenStringsOmitted > 0
       ? "response-budget"
       : undefined);
-  const partial =
-    truncated || hydration !== null || discovered.tables.includedCount === 0;
+  const partial = truncated || discoveryReason !== null;
   const publishedReason: NativeAotReason = discoveryReason ?? {
     code: "truncated",
     truncation_reason: truncationReason ?? "response-budget",

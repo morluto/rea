@@ -6,7 +6,8 @@ import { projectStableArtifactFailure } from "../StableArtifactFailure.js";
 import { ARTIFACT_GRAPH_PROVIDER } from "../../domain/investigationProviders.js";
 import { z } from "zod";
 
-import { decodeBinaryPlistValue } from "./BinaryPlistMaterializer.js";
+import { decodeBinaryPropertyList } from "./BinaryPlistMaterializer.js";
+import { plistDuplicateKeyLimitations } from "../../domain/apple/plistDuplicateKeys.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
@@ -110,14 +111,7 @@ export const decodeKeyedArchiveBytes = (
     : undefined;
   const parsed =
     binaryExpansion !== undefined
-      ? {
-          value: decodeBinaryPlistValue(
-            bytes,
-            binaryExpansion,
-            binaryScalarMetadata,
-          ),
-          numberLiterals: binaryScalarMetadata!.literals,
-        }
+      ? decodeBinaryPropertyList(bytes, binaryExpansion, binaryScalarMetadata)
       : parseXmlPropertyList(xmlText ?? "");
   const {
     nonFiniteRealCount,
@@ -147,6 +141,7 @@ export const decodeKeyedArchiveBytes = (
     limitations: [
       ...graph.limitations,
       ...numbers.limitations(),
+      ...plistDuplicateKeyLimitations(parsed.duplicateKeys),
       ...(nonFiniteRealCount === 0
         ? []
         : [nonFiniteRealLimitation(nonFiniteRealCount)]),

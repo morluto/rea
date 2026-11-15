@@ -34,15 +34,10 @@ import {
   fromSetup,
   present,
   fixedProjectLocation,
-  clineLocation,
   fxLocation,
   gooseLocation,
   junieLocation,
-  kiroLocation,
-  mastraLocation,
   mcporterLocation,
-  zedLocation,
-  ampLocation,
   type McpRegistrationLocationContext,
   type McpRegistrationGlobalLocation,
   type McpRegistrationLocation,
@@ -136,14 +131,7 @@ const MCPORTER_STDIO_INCOMPATIBILITIES: readonly NativeStdioIncompatibility[] =
  */
 export const MCP_REGISTRATION_CLIENTS = {
   antigravity: tableClient("antigravity"),
-  cline: {
-    kind: "registration-only",
-    displayName: "Cline VSCode Extension",
-    format: "json",
-    aliases: ["cline-vscode"],
-    globalLocation: clineLocation,
-    registrationConnection: { kind: "cline" },
-  },
+  cline: tableClient("cline_vscode"),
   "cline-cli": tableClient("cline"),
   "claude-code": tableClient("claude_code"),
   "claude-desktop": tableClient("claude_desktop"),
@@ -211,35 +199,8 @@ export const MCP_REGISTRATION_CLIENTS = {
     },
   },
   "kimi-code": tableClient("kimi"),
-  "kiro-cli": {
-    kind: "registration-only",
-    displayName: "Kiro CLI",
-    format: "json",
-    aliases: ["kiro"],
-    globalLocation: kiroLocation,
-    projectLocation: fixedProjectLocation([".kiro/settings/mcp.json"]),
-    registrationConnection: {
-      kind: "flat",
-      fields: ["type", "url"],
-      stdio: [
-        { kind: "optional-enum", field: "type", values: ["stdio"] },
-        { kind: "present", field: "url" },
-      ],
-    },
-  },
-  mastracode: {
-    kind: "registration-only",
-    displayName: "Mastra Code",
-    format: "json",
-    aliases: ["mastra"],
-    globalLocation: mastraLocation,
-    projectLocation: fixedProjectLocation([".mastracode/mcp.json"]),
-    registrationConnection: {
-      kind: "flat",
-      fields: ["url"],
-      stdio: [{ kind: "string", field: "url" }],
-    },
-  },
+  "kiro-cli": tableClient("kiro"),
+  mastracode: tableClient("mastracode"),
   mcporter: {
     kind: "registration-only",
     displayName: "MCPorter",
@@ -256,29 +217,8 @@ export const MCP_REGISTRATION_CLIENTS = {
   pi: tableClient("pi"),
   vscode: tableClient("vscode"),
   windsurf: tableClient("windsurf"),
-  zed: {
-    kind: "registration-only",
-    displayName: "Zed",
-    format: "zed",
-    globalLocation: zedLocation,
-    projectLocation: fixedProjectLocation([".zed/settings.json"]),
-    registrationConnection: {
-      kind: "flat",
-      fields: ["url"],
-      stdio: [{ kind: "present", field: "url" }],
-    },
-  },
-  amp: {
-    kind: "registration-only",
-    displayName: "Amp",
-    format: "amp",
-    globalLocation: ampLocation,
-    registrationConnection: {
-      kind: "flat",
-      fields: ["url"],
-      stdio: [{ kind: "present", field: "url" }],
-    },
-  },
+  zed: tableClient("zed"),
+  amp: tableClient("amp"),
 } as const satisfies Record<string, CatalogEntry>;
 
 export type McpRegistrationClientId = keyof typeof MCP_REGISTRATION_CLIENTS;

@@ -12,7 +12,10 @@ import type { FileHandle } from "node:fs/promises";
 import type { Socket } from "node:net";
 import type { ProgressReporter } from "../application/ProgressReporter.js";
 
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  OwnerCancellation,
+} from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { NativeValueFlowLimits } from "../domain/native/nativeValueFlow.js";
@@ -34,11 +37,8 @@ import {
   Utf8NdjsonLineBuffer,
   Utf8NdjsonDecodingError,
 } from "../process/Utf8NdjsonLineBuffer.js";
-import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
-import {
-  SharedStartupAttempt,
-  STARTUP_OWNER_CLOSED,
-} from "../process/SharedStartupAttempt.js";
+import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
+import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
 import { ProviderRunLineage } from "../process/ProviderRunLineage.js";
@@ -61,7 +61,6 @@ import {
   createGhidraDiagnostics,
   ghidraDiagnosticStream,
   ghidraFailureOutput,
-  GHIDRA_JVM_OOME_MARKER,
   GHIDRA_PROCESS_DIAGNOSTIC_BYTES,
   type GhidraDiagnosticsScope,
 } from "./GhidraDiagnostics.js";
@@ -301,7 +300,7 @@ export class GhidraClient {
     if (this.#closePromise !== undefined)
       return waitForAbortable(this.#closePromise, signal).then(
         (closed) =>
-          closed === ABORTED
+          closed instanceof AbortedWait
             ? err(this.#startupWaitCancellation(signal))
             : this.start(signal),
         (cause: unknown) =>
@@ -362,7 +361,7 @@ export class GhidraClient {
     const signalAborted = (): boolean => signal?.aborted === true;
     if (signalAborted()) return err(this.#startupWaitCancellation(signal));
     const waited = await waitForAbortable(attempt.promise, signal);
-    if (waited === ABORTED || (waited.ok && signalAborted()))
+    if (waited instanceof AbortedWait || (waited.ok && signalAborted()))
       return err(this.#startupWaitCancellation(signal));
     if (waited.ok || waited.error.cleanupFailure !== undefined) return waited;
     return this.start(signal);
@@ -1093,7 +1092,7 @@ export class GhidraClient {
         this.#launch = partialLaunch;
         this.#process = new ProviderProcessSupervisor(partialLaunch, {
           maxDiagnosticBytes: GHIDRA_PROCESS_DIAGNOSTIC_BYTES,
-          outputToken: GHIDRA_JVM_OOME_MARKER,
+          runtime: "jvm",
           onDiagnostic: (event) => this.#onProcessDiagnostic(event),
         });
         this.#startupOutputCheckpoint = this.#process.checkpointOutput();
@@ -1117,7 +1116,7 @@ export class GhidraClient {
     this.#launch = launched.value;
     this.#process = new ProviderProcessSupervisor(launched.value, {
       maxDiagnosticBytes: GHIDRA_PROCESS_DIAGNOSTIC_BYTES,
-      outputToken: GHIDRA_JVM_OOME_MARKER,
+      runtime: "jvm",
       onDiagnostic: (event) => this.#onProcessDiagnostic(event),
     });
     this.#startupOutputCheckpoint = this.#process.checkpointOutput();
@@ -1562,7 +1561,7 @@ export class GhidraClient {
       return this.#failure("cancelled", "Ghidra startup was cancelled", cause, {
         cancellation,
       });
-    if (deadline.signal.reason === STARTUP_OWNER_CLOSED)
+    if (deadline.signal.reason === OwnerCancellation.startupOwnerClosed)
       return this.#failure(
         "process",
         "Ghidra session closed during startup",

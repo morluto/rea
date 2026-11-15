@@ -726,9 +726,17 @@ const emitCaptureNavigation = (
       : command.method === "Page.captureScreenshot"
         ? options.navigateDuringScreenshotUrl
         : undefined;
+  // Page capture navigation reports its new document's loader, as Chrome
+  // does; the screenshot one omits it, leaving the document unproven.
   if (navigationUrl !== undefined)
     event(socket, "Page.frameNavigated", command.sessionId, {
-      frame: { id: "frame-main", url: navigationUrl },
+      frame: {
+        id: "frame-main",
+        ...(command.method === "DOMSnapshot.captureSnapshot"
+          ? { loaderId: "loader-navigated" }
+          : {}),
+        url: navigationUrl,
+      },
     });
 };
 

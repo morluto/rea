@@ -259,6 +259,7 @@ const createTerminalRenderer = (
 interface StartCaptureRuntimeOptions {
   readonly scenario: ProcessScenario;
   readonly hostEnvironment: Readonly<Record<string, string | undefined>>;
+  readonly hostPlatform: NodeJS.Platform;
   readonly temporaryRoot: string;
   readonly runId: string;
   readonly ownershipBaseline: ProcessOwnershipBaseline;
@@ -384,6 +385,7 @@ const startCaptureRuntime = async (
     stopSampler = startProcessSampler({
       rootPid: terminal.pid,
       runId: options.runId,
+      platform: options.hostPlatform,
       started,
       limit: scenario.limits.processes,
       samples: options.samples,
@@ -866,6 +868,7 @@ const runProcessScenario = async (
     runtime = await startCaptureRuntime({
       scenario,
       hostEnvironment,
+      hostPlatform,
       temporaryRoot,
       runId,
       ownershipBaseline,

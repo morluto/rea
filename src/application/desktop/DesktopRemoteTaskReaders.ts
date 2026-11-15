@@ -19,7 +19,10 @@ import {
   AGENTENV_PROVIDER,
   type ComputerRelease,
 } from "../../desktop/AgentEnvComputerHelper.js";
-import { ABORTED, waitForAbortable } from "../../process/AbortablePromise.js";
+import {
+  AbortedWait,
+  waitForAbortable,
+} from "../../process/AbortablePromise.js";
 
 type Exec = (
   argv: readonly string[],
@@ -95,7 +98,7 @@ export class DesktopRemoteTaskReaders {
           pending.requestId,
         );
         const observed = await waitForAbortable(pending.command, signal);
-        if (observed === ABORTED) throw signal.reason;
+        if (observed instanceof AbortedWait) throw observed.carried;
         result = observed;
         if (result.timed_out) {
           pending.uncertain = new Error(

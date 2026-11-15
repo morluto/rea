@@ -23,6 +23,7 @@ describe("upstream IDA tool result decoding", () => {
       url: "http://127.0.0.1:12345/mcp",
       headers: { Authorization: "Bearer fixture-secret" },
       mode: "attached",
+      protocol: "legacy",
       timeoutMs: 1000,
     });
     const evidence = "Caller-selected fixture-secret evidence";
@@ -54,6 +55,7 @@ describe("upstream IDA tool result decoding", () => {
       url: "http://127.0.0.1:12345/mcp",
       headers: { Authorization: "Bearer fixture-secret" },
       mode: "attached",
+      protocol: "legacy",
       timeoutMs: 1000,
     });
     expect(() =>
@@ -181,6 +183,7 @@ const failingHttpConnection = (
       url: "http://127.0.0.1:12345/mcp",
       headers: { Authorization: "Custom " + credential },
       mode: "attached",
+      protocol: "legacy",
       timeoutMs: 1000,
     },
     {},
@@ -282,6 +285,7 @@ it("preserves the SDK request timeout as a typed IDA timeout", async () => {
       url: "http://127.0.0.1:12345/mcp",
       headers: { Authorization: "Bearer fixture-secret" },
       mode: "attached",
+      protocol: "legacy",
       timeoutMs,
     },
     {},
@@ -348,6 +352,7 @@ it("bounds a stalled health poll by the remaining readiness deadline", async () 
       url: "http://127.0.0.1:12345/mcp",
       headers: {},
       mode: "headless",
+      protocol: "modern",
       timeoutMs,
     },
     {},
@@ -501,6 +506,7 @@ const withIdaResource = async (
       url: "http://127.0.0.1:12345/mcp",
       headers: {},
       mode: "attached",
+      protocol: "legacy",
       timeoutMs: 1000,
     },
     {},
@@ -564,6 +570,7 @@ it("owns unclassified truncated-output hints separately from their context", () 
   const diagnostic = createIdaDiagnosticRedactor({
     url: "http://127.0.0.1:12345/mcp",
     mode: "attached",
+    protocol: "legacy",
     timeoutMs: 1000,
     headers: { Authorization: 'Custom q"uote' },
   });
@@ -666,6 +673,7 @@ it("uses the actual SDK abort outcome to preserve the caller reason", async () =
       url: "http://127.0.0.1:12345/mcp",
       headers: {},
       mode: "attached",
+      protocol: "legacy",
       timeoutMs: 1000,
     },
     {},
@@ -722,6 +730,7 @@ it("keeps a real SDK physical failure when abort arrives during its outer unwind
       url: "http://127.0.0.1:12345/mcp",
       headers: {},
       mode: "attached",
+      protocol: "legacy",
       timeoutMs: 1000,
     },
     {},
@@ -866,6 +875,7 @@ const cleanupConnection = () =>
       url: "http://127.0.0.1:12345/mcp",
       headers: {},
       mode: "attached",
+      protocol: "legacy",
       timeoutMs: 1000,
     },
     {},
@@ -1112,6 +1122,7 @@ it.each(["completed", "pending", "rejected"] as const)(
         url: "http://127.0.0.1:12345/mcp",
         headers: {},
         mode: "attached",
+        protocol: "legacy",
         timeoutMs: 30,
       },
       {},

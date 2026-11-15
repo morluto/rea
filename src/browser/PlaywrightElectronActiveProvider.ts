@@ -29,7 +29,10 @@ import {
   AnalysisError,
   primaryAnalysisError,
 } from "../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+} from "../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -375,7 +378,7 @@ const captureOutcomeWithCancellation = (
   return err(
     analysisErrorWithCancellation(
       outcome.error,
-      new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
+      cancelledBy(OPERATION, signal),
     ),
   );
 };

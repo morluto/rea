@@ -450,14 +450,14 @@ it("waits for the desktop to draw before it returns the first screenshot", async
 });
 
 it("returns the latest frame when a retried screenshot outlasts the wait for the desktop, sending progress meanwhile", async () => {
-  // The third screenshot would answer a minute later, well past the 10 s wait.
+  // The third screenshot would answer only after the test deadline, so the
+  // call returns only if the 10 s wait abandons it.
   const { computer, runner } = await fakes({
     blankFrames: 10_000,
-    screenshotDelaysMs: [0, 0, 60_000],
+    screenshotDelaysMs: [0, 0, 3_600_000],
   });
   const client = await connect(runner.environment);
   const progress: { message?: string | undefined }[] = [];
-  const startedAt = Date.now();
   const started = await client.callTool(
     {
       name: "start_build_computer",
@@ -467,7 +467,6 @@ it("returns the latest frame when a retried screenshot outlasts the wait for the
   );
 
   expect(started.isError, JSON.stringify(started)).not.toBe(true);
-  expect(Date.now() - startedAt).toBeLessThan(20_000);
   expect(computer.calls).toHaveLength(3);
   expect(images(started)).toHaveLength(1);
   expect(progress.map(({ message }) => message)).toContainEqual(
