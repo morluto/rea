@@ -2226,6 +2226,10 @@ it.each([
   ["XMLHttpRequest.prototype.open = replacement;", false],
   ["const alias = xhr; alias.open = replacement;", false],
   ["mutate(xhr);", false],
+  // Global code between construction and the call may patch the prototype,
+  // so the call, not the constructor reference, bounds its timing.
+  ['eval("XMLHttpRequest.prototype.open = replacement");', false],
+  ['Function("XMLHttpRequest.prototype.open = replacement")();', false],
 ])(
   "preserves XHR receiver proof across visible mutation: %s",
   (mutation, observed) => {

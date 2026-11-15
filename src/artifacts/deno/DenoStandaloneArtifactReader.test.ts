@@ -5,7 +5,7 @@ import { open, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it, vi } from "vitest";
-import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../../tests/support/lifecycleHarness.js";
 
 import { elfNote, elfNoteFixture } from "../../native/elf/ElfNotes.fixture.js";
 import {
@@ -1844,14 +1844,7 @@ it.each(["retry", "independent caller", "physical failure"] as const)(
     const observed = await open(path, "r");
     const prototype = Object.getPrototypeOf(observed) as FileHandle;
     const read = prototype.read;
-    let enter!: () => void;
-    let release!: () => void;
-    const entered = new Promise<void>((resolve) => {
-      enter = resolve;
-    });
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
+    const artifactRead = phaseGate();
     let firstRead = true;
     const spy = vi.spyOn(prototype, "read").mockImplementation(async function (
       this: FileHandle,
@@ -1860,8 +1853,7 @@ it.each(["retry", "independent caller", "physical failure"] as const)(
       const result = await read.apply(this, args);
       if (firstRead) {
         firstRead = false;
-        enter();
-        await gate;
+        await artifactRead.hold();
         if (scenario === "physical failure") throw physicalFailure;
       }
       return result;
@@ -1876,7 +1868,7 @@ it.each(["retry", "independent caller", "physical failure"] as const)(
         (cause: unknown) => cause,
       );
       pending.push(failure);
-      await awaitAcknowledgement(entered, first, "Deno artifact read");
+      await artifactRead.reached(first, "Deno artifact read");
       const concurrent =
         scenario === "independent caller"
           ? collect(reader.entries())
@@ -1886,7 +1878,7 @@ it.each(["retry", "independent caller", "physical failure"] as const)(
         void concurrent.catch(() => undefined);
       }
       controller.abort(reason);
-      release();
+      artifactRead.release();
       const rejected = await failure;
       if (scenario === "physical failure")
         expect(rejected).toMatchObject({ reason: "io" });
@@ -1900,7 +1892,7 @@ it.each(["retry", "independent caller", "physical failure"] as const)(
         "source",
       );
     } finally {
-      release();
+      artifactRead.release();
       await Promise.allSettled(pending);
       spy.mockRestore();
       await observed.close();
