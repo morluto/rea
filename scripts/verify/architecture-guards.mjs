@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { recordPredicateCounts } from "./record-predicate-guard.mjs";
 import {
   compareCountedBaseline,
   recordLoweredBaseline,
@@ -166,6 +167,43 @@ check(
     "src/domain/webBundleAnalyzerInspection.ts",
   ],
 );
+
+// "Non-null object other than an array" has one owner: src/domain/isRecord.ts.
+// A local predicate with that body, under any name, is a copy. The listed files
+// still hold one and may only be removed from the list; a listed file that no
+// longer matches fails so the list shrinks with the code.
+const RECORD_PREDICATE_COPIES = [
+  // Exported under a module-specific name; importers still use that name.
+  "src/browser/history/CaptureRedaction.ts",
+  "src/contracts/compactJsonSchema.ts",
+  "src/domain/analysisView/environmentStateRules.ts",
+  // Owned by the advertised-schema workstream.
+  "src/contracts/inputSchemaPresentation.ts",
+  // Narrows a protocol-specific parameter type, not unknown.
+  "src/browser/execution/CdpRuntimeInitiator.ts",
+  // Named `object`, which also spells the typeof result in these files.
+  "src/pcap/PcapDnsWire.ts",
+  "src/pcap/PcapOutput.ts",
+];
+const mismatchedRecordCopies = files.filter(({ path, content }) => {
+  if (path === "src/domain/isRecord.ts") return false;
+  const { named, bodies } = recordPredicateCounts(content);
+  return (
+    named !== 0 || bodies !== (RECORD_PREDICATE_COPIES.includes(path) ? 1 : 0)
+  );
+});
+const pathsWithRecordCopies = new Set(files.map(({ path }) => path));
+const missingRecordCopies = RECORD_PREDICATE_COPIES.filter(
+  (path) => !pathsWithRecordCopies.has(path),
+);
+if (mismatchedRecordCopies.length > 0)
+  failures.push(
+    `local non-array record predicate count changed (import isRecord and update the baseline):\n${mismatchedRecordCopies.map(({ path }) => `  ${path}`).join("\n")}`,
+  );
+if (missingRecordCopies.length > 0)
+  failures.push(
+    `record predicate baseline references missing files; remove those entries:\n${missingRecordCopies.map((path) => `  ${path}`).join("\n")}`,
+  );
 
 // Node clamps a timer delay above the signed 32-bit bound to 1 ms. Durations
 // use MAX_NODE_TIMER_DELAY_MS or timerDurationMsSchema from their one owner.

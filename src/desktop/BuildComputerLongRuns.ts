@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
 
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+} from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -52,18 +55,14 @@ export class BuildComputerLongRuns {
     readonly stderr: string;
   }> {
     const { signal } = options;
-    if (signal.aborted)
-      throw new AnalysisCancelledError(OPERATION, { cause: signal.reason });
+    if (signal.aborted) throw cancelledBy(OPERATION, signal);
     const previous = await this.release();
     if (!previous.verified)
       throw this.#cleanupFailure(
         previous.reason,
-        signal.aborted
-          ? new AnalysisCancelledError(OPERATION, { cause: signal.reason })
-          : undefined,
+        signal.aborted ? cancelledBy(OPERATION, signal) : undefined,
       );
-    if (signal.aborted)
-      throw new AnalysisCancelledError(OPERATION, { cause: signal.reason });
+    if (signal.aborted) throw cancelledBy(OPERATION, signal);
     const token = randomUUID();
     const job: Job = {
       path: `${options.work}/jobs/${token}`,
@@ -157,7 +156,7 @@ export class BuildComputerLongRuns {
       }
     } catch (cause: unknown) {
       let primary = signal.aborted
-        ? new AnalysisCancelledError(OPERATION, { cause: signal.reason })
+        ? cancelledBy(OPERATION, signal)
         : cause instanceof AnalysisError
           ? cause
           : new ProviderAdapterError(AGENTENV_PROVIDER, OPERATION, {
@@ -170,9 +169,7 @@ export class BuildComputerLongRuns {
       if (!this.#jobs.has(job)) throw primary;
       const released = await this.#cancel(job);
       if (signal.aborted && !(primary instanceof AnalysisCancelledError)) {
-        const cancelled = new AnalysisCancelledError(OPERATION, {
-          cause: signal.reason,
-        });
+        const cancelled = cancelledBy(OPERATION, signal);
         cancelled.retainSecondaryFailure(primary);
         primary = cancelled;
       }
