@@ -1,4 +1,5 @@
 import * as t from "@babel/types";
+import { ambientPathMayObserveAt } from "./javascriptSemanticEffectLog.js";
 
 import {
   semanticStaticPropertyKey,
@@ -14,10 +15,7 @@ import {
   resolveJavaScriptGenericInvocation,
   type JavaScriptSourceInvocationContext,
 } from "./javascriptIntrinsicInvocation.js";
-import {
-  semanticBindingAtRead,
-  semanticEffectTiming,
-} from "./javascriptSemanticMutationInitializers.js";
+import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import {
   semanticReferenceSourcesInactive,
   semanticKnownArrayIteration,
@@ -152,20 +150,14 @@ export const createSemanticReturnedReferences = (
     const sourceGenericInvocation =
       invocation !== undefined &&
       javaScriptGenericInvocationMethod(invocation.callee) !== undefined;
-    const inheritedInvocationChanged = (method: "call" | "apply"): boolean => {
-      if (invocation === undefined) return false;
-      const inheritedPath = ["global", "Function", "prototype", method];
-      return state.ambientWriteEffects.some(
-        (effect) =>
-          effect.path.length <= inheritedPath.length &&
-          effect.path.every(
-            (key, index) =>
-              key === null ||
-              semanticPropertyPathKeyMatches(key, inheritedPath[index] ?? ""),
-          ) &&
-          semanticEffectTiming(invocation, effect.node, state) !== "after",
-      );
-    };
+    const inheritedInvocationChanged = (method: "call" | "apply"): boolean =>
+      invocation !== undefined &&
+      ambientPathMayObserveAt(state, invocation, [
+        "global",
+        "Function",
+        "prototype",
+        method,
+      ]);
     // Exact finite alternatives retain unrelated keys and cross-path
     // correlations. Growing/shrinking cycles still converge at any depth;
     // selector-budget widening retains the complete may-target closure.
