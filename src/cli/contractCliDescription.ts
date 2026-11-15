@@ -47,11 +47,12 @@ export interface DocumentContract<Name extends string = string> {
   readonly inputSchema: z.ZodType;
 }
 
-/** A contract input field name. */
-export type ContractField<Contract extends DocumentContract> = keyof z.input<
-  Contract["inputSchema"]
-> &
-  string;
+/** A contract input field name, from any of its input branches. */
+export type ContractField<Contract extends DocumentContract> =
+  | (keyof z.input<Contract["inputSchema"]> & string)
+  | (BranchKey<z.input<Contract["inputSchema"]>> & string);
+
+type BranchKey<Input> = Input extends unknown ? keyof Input : never;
 
 /** How one contract field is spelled on the CLI. */
 export interface CliFieldProjection {
@@ -61,6 +62,12 @@ export interface CliFieldProjection {
   readonly alias?: string;
   /** CLI help, when it differs from the contract field's description. */
   readonly description?: string;
+  /**
+   * The value an omitted option takes on the CLI, for a contract field that
+   * has no default, such as the input branch a bare command selects. The
+   * field must admit it.
+   */
+  readonly default?: string | number | boolean;
 }
 
 /**
@@ -433,6 +440,8 @@ export interface ContractCliParameter {
   readonly inbound: boolean;
   /** A bare flag sets true; it takes no value. */
   readonly booleanFlag: boolean;
+  /** The value an omitted option takes on the CLI where the contract has no default. */
+  readonly cliDefault: string | number | boolean | undefined;
   /** The option may repeat; each occurrence adds one array element. */
   readonly repeatable: boolean;
   /** Integer values are spelled as decimal digits only. */
@@ -833,6 +842,57 @@ const branchSelectingFlag = (
     : flag.default(omissions[0]!.parse(undefined) as boolean);
 };
 
+/**
+ * A field every input branch declares as a distinct text literal, such as
+ * `action` or `operation`: the option names the branch it selects.
+ */
+const branchSelectingChoice = (
+  branches: readonly (z.ZodType | undefined)[],
+): z.ZodType | undefined => {
+  const values = branches.map((branch) => {
+    const value = branch === undefined ? undefined : core(branch);
+    return value instanceof z.ZodLiteral && value.values.size === 1
+      ? [...value.values][0]
+      : undefined;
+  });
+  if (
+    values.some((value) => typeof value !== "string") ||
+    new Set(values).size !== values.length ||
+    branches.some((branch) => admitsOmission(branch!))
+  )
+    return undefined;
+  const choice = z.enum(values as [string, ...string[]]);
+  const described = branches.find((branch) => branch!.description);
+  return described === undefined
+    ? choice
+    : choice.describe(described.description!);
+};
+
+/**
+ * A field only some input branches declare, with one schema there. The CLI
+ * takes it as an optional option; the selected branch's contract parse
+ * refuses it when that branch does not declare it.
+ */
+const branchOnlyField = (
+  branches: readonly (z.ZodType | undefined)[],
+): z.ZodType | undefined => {
+  const declared = branches.filter(
+    (branch): branch is z.ZodType => branch !== undefined,
+  );
+  const [first] = declared;
+  if (
+    first === undefined ||
+    declared.length === branches.length ||
+    declared.some((branch) => branch !== first)
+  )
+    return undefined;
+  if (admitsOmission(first)) return first;
+  const optional = first.optional();
+  return first.description === undefined
+    ? optional
+    : optional.describe(first.description);
+};
+
 const inputFields = (
   contract: ProjectedContract,
   unprojectedFields: ReadonlySet<string>,
@@ -849,7 +909,10 @@ const inputFields = (
       const branches = shapes.map((shape) => shape[field]);
       const [first] = branches;
       if (branches.every((branch) => branch === first)) return [field, first!];
-      const selector = branchSelectingFlag(branches);
+      const selector =
+        branchSelectingFlag(branches) ??
+        branchSelectingChoice(branches) ??
+        branchOnlyField(branches);
       if (selector !== undefined) return [field, selector];
       if (
         !unprojectedFields.has(field) ||
@@ -1541,6 +1604,18 @@ export const describeContractCommand = <
       assertArgvField(contract.name, field, declared);
       schema = cliDecimalShape({ field: argvOptional(declared) }).field;
     }
+    if (projected?.default !== undefined) {
+      if (
+        admitsOmission(declared) ||
+        !declared.safeParse(projected.default).success
+      )
+        throw new Error(
+          `${contract.name}.${field} cannot take the CLI default ${String(projected.default)}`,
+        );
+      const described = schema.description;
+      schema = schema.default(projected.default as never);
+      if (described !== undefined) schema = schema.describe(described);
+    }
     if (projected?.description !== undefined)
       schema = schema.describe(projected.description);
     const description = schema.description;
@@ -1586,6 +1661,7 @@ export const describeContractCommand = <
       schema,
       inbound: inbound !== undefined,
       booleanFlag: value instanceof z.ZodBoolean,
+      cliDefault: projected?.default,
       repeatable: value instanceof z.ZodArray,
       decimal: value instanceof z.ZodNumber,
       callerPath,
@@ -1630,6 +1706,7 @@ export const describeContractCommand = <
         schema,
         inbound: false,
         booleanFlag: value instanceof z.ZodBoolean,
+        cliDefault: undefined,
         repeatable: value instanceof z.ZodArray,
         decimal: value instanceof z.ZodNumber,
         callerPath: false,
