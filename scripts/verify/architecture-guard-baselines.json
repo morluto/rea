@@ -395,7 +395,6 @@
   },
   "verifier-fixture-root": {
     "scripts/verify-adb.mjs": 3,
-    "scripts/verify-agent-experience.mjs": 1,
     "scripts/verify-agentenv-environment.mjs": 1,
     "scripts/verify-binary-hardening.mjs": 1,
     "scripts/verify-binary-layout.mjs": 1,
