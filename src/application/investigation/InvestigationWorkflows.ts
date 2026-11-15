@@ -9,6 +9,9 @@ import {
 } from "../../domain/changedBehavior.js";
 import { buildCallPath } from "../../domain/callPath.js";
 import { correlateStaticAndRuntime } from "../../domain/staticRuntimeCorrelation.js";
+import { verifyReconstruction } from "../../domain/reconstructionVerification.js";
+import { reconstructionVerificationInputSchema } from "../../domain/reconstructionVerificationSchemas.js";
+import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { createAnalysisProfile } from "../../domain/analysisProfile.js";
 import { readImmutableEvidence } from "../../domain/evidenceValidation.js";
@@ -16,6 +19,7 @@ import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   CALL_PATH_PROVIDER,
   CHANGED_BEHAVIOR_PROVIDER,
+  RECONSTRUCTION_PROVIDER,
   STATIC_RUNTIME_PROVIDER,
 } from "../../domain/investigationProviders.js";
 import type { RecordUnknownInput } from "../../domain/residualUnknown.js";
@@ -262,6 +266,76 @@ export const correlateStaticAndRuntimeEvidence = (
         ],
       },
     );
+  } catch (cause: unknown) {
+    if (cause instanceof AnalysisError) return err(cause);
+    throw cause;
+  }
+};
+
+/**
+ * Verify a reconstruction specification against the session's immutable
+ * Evidence bundle. The verification reads the bundle in place, so it retains
+ * no sources; its links name the exact session records it relied on.
+ */
+export const verifyReconstructionEvidence = (
+  input: unknown,
+  reader: Pick<
+    EvidenceReader,
+    "evidenceForAnalysis" | "immutableEvidenceBundle"
+  >,
+): Result<InvestigationWorkflowExecution, AnalysisError> => {
+  const parsed = reconstructionVerificationInputSchema.safeParse(input);
+  if (!parsed.success)
+    return err(
+      analysisInputErrorFromIssues(
+        "verify_reconstruction",
+        parsed.error.issues,
+        input,
+        { cause: parsed.error },
+      ),
+    );
+  try {
+    const result = verifyReconstruction(
+      parsed.data.specification,
+      reader.immutableEvidenceBundle(),
+    );
+    const closure = resolveInvestigationEvidenceClosure(
+      reader,
+      result.evidence_links,
+    );
+    if (!closure.ok) return closure;
+    const evidence = createEvidence(
+      unknownTarget("derived-from-linked-evidence"),
+      RECONSTRUCTION_PROVIDER,
+      {
+        predicateType: "rea.reconstruction-verification",
+        operation: "verify_reconstruction",
+        analysisProfile: createAnalysisProfile(RECONSTRUCTION_PROVIDER, {
+          workflow_revision: 2,
+        }),
+        parameters: {
+          specification_sha256: result.specification_sha256,
+          claim_ids: parsed.data.specification.claims.map(
+            ({ claim_id: id }) => id,
+          ),
+        },
+        result,
+        confidence: "derived",
+        authority: "analyst-inference",
+        limitations: result.limitations,
+        evidenceLinks: closure.value,
+      },
+    );
+    return finish(evidence, [], result.status === "unknown", {
+      question: "Does the reconstruction satisfy every declared claim?",
+      domain: "reconstruction-verification",
+      requiredAuthority: null,
+      requiredConfidence: "derived",
+      probes: result.recommended_probes.map(({ operation, rationale }) => ({
+        operation,
+        rationale,
+      })),
+    });
   } catch (cause: unknown) {
     if (cause instanceof AnalysisError) return err(cause);
     throw cause;
