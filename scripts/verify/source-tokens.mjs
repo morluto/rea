@@ -29,9 +29,15 @@ export const expressionKeywords = new Set([
   "yield",
 ]);
 
-// After a closing bracket, `++` or `--` an operand has ended, so `/` divides.
+// A parenthesised head after these keywords ends where a statement starts.
+const controlKeywords = new Set(["if", "while", "for", "with"]);
+
+// After a closing bracket, `++` or `--` an operand has ended, so `/` divides,
+// except after the `)` that closes a control head such as `if (…)`, where a
+// statement (and so a regular expression) starts.
 const regexAllowedAfter = (token) =>
   token === undefined ||
+  (token.kind === "punct" && token.controlHead === true) ||
   (token.kind === "punct" && !/^(?:[)\]}]|\+\+|--)$/u.test(token.text)) ||
   (token.kind === "id" && expressionKeywords.has(token.text));
 
@@ -110,8 +116,10 @@ const wordToken = (source, at) => {
  * are tracked through nested `${…}` substitutions with a brace stack.
  */
 export const tokenize = (source) => {
-  /** @type {{ kind: string, text: string, start: number }[]} */
+  /** @type {{ kind: string, text: string, start: number, controlHead?: true }[]} */
   const tokens = [];
+  // One entry per open `(`: whether it opens a control head.
+  const parens = [];
   /** @type {{ text: string, end: number }[]} */
   const comments = [];
   const braces = [];
@@ -146,6 +154,13 @@ export const tokenize = (source) => {
         continue;
       }
       at = start + token.text.length;
+      if (token.text === "(") {
+        const previous = tokens.at(-1);
+        parens.push(
+          previous?.kind === "id" && controlKeywords.has(previous.text),
+        );
+      } else if (token.text === ")" && parens.pop() === true)
+        token.controlHead = true;
       tokens.push(token);
       if (token.text === "{") braces.push("block");
       else if (token.text === "}") braces.pop();

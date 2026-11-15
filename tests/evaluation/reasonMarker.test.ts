@@ -77,6 +77,18 @@ it("reads regular expressions and template substitutions as code", () => {
   expect(count("const t = `${s.slice(0, MAX)}`;")).toBe(1);
 });
 
+it("reads a regular expression after a control head as a statement", () => {
+  for (const keyword of ["if", "while", "for", "with"])
+    expect(
+      count(
+        `${keyword} (ready) /[/*]/.test(value) && report(value);\nconst kept = items.slice(0, MAX);`,
+      ),
+    ).toBe(1);
+  // A call's closing parenthesis still ends an operand, so `/` divides.
+  expect(count("const half = size(a) / 2; /* items.slice(0, MAX) */")).toBe(0);
+  expect(count("const r = f(a) / g(b); items.slice(0, MAX);")).toBe(1);
+});
+
 it("loads without installed dependencies, as CI runs it before npm ci", async () => {
   for (const module of ["reason-marker.mjs", "source-tokens.mjs"]) {
     const source = await readFile(
