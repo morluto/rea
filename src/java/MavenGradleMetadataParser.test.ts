@@ -573,6 +573,25 @@ it("keeps malformed Gradle JSON source out of the failure message", () => {
   expect(message).not.toContain('"url"');
 });
 
+it("refuses unreadable Gradle version and available-at values", () => {
+  const module = (variant: Record<string, unknown>) =>
+    JSON.stringify({
+      formatVersion: "1.1",
+      component: { group: "com.example", module: "demo", version: "1.0.0" },
+      variants: [{ name: "runtime", ...variant }],
+    });
+  const dependency = (version: unknown) =>
+    module({
+      dependencies: [{ group: "com.example", module: "lib", version }],
+    });
+  expectFailure(dependency(42), "malformed");
+  expectFailure(dependency(null), "malformed");
+  expectFailure(dependency({ requires: 42 }), "malformed");
+  expectFailure(dependency({ strictly: ["1.0"] }), "malformed");
+  expectFailure(module({ "available-at": "demo-jvm" }), "malformed");
+  expectFailure(module({ "available-at": [] }), "malformed");
+});
+
 it("refuses JSON that is not Gradle module metadata", () => {
   expectFailure('{"name":"demo"}', "unsupported");
 });

@@ -226,7 +226,20 @@ const gradleVersionOf = (
       ? { ...emptyGradleVersion }
       : { ...emptyGradleVersion, requires };
   }
-  if (!isRecord(value)) return { ...emptyGradleVersion };
+  if (value === undefined) return { ...emptyGradleVersion };
+  if (!isRecord(value))
+    throw malformedInput(
+      MAVEN_GRADLE_METADATA_FORMAT,
+      "Gradle module metadata version is present but is neither a string nor a JSON object.",
+    );
+  const versionText = (field: "requires" | "prefers" | "strictly") => {
+    const entry = value[field];
+    if (entry === undefined || typeof entry === "string") return textOf(entry);
+    throw malformedInput(
+      MAVEN_GRADLE_METADATA_FORMAT,
+      `Gradle module metadata version.${field} is present but is not a string.`,
+    );
+  };
   const rejects = gradleArray(value.rejects, "version.rejects").map(
     (entry, index) => {
       const text = textOf(entry);
@@ -238,9 +251,9 @@ const gradleVersionOf = (
     },
   );
   return {
-    requires: textOf(value.requires),
-    prefers: textOf(value.prefers),
-    strictly: textOf(value.strictly),
+    requires: versionText("requires"),
+    prefers: versionText("prefers"),
+    strictly: versionText("strictly"),
     rejects,
   };
 };
@@ -560,9 +573,13 @@ const parseGradle = (
     const usage = textOf(attributes["org.gradle.usage"]);
     const platform =
       category === "platform" || category === "enforced-platform";
-    const available = isRecord(variant["available-at"])
-      ? variant["available-at"]
-      : null;
+    const availableAt: unknown = variant["available-at"];
+    if (availableAt !== undefined && !isRecord(availableAt))
+      throw malformedInput(
+        MAVEN_GRADLE_METADATA_FORMAT,
+        "Gradle module metadata available-at is present but is not a JSON object.",
+      );
+    const available = availableAt === undefined ? null : availableAt;
     const variantDependencies = gradleArray(
       variant.dependencies,
       "dependencies",
