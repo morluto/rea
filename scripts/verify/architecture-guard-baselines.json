@@ -540,5 +540,11 @@
     "src/sqlite/SqliteDatabaseProvider.ts": 8,
     "src/sqlite/SqliteDatabaseWorkerExecution.ts": 2,
     "src/wasm/WabtArtifactProvider.ts": 1
+  },
+  "keyed-first-match": {
+    "src/artifacts/fit/FitStructure.ts": 1,
+    "src/domain/apkSignature/apkV1SignatureBlock.ts": 1,
+    "src/native/MachoArchitectureSelection.ts": 2,
+    "src/native/NativeMachoInspection.ts": 1
   }
 }
