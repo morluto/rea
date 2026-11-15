@@ -1,6 +1,7 @@
 import {
   canonicalInputSchema,
   canonicalOutputSchema,
+  withCanonicalOutputSchema,
 } from "./canonicalOutputSchema.js";
 import type { Client } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -48,7 +49,7 @@ export const advertisedMcpToolSchemas = async (
   expect(ajv.validateSchema(outputSchema)).toBe(true);
   return {
     name: advertised.name,
-    toolDefinition: advertised,
+    toolDefinition: withCanonicalOutputSchema(advertised),
     ajv,
     inputSchema,
     canonicalInputSchema: canonicalInput,

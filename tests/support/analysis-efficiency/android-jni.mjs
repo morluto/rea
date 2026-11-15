@@ -1,4 +1,5 @@
 /** Public SDK/stdio JNI investigation, checked against independent NDK/DEX facts. */
+import { withCanonicalOutputSchema } from "../../../scripts/lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
@@ -808,11 +809,11 @@ try {
   ]) {
     const selected = catalog.tools.filter((tool) => tool.name === name);
     assert.equal(selected.length, 1);
-    assert.ok(selected[0].outputSchema);
+    const definition = withCanonicalOutputSchema(selected[0]);
     contracts.set(name, {
-      definition: selected[0],
-      input: ajv.compile(selected[0].inputSchema),
-      output: ajv.compile(selected[0].outputSchema),
+      definition,
+      input: ajv.compile(definition.inputSchema),
+      output: ajv.compile(definition.outputSchema),
     });
   }
   validateJniOutput = contracts.get("inspect_android_jni_bindings").output;

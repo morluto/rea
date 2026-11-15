@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
@@ -597,13 +598,8 @@ describe("binary_session detail over MCP", () => {
     const summary = (await sessionStatusOf(mcp, {})).raw.result;
     const complete = (await sessionStatusOf(mcp, { detail: "complete" })).raw
       .result;
-    const advertised = (await mcp.listTools()).tools.find(
-      ({ name }) => name === "binary_session",
-    )?.outputSchema;
-    if (advertised === undefined)
-      throw new Error("binary_session omitted its output schema");
     const validate = new AjvJsonSchemaValidator().getValidator(
-      z.record(z.string(), z.unknown()).parse(advertised),
+      canonicalOutputSchema("binary_session"),
     );
     const canonical = toolContract("binary_session").outputSchema;
     const { omitted_fields: _omitted, ...summaryWithoutOmissions } = summary;

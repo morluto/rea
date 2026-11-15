@@ -1,4 +1,7 @@
-import { canonicalOutputSchema } from "./canonicalOutputSchema.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "./canonicalOutputSchema.js";
 import {
   Client,
   type CallToolRequestOptions,
@@ -57,7 +60,11 @@ export async function connectLocalToolsMcp(
   const tools = (await client.listTools()).tools;
   // Catalog dialect/reference validity belongs to toolSchemaValidity and the
   // compact-profile catalog tests.
-  const definitions = new Map(tools.map((tool) => [tool.name, tool]));
+  // tools/list omits output schemas by default; bind each definition to its
+  // canonical output contract so the SDK client validates successful replies.
+  const definitions = new Map(
+    tools.map((tool) => [tool.name, withCanonicalOutputSchema(tool)]),
+  );
   const call = async (
     name: string,
     arguments_: Record<string, unknown>,
@@ -71,12 +78,16 @@ export async function connectLocalToolsMcp(
         ...(definition === undefined ? {} : { toolDefinition: definition }),
       },
     );
-    // tools/list omits output schemas by default; validate each structured
-    // reply, including error payloads, against its canonical output contract.
-    if (response.structuredContent !== undefined && definition !== undefined) {
+    // The SDK skips error payloads. A caller-supplied validator also retains
+    // the fixture's independent canonical-schema assertion.
+    if (
+      (response.isError === true || jsonSchemaValidator !== undefined) &&
+      response.structuredContent !== undefined &&
+      definition !== undefined
+    ) {
       expect(
         validation.assertions.validate(
-          canonicalOutputSchema(definition.name),
+          definition.outputSchema,
           response.structuredContent,
         ),
         JSON.stringify(validation.assertions.errors),

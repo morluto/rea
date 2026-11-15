@@ -1,4 +1,5 @@
 /** Public MCP mapping investigation with a source inventory and raw DEX oracle. */
+import { withCanonicalOutputSchema } from "../../../scripts/lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
@@ -98,10 +99,10 @@ try {
   ]) {
     const definitions = catalog.tools.filter((tool) => tool.name === name);
     assert.equal(definitions.length, 1);
-    assert.ok(definitions[0].outputSchema);
+    const definition = withCanonicalOutputSchema(definitions[0]);
     contracts.set(name, {
-      definition: definitions[0],
-      validate: ajv.compile(definitions[0].outputSchema),
+      definition,
+      validate: ajv.compile(definition.outputSchema),
     });
   }
   const parents = [];

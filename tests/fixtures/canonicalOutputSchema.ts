@@ -27,3 +27,17 @@ export const canonicalOutputSchema = (name: string): Record<string, unknown> =>
 /** The canonical input JSON Schema that the compact advertisement presents. */
 export const canonicalInputSchema = (name: string): Record<string, unknown> =>
   advertisedInputJsonSchema(contractNamed(name));
+
+/**
+ * A listed tool definition carrying its canonical output schema, so the SDK
+ * client (and any caller-supplied validator) checks replies against the
+ * contract even though `tools/list` omits output schemas by default.
+ */
+export const withCanonicalOutputSchema = <
+  Tool extends { readonly name: string },
+>(
+  tool: Tool,
+): Tool & { outputSchema: Record<string, unknown> } => ({
+  ...tool,
+  outputSchema: canonicalOutputSchema(tool.name),
+});

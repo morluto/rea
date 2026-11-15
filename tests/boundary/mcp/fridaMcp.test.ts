@@ -1,4 +1,7 @@
-import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema } from "ajv";
@@ -419,11 +422,8 @@ it("advertises Frida MCP schemas and keeps remote credentials out of results", a
 
   const tools = (await client.listTools()).tools;
   const advertised = tools.find((tool) => tool.name === "list_frida_devices");
-  if (
-    advertised?.inputSchema === undefined ||
-    canonicalOutputSchema(advertised.name) === undefined
-  )
-    throw new Error("Missing advertised Frida schemas");
+  if (advertised === undefined)
+    throw new Error("Missing advertised Frida definition");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   const inputSchema: Record<string, unknown> = advertised.inputSchema;
   const outputSchema: Record<string, unknown> = canonicalOutputSchema(
@@ -438,7 +438,7 @@ it("advertises Frida MCP schemas and keeps remote credentials out of results", a
         remote: { address: "127.0.0.1:27042", token: "synthetic-secret-token" },
       },
     },
-    { toolDefinition: advertised },
+    { toolDefinition: withCanonicalOutputSchema(advertised) },
   );
   expect(response.isError).not.toBe(true);
   expect(JSON.stringify(response.structuredContent)).not.toContain(
@@ -546,10 +546,10 @@ it("advertises Frida MCP schemas and keeps remote credentials out of results", a
   const oneShotContract = tools.find(
     (tool) => tool.name === "instrument_with_frida",
   );
-  if (oneShotContract?.outputSchema === undefined)
-    throw new Error("Missing one-shot Frida output schema");
+  if (oneShotContract === undefined)
+    throw new Error("Missing one-shot Frida definition");
   const validateOneShot = ajv.compile(
-    oneShotContract.outputSchema as AnySchema,
+    canonicalOutputSchema(oneShotContract.name) as AnySchema,
   );
   expect(validateOneShot(oneShot.structuredContent)).toBe(true);
 
