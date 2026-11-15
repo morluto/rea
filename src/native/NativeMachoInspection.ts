@@ -1,3 +1,4 @@
+import { parseFailureFromCause } from "../domain/parseFailure.js";
 import { LC } from "../domain/apple/machoLoadCommandCodes.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { EvidenceLocation } from "../domain/evidence.js";
@@ -132,7 +133,8 @@ const readChainedImportNames = async (
       ),
     );
   } catch (cause) {
-    if (cause instanceof RangeError) return err(cause.message);
+    const failure = parseFailureFromCause(cause);
+    if (failure !== undefined) return err(failure.message);
     throw cause;
   }
 };
