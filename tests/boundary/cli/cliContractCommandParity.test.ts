@@ -286,6 +286,7 @@ describe("CLI commands projected from tool contracts", () => {
           ...description.parameters
             .filter(({ positional }) => !positional)
             .map(({ key }) => key),
+          ...(description.sessionTarget?.options ?? []).map(({ key }) => key),
           ...description.cliOnlyOptions.map(({ key }) => key),
         ].toSorted(),
       );
@@ -651,6 +652,88 @@ describe("Session targets of contract commands", () => {
           );
     },
   );
+
+  it.each(
+    sessionTargeted.filter(
+      ([, description]) => description.sessionTarget!.options.length > 0,
+    ),
+  )(
+    "%s admits opening options with the opening contract and keeps them out of the contract input",
+    (_command, description) => {
+      const target = description.sessionTarget!;
+      const values = {
+        ...argvValues(description, {}),
+        [target.key]: "rel/app",
+        targetFormat: "esp-flash-image",
+        flashOffset: "0x1000",
+      };
+      for (const { key } of target.options)
+        expect(Object.keys(description.fields), key).not.toContain(key);
+      expect(Object.values(description.toContractInput(values))).not.toContain(
+        "0x1000",
+      );
+      expect(target.admitOpening(description.contract.name, values)).toEqual({
+        ok: true,
+        value: { format: "esp-flash-image", flash_offset: "0x1000" },
+      });
+      expect(target.admitOpening(description.contract.name, {})).toEqual({
+        ok: true,
+        value: {},
+      });
+      // The opening contract's pairing rule names the CLI key.
+      const unpaired = target.admitOpening(description.contract.name, {
+        [target.key]: "rel/app",
+        flashOffset: "0x1000",
+      });
+      expect(unpaired.ok).toBe(false);
+      if (!unpaired.ok)
+        expect(unpaired.error.issues).toEqual([
+          expect.objectContaining({
+            path: ["flashOffset"],
+            message: expect.stringMatching(/only with format=esp-flash-image/u),
+          }),
+        ]);
+      // Only the projected values of an opening field are admitted.
+      const format = target.options.find(({ key }) => key === "targetFormat")!;
+      expect(admits(format.schema, "esp-flash-image")).toBe(true);
+      expect(admits(format.schema, "raw-binary")).toBe(false);
+    },
+  );
+
+  it("refuses opening fields the opening contract cannot supply", () => {
+    const opening = {
+      name: "open",
+      inputSchema: z.object({
+        path: z.string(),
+        mode: z.enum(["a", "b"]).optional(),
+        required: z.string(),
+      }),
+    };
+    const describeOpening = (fields: Record<string, { values?: [string] }>) =>
+      describeContractCommand(
+        { name: "probe", inputSchema: z.object({}) },
+        {
+          command: "probe",
+          description: "Probe",
+          sessionTarget: {
+            description: "Target",
+            open: { contract: opening, fields },
+          },
+        },
+      );
+    expect(() => describeOpening({ missing: {} })).toThrow(
+      "open has no option field missing",
+    );
+    expect(() => describeOpening({ path: {} })).toThrow(
+      "open has no option field path",
+    );
+    expect(() => describeOpening({ required: {} })).toThrow(
+      "open.required is required",
+    );
+    expect(() => describeOpening({ mode: { values: ["c"] } })).toThrow(
+      "open.mode does not admit c",
+    );
+  });
 
   it("refuses a session target beside a contract field keyed path", () => {
     expect(() =>
