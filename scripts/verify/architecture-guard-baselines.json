@@ -286,18 +286,6 @@
     "src/adb/AdbProvider.ts": 1,
     "src/apktool/ApktoolConfiguration.ts": 4,
     "src/apktool/ApktoolProvider.ts": 2,
-    "src/application/BinaryTargetResolver.ts": 1,
-    "src/application/binary/AnalysisSnapshotCache.ts": 1,
-    "src/application/binaryDiagnostics/ByteEntropyService.ts": 1,
-    "src/application/desktop/DesktopBuildComputers.ts": 1,
-    "src/application/desktop/DesktopBuildSolves.ts": 1,
-    "src/application/desktop/DesktopOutputTree.ts": 1,
-    "src/application/environment/environmentBundleWrite.ts": 1,
-    "src/application/javascript/ElectronActiveObservationService.ts": 1,
-    "src/application/process/ProcessCli.ts": 3,
-    "src/application/process/ProcessEvidence.ts": 1,
-    "src/application/process/ProcessScenarioPreparation.ts": 1,
-    "src/application/reverse/ReverseEngineeringService.ts": 1,
     "src/browser/ChromiumSandbox.ts": 1,
     "src/browser/ElectronCaptureCleanup.ts": 1,
     "src/browser/ElectronProcessCleanup.ts": 1,
@@ -348,8 +336,6 @@
     "src/wasm/WabtArtifactProvider.ts": 1
   },
   "ambient-host-architecture": {
-    "src/application/BinaryTargetResolver.ts": 1,
-    "src/application/LinuxHopper.ts": 1,
     "src/browser/PlaywrightElectronActiveFuses.ts": 2,
     "src/evm/EvmoleInterfaceProvider.ts": 2,
     "src/javascript/recovery/WakaruCommand.ts": 1,
@@ -418,7 +404,6 @@
     "src/native/pwntools/PwntoolsDecoder.ts": 1
   },
   "test-host-platform-stub": {
-    "src/application/binaryDiagnostics/ByteEntropyService.test.ts": 1,
     "src/browser/ElectronCaptureCleanup.test.ts": 2,
     "src/browser/PlaywrightElectronActiveProvider.test.ts": 2,
     "src/browser/PlaywrightScenarioBrowser.test.ts": 3,
