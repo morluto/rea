@@ -6,6 +6,7 @@ import { cliTest } from "../../support/cli/cliFixture.js";
 const selectors = [
   ["function", "procedure", "analyze_function"],
   ["inspect-native-api", "procedure", "inspect_native_api"],
+  ["procedure-references", "procedure", "procedure_references"],
   ["instructions", "procedure", "read_function_instructions"],
   ["decompile", "procedure", "procedure_pseudo_code"],
   ["xrefs", "address", "xrefs"],
@@ -68,6 +69,28 @@ describe("CLI analysis selector boundaries", () => {
           expect(result.json).toMatchObject({
             code: "invalid_request",
             details: { operation, issues: [{ path: [option], reason }] },
+          });
+        }
+      },
+    );
+    cliTest(
+      `rejects empty ${command} selectors in either spelling before opening a target`,
+      async ({ cli }) => {
+        for (const selection of [[""], [`--${option}=`]]) {
+          const label = `${command} ${JSON.stringify(selection)}`;
+          const result = await cli.run({
+            arguments: [
+              command,
+              "does-not-exist",
+              ...selection,
+              "--format",
+              "json",
+            ],
+            environment: { REA_LOG_LEVEL: "silent" },
+          });
+          expect(result.exitCode, label).not.toBe(0);
+          expect(result.json, label).toMatchObject({
+            code: "VALIDATION_ERROR",
           });
         }
       },
@@ -222,6 +245,7 @@ for (const [command, option] of [
   ["instructions", "procedure"],
   ["decompile", "procedure"],
   ["inspect-native-api", "procedure"],
+  ["procedure-references", "procedure"],
 ] as const) {
   cliTest(
     `admits equivalent native coordinates through ${command}`,
