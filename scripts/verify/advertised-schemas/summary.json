@@ -1764,7 +1764,7 @@
       "input compact": "3d7959f5cdca863d",
       "input full": "1b2a3ffc89e2ce0e",
       "output compact": "9087cdd7aaaf031b",
-      "output full": "4e943e30587002c5"
+      "output full": "b2368fb3eedde37c"
     },
     "annotate_native_function": {
       "input compact": "70c17ea61092a8c3",
@@ -1936,7 +1936,7 @@
     },
     "compare_source_to_bundle": {
       "input compact": "53e35e56039bbec8",
-      "input full": "0f2c39e508686cd8",
+      "input full": "6e99d392d341fb5e",
       "output compact": "9087cdd7aaaf031b",
       "output full": "f24053aae7e1e599"
     },
@@ -2176,7 +2176,7 @@
     },
     "import_managed_reconstruction": {
       "input compact": "32ffbbfc8df34d78",
-      "input full": "6f267e70aad84417",
+      "input full": "3192e92a7311cdfb",
       "output compact": "9087cdd7aaaf031b",
       "output full": "8bb0832e69f9b84c"
     },
@@ -2232,7 +2232,7 @@
       "input compact": "99dbe34c28cd04dd",
       "input full": "9f3548ab0d96918c",
       "output compact": "9087cdd7aaaf031b",
-      "output full": "9aac9fb26192c9f6"
+      "output full": "eb1b9cf3a1cb1101"
     },
     "inspect_android_class": {
       "input compact": "fb8be61f22dca985",
@@ -2430,7 +2430,7 @@
       "input compact": "2c6c9865b3119ae2",
       "input full": "4e2d466049d3db8a",
       "output compact": "9087cdd7aaaf031b",
-      "output full": "86066131df551cc2"
+      "output full": "c1398e2053c19bb2"
     },
     "inspect_managed_native_boundaries": {
       "input compact": "ab5465849952e847",
@@ -2616,7 +2616,7 @@
       "input compact": "ae6db425047c0a8f",
       "input full": "48fbe489c80a476d",
       "output compact": "9087cdd7aaaf031b",
-      "output full": "3a8024c1197d35bb"
+      "output full": "b205593aafb06b34"
     },
     "inspect_windows_shortcut": {
       "input compact": "f7055432bf97761a",
@@ -2802,7 +2802,7 @@
       "input compact": "e04053c4c8250c81",
       "input full": "7eb7e5f05efc1d0d",
       "output compact": "9087cdd7aaaf031b",
-      "output full": "7e1c7b56a2a20967"
+      "output full": "c18514ef9e3c9a14"
     },
     "observe_native_calls": {
       "input compact": "3ef1f34cab7e4387",
@@ -2914,7 +2914,7 @@
     },
     "project_managed_application_graph": {
       "input compact": "926cbfd4477960cc",
-      "input full": "74a6cf3c3abfea43",
+      "input full": "fdeaae10fff78bb7",
       "output compact": "9087cdd7aaaf031b",
       "output full": "ceb31fc3b096dab1"
     },
