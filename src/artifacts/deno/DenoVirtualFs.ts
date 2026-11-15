@@ -1,7 +1,9 @@
 import { fixedAllowanceRemediation } from "../../domain/fixedAllowanceRemediation.js";
-import { abortIfNeeded } from "../ArtifactHash.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
-import { normalizeArtifactPath } from "../ArtifactPaths.js";
+import {
+  ArtifactReaderFailure,
+  normalizeArtifactPath,
+  abortIfNeeded,
+} from "../../resources/index.js";
 
 /** Directory, file, and symlink records admitted from one virtual filesystem. */
 const MAX_DENO_VFS_ENTRIES = 100_000;

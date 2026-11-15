@@ -2,7 +2,7 @@ import type { BigIntStats } from "node:fs";
 
 import type { Result } from "../domain/result.js";
 import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 
 export type ReferenceSourceEntryKind =
   | "file"

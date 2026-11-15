@@ -1,7 +1,10 @@
 import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
-import { MAX_NODE_TIMER_DELAY_MS } from "../../domain/analysisResourceLimits.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
+import { nativeDeadlineRecovery } from "../../domain/native/nativeDeadlines.js";
+import { Budget } from "../../domain/budget.js";
+import {
+  ArtifactResourceScope,
+  bindArtifactFileCleanup,
+} from "../../resources/index.js";
 import {
   ProcessOwnershipInspectionCancelled,
   ProcessOwnershipIdentityBatchFailure,
@@ -75,7 +78,7 @@ import {
 } from "../../process/ProcessOwnershipObservation.js";
 import { ProcessAdmissionError } from "../../process/ProcessAdmissionError.js";
 import type { ProviderProcessSupervisor } from "../../process/ProviderProcess.js";
-import { RuntimeControlUnavailableError } from "../../process/RuntimeControlUnavailableError.js";
+import { RuntimeControlUnavailableError } from "../../domain/runtimeControlUnavailableError.js";
 import { WindowsNativeAuthorityUnavailableError } from "../../windows/WindowsNativeLoader.js";
 import {
   WindowsNativeSpawnControlError,
@@ -237,7 +240,8 @@ export class ReverseEngineeringService {
     AbortController,
     Promise<Result<Evidence, AnalysisError>>
   >();
-  #reservedOutputBytes = 0;
+  /** Output capture admitted across active operations. */
+  readonly #reservedOutput = new Budget(MAX_ACTIVE_CAPTURE_BYTES);
   #closing = false;
   #closePromise: Promise<void> | undefined;
   #dispatched = 0;
@@ -514,7 +518,7 @@ export class ReverseEngineeringService {
     if (
       this.#activeOperations.size >=
         MAX_CONCURRENT_REVERSE_ENGINEERING_OPERATIONS ||
-      this.#reservedOutputBytes + outputBudgetBytes > MAX_ACTIVE_CAPTURE_BYTES
+      !this.#reservedOutput.tryCharge(outputBudgetBytes)
     )
       return Promise.resolve(
         err(
@@ -527,7 +531,7 @@ export class ReverseEngineeringService {
                 MAX_CONCURRENT_REVERSE_ENGINEERING_OPERATIONS,
               active_operations: this.#activeOperations.size,
               max_active_capture_bytes: MAX_ACTIVE_CAPTURE_BYTES,
-              reserved_output_bytes: this.#reservedOutputBytes,
+              reserved_output_bytes: this.#reservedOutput.used,
               requested_output_bytes: outputBudgetBytes,
             },
             {
@@ -547,7 +551,6 @@ export class ReverseEngineeringService {
       signal === undefined || signal instanceof AbortSignal
         ? controller.signal
         : signal;
-    this.#reservedOutputBytes += outputBudgetBytes;
     const running = this.#observeProvider({
       ...request,
       profile: selection.value,
@@ -567,7 +570,7 @@ export class ReverseEngineeringService {
       .finally(() => {
         signal?.removeEventListener("abort", relayAbort);
         this.#activeOperations.delete(controller);
-        this.#reservedOutputBytes -= outputBudgetBytes;
+        this.#reservedOutput.refund(outputBudgetBytes);
       });
     this.#activeOperations.set(controller, tracked);
     return tracked;
@@ -1456,17 +1459,20 @@ const runtimeControlPreparationError = (
   return windowsNativeSpawnControlError(cause);
 };
 
-const reverseCommandTimeoutGuidance = (
-  provider: string,
-  timeoutMs: number,
-): { readonly userMessage: string; readonly remediationAction: string } => ({
-  userMessage: `This ${provider} command reached its ${String(timeoutMs)} ms server/provider deadline (command_timeout_ms) during target preflight or the one-shot command (deadlineExpired). This is not a Ghidra or Hopper startup deadline and not a debugger session deadline.`,
-  remediationAction: `${
-    timeoutMs < MAX_NODE_TIMER_DELAY_MS
-      ? `Increase command_timeout_ms above ${String(timeoutMs)} (integer milliseconds from 1 to ${String(MAX_NODE_TIMER_DELAY_MS)}; omitted means ${String(DEFAULT_REVERSE_COMMAND_TIMEOUT_MS)}), or use --command-timeout-ms on the CLI.`
-      : `command_timeout_ms is already at the maximum ${String(MAX_NODE_TIMER_DELAY_MS)} ms; no higher deadline is supported.`
-  } The new value applies on the next call; no restart is required. The combined output allowance is separately selected by max_output_bytes (default ${String(DEFAULT_REVERSE_COMMAND_OUTPUT_BYTES)} bytes). Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
-});
+/**
+ * The deadline failure names `command_timeout_ms` and binds it as the
+ * per-call control; each adapter names the option that sets it.
+ */
+const reverseCommandTimeoutGuidance = (provider: string, timeoutMs: number) =>
+  nativeDeadlineRecovery({
+    timeoutMs,
+    parameter: "command_timeout_ms",
+    defaultMs: DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
+    phase: `${provider} command deadline`,
+    unchanged: `No restart is required. The combined output allowance is separately selected by max_output_bytes (default ${String(DEFAULT_REVERSE_COMMAND_OUTPUT_BYTES)} bytes).`,
+    detail:
+      " It covers target preflight and the one-shot command (deadlineExpired); it is not a Ghidra or Hopper startup deadline or a debugger session deadline.",
+  });
 
 export const digestFile = async (
   path: string,

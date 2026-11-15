@@ -11,8 +11,8 @@ import type {
   ReleaseExposurePort,
   ReleaseExposureScanVisitor,
   ReleaseExposureTextVisitor,
-} from "../application/releaseExposure/ReleaseExposurePort.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+} from "../ports/releaseExposure/ReleaseExposurePort.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import {
   BoundedListCollector,
   boundedList,
@@ -22,27 +22,28 @@ import {
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactReader,
-} from "./ArtifactReader.js";
-import {
   ArtifactResourceScope,
   type ArtifactCleanupAttempt,
   type ArtifactResourceOwner,
-} from "./ArtifactResourceScope.js";
-import {
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
-} from "./ArtifactFileOperation.js";
-import { decodeBinaryPlistText } from "./apple/BinaryPlistMaterializer.js";
+  readStableArtifact,
+  projectArtifactCloseFailure,
+  projectStableArtifactFailure,
+  readerIntegrityFailure,
+  hashStableRootArtifactHandle,
+  openRootArtifact,
+  releaseRootArtifact,
+  asarHeaderAdmissionRecovery,
+  createAsarHeaderSignatureProbe,
+} from "../resources/index.js";
+import { decodeBinaryPlistText } from "../domain/apple/binaryPlistMaterializer.js";
 import {
   InternalInvariantError,
   invariantViolation,
 } from "../domain/internalInvariant.js";
 import { ArtifactEmbeddedFormatProbes } from "./ArtifactEmbeddedFormatProbes.js";
-import {
-  asarHeaderAdmissionRecovery,
-  createAsarHeaderSignatureProbe,
-} from "./AsarHeader.js";
 import {
   DEFAULT_ASAR_HEADER_ADMISSION,
   type AsarHeaderAdmission,
@@ -51,18 +52,7 @@ import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { ArtifactTraversalObservation } from "./ArtifactTraversalObservation.js";
 import { classifyEmbeddedExecutablePackage } from "./inventory/classify.js";
 import { inventoryArtifactInScope } from "./inventory/ArtifactInventory.js";
-import {
-  hashStableRootArtifactHandle,
-  openRootArtifact,
-  releaseRootArtifact,
-} from "./inventory/hashStableRootArtifact.js";
 import { createArtifactReader } from "./createArtifactReader.js";
-import { readStableArtifact } from "./readStableArtifact.js";
-import {
-  projectArtifactCloseFailure,
-  projectStableArtifactFailure,
-  readerIntegrityFailure,
-} from "./StableArtifactFailure.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
@@ -126,7 +116,7 @@ import { sourceMapJsonText } from "../domain/sourceMapEnvelope.js";
 import {
   inspectSourceMap,
   inspectSourceMapSourceContent,
-} from "../javascript/sourceMaps/SourceMapFormat.js";
+} from "../domain/sourceMapFormat.js";
 import { htmlArtifactReferences } from "../domain/javascript/htmlArtifactReferences.js";
 import { parseJavaScriptSource } from "../domain/javascript/javascriptSourceParser.js";
 import { addSourceMapDirectives } from "../domain/javascript/javascriptStaticAnalysisCalls.js";

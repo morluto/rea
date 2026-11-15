@@ -8,7 +8,7 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { firmwareResultSchemas } from "../../../dist/domain/firmware/firmwareAnalysis.js";
 import { parseEvidence } from "../../../dist/domain/evidence.js";
-import { ArtifactResourceScope } from "../../../dist/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../dist/resources/ArtifactResourceScope.js";
 import { hashVerifierFile } from "../../lib/verifier-file-resources.mjs";
 import {
   VerifierFixture,

@@ -7,7 +7,7 @@ import {
   createAnalysisExecution,
   type AnalysisClient,
   type ProviderIdentity,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import { parseBinaryTarget } from "../BinaryTargetResolver.js";
 import { InvestigationRecords } from "../investigation/InvestigationRecords.js";
 import { AnalysisProviderRegistry } from "./AnalysisProviderRegistry.js";

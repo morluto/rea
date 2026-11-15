@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createAnalysisExecution,
   type AnalysisOperationPort,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { DecompileExport } from "../../../src/application/decompileDirectory/exportTree.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";

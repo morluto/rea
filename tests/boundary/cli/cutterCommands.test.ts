@@ -134,7 +134,8 @@ describe("Cutter CLI commands", () => {
         operation: "cutter_command",
         issues: [
           {
-            path: ["session_id"],
+            // Projected from its contract, so the issue names the CLI key.
+            path: ["sessionId"],
             message:
               "Cutter bridge session is unavailable or stale; list sessions again and select an available session.",
           },

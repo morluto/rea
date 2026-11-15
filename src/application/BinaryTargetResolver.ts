@@ -16,9 +16,11 @@ import {
   bindRegularFileCleanup,
   RetainedRegularFileCleanupFailure,
   retryRegularFileCleanup,
-} from "./RegularFileRead.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+} from "../process/RegularFileRead.js";
+import {
+  type ArtifactResourceScope,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { childFailureDiagnostics } from "../domain/analysisErrorProjection.js";
 import { constants, type Stats } from "node:fs";
@@ -37,11 +39,12 @@ import {
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
-import type {
-  BinaryTarget,
-  BinaryArchitecture,
-  PeCodeViewRecord,
-  UniversalMachOSlice,
+import {
+  BINARY_TARGET_FORMAT_KINDS,
+  type BinaryTarget,
+  type BinaryArchitecture,
+  type PeCodeViewRecord,
+  type UniversalMachOSlice,
 } from "../domain/binaryTargetTypes.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { readMipsElfMetadata } from "./MipsElfMetadata.js";
@@ -91,7 +94,6 @@ import {
 import { espFlashSelectionError } from "../domain/firmware/espFlashSelection.js";
 import {
   locateTrailingZipArchive,
-  isZipPackageFormat,
   zipRootPackageFormat,
 } from "../domain/zipPackageFormat.js";
 
@@ -874,25 +876,7 @@ const isArchiveFormat = (
     | "gamecube-dol"
   >,
 ): format is Extract<BinaryTarget, { kind: "archive" }>["format"] =>
-  isZipPackageFormat(format) ||
-  [
-    "asar",
-    "ines",
-    "godot-pck",
-    "unityfs",
-    "wxapkg",
-    "uimage",
-    "dmg",
-    "pkg",
-    "intel-hex",
-    "srec",
-    "esp-image",
-    "uf2",
-    "dfuse",
-    "esp-flash-image",
-    "fit",
-    "ntfs-mft",
-  ].includes(format);
+  BINARY_TARGET_FORMAT_KINDS[format] === "archive";
 
 /** Whether the leading bytes begin any executable header family, valid or not. */
 const claimsLeadingExecutableHeader = async (

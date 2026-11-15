@@ -59,6 +59,7 @@ export const passiveNetworkCapture = (paths: readonly string[] = ["/a"]) => {
         status: 200,
         mime_type: "text/html",
         encoded_data_length: 10,
+        redirects: [],
         initiator: { type: "parser", url: null, line: null, column: null },
         body_shapes: { status: "unavailable", request: null, response: null },
       })),

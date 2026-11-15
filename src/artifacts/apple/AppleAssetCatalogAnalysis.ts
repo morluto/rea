@@ -13,24 +13,24 @@ import {
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import { createHash } from "node:crypto";
 import { lstat } from "node:fs/promises";
-import { streamChunkToBuffer } from "../StreamBytes.js";
-import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
-import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
-import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
-import { InternalInvariantError } from "../../domain/internalInvariant.js";
-import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
-import { ARTIFACT_GRAPH_PROVIDER } from "../../domain/investigationProviders.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import {
-  ArtifactTraversalObservation,
-  declaredArtifactEntries,
-} from "../ArtifactTraversalObservation.js";
-import {
+  streamChunkToBuffer,
+  ArtifactResourceScope,
   ArtifactReaderFailure,
   sameArtifactSourceIdentity,
   type ArtifactEntry,
   type ArtifactReaderTraversal,
-} from "../ArtifactReader.js";
+} from "../../resources/index.js";
+import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
+import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
+import { InternalInvariantError } from "../../domain/internalInvariant.js";
+import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
+import { ARTIFACT_GRAPH_PROVIDER } from "../../domain/investigationProviders.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
+import {
+  ArtifactTraversalObservation,
+  declaredArtifactEntries,
+} from "../ArtifactTraversalObservation.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { analyzeInterfaceBuilderBundle } from "./InterfaceBuilderAnalysis.js";
 import {
@@ -136,11 +136,11 @@ export const analyzeAppleAssetCatalogs = async (input: {
         "inspect_asset_catalog",
         joined.error,
       );
-      throw analysisErrorWithCleanupFailure(
+      throw analysisErrorWithCleanupDependencies(
         primary,
         cleanup,
         "inspect_asset_catalog",
-      ).bindCleanupDependencies([primary, cleanup]);
+      );
     }
     throw cause;
   }
@@ -281,11 +281,11 @@ const collectAssetCatalogs = async (input: {
         "inspect_asset_catalog",
         input.resources.cleanupFailure({ kind: "completed" }, [released]),
       );
-      throw analysisErrorWithCleanupFailure(
+      throw analysisErrorWithCleanupDependencies(
         outcome.cause,
         cleanup,
         "inspect_asset_catalog",
-      ).bindCleanupDependencies([outcome.cause, cleanup]);
+      );
     }
     throw input.resources.cleanupFailure(outcome, [released]);
   }
@@ -526,7 +526,7 @@ const assetUtilFailure = (cause: unknown, entry: ArtifactEntry): unknown => {
 
 const digestBounded = async (
   reader: DirectoryArtifactReader,
-  entry: import("../ArtifactReader.js").ArtifactEntry,
+  entry: import("../../resources/index.js").ArtifactEntry,
   signal?: AbortSignal,
 ): Promise<string> => {
   if (entry.declaredSize === null || entry.declaredSize > MAX_CATALOG_BYTES)

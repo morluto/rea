@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
   MAX_DENO_LOGICAL_PATH_PARTS,
   walkDenoVirtualFs,

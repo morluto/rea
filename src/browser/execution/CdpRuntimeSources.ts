@@ -16,7 +16,7 @@ import {
   cdpContextFrameClaim,
   selectCdpScriptFrame,
 } from "../CdpScriptContextFacts.js";
-import { assertRuntimeRetention } from "./CdpRuntimeRetention.js";
+import { RuntimeRetention } from "./CdpRuntimeRetention.js";
 
 /** Source ownership is proven by execution context/frame metadata, independently of URL aliases. */
 export class CdpRuntimeSources {
@@ -31,10 +31,13 @@ export class CdpRuntimeSources {
   readonly #changed = new Set<string>();
   readonly #changedContexts = new Set<number>();
   readonly #sources = new Map<string, WebRuntimeSource>();
-  #retainedBytes = 0;
-  #sourceBytes = 0;
+  readonly #metadata: RuntimeRetention;
+  readonly #sourceText: RuntimeRetention;
   #failure: AnalysisError | undefined;
-  constructor(readonly session: CdpRuntimeSession) {}
+  constructor(readonly session: CdpRuntimeSession) {
+    this.#metadata = new RuntimeRetention(session.operation, "metadata");
+    this.#sourceText = new RuntimeRetention(session.operation, "sources");
+  }
 
   /** Subscribe before enabling Debugger; existing uncollected scripts are replayed by the producer. */
   ingest(event: CdpReceivedEvent, retainNewMetadata = true): void {
@@ -44,12 +47,7 @@ export class CdpRuntimeSources {
       if (registered?.method === "Runtime.executionContextCreated") {
         const bytes = registered.payload.declarationBytes;
         if (!bytes.ok) throw bytes.error;
-        this.#retainedBytes += bytes.value;
-        assertRuntimeRetention(
-          this.session.operation,
-          "metadata",
-          this.#retainedBytes,
-        );
+        this.#metadata.charge(bytes.value);
         const declaration = registered.payload.runtime;
         if (!declaration.success) throw declaration.error;
         const context = declaration.data.context;
@@ -66,12 +64,7 @@ export class CdpRuntimeSources {
       } else if (registered?.method === "Debugger.scriptParsed") {
         const bytes = registered.payload.declarationBytes;
         if (!bytes.ok) throw bytes.error;
-        this.#retainedBytes += bytes.value;
-        assertRuntimeRetention(
-          this.session.operation,
-          "metadata",
-          this.#retainedBytes,
-        );
+        this.#metadata.charge(bytes.value);
         const declaration = registered.payload.runtime;
         if (!declaration.success) throw declaration.error;
         const script = declaration.data;
@@ -266,12 +259,7 @@ export class CdpRuntimeSources {
         reason: cause.userMessage ?? cause.message,
       };
     }
-    this.#sourceBytes += Buffer.byteLength(text);
-    assertRuntimeRetention(
-      this.session.operation,
-      "sources",
-      this.#sourceBytes,
-    );
+    this.#sourceText.charge(Buffer.byteLength(text));
     const facts = webTextFacts(text);
     return {
       state: "captured",

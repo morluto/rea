@@ -30,7 +30,6 @@ it("publishes CLI Evidence without re-authenticating the complete graph", async 
   );
 
   const output = await publishCliAnalysisEvidence(ok(evidence), {
-    providerId: "fixture",
     operation: "fixture",
     signal: new AbortController().signal,
     detail: "complete",
@@ -71,7 +70,6 @@ it("keeps the writer heap check for mutable source Evidence", async () => {
   const mutableSource = JSON.parse(JSON.stringify(source)) as typeof source;
 
   const output = await publishCliAnalysisEvidence(ok(evidence), {
-    providerId: "fixture",
     operation: "fixture",
     signal: new AbortController().signal,
     detail: "complete",
@@ -79,5 +77,9 @@ it("keeps the writer heap check for mutable source Evidence", async () => {
     sourceEvidence: [mutableSource],
   });
 
-  expect(output).toMatchObject({ code: "resource_constraint" });
+  // The refused publication keeps the completed parent's facts.
+  expect(output).toMatchObject({
+    code: "resource_constraint",
+    details: { partial_observation: { evidence_id: evidence.evidence_id } },
+  });
 });

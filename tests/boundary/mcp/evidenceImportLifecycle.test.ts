@@ -2,15 +2,13 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
+import { phaseArrival, phaseGate } from "../../support/lifecycleHarness.js";
 
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { createServer } from "../../../src/server/createServer.js";
-import {
-  createDeferred,
-  createTestBinarySession,
-} from "../../fixtures/binarySession.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const connectImportSession = async () => {
@@ -23,22 +21,20 @@ const connectImportSession = async () => {
     name: "evidence-import-lifecycle",
     version: "1",
   });
-  const readCompleted = createDeferred<void>();
-  const releaseRead = createDeferred<void>();
+  const importRead = phaseGate();
   const originalFileClose = OwnedFileHandle.prototype.close;
   vi.spyOn(OwnedFileHandle.prototype, "close").mockImplementationOnce(
     async function (this: OwnedFileHandle) {
       await originalFileClose.call(this);
-      readCompleted.resolve();
-      await releaseRead.promise;
+      await importRead.hold();
     },
   );
-  const closeStarted = createDeferred<void>();
+  const closeStart = phaseArrival();
   const originalSessionClose = session.close.bind(session);
   const events: string[] = [];
   vi.spyOn(session, "close").mockImplementation((...args) => {
     const closing = originalSessionClose(...args);
-    closeStarted.resolve();
+    closeStart.arrive();
     return closing.then((result) => {
       events.push("close");
       return result;
@@ -51,7 +47,7 @@ const connectImportSession = async () => {
     return imported;
   });
   onTestFinished(async () => {
-    releaseRead.resolve();
+    importRead.release();
     vi.restoreAllMocks();
     await client.close();
     await server.close();
@@ -59,7 +55,7 @@ const connectImportSession = async () => {
   });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
-  const laterImportDispatched = createDeferred<void>();
+  const laterImportDispatch = phaseArrival();
   let importsDispatched = 0;
   const send = clientTransport.send.bind(clientTransport);
   vi.spyOn(clientTransport, "send").mockImplementation(
@@ -71,7 +67,7 @@ const connectImportSession = async () => {
         message.params?.name === "import_evidence_bundle"
       ) {
         importsDispatched += 1;
-        if (importsDispatched === 2) laterImportDispatched.resolve();
+        if (importsDispatched === 2) laterImportDispatch.arrive();
       }
     },
   );
@@ -95,24 +91,23 @@ const connectImportSession = async () => {
     session,
     events,
     importBundle,
-    readCompleted: readCompleted.promise,
-    closeStarted: closeStarted.promise,
-    laterImportDispatched: laterImportDispatched.promise,
-    releaseRead: () => releaseRead.resolve(),
+    importRead,
+    closeStart,
+    laterImportDispatch,
   };
 };
 
 it("drains a file import before close_binary releases the engine and retains its records", async () => {
   const fixture = await connectImportSession();
   const importing = fixture.importBundle("before_close");
-  await fixture.readCompleted;
+  await fixture.importRead.reached(importing, "import file read");
   const closing = fixture.client.callTool({
     name: "close_binary",
     arguments: {},
   });
-  await fixture.closeStarted;
+  await fixture.closeStart.reached(closing, "close_binary start");
   await fixture.client.ping();
-  fixture.releaseRead();
+  fixture.importRead.release();
   const [imported, closed] = await Promise.all([importing, closing]);
 
   expect(imported.isError, JSON.stringify(imported)).not.toBe(true);
@@ -133,16 +128,16 @@ it("drains a file import before close_binary releases the engine and retains its
 it("admits a later import after close_binary while retaining the earlier bundle", async () => {
   const fixture = await connectImportSession();
   const earlier = fixture.importBundle("before_close");
-  await fixture.readCompleted;
+  await fixture.importRead.reached(earlier, "import file read");
   const closing = fixture.client.callTool({
     name: "close_binary",
     arguments: {},
   });
-  await fixture.closeStarted;
+  await fixture.closeStart.reached(closing, "close_binary start");
   const later = fixture.importBundle("after_close");
-  await fixture.laterImportDispatched;
+  await fixture.laterImportDispatch.reached(later, "later import dispatch");
   await fixture.client.ping();
-  fixture.releaseRead();
+  fixture.importRead.release();
   const results = await Promise.all([earlier, closing, later]);
 
   for (const result of results)

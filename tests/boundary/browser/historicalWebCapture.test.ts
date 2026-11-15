@@ -349,7 +349,7 @@ it("reports the actual HAR decoder nesting constraint as a typed selected-input 
     details: {
       issues: [
         {
-          path: ["capture_path", expect.stringMatching(/^\/_extension\/child/)],
+          path: ["capturePath", expect.stringMatching(/^\/_extension\/child/)],
           reason: "out_of_range",
           expected: { maximum_capture_nesting: 64 },
         },

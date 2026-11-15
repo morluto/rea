@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import {
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+  streamChunkToBuffer,
+} from "../resources/index.js";
 import { ZipArtifactReader } from "../artifacts/ZipArtifactReader.js";
-import { streamChunkToBuffer } from "../artifacts/StreamBytes.js";
 import type {
   AndroidJniLibraryObservation,
   AndroidJniReport,
@@ -12,7 +14,7 @@ import type {
 import { compileAndroidJniLibrarySelection } from "../domain/android/androidJniBindings.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { inspectAndroidJniLibrary } from "../native/android/AndroidJniLibrary.js";
+import { inspectAndroidJniLibrary } from "../domain/android/androidJniLibrary.js";
 import {
   JadxInterruption,
   throwIfJadxInterrupted,
@@ -207,6 +209,10 @@ export const readAndroidJniLibraries = async (input: {
                       : "io",
                   message:
                     cause instanceof Error ? cause.message : String(cause),
+                  ...(cause instanceof ArtifactReaderFailure &&
+                  cause.integrityCheck !== undefined
+                    ? { integrity_check: cause.integrityCheck }
+                    : {}),
                 },
               };
             }

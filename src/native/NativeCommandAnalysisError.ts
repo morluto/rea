@@ -1,4 +1,4 @@
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import {
   ProcessOwnershipInspectionCancelled,
@@ -25,10 +25,10 @@ import {
   nativeDeadlineRecovery,
 } from "../domain/native/nativeDeadlines.js";
 import {
-  NATIVE_COMMAND_OUTPUT_BUDGET_BYTES,
   NATIVE_FAILURE_DIAGNOSTIC_BYTES,
   type NativeCommandFailure,
 } from "./CommandRunner.js";
+import { NATIVE_COMMAND_OUTPUT_BUDGET_BYTES } from "../domain/native/nativeCommandOutput.js";
 
 /** Operation-owned text for a command deadline or unavailable requirement. */
 export interface NativeCommandFailurePresentation {
@@ -115,7 +115,6 @@ export const translateNativeCommandFailure = (
               nativeDeadlineRecovery({
                 timeoutMs,
                 parameter: "native_command_timeout_ms",
-                cliFlag: "--native-command-timeout-ms",
                 defaultMs: DEFAULT_NATIVE_COMMAND_TIMEOUT_MS,
                 phase: "macOS native command deadline",
                 unchanged: `The ${String(NATIVE_COMMAND_OUTPUT_BUDGET_BYTES)}-byte command output allowance and the ${String(NATIVE_FAILURE_DIAGNOSTIC_BYTES)}-byte failure-diagnostic excerpt have no runtime override.`,
@@ -201,7 +200,6 @@ export const translateNativeCommandFailure = (
           nativeDeadlineRecovery({
             timeoutMs,
             parameter: "native_command_timeout_ms",
-            cliFlag: "--native-command-timeout-ms",
             defaultMs: DEFAULT_NATIVE_COMMAND_TIMEOUT_MS,
             phase: "macOS native command deadline",
             unchanged: `The ${String(NATIVE_COMMAND_OUTPUT_BUDGET_BYTES)}-byte command output allowance and the ${String(NATIVE_FAILURE_DIAGNOSTIC_BYTES)}-byte failure-diagnostic excerpt have no runtime override.`,

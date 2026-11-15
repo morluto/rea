@@ -1,5 +1,5 @@
 import { basename } from "node:path";
-import type { AnalysisExecution } from "../AnalysisProvider.js";
+import type { AnalysisExecution } from "../../ports/AnalysisProvider.js";
 import type { Evidence } from "../../domain/evidence.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { equalJsonText } from "../../domain/jsonSerialization.js";

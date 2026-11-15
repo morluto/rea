@@ -1,10 +1,11 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import {
   advertisedMcpToolSchemas,
   assertRecordedMcpEvidence,
 } from "../../fixtures/advertisedMcpTool.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterAll, expect, it, onTestFinished, vi } from "vitest";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -269,21 +270,13 @@ it.each([undefined, "summary"] as const)(
   "records complete WASM Evidence when an MCP request is cancelled during provider work (detail=%s)",
   async (detail) => {
     const value = wasmArtifactFixture();
-    let releaseProvider: (() => void) | undefined;
-    let providerStarted: (() => void) | undefined;
-    const started = new Promise<void>((resolve) => {
-      providerStarted = resolve;
-    });
-    const providerGate = new Promise<void>((resolve) => {
-      releaseProvider = resolve;
-    });
+    const wasmProviderStart = phaseGate();
     let serverSignal: AbortSignal | undefined;
     const service = new WasmArtifactService({
       close: () => Promise.resolve(),
       inspect: async (_input, options) => {
         serverSignal = options?.signal;
-        providerStarted?.();
-        await providerGate;
+        await wasmProviderStart.hold();
         expect(options?.signal?.aborted).toBe(true);
         return ok(wasmArtifactExecution(value));
       },
@@ -311,14 +304,14 @@ it.each([undefined, "summary"] as const)(
     );
     const rejected = expect(cancellation).rejects.toThrow();
     try {
-      await awaitAcknowledgement(started, cancellation, "WASM provider start");
+      await wasmProviderStart.reached(cancellation, "WASM provider start");
       controller.abort(new Error("cancel after provider work starts"));
       let serverReason: unknown;
       try {
         await harness.client.ping();
         serverReason = serverSignal?.reason;
       } finally {
-        releaseProvider?.();
+        wasmProviderStart.release();
       }
       await rejected;
       expect(inspect).toHaveBeenCalledOnce();
@@ -352,7 +345,7 @@ it.each([undefined, "summary"] as const)(
       expect(session.evidenceById(partial.evidence_id)).toEqual(partial);
     } finally {
       controller.abort();
-      releaseProvider?.();
+      wasmProviderStart.release();
       await cancellation.catch(() => undefined);
       await rejected.catch(() => undefined);
     }
@@ -589,7 +582,7 @@ it("reads an oversized completed WASM result through its reported retained refer
     expect(ajv.validate(input, args), JSON.stringify(ajv.errors)).toBe(true);
     const selected = await harness.client.callTool(
       { name: "inspect_analysis_view", arguments: args },
-      { toolDefinition: advertised },
+      { toolDefinition: withCanonicalOutputSchema(advertised) },
     );
     expect(
       selected.isError,

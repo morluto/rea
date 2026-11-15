@@ -27,7 +27,7 @@ export interface KunaAdmissionRefusal {
  */
 export const admitKunaCommand = (
   environment: Readonly<NodeJS.ProcessEnv>,
-  platform?: NodeJS.Platform,
+  platform: NodeJS.Platform,
 ): Result<KunaConfiguration, KunaAdmissionRefusal> => {
   const configuration = readKunaConfiguration(environment, platform);
   if (!configuration.ok) {

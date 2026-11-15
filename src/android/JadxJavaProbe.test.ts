@@ -1,6 +1,6 @@
 import { validateJadxConfiguration } from "./JadxConfiguration.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { ArtifactResourceRetryFailure } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceRetryFailure } from "../resources/ArtifactResourceScope.js";
 import { expect, it, vi } from "vitest";
 import { inspectJadxJava, type JadxJavaProbeOptions } from "./JadxJavaProbe.js";
 import {
