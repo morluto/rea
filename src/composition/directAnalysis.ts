@@ -62,6 +62,13 @@ export const createDirectAnalysis = (
       await import("../application/DirectAnalysis.js");
     return runProviderAnalysis(dependencies, ...args);
   };
+  const runManagedProviderEvidence: BoundOperation<
+    DirectAnalysisRuntime["runManagedProviderEvidence"]
+  > = async (...args) => {
+    const { runManagedProviderEvidence } =
+      await import("../application/DirectAnalysis.js");
+    return runManagedProviderEvidence(dependencies, ...args);
+  };
   const runSessionStatus: BoundOperation<
     DirectAnalysisStatusRuntime["runSessionStatus"]
   > = async (...args) => {
@@ -72,6 +79,7 @@ export const createDirectAnalysis = (
   return {
     runDirectAnalysis,
     runProviderAnalysis,
+    runManagedProviderEvidence,
     runSessionStatus,
   };
 };
