@@ -89,8 +89,12 @@ const untracedInput = (path) =>
       ? `Input is not traced to tests: ${path}`
       : undefined;
 
+// Static and literal dynamic imports, mocks, and module URLs such as the
+// `new URL("./x.mts", import.meta.url)` that `importVerifierSource` loads
+// (scripts/lib/import-specifiers.mjs owns the exact parse; the planning job
+// runs before dependencies are installed, so it cannot load that parser).
 const SPECIFIER =
-  /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+|\bvi\.mock\(\s*)["'](\.{1,2}\/[^"']+)["']/gu;
+  /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+|\bvi\.mock\(\s*|\bnew\s+URL\(\s*)["'](\.{1,2}\/[^"']+)["']/gu;
 // TypeScript imports name the emitted `.js`/`.mjs`; scripts are imported as is.
 const importsOf = (path, source) =>
   [...source.matchAll(SPECIFIER)].flatMap(([, specifier]) => {
@@ -131,23 +135,53 @@ export function traceAffectedTests({ files, snapshot }) {
   );
   for (const path of files) if (isTest(path)) select(path, "changed");
 
+  // A seed and every helper that imports it, directly or through another.
+  const throughHelpers = (seed) => {
+    const reached = new Set(seed);
+    for (let grew = true; grew;) {
+      grew = false;
+      for (const helper of helpers)
+        if (
+          !reached.has(helper) &&
+          imports.get(helper).some((target) => reached.has(target))
+        ) {
+          reached.add(helper);
+          grew = true;
+        }
+    }
+    return reached;
+  };
   // Close over test-only helpers, verifiers and shared script modules, then
   // take the tests that import a change.
-  const affected = new Set(changedModules);
-  for (let grew = true; grew;) {
-    grew = false;
-    for (const helper of helpers)
-      if (
-        !affected.has(helper) &&
-        imports.get(helper).some((target) => affected.has(target))
-      ) {
-        affected.add(helper);
-        grew = true;
-      }
-  }
+  const affected = throughHelpers(changedModules);
   for (const test of tests)
     if (imports.get(test).some((target) => affected.has(target)))
       select(test, "imports");
+  // Script paths a test can start or read by name: changed files, plus the
+  // verifiers and shared modules a change reaches.
+  const named = (reached) => [
+    ...new Set([
+      ...files,
+      ...[...reached].filter((path) => path.startsWith("scripts/")),
+    ]),
+  ];
+  const names = (test, paths) =>
+    paths.some((path) => (sources.get(test) ?? "").includes(path));
+
+  // A changed shared module that no test reaches has no coverage in a
+  // selection, even when other changes select tests.
+  for (const library of changedModules.filter(isScriptLibrary)) {
+    const reached = throughHelpers([library]);
+    const paths = named(reached);
+    if (
+      !tests.some(
+        (test) =>
+          imports.get(test).some((target) => reached.has(target)) ||
+          names(test, paths),
+      )
+    )
+      untraced.push(`No test reaches shared script module: ${library}`);
+  }
 
   // A shared script module that another script, configuration file, hook or
   // workflow imports or names by file name can shape every run.
@@ -185,10 +219,11 @@ export function traceAffectedTests({ files, snapshot }) {
       if (patterns.some((glob) => matchesGlob(test, glob)))
         select(test, "owner");
   }
-  // Tests that name a changed path read it directly.
-  for (const path of files)
-    for (const test of tests)
-      if ((sources.get(test) ?? "").includes(path)) select(test, "names");
+  // Tests that name a changed path, or a verifier or shared module the change
+  // reaches, read or start it directly.
+  const reachedPaths = named(affected);
+  for (const test of tests)
+    if (names(test, reachedPaths)) select(test, "names");
   return { selected, untraced };
 }
 

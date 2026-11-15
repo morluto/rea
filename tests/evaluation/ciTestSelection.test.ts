@@ -126,20 +126,43 @@ it("traces shared script modules to their tests and falls back for other consume
       "Script consumer is not traced: scripts/build.mjs uses scripts/lib/wrapper.mjs",
   });
   expect(
-    plan(["scripts/lib/unused.mjs"], {
+    plan(["scripts/lib/shared.mjs"], {
       ...sources,
-      "package.json": '{"scripts":{"x":"node scripts/lib/unused.mjs"}}',
+      "package.json": '{"scripts":{"x":"node scripts/lib/shared.mjs"}}',
     }),
   ).toMatchObject({
     mode: "full",
     reason:
-      "Script consumer is not traced: package.json uses scripts/lib/unused.mjs",
+      "Script consumer is not traced: package.json uses scripts/lib/shared.mjs",
   });
-  // A module no test reaches keeps the existing fallback.
-  expect(plan(["scripts/lib/unused.mjs"], sources)).toMatchObject({
-    mode: "full",
-    reason: "No test imports, names or sits beside a changed path",
-  });
+  // A module no test reaches runs everything, even beside a selected change.
+  for (const files of [
+    ["scripts/lib/unused.mjs"],
+    ["scripts/lib/unused.mjs", "tests/boundary/filesystem/other.test.ts"],
+  ])
+    expect(plan(files, sources)).toMatchObject({
+      mode: "full",
+      reason: "No test reaches shared script module: scripts/lib/unused.mjs",
+    });
+  // Verifier source loads are module edges, and a test that starts a reached
+  // verifier by path is selected without importing it.
+  const loaded = {
+    "scripts/lib/startup.mts": "",
+    "scripts/lib/lifecycle.mjs":
+      'await importVerifierSource(new URL("./startup.mts", import.meta.url).href, import.meta.url);',
+    "scripts/verify-runtime.mjs": 'import "./lib/lifecycle.mjs";',
+    "tests/boundary/filesystem/startup.test.ts":
+      'import "../../../scripts/lib/startup.mts";',
+    "tests/boundary/filesystem/lifecycle.test.ts":
+      'import "../../../scripts/lib/lifecycle.mjs";',
+    "tests/boundary/filesystem/runtimeVerifier.test.ts":
+      'spawn(process.execPath, ["scripts/verify-runtime.mjs"]);',
+  };
+  expect(selectedFiles(plan(["scripts/lib/startup.mts"], loaded))).toEqual([
+    "tests/boundary/filesystem/lifecycle.test.ts",
+    "tests/boundary/filesystem/runtimeVerifier.test.ts",
+    "tests/boundary/filesystem/startup.test.ts",
+  ]);
   // Other scripts remain untraced inputs.
   expect(plan(["scripts/build.mjs"], sources)).toMatchObject({
     mode: "full",
