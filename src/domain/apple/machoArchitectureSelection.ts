@@ -4,14 +4,14 @@ import {
   machoCpuSubtypeBase,
   X86_64_HOST_SUBTYPE_PREFERENCE,
   X86_HOST_SUBTYPE_PREFERENCE,
-} from "../domain/apple/machoCpuIdentity.js";
-import { keyedBy, uniqueKeyed } from "../domain/keyedCollection.js";
-import { err, ok, type Result } from "../domain/result.js";
+} from "./machoCpuIdentity.js";
+import { keyedBy, uniqueKeyed } from "../keyedCollection.js";
+import { err, ok, type Result } from "../result.js";
 import type {
   AdmittedMachoSlice,
   MachoSliceSelectionRefusal,
-} from "./metadata/MachoSliceSelection.js";
-import type { LipoArchitecture } from "../domain/apple/lipo.js";
+} from "./machoSliceSelection.js";
+import type { LipoArchitecture } from "./lipo.js";
 
 /** Apple tool names for the domain-owned host subtype preference. */
 const preferredSubtypes = <Subtype extends number>(

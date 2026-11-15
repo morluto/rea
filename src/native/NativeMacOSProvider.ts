@@ -109,7 +109,7 @@ import { createPlistNumberProjection } from "../domain/apple/plistNumbers.js";
 import type { NativeUiObservationResult } from "../domain/native/nativeUiObservation.js";
 import { parseXmlPropertyList } from "../domain/propertyListKeys.js";
 import { plistDuplicateKeyLimitations } from "../domain/apple/plistDuplicateKeys.js";
-import { machoKnownCodeSignSelector } from "./MachoArchitectureSelection.js";
+import { machoKnownCodeSignSelector } from "../domain/apple/machoArchitectureSelection.js";
 import {
   demangleSwiftSchema,
   inspectPlistSchema,
@@ -160,7 +160,7 @@ import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.j
 import {
   MachoCommandNamesLimitError,
   readMachoCommandNames,
-} from "./MachoCommandNames.js";
+} from "../domain/apple/machoCommandNames.js";
 import {
   assertSelectedMachoSlice,
   resolveSelectedMachoSlice,

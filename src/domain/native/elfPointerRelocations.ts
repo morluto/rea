@@ -1,24 +1,21 @@
-import type {
-  FileMapping,
-  ZeroFillMapping,
-} from "../../domain/virtualFileMapping.js";
-import { readElfDynamicEntry } from "../../domain/elfDynamicEntry.js";
-import { readElfRelocationEntry } from "../../domain/elfRelocation.js";
-import { readElfSymbol } from "../../domain/elfSymbol.js";
+import type { FileMapping, ZeroFillMapping } from "../virtualFileMapping.js";
+import { readElfDynamicEntry } from "../elfDynamicEntry.js";
+import { readElfRelocationEntry } from "../elfRelocation.js";
+import { readElfSymbol } from "../elfSymbol.js";
 import {
   readElfHashSymbolCount,
   readElfGnuHashSymbolCount,
   type ElfHashWordReader,
-} from "../../domain/elfHashSymbolCount.js";
-import { err, ok } from "../../domain/result.js";
+} from "../elfHashSymbolCount.js";
+import { err, ok } from "../result.js";
 import {
   BinaryMappingFailure,
   BinaryReader,
   createFileMappingIndex,
   isZeroFilledSpan,
   type ElfDynamicSegment,
-} from "../../domain/binaryContainer.js";
-import { ParseFailureError } from "../../domain/parseFailure.js";
+} from "../binaryContainer.js";
+import { ParseFailureError } from "../parseFailure.js";
 
 /** The ParseFailure format of ELF loader pointer interpretation. */
 export const ELF_POINTER_RELOCATION_FORMAT = "elf-pointer-relocations";

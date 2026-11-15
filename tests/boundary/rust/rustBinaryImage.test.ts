@@ -10,7 +10,7 @@ import {
   rustDependencyPayload,
 } from "../../fixtures/rust/image.js";
 import { readRustBinaryImage } from "../../../src/rust/RustBinaryImage.js";
-import { readBinaryContainer } from "../../../src/native/metadata/readBinaryContainer.js";
+import { readBinaryContainer } from "../../../src/domain/native/readBinaryContainer.js";
 import { readGoBinaryImage } from "../../../src/go/GoBinaryImage.js";
 import { ParseFailureError } from "../../../src/domain/parseFailure.js";
 

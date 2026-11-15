@@ -423,7 +423,7 @@ const PATH_SCOPES = {
     "src/resources/ArtifactPaths.ts",
     "src/application/WebScriptExportService.ts",
     "src/contracts/webScriptToolContracts.ts",
-    "src/server/registerWebScriptTool.ts",
+    "src/server/serviceToolBindings.ts",
     "src/server/createServer.ts",
     "src/cli/webModuleCommands.ts",
     "src/cliBrowserScenarioCommands.ts",

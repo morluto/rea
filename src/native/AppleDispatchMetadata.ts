@@ -47,13 +47,13 @@ import { NATIVE_MACOS_PROVIDER_IDENTITY as IDENTITY } from "./NativeMacosProvide
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import { pushDispatchCoverage } from "./AppleDispatchCoverage.js";
-import { parsePointerFixupsSteps } from "./AppleMachoFixups.js";
+import { parsePointerFixupsSteps } from "../domain/apple/appleMachoFixups.js";
 import { BinaryFormatFailure } from "../domain/binaryContainer.js";
-import { parseMachoLayout } from "./AppleMachoSelection.js";
+import { parseMachoLayout } from "../domain/apple/appleMachoSelection.js";
 import {
   selectMachoSlice,
   type AdmittedMachoSlice,
-} from "./metadata/MachoSliceSelection.js";
+} from "../domain/apple/machoSliceSelection.js";
 import { decodeObjcDispatchFacets } from "./AppleObjcDispatchFacets.js";
 import {
   createSwiftRelativeReader,

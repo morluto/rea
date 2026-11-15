@@ -9,7 +9,7 @@ import { malformedInput } from "../domain/parseFailure.js";
 import {
   MachoCommandNamesLimitError,
   type MachoCommandNames,
-} from "./MachoCommandNames.js";
+} from "../domain/apple/machoCommandNames.js";
 import type { NativeMachoSource } from "./NativeMachoSource.js";
 import type { LipoArchitecture } from "../domain/apple/lipo.js";
 

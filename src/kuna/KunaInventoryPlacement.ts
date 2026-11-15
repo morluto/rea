@@ -3,9 +3,9 @@ import {
   readMachoHeaderDeclarations,
   readMachoLoadCommandTableHeader,
 } from "../domain/apple/machoLoadCommands.js";
-import { decodeMachoFixedName } from "../native/AppleMachoNames.js";
+import { decodeMachoFixedName } from "../domain/apple/appleMachoNames.js";
 import { parseFailureFromCause } from "../domain/parseFailure.js";
-import { readMachoCommandNames } from "../native/MachoCommandNames.js";
+import { readMachoCommandNames } from "../domain/apple/machoCommandNames.js";
 import type { KunaInputPrefix } from "./KunaCommand.js";
 import type { KunaInventoryFunction } from "./KunaProjectFiles.js";
 
