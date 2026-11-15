@@ -25,7 +25,7 @@ import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { dispatchQueuedInterrupts } from "../process/queuedInterrupts.js";
 import { finalizedResult, runOwned } from "../providers/runOwned.js";
-import { parseCliJsonInput, resolveCliJsonPaths } from "../cliJsonInput.js";
+import { parseCliJsonInput, resolveCliJsonPaths } from "./cliJsonInput.js";
 import { jsonInputArgument } from "./jsonInputArgument.js";
 import {
   describeContractCommand,

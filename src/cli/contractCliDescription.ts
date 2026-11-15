@@ -14,7 +14,7 @@ import {
 } from "./analysisEvidenceDelivery.js";
 import { parseCliJsonOption } from "./cliJsonOption.js";
 import { getEvidenceInputContract } from "../domain/evidenceInputContract.js";
-import { cliJsonCallerPathSchema } from "../cliJsonInput.js";
+import { cliJsonCallerPathSchema } from "./cliJsonInput.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import { cliDecimalField, cliDecimalShape } from "./options.js";
 import {
