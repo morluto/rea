@@ -161,6 +161,39 @@ describe("compiled CLI JSON document caller paths", () => {
   );
 });
 
+describe("compiled CLI session-target JSON documents", () => {
+  cliTest(
+    "observe-native-calls refuses an invalid document before opening its target",
+    async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-cli-json-target-");
+      const result = await cli.run({
+        arguments: [
+          "observe-native-calls",
+          join(root, "missing-target"),
+          JSON.stringify({ breakpoints: "main" }),
+          "--json",
+        ],
+        environment: {
+          HOME: root,
+          XDG_CONFIG_HOME: root,
+          XDG_CACHE_HOME: root,
+        },
+      });
+      expect(result.json).toMatchObject({
+        error: "Analysis failed",
+        code: "invalid_request",
+        details: {
+          operation: "observe_native_calls",
+          issues: expect.arrayContaining([
+            expect.objectContaining({ path: ["breakpoints"] }),
+          ]),
+        },
+      });
+      expect(result.exitCode).toBe(1);
+    },
+  );
+});
+
 describe("compiled CLI JSON input diagnostic preservation", () => {
   for (const [format, flags] of [
     ["JSON", ["--json"]],

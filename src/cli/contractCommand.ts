@@ -317,6 +317,11 @@ export interface ContractDocumentContext<
   readonly spelled: unknown;
   /** The projection's CLI-only options, whose effect the handler owns. */
   readonly cliOptions: CliOptions;
+  /**
+   * The session target as the caller spelled it, for a projection with
+   * `sessionTarget`; undefined otherwise.
+   */
+  readonly sessionTarget: string | undefined;
 }
 
 const documentDescriptions = new WeakMap<
@@ -379,6 +384,11 @@ export const registerContractDocumentCommand = <
   cli.command(description.command, {
     description: description.description,
     args: z.object({
+      ...(description.sessionTarget === undefined
+        ? {}
+        : {
+            [description.sessionTarget.key]: description.sessionTarget.schema,
+          }),
       [description.key]: jsonInputArgument(
         description.documentDescription,
         description.content,
@@ -414,6 +424,10 @@ export const registerContractDocumentCommand = <
               signal,
               operation: contract.name,
               spelled: decoded.value,
+              sessionTarget:
+                description.sessionTarget === undefined
+                  ? undefined
+                  : args[description.sessionTarget.key],
               cliOptions: description.cliOptionValues(
                 values,
               ) as CliOptionValues<CliOptions>,
