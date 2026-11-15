@@ -11,9 +11,12 @@
   "files": [
     "scripts/lib/mcp-verifier-results.mjs",
     "scripts/lib/real-ghidra-snapshot-lifecycle.mjs",
+    "scripts/lib/verifier-artifact-scope.mjs",
     "scripts/verify-package-evidence.mjs",
     "scripts/verify/javascript/digests.mjs",
-    "scripts/verify/javascript/output.mjs"
+    "scripts/verify/javascript/output.mjs",
+    "scripts/verify/managed/manifest-parser.mjs",
+    "scripts/verify/managed/manifest.mjs"
   ],
   "include": []
 }
