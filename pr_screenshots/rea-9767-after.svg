@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="620" viewBox="0 0 1280 620" role="img" aria-labelledby="title desc">
+  <title id="title">After: web capture record schema requires a nonempty selection</title>
+  <desc id="desc">The CLI schema includes minItems 1 for the optional record array, matching runtime validation.</desc>
+  <rect width="1280" height="620" fill="#101722"/>
+  <rect x="44" y="38" width="1192" height="544" rx="18" fill="#182231" stroke="#34445a" stroke-width="2"/>
+  <circle cx="78" cy="75" r="8" fill="#ff6b6b"/>
+  <circle cx="105" cy="75" r="8" fill="#ffd166"/>
+  <circle cx="132" cy="75" r="8" fill="#06d6a0"/>
+  <text x="170" y="83" fill="#b7c5d8" font-family="Arial, sans-serif" font-size="22">inspect-web-network-capture • issue #9767</text>
+  <text x="84" y="145" fill="#8ea4bd" font-family="Menlo, Consolas, monospace" font-size="22">$ rea inspect-web-network-capture --schema --json</text>
+  <text x="84" y="210" fill="#d9e2ef" font-family="Menlo, Consolas, monospace" font-size="22">"record": {</text>
+  <text x="112" y="252" fill="#9ff0c9" font-family="Menlo, Consolas, monospace" font-size="22">"type": "array",</text>
+  <text x="112" y="294" fill="#9ff0c9" font-family="Menlo, Consolas, monospace" font-size="22">"minItems": 1,</text>
+  <text x="112" y="336" fill="#9ff0c9" font-family="Menlo, Consolas, monospace" font-size="22">"items": { "type": "integer", "minimum": 0 }</text>
+  <text x="84" y="378" fill="#d9e2ef" font-family="Menlo, Consolas, monospace" font-size="22">}</text>
+  <rect x="84" y="422" width="1112" height="70" rx="12" fill="#173a32" stroke="#39b98a"/>
+  <text x="112" y="466" fill="#b8f4d7" font-family="Arial, sans-serif" font-size="24">Advertised schema now matches runtime validation.</text>
+</svg>

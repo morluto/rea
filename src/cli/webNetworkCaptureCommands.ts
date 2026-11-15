@@ -55,6 +55,7 @@ export const registerWebNetworkCaptureCommands = (
         .describe("Fully qualified message type in the descriptor set"),
       record: z
         .array(cliDecimalField(recordOrdinal))
+        .min(1)
         .optional()
         .describe("Zero-based producer ordinals; repeat to select several"),
       ...explicitSensitiveValueOptions,

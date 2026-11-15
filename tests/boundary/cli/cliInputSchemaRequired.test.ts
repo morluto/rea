@@ -734,6 +734,32 @@ describe("Apktool locale selection input schema", () => {
   });
 });
 
+describe("web capture record selection input schema", () => {
+  it("requires at least one record ordinal when selection is supplied", async () => {
+    const cli = createCli({});
+    const advertised = await advertisedSchema(
+      cli,
+      "inspect-web-network-capture",
+    );
+    const parser = parserSchema(cli, "inspect-web-network-capture", "options");
+    if (parser === undefined)
+      throw new Error("Web capture options parser was not registered");
+    expect(advertised.options?.properties.record).toMatchObject({
+      type: "array",
+      minItems: 1,
+    });
+    const validate = new Ajv2020({ strict: false }).compile(
+      advertised.options ?? {},
+    );
+    for (const record of [[], [0], [0, 1]]) {
+      const input = { record };
+      const expected = record.length > 0;
+      expect(parser.safeParse(input).success).toBe(expected);
+      expect(validate(input)).toBe(expected);
+    }
+  });
+});
+
 describe("reference-source outline-depth input schema", () => {
   it("parses decimal CLI tokens into the advertised safe integer schema", async () => {
     const cli = createCli({});
