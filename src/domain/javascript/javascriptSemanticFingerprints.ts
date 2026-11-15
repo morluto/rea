@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import * as t from "@babel/types";
 import { runtimeFunctionParameters } from "./javascriptAstValues.js";
 
@@ -19,6 +17,7 @@ import type {
 import { semanticCallableIdForNode } from "./javascriptSemanticProjection.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 import { traverseJavaScriptAstSteps } from "./javascriptSemanticTraversal.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 interface SemanticFingerprintCollectionInput {
   readonly state: JavaScriptSemanticAnalysisState;
@@ -311,4 +310,4 @@ const isAsyncCallable = (node: t.Node): boolean =>
   t.isFunction(node) && node.async;
 
 const digest = (value: readonly string[]): string =>
-  createHash("sha256").update(JSON.stringify(value)).digest("hex");
+  sha256Hex(JSON.stringify(value));

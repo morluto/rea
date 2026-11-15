@@ -518,6 +518,17 @@ checkCounted(
   ["src/kernel/byteToHex.ts"],
 );
 
+// A one-shot SHA-256 hex digest of an in-memory value has one owner,
+// src/kernel/sha256Hex.ts. Incremental and streamed hashing (a Hash updated
+// more than once) is not counted.
+checkCounted(
+  "one-shot SHA-256 hex digest (use sha256Hex from src/kernel/sha256Hex)",
+  "inline-sha256-hex",
+  files,
+  /createHash\(\s*"sha256"\s*\)\s*\.update\((?:[^()]|\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\))*\)\s*\.digest\(\s*"hex"\s*\)/gu,
+  ["src/kernel/sha256Hex.ts"],
+);
+
 // Strict UTF-8 decoding has one owner, src/domain/strictUtf8.ts, which makes
 // each site state its byte-order-mark policy. A local fatal decoder silently
 // strips a leading BOM unless it remembers ignoreBOM. The pattern matches the
