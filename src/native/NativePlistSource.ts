@@ -332,6 +332,7 @@ export const readNativePlistBytes = (
       throw new ArtifactReaderFailure(
         "integrity",
         `Selected plist changed during read: ${input.selection.path}`,
+        { integrityCheck: "container-identity" },
       );
     assertArtifactReadActive(input.signal);
     return bytes;
