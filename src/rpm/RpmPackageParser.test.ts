@@ -10,6 +10,7 @@ import {
   encodeRpmPackage,
   rpmBinaryPackageFixture,
   rpmGroupedTriggerFixture,
+  rpmInt32PreinFixture,
   rpmOutOfBoundsIndexFixture,
   rpmSourcePackageFixture,
   rpmSparsePackageFixture,
@@ -373,6 +374,57 @@ it("reports a short lead as truncated rather than malformed", () => {
       observed: { lead: { magic: "edabeedb" } },
     });
   }
+});
+
+const malformedRefusal = (bytes: Buffer): ParseFailureError => {
+  try {
+    parse(bytes);
+  } catch (cause) {
+    if (cause instanceof ParseFailureError) return cause;
+    throw cause;
+  }
+  throw new Error("expected a malformed refusal");
+};
+
+it("refuses an in-bounds PREIN stored as INT32 instead of dropping the scriptlet", () => {
+  const cause = malformedRefusal(rpmInt32PreinFixture());
+  expect(cause.failure).toMatchObject({
+    kind: "malformed",
+    format: "rpm",
+    field: "main tag 1023",
+    observed: { signature: { size: 256 } },
+  });
+  expect(cause.message).toMatch(
+    /tag 1023 \(PREIN\) is stored as INT32; expected STRING/u,
+  );
+});
+
+it("refuses a fixed-count tag whose stored count differs", () => {
+  const epoch = malformedRefusal(
+    encodeRpmPackage({
+      headerTags: [
+        { tag: RPM_TAG.name, type: RPM_TYPE.string, string: "twoepochs" },
+        { tag: RPM_TAG.epoch, type: RPM_TYPE.int32, int32: [1, 2] },
+      ],
+    }),
+  );
+  expect(epoch.failure).toMatchObject({
+    kind: "malformed",
+    field: "main tag 1003",
+  });
+  expect(epoch.message).toMatch(/\(EPOCH\) has count 2; expected 1/u);
+  const md5 = malformedRefusal(
+    encodeRpmPackage({
+      signatureTags: [
+        { tag: RPM_SIG_TAG.md5, type: RPM_TYPE.bin, bin: Buffer.alloc(8) },
+      ],
+    }),
+  );
+  expect(md5.failure).toMatchObject({
+    kind: "malformed",
+    field: "signature tag 1004",
+  });
+  expect(md5.message).toMatch(/\(SIG_MD5\) has count 8; expected 16/u);
 });
 
 it("refuses an index entry that leaves the data store", () => {

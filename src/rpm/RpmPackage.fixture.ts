@@ -449,6 +449,21 @@ export const rpmUtf8PackageFixture = (): Buffer =>
     ],
   });
 
+/** In-bounds PREIN stored as INT32 rather than the STRING its reader requires. */
+export const rpmInt32PreinFixture = (): Buffer =>
+  encodeRpmPackage({
+    headerTags: [
+      { tag: RPM_TAG.name, type: RPM_TYPE.string, string: "mistyped" },
+      { tag: RPM_TAG.prein, type: RPM_TYPE.int32, int32: [0x6563686f] },
+      {
+        tag: RPM_TAG.preinProg,
+        type: RPM_TYPE.stringArray,
+        strings: ["/bin/sh"],
+      },
+      { tag: RPM_TAG.payloadFormat, type: RPM_TYPE.string, string: "cpio" },
+    ],
+  });
+
 /** Header whose first index entry points past the data store. */
 export const rpmOutOfBoundsIndexFixture = (): Buffer =>
   encodeRpmPackage({

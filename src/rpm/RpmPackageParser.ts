@@ -359,6 +359,172 @@ const decodeEntry = (store: BinaryReader, entry: IndexEntry): HeaderValue => {
   }
 };
 
+/** The stored types and, where fixed, the count each read tag must have. */
+interface TagSpec {
+  readonly name: string;
+  readonly types: readonly number[];
+  readonly count?: number;
+}
+
+const TYPE_NAMES: Readonly<Record<number, string>> = {
+  [RPM_TYPE.null]: "NULL",
+  [RPM_TYPE.char]: "CHAR",
+  [RPM_TYPE.int8]: "INT8",
+  [RPM_TYPE.int16]: "INT16",
+  [RPM_TYPE.int32]: "INT32",
+  [RPM_TYPE.int64]: "INT64",
+  [RPM_TYPE.string]: "STRING",
+  [RPM_TYPE.bin]: "BIN",
+  [RPM_TYPE.stringArray]: "STRING_ARRAY",
+  [RPM_TYPE.i18nString]: "I18NSTRING",
+};
+
+const typeName = (type: number): string =>
+  TYPE_NAMES[type] ?? `type ${String(type)}`;
+
+const oneString = (name: string): TagSpec => ({
+  name,
+  types: [RPM_TYPE.string],
+  count: 1,
+});
+// rpm itself reads an I18NSTRING tag stored as a plain STRING.
+const i18nString = (name: string): TagSpec => ({
+  name,
+  types: [RPM_TYPE.i18nString, RPM_TYPE.string],
+});
+const stringList = (name: string): TagSpec => ({
+  name,
+  types: [RPM_TYPE.stringArray],
+});
+// Older rpm stored scriptlet interpreters as STRING, newer as STRING_ARRAY.
+const program = (name: string): TagSpec => ({
+  name,
+  types: [RPM_TYPE.string, RPM_TYPE.stringArray],
+});
+const oneInt32 = (name: string): TagSpec => ({
+  name,
+  types: [RPM_TYPE.int32],
+  count: 1,
+});
+const int32List = (name: string): TagSpec => ({
+  name,
+  types: [RPM_TYPE.int32],
+});
+const binary = (name: string, count?: number): TagSpec => ({
+  name,
+  types: [RPM_TYPE.bin],
+  ...(count === undefined ? {} : { count }),
+});
+
+/** Every main-header tag this parser reads. */
+const MAIN_TAG_SPECS: ReadonlyMap<number, TagSpec> = new Map([
+  [RPM_TAG.name, oneString("NAME")],
+  [RPM_TAG.version, oneString("VERSION")],
+  [RPM_TAG.release, oneString("RELEASE")],
+  [RPM_TAG.epoch, oneInt32("EPOCH")],
+  [RPM_TAG.summary, i18nString("SUMMARY")],
+  [RPM_TAG.buildTime, oneInt32("BUILDTIME")],
+  [RPM_TAG.buildHost, oneString("BUILDHOST")],
+  [RPM_TAG.vendor, oneString("VENDOR")],
+  [RPM_TAG.license, oneString("LICENSE")],
+  [RPM_TAG.packager, oneString("PACKAGER")],
+  [RPM_TAG.url, oneString("URL")],
+  [RPM_TAG.os, oneString("OS")],
+  [RPM_TAG.arch, oneString("ARCH")],
+  [RPM_TAG.sourceRpm, oneString("SOURCERPM")],
+  [RPM_TAG.prein, oneString("PREIN")],
+  [RPM_TAG.postin, oneString("POSTIN")],
+  [RPM_TAG.preun, oneString("PREUN")],
+  [RPM_TAG.postun, oneString("POSTUN")],
+  [RPM_TAG.pretrans, oneString("PRETRANS")],
+  [RPM_TAG.posttrans, oneString("POSTTRANS")],
+  [RPM_TAG.preinProg, program("PREINPROG")],
+  [RPM_TAG.postinProg, program("POSTINPROG")],
+  [RPM_TAG.preunProg, program("PREUNPROG")],
+  [RPM_TAG.postunProg, program("POSTUNPROG")],
+  [RPM_TAG.pretransProg, program("PRETRANSPROG")],
+  [RPM_TAG.posttransProg, program("POSTTRANSPROG")],
+  [RPM_TAG.triggerScripts, stringList("TRIGGERSCRIPTS")],
+  [RPM_TAG.triggerName, stringList("TRIGGERNAME")],
+  [RPM_TAG.triggerIndex, int32List("TRIGGERINDEX")],
+  [RPM_TAG.triggerScriptProg, stringList("TRIGGERSCRIPTPROG")],
+  [RPM_TAG.fileSizes, int32List("FILESIZES")],
+  [RPM_TAG.fileModes, { name: "FILEMODES", types: [RPM_TYPE.int16] }],
+  [RPM_TAG.fileDigests, stringList("FILEDIGESTS")],
+  [RPM_TAG.fileFlags, int32List("FILEFLAGS")],
+  [RPM_TAG.fileUserName, stringList("FILEUSERNAME")],
+  [RPM_TAG.fileGroupName, stringList("FILEGROUPNAME")],
+  [RPM_TAG.fileDigestAlgo, oneInt32("FILEDIGESTALGO")],
+  [RPM_TAG.dirIndexes, int32List("DIRINDEXES")],
+  [RPM_TAG.baseNames, stringList("BASENAMES")],
+  [RPM_TAG.dirNames, stringList("DIRNAMES")],
+  [RPM_TAG.provideName, stringList("PROVIDENAME")],
+  [RPM_TAG.provideFlags, int32List("PROVIDEFLAGS")],
+  [RPM_TAG.provideVersion, stringList("PROVIDEVERSION")],
+  [RPM_TAG.requireName, stringList("REQUIRENAME")],
+  [RPM_TAG.requireFlags, int32List("REQUIREFLAGS")],
+  [RPM_TAG.requireVersion, stringList("REQUIREVERSION")],
+  [RPM_TAG.conflictName, stringList("CONFLICTNAME")],
+  [RPM_TAG.conflictFlags, int32List("CONFLICTFLAGS")],
+  [RPM_TAG.conflictVersion, stringList("CONFLICTVERSION")],
+  [RPM_TAG.obsoleteName, stringList("OBSOLETENAME")],
+  [RPM_TAG.obsoleteFlags, int32List("OBSOLETEFLAGS")],
+  [RPM_TAG.obsoleteVersion, stringList("OBSOLETEVERSION")],
+  [RPM_TAG.recommendName, stringList("RECOMMENDNAME")],
+  [RPM_TAG.recommendFlags, int32List("RECOMMENDFLAGS")],
+  [RPM_TAG.recommendVersion, stringList("RECOMMENDVERSION")],
+  [RPM_TAG.suggestName, stringList("SUGGESTNAME")],
+  [RPM_TAG.suggestFlags, int32List("SUGGESTFLAGS")],
+  [RPM_TAG.suggestVersion, stringList("SUGGESTVERSION")],
+  [RPM_TAG.supplementName, stringList("SUPPLEMENTNAME")],
+  [RPM_TAG.supplementFlags, int32List("SUPPLEMENTFLAGS")],
+  [RPM_TAG.supplementVersion, stringList("SUPPLEMENTVERSION")],
+  [RPM_TAG.enhanceName, stringList("ENHANCENAME")],
+  [RPM_TAG.enhanceFlags, int32List("ENHANCEFLAGS")],
+  [RPM_TAG.enhanceVersion, stringList("ENHANCEVERSION")],
+  [RPM_TAG.payloadFormat, oneString("PAYLOADFORMAT")],
+  [RPM_TAG.payloadCompressor, oneString("PAYLOADCOMPRESSOR")],
+  [RPM_TAG.payloadFlags, oneString("PAYLOADFLAGS")],
+  [RPM_TAG.payloadDigest, stringList("PAYLOADDIGEST")],
+  [RPM_TAG.payloadDigestAlgo, oneInt32("PAYLOADDIGESTALGO")],
+]);
+
+/** Every signature-header tag this parser reads. */
+const SIGNATURE_TAG_SPECS: ReadonlyMap<number, TagSpec> = new Map([
+  [RPM_SIG_TAG.size, oneInt32("SIG_SIZE")],
+  [RPM_SIG_TAG.md5, binary("SIG_MD5", 16)],
+  [RPM_SIG_TAG.pgp, binary("SIG_PGP")],
+  [RPM_SIG_TAG.gpg, binary("SIG_GPG")],
+  [RPM_SIG_TAG.rsaHeader, binary("RSAHEADER")],
+  [RPM_SIG_TAG.dsaHeader, binary("DSAHEADER")],
+  [RPM_SIG_TAG.sha1Header, oneString("SHA1HEADER")],
+  [RPM_SIG_TAG.sha256Header, oneString("SHA256HEADER")],
+  [RPM_TAG.payloadDigest, stringList("PAYLOADDIGEST")],
+  [RPM_TAG.payloadDigestAlgo, oneInt32("PAYLOADDIGESTALGO")],
+]);
+
+/** Refuse a read tag whose stored type or count cannot carry its meaning. */
+const checkTagSpec = (
+  entry: IndexEntry,
+  specs: ReadonlyMap<number, TagSpec>,
+  label: "signature" | "main",
+  at: number,
+): void => {
+  const spec = specs.get(entry.tag);
+  if (spec === undefined) return;
+  const field = `${label} tag ${String(entry.tag)}`;
+  if (!spec.types.includes(entry.type))
+    fail(
+      `RPM ${label} header tag ${String(entry.tag)} (${spec.name}) is stored as ${typeName(entry.type)}; expected ${spec.types.map(typeName).join(" or ")}.`,
+      { offset: at, field },
+    );
+  if (spec.count !== undefined && entry.count !== spec.count)
+    fail(
+      `RPM ${label} header tag ${String(entry.tag)} (${spec.name}) has count ${String(entry.count)}; expected ${String(spec.count)}.`,
+      { offset: at, field },
+    );
+};
+
 const parseHeader = (
   reader: BinaryReader,
   start: number,
@@ -420,6 +586,12 @@ const parseHeader = (
         );
       continue;
     }
+    checkTagSpec(
+      entry,
+      label === "main" ? MAIN_TAG_SPECS : SIGNATURE_TAG_SPECS,
+      label,
+      at,
+    );
     if (values.has(entry.tag)) continue;
     values.set(entry.tag, decodeEntry(store, entry));
   }
@@ -433,14 +605,25 @@ const parseHeader = (
   };
 };
 
+/**
+ * Tag specs are checked before any getter runs, so a present value of another
+ * kind is a parser defect; refuse it rather than report the tag as missing.
+ */
+const unexpectedKind = (tag: number, value: HeaderValue): never =>
+  fail(
+    `RPM tag ${String(tag)} decoded as ${value.kind}, which its reader does not accept.`,
+    { field: `tag ${String(tag)}` },
+  );
+
 const stringValue = (
   header: DecodedHeader,
   tag: number,
 ): string | undefined => {
   const value = header.values.get(tag);
-  if (value?.kind === "string") return value.value;
-  if (value?.kind === "strings") return value.values[0];
-  return undefined;
+  if (value === undefined) return undefined;
+  if (value.kind === "string") return value.value;
+  if (value.kind === "strings") return value.values[0];
+  return unexpectedKind(tag, value);
 };
 
 /** Decoded text plus its stored UTF-8 byte length, for byte-count reporting. */
@@ -454,11 +637,11 @@ const storedString = (
   tag: number,
 ): StoredString | undefined => {
   const value = header.values.get(tag);
-  if (value?.kind === "string")
-    return { text: value.value, bytes: value.bytes };
-  if (value?.kind === "strings" && value.values.length > 0)
+  if (value === undefined) return undefined;
+  if (value.kind === "string") return { text: value.value, bytes: value.bytes };
+  if (value.kind === "strings")
     return { text: value.values[0]!, bytes: value.bytes[0]! };
-  return undefined;
+  return unexpectedKind(tag, value);
 };
 
 const storedStrings = (
@@ -466,14 +649,15 @@ const storedStrings = (
   tag: number,
 ): readonly StoredString[] | undefined => {
   const value = header.values.get(tag);
-  if (value?.kind === "strings")
+  if (value === undefined) return undefined;
+  if (value.kind === "strings")
     return value.values.map((text, index) => ({
       text,
       bytes: value.bytes[index]!,
     }));
-  if (value?.kind === "string")
+  if (value.kind === "string")
     return [{ text: value.value, bytes: value.bytes }];
-  return undefined;
+  return unexpectedKind(tag, value);
 };
 
 const stringArray = (
@@ -481,15 +665,17 @@ const stringArray = (
   tag: number,
 ): readonly string[] | undefined => {
   const value = header.values.get(tag);
-  if (value?.kind === "strings") return value.values;
-  if (value?.kind === "string") return [value.value];
-  return undefined;
+  if (value === undefined) return undefined;
+  if (value.kind === "strings") return value.values;
+  if (value.kind === "string") return [value.value];
+  return unexpectedKind(tag, value);
 };
 
 const intValue = (header: DecodedHeader, tag: number): number | undefined => {
   const value = header.values.get(tag);
-  if (value?.kind === "ints") return value.values[0];
-  return undefined;
+  if (value === undefined) return undefined;
+  if (value.kind === "ints") return value.values[0];
+  return unexpectedKind(tag, value);
 };
 
 const intArray = (
@@ -497,14 +683,16 @@ const intArray = (
   tag: number,
 ): readonly number[] | undefined => {
   const value = header.values.get(tag);
-  if (value?.kind === "ints") return value.values;
-  return undefined;
+  if (value === undefined) return undefined;
+  if (value.kind === "ints") return value.values;
+  return unexpectedKind(tag, value);
 };
 
 const binValue = (header: DecodedHeader, tag: number): Buffer | undefined => {
   const value = header.values.get(tag);
-  if (value?.kind === "bin") return value.value;
-  return undefined;
+  if (value === undefined) return undefined;
+  if (value.kind === "bin") return value.value;
+  return unexpectedKind(tag, value);
 };
 
 const comparison = (flags: number): RpmDependencyComparison | null => {
@@ -837,10 +1025,6 @@ const signatureObservation = (
   padBytes: number,
 ) => {
   const md5 = binValue(signatureHeader, RPM_SIG_TAG.md5);
-  if (md5 !== undefined && md5.length !== 16)
-    fail("RPM MD5 signature tag is not 16 bytes.", {
-      field: "signature md5",
-    });
   const blobs = [
     signatureBlob(signatureHeader, RPM_SIG_TAG.pgp, "pgp"),
     signatureBlob(signatureHeader, RPM_SIG_TAG.gpg, "gpg"),

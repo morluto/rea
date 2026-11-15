@@ -68,7 +68,10 @@ index entries default to 4096 (65536 maximum), file-inventory rows default to
 (16 MiB maximum) when requested. Exceeding a budget fails without treating the
 count as zero or silently truncating.
 
-Malformed or truncated headers fail with typed refusals. Safely read lead and
+Malformed or truncated headers fail with typed refusals. A tag the report reads
+that is stored with another type or a different fixed count (for example a
+`PREIN` stored as `INT32`, or a two-value `EPOCH`) is refused as malformed
+rather than reported as missing. Safely read lead and
 signature facts stay in `issues[].observed`. A completed file snapshot remains
 available as a `file-snapshot-hash` partial observation. Foreign magic is
 `unsupported_target`, not a successful parse.
