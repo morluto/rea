@@ -1,7 +1,5 @@
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
-import { z } from "incur";
-
-import { compareManagedMemberPaths } from "../application/managed/ManagedMemberComparisonService.js";
+import { executeManagedMemberComparison } from "../application/managed/ManagedMemberComparisonService.js";
 import { executeManagedNativeBoundaries } from "../application/managed/ManagedNativeVerificationService.js";
 import { importManagedReconstructionEvidence } from "../application/managed/ManagedReconstructionService.js";
 import { projectManagedApplicationGraphEvidence } from "../application/managed/ManagedApplicationGraphService.js";
@@ -11,48 +9,33 @@ import { contractNamed } from "./contractCliDescription.js";
 import {
   registerContractCommand,
   registerContractDocumentCommand,
+  runOnEvidenceTargets,
   runOnSessionTarget,
 } from "./contractCommand.js";
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { MANAGED_STATIC_PROVIDER } from "../domain/investigationProviders.js";
 import { ok } from "../domain/result.js";
 import {
   evidenceBundleOption,
   runEvidenceInputCommand,
 } from "./evidenceInputCommand.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
-import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
-import {
-  MANAGED_TOOL_CONTRACTS,
-  managedMembersInputSchema,
-} from "../contracts/managed/managedToolContracts.js";
-import { localPathStringSchema } from "../domain/localPath.js";
-import { withCommandCancellation } from "./commandCancellation.js";
-import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
-import { managedInspectionBudgetShape } from "../domain/managed/managedInspectionLimits.js";
-import { cliDecimalField } from "./options.js";
-
-const managedBudgetOptions = {
-  maxSnapshotBytes: cliDecimalField(
-    managedInspectionBudgetShape.max_snapshot_bytes,
-  ),
-  maxMetadataRepresentationBytes: cliDecimalField(
-    managedInspectionBudgetShape.max_metadata_representation_bytes,
-  ),
-};
+import { MANAGED_TOOL_CONTRACTS } from "../contracts/managed/managedToolContracts.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 
 export const registerManagedCommands = (
   cli: CliInstance,
   logger: Logger,
-  runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
+  {
+    runProviderAnalysis,
+    runManagedProviderEvidence,
+  }: Pick<DirectAnalysis, "runProviderAnalysis" | "runManagedProviderEvidence">,
 ): void => {
   registerInspectManagedArtifact(cli, logger, runProviderAnalysis);
   registerInspectManagedMembers(cli, logger, runProviderAnalysis);
   registerInspectManagedNativeBoundaries(cli, logger, runProviderAnalysis);
-  registerCompareManagedMembers(cli, logger);
+  registerCompareManagedMembers(cli, logger, runManagedProviderEvidence);
   registerManagedWorkflowCommands(cli, logger);
 };
 
@@ -127,67 +110,76 @@ const registerInspectManagedNativeBoundaries = (
   );
 };
 
-const compareManagedMemberArgs = z.object({
-  leftPath: localPathStringSchema.describe(
-    "Baseline managed PE executable or assembly",
-  ),
-  rightPath: localPathStringSchema.describe(
-    "Candidate managed PE executable or assembly",
-  ),
-});
-
+/**
+ * Inspect both artifacts as inspect-managed-members would, with the same
+ * inspection options, then compare that Evidence.
+ */
 const registerCompareManagedMembers = (
   cli: CliInstance,
   logger: Logger,
+  runManagedProviderEvidence: DirectAnalysis["runManagedProviderEvidence"],
 ): void => {
-  cli.command(CLI_COMMANDS.compareManagedMembers, {
-    description:
-      "Compare managed PE/CLI member inventories by exact declared type, name, and signature; names alone never form a match",
-    args: compareManagedMemberArgs,
-    options: z.object({
-      ...managedBudgetOptions,
-      type: managedMembersInputSchema.shape.type_names.describe(
-        "Compare only members declared by this exact type full name on both sides, as selected by inspect-managed-members --type; use it when a whole-assembly comparison exceeds capacity (repeatable)",
-      ),
-    }),
-    run: ({ args, options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, "compare-managed-members", async () => {
-          const resources = new ArtifactResourceScope();
-          const result = await finishAnalysisCommand(
-            () =>
-              compareManagedMemberPaths(
-                {
-                  leftPath: args.leftPath,
-                  rightPath: args.rightPath,
-                  ...(options.maxSnapshotBytes === undefined
-                    ? {}
-                    : { maxSnapshotBytes: options.maxSnapshotBytes }),
-                  ...(options.maxMetadataRepresentationBytes === undefined
-                    ? {}
-                    : {
-                        maxRepresentationBytes:
-                          options.maxMetadataRepresentationBytes,
-                      }),
-                  ...(options.type === undefined
-                    ? {}
-                    : { typeNames: options.type }),
-                },
-                {},
-                resources,
-              ),
-            resources,
-            MANAGED_STATIC_PROVIDER.id,
-            "compare_managed_members",
-            signal,
-            "Managed member comparison resources",
-          );
-          return result.ok
-            ? result.value
-            : { error: "Managed member comparison failed", ...result.error };
-        }),
-      ),
-  });
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(MANAGED_WORKFLOW_TOOL_CONTRACTS, "compare_managed_members"),
+    {
+      command: CLI_COMMANDS.compareManagedMembers,
+      description:
+        "Compare managed PE/CLI member inventories by exact declared type, name, and signature; names alone never form a match",
+      evidenceTargets: {
+        fields: {
+          left: {
+            name: "leftPath",
+            description: "Baseline managed PE executable or assembly",
+          },
+          right: {
+            name: "rightPath",
+            description: "Candidate managed PE executable or assembly",
+          },
+        },
+        source: {
+          contract: contractNamed(
+            MANAGED_TOOL_CONTRACTS,
+            "inspect_managed_members",
+          ),
+          fields: {
+            type_names: {
+              name: "type",
+              description:
+                "Compare only members declared by this exact type full name on both sides, as selected by inspect-managed-members --type; use it when a whole-assembly comparison exceeds capacity (repeatable)",
+            },
+            max_snapshot_bytes: {},
+            max_metadata_representation_bytes: {},
+          },
+        },
+      },
+    },
+    runOnEvidenceTargets(
+      (target, parameters, signal) =>
+        runManagedProviderEvidence(
+          target,
+          "inspect_managed_members",
+          parameters,
+          signal,
+        ),
+      (input, { evidenceTargets, opening, signal }) => {
+        const pathOf = (side: string) =>
+          evidenceTargets.targets.find(({ field }) => field === side)!.target;
+        const compared = executeManagedMemberComparison(input, undefined, {
+          signal,
+          selection: {
+            leftPath: pathOf("left"),
+            rightPath: pathOf("right"),
+            inspection: opening as Readonly<Record<string, JsonValue>>,
+          },
+        });
+        return Promise.resolve(
+          compared.ok ? ok(compared.value.evidence) : compared,
+        );
+      },
+    ),
+  );
 };
 
 /** Managed Evidence workflows, each taking its contract input as one JSON document. */
