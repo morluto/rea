@@ -3,7 +3,11 @@ import { lstat } from "node:fs/promises";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import type { ClientRootContext } from "./ClientConfigRoots.js";
-import type { SetupClient, SupportedClientName } from "./SupportedClients.js";
+import {
+  clientEvidencePaths,
+  type SetupClient,
+  type SupportedClientName,
+} from "./SupportedClients.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import type { ClientInlineConfiguration } from "./ClientConfigurationDocument.js";
 
@@ -45,7 +49,10 @@ export const fromSetup =
         `The registration catalog has no path owner for ${name}.`,
       );
     if (client.configPathError !== undefined)
-      throw new ConfigurationError(client.configPathError);
+      throw (
+        client.configPathFailure ??
+        new ConfigurationError(client.configPathError)
+      );
     return {
       configPath: selectedPath(client.configPath, context),
       ...(client.configPaths === undefined
@@ -55,7 +62,13 @@ export const fromSetup =
               selectedPath(path, context),
             ),
           }),
-      markers: [selectedPath(client.markerPath ?? client.configPath, context)],
+      ...(client.inlineConfiguration === undefined
+        ? {}
+        : { inlineConfiguration: client.inlineConfiguration }),
+      // Setup's detection evidence, so both commands find the same clients.
+      markers: clientEvidencePaths(client).map((path) =>
+        selectedPath(path, context),
+      ),
     };
   };
 

@@ -38,6 +38,11 @@ import {
   type MsixPackageView,
   windowsAppDataRoots,
 } from "./MsixPackageStorage.js";
+import { kiloProjectLocation } from "./McpRegistrationKiloLocations.js";
+import type {
+  McpRegistrationLocation,
+  McpRegistrationLocationContext,
+} from "./McpRegistrationLocations.js";
 
 /** One supported client configuration location. */
 export interface SetupClient {
@@ -62,6 +67,8 @@ export interface SetupClient {
   readonly junieSettings?: JunieLocationSettings;
   /** Unresolved path evidence only; consumers must not perform I/O on it. */
   readonly configPathError?: string;
+  /** The access failure behind `configPathError`, when one was observed. */
+  readonly configPathFailure?: ConfigurationError;
   /** Same-scope fallback ZCode stops loading after its first native server. */
   readonly zcodeFallbackPath?: string;
   readonly markerPath?: string;
@@ -121,6 +128,8 @@ interface ClientPathFailure {
   readonly path: string;
   readonly message: string;
   readonly msixPackage?: MsixPackageView;
+  /** The access failure that left the path unresolved, with its cause. */
+  readonly failure?: ConfigurationError;
 }
 
 type ClientPathResult = Result<string, ClientPathFailure>;
@@ -183,14 +192,25 @@ type ClientDefinitionLocation =
  * The registration itself uses this row's location, format, profile and
  * read-scope facts, so both commands share one definition.
  */
-interface McpAddExposure {
+type McpAddExposure = {
   /** add-mcp agent aliases that select this client. */
   readonly aliases?: readonly string[];
-  /** Project documents in native precedence; absent means global-only. */
-  readonly projectPaths?: readonly [string, ...string[]];
   /** Dialect of the project document when it differs from the user one. */
   readonly projectFormat?: ClientConfigurationFormat;
-}
+} & (
+  | {
+      /** Project documents in native precedence; absent means global-only. */
+      readonly projectPaths?: readonly [string, ...string[]];
+      readonly projectLocation?: undefined;
+    }
+  | {
+      /** A project location only an asynchronous probe can decide. */
+      readonly projectLocation: (
+        context: McpRegistrationLocationContext,
+      ) => Promise<McpRegistrationLocation>;
+      readonly projectPaths?: undefined;
+    }
+);
 
 interface ClientDefinitionBase {
   readonly name: string;
@@ -1066,6 +1086,7 @@ const kiloLayeredLocation = async (
       return err({
         path: kiloDefaultLocation(kilo).markerPath,
         message: cause.message,
+        failure: cause,
       });
     return err(kiloPathFailure(cause));
   }
@@ -1797,6 +1818,10 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
       stdio: [{ kind: "required-enum", field: "type", values: ["local"] }],
     },
     displayName: "Kilo Code",
+    mcpAdd: {
+      aliases: ["kilo", "kilocode"],
+      projectLocation: kiloProjectLocation,
+    },
     location: kiloLocation,
     configPaths: kiloCandidatePaths,
     discoveryPaths: kiloDiscoveryPaths,
@@ -2056,6 +2081,9 @@ export const resolveSupportedClients = async (
             ...row,
             configPath: location.error.path,
             configPathError: location.error.message,
+            ...(location.error.failure === undefined
+              ? {}
+              : { configPathFailure: location.error.failure }),
           };
     }),
   );

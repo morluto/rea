@@ -1,7 +1,3 @@
-import {
-  kiloLocation,
-  kiloProjectLocation,
-} from "./McpRegistrationKiloLocations.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
@@ -21,10 +17,7 @@ import {
   type SupportedClientName,
 } from "./SupportedClients.js";
 import { redirectedWriteBlocker } from "./MsixPackageStorage.js";
-import type {
-  ClientRegistrationConnectionProfile,
-  ClientRegistrationProfile,
-} from "./ClientRegistrationProfile.js";
+import type { ClientRegistrationProfile } from "./ClientRegistrationProfile.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
   selectedPath,
@@ -32,140 +25,83 @@ import {
   present,
   fixedProjectLocation,
   type McpRegistrationLocationContext,
-  type McpRegistrationGlobalLocation,
   type McpRegistrationLocation,
 } from "./McpRegistrationLocations.js";
-
-/**
- * A client `rea mcp add` knows but the client table does not yet hold. Its
- * facts are declared here until it joins that table; every other client
- * projects its table row.
- */
-interface RegistrationOnlyDescriptor {
-  readonly kind: "registration-only";
-  readonly displayName: string;
-  readonly format: ClientConfigurationFormat;
-  readonly aliases?: readonly string[];
-  readonly globalLocation: (
-    context: McpRegistrationLocationContext,
-  ) => Promise<McpRegistrationGlobalLocation>;
-  readonly projectLocation?: (
-    context: McpRegistrationLocationContext,
-  ) => Promise<McpRegistrationLocation>;
-  readonly registrationConnection: ClientRegistrationConnectionProfile;
-}
-
-/** An add-mcp agent backed by one client-table row. */
-interface TableClient {
-  readonly kind: "client";
-  readonly name: SupportedClientName;
-}
-
-const tableClient = <const Name extends SupportedClientName>(
-  name: Name,
-): TableClient & { readonly name: Name } => ({ kind: "client", name });
-
-type CatalogEntry = TableClient | RegistrationOnlyDescriptor;
 
 /** The facts registration needs, from the client's single owner. */
 interface ClientDescriptor {
   readonly displayName: string;
   readonly format: ClientConfigurationFormat;
   readonly aliases: readonly string[];
-  readonly globalLocation: (
-    context: McpRegistrationLocationContext,
-  ) => Promise<McpRegistrationGlobalLocation>;
   readonly projectLocation?: (
     context: McpRegistrationLocationContext,
   ) => Promise<McpRegistrationLocation>;
   readonly projectFormat?: ClientConfigurationFormat;
   readonly registrationProfile: ClientRegistrationProfile;
-  readonly setupName?: SupportedClientName;
+  readonly setupName: SupportedClientName;
 }
 
 /**
  * Reviewed add-mcp 2.6.1 agent ids plus Incur's separate Amp contract, in
- * add-mcp's order. Table-backed agents carry only their row name; the row owns
- * the location, format, profile, aliases, project documents and read scope.
+ * add-mcp's order, each naming its client-table row. The row owns the
+ * location, format, profile, aliases, project location and read scope.
  */
 export const MCP_REGISTRATION_CLIENTS = {
-  antigravity: tableClient("antigravity"),
-  cline: tableClient("cline_vscode"),
-  "cline-cli": tableClient("cline"),
-  "claude-code": tableClient("claude_code"),
-  "claude-desktop": tableClient("claude_desktop"),
-  codex: tableClient("codex"),
-  cursor: tableClient("cursor"),
-  "factory-droid": tableClient("droid"),
-  fx: tableClient("fx"),
-  "gemini-cli": tableClient("gemini_cli"),
-  goose: tableClient("goose"),
-  "github-copilot-cli": tableClient("copilot_cli"),
-  "grok-build": tableClient("grok_build"),
-  hermes: tableClient("hermes"),
-  junie: tableClient("junie"),
-  "kilo-code": {
-    kind: "registration-only",
-    displayName: "Kilo Code",
-    format: "kilo",
-    aliases: ["kilo", "kilocode"],
-    globalLocation: kiloLocation,
-    projectLocation: kiloProjectLocation,
-    registrationConnection: {
-      kind: "flat",
-      fields: ["url"],
-      stdio: [{ kind: "required-enum", field: "type", values: ["local"] }],
-    },
-  },
-  "kimi-code": tableClient("kimi"),
-  "kiro-cli": tableClient("kiro"),
-  mastracode: tableClient("mastracode"),
-  mcporter: tableClient("mcporter"),
-  opencode: tableClient("opencode"),
-  pi: tableClient("pi"),
-  vscode: tableClient("vscode"),
-  windsurf: tableClient("windsurf"),
-  zed: tableClient("zed"),
-  amp: tableClient("amp"),
-} as const satisfies Record<string, CatalogEntry>;
+  antigravity: "antigravity",
+  cline: "cline_vscode",
+  "cline-cli": "cline",
+  "claude-code": "claude_code",
+  "claude-desktop": "claude_desktop",
+  codex: "codex",
+  cursor: "cursor",
+  "factory-droid": "droid",
+  fx: "fx",
+  "gemini-cli": "gemini_cli",
+  goose: "goose",
+  "github-copilot-cli": "copilot_cli",
+  "grok-build": "grok_build",
+  hermes: "hermes",
+  junie: "junie",
+  "kilo-code": "kilo",
+  "kimi-code": "kimi",
+  "kiro-cli": "kiro",
+  mastracode: "mastracode",
+  mcporter: "mcporter",
+  opencode: "opencode",
+  pi: "pi",
+  vscode: "vscode",
+  windsurf: "windsurf",
+  zed: "zed",
+  amp: "amp",
+} as const satisfies Record<string, SupportedClientName>;
 
 export type McpRegistrationClientId = keyof typeof MCP_REGISTRATION_CLIENTS;
 
 const isClientId = (value: string): value is McpRegistrationClientId =>
   Object.hasOwn(MCP_REGISTRATION_CLIENTS, value);
 
-/** Project one agent's facts from its owner: the table row, or its pending descriptor. */
+/** Project one agent's facts from its client-table row. */
 const clientDescriptor = (id: McpRegistrationClientId): ClientDescriptor => {
-  const entry: CatalogEntry = MCP_REGISTRATION_CLIENTS[id];
-  if (entry.kind === "registration-only") {
-    const { registrationConnection, ...facts } = entry;
-    return {
-      aliases: [],
-      ...facts,
-      // Pending clients bind their add-mcp id as the native identity.
-      registrationProfile: {
-        nativeClient: id,
-        connection: registrationConnection,
-      },
-    };
-  }
-  const row = supportedClientDefinition(entry.name);
+  const name: SupportedClientName = MCP_REGISTRATION_CLIENTS[id];
+  const row = supportedClientDefinition(name);
   if (row.format === "unsupported")
     throw new Error(`${row.name} has no registration format`);
   const projectPaths = row.mcpAdd?.projectPaths;
+  const projectLocation =
+    row.mcpAdd?.projectLocation ??
+    (projectPaths === undefined
+      ? undefined
+      : fixedProjectLocation(projectPaths));
   return {
     displayName: row.displayName,
     format: row.format,
     aliases: row.mcpAdd?.aliases ?? [],
-    globalLocation: fromSetup(entry.name),
-    ...(projectPaths === undefined
-      ? {}
-      : { projectLocation: fixedProjectLocation(projectPaths) }),
+    ...(projectLocation === undefined ? {} : { projectLocation }),
     ...(row.mcpAdd?.projectFormat === undefined
       ? {}
       : { projectFormat: row.mcpAdd.projectFormat }),
     registrationProfile: row.registrationProfile,
-    setupName: entry.name,
+    setupName: name,
   };
 };
 
@@ -230,7 +166,7 @@ const selectedIds = (agents: readonly string[]): McpRegistrationClientId[] => {
   return ids;
 };
 
-/** Table rows retain their exact profile; pending clients bind the descriptor key. */
+/** Each agent registers with its table row's exact profile. */
 export const mcpClientRegistrationProfile = (
   id: McpRegistrationClientId,
 ): ClientRegistrationProfile => clientDescriptor(id).registrationProfile;
@@ -260,11 +196,10 @@ const globalTarget = async (
   context: McpRegistrationLocationContext,
 ): Promise<{ client: McpRegistrationClient; markers: readonly string[] }> => {
   const descriptor = clientDescriptor(id);
-  const resolved = await descriptor.globalLocation(context);
-  const setupClient =
-    descriptor.setupName === undefined
-      ? undefined
-      : context.setup.find(({ name }) => name === descriptor.setupName);
+  const resolved = await fromSetup(descriptor.setupName)(context);
+  const setupClient = context.setup.find(
+    ({ name }) => name === descriptor.setupName,
+  );
   return {
     client: {
       id,
@@ -352,12 +287,12 @@ export const resolveMcpRegistrationClients = async (
     if (ids.length > 0) {
       const clients: McpRegistrationClient[] = [];
       for (const id of ids) {
+        // A user-scope target is already resolved with the table, so its
+        // failure is reported before a cancellation that followed it.
+        if (selection.global)
+          clients.push((await globalTarget(id, context)).client);
         checkCancellation(selection.signal);
-        clients.push(
-          selection.global
-            ? (await globalTarget(id, context)).client
-            : await projectTarget(id, context),
-        );
+        if (!selection.global) clients.push(await projectTarget(id, context));
       }
       if (selection.global) await admitGlobalTargets(clients, context);
       checkCancellation(selection.signal);

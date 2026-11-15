@@ -4,7 +4,6 @@ import {
   directoryFiles,
   kiloExplicitDirectory,
   kiloExplicitFile,
-  kiloGlobalLocation,
   kiloHomeDirectories,
   kiloInlineConfiguration,
   kiloRoot,
@@ -24,7 +23,6 @@ import {
   present,
   type McpRegistrationLocationContext,
   type McpRegistrationLocation,
-  type McpRegistrationGlobalLocation,
 } from "./McpRegistrationLocations.js";
 
 /** `rea mcp add` resolves configured paths against its working directory. */
@@ -34,24 +32,6 @@ const kiloContext = (
   root: rootContext(context),
   path: (path) => selectedPath(path, context),
 });
-
-export const kiloLocation = async (
-  context: McpRegistrationLocationContext,
-): Promise<McpRegistrationGlobalLocation> => {
-  const {
-    configPath,
-    configPaths,
-    inlineConfiguration,
-    markerPath,
-    discoveryPaths,
-  } = await kiloGlobalLocation(kiloContext(context));
-  return {
-    configPath,
-    configPaths,
-    ...(inlineConfiguration === undefined ? {} : { inlineConfiguration }),
-    markers: [markerPath, ...discoveryPaths],
-  };
-};
 
 const ancestorsThrough = (directory: string, root: string): string[] => {
   const directories: string[] = [];

@@ -270,6 +270,48 @@ it("refuses Kilo's location while KILO_CONFIG_CONTENT cannot be parsed", async (
   );
 });
 
+it("registers Kilo through its table row in rea mcp add", async () => {
+  const home = await createTestTempDirectory("rea-kilo-mcp-add-row-");
+  const resources = new ArtifactResourceScope();
+  const select = (environment: NodeJS.ProcessEnv) =>
+    resolveMcpRegistrationClients(
+      {
+        agents: ["kilo"],
+        global: true,
+        cwd: home,
+        home,
+        platform,
+        environment,
+      },
+      resources,
+    );
+  // A relative path is refused as setup refuses it, not resolved from cwd.
+  const relative = await select({ KILO_CONFIG: "kilo.json" });
+  expect(relative.ok).toBe(false);
+  if (!relative.ok) expect(relative.error.message).toContain("is relative");
+  // The row's inline layer still decides what Kilo loads.
+  const selected = await select({
+    KILO_CONFIG_CONTENT: JSON.stringify({
+      mcp: { rea: { command: ["/opt/other/rea", "mcp"] } },
+    }),
+  });
+  if (!selected.ok) throw selected.error;
+  expect(selected.value[0]?.inlineConfiguration?.origin).toBe(
+    "KILO_CONFIG_CONTENT",
+  );
+  const [outcome] = await registerMcpClients(
+    selected.value,
+    { command: command[0] ?? "", args: command.slice(1) },
+    undefined,
+    resources,
+  );
+  if (outcome?.status !== "completed") throw new Error("Kilo did not run");
+  if (outcome.result.ok) throw new Error("The inline launcher was ignored");
+  expect(outcome.result.error.message).toContain(
+    "higher-priority configuration overrides",
+  );
+});
+
 /** Uninstall's Kilo outcome, and every action detail it reported. */
 const uninstallKilo = async (home: string, environment: NodeJS.ProcessEnv) => {
   const result = await runUninstall(
