@@ -3,7 +3,6 @@
   "src/application/decompileDirectory/decompileAll.ts": 1,
   "src/domain/analysisErrorPresentation.ts": 6,
   "src/dotnet/ManagedMemberRecovery.ts": 1,
-  "src/flutter/FlutterBuildProvider.ts": 4,
   "src/ghidra/GhidraFileOffsetFailure.ts": 1,
   "src/ghidra/GhidraProviderClient.ts": 5,
   "src/javascript/analysis/JavaScriptAnalysisWorker.ts": 1,
