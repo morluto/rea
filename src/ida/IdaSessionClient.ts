@@ -211,7 +211,6 @@ export class IdaSessionClient implements AnalysisClient {
   #closed = false;
   #closing = false;
   #closePromise: Promise<Result<null, AnalysisError>> | undefined;
-  #closeFailures: WeakRef<IdaCleanupError>[] = [];
   #workspace: IdaWorkspace | undefined;
   #database: string | undefined;
   #databaseCloseCompleted = false;
@@ -1003,9 +1002,6 @@ export class IdaSessionClient implements AnalysisClient {
       await this.connection.close();
       await this.#workspace?.remove();
       this.#closed = true;
-      for (const failure of this.#closeFailures)
-        failure.deref()?.resolveCleanup();
-      this.#closeFailures = [];
       return ok(null);
     } catch (cause: unknown) {
       this.connection.detach();
@@ -1016,18 +1012,18 @@ export class IdaSessionClient implements AnalysisClient {
         this.#unreleasedSessions(),
       );
       const client = this;
-      failure.bindCleanupResourceOwner({
+      // The failure reads this client's later successful close.
+      const owner = {
         get cleanupResources() {
           return client.#closed ? [] : [path];
         },
-      });
-      this.#closeFailures = [
-        ...this.#closeFailures.filter(
-          (reference) => reference.deref() !== undefined,
-        ),
-        new WeakRef(failure),
-      ];
-      return err(failure);
+        get cleanupReleased() {
+          return client.#closed;
+        },
+      };
+      return err(
+        failure.bindCleanupResourceOwner(owner).bindCleanupReleaseClaim(owner),
+      );
     }
   }
 }
