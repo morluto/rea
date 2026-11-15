@@ -1,4 +1,3 @@
-import { OwnerCancellation } from "../domain/analysisErrorCore.js";
 import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -230,12 +229,20 @@ const sendFromPage = (
         : request.deadline - Date.now();
     if (remaining !== undefined && remaining <= 0)
       return { error: "The request ran out of time before it was sent." };
+    // This callback runs in the page, which cannot reach REA's modules, so
+    // its abort reasons are page-native DOMExceptions defined here.
     const controller = new AbortController();
     const timer =
       remaining === undefined
         ? undefined
         : setTimeout(
-            () => controller.abort(OwnerCancellation.deadlineElapsed),
+            () =>
+              controller.abort(
+                new DOMException(
+                  "The request ran out of time.",
+                  "TimeoutError",
+                ),
+              ),
             remaining,
           );
     try {
@@ -283,7 +290,9 @@ const sendFromPage = (
         }
       return { status: answer.status };
     } catch (cause: unknown) {
-      controller.abort(OwnerCancellation.noLongerNeeded);
+      controller.abort(
+        new DOMException("The request is no longer needed.", "AbortError"),
+      );
       return {
         error: cause instanceof Error ? cause.message : String(cause),
       };

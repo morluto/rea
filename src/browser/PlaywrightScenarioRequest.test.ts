@@ -180,7 +180,13 @@ const fakePage = (options: {
         await new Promise((resolve) =>
           setTimeout(resolve, options.evaluateDelayMs),
         );
-      return fn(arg);
+      // Like Playwright, run the callback from its source text with a cloned
+      // argument, so it cannot reach this module's imports or closures.
+      const pageFunction = new Function(
+        "arg",
+        `return (${fn.toString()})(arg);`,
+      ) as (arg: Arg) => Result | Promise<Result>;
+      return await pageFunction(structuredClone(arg));
     },
   } as unknown as Page;
 };
@@ -282,6 +288,28 @@ describe("request dispatch boundary", () => {
       ),
     ).rejects.toThrow("ran out of time");
     expect(calls).toEqual([]);
+  });
+
+  it("aborts the page fetch when its deadline elapses", async () => {
+    const signals: AbortSignal[] = [];
+    vi.stubGlobal(
+      "fetch",
+      async (_url: string, init: RequestInit) =>
+        await new Promise<Response>((_resolve, reject) => {
+          const signal = init.signal!;
+          signals.push(signal);
+          signal.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          });
+        }),
+    );
+    const parsed = scenario([requestStep({ timeout_ms: 20 })]);
+    await expect(
+      perform(fakePage({}), parsed.actions[0]!, resolved(parsed)),
+    ).rejects.toThrow();
+    expect(signals).toHaveLength(1);
+    await waitFor(() => expect(signals[0]!.aborted).toBe(true));
+    expect(signals[0]!.reason).toMatchObject({ name: "TimeoutError" });
   });
 
   it("guards dispatch after cancellation while evaluation was queued, and removes its route", async () => {
