@@ -7,6 +7,50 @@ import { expect } from "vitest";
 
 import type { GdbSessionManager } from "../../../src/gdb/GdbSessionManager.js";
 
+/** Version every fake GDB reports in its `-gdb-version` banner. */
+export const FAKE_GDB_VERSION = "99.1.rea-fake";
+
+/** The `-gdb-version` reply, before the token's result record. */
+export const fakeGdbVersionStream = `~"GNU gdb (REA fake) ${FAKE_GDB_VERSION}\\n"\n`;
+
+/**
+ * Answer the fixed `-gdb-version` startup query for an in-process fake GDB.
+ * Returns false for any other command, which the scenario answers.
+ */
+export const answerFakeGdbStartup = (
+  stdout: { write(text: string): unknown },
+  token: string,
+  command: string,
+): boolean => {
+  if (command !== "-gdb-version") return false;
+  stdout.write(`${fakeGdbVersionStream}${token}^done\n`);
+  return true;
+};
+
+/**
+ * Startup preamble for a scripted fake GDB, placed after its shebang. It
+ * answers the fixed `-gdb-version` startup query before any stdin listener the
+ * scenario registers sees it, so a scenario models only its own commands.
+ */
+export const fakeGdbStartupPreamble = String.raw`{
+  const listen = process.stdin.on.bind(process.stdin);
+  const answerVersion = (chunk) => {
+    if (!String(chunk).includes("-gdb-version")) return chunk;
+    const kept = [];
+    for (const line of String(chunk).split("\n")) {
+      const query = /^(\d+)-gdb-version$/.exec(line);
+      if (query === null) kept.push(line);
+      else process.stdout.write(${JSON.stringify(fakeGdbVersionStream)} + query[1] + "^done\n");
+    }
+    return kept.join("\n");
+  };
+  process.stdin.on = process.stdin.addListener = (event, listener) =>
+    listen(event, event !== "data" ? listener : (chunk) => {
+      const rest = answerVersion(chunk);
+      if (rest.length > 0) listener(rest);
+    });
+}`;
+
 type GdbSessionStart = Awaited<ReturnType<GdbSessionManager["start"]>>;
 type StartedGdbSession = Extract<GdbSessionStart, { readonly ok: true }>;
 

@@ -29,6 +29,18 @@ export interface GdbMiResultRecord {
   readonly results: readonly GdbMiResult[];
 }
 
+/** A stream record: `~` console, `@` target or `&` log output. */
+export interface GdbMiStreamRecord {
+  readonly kind: "console" | "target" | "log";
+  readonly value: GdbMiValue;
+}
+
+const STREAM_KINDS: Readonly<Record<string, GdbMiStreamRecord["kind"]>> = {
+  "~": "console",
+  "@": "target",
+  "&": "log",
+};
+
 /** Why a line is not a well-formed MI result record. */
 export interface GdbMiRecordFailure {
   readonly kind: "malformed-mi-record";
@@ -110,6 +122,18 @@ class MiParser {
       results.push(result.value);
     }
     return ok({ token, resultClass, results });
+  }
+
+  stream(): Result<GdbMiStreamRecord, GdbMiRecordFailure> {
+    const kind = STREAM_KINDS[this.#line[0] ?? ""];
+    if (kind === undefined || this.#line[1] !== '"')
+      return err(this.fail("line is not an MI stream record"));
+    this.#cursor = 1;
+    const text = this.#cString();
+    if (!text.ok) return text;
+    if (this.#cursor !== this.#line.length)
+      return err(this.fail("text after the stream record's C-string"));
+    return ok({ kind, value: text.value });
   }
 
   #isNameCharacter(character: string | undefined): boolean {
@@ -279,6 +303,11 @@ class MiParser {
 export const parseGdbMiResultRecord = (
   line: string,
 ): Result<GdbMiResultRecord, GdbMiRecordFailure> => new MiParser(line).record();
+
+/** Parse one complete MI stream record line (without its newline). */
+export const parseGdbMiStreamRecord = (
+  line: string,
+): Result<GdbMiStreamRecord, GdbMiRecordFailure> => new MiParser(line).stream();
 
 /**
  * Parse a tokenized `^done` record. Any other class, an untokenized record and

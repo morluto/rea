@@ -6,7 +6,11 @@ import {
   parseGdbMiResultRecord,
   type GdbMiValue,
 } from "./GdbMiRecord.js";
-import { GDB_PROVIDER_IDENTITY } from "./GdbProviderIdentity.js";
+import {
+  GDB_PROVIDER_IDENTITY,
+  gdbReportedVersion,
+  type GdbProviderIdentity,
+} from "./GdbProviderIdentity.js";
 import { persistentDebuggerHostSupported } from "../process/PersistentDebuggerHost.js";
 import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
 import { classifyLaunchFailure } from "../process/launchFailure.js";
@@ -318,6 +322,8 @@ const gdbErrorMessage = (cause: unknown): string =>
 interface GdbSession {
   readonly id: string;
   readonly miVersion: "mi3" | "mi2";
+  /** Identity for this session's Evidence; version is set from -gdb-version. */
+  provider: GdbProviderIdentity;
   readonly launched: SpawnedOwnedProviderProcess;
   readonly supervisor: ProviderProcessSupervisor;
   /** Confirms target disposition and any durable sink before process cleanup. */
@@ -660,6 +666,7 @@ export class GdbSessionManager {
     const session: GdbSession = {
       id,
       miVersion,
+      provider: GDB_PROVIDER_IDENTITY,
       launched,
       supervisor,
       detachInferior: () => this.#detachInferior(session),
@@ -771,6 +778,22 @@ export class GdbSessionManager {
         throw new AnalysisCancelledError("start_gdb_session", {
           cause: signal.reason,
         });
+      // -gdb-version loads nothing, so it may precede the auto-load setting.
+      const reported = await this.#request(
+        session,
+        "-gdb-version",
+        signal,
+        "start_gdb_session",
+      );
+      if (
+        reported.completion_status === "complete" &&
+        !reported.output_truncated &&
+        parseGdbMiDoneRecord(reported.mi).ok
+      )
+        session.provider = {
+          ...GDB_PROVIDER_IDENTITY,
+          version: gdbReportedVersion(reported.records),
+        };
       const autoLoad = await this.#request(
         session,
         "-gdb-set auto-load off",
@@ -887,7 +910,7 @@ export class GdbSessionManager {
       const startupEvidence =
         startupEvidencePayload === undefined
           ? undefined
-          : createEvidence(undefined, GDB_PROVIDER_IDENTITY, {
+          : createEvidence(undefined, session.provider, {
               predicateType: "rea.debugger.startup-observation",
               operation: "start_gdb_session",
               parameters: {
@@ -1070,64 +1093,60 @@ export class GdbSessionManager {
               "gdb_console",
               command,
             );
-            const evidence = createEvidence(
-              undefined,
-              { id: "gnu.gdb", name: "GNU GDB", version: null },
-              {
-                predicateType: "rea.debugger.console-observation",
-                operation: "gdb_console",
-                parameters: { session_id: sessionId, command },
-                result: {
-                  command,
-                  mi: result.mi,
-                  records: [...result.records],
-                  console: result.console,
-                  target: result.target,
-                  log: result.log,
-                  output_truncated: result.output_truncated,
-                  ...(result.output_limits === undefined
-                    ? {}
-                    : { output_limits: result.output_limits }),
-                  ...(result.output_invalid_utf8
-                    ? { output_invalid_utf8: true as const }
-                    : {}),
-                  completion_status: result.completion_status,
-                },
-                rawResult: {
-                  command,
-                  mi: result.mi,
-                  records: [...result.records],
-                  console: result.console,
-                  target: result.target,
-                  log: result.log,
-                  output_truncated: result.output_truncated,
-                  ...(result.output_limits === undefined
-                    ? {}
-                    : { output_limits: result.output_limits }),
-                  ...(result.output_invalid_utf8
-                    ? { output_invalid_utf8: true as const }
-                    : {}),
-                  completion_status: result.completion_status,
-                },
-                subjectUnavailableReason:
-                  "The active GDB inferior identity is not established by the debugger session identifier.",
-                limitations: [
-                  ...(result.mi.length === 0
-                    ? [
-                        "A separately tokenized read-only query confirmed return to GDB's command loop. The original result record could not be framed independently from raw stdout; its bytes remain in records and its result class is unknown.",
-                      ]
-                    : []),
-                  "MI records are returned as decoded text; their semantics depend on GDB version and target.",
-                  ...gdbRetainedOutputLimitations(result, this.#commandOutput),
-                  ...(result.output_invalid_utf8
-                    ? [
-                        "MI stream bytes were not valid UTF-8; returned text contains replacement characters.",
-                      ]
-                    : []),
-                  "The unrestricted GDB console can access local shell, filesystem, network, and target controls.",
-                ],
+            const evidence = createEvidence(undefined, session.provider, {
+              predicateType: "rea.debugger.console-observation",
+              operation: "gdb_console",
+              parameters: { session_id: sessionId, command },
+              result: {
+                command,
+                mi: result.mi,
+                records: [...result.records],
+                console: result.console,
+                target: result.target,
+                log: result.log,
+                output_truncated: result.output_truncated,
+                ...(result.output_limits === undefined
+                  ? {}
+                  : { output_limits: result.output_limits }),
+                ...(result.output_invalid_utf8
+                  ? { output_invalid_utf8: true as const }
+                  : {}),
+                completion_status: result.completion_status,
               },
-            );
+              rawResult: {
+                command,
+                mi: result.mi,
+                records: [...result.records],
+                console: result.console,
+                target: result.target,
+                log: result.log,
+                output_truncated: result.output_truncated,
+                ...(result.output_limits === undefined
+                  ? {}
+                  : { output_limits: result.output_limits }),
+                ...(result.output_invalid_utf8
+                  ? { output_invalid_utf8: true as const }
+                  : {}),
+                completion_status: result.completion_status,
+              },
+              subjectUnavailableReason:
+                "The active GDB inferior identity is not established by the debugger session identifier.",
+              limitations: [
+                ...(result.mi.length === 0
+                  ? [
+                      "A separately tokenized read-only query confirmed return to GDB's command loop. The original result record could not be framed independently from raw stdout; its bytes remain in records and its result class is unknown.",
+                    ]
+                  : []),
+                "MI records are returned as decoded text; their semantics depend on GDB version and target.",
+                ...gdbRetainedOutputLimitations(result, this.#commandOutput),
+                ...(result.output_invalid_utf8
+                  ? [
+                      "MI stream bytes were not valid UTF-8; returned text contains replacement characters.",
+                    ]
+                  : []),
+                "The unrestricted GDB console can access local shell, filesystem, network, and target controls.",
+              ],
+            });
             return ok({ result, evidence });
           } catch (cause) {
             if (cause instanceof ConfigurationError) return err(cause);
@@ -1146,26 +1165,19 @@ export class GdbSessionManager {
                 ...processExit.partial,
                 command,
               };
-              const evidence = createEvidence(
-                undefined,
-                { id: "gnu.gdb", name: "GNU GDB", version: null },
-                {
-                  predicateType: "rea.debugger.console-observation",
-                  operation: "gdb_console",
-                  parameters: { session_id: sessionId, command },
-                  result: { ...result, records: [...result.records] },
-                  rawResult: { ...result, records: [...result.records] },
-                  subjectUnavailableReason:
-                    "The active GDB inferior identity is not established by the debugger session identifier.",
-                  limitations: [
-                    "GDB exited before returning a correlated MI result record; only records retained for the active command are returned raw.",
-                    ...gdbRetainedOutputLimitations(
-                      result,
-                      this.#commandOutput,
-                    ),
-                  ],
-                },
-              );
+              const evidence = createEvidence(undefined, session.provider, {
+                predicateType: "rea.debugger.console-observation",
+                operation: "gdb_console",
+                parameters: { session_id: sessionId, command },
+                result: { ...result, records: [...result.records] },
+                rawResult: { ...result, records: [...result.records] },
+                subjectUnavailableReason:
+                  "The active GDB inferior identity is not established by the debugger session identifier.",
+                limitations: [
+                  "GDB exited before returning a correlated MI result record; only records retained for the active command are returned raw.",
+                  ...gdbRetainedOutputLimitations(result, this.#commandOutput),
+                ],
+              });
               const stopped = await this.#stopDebuggerOnly(session);
               if (stopped.status === "incomplete")
                 return err(
@@ -1707,7 +1719,7 @@ export class GdbSessionManager {
     const partialObservation =
       partial === undefined
         ? undefined
-        : createEvidence(undefined, GDB_PROVIDER_IDENTITY, {
+        : createEvidence(undefined, session.provider, {
             predicateType: "rea.debugger.console-observation",
             operation: "gdb_console",
             parameters: {
@@ -1929,7 +1941,7 @@ export class GdbSessionManager {
             ),
           },
         );
-        const evidence = createEvidence(undefined, GDB_PROVIDER_IDENTITY, {
+        const evidence = createEvidence(undefined, session.provider, {
           predicateType:
             operation === "start_gdb_session"
               ? "rea.debugger.startup-observation"
@@ -2022,7 +2034,7 @@ export class GdbSessionManager {
             : {}),
           completion_status: "unknown",
         };
-        const evidence = createEvidence(undefined, GDB_PROVIDER_IDENTITY, {
+        const evidence = createEvidence(undefined, session.provider, {
           predicateType: "rea.debugger.console-observation",
           operation: "gdb_console",
           parameters: {

@@ -1,4 +1,8 @@
-import { createGdbFixtureOwner } from "./gdbTestHelpers.js";
+import {
+  createGdbFixtureOwner,
+  FAKE_GDB_VERSION,
+  fakeGdbStartupPreamble,
+} from "./gdbTestHelpers.js";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,9 +10,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { GdbSessionManager } from "../../../src/gdb/GdbSessionManager.js";
+import { gdbReportedVersion } from "../../../src/gdb/GdbProviderIdentity.js";
 import { AnalysisSettings } from "../../../src/application/AnalysisSettings.js";
 
 const gdbSettingsFixture = `#!${process.execPath}
+${fakeGdbStartupPreamble}
 process.stdout.write("(gdb)\\n");
 let input = "";
 process.stdin.setEncoding("utf8");
@@ -25,6 +31,7 @@ process.stdin.on("data", chunk => {
 
 /** A fake GDB that answers the auto-load setting with `reply` and others with ^done. */
 const autoLoadReplyFixture = (reply: string) => `#!${process.execPath}
+${fakeGdbStartupPreamble}
 process.stdout.write("(gdb)\\n");
 let input = "";
 process.stdin.setEncoding("utf8");
@@ -66,6 +73,7 @@ describe("persistent debugger session managers", () => {
     await writeFile(
       provider,
       `#!${process.execPath}
+${fakeGdbStartupPreamble}
 process.stdout.write("(gdb)\\n");
 let input = "";
 process.stdin.setEncoding("utf8");
@@ -103,6 +111,13 @@ process.stdin.on("data", (chunk) => {
     );
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value.result.mi).toMatch(/^\d+\^done/u);
+    // Evidence names the version this GDB reported for -gdb-version.
+    if (result.ok)
+      expect(result.value.evidence.provider).toEqual({
+        id: "gnu.gdb",
+        name: "GNU GDB",
+        version: FAKE_GDB_VERSION,
+      });
 
     const closed = await manager.close(started.value.session_id);
     expect(closed.ok).toBe(true);
@@ -227,4 +242,22 @@ it("starts GDB without applying an invalid console output limit", async () => {
       rm(directory, { recursive: true, force: true }),
     );
   }
+});
+
+it.each([
+  ["upstream build", ['~"GNU gdb (GDB) 15.1\\n"', '~"Copyright"'], "15.1"],
+  [
+    "distribution build",
+    [
+      '=thread-group-added,id="i1"',
+      '~"GNU gdb (Ubuntu 12.1-0ubuntu1~22.04) 12.1\\n"',
+    ],
+    "12.1",
+  ],
+  ["another banner", ['~"GDB 15.1\\n"'], null],
+  ["no version token", ['~"GNU gdb (GDB)\\n"'], null],
+  ["a malformed record", ['~"GNU gdb (GDB) 15.1'], null],
+  ["no console record", ['&"GNU gdb (GDB) 15.1\\n"'], null],
+])("reads the -gdb-version banner: %s", (_case, records, version) => {
+  expect(gdbReportedVersion(records)).toBe(version);
 });
