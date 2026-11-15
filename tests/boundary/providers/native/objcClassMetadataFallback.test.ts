@@ -12,7 +12,7 @@ import { createAnalysisExecution } from "../../../../src/application/AnalysisPro
 import { EnhancedTools } from "../../../../src/application/EnhancedTools.js";
 import { layoutFor } from "../../../../src/native/AppleMachoSelection.fixture.js";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
-import { BinaryFormatFailure } from "../../../../src/native/metadata/BinaryContainer.js";
+import { BinaryFormatFailure } from "../../../../src/domain/binaryContainer.js";
 import { NativeFixtureRunner } from "../../../fixtures/nativeCommands.js";
 import { ok } from "../../../../src/domain/result.js";
 

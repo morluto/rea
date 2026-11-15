@@ -3,7 +3,7 @@ import { readGoBinaryImage } from "../../go/GoBinaryImage.js";
 import { readPeImage } from "./PeImage.js";
 import { pe } from "../../domain/binaryTarget.fixture.js";
 import { parseMzHeaderEvidence } from "../../domain/dosMz.js";
-import { BinaryFormatFailure } from "./BinaryContainer.js";
+import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
 import { readBinaryContainer } from "./readBinaryContainer.js";
 import {
   createGoBinaryFixture,

@@ -17,7 +17,7 @@ import {
   BinaryReader,
   BinaryFormatFailure,
   BinaryResourceFailure,
-} from "../native/metadata/BinaryContainer.js";
+} from "../domain/binaryContainer.js";
 import {
   readElfSectionDirectory,
   type NativeSection,

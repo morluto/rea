@@ -821,19 +821,16 @@ describe("comparison of edges to a TypeSpec-owned member", () => {
     },
   );
 
-  it("keeps historical target-row resolution unknown", () => {
+  it("refuses an edge that omits its target-row resolution", () => {
     const inspection = typeSpecMember(0x0a00_0001);
-    const historical = {
-      ...inspection,
-      call_edges: inspection.call_edges.map(
-        ({ target_row_resolved: _omitted, ...edge }) => edge,
-      ),
-    };
-    const comparison = compareManagedMembers(
-      { evidenceId: `ev_${"a".repeat(64)}`, result: historical },
-      { evidenceId: `ev_${"b".repeat(64)}`, result: historical },
-    );
-    expect(comparison.methods[0]?.status).toBe("unknown");
+    expect(
+      managedMemberInspectionSchema.safeParse({
+        ...inspection,
+        call_edges: inspection.call_edges.map(
+          ({ target_row_resolved: _omitted, ...edge }) => edge,
+        ),
+      }).success,
+    ).toBe(false);
   });
 
   it("compares a proven TypeSpec field row through the same owner", () => {

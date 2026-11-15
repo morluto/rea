@@ -1,21 +1,30 @@
 import { scheduler } from "node:timers/promises";
-import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
-import { GPU_OBJECT_BYTES, rejectGpu } from "./GpuSource.js";
-import { BinaryResourceFailure } from "../native/metadata/BinaryContainer.js";
-/** Raw LZ4 blocks used by CUDA's 0x2000 mode; not an LZ4 frame decoder. */
+import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
+import {
+  BinaryFormatFailure,
+  BinaryResourceFailure,
+} from "../domain/binaryContainer.js";
+const rejectLz4 = (message: string): never => {
+  throw new BinaryFormatFailure("malformed", message);
+};
+/**
+ * Raw LZ4 blocks (CUDA's 0x2000 mode, UnityFS blocks); not an LZ4 frame
+ * decoder. `maximumBytes` is the caller's decoded-output budget.
+ */
 export const decodeLz4Block = async (
   input: Buffer,
   expected: number,
+  maximumBytes: number,
   signal?: AbortSignal,
 ): Promise<Buffer> => {
   if (
     !Number.isSafeInteger(expected) ||
     expected < 0 ||
-    expected > GPU_OBJECT_BYTES
+    expected > maximumBytes
   )
     throw new BinaryResourceFailure(
       "structure",
-      GPU_OBJECT_BYTES,
+      maximumBytes,
       "LZ4 decoded length exceeds the object budget",
     );
   const output = Buffer.alloc(expected);
@@ -23,7 +32,7 @@ export const decodeLz4Block = async (
     write = 0,
     checkpoint = 0;
   const byte = (): number => {
-    if (read >= input.length) return rejectGpu("Truncated LZ4 block");
+    if (read >= input.length) return rejectLz4("Truncated LZ4 block");
     return input[read++]!;
   };
   const length = (nibble: number, remaining: number): number => {
@@ -33,11 +42,11 @@ export const decodeLz4Block = async (
       do {
         extra = byte();
         if (extra > remaining - total)
-          rejectGpu("LZ4 length exceeds its declared output");
+          rejectLz4("LZ4 length exceeds its declared output");
         total += extra;
       } while (extra === 255);
     }
-    if (total > remaining) rejectGpu("LZ4 length exceeds its declared output");
+    if (total > remaining) rejectLz4("LZ4 length exceeds its declared output");
     return total;
   };
   while (read < input.length) {
@@ -49,14 +58,14 @@ export const decodeLz4Block = async (
     const token = byte();
     const literals = length(token >>> 4, expected - write);
     if (literals > input.length - read)
-      rejectGpu("LZ4 literals exceed their encoded input");
+      rejectLz4("LZ4 literals exceed their encoded input");
     input.copy(output, write, read, read + literals);
     read += literals;
     write += literals;
     if (read === input.length) break;
     const distance = byte() | (byte() << 8);
     if (distance === 0 || distance > write)
-      rejectGpu("LZ4 match has an invalid backward distance");
+      rejectLz4("LZ4 match has an invalid backward distance");
     const match = length(token & 15, expected - write - 4) + 4;
     let copied = Math.min(distance, match);
     output.copy(output, write, write - distance, write - distance + copied);
@@ -69,7 +78,7 @@ export const decodeLz4Block = async (
     write += match;
   }
   if (write !== expected)
-    rejectGpu("LZ4 decoded length disagrees with its declaration");
+    rejectLz4("LZ4 decoded length disagrees with its declaration");
   assertArtifactReadActive(signal);
   return output;
 };

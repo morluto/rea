@@ -1,8 +1,5 @@
-import type {
-  Devicetree,
-  InspectDevicetreeInput,
-} from "../../domain/firmware/devicetree.js";
-import { BinaryFormatFailure } from "../../native/metadata/BinaryContainer.js";
+import type { Devicetree, InspectDevicetreeInput } from "./devicetree.js";
+import { BinaryFormatFailure } from "../binaryContainer.js";
 
 export class DevicetreeLimitFailure extends Error {
   constructor(

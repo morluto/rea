@@ -126,7 +126,7 @@ import { sourceMapJsonText } from "../domain/sourceMapEnvelope.js";
 import {
   inspectSourceMap,
   inspectSourceMapSourceContent,
-} from "../javascript/sourceMaps/SourceMapFormat.js";
+} from "../domain/sourceMapFormat.js";
 import { htmlArtifactReferences } from "../domain/javascript/htmlArtifactReferences.js";
 import { parseJavaScriptSource } from "../domain/javascript/javascriptSourceParser.js";
 import { addSourceMapDirectives } from "../domain/javascript/javascriptStaticAnalysisCalls.js";
