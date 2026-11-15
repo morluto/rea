@@ -4,9 +4,10 @@ import type {
   AnalysisErrorOptions,
 } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
   type ResourceConstraintRecovery,
 } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -73,11 +74,16 @@ export const classifyProviderOutcome = (
       : { capturedOutput: context.capturedOutput(outcome.output.snapshot) }),
   };
   switch (outcome.kind) {
-    case "cancelled":
-      return new AnalysisCancelledError(operation, {
-        ...details,
-        cause: outcome.reason,
-      });
+    case "cancelled": {
+      // The caller's abort reason is the cancellation's cause; the outcome's
+      // own cause is the supervisor failure that observed it.
+      const { cause: _observed, ...cancellationDetails } = details;
+      return cancelledBy(
+        operation,
+        carriedReason(outcome.reason),
+        cancellationDetails,
+      );
+    }
     case "timeout":
       return new AnalysisTimeoutError(operation, context.timeout.ms, {
         ...details,
