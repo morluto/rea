@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import {
   NativeModuleResolver,
   type ModuleResolverLauncher,
@@ -137,11 +137,20 @@ describe("native module resolver cleanup retry", () => {
         };
       },
     );
+    let retrying: ReturnType<NativeModuleResolver["resolve"]> | undefined;
+    // Release the held close and join the gated request even when an
+    // assertion fails while it is held.
+    onTestFinished(async () => {
+      cleanup.allow();
+      retriedClose.release();
+      await retrying?.catch(() => undefined);
+      await provider.close();
+    });
     const first = await provider.resolve(input);
     if (first.ok) throw new Error("expected retained browser cleanup");
     expect(first.error.cleanupIncomplete).toBe(true);
     cleanup.allow();
-    const retrying = provider.resolve(input);
+    retrying = provider.resolve(input);
     // The retained close is still running: no replacement browser yet.
     expect(
       await retriedClose.reached(retrying, "retained browser close retry"),
@@ -155,7 +164,6 @@ describe("native module resolver cleanup retry", () => {
     expect(launches).toBe(2);
     expect(first.error.cleanupIncomplete).toBe(false);
     expect(first.error.cleanupResources).toEqual([]);
-    await provider.close();
   });
 });
 

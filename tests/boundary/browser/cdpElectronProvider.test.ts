@@ -632,6 +632,7 @@ describe("CdpElectronProvider transport lifecycle", () => {
     let retryHeld = false;
     // Each transport connect, observed when it is requested.
     const connectSpy = vi.spyOn(CdpConnection, "connect");
+    let retrying: ReturnType<CdpElectronProvider["inspectPage"]> | undefined;
     const closeSpy = vi
       .spyOn(CdpConnection.prototype, "close")
       .mockImplementation(async function (this: CdpConnection) {
@@ -657,7 +658,7 @@ describe("CdpElectronProvider transport lifecycle", () => {
       const connectsBeforeRetry = connectSpy.mock.calls.length;
 
       denyClose = false;
-      const retrying = provider.inspectPage(inspectInput(browser.endpoint));
+      retrying = provider.inspectPage(inspectInput(browser.endpoint));
       // The retained close is still running: no replacement connect yet.
       expect(
         await retriedClose.reached(retrying, "retained transport close retry"),
@@ -678,6 +679,7 @@ describe("CdpElectronProvider transport lifecycle", () => {
     } finally {
       denyClose = false;
       retriedClose.release();
+      await retrying?.catch(() => undefined);
       closeSpy.mockRestore();
       connectSpy.mockRestore();
       await provider.close().catch(() => undefined);
