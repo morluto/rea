@@ -214,11 +214,12 @@ export class BuildComputerLongRuns {
         };
   }
 
-  /** Clear retained jobs after a verified computer teardown removed their processes. */
+  /**
+   * Clear retained jobs after a verified computer teardown removed their
+   * processes. Each failure's release claim reads job membership, so leaving
+   * the set releases every failure that named them.
+   */
   resolveAfterVerifiedComputerTeardown(): void {
-    for (const job of this.#jobs) {
-      for (const reference of job.failures) reference.deref()?.resolveCleanup();
-    }
     this.#jobs.clear();
   }
 
