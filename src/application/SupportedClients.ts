@@ -559,6 +559,44 @@ const zedConfigDirectory = ({ home, platform, env }: ClientPathContext) =>
       : join(absoluteXdgConfigHome({ home, env }), "zed");
 
 /**
+ * Amp's user settings: `settings.json` or `settings.jsonc` in
+ * `~/.config/amp` on every platform. Amp does not document which one wins
+ * when both exist, so that case stays unresolved.
+ */
+const ampLocation = ({
+  home,
+}: ClientPathContext): Result<ClientLocation, ClientPathFailure> => {
+  const directory = join(home, ".config", "amp");
+  const candidates = ["settings.json", "settings.jsonc"].map((name) =>
+    join(directory, name),
+  );
+  const present: string[] = [];
+  for (const candidate of candidates) {
+    try {
+      lstatSync(candidate);
+      present.push(candidate);
+    } catch (cause: unknown) {
+      if (
+        !(cause instanceof Error && "code" in cause && cause.code === "ENOENT")
+      )
+        return err({
+          path: candidate,
+          message: `Cannot determine whether ${candidate} exists: ${cause instanceof Error ? cause.message : String(cause)}. Repair its access before configuring Amp.`,
+        });
+    }
+  }
+  if (present.length > 1)
+    return err({
+      path: directory,
+      message: `Both ${candidates[0]} and ${candidates[1]} exist, and Amp does not document which one it reads. Merge them into one file before configuring Amp.`,
+    });
+  return ok({
+    configPath: present[0] ?? join(directory, "settings.json"),
+    markerPath: directory,
+  });
+};
+
+/**
  * FreeBuff's own profile directory (its `state.json` root, fixed under
  * `.config` on every platform). The shared `~/.agents` folder is not
  * FreeBuff-specific: REA's own skill installs create it, so it cannot
@@ -1144,8 +1182,7 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
       stdio: [{ kind: "present", field: "url" }],
     },
     displayName: "Amp",
-    configPath: [".config", "amp", "settings.json"],
-    markerPath: [".config", "amp"],
+    location: ampLocation,
     format: "amp",
   }),
   defineClient({

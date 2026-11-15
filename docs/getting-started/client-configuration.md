@@ -835,14 +835,16 @@ of these clients. Setup offers a client when its directory exists.
 | Kiro                    | `kiro`         | `~/.kiro/settings/mcp.json`, shared by the IDE and CLI                                                                          | `mcpServers`      |
 | Mastra Code             | `mastracode`   | `~/.mastracode/mcp.json`                                                                                                        | `mcpServers`      |
 | Zed                     | `zed`          | `~/.config/zed/settings.json` on macOS, `%APPDATA%\Zed\settings.json` on Windows, `$XDG_CONFIG_HOME/zed/settings.json` on Linux | `context_servers` |
-| Amp                     | `amp`          | `~/.config/amp/settings.json`                                                                                                   | `amp.mcpServers`  |
+| Amp                     | `amp`          | `~/.config/amp/settings.json`, or `settings.jsonc` when that is the only one                                                    | `amp.mcpServers`  |
 
 Cline is resolved in VS Code's user directory only; the extension's storage in
 other editors that host it is not inspected. A same-named server in a Kiro,
 Mastra Code, Zed or Amp project file overrides the user registration; doctor
 reports the user file. Mastra Code keeps enabled state outside `mcp.json`, and
 Amp's managed settings and `amp.mcpPermissions` can block a server; doctor
-cannot observe either. Zed's comments and formatting are preserved. These
+cannot observe either. When both Amp settings files exist, Amp does not
+document which it reads, so REA refuses to choose; merge them into one file.
+Zed's comments and formatting are preserved. These
 locations follow each client's documentation and source; no installed client
 was run to verify loading.
 
