@@ -9,7 +9,10 @@ import {
   parseFieldDiscovery,
   parseFieldGlossary,
   selectFieldRecords,
+  FIELD_GLOSSARY_CACHE_RECORDS_LIMIT,
+  FIELD_GLOSSARY_CACHE_SOURCE_BYTES_LIMIT,
 } from "./parseFieldDiscovery.js";
+import { ParseFailureError } from "../domain/parseFailure.js";
 
 const GLOSSARY = [
   "P\tframe\tframe",
@@ -130,5 +133,82 @@ describe("parseFieldDiscovery", () => {
     expect(() => parseFieldDiscovery("", input())).toThrow(
       "TShark returned an empty field glossary",
     );
+  });
+});
+
+/** Captures what a parse attempt throws, or undefined when it succeeds. */
+const parseFailureOf = (run: () => unknown): unknown => {
+  try {
+    run();
+  } catch (cause: unknown) {
+    return cause;
+  }
+  return undefined;
+};
+
+describe("parseFieldGlossary retention caps", () => {
+  it("raises a limit parse failure over the record cap", () => {
+    const many = Array.from(
+      { length: 5 },
+      (_, index) => `P\tp${index}\tp${index}`,
+    ).join("\n");
+    const failure = parseFailureOf(() =>
+      parseFieldGlossary(many, {
+        maxSourceBytes: 1_000_000,
+        maxRecords: 3,
+      }),
+    );
+    expect(failure).toBeInstanceOf(ParseFailureError);
+    expect(failure).toMatchObject({
+      kind: "limit",
+      failure: { limit: { name: FIELD_GLOSSARY_CACHE_RECORDS_LIMIT } },
+    });
+  });
+
+  it("raises a limit parse failure over the source-bytes cap", () => {
+    const big = `F\tx.y\tx.y\tFT_STRING\tx\t0x0\t0\t${"a".repeat(100)}`;
+    const failure = parseFailureOf(() =>
+      parseFieldGlossary(big, {
+        maxSourceBytes: 10,
+        maxRecords: 1_000_000,
+      }),
+    );
+    expect(failure).toBeInstanceOf(ParseFailureError);
+    expect(failure).toMatchObject({
+      kind: "limit",
+      failure: { limit: { name: FIELD_GLOSSARY_CACHE_SOURCE_BYTES_LIMIT } },
+    });
+  });
+
+  it("parses a glossary within the caps", () => {
+    expect(
+      parseFieldGlossary(GLOSSARY, {
+        maxSourceBytes: 1_000_000,
+        maxRecords: 100,
+      }),
+    ).toHaveLength(8);
+  });
+
+  it("still answers one page from an oversized glossary without retaining it", () => {
+    const wide = Array.from(
+      { length: 10 },
+      (_, index) =>
+        `F\tp.f${index}\tp.f${index}\tFT_STRING\tp\t0x0\t0\tdesc ${index}`,
+    ).join("\n");
+    expect(() =>
+      parseFieldGlossary(wide, {
+        maxSourceBytes: 1_000_000,
+        maxRecords: 3,
+      }),
+    ).toThrow(ParseFailureError);
+    const page = parseFieldDiscovery(
+      wide,
+      input({ kind: "fields", limit: 2, offset: 1 }),
+    );
+    expect(page.records.map((record) => record.abbreviation)).toEqual([
+      "p.f1",
+      "p.f2",
+    ]);
+    expect(page.output_window.matching).toBe(10);
   });
 });

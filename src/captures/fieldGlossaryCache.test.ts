@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   createFieldGlossaryCache,
+  pluginListDigest,
   FIELD_GLOSSARY_CACHE_BUDGET,
   FIELD_GLOSSARY_CACHE_MAX_RECORDS,
   type FieldGlossaryIdentity,
@@ -12,6 +13,7 @@ const identity = (overrides: Partial<FieldGlossaryIdentity> = {}) => ({
   path: "/fixture/tshark",
   sha256: "a".repeat(64),
   versionBanner: "tshark (Wireshark) 4.6.9",
+  pluginsDigest: "p".repeat(64),
   ...overrides,
 });
 
@@ -47,6 +49,9 @@ describe("field glossary cache", () => {
     expect(
       cache.lookup(identity({ versionBanner: "tshark (Wireshark) 4.6.8" })),
     ).toBeUndefined();
+    expect(
+      cache.lookup(identity({ pluginsDigest: "q".repeat(64) })),
+    ).toBeUndefined();
     expect(cache.lookup(identity())).toHaveLength(1);
   });
 
@@ -81,5 +86,32 @@ describe("field glossary cache", () => {
     cache.store(identity(), [record()]);
     cache.clear();
     expect(cache.lookup(identity())).toBeUndefined();
+  });
+});
+
+describe("pluginListDigest", () => {
+  const PLUGINS =
+    "gryphon.so\t0.0.4\tdissector\t/usr/lib/wireshark/plugins/4.6/gryphon.so";
+
+  it("is stable across plugin load order", () => {
+    const other =
+      "acme.so\t1.2.3\tdissector\t/usr/lib/wireshark/plugins/4.6/acme.so";
+    expect(pluginListDigest(`${PLUGINS}\n${other}`)).toBe(
+      pluginListDigest(`${other}\n${PLUGINS}`),
+    );
+  });
+
+  it("changes when a plugin is added, upgraded, or removed", () => {
+    expect(pluginListDigest(PLUGINS)).not.toBe(
+      pluginListDigest(
+        `${PLUGINS}\nacme.so\t1.2.3\tdissector\t/usr/lib/wireshark/plugins/4.6/acme.so`,
+      ),
+    );
+    expect(pluginListDigest(PLUGINS)).not.toBe(
+      pluginListDigest(
+        "gryphon.so\t0.0.5\tdissector\t/usr/lib/wireshark/plugins/4.6/gryphon.so",
+      ),
+    );
+    expect(pluginListDigest(PLUGINS)).not.toBe(pluginListDigest(""));
   });
 });

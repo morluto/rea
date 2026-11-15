@@ -74,8 +74,10 @@ bounded question and must not be used to infer whole-capture absence.
 Discover unfamiliar field names with `inspect_packet_fields`, using an exact
 protocol and a narrow query. If the installed names are already established,
 direct field selection avoids an additional glossary probe. Count discovery
-and any retries when comparing investigation cost; a small page alone does
-not establish a faster workflow.
+and any retries when comparing investigation cost; the first glossary dump is
+paid once per tool identity, and later pages for the same tool reuse the
+cached glossary, so a small page alone does not establish a faster workflow
+for the first page.
 
 Additional selections:
 
@@ -213,10 +215,13 @@ The adapter uses the documented `tshark -G fields` grammar under its existing
 private empty profile and Linux process limits. TShark 4.6.9's full glossary was
 measured at 22,303,197 bytes; discovery defaults to **32 MiB** combined command
 output (capture inspection defaults to **4 MiB**); `producer_limits.output_bytes`
-can change either request budget. Parsing walks lines once and
-constructs objects only for the selected page. Returned strings are copied so
-retained pages do not retain the complete glossary string. Before constructing a selected
-record it charges six times the source UTF-8 bytes plus 512 bytes against an
+can change either request budget. Parsing walks lines once and builds detached
+records for the whole glossary, bounded by the cache retention caps (**64 MiB**
+source bytes, **1,000,000** records); a glossary over those caps is not retained
+and instead falls back to a single-pass selection that constructs objects only
+for the selected page. Returned strings are copied so retained pages do not
+retain the complete glossary string. Before constructing a selected record it
+charges six times the source UTF-8 bytes plus 512 bytes against an
 **8 MiB** page record budget, covering JSON escaping and record bookkeeping.
 A page whose next record would exceed it ends there with `has_more: true` and
 `record_budget_reached: true`; continue with `offset` set to the previous
@@ -227,8 +232,13 @@ distinct.
 
 Tool/limiter identity, version, stderr and selected arguments are retained in
 Evidence. No capture, interface or device is opened. Discovery shares capture
-analysis's admission slot and cleanup owner. Each call rereads the glossary;
-installed plugins, libraries and global configuration remain trusted and are not
-fully fingerprinted. There is no cache or snapshot-consistent pagination claim.
+analysis's admission slot and cleanup owner. The parsed glossary is cached in
+memory for the provider session, keyed by the selected tool identity (executable
+path, digest, version banner, installed plugin list from `tshark -G plugins`);
+pages from the same snapshot are consistent. The snapshot refreshes when any
+identity fact changes — including installing, removing, or upgrading a dissector
+plugin mid-session — or when the provider closes. A glossary over the retention
+caps is re-read on every call and never cached. Installed libraries, global
+configuration and plugin contents remain trusted and are not fully fingerprinted.
 The real Linux lane checks public CLI/MCP queries against the direct glossary,
 including USB vendor-ID typing, negative queries and paging.

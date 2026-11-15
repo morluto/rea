@@ -25,12 +25,18 @@ import {
   packetFieldsCatalogSchema,
 } from "../domain/captures/packetFields.js";
 import {
+  parseFieldDiscovery,
   parseFieldGlossary,
   selectFieldRecords,
   FIELD_RECORD_BUDGET,
+  type FieldGlossaryParseLimits,
 } from "./parseFieldDiscovery.js";
 import {
   createFieldGlossaryCache,
+  pluginListDigest,
+  FIELD_GLOSSARY_CACHE_BUDGET,
+  FIELD_GLOSSARY_CACHE_MAX_RECORDS,
+  type FieldGlossaryCache,
   type FieldGlossaryIdentity,
 } from "./fieldGlossaryCache.js";
 import {
@@ -79,6 +85,7 @@ import {
   packetCaptureSchema,
 } from "../domain/captures/packetCapture.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { ParseFailureError } from "../domain/parseFailure.js";
 import { finalizedResult, runOwned } from "../providers/runOwned.js";
 import { runOwnedCommand } from "../process/OwnedCommand.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
@@ -102,7 +109,7 @@ export const tsharkHostSupported = (platform: NodeJS.Platform): boolean =>
 /** Inspect selected capture files only, retaining cleanup ownership across failures. */
 export class TsharkCaptureProvider implements PacketCapturePort {
   readonly #resources: ArtifactAnalysisResources;
-  readonly #fieldGlossaryCache = createFieldGlossaryCache();
+  readonly #fieldGlossaryCache: FieldGlossaryCache;
   constructor(
     readonly environment: Readonly<NodeJS.ProcessEnv> = process.env,
     readonly launcher?: Launcher,
@@ -111,7 +118,13 @@ export class TsharkCaptureProvider implements PacketCapturePort {
     readonly platform: NodeJS.Platform = HOST_PLATFORM.platform,
     readonly readArtifact: typeof readStableArtifact = readStableArtifact,
     readonly readLimits: typeof readLinuxResourceLimits = readLinuxResourceLimits,
+    readonly fieldGlossaryCache: FieldGlossaryCache = createFieldGlossaryCache(),
+    readonly fieldGlossaryLimits: FieldGlossaryParseLimits = {
+      maxSourceBytes: FIELD_GLOSSARY_CACHE_BUDGET,
+      maxRecords: FIELD_GLOSSARY_CACHE_MAX_RECORDS,
+    },
   ) {
+    this.#fieldGlossaryCache = fieldGlossaryCache;
     this.#resources = createArtifactAnalysisResources(
       TSHARK_PROVIDER_IDENTITY.id,
       OPERATION,
@@ -143,9 +156,16 @@ export class TsharkCaptureProvider implements PacketCapturePort {
       "inspect_packet_fields",
     );
   }
-  close(): Promise<void> {
+  async close(): Promise<void> {
     this.#fieldGlossaryCache.clear();
-    return this.#resources.close();
+    try {
+      await this.#resources.close();
+    } finally {
+      // A dump in flight when close began can store after the first clear;
+      // the drain guarantees every store has landed before this runs, so the
+      // second clear leaves no retained glossary on a closed provider.
+      this.#fieldGlossaryCache.clear();
+    }
   }
   async #executeRequest(
     input: InspectPacketCaptureInput | InspectPacketFieldsInput,
@@ -350,11 +370,17 @@ export class TsharkCaptureProvider implements PacketCapturePort {
         // The glossary depends only on the selected installation, never on
         // capture traffic, so a parsed glossary is reused across pages until
         // the tool identity changes. The version probe still runs every
-        // request: it validates the 4.x requirement and keys the cache.
+        // request: it validates the 4.x requirement and keys the cache. The
+        // installed plugin list is probed the same way — plugins can add,
+        // remove, or rename registrations without changing the executable or
+        // its version banner — and its digest joins the cache identity, so a
+        // plugin change mid-session re-dumps instead of serving stale fields.
+        const plugins = await execute(["-G", "plugins"]);
         const glossaryIdentity: FieldGlossaryIdentity = {
           path: command,
           sha256: tool.sha256,
           versionBanner: version.stdout.text,
+          pluginsDigest: pluginListDigest(plugins.stdout.text),
         };
         const cachedGlossary =
           this.#fieldGlossaryCache.lookup(glossaryIdentity);
@@ -365,9 +391,23 @@ export class TsharkCaptureProvider implements PacketCapturePort {
           fieldsDiagnostics = "";
         } else {
           const output = await execute(args);
-          const records = parseFieldGlossary(output.stdout.text);
-          this.#fieldGlossaryCache.store(glossaryIdentity, records);
-          selection = selectFieldRecords(records, input);
+          try {
+            const records = parseFieldGlossary(
+              output.stdout.text,
+              this.fieldGlossaryLimits,
+            );
+            this.#fieldGlossaryCache.store(glossaryIdentity, records);
+            selection = selectFieldRecords(records, input);
+          } catch (cause) {
+            // The only limit failure this parse can raise is the retention
+            // cap; malformed and empty glossaries are plain errors and
+            // propagate as producer failures.
+            if (!(cause instanceof ParseFailureError) || cause.kind !== "limit")
+              throw cause;
+            // Oversized glossary: answer this page from a single-pass
+            // selection that allocates only the page, and retain nothing.
+            selection = parseFieldDiscovery(output.stdout.text, input);
+          }
           fieldsDiagnostics = output.stderr.text;
         }
         const report = packetFieldsCatalogSchema.parse({
@@ -386,7 +426,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
             subject: { path: command, sha256: tool.sha256, format: "file" },
             limitations: [
               "Protocol and field registrations describe the selected installation, not traffic observed in a capture. Duplicate abbreviations remain distinct producer records with source line numbers.",
-              "The field glossary is cached in memory for the selected TShark identity (path, digest, version banner) and reused across pages until the tool changes. The private empty personal profile does not fingerprint or isolate installed libraries, global configuration or plugins; they remain trusted.",
+              "The field glossary is cached in memory for the selected TShark identity (path, digest, version banner, installed plugin list) and reused across pages until the tool or its plugins change; closing the provider drops the snapshot. The private empty personal profile does not isolate installed libraries, global configuration or plugins; their contents remain trusted and are not fully fingerprinted.",
               "No capture file, interface or device is opened. Resource ceilings do not constitute an OS sandbox. Selected producer output budget is reported in limits.output_bytes and can be changed with producer_limits.output_bytes. Selected record representation remains independently capped at 8 MiB before expansion.",
             ],
           }),
