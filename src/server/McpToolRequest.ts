@@ -5,7 +5,11 @@ import type { z } from "zod";
 import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { cancelledBy } from "../domain/analysisErrorCore.js";
+import {
+  cancelledBy,
+  type CallerAbort,
+  type OwnerCancellation,
+} from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 const currentRequest = new AsyncLocalStorage<McpToolRequest>();
@@ -54,7 +58,7 @@ export class McpToolRequest {
   }
 
   /** A suppressed SDK reply releases admission after the handler's cleanup. */
-  cancel(reason?: unknown): void {
+  cancel(reason: CallerAbort | OwnerCancellation): void {
     this.cancellation.abort(reason);
     if (!this.#publicationStarted) this.#finishPublication();
   }

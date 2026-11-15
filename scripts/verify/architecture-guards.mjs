@@ -231,6 +231,21 @@ check(
   ],
 );
 
+// Native inventory results parse once against their named fact contract
+// (docs/adr/native/typed-operation-facts.md). Hopper's reply table and the
+// advertised output schemas own their own protocol and catalog contracts.
+check(
+  "native inventory rows parsed outside their fact contract (use executeFact or a contract from src/domain/native/nativeOperationFacts)",
+  files,
+  /\bnativeInventoryRowsSchemas\b|z\.array\(\s*addressedValueSchema\b|\baddressedValueSchema\s*\.\s*(?:safeParse|parse|pick)\b/,
+  [
+    "src/domain/native/nativeInventory.ts",
+    "src/domain/native/nativeOperationFacts.ts",
+    "src/hopper/HopperReplyContracts.ts",
+    "src/contracts/toolOutputSchemaGroups.ts",
+  ],
+);
+
 // Mach-O load-command codes have one table; a local copy drifts from it.
 check(
   "local Mach-O load-command code (import LC from src/domain/apple/machoLoadCommandCodes)",
@@ -313,6 +328,19 @@ checkCounted(
   files,
   /\b_source\s*\.\s*layers\b/gu,
   ["src/pcap/TsharkJsonPackets.ts"],
+);
+
+// An abort reason names who ended the work: a typed `CallerAbort` at the CLI,
+// MCP and HTTP adapters, or an `OwnerCancellation` when REA closes an owner.
+// A bare `.abort()` leaves an anonymous platform AbortError as the cause.
+// Playwright's `route.abort(errorCode)` takes a network error code instead;
+// its call sites pass that code explicitly so the scan stays receiver-independent.
+checkCounted(
+  "AbortController.abort() without a reason (pass a CallerAbort or OwnerCancellation from src/domain/analysisErrorCore)",
+  "abort-without-reason",
+  files,
+  /\.abort\(\s*\)/gu,
+  [],
 );
 
 // GDB MI result records have one parser, src/gdb/GdbMiRecord.ts, which
@@ -441,6 +469,25 @@ checkCounted(
   files,
   /\.bindCleanupDependencies\(/gu,
   ["src/domain/analysisErrorBase.ts"],
+);
+
+// The running host is read once by src/platform/HostPlatform; composition
+// takes it from there and passes the platform or architecture on as a
+// required parameter. An ambient read elsewhere mixes the host REA runs on
+// with the host a caller asked about, and cannot be selected by a test.
+checkCounted(
+  "ambient process.platform read (take HOST_PLATFORM from src/platform/HostPlatform at composition and pass the platform as a parameter)",
+  "ambient-host-platform",
+  files,
+  /\bprocess\.platform\b/gu,
+  ["src/platform/HostPlatform.ts"],
+);
+checkCounted(
+  "ambient process.arch read (take HOST_PLATFORM from src/platform/HostPlatform at composition and pass the architecture as a parameter)",
+  "ambient-host-architecture",
+  files,
+  /\bprocess\.arch\b/gu,
+  ["src/platform/HostPlatform.ts"],
 );
 
 // `find` on a parsed section, program-header or load-command table silently

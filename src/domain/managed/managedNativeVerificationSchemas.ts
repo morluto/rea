@@ -180,7 +180,7 @@ export const managedNativeVerificationResultSchema = z
     }),
     pinvoke_imports: z.array(pinvokeVerificationSchema),
     native_implementations: z.strictObject({
-      runtime_provided: z.int().nonnegative().nullable().default(null),
+      runtime_provided: z.int().nonnegative(),
       unresolved: z.int().min(0),
       reason: nonEmptyTextSchema,
     }),
