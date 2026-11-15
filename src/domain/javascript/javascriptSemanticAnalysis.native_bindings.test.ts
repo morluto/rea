@@ -212,6 +212,9 @@ describe("JavaScript semantic analysis: child-process signals", () => {
         const child = spawn("/bin/tool");
         child.kill(...[]);
         child.kill(...["SIGINT"]);
+        child.kill(...[, "SIGINT"]);
+        child.kill(...[...["SIGINT"]]);
+        child.kill(...[], "SIGKILL");
         child.kill(...signals);
         const literals = ["SIGINT"];
         child.kill(...literals);
@@ -238,6 +241,9 @@ describe("JavaScript semantic analysis: child-process signals", () => {
     ).toEqual([
       "SIGTERM",
       "SIGINT",
+      "SIGTERM",
+      "SIGINT",
+      "SIGKILL",
       null,
       null,
       "SIGTERM",
