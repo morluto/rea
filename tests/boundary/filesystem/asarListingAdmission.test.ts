@@ -181,7 +181,7 @@ it("bounds the quoted unsafe ASAR path component", async () => {
   await expect(inventoryArtifact(path)).rejects.toMatchObject({
     reason: "path",
     message: inArchive(
-      `ASAR header has an unsafe path component under the archive root: ${JSON.stringify("a".repeat(256))}... (302 UTF-16 code units)`,
+      `ASAR header has an unsafe path component under the archive root: ${JSON.stringify("a".repeat(256))}… (302 UTF-16 code units)`,
       path,
     ),
   });
@@ -196,7 +196,7 @@ it("bounds the quoted parent of an unsafe ASAR path component", async () => {
   await expect(inventoryArtifact(path)).rejects.toMatchObject({
     reason: "path",
     message: inArchive(
-      `ASAR header has an unsafe path component under ${JSON.stringify("d".repeat(256))}... (300 UTF-16 code units): ".."`,
+      `ASAR header has an unsafe path component under ${JSON.stringify("d".repeat(256))}… (300 UTF-16 code units): ".."`,
       path,
     ),
   });
@@ -314,7 +314,7 @@ it.each([
   [
     JSON.stringify("9".repeat(300)),
     invalidSize(
-      `size ${JSON.stringify("9".repeat(256))}... (300 UTF-16 code units)`,
+      `size ${JSON.stringify("9".repeat(256))}… (300 UTF-16 code units)`,
     ),
   ],
   ["9007199254740992", unretainedSize],

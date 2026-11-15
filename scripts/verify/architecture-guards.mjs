@@ -429,6 +429,17 @@ checkCounted(
   ["src/domain/boundedList.ts"],
 );
 
+// Display text cut with an appended ellipsis comes from ellipsisExcerpt in
+// src/domain/excerpt, which never splits a surrogate pair and marks the result
+// as excerpt text. A hand-written `${text.slice(0, n)}…` does neither.
+checkCounted(
+  "hand-written ellipsis excerpt (use ellipsisExcerpt from src/domain/excerpt)",
+  "ad-hoc-ellipsis",
+  files,
+  /\.slice\(\s*0\s*,[^)]*\)\)?\}(?:…|\.\.\.)/gu,
+  ["src/domain/excerpt.ts"],
+);
+
 // A deadline is a monotonic budget owned by `Deadline` in src/domain/deadline;
 // a wall-clock sum moves with clock changes and has no finalize phase. The
 // remaining copy converts a monotonic budget for a browser page, which can

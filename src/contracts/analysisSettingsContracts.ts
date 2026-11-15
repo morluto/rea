@@ -5,7 +5,7 @@ import {
   analysisSettingIdSchema,
   analysisSettingValueSchema,
 } from "../domain/analysisSettingDefinitions.js";
-import { toolContractMetadata } from "./toolEffects.js";
+import { toolContractMetadata, toolEffects } from "./toolEffects.js";
 import type { ToolContract } from "./toolContractTypes.js";
 
 export const inspectAnalysisSettingsInputSchema = z.strictObject({
@@ -95,7 +95,7 @@ export const updateAnalysisSettingsResultSchema =
 export const ANALYSIS_SETTINGS_TOOL_CONTRACTS = [
   {
     name: "inspect_analysis_settings",
-    ...toolContractMetadata("inspect_analysis_settings"),
+    ...toolContractMetadata("inspect_analysis_settings", toolEffects()),
     kind: "application",
     description:
       "Inspect REA's editable runtime admission sizes, deadlines and worker heaps, their bounds, launch values and application points. No active target is required. Filters intersect. If an error already names a setting and its bounds, update_analysis_settings can be called directly. Explicit per-call arguments override runtime defaults. Active worker values are not observed by this configuration view.",
@@ -110,7 +110,10 @@ export const ANALYSIS_SETTINGS_TOOL_CONTRACTS = [
   },
   {
     name: "update_analysis_settings",
-    ...toolContractMetadata("update_analysis_settings"),
+    ...toolContractMetadata(
+      "update_analysis_settings",
+      toolEffects({ mutatesSession: true }),
+    ),
     kind: "application",
     description:
       "Atomically set or reset editable runtime defaults for new work. Changes survive target close/open but disappear on REA restart; reset restores launch configuration. Follow an error's named setting/bounds directly, then retry after work and cleanup settle; no inspection is needed when they are supplied. Does not change active work, edit files, restart providers, raise client limits or override explicit per-call arguments.",
