@@ -268,11 +268,17 @@ in the file the installed app reads:
   private copy when it exists. Before the package has saved one, they use the
   `%APPDATA%` file it still reads; with neither file, setup creates the
   private copy.
-- If `%LOCALAPPDATA%\Claude-Data\claude_pzs8sxrjxfjjc` exists, setup, doctor
-  and uninstall report an unresolved location. Migrated MSIX installations
-  have been observed reading `claude_desktop_config.json` in this directory.
-  Quit Claude Desktop and verify its active configuration before registering
-  manually. See [#8968](https://github.com/morluto/rea/issues/8968).
+- If `%LOCALAPPDATA%\Claude-Data\claude_pzs8sxrjxfjjc` exists, Claude Desktop
+  has migrated its user data there. Setup, doctor and uninstall use
+  `claude_desktop_config.json` in that directory when the app's migration
+  marker `.user-data-left.claude_pzs8sxrjxfjjc` is in `%APPDATA%\Claude` and,
+  if the package is installed, in its private `LocalCache\Roaming\Claude`
+  folder too, or that folder has no configuration of its own. A terminal that
+  the package started still has its AppData writes redirected, so setup and
+  uninstall refuse to write any client's AppData files from it. Otherwise they
+  report an unresolved location; quit Claude Desktop and verify its active
+  configuration before registering manually. See
+  [#8968](https://github.com/morluto/rea/issues/8968).
 - If `%LOCALAPPDATA%\Packages` holds a `Claude_<publisher ID>` package from
   another publisher, an `AnthropicPBC.Claude_<publisher ID>` package, or cannot
   be read, REA cannot establish which file Claude

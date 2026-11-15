@@ -54,6 +54,12 @@ export interface SetupClient {
   readonly sharedRegistration?: boolean;
   /** MSIX package storage that decides which configuration the client reads. */
   readonly msixPackage?: MsixPackageView;
+  /**
+   * The client's MSIX package as this process sees it, even when the package
+   * no longer decides which file the client reads. A redirected view means
+   * this process's AppData writes land in that package's private storage.
+   */
+  readonly processPackage?: MsixPackageView;
   /** A running client can rewrite its configuration from memory. */
   readonly quitBeforeSetup?: boolean;
   /** Product-specific applicability evidence when configuration storage is shared. */
@@ -82,6 +88,7 @@ interface ClientPathFailure {
   readonly path: string;
   readonly message: string;
   readonly msixPackage?: MsixPackageView;
+  readonly processPackage?: MsixPackageView;
 }
 
 type ClientPathResult = Result<string, ClientPathFailure>;
@@ -100,6 +107,7 @@ interface ClientLocation {
   readonly configPath: string;
   readonly markerPath: string;
   readonly msixPackage?: MsixPackageView;
+  readonly processPackage?: MsixPackageView;
 }
 
 type ClientDefinition = ClientDefinitionBase & ClientDefinitionLocation;
@@ -349,8 +357,9 @@ export const registrationWriteBlocker = (
 export const appDataRedirection = (
   clients: readonly SetupClient[],
 ): MsixPackageView | undefined =>
-  clients.find(({ msixPackage }) => msixPackage?.processView === "redirected")
-    ?.msixPackage;
+  clients.find(
+    ({ processPackage }) => processPackage?.processView === "redirected",
+  )?.processPackage;
 
 const OMP_PROFILE_NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/u;
 const OMP_RESERVED_PROFILE =
@@ -1200,8 +1209,12 @@ export const supportedClients = (
           ...(location.error.msixPackage === undefined
             ? {}
             : { msixPackage: location.error.msixPackage }),
+          ...(location.error.processPackage === undefined
+            ? {}
+            : { processPackage: location.error.processPackage }),
         };
-      const { configPath, markerPath, msixPackage } = location.value;
+      const { configPath, markerPath, msixPackage, processPackage } =
+        location.value;
       return {
         name: definition.name,
         registrationProfile: definition.registrationProfile,
@@ -1222,6 +1235,7 @@ export const supportedClients = (
           : { zcodeFallbackPath: definition.zcodeFallbackPath(context) }),
         markerPath,
         ...(msixPackage === undefined ? {} : { msixPackage }),
+        ...(processPackage === undefined ? {} : { processPackage }),
         ...(definition.quitBeforeSetup === true
           ? { quitBeforeSetup: true }
           : {}),
