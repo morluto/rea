@@ -1,4 +1,5 @@
 import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
+import { Budget } from "../../domain/budget.js";
 import {
   readFatContainerHeader,
   readMachoHeaderPrefixFacts,
@@ -210,15 +211,26 @@ const METADATA_CACHE_ENTRIES = 1024;
 /** Exact-range caching avoids page amplification from file-controlled pointers. */
 class BunGraphRangeReader implements BunGraphData {
   readonly #ranges = new Map<string, Buffer>();
-  #retainedBytes = 0;
-  #readBytes = 0;
+  readonly #retained = new Budget(METADATA_CACHE_BYTES);
+  readonly #read: Budget;
   constructor(
     private readonly handle: FileHandle,
     private readonly start: number,
     readonly length: number,
     private readonly signal: AbortSignal | undefined,
-    private readonly maximumReadBytes: number,
-  ) {}
+    maximumReadBytes: number,
+  ) {
+    this.#read = new Budget(maximumReadBytes);
+  }
+
+  /** Drop the least recently used range and return its retained size. */
+  readonly #evictOldest = (): number | undefined => {
+    const oldest = this.#ranges.keys().next();
+    if (oldest.done === true) return undefined;
+    const bytes = this.#ranges.get(oldest.value)?.length ?? 0;
+    this.#ranges.delete(oldest.value);
+    return bytes;
+  };
 
   async read(offset: number, length: number): Promise<Buffer> {
     abortIfNeeded(this.signal);
@@ -239,15 +251,15 @@ class BunGraphRangeReader implements BunGraphData {
       this.#ranges.set(key, existing);
       return Buffer.from(existing);
     }
-    if (length > this.maximumReadBytes - this.#readBytes)
-      throw artifactReaderLimitFailure(
-        "artifact_limits.bun.metadata_read_bytes",
-        this.maximumReadBytes,
-        "bytes",
-        this.#readBytes + length,
-      );
     // Charge physical work before allocation or I/O, including uncached large names.
-    this.#readBytes += length;
+    this.#read.charge(length, () =>
+      artifactReaderLimitFailure(
+        "artifact_limits.bun.metadata_read_bytes",
+        this.#read.maximum,
+        "bytes",
+        this.#read.used + length,
+      ),
+    );
     const bytes = await readExact(
       this.handle,
       this.start + offset,
@@ -255,16 +267,10 @@ class BunGraphRangeReader implements BunGraphData {
       this.signal,
     );
     if (length > METADATA_CACHE_BYTES) return bytes;
-    while (
-      this.#ranges.size >= METADATA_CACHE_ENTRIES ||
-      this.#retainedBytes + length > METADATA_CACHE_BYTES
-    ) {
-      const oldest = this.#ranges.keys().next().value!;
-      this.#retainedBytes -= this.#ranges.get(oldest)!.length;
-      this.#ranges.delete(oldest);
-    }
+    while (this.#ranges.size >= METADATA_CACHE_ENTRIES)
+      this.#retained.refund(this.#evictOldest() ?? 0);
+    if (!this.#retained.chargeEvicting(length, this.#evictOldest)) return bytes;
     this.#ranges.set(key, bytes);
-    this.#retainedBytes += length;
     return Buffer.from(bytes);
   }
 }
