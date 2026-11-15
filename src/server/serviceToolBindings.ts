@@ -43,7 +43,13 @@ import type { WasmArtifactService } from "../application/wasm/WasmArtifactServic
 import { compareWasmInterfaces } from "../application/wasm/WasmInterfaceComparisonService.js";
 import type { WebModuleTraceService } from "../application/WebModuleTraceService.js";
 import type { WebSourceLocationService } from "../application/WebSourceLocationService.js";
-import { ok } from "../domain/result.js";
+import { toolContract } from "../contracts/toolContracts.js";
+import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
+import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
+import { err, ok } from "../domain/result.js";
+import { captureSensitiveValues } from "../domain/webNetworkCapture.js";
+import type { WebNetworkCaptureService } from "../application/WebNetworkCaptureService.js";
+import type { WebRuntimeService } from "../application/WebRuntimeService.js";
 import {
   contractServiceBindings,
   registerContractTools,
@@ -51,6 +57,7 @@ import {
   type ContractToolDependencies,
 } from "./contractToolBindings.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
+import { retainedSummaryDelivery } from "./retainedSummaryDelivery.js";
 
 type Bind<Service> = (
   service: Service,
@@ -351,6 +358,51 @@ const SERVICE_TOOL_BINDINGS = {
       summary: (input, options) => service.trace(input, options),
     },
   })) satisfies Bind<WebSourceLocationService>,
+  webNetworkCapture: ((service, retention) => {
+    const contract = toolContract("inspect_web_network_capture");
+    const delivery = retainedSummaryDelivery(contract.name, retention);
+    return {
+      inspect_web_network_capture: {
+        // The workflow admits the raw request so caller-declared sensitivity
+        // also covers invalid arguments; SDK admission would emit unprojected
+        // issue paths as plain text.
+        admission: "application",
+        run: async (rawInput, options) => {
+          const parsed = contract.inputSchema.safeParse(rawInput);
+          if (!parsed.success)
+            return err(
+              redactExplicitFailure(
+                analysisInputErrorFromIssues(
+                  contract.name,
+                  parsed.error.issues,
+                  rawInput,
+                  { cause: parsed.error },
+                ),
+                captureSensitiveValues(rawInput),
+              ),
+            );
+          const { detail, ...input } = parsed.data;
+          const parameters = { detail };
+          const ready = delivery.preflight(parameters);
+          if (!ready.ok) return ready;
+          const inspected = await service.inspect(input, options);
+          return inspected.ok
+            ? delivery.projectEvidence(parameters, inspected.value)
+            : inspected;
+        },
+      },
+    };
+  }) satisfies Bind<WebNetworkCaptureService>,
+  webRuntime: ((service) => ({
+    observe_web_execution: {
+      admission: "sdk",
+      run: (input, options) => service.observe(input, options),
+    },
+    inspect_web_event_listeners: {
+      admission: "sdk",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<WebRuntimeService>,
   javascriptRecovery: ((service) => ({
     recover_javascript_sources: {
       admission: "sdk",

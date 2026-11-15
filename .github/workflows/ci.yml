@@ -5,9 +5,6 @@ on:
     branches: [main]
   pull_request:
     branches: [main, "release/*"]
-  # The merge queue tests each group's exact head before it lands on main.
-  merge_group:
-    types: [checks_requested]
   schedule:
     - cron: "23 0-2,4-23 * * *"
     - cron: "23 3 * * *"
@@ -36,8 +33,7 @@ concurrency:
   # Main feedback also finishes, coalescing newer pushes to one pending run.
   # Scheduled/manual main runs coalesce to one active and the latest pending;
   # release and label-triggered qualification use exact-revision groups.
-  # Merge-queue groups use their exact head and are never cancelled by pushes.
-  group: ci-${{ github.event_name == 'merge_group' && 'merge-queue' || (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || inputs.source_sha != '' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && 'qualification' || 'feedback' }}-${{ github.event.merge_group.head_sha || inputs.source_sha || github.event.pull_request.number || github.ref }}
+  group: ci-${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || inputs.source_sha != '' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && 'qualification' || 'feedback' }}-${{ inputs.source_sha || github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' && inputs.source_sha == '' && !contains(github.event.pull_request.labels.*.name, 'ci:full') }}
 
 env:
@@ -106,14 +102,6 @@ jobs:
         run: |
           test "${SOURCE_SHA}" = "${GITHUB_SHA}"
           test "${SOURCE_SHA}" = "$(git rev-parse HEAD)"
-      - name: Bind classification to the queued merge-group head
-        if: github.event_name == 'merge_group'
-        env:
-          MERGE_GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
-        run: |
-          test -n "${MERGE_GROUP_HEAD_SHA}"
-          test "${MERGE_GROUP_HEAD_SHA}" = "${GITHUB_SHA}"
-          test "${MERGE_GROUP_HEAD_SHA}" = "$(git rev-parse HEAD)"
       - name: Find a verified ancestor for push selection
         id: baseline
         if: github.event_name == 'push' && inputs.source_sha == ''
@@ -137,9 +125,9 @@ jobs:
       - name: Select verification lanes
         id: plan
         env:
-          BASE_SHA: ${{ steps.baseline.outputs.base || github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          BASE_SHA: ${{ steps.baseline.outputs.base || github.event.pull_request.base.sha }}
           BASELINE_REASON: ${{ steps.baseline.outputs.reason }}
-          HEAD_SHA: ${{ inputs.source_sha || github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+          HEAD_SHA: ${{ inputs.source_sha || github.event.pull_request.head.sha || github.sha }}
           CI_FULL: ${{ inputs.source_sha != '' || contains(github.event.pull_request.labels.*.name, 'ci:full') }}
           CI_SKIP_FULL: ${{ steps.qualification.outputs.run_full == 'false' }}
         run: node scripts/ci/plan.mjs
@@ -340,7 +328,7 @@ jobs:
     strategy:
       # Failed PRs release the remaining matrix slots; qualification retains
       # every shard's diagnostics and coverage. Passing PRs run the full suite.
-      fail-fast: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.tier == 'fast' }}
+      fail-fast: ${{ github.event_name == 'pull_request' && needs.changes.outputs.tier == 'fast' }}
       matrix:
         # Fast feedback uses one source group and twelve built groups. Shards
         # are balanced by recorded duration, but hosted runner speed varies,
@@ -1227,9 +1215,7 @@ jobs:
   required:
     name: CI required
     # Report failed dependencies, but release superseded PR concurrency slots.
-    # A merge-queue run always reports: a skipped required check counts as
-    # passing, so a cancelled group must fail this gate instead.
-    if: ${{ github.event_name == 'merge_group' || !cancelled() }}
+    if: ${{ !cancelled() }}
     needs:
       [
         changes,
