@@ -23,6 +23,7 @@ import {
   translateValue,
   type IdMap,
 } from "./environmentCompareIds.js";
+import { isRecord } from "../../domain/isRecord.js";
 
 export const DIFFERENCE_CATEGORIES = [
   "status",
@@ -66,9 +67,6 @@ const TIME_FIELD =
 const TIME_FIELD_CAMEL =
   /(?:At|Time|Date|Timestamp|Created|Updated|Modified)$/u;
 const ID_LIST_FIELD = /^(ids|uuids|guids)$/u;
-
-const isObject = (value: JsonValue | undefined): value is JsonObject =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const shown = (value: JsonValue | undefined): string => {
   const text = value === undefined ? "<absent>" : JSON.stringify(value);
@@ -517,7 +515,7 @@ class Differ {
   ): void {
     if (Array.isArray(live) && Array.isArray(env))
       this.array(live, env, pointer, at.clockKey ?? at.key, generation);
-    else if (isObject(live) && isObject(env))
+    else if (isRecord(live) && isRecord(env))
       this.object(
         live,
         env,
@@ -528,8 +526,8 @@ class Differ {
     else if (
       Array.isArray(live) ||
       Array.isArray(env) ||
-      isObject(live) ||
-      isObject(env)
+      isRecord(live) ||
+      isRecord(env)
     )
       this.add({
         category: "value",

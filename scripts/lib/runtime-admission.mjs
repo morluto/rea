@@ -21,7 +21,7 @@ export const unsupportedRuntimeMessage = (range, version) => {
 };
 
 /** Human-readable release families for an `engines.node` range. */
-export const supportedReleaseProse = (range) =>
+const supportedReleaseProse = (range) =>
   `Node.js ${range
     .split("||")
     .map((clause) => {

@@ -141,7 +141,7 @@ const canonicalDestination = (
 export const redirectedWriteBlocker = (
   view: MsixPackageView | undefined,
   targets: readonly string[],
-  operation: "setup" | "uninstall",
+  operation: "setup" | "uninstall" | "mcp add",
   canonicalPath: (path: string) => string = realpathSync.native,
 ): string | undefined => {
   if (view?.processView !== "redirected" || targets.length === 0)

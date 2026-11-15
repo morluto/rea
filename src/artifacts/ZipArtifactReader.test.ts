@@ -32,6 +32,7 @@ import { hashReadable } from "./ArtifactHash.js";
 import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
 
 import { analysisErrorUserMessage } from "../domain/analysisErrorPresentation.js";
+import { waitFor } from "../../tests/support/testWait.js";
 
 const MINIMUM_ARTIFACT_EXPANDED_BYTES = 256 * 1024 * 1024;
 
@@ -398,27 +399,21 @@ describe("ZIP Zstandard member streams", () => {
         expect(decoders).toHaveLength(1);
         // A fresh decoder can succeed while an abandoned producer is stuck.
         // Verify the first actual getData and native close before starting it.
-        await vi.waitFor(
-          () => {
-            expect(producers[0]?.settled).toBe(true);
-            expect(decoders[0]?.closed).toBe(true);
-            expect(decoders[0]?.destroyed).toBe(true);
-          },
-          { timeout: 5_000 },
-        );
+        await waitFor(() => {
+          expect(producers[0]?.settled).toBe(true);
+          expect(decoders[0]?.closed).toBe(true);
+          expect(decoders[0]?.destroyed).toBe(true);
+        });
         const chunks: Buffer[] = [];
         for await (const chunk of await reader.open(entry))
           chunks.push(Buffer.from(chunk));
         expect(Buffer.concat(chunks).equals(content)).toBe(true);
         expect(producers).toHaveLength(2);
         expect(decoders).toHaveLength(2);
-        await vi.waitFor(
-          () => {
-            expect(producers.every(({ settled }) => settled)).toBe(true);
-            expect(decoders.every(({ closed }) => closed)).toBe(true);
-          },
-          { timeout: 5_000 },
-        );
+        await waitFor(() => {
+          expect(producers.every(({ settled }) => settled)).toBe(true);
+          expect(decoders.every(({ closed }) => closed)).toBe(true);
+        });
       } finally {
         controller.abort();
         await reader.close();
@@ -858,6 +853,49 @@ it("joins an admitted ZIP enumeration before reader close completes", async () =
   } finally {
     release.resolve();
     await next.catch(() => undefined);
+    await reader.close();
+    reads.mockRestore();
+    await fixture.handle.close();
+  }
+});
+
+it("joins the final member accounting read before closing its source", async () => {
+  const fixture = await admittedZip();
+  const reached = createDeferred<void>();
+  const release = createDeferred<void>();
+  const reader = new ZipArtifactReader(fixture.path, "zip", undefined, fixture);
+  const traversal = reader.entries()[Symbol.asyncIterator]();
+  let next: Promise<IteratorResult<ArtifactEntry>> | undefined;
+  const nativeRead = fixture.positional.read.bind(fixture.positional);
+  const reads = vi.spyOn(fixture.positional, "read");
+  try {
+    expect((await traversal.next()).done).toBe(false);
+    reads.mockImplementation(async (...args) => {
+      if (args[3] === 0) {
+        reached.resolve();
+        await release.promise;
+      }
+      return nativeRead(...args);
+    });
+    next = traversal.next();
+    await awaitAcknowledgement(
+      reached.promise,
+      next,
+      "ZIP member accounting read",
+    );
+    let closed = false;
+    const closing = reader.close().then(() => {
+      closed = true;
+    });
+    await Promise.resolve();
+    expect(closed).toBe(false);
+    release.resolve();
+    await expect(next).rejects.toMatchObject({ reason: "unavailable" });
+    await closing;
+    expect(closed).toBe(true);
+  } finally {
+    release.resolve();
+    await next?.catch(() => undefined);
     await reader.close();
     reads.mockRestore();
     await fixture.handle.close();

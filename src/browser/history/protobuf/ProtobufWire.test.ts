@@ -174,7 +174,7 @@ it("bounds qualified descriptor-name expansion before creating the SDK registry"
   );
   await expect(
     ProtobufSchema.read(bytes, "Missing", new ProtobufBudget(), same),
-  ).rejects.toMatchObject({ reason: "limit" });
+  ).rejects.toMatchObject({ limit: { name: "protobuf-decoding" } });
 });
 
 it("distinguishes native gRPC flags from web trailers and retains partial messages", async () => {
@@ -376,7 +376,7 @@ it("stops before exhausting fact capacity and yields for caller cancellation", a
   budget.charge(96 * 1024 * 1024 - 1023);
   await expect(
     decodeProtobufWire(Buffer.from([8, 1]), 0, 2, 0, budget, same),
-  ).rejects.toMatchObject({ reason: "limit" });
+  ).rejects.toMatchObject({ limit: { name: "protobuf-decoding" } });
   const abort = new AbortController();
   const reason = new Error("caller stopped selected decoding");
   const data = Buffer.alloc(8192);

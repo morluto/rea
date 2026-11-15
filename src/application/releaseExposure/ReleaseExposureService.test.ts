@@ -28,6 +28,7 @@ import { err, ok, type Result } from "../../domain/result.js";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { ReleaseExposurePort } from "./ReleaseExposurePort.js";
 import { ReleaseExposureService } from "./ReleaseExposureService.js";
+import { releaseOwnedCleanup } from "../../../tests/support/cleanupRelease.js";
 
 const SHA = "ab".repeat(32);
 
@@ -2126,9 +2127,9 @@ describe("ReleaseExposureService cleanup", () => {
       "/work/app/desktop",
       "/work/app/go",
     ]);
-    first.resolveCleanup();
+    releaseOwnedCleanup(first);
     expect(failure.cleanupIncomplete).toBe(true);
-    second.resolveCleanup();
+    releaseOwnedCleanup(second);
     expect(failure.cleanupIncomplete).toBe(false);
   });
 });

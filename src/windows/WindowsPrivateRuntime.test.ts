@@ -420,19 +420,14 @@ it.each(["valid", "oversized", "oversized-close-failed"] as const)(
       return null;
     });
     const runtime = WindowsPrivateRuntime.create("C:\\", "rea-");
-    const originalPlatform = Object.getOwnPropertyDescriptor(
-      process,
-      "platform",
-    )!;
-    Object.defineProperty(process, "platform", {
-      ...originalPlatform,
-      value: "win32",
-    });
     try {
-      const result = await observeGhidraEndpoint({
-        transport: "authenticated-loopback-tcp",
-        path: admittedFile.requestedPath,
-      });
+      const result = await observeGhidraEndpoint(
+        {
+          transport: "authenticated-loopback-tcp",
+          path: admittedFile.requestedPath,
+        },
+        { platform: "win32" },
+      );
       if (kind === "valid")
         expect(result).toEqual({
           ok: true,
@@ -462,7 +457,6 @@ it.each(["valid", "oversized", "oversized-close-failed"] as const)(
       }
       expect(operations).toContain("close");
     } finally {
-      Object.defineProperty(process, "platform", originalPlatform);
       await runtime.close();
     }
   },

@@ -23,7 +23,7 @@ const current = (
   await readFile(join(sourceRoot, "SKILL.md"), "utf8")
 ).replaceAll("\r\n", "\n");
 const cacheBust = String(Date.now());
-const { FULL_CATALOG_IDENTITY } = await import(
+const { DEFAULT_CATALOG_IDENTITY } = await import(
   `${pathToFileURL(join(root, "dist/catalogIdentity.js")).href}?${cacheBust}`
 );
 const { PRODUCT_IDENTITY } = await import(
@@ -34,7 +34,7 @@ const latestSpecifier = PRODUCT_IDENTITY.packageSpecifier;
 const pinnedSpecifier = PRODUCT_IDENTITY.registrationPackageSpecifier;
 const generated = addSkillManifestToolCount(
   current,
-  FULL_CATALOG_IDENTITY.counts.mcp_tools,
+  DEFAULT_CATALOG_IDENTITY.counts.mcp_tools,
 );
 if (!generated.ok) throw generated.error;
 const source = generated.value.replaceAll(latestSpecifier, pinnedSpecifier);

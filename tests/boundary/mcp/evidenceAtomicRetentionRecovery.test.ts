@@ -14,8 +14,6 @@ import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchem
 it.each([
   { profile: "compact", preexisting: false },
   { profile: "compact", preexisting: true },
-  { profile: "full", preexisting: false },
-  { profile: "full", preexisting: true },
 ] as const)(
   "preserves the completed comparison on atomic retention failure ($profile schema, preexisting: $preexisting)",
   async ({ profile, preexisting }) => {

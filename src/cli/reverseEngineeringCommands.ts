@@ -80,7 +80,7 @@ const cleanupOnlyCompleteEvidence = (
   return typeof normalized === "object" &&
     normalized !== null &&
     !Array.isArray(normalized) &&
-    normalized.completion_status === "complete"
+    normalized.completion_status !== "unknown"
     ? parsed.data
     : undefined;
 };

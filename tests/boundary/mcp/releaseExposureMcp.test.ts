@@ -1,3 +1,4 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -49,7 +50,7 @@ mcpTest(
       );
       const response = await client.callTool(
         { name: "audit_release_exposure", arguments: { path: root } },
-        { toolDefinition: definition },
+        { toolDefinition: withCanonicalOutputSchema(definition) },
       );
       expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
       const evidence = outputSchema.parse(response.structuredContent);
@@ -64,7 +65,7 @@ mcpTest(
           name: "audit_release_exposure",
           arguments: { path: "relative-dir" },
         },
-        { toolDefinition: definition },
+        { toolDefinition: withCanonicalOutputSchema(definition) },
       );
       expect(bad.isError).toBe(true);
     } finally {

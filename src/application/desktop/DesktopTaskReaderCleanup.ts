@@ -1,7 +1,8 @@
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { cancelledBy, carriedReason } from "../../domain/analysisErrorCore.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
+import { AnalysisCleanupRelease } from "../../domain/analysisCleanupRelease.js";
 import type { TaskFileView } from "../../domain/desktop/appTaskChecks.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
 import { RetainedCommandCleanup } from "../../process/RetainedCommandCleanup.js";
@@ -22,9 +23,7 @@ const primaryFailure = (cause: unknown): AnalysisError | undefined => {
   if (cause instanceof AnalysisError) return cause;
   if (cause === undefined) return undefined;
   return cause instanceof OwnedCommandFailure && cause.reason === "cancelled"
-    ? new AnalysisCancelledError(OPERATION, {
-        cause: cause.cancellation?.reason,
-      })
+    ? cancelledBy(OPERATION, carriedReason(cause.cancellation?.reason))
     : new ProviderAdapterError(DESKTOP_PROVIDER.id, OPERATION, {
         cause,
         userMessage: `The task reader could not complete: ${cause instanceof Error ? cause.message : String(cause)}`,
@@ -65,11 +64,12 @@ export const readerFailure = (
 /** Own an unconfirmed reader process and its working folder across requests. */
 class ReaderCleanup implements RetainedWorkerCleanup {
   #retry: Promise<void> | undefined;
+  readonly #released = new AnalysisCleanupRelease();
   constructor(
     readonly owner: RetainedCommandCleanup,
     readonly failure: ProviderCleanupError,
   ) {
-    failure.bindCleanupResourceOwner(owner);
+    this.#released.bind(failure.bindCleanupResourceOwner(owner));
   }
 
   retryRetainedCleanup(): Promise<void> {
@@ -88,7 +88,7 @@ class ReaderCleanup implements RetainedWorkerCleanup {
     try {
       await this.owner.close();
       processWorkerCleanup.delete(this);
-      this.failure.resolveCleanup();
+      this.#released.confirm();
     } catch (cause: unknown) {
       this.failure.retainDiagnostics({
         retry_failure: cause instanceof Error ? cause.message : String(cause),

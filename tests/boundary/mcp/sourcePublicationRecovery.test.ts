@@ -458,7 +458,7 @@ it("accounts for a wide source ID list before constructing recovery Evidence", a
   }
 });
 
-it.each(["compact", "full"] as const)(
+it.each(["compact"] as const)(
   "reports omitted primary when a retained provider source precedes an authentication refusal (%s)",
   async (profile) => {
     const identity = { id: "fixture", name: "Fixture", version: "1" };

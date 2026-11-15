@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { expect } from "vitest";
 import { z } from "zod";
 
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { webNetworkCaptureSchema } from "../../../src/domain/webNetworkCapture.js";
 import { protobufHar } from "../../fixtures/protobufCapture.js";
@@ -132,7 +132,7 @@ cliTest.for([
     const descriptor = join(root, `${variant}.pb`);
     const bytes = toBinary(FileDescriptorSetSchema, definition);
     await writeFile(descriptor, bytes);
-    const output = await cli.sharedCliRun!({
+    const output = await cli.run({
       arguments: [
         "inspect-web-network-capture",
         capture,
@@ -222,7 +222,7 @@ cliTest(
     const definition = toBinary(FileDescriptorSetSchema, valid);
     await writeFile(capture, protobufHar(body, "application/x-protobuf"));
     await writeFile(descriptor, definition);
-    const output = await cli.sharedCliRun!({
+    const output = await cli.run({
       arguments: [
         "inspect-web-network-capture",
         capture,

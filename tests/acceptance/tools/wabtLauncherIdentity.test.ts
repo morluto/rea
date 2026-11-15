@@ -181,10 +181,8 @@ cliTest.skipIf(process.platform === "win32")(
       if (decoder === undefined)
         throw new Error("No decoder process was observed");
       await expect
-        .poll(
-          () =>
-            observeProcessStartIdentity(decoder.pid, undefined, decoder.run_id),
-          { timeout: 6000 },
+        .poll(() =>
+          observeProcessStartIdentity(decoder.pid, undefined, decoder.run_id),
         )
         .toBeUndefined();
     }

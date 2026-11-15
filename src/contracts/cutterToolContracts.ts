@@ -28,10 +28,12 @@ export const cutterCommandResultSchema = z.strictObject({
   execution_state: z.enum(["not_started", "complete", "failed", "unknown"]),
   error: z.string().nullable(),
   message: z.string().nullable(),
-  output_truncated: z.boolean(),
+  /** Null when the bridge did not declare whether output was omitted. */
+  output_truncated: z.boolean().nullable(),
   cutter_version: z.string().nullable(),
   current_file: z.string().nullable(),
-  document_generation: z.int().nonnegative(),
+  /** Null when the bridge did not report the generation after the command. */
+  document_generation: z.int().nonnegative().nullable(),
   identity_status: z.literal("partial"),
 });
 

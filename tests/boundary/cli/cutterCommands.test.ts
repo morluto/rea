@@ -98,7 +98,9 @@ describe("Cutter CLI commands", () => {
         ownsProcessLifetime: true,
       });
       try {
-        await expect.poll(() => accepted, { timeout: 5_000 }).toBe(8);
+        // Probes that time out close their sockets, so only a full concurrent
+        // wave holds eight open at once.
+        await expect.poll(() => sockets.size).toBe(8);
         launched.process.kill("SIGINT");
         expect(await supervisor.waitForExit(5_000)).toBe(true);
         expect(await supervisor.waitForOutputClose(1_000)).toBe(true);

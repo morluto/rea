@@ -2,10 +2,8 @@ import { expect, it } from "vitest";
 import { createEvidence } from "../evidence.js";
 import { freezeJsonSnapshot } from "../immutableJson.js";
 import type { RustBinary } from "../rust/rustBinary.js";
-import {
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "./analysisView.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 
 const report: RustBinary = {
   artifact: { path: "/artifacts/rust", sha256: "a".repeat(64), bytes: 512 },

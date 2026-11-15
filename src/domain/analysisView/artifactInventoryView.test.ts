@@ -13,7 +13,7 @@ import {
   artifactInventoryViewRequestSchema,
   projectArtifactInventoryView,
 } from "./artifactInventoryView.js";
-import type { AnalysisViewParent } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 
 const carrier = ARTIFACT_COMPARISON_EXAMPLE.left;
 const freshInventory = (version: "current" | "historical" = "current") => {

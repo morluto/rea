@@ -2,8 +2,9 @@ import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
 import {
   imageFileSizeRemediation,
   projectSelectedArtifactFileFailure,
+  projectOwnedArtifactIdentityFailure,
   projectStableArtifactFailure,
-  stableArtifactInputRecovery,
+  stableArtifactInputFailure,
   projectArtifactCloseFailure,
 } from "../../artifacts/StableArtifactFailure.js";
 import { fixedNativeAllowance } from "../../domain/native/nativeDeadlines.js";
@@ -15,15 +16,12 @@ import {
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
-  artifactFileCancellationCause,
 } from "../../artifacts/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import type { PeResourcesPort } from "../../application/binaryDiagnostics/PeResourcesPort.js";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import {
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
@@ -116,25 +114,12 @@ const peResourcesFailurePrimary = (
       { cause },
     );
 
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "integrity"
-  )
-    return new AnalysisArtifactChangedError(
-      operation,
-      input.path,
-      cause.message,
-      { cause },
-    );
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "cancelled"
-  )
-    return new AnalysisCancelledError(operation, {
-      cause: artifactFileCancellationCause(cause),
-    });
+  const identityFailure = projectOwnedArtifactIdentityFailure(
+    facts,
+    operation,
+    input.path,
+  );
+  if (identityFailure !== undefined) return identityFailure;
 
   if (
     origin === "owned-or-classified" &&
@@ -178,17 +163,7 @@ const peResourcesFailurePrimary = (
       );
     }
     if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(
-        operation,
-        { cause, ...stableArtifactInputRecovery(cause) },
-        [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: cause.message,
-          },
-        ],
-      );
+      return stableArtifactInputFailure(cause, operation);
   }
 
   const fileFailure = projectSelectedArtifactFileFailure(
