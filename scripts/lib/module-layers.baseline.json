@@ -1,6 +1,6 @@
 {
   "upward": {
-    "android -> application": 3,
+    "android -> application": 1,
     "apktool -> application": 1,
     "application -> catalogDiscovery.ts": 1,
     "application -> catalogIdentity.ts": 2,
@@ -14,11 +14,8 @@
     "desktop -> application": 5,
     "domain -> contracts": 4,
     "dotnet -> application": 2,
-    "ghidra -> application": 1,
     "hopper -> application": 2,
-    "ida -> application": 1,
     "il2cpp -> application": 1,
-    "kuna -> application": 1,
     "native -> application": 2,
     "process -> artifacts": 17,
     "signals -> application": 1,
