@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { readClientPolicyBlock } from "./GeminiClientSettings.js";
 import {
   readClientConfigurationFiles,
@@ -395,7 +396,10 @@ const persistClientConfiguration = async ({
         ? { mode: PRIVATE_PROFILE_MODES.directory }
         : {}),
     });
-    if (client.privateProfile !== undefined && process.platform !== "win32")
+    if (
+      client.privateProfile !== undefined &&
+      HOST_PLATFORM.platform !== "win32"
+    )
       await securePrivateDirectory(
         dirname(transactionPath),
         client.privateProfile.home,
