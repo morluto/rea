@@ -17,6 +17,7 @@ import {
   type ReaderLease,
 } from "../../domain/desktop/appTaskReaders.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
+import { AnalysisCleanupRelease } from "../../domain/analysisCleanupRelease.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import {
   AGENTENV_PROVIDER,
@@ -52,7 +53,10 @@ interface PendingReader {
 /** Owns remote reader folders and joins interrupted commands before removing them. */
 export class DesktopRemoteTaskReaders {
   readonly #pending = new Set<PendingReader>();
+  /** Failures reported for the current pending readers, kept to retain late reader facts. */
   readonly #failures = new Set<WeakRef<ProviderCleanupError>>();
+  /** Confirmed once the readers pending when it was taken are all removed. */
+  #release = new AnalysisCleanupRelease();
 
   constructor(private readonly exec: Exec) {}
 
@@ -243,7 +247,8 @@ export class DesktopRemoteTaskReaders {
         reason: errors.join("; "),
         resources: this.cleanupResources,
       };
-    for (const failure of this.#failures) failure.deref()?.resolveCleanup();
+    this.#release.confirm();
+    this.#release = new AnalysisCleanupRelease();
     this.#failures.clear();
     return { verified: true, teardown: "agentenv" };
   }
@@ -305,7 +310,7 @@ export class DesktopRemoteTaskReaders {
           "Retry the check or close the build computer to retry cleanup. If the command outcome is unknown, inspect the reported computer and confirm the reader has stopped before removing its folder.",
       },
     );
-    failure.bindCleanupResourceOwner(this);
+    this.#release.bind(failure.bindCleanupResourceOwner(this));
     this.#failures.add(new WeakRef(failure));
     return failure;
   }

@@ -1,3 +1,4 @@
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 import {
   NATIVE_CALL_CAPTURE_DEFAULTS,
   type NativeCallCaptureLimits,
@@ -108,7 +109,7 @@ const parseLldbObservationJournal = (bytes: Uint8Array): ParsedLldbJournal => {
   const events: ParsedLldbJournal["events"] = [];
   const otherStops: string[] = [];
   const limitations: string[] = [];
-  const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+  const decoder = strictUtf8Decoder("preserve");
   let malformedCount = 0;
   let firstMalformedRow: number | undefined;
   let start = 0;

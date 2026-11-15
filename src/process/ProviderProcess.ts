@@ -1,4 +1,6 @@
 import { err, ok, type Result } from "../domain/result.js";
+import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
+import type { AnalysisCleanupReleaseClaim } from "../domain/analysisErrorBase.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { DarwinProcessOwnershipInspectionError } from "./DarwinProcessRunTokenReader.js";
 import {
@@ -37,6 +39,7 @@ import {
   type ManagedRuntime,
   type RuntimeExhaustion,
 } from "./RuntimeExhaustion.js";
+import { isStrictUtf8 } from "../domain/strictUtf8.js";
 
 const DEFAULT_TERMINATION_GRACE_MS = 250;
 const DEFAULT_KILL_GRACE_MS = 1_000;
@@ -463,6 +466,7 @@ export class ProviderProcessSupervisor {
   #exitObservation: ProviderProcessExitObservation | undefined;
   #stopPromise: Promise<ProviderProcessStopResult> | undefined;
   #stopRequested = false;
+  readonly #release = new AnalysisCleanupRelease();
   #disposed = false;
   #maxAggregateDiagnosticBytes: number | undefined;
   readonly #maxStreamDiagnosticBytes:
@@ -792,6 +796,14 @@ export class ProviderProcessSupervisor {
     };
   }
 
+  /**
+   * Confirmed once a stop proves this process ended; errors reporting the
+   * process read it instead of being told.
+   */
+  get cleanupRelease(): AnalysisCleanupReleaseClaim {
+    return this.#release;
+  }
+
   /** Share each stop attempt; incomplete cleanup retains ownership and permits retry. */
   stop(
     options: ProviderProcessStopOptions = {},
@@ -800,6 +812,7 @@ export class ProviderProcessSupervisor {
       this.#stopRequested = true;
     this.#stopPromise ??= this.#stop(options).then((result) => {
       if (result.status === "incomplete") this.#stopPromise = undefined;
+      else if (result.status !== "not-owned") this.#release.confirm();
       return result;
     });
     return this.#stopPromise;
@@ -1143,12 +1156,7 @@ class ProcessOutputCapture {
     observedBytes: number,
   ): ProviderProcessSnapshot["stdout"] {
     const text = buffer.toString("utf8");
-    let invalidUtf8 = false;
-    try {
-      new TextDecoder("utf-8", { fatal: true }).decode(buffer);
-    } catch {
-      invalidUtf8 = true;
-    }
+    const invalidUtf8 = !isStrictUtf8(buffer);
     return {
       text,
       bytes: buffer.byteLength,

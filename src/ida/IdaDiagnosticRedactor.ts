@@ -1,3 +1,4 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import {
   redactIdaJsonDiagnostic,
   redactIdaUnclassifiedDiagnostic,
@@ -42,9 +43,7 @@ const basicPayloads = (payload: string): readonly string[] => {
   if (octets.some((value) => value < 0x20 || value === 0x7f)) return [];
   const candidates = [octets.toString("latin1")];
   try {
-    candidates.push(
-      new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(octets),
-    );
+    candidates.push(decodeStrictUtf8(octets, "preserve"));
   } catch {
     // Invalid UTF-8 has no decoded Unicode candidate. Exact Latin-1 preserves
     // each octet; do not invent a replacement-character credential.

@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
 import { mkdtemp, realpath, rm, type FileHandle } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -90,18 +91,16 @@ class NativeDmgCommandFailure extends ArtifactReaderFailure {
       readonly exitCode?: number;
     },
   ) {
-    super(
-      failure.reason,
-      message,
-      options === undefined
-        ? undefined
-        : {
-            ...(options.cause === undefined ? {} : { cause: options.cause }),
-            ...(options.cancellation === undefined
-              ? {}
-              : { cancellation: options.cancellation }),
-          },
-    );
+    super(failure.reason, message, {
+      ...(options?.cause === undefined ? {} : { cause: options.cause }),
+      ...(options?.cancellation === undefined
+        ? {}
+        : { cancellation: options.cancellation }),
+      // Only hdiutil verify classifies a DMG failure as integrity.
+      ...(failure.reason === "integrity"
+        ? { integrityCheck: "image-checksum" as const }
+        : {}),
+    });
     this.processNotStarted = options?.processNotStarted ?? false;
     this.verifyDiagnostic = failure.verifyDiagnostic;
     this.unrecognizedImage = failure.unrecognizedImage ?? false;
@@ -181,7 +180,8 @@ export class NativeDmgArtifactReader implements ArtifactReader {
     environment: Readonly<NodeJS.ProcessEnv>,
     host?: NativeDmgHost,
   ) {
-    if (process.platform !== "darwin" && host === undefined)
+    // The system host mounts through this host's hdiutil.
+    if (HOST_PLATFORM.platform !== "darwin" && host === undefined)
       throw new ArtifactReaderFailure(
         "unavailable",
         "Native DMG traversal is available only on macOS",

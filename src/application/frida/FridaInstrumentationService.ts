@@ -7,7 +7,7 @@ import {
   resolvedAnalysisError,
   type AnalysisError,
 } from "../../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import {
   AnalysisAccessDeniedError,
@@ -423,11 +423,11 @@ export class FridaInstrumentationService {
     const closed = await this.#provider.closeSession(sessionId);
     const failure = closed.ok
       ? resolvedAnalysisError(primary)
-      : analysisErrorWithCleanupFailure(
+      : analysisErrorWithCleanupDependencies(
           primary,
           closed.error,
           "instrument_with_frida",
-        ).bindCleanupDependencies([primary, closed.error]);
+        );
     return err(
       signal?.aborted
         ? analysisErrorWithCancellation(

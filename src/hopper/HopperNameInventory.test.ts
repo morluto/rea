@@ -6,6 +6,32 @@ import { HopperClient } from "./HopperClient.js";
 import { HopperProvider } from "./HopperProvider.js";
 
 import { projectHopperNameInventory } from "./HopperNameInventory.js";
+import {
+  hopperReplySchemas,
+  parseHopperReply as parseHopperReplyWith,
+  type HopperReplyMethod,
+} from "./HopperReplyContracts.js";
+import type { JsonValue } from "../domain/jsonValue.js";
+
+/**
+ * Stand in for the client's own reply check: `HopperClient.callTool` validates
+ * each reply against its method contract before the provider reads it.
+ */
+const validatedReply =
+  (reply: JsonValue) =>
+  (
+    method: HopperReplyMethod,
+    _arguments?: unknown,
+    options?: { readonly operation?: string },
+  ) =>
+    Promise.resolve(
+      parseHopperReplyWith(
+        hopperReplySchemas,
+        method,
+        reply,
+        options?.operation ?? method,
+      ),
+    );
 
 describe("Hopper name inventory labels", () => {
   it("tags stripped class-object labels without rewriting source values", () => {
@@ -148,7 +174,7 @@ describe("Hopper list_names reply contract", () => {
       if (!config.ok) throw config.error;
       const callTool = vi
         .spyOn(HopperClient.prototype, "callTool")
-        .mockResolvedValue(ok(reply));
+        .mockImplementation(validatedReply(reply) as never);
       const client = new HopperProvider(
         config.value,
         silentLogger,

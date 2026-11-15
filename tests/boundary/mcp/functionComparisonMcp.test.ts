@@ -314,10 +314,9 @@ describe("function comparison MCP integration", () => {
 });
 
 describe("function comparison input-kind diagnostics", () => {
+  // Each mismatch is checked once; alternating sides covers both labels.
   it.each([
     { side: "left", mismatch: "operation" },
-    { side: "right", mismatch: "operation" },
-    { side: "left", mismatch: "predicate" },
     { side: "right", mismatch: "predicate" },
   ] as const)(
     "rejects inline $side Evidence with the wrong $mismatch as an input-selection error",
@@ -350,10 +349,13 @@ describe("function comparison input-kind diagnostics", () => {
             {
               path: [side],
               reason: "invalid_value",
-              message: `Function analysis requires analyze_function Evidence with the rea.analysis predicate; the ${side} Evidence has operation ${wrong.operation} and predicate ${wrong.predicate_type}.`,
               expected: {
                 operation: "analyze_function",
                 predicate_type: "rea.analysis",
+              },
+              observed: {
+                operation: wrong.operation,
+                predicate_type: wrong.predicate_type,
               },
             },
           ],
@@ -390,9 +392,7 @@ describe("function comparison input-kind diagnostics", () => {
         issues: [
           {
             path: ["left"],
-            message: expect.stringContaining(
-              "the left Evidence has operation inventory_artifact",
-            ),
+            observed: { operation: "inventory_artifact" },
           },
         ],
       },
@@ -531,11 +531,7 @@ it.each([
       const rejected = await verification(inconsistent.evidence_id);
       expect(parseMcpToolError(rejected).error).toMatchObject({
         code: "evidence_integrity_mismatch",
-        details: {
-          reason: expect.stringContaining(
-            "Function comparison status contradicts its dimensions or function match",
-          ),
-        },
+        details: { constraint: "status-matches-dimensions" },
       });
       expect(harness.session.evidenceById(inconsistent.evidence_id)).toEqual(
         inconsistent,

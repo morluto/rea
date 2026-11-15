@@ -1,6 +1,9 @@
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { stableArtifactInputFailure } from "../artifacts/StableArtifactFailure.js";
+import {
+  stableArtifactInputFailure,
+  readerIntegrityFailure,
+} from "../artifacts/StableArtifactFailure.js";
 import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
@@ -16,7 +19,6 @@ import {
 } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
-  AnalysisArtifactChangedError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
@@ -115,13 +117,9 @@ export const sqliteDatabaseDialect = (
       if (cause instanceof ArtifactReaderFailure) {
         if (cause.reason === "io" && cause.cause !== undefined)
           return classifyProviderFailure(cause.cause, dialect);
+        // The shared owner names the integrity check that failed.
         if (cause.reason === "integrity")
-          return new AnalysisArtifactChangedError(
-            OPERATION,
-            path,
-            cause.message,
-            { cause },
-          );
+          return readerIntegrityFailure(OPERATION, path, cause);
         // The shared owner reports the read's cancellation.
         return cause.reason === "cancelled"
           ? undefined

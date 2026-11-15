@@ -73,6 +73,7 @@ const readNativeObservation = (
     const payload = readEvidencePayload(
       inspectMachoSchema,
       evidence.normalized_result,
+      { within: ["normalized_result"] },
     );
     if (!payload.ok) return payload;
     return ok({
@@ -98,6 +99,7 @@ const readNativeObservation = (
     const payload = readEvidencePayload(
       functionDossierSchema,
       evidence.normalized_result,
+      { within: ["normalized_result"] },
     );
     if (!payload.ok) return payload;
     return ok({

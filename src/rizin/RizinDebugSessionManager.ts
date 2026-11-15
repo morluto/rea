@@ -1,3 +1,4 @@
+import { readRuntimeSetting } from "../config/runtimeAnalysisSettings.js";
 import { RIZIN_DEBUGGER_PROVIDER_IDENTITY } from "./RizinDebuggerProviderIdentity.js";
 import { persistentDebuggerHostSupported } from "../process/PersistentDebuggerHost.js";
 import { Deadline } from "../domain/deadline.js";
@@ -40,7 +41,6 @@ import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { currentAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { ConfigurationError } from "../domain/configurationErrors.js";
 import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
@@ -778,15 +778,13 @@ export class RizinDebugSessionManager {
           },
         ),
       );
-    let acceptedDeadline: DebuggerAdmissionLimit;
-    let acceptedOutput: DebuggerAdmissionLimit;
-    try {
-      acceptedDeadline = this.#commandDeadline;
-      acceptedOutput = this.#commandOutput;
-    } catch (cause: unknown) {
-      if (cause instanceof ConfigurationError) return err(cause);
-      throw cause;
-    }
+    const accepted = readRuntimeSetting(() => ({
+      deadline: this.#commandDeadline,
+      output: this.#commandOutput,
+    }));
+    if (!accepted.ok) return accepted;
+    const { deadline: acceptedDeadline, output: acceptedOutput } =
+      accepted.value;
     session.pendingCommandCount += 1;
     let release: (() => void) | undefined;
     let acquired = false;

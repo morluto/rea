@@ -286,6 +286,7 @@ describe("CLI commands projected from tool contracts", () => {
           ...description.parameters
             .filter(({ positional }) => !positional)
             .map(({ key }) => key),
+          ...(description.sessionTarget?.options ?? []).map(({ key }) => key),
           ...description.cliOnlyOptions.map(({ key }) => key),
         ].toSorted(),
       );
@@ -652,6 +653,88 @@ describe("Session targets of contract commands", () => {
     },
   );
 
+  it.each(
+    sessionTargeted.filter(
+      ([, description]) => description.sessionTarget!.options.length > 0,
+    ),
+  )(
+    "%s admits opening options with the opening contract and keeps them out of the contract input",
+    (_command, description) => {
+      const target = description.sessionTarget!;
+      const values = {
+        ...argvValues(description, {}),
+        [target.key]: "rel/app",
+        targetFormat: "esp-flash-image",
+        flashOffset: "0x1000",
+      };
+      for (const { key } of target.options)
+        expect(Object.keys(description.fields), key).not.toContain(key);
+      expect(Object.values(description.toContractInput(values))).not.toContain(
+        "0x1000",
+      );
+      expect(target.admitOpening(description.contract.name, values)).toEqual({
+        ok: true,
+        value: { format: "esp-flash-image", flash_offset: "0x1000" },
+      });
+      expect(target.admitOpening(description.contract.name, {})).toEqual({
+        ok: true,
+        value: {},
+      });
+      // The opening contract's pairing rule names the CLI key.
+      const unpaired = target.admitOpening(description.contract.name, {
+        [target.key]: "rel/app",
+        flashOffset: "0x1000",
+      });
+      expect(unpaired.ok).toBe(false);
+      if (!unpaired.ok)
+        expect(unpaired.error.issues).toEqual([
+          expect.objectContaining({
+            path: ["flashOffset"],
+            message: expect.stringMatching(/only with format=esp-flash-image/u),
+          }),
+        ]);
+      // Only the projected values of an opening field are admitted.
+      const format = target.options.find(({ key }) => key === "targetFormat")!;
+      expect(admits(format.schema, "esp-flash-image")).toBe(true);
+      expect(admits(format.schema, "raw-binary")).toBe(false);
+    },
+  );
+
+  it("refuses opening fields the opening contract cannot supply", () => {
+    const opening = {
+      name: "open",
+      inputSchema: z.object({
+        path: z.string(),
+        mode: z.enum(["a", "b"]).optional(),
+        required: z.string(),
+      }),
+    };
+    const describeOpening = (fields: Record<string, { values?: [string] }>) =>
+      describeContractCommand(
+        { name: "probe", inputSchema: z.object({}) },
+        {
+          command: "probe",
+          description: "Probe",
+          sessionTarget: {
+            description: "Target",
+            open: { contract: opening, fields },
+          },
+        },
+      );
+    expect(() => describeOpening({ missing: {} })).toThrow(
+      "open has no option field missing",
+    );
+    expect(() => describeOpening({ path: {} })).toThrow(
+      "open has no option field path",
+    );
+    expect(() => describeOpening({ required: {} })).toThrow(
+      "open.required is required",
+    );
+    expect(() => describeOpening({ mode: { values: ["c"] } })).toThrow(
+      "open.mode does not admit c",
+    );
+  });
+
   it("refuses a session target beside a contract field keyed path", () => {
     expect(() =>
       describeContractCommand(
@@ -770,6 +853,10 @@ describe("JSON-document contract commands", () => {
         "match-native-functions",
         "build-reconstruction-obligation-ledger",
         "evaluate-reconstruction-coverage",
+        "observe-native-calls",
+        "compare-static-and-observed-endpoints",
+        "capture-browser-scenario",
+        "validate-browser-scenario",
       ]),
     );
   });
@@ -779,12 +866,18 @@ describe("JSON-document contract commands", () => {
     (_command, description) => {
       const command = registered.get(description.command)!;
       const args = (command.args as z.ZodObject).shape;
-      expect(Object.keys(args)).toEqual([description.key]);
+      expect(Object.keys(args)).toEqual([
+        ...(description.sessionTarget === undefined
+          ? []
+          : [description.sessionTarget.key]),
+        description.key,
+      ]);
       const advertised = (args[description.key] as z.ZodType).meta();
       expect(advertised?.contentMediaType).toBe("application/json");
       const content = advertised?.contentSchema as Record<string, unknown>;
       expect(content).toEqual(jsonInputContentSchema(description.content));
-      // Every contract field reaches the document unless omitted with a reason.
+      // Every contract field reaches the document unless omitted with a
+      // reason or taken as an option beside it.
       const input = inputJsonSchema(description.contract.inputSchema);
       const fields = new Set(
         reachable(input, []).flatMap((branch) =>
@@ -796,16 +889,26 @@ describe("JSON-document contract commands", () => {
       for (const field of fields)
         expect(
           reachable(content, [field]).length > 0 ||
-            Object.hasOwn(description.omitted, field),
+            Object.hasOwn(description.omitted, field) ||
+            Object.hasOwn(description.flagged, field),
           field,
         ).toBe(true);
-      for (const field of Object.keys(description.omitted))
+      for (const field of [
+        ...Object.keys(description.omitted),
+        ...Object.keys(description.flagged),
+      ])
         expect(reachable(content, [field]), field).toEqual([]);
+      const options = [
+        ...description.deliveryOptions,
+        ...description.cliOnlyOptions,
+      ].map(({ key }) => key);
+      for (const key of Object.values(description.flagged))
+        expect(options, key).toContain(key);
       expect(
         Object.keys(
           (command.options as z.ZodObject | undefined)?.shape ?? {},
         ).toSorted(),
-      ).toEqual(description.cliOnlyOptions.map(({ key }) => key).toSorted());
+      ).toEqual(options.toSorted());
     },
   );
 
@@ -866,5 +969,95 @@ describe("JSON-document contract commands", () => {
     expect(
       Object.keys(inputJsonSchema(described.content).properties as object),
     ).toEqual(["required"]);
+  });
+});
+
+describe("JSON-document delivery options", () => {
+  const contract = {
+    name: "probe",
+    inputSchema: z.object({
+      required: z.string(),
+      optional: z.string().optional(),
+    }),
+  };
+  const projection = {
+    command: "probe",
+    description: "Probe",
+    document: "Probe JSON",
+  };
+
+  it("takes detail and view beside the document and admits them before the handler", () => {
+    expect(() =>
+      describeContractDocumentCommand(contract, {
+        ...projection,
+        evidenceDelivery: true,
+      }),
+    ).toThrow("probe.detail is not an optional field");
+    const delivered = {
+      name: "probe",
+      inputSchema: contract.inputSchema.extend({
+        detail: z.enum(["complete", "summary"]).default("complete"),
+        view: z.object({ offset: z.number() }).optional(),
+      }),
+    };
+    expect(() =>
+      describeContractDocumentCommand(delivered, {
+        ...projection,
+        viewDelivery: { invalidJson: "view must be JSON" },
+      }),
+    ).toThrow("probe view delivery requires evidenceDelivery");
+    expect(() =>
+      describeContractDocumentCommand(delivered, {
+        ...projection,
+        evidenceDelivery: true,
+        omit: { detail: "never" },
+      }),
+    ).toThrow("probe.detail is both omitted and an option");
+    expect(() =>
+      describeContractDocumentCommand(delivered, {
+        ...projection,
+        evidenceDelivery: true,
+        cliOptions: { evidence_output: z.string().optional() },
+      }),
+    ).toThrow("probe projects two fields to one CLI key");
+    const flagged = describeContractDocumentCommand(delivered, {
+      ...projection,
+      evidenceDelivery: true,
+      viewDelivery: { invalidJson: "view must be JSON" },
+    });
+    expect(
+      Object.keys(inputJsonSchema(flagged.content).properties as object),
+    ).toEqual(["required", "optional"]);
+    expect(flagged.admitDelivery({ detail: "complete" })).toEqual({
+      ok: true,
+      value: { detail: "complete", evidenceOutput: undefined },
+    });
+    expect(
+      flagged.admitDelivery({
+        detail: "summary",
+        evidence_output: "out.json",
+        view: '{"offset":2}',
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        detail: "summary",
+        evidenceOutput: "out.json",
+        view: { offset: 2 },
+      },
+    });
+    for (const values of [
+      { detail: "complete", view: '{"offset":2}' },
+      { detail: "summary", evidence_output: "out.json", view: "{" },
+      {
+        detail: "summary",
+        evidence_output: "out.json",
+        view: '{"offset":"2"}',
+      },
+      { detail: "summary" },
+    ])
+      expect(flagged.admitDelivery(values).ok, JSON.stringify(values)).toBe(
+        false,
+      );
   });
 });
