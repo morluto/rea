@@ -1,5 +1,5 @@
 import { parseAnalysisInput } from "../AnalysisInput.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import type {
   Il2cppSeedOutput,
@@ -66,11 +66,7 @@ export class Il2cppMetadataService {
         failure =
           failure === undefined
             ? next
-            : analysisErrorWithCleanupFailure(
-                failure,
-                next,
-                OPERATION,
-              ).bindCleanupDependencies([failure, next]);
+            : analysisErrorWithCleanupDependencies(failure, next, OPERATION);
       }
     }
     if (failure !== undefined) throw failure;

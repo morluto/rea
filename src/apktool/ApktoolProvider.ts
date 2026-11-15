@@ -53,7 +53,7 @@ import {
   OwnerCancellation,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { finalizedResult, runOwned } from "../providers/runOwned.js";
@@ -514,11 +514,7 @@ export class ApktoolProvider {
     if (first === undefined) return;
     throw failures.reduce(
       (primary, cleanup) =>
-        analysisErrorWithCleanupFailure(
-          primary,
-          cleanup,
-          "close",
-        ).bindCleanupDependencies([primary, cleanup]),
+        analysisErrorWithCleanupDependencies(primary, cleanup, "close"),
       first,
     );
   }
@@ -726,11 +722,7 @@ export class ApktoolProvider {
         physical === cause && cause instanceof AnalysisError
           ? cause
           : failure.cleanupIncomplete
-            ? analysisErrorWithCleanupFailure(
-                primary,
-                failure,
-                operation,
-              ).bindCleanupDependencies([primary, failure])
+            ? analysisErrorWithCleanupDependencies(primary, failure, operation)
             : primary;
       if (
         completedDecode !== undefined &&

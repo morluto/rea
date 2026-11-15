@@ -1,3 +1,4 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { scheduler } from "node:timers/promises";
 import type { GpuObject } from "../domain/gpu/gpuCodeObjects.js";
 import {
@@ -69,8 +70,9 @@ export const readClangBundleDirectory = async (
       );
     let name: string;
     try {
-      name = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+      name = decodeStrictUtf8(
         await source.read(position + 24, nameSize),
+        "preserve",
       );
     } catch (cause) {
       if (cause instanceof TypeError)

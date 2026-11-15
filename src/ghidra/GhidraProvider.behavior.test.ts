@@ -123,6 +123,7 @@ import {
 import { AnalysisSnapshotCache } from "../application/binary/AnalysisSnapshotCache.js";
 import { createEvidence } from "../domain/evidence.js";
 import { createEvidenceBundle } from "../domain/evidenceBundle.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 const GHIDRA_SESSION_RETAINED = "The Ghidra session remains usable.";
 const GHIDRA_ANNOTATIONS_RETAINED =
@@ -6870,7 +6871,7 @@ it("session-observation failure clears only its resolved cleanup dependency afte
       close: async () => {
         closes++;
         if (closes === 1) return err(retained);
-        retained.resolveCleanup();
+        releaseOwnedCleanup(retained);
         return ok(null);
       },
     }),

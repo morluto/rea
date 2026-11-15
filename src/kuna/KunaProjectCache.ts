@@ -267,9 +267,25 @@ interface RetainedHashFile {
   lastCloseFailure?: ProviderCleanupError;
 }
 
-interface CleanupErrorReport {
-  readonly error: WeakRef<AnalysisError>;
-  readonly pendingOwners: Set<object>;
+/**
+ * Release of one retained resource owner. When retirement moves the owner's
+ * resources to another owner, it reads that successor's release instead.
+ */
+class KunaOwnerRelease {
+  #released = false;
+  #successor: KunaOwnerRelease | undefined;
+
+  get released(): boolean {
+    return this.#released || (this.#successor?.released ?? false);
+  }
+
+  confirm(): void {
+    this.#released = true;
+  }
+
+  transferTo(successor: KunaOwnerRelease): void {
+    this.#successor = successor;
+  }
 }
 
 interface CleanupFailureOwner {
@@ -390,8 +406,13 @@ export class KunaProjectCache {
   readonly #hashRecords = new WeakMap<OwnedFileHandle, RetainedHashFile>();
   /** Serialize owner release and staging retirement across concurrent lookups. */
   #hashRetry: Promise<void> = Promise.resolve();
-  /** Weakly track caller errors against every resource owner they report. */
-  readonly #cleanupErrorReports: CleanupErrorReport[] = [];
+  /** Each resource owner's release, read by the errors reporting it. */
+  readonly #ownerReleases = new WeakMap<object, KunaOwnerRelease>();
+  /** Owner releases each reported error reads; it completes once all confirm. */
+  readonly #errorOwnerReleases = new WeakMap<
+    AnalysisError,
+    KunaOwnerRelease[]
+  >();
   readonly #stagingCleanupOwners = new Map<string, object>();
 
   constructor(
@@ -660,7 +681,7 @@ export class KunaProjectCache {
   async #retryProcess(retained: RetainedProcess): Promise<void> {
     const stopped = await retained.owner?.stop();
     if (stopped === undefined || stopped.status === "incomplete") return;
-    this.#resolveCleanupOwner(retained);
+    this.#confirmOwnerRelease(retained);
     await this.#retireStaging(retained.staging, retained.key);
     this.#retainedProcesses.delete(retained);
   }
@@ -695,7 +716,7 @@ export class KunaProjectCache {
         try {
           await retained.lease.release();
           this.#retainedHashFiles.delete(owner);
-          this.#resolveCleanupOwner(owner);
+          this.#confirmOwnerRelease(owner);
           if (retained.staging !== null)
             staging.set(retained.staging, retained.key);
         } catch (cause: unknown) {
@@ -797,18 +818,33 @@ export class KunaProjectCache {
     return result;
   }
 
+  /** Let `error` read the release of every owner it reports. */
   #bindCleanupError(error: AnalysisError, owners: readonly object[]): void {
-    this.#pruneCleanupErrorReports();
-    const report = this.#cleanupErrorReports.find(
-      (candidate) => candidate.error.deref() === error,
-    );
-    const pending = report?.pendingOwners ?? new Set<object>();
-    for (const owner of owners) pending.add(owner);
-    if (report === undefined && pending.size > 0)
-      this.#cleanupErrorReports.push({
-        error: new WeakRef(error),
-        pendingOwners: pending,
+    if (owners.length === 0) return;
+    let releases = this.#errorOwnerReleases.get(error);
+    if (releases === undefined) {
+      const bound: KunaOwnerRelease[] = [];
+      releases = bound;
+      this.#errorOwnerReleases.set(error, bound);
+      error.bindCleanupReleaseClaim({
+        get cleanupReleased() {
+          return bound.every((release) => release.released);
+        },
       });
+    }
+    for (const owner of owners) {
+      const release = this.#ownerRelease(owner);
+      if (!releases.includes(release)) releases.push(release);
+    }
+  }
+
+  #ownerRelease(owner: object): KunaOwnerRelease {
+    let release = this.#ownerReleases.get(owner);
+    if (release === undefined) {
+      release = new KunaOwnerRelease();
+      this.#ownerReleases.set(owner, release);
+    }
+    return release;
   }
 
   #fileCleanupOwner(path: string): object {
@@ -824,41 +860,12 @@ export class KunaProjectCache {
     return owner;
   }
 
-  #resolveCleanupOwner(owner: object): void {
-    for (const report of [...this.#cleanupErrorReports]) {
-      const error = report.error.deref();
-      if (error === undefined) {
-        this.#cleanupErrorReports.splice(
-          this.#cleanupErrorReports.indexOf(report),
-          1,
-        );
-        continue;
-      }
-      report.pendingOwners.delete(owner);
-      if (report.pendingOwners.size === 0) {
-        error.resolveCleanup();
-        this.#cleanupErrorReports.splice(
-          this.#cleanupErrorReports.indexOf(report),
-          1,
-        );
-      }
-    }
+  #confirmOwnerRelease(owner: object): void {
+    this.#ownerRelease(owner).confirm();
   }
 
   #transferCleanupOwner(from: object, to: object): void {
-    this.#pruneCleanupErrorReports();
-    for (const report of this.#cleanupErrorReports)
-      if (report.pendingOwners.delete(from)) report.pendingOwners.add(to);
-  }
-
-  #pruneCleanupErrorReports(): void {
-    for (
-      let index = this.#cleanupErrorReports.length - 1;
-      index >= 0;
-      index -= 1
-    )
-      if (this.#cleanupErrorReports[index]?.error.deref() === undefined)
-        this.#cleanupErrorReports.splice(index, 1);
+    this.#ownerRelease(from).transferTo(this.#ownerRelease(to));
   }
 
   /**
@@ -910,7 +917,7 @@ export class KunaProjectCache {
       await rename(staging, retired);
       cleanupPath = retired;
       await this.#removeRetired(retired, key);
-      if (stagingOwner !== undefined) this.#resolveCleanupOwner(stagingOwner);
+      if (stagingOwner !== undefined) this.#confirmOwnerRelease(stagingOwner);
       return undefined;
     } catch (cause: unknown) {
       const failure =
@@ -1294,7 +1301,7 @@ export class KunaProjectCache {
       const retained = this.#retainedFiles.get(path);
       this.#retainedFiles.delete(path);
       if (retained !== undefined)
-        this.#resolveCleanupOwner(retained.cleanupOwner);
+        this.#confirmOwnerRelease(retained.cleanupOwner);
     } catch (cause: unknown) {
       throw this.#retainFileCleanup(path, cause, key);
     }

@@ -6,6 +6,7 @@ import type {
 import type { CdpRuntimeSources } from "./CdpRuntimeSources.js";
 import type { CdpCommandResult } from "../protocol/CdpCommands.js";
 import { queryListenerSelector } from "./CdpListenerSelector.js";
+import { onCdpTargetEvent } from "../CdpTargetEvents.js";
 
 /** Inspect native DOM listener descriptors without evaluating JavaScript or invoking handlers. */
 export const captureWebEventListeners = async (
@@ -15,8 +16,10 @@ export const captureWebEventListeners = async (
 ): Promise<WebEventListenersObservation> => {
   const session = sources.session;
   session.beginCompletion();
-  const unsubscribe = session.transport.connection.onEvent((event) =>
-    sources.ingest(event),
+  const unsubscribe = onCdpTargetEvent(
+    session.transport.connection,
+    session.transport.sessionId,
+    (event) => sources.ingest(event),
   );
   try {
     for (const domain of ["Page", "Runtime", "Debugger", "DOM"] as const)

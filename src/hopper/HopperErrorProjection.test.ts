@@ -1,3 +1,4 @@
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { describe, expect, it } from "vitest";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
@@ -501,7 +502,7 @@ describe("analysis error projection: Hopper caller lifetime", () => {
       diagnostics: { primary_error: continuingPrimary },
     });
 
-    cleanup.resolveCleanup();
+    releaseOwnedCleanup(cleanup);
     expect(
       projectAnalysisError(composed, "invocation").details?.cleanup_history,
     ).toMatchObject({ primary_error: invocationPrimary });

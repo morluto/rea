@@ -8,7 +8,7 @@ import {
   primaryAnalysisError,
   type AnalysisPartialObservation,
 } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import {
   AnalysisCancelledError,
@@ -458,11 +458,11 @@ export const runOwned = async <Value>(
     ]))
       replacement.retainSecondaryFailure(secondary);
     return replaced.cleanupIncomplete
-      ? analysisErrorWithCleanupFailure(
+      ? analysisErrorWithCleanupDependencies(
           replacement,
           replaced,
           options.operation,
-        ).bindCleanupDependencies([replaced])
+        )
       : replacement;
   };
   if (budgetElapsed && isAborted(signal)) {
@@ -583,11 +583,11 @@ export const runOwned = async <Value>(
       error:
         cleanup.failure === outcome.error
           ? outcome.error
-          : analysisErrorWithCleanupFailure(
+          : analysisErrorWithCleanupDependencies(
               outcome.error,
               cleanup.failure,
               options.operation,
-            ).bindCleanupDependencies([outcome.error, cleanup.failure]),
+            ),
       cleanup,
     };
   }

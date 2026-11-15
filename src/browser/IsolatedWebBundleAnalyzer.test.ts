@@ -24,6 +24,7 @@ import {
   WebBundleAnalysisAdmission,
   type WebBundleAnalysisWorkerPort,
 } from "./IsolatedWebBundleAnalyzer.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 const origin = "https://app.example.test";
 const noSourceMaps: WebBundleAnalysis["observations"]["source_maps"] = {
@@ -340,8 +341,8 @@ it("retains cleanup ownership after mixed worker/close failure and resolves it o
       close: async () => {
         closeAttempts += 1;
         if (closeAttempts <= 2) throw closeFailure;
-        closeFailure.resolveCleanup();
-        primary.resolveCleanup();
+        releaseOwnedCleanup(closeFailure);
+        releaseOwnedCleanup(primary);
       },
     }),
     admission,

@@ -19,6 +19,7 @@ import {
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { observed } from "../../fixtures/analysisExecution.js";
+import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
 
 it.each(
   [true, false].flatMap((supported) =>
@@ -163,7 +164,7 @@ it("retries target and provider owners independently through the same MCP connec
     execute,
     close: async () => {
       if (!providerAllowed) return err(providerFailure);
-      providerFailure.resolveCleanup();
+      releaseOwnedCleanup(providerFailure);
       return ok(null);
     },
   }));

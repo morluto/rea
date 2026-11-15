@@ -6,6 +6,8 @@ import { pathToFileURL } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { fakeCdpEvents } from "../../tests/fixtures/fakeCdpEvents.js";
+
 import {
   fakeCdpSend,
   frameTreeReply,
@@ -90,7 +92,8 @@ it.each([
     ]);
     const mainUrl = pathToFileURL(main).href,
       childUrl = pathToFileURL(child).href;
-    let listener: (event: CdpEvent) => void = () => {};
+    const events = fakeCdpEvents();
+    const listener = events.emit;
     let reads = 0,
       fired = false;
     const emitScript = () => {
@@ -122,10 +125,7 @@ it.each([
       if (stage !== "initial") emitScript();
     };
     const connection = {
-      onEvent: (value: typeof listener) => {
-        listener = (event) => value(receiveCdpEvent(event));
-        return () => {};
-      },
+      onEvent: events.onEvent,
       send: fakeCdpSend(async (method) => {
         if (method === "Page.getFrameTree") {
           reads++;
@@ -309,7 +309,8 @@ it.each([
     ]);
     const mainUrl = pathToFileURL(main).href,
       childUrl = pathToFileURL(child).href;
-    let listener: (event: CdpEvent) => void = () => {};
+    const events = fakeCdpEvents();
+    const listener = events.emit;
     let reads = 0,
       fired = false;
     const inject = () => {
@@ -332,10 +333,7 @@ it.each([
       }
     };
     const connection = {
-      onEvent: (value: typeof listener) => {
-        listener = (event) => value(receiveCdpEvent(event));
-        return () => {};
-      },
+      onEvent: events.onEvent,
       send: fakeCdpSend(async (method) => {
         if (method === "Page.getFrameTree") {
           reads++;
@@ -503,7 +501,7 @@ describe("Electron frame capture", () => {
     const completeness = new CdpCaptureCompleteness();
     const ingest = (method: string, params: unknown): void =>
       ingestElectronScriptEvent({
-        event: { method, params },
+        event: receiveCdpEvent({ method, params }),
         scripts,
         executionContextFrames,
         retention,
@@ -728,7 +726,8 @@ it.each([
     ]);
     const mainUrl = pathToFileURL(main).href,
       childUrl = pathToFileURL(child).href;
-    let listener: (event: CdpEvent) => void = () => {};
+    const events = fakeCdpEvents();
+    const listener = events.emit;
     let reads = 0;
     let replayed = false;
     const emitScript = (hash: string, frameId: string, contextId: number) => {
@@ -776,10 +775,7 @@ it.each([
       emitScript("after-grandchild", "grandchild", 11);
     };
     const connection = {
-      onEvent: (value: typeof listener) => {
-        listener = (event) => value(receiveCdpEvent(event));
-        return () => {};
-      },
+      onEvent: events.onEvent,
       send: fakeCdpSend(async (method) => {
         if (method === "Page.getFrameTree") {
           reads++;
@@ -898,7 +894,8 @@ it.each([
     const mainUrl = pathToFileURL(main).href;
     const childUrl = pathToFileURL(child).href;
     let reads = 0;
-    let listener: (event: CdpEvent) => void = () => {};
+    const events = fakeCdpEvents();
+    const listener = events.emit;
     const emitScript = (hash: string, id: number, frameId: string) => {
       listener({
         method: "Runtime.executionContextCreated",
@@ -910,10 +907,7 @@ it.each([
       });
     };
     const connection = {
-      onEvent: (value: typeof listener) => {
-        listener = (event) => value(receiveCdpEvent(event));
-        return () => {};
-      },
+      onEvent: events.onEvent,
       send: fakeCdpSend(async (method) => {
         if (method === "Page.getFrameTree") {
           reads++;

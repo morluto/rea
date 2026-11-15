@@ -1,3 +1,4 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { OwnerCancellation } from "../domain/analysisErrorCore.js";
 import {
   deserializeMessage,
@@ -386,11 +387,11 @@ export class OwnedMcpStdioTransport implements Transport {
           );
         this.#appendFrame(fragment, frameBytes);
         if (newline === -1) return;
-        const line = new TextDecoder("utf-8", {
-          fatal: true,
-          // Preserve a leading BOM so the JSON-RPC parser can reject it.
-          ignoreBOM: true,
-        }).decode(this.#frameBuffer.subarray(0, this.#frameLength));
+        // Preserve a leading BOM so the JSON-RPC parser can reject it.
+        const line = decodeStrictUtf8(
+          this.#frameBuffer.subarray(0, this.#frameLength),
+          "preserve",
+        );
         this.#frameBuffer = Buffer.alloc(0);
         this.#frameLength = 0;
         this.onmessage?.(deserializeMessage(line));
