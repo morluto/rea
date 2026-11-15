@@ -1,5 +1,4 @@
 import { KUNA_STRING_MIN_LENGTH } from "./KunaLimits.js";
-import { accessSync, constants, statSync } from "node:fs";
 
 import type {
   AnalysisClient,
@@ -38,11 +37,11 @@ import {
   createKunaResourceScope,
   inspectKunaInstallation,
 } from "./KunaInstallation.js";
+import { admitKunaCommand } from "./KunaAdmission.js";
 import { KunaProjectCache } from "./KunaProjectCache.js";
 import { kunaCapabilities } from "./KunaProviderCapabilities.js";
 import { KUNA_PROVIDER_IDENTITY } from "./KunaProviderMetadata.js";
 import {
-  KUNA_COMMAND_REMEDIATION,
   KUNA_RELEASE_VERIFICATION_EXPLANATION,
   KUNA_UNVERIFIED_VERSION_REMEDIATION,
   KUNA_VERIFIED_VERSION,
@@ -116,36 +115,14 @@ export class KunaProvider implements AnalysisProviderCandidate {
   }
 
   inspectAvailability(): ProviderAvailability {
-    const configuration = readKunaConfiguration(
-      this.#environment,
-      this.#platform,
-    );
-    if (!configuration.ok)
+    const admission = admitKunaCommand(this.#environment, this.#platform);
+    if (!admission.ok)
       return {
         status: "unavailable",
-        code: configuration.error.code,
-        reason: configuration.error.reason,
-        remediation: configuration.error.remediation,
-        diagnostics: {
-          configured: configuration.error.code !== "not_configured",
-          version_probed: false,
-        },
-      };
-    const { command } = configuration.value;
-    let unusable: string | undefined;
-    try {
-      accessSync(command, constants.X_OK);
-      if (!statSync(command).isFile()) unusable = "command_not_file";
-    } catch (cause: unknown) {
-      unusable = cause instanceof Error ? cause.message : String(cause);
-    }
-    if (unusable !== undefined)
-      return {
-        status: "unavailable",
-        code: "executable_missing",
-        reason: `Cannot execute REA_KUNA_COMMAND ${command}: ${unusable}. ${KUNA_COMMAND_REMEDIATION}`,
-        remediation: KUNA_COMMAND_REMEDIATION,
-        diagnostics: { configured: true, command, version_probed: false },
+        code: admission.error.code,
+        reason: admission.error.reason,
+        remediation: admission.error.remediation,
+        diagnostics: { ...admission.error.diagnostics, version_probed: false },
       };
     return {
       status: "available",
@@ -153,9 +130,9 @@ export class KunaProvider implements AnalysisProviderCandidate {
       reason: null,
       diagnostics: {
         configured: true,
-        command,
-        cache_root: configuration.value.cacheRoot,
-        jobs: configuration.value.jobs,
+        command: admission.value.command,
+        cache_root: admission.value.cacheRoot,
+        jobs: admission.value.jobs,
         version_probed: false,
       },
     };

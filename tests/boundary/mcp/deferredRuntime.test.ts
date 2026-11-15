@@ -110,6 +110,20 @@ it.each([
           true,
         );
     }
+    // Discovery is not recorded; it follows the default compact input profile.
+    expect(
+      initial.tools.find(({ name }) => name === "discover_tools")?.inputSchema
+        .properties,
+    ).toMatchObject({
+      offset: { type: "integer", minimum: 0, maximum: 9007199254740991 },
+      limit: { type: "integer", minimum: 1, maximum: 20 },
+    });
+    expect(
+      JSON.stringify(
+        initial.tools.find(({ name }) => name === "discover_tools")
+          ?.inputSchema,
+      ),
+    ).not.toContain('"default"');
     const call = async (name: string, args: Record<string, unknown>) => {
       if (environment.REA_MCP_OUTPUT_SCHEMA_PROFILE === "off") {
         const definition = (await client.listTools()).tools.find(

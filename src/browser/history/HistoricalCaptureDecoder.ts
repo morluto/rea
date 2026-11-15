@@ -423,7 +423,14 @@ export class HistoricalCaptureDecoder {
       // historical error already follows the post-launch completion owner.
       const error = retainProcessInspectionCleanup(
         processInspectionFailure(cause),
-        historicalCaptureFailure(input, cause, phase, options, reportedHeap),
+        historicalCaptureFailure(
+          input,
+          cause,
+          phase,
+          options,
+          reportedHeap,
+          processLease,
+        ),
         runtimeResources,
         OPERATION,
       );

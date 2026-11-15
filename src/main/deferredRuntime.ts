@@ -10,6 +10,7 @@ import {
 } from "../recordedMcpCatalog.js";
 import type { AppConfig } from "../config/types.js";
 import {
+  compactPresentationForMcpInputSchemaProfile,
   resolveMcpInputSchemaProfile,
   type McpInputSchemaProfile,
 } from "../config/mcpInputSchemaProfile.js";
@@ -215,7 +216,11 @@ export const runDeferred = async (
                   dependencies.setExitCode(1);
                   throw cause;
                 }),
-              config.mcpMaxInputElements,
+              {
+                maximumInputElements: config.mcpMaxInputElements,
+                compactPresentation:
+                  compactPresentationForMcpInputSchemaProfile(profile),
+              },
             );
             if (config.mcpToolCatalogProfile === "hot-cold")
               server.enableProgressiveCatalog();

@@ -37,12 +37,13 @@ import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js"
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisUnsupportedTargetError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import {
   projectAnalysisError,
@@ -214,11 +215,7 @@ export class PwntoolsDecoder<
   ): Promise<Result<Report, AnalysisError>> {
     if (options?.signal?.aborted)
       return Promise.resolve(
-        err(
-          new AnalysisCancelledError(this.profile.operation, {
-            cause: options?.signal?.reason,
-          }),
-        ),
+        err(cancelledBy(this.profile.operation, options?.signal)),
       );
     if (this.#closing) return Promise.resolve(err(this.#closedError()));
     const key = Symbol();
@@ -229,11 +226,7 @@ export class PwntoolsDecoder<
     const operation = this.#tail.then(() => {
       this.#admissions.settle(key, "admitted");
       if (options?.signal?.aborted)
-        return err(
-          new AnalysisCancelledError(this.profile.operation, {
-            cause: options?.signal?.reason,
-          }),
-        );
+        return err(cancelledBy(this.profile.operation, options?.signal));
       return this.#closing ? err(this.#closedError()) : inspect();
     });
     this.#tail = operation.then(
@@ -243,9 +236,10 @@ export class PwntoolsDecoder<
     return admission.then((state) =>
       state === "cancelled"
         ? err(
-            new AnalysisCancelledError(this.profile.operation, {
-              cause: options?.signal?.reason,
-            }),
+            cancelledBy(
+              this.profile.operation,
+              carriedReason(options?.signal?.reason),
+            ),
           )
         : operation,
     );
@@ -337,9 +331,7 @@ export class PwntoolsDecoder<
       );
     try {
       if (options?.signal?.aborted)
-        throw new AnalysisCancelledError(OPERATION, {
-          cause: options.signal.reason,
-        });
+        throw cancelledBy(OPERATION, options.signal);
       if (!pwntoolsHostSupported(process.platform, process.arch)) {
         const requirement = pwntoolsHostRequirement(
           process.platform,
@@ -430,9 +422,7 @@ export class PwntoolsDecoder<
           cause.code === "ABORT_ERR" &&
           cause.cause === options.signal.reason
         )
-          throw new AnalysisCancelledError(OPERATION, {
-            cause: options.signal.reason,
-          });
+          throw cancelledBy(OPERATION, options.signal);
         throw cause;
       }
       await writeFile(
@@ -501,10 +491,11 @@ export class PwntoolsDecoder<
           if (cleanup !== undefined) bindArtifactFileCleanup(cause, cleanup);
           const primary =
             cause.reason === "cancelled"
-              ? new AnalysisCancelledError(OPERATION, {
-                  cause: artifactFileCancellationCause(cause),
-                  capturedOutput,
-                })
+              ? cancelledBy(
+                  OPERATION,
+                  carriedReason(artifactFileCancellationCause(cause)),
+                  { capturedOutput },
+                )
               : (cleanup ??
                 new AnalysisOutputError(OPERATION, cause.message, {
                   cause,
@@ -527,14 +518,17 @@ export class PwntoolsDecoder<
           cause instanceof ArtifactReaderFailure &&
           cause.reason === "cancelled"
         ) {
-          const error = new AnalysisCancelledError(OPERATION, {
-            cause: artifactFileCancellationCause(cause),
-            capturedOutput,
-            ...(cause instanceof ArtifactReaderFailure &&
-            cause.cleanup !== undefined
-              ? { cleanup: cause.cleanup }
-              : {}),
-          });
+          const error = cancelledBy(
+            OPERATION,
+            carriedReason(artifactFileCancellationCause(cause)),
+            {
+              capturedOutput,
+              ...(cause instanceof ArtifactReaderFailure &&
+              cause.cleanup !== undefined
+                ? { cleanup: cause.cleanup }
+                : {}),
+            },
+          );
           bindArtifactFileCleanup(cause, error);
           throw error;
         }
@@ -706,8 +700,7 @@ export class PwntoolsDecoder<
     const cleanup = await this.#completeCleanup(() => this.#retire());
     if (result.ok && options?.signal?.aborted)
       result = err(
-        new AnalysisCancelledError(OPERATION, {
-          cause: options.signal.reason,
+        cancelledBy(OPERATION, options.signal, {
           partialObservation: result.value,
           capturedOutput: result.value.diagnostics,
         }),
