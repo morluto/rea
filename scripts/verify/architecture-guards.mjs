@@ -15,6 +15,7 @@ import {
   isComparisonOrCountFile,
   optionalFactDefaultCount,
 } from "./optional-fact-default-guard.mjs";
+import { unmarkedMatchCount } from "./reason-marker.mjs";
 
 // Architecture guards for the strict-identity / best-effort-inference split.
 // - Composite dedup keys must not NUL-join variable-length or free-form
@@ -440,12 +441,21 @@ checkCounted(
 
 // A slice to a named maximum drops items; boundedList in src/domain/boundedList
 // keeps the count of what it dropped beside the retained items, so a consumer
-// can say that more exist and how many.
+// can say that more exist and how many. Two caps drop no evidence and carry a
+// reason marker instead (#11411): `// generation-cap: <reason>` limits what REA
+// generates (suggested checks, guards) or the work spent finding it, and
+// `// sample-cap: <reason>` limits illustrative samples whose full totals the
+// same result already reports.
 checkCounted(
-  "slice to a named maximum (use boundedList or BoundedListCollector from src/domain/boundedList so the omitted count travels with the items)",
+  "slice to a named maximum (use boundedList or BoundedListCollector from src/domain/boundedList so the omitted count travels with the items, or mark a generation or sample cap with its reason)",
   "constant-maximum-slice",
   files,
-  /\.slice\(\s*0\s*,\s*[A-Z][A-Z0-9_]*\s*\)/gu,
+  (_content, file) =>
+    unmarkedMatchCount(
+      file.source,
+      /\.slice\(\s*0\s*,\s*[A-Z][A-Z0-9_]*\s*\)/gu,
+      ["generation-cap", "sample-cap"],
+    ),
   ["src/domain/boundedList.ts"],
 );
 
