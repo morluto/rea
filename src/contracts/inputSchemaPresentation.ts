@@ -354,7 +354,7 @@ const normalizationContext = (
     fact: Fact;
   }[] = [];
   const changed: Fact[] = [];
-  const dynamic: Fact[] = [];
+  const untracked: Fact[] = [];
   const factAt = (
     schema: unknown,
     inherited: JsonSchemaScope | undefined,
@@ -420,15 +420,14 @@ const normalizationContext = (
           fact.changed = true;
           changed.push(fact);
         }
-      }
+      } else untracked.push(fact);
     }
     if (
       scope?.dialect !== "draft-07" &&
       (typeof schema.$dynamicRef === "string" ||
         typeof schema.$recursiveRef === "string")
-    ) {
-      dynamic.push(fact);
-    }
+    )
+      untracked.push(fact);
     if (!ignoresSiblings)
       for (const child of schemaSubschemas(schema, {
         includeDefinitions: false,
@@ -455,10 +454,11 @@ const normalizationContext = (
           factAt(child, scope)?.evaluationDependents.add(fact);
       }
   }
-  // A dynamic target depends on the evaluation path, which this owner does
-  // not follow. Once anything widens, relax them like named anchors.
+  // Dynamic targets depend on the evaluation path, and an unresolved target
+  // may be an embedded resource this owner rewrote. Neither is followed, so
+  // once anything widens, relax them like named anchors.
   if (changed.length > 0)
-    for (const fact of dynamic) {
+    for (const fact of untracked) {
       fact.opaqueReference = fact;
       if (!fact.changed) {
         fact.changed = true;
