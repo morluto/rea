@@ -21,12 +21,12 @@ import {
   ArtifactEmbeddedFormatProbes,
   type ArtifactEmbeddedFormatProbeFacts,
 } from "../ArtifactEmbeddedFormatProbes.js";
-import { withArtifactRegularFile } from "../ArtifactFileOperation.js";
+import { withArtifactRegularFile } from "../../resources/ArtifactFileOperation.js";
 import type {
   ArtifactCleanupAttempt,
   ArtifactResourceOwner,
   ArtifactResourceScope,
-} from "../ArtifactResourceScope.js";
+} from "../../resources/ArtifactResourceScope.js";
 import { lstat, realpath } from "node:fs/promises";
 import { dirname } from "node:path";
 import { isPathWithinRoot } from "../../domain/localPath.js";

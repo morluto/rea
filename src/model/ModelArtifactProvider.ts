@@ -25,7 +25,7 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   withArtifactRegularFile,
@@ -33,7 +33,7 @@ import {
   artifactFilePrimaryFacts,
   artifactFileCancellationCause,
   artifactFileCompletion,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ModelHeaderReader } from "./ModelHeaderReader.js";
 import { GgufHeader } from "./GgufHeader.js";

@@ -1,4 +1,4 @@
-import { artifactOperationCause } from "../ArtifactFileOperation.js";
+import { artifactOperationCause } from "../../resources/ArtifactFileOperation.js";
 import { regularFileCancellation } from "../../filesystem/OwnedRegularFile.js";
 import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
@@ -19,7 +19,7 @@ import {
   hashReadable,
   type HashResult,
 } from "../ArtifactHash.js";
-import type { ArtifactResourceScope } from "../ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { fileSnapshotPartialObservationSchema } from "../../domain/fileSnapshotObservation.js";
 
 /** Finalize the admitted root while preserving its completed identity and exact owner. */

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type { RetainedResourceScope } from "../../src/ports/AnalysisProvider.js";
 import { AnalysisCleanupLease } from "../../src/resources/AnalysisCleanupLease.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import {
   prepareOwnedCommand,
   runOwnedCommand,

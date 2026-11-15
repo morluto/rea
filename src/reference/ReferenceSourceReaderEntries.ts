@@ -3,7 +3,7 @@ import type { BigIntStats, Dir, Dirent } from "node:fs";
 import { opendir, readlink, realpath, stat } from "node:fs/promises";
 import { basename, dirname, join, sep } from "node:path";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
-import type { ArtifactCleanupAttempt } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactCleanupAttempt } from "../resources/ArtifactResourceScope.js";
 import { OwnedDirectoryHandle } from "../filesystem/OwnedDirectoryHandle.js";
 import {
   absoluteCallerPath,

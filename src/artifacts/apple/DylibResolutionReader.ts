@@ -29,8 +29,8 @@ import {
   DylibFileAccess,
   classifyDylibReadFailure,
 } from "./DylibFileAccess.js";
-import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
-import { assertArtifactReadActive } from "../ArtifactFileOperation.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
+import { assertArtifactReadActive } from "../../resources/ArtifactFileOperation.js";
 
 const OPERATION = "trace_dylib_resolution";
 // Resolution reads paths on this host's filesystem.

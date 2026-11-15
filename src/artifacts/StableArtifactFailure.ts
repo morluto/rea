@@ -1,4 +1,4 @@
-import type { StableArtifactSnapshot } from "./readStableArtifact.js";
+import type { StableArtifactSnapshot } from "../resources/readStableArtifact.js";
 import type {
   AnalysisError,
   AnalysisErrorOptions,
@@ -10,7 +10,7 @@ import {
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
   type ArtifactFilePrimaryFacts,
-} from "./ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import { completedStableArtifactObservation } from "./StableArtifactObservation.js";
 import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
 import {

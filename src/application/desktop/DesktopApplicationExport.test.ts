@@ -9,7 +9,7 @@ import { z } from "zod";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import type { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {

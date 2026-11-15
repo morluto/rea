@@ -17,7 +17,7 @@ import {
   type FileHandle,
 } from "node:fs/promises";
 import { afterEach, expect, it, vi } from "vitest";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { parseConfig } from "../../../src/config/parseConfig.js";
 import {
   resolveGhidraAnalysisSeeds,

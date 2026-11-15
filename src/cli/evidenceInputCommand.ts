@@ -2,7 +2,7 @@ import { localPathStringSchema } from "../domain/localPath.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Result } from "../domain/result.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";

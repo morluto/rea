@@ -8,12 +8,12 @@ import {
   artifactFilePrimaryFacts,
   bindArtifactFileCleanup,
   type ArtifactFilePrimaryFacts,
-} from "../../artifacts/ArtifactFileOperation.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+} from "../../resources/ArtifactFileOperation.js";
+import type { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import {
   completedStableArtifact,
   readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
+} from "../../resources/readStableArtifact.js";
 import {
   AnalysisError,
   primaryAnalysisError,

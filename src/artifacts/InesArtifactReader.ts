@@ -1,4 +1,4 @@
-import { artifactOperationCause } from "./ArtifactFileOperation.js";
+import { artifactOperationCause } from "../resources/ArtifactFileOperation.js";
 import { readFileHandlePrefix } from "../filesystem/readFileHandlePrefix.js";
 import { Readable } from "node:stream";
 import {

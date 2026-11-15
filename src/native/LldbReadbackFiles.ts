@@ -1,10 +1,10 @@
 import type { FileHandle } from "node:fs/promises";
 import { err, ok, type Result } from "../domain/result.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import {
   ArtifactFileCleanupFailure,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import type { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 
 /** PID publication is decimal; allow the largest safe PID and a CRLF ending. */

@@ -2,8 +2,8 @@ import { FLUTTER_PROVIDER_IDENTITY } from "./FlutterProviderIdentity.js";
 import {
   artifactFileCancellationCause,
   assertArtifactReadActive,
-} from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+} from "../resources/ArtifactFileOperation.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,

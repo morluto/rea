@@ -5,7 +5,7 @@ import { AnalysisCleanupLeaseGroup } from "../resources/AnalysisCleanupLease.js"
 import {
   ArtifactResourceScope,
   ArtifactResourceRetryFailure,
-} from "../artifacts/ArtifactResourceScope.js";
+} from "../resources/ArtifactResourceScope.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import { ProviderProcessSupervisor } from "../process/ProviderProcess.js";

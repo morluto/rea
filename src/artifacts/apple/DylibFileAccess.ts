@@ -17,9 +17,9 @@ import {
   assertArtifactReadActive,
   mapArtifactFileFailure,
   withArtifactRegularFile,
-} from "../ArtifactFileOperation.js";
+} from "../../resources/ArtifactFileOperation.js";
 import type { ArtifactIntegrityCheck } from "../../domain/artifactOperationError.js";
-import type { ArtifactResourceScope } from "../ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { readArtifactFileChunks } from "../readArtifactFileChunks.js";
 import { hasMachoMagic } from "../../domain/apple/machoContainer.js";
 import { readMachoImage } from "./MachoLoadCommandReader.js";

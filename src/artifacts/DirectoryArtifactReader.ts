@@ -31,7 +31,7 @@ import { RegularFileOperationCancelled } from "../filesystem/RegularFile.js";
 import {
   ArtifactFileCancelled,
   ArtifactFileCleanupFailure,
-} from "./ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import { decodeDirectoryEntryName } from "../filesystem/decodeDirectoryEntryName.js";
 import { resolveArtifactSourcePath } from "./ArtifactSelectedSource.js";

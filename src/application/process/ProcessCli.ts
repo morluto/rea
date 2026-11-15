@@ -45,9 +45,9 @@ import {
   ArtifactReaderFailure,
   artifactPrimaryCleanupLeases,
 } from "../../resources/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
+import { bindArtifactFileCleanup } from "../../resources/ArtifactFileOperation.js";
 import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { EvidenceFileError } from "../../domain/evidenceErrors.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";

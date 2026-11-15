@@ -24,7 +24,7 @@ import {
 import type {
   ArtifactResourceOwner,
   ArtifactResourceScope,
-} from "../artifacts/ArtifactResourceScope.js";
+} from "../resources/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import type {
   AnalysisCleanupObservation,

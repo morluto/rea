@@ -1,6 +1,6 @@
 import { EvidenceIntegrityError } from "../../../src/domain/evidenceErrors.js";
 import { resolveSourceToBundleReference } from "../../../src/application/javascript/SourceToBundleReference.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";

@@ -6,7 +6,7 @@ import {
   BinaryFormatFailure,
   BinaryResourceFailure,
 } from "../native/metadata/BinaryContainer.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../resources/ArtifactFileOperation.js";
 import { setImmediate } from "node:timers/promises";
 import {
   readUnityFsHeaderFacts,

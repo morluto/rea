@@ -1,4 +1,4 @@
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { AnalysisCleanupLease } from "../../src/resources/AnalysisCleanupLease.js";
 import type { RetainedResourceScope } from "../../src/ports/AnalysisProvider.js";
 

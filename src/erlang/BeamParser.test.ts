@@ -16,7 +16,7 @@ import {
 } from "./Beam.fixture.js";
 import { BeamCapacityFailure, parseErlangBeam } from "./BeamParser.js";
 import { BeamProvider } from "./BeamProvider.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 
 const defaults = inspectErlangBeamInputSchema.parse({
   path: "/artifacts/app.beam",

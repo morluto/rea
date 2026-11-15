@@ -1,5 +1,5 @@
 import { hashStableFile } from "../../dist/filesystem/StableFileHash.js";
-import { ArtifactResourceScope } from "../../dist/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../dist/resources/ArtifactResourceScope.js";
 import { AnalysisCleanupLease } from "../../dist/resources/AnalysisCleanupLease.js";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 

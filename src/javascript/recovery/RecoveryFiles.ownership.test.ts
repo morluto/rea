@@ -4,8 +4,8 @@ import { createHash } from "node:crypto";
 import { writeFile, type FileHandle } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { afterEach, expect, it, onTestFinished, vi } from "vitest";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { ArtifactFileCleanupFailure } from "../../artifacts/ArtifactFileOperation.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
+import { ArtifactFileCleanupFailure } from "../../resources/ArtifactFileOperation.js";
 import {
   AnalysisCancelledError,
   AnalysisArtifactChangedError,

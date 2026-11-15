@@ -7,8 +7,8 @@ import { classifyProviderFailure } from "../providers/classifyProviderFailure.js
 import {
   ArtifactResourceRetryFailure,
   ArtifactResourceScope,
-} from "../artifacts/ArtifactResourceScope.js";
-import { withArtifactRegularFile } from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactResourceScope.js";
+import { withArtifactRegularFile } from "../resources/ArtifactFileOperation.js";
 import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
@@ -18,7 +18,7 @@ import { OwnedCommandFailure } from "./OwnedCommand.js";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { expect, it } from "vitest";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+import { readStableArtifact } from "../resources/readStableArtifact.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   AnalysisCancelledError,

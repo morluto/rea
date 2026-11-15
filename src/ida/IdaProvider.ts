@@ -1,4 +1,4 @@
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import { bindArtifactFileCleanup } from "../resources/ArtifactFileOperation.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { launchRegexMatchingLimitation } from "../process/RegexMatcher.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
@@ -51,7 +51,7 @@ import {
   IDA_WORKSPACE_ROOT_REMEDIATION,
   type IdaAdmission,
 } from "./IdaAdmission.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { ProviderInspectionScope } from "../ports/ProviderInspectionScope.js";

@@ -1,7 +1,7 @@
 import { lstat, realpath } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { normalizeArtifactPath } from "../../artifacts/ArtifactPaths.js";
 import type { WebScriptArtifactPort } from "../../ports/WebScriptArtifactPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";

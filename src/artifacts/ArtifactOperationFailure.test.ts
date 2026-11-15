@@ -10,7 +10,7 @@ import {
   readerIntegrityFailure,
 } from "./StableArtifactFailure.js";
 import { artifactIntegrityDetails } from "../domain/artifactIntegrity.js";
-import { ArtifactFileCleanupFailure } from "./ArtifactFileOperation.js";
+import { ArtifactFileCleanupFailure } from "../resources/ArtifactFileOperation.js";
 import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 

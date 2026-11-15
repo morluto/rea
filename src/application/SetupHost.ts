@@ -5,7 +5,7 @@ import {
 } from "./ClientConfigurationCleanup.js";
 import { access } from "node:fs/promises";
 
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { currentClientRegistrationCommand } from "./ClientRegistrationIdentity.js";

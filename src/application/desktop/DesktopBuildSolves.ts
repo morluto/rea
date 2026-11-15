@@ -4,11 +4,11 @@ import {
   PORTABLE_BUNDLE_NAME_CONSTRAINT,
 } from "../../domain/portableBundleName.js";
 import { createHash } from "node:crypto";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
-} from "../../artifacts/ArtifactFileOperation.js";
+} from "../../resources/ArtifactFileOperation.js";
 import { RegularFileCapacityError } from "../../filesystem/readStableFileBytes.js";
 import {
   guestFileAnswerCeiling,

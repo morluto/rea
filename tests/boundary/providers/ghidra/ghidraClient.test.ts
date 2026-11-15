@@ -3,7 +3,7 @@ import type { BridgeMaxReplyBytes } from "../../../../src/config/bridgeMaxReplyB
 import { GhidraProvider } from "../../../../src/ghidra/GhidraProvider.js";
 import { fixtureDosLoadImage } from "../../../../src/ghidra/GhidraLoadImage.fixture.js";
 import { jsonValueSchema } from "../../../../src/domain/jsonValue.js";
-import { artifactFilePrimaryFacts } from "../../../../src/artifacts/ArtifactFileOperation.js";
+import { artifactFilePrimaryFacts } from "../../../../src/resources/ArtifactFileOperation.js";
 import {
   AnalysisCancelledError,
   OwnerCancellation,

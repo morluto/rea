@@ -6,7 +6,7 @@ import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { readWindowsPrivateRuntimeFile } from "../windows/WindowsPrivateRuntime.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   assertArtifactReadActive,
@@ -14,7 +14,7 @@ import {
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import { readArtifactFileChunks } from "../artifacts/readArtifactFileChunks.js";
 import { sameRegularFileState } from "../filesystem/RegularFile.js";
 import {

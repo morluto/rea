@@ -1,6 +1,6 @@
 import { DESKTOP_EXPORT_FRAMEWORK_VERSION } from "../domain/desktop/appExport.js";
 import type { execFileOutput } from "../process/ExecFileOutput.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import type { ClientRegistrationStatus } from "./ClientRegistrationStatus.js";
 import type { DoctorHost, DoctorSkillState } from "./Doctor.js";
 import type { DoctorCheck } from "../ports/DoctorProviderInspection.js";

@@ -3,7 +3,7 @@ import {
   appendPeConsumedSpan as consume,
 } from "./PeRvaSpans.js";
 import { setImmediate } from "node:timers/promises";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../../resources/ArtifactFileOperation.js";
 import {
   BinaryFormatFailure,
   BinaryMappingFailure,

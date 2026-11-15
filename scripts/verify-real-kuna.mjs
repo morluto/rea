@@ -22,7 +22,7 @@ import {
   KUNA_UNVERIFIED_VERSION_REMEDIATION,
   KUNA_VERIFIED_VERSION,
 } from "../dist/kuna/KunaRelease.js";
-import { ArtifactResourceScope } from "../dist/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../dist/resources/ArtifactResourceScope.js";
 import { AnalysisCleanupLease } from "../dist/resources/AnalysisCleanupLease.js";
 import {
   KUNA_XREF_MISSING_NAME_REMEDIATION,

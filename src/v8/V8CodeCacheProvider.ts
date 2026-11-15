@@ -1,15 +1,15 @@
 import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   type StableArtifactSnapshot,
   readStableArtifact,
-} from "../artifacts/readStableArtifact.js";
+} from "../resources/readStableArtifact.js";
 import {
   artifactFilePrimaryFacts,
   artifactSelectedPathErrno,
   type ArtifactFilePrimaryFacts,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import {
   projectArtifactCloseFailure,
   projectOwnedArtifactIdentityFailure,

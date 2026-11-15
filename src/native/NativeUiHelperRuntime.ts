@@ -1,4 +1,4 @@
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";

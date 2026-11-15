@@ -8,7 +8,7 @@ import type {
   AnalysisExecution,
   ExecutionOptions,
 } from "../../ports/AnalysisProvider.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
 import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
 import { SafeOutputTreeCreationFailure } from "../../artifacts/SafeOutputTreeCreationFailure.js";
@@ -21,7 +21,7 @@ import {
   carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
-import { artifactFileCancellationCause } from "../../artifacts/ArtifactFileOperation.js";
+import { artifactFileCancellationCause } from "../../resources/ArtifactFileOperation.js";
 import {
   javascriptRecoveryResultSchema,
   type JavaScriptRecoveryInput,

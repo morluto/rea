@@ -1,4 +1,4 @@
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import { bindArtifactFileCleanup } from "../resources/ArtifactFileOperation.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { fileURLToPath } from "node:url";
@@ -28,7 +28,7 @@ import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.
 import { err, ok, type Result } from "../domain/result.js";
 import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";

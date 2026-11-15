@@ -7,7 +7,7 @@ import {
   prepareOwnedCommand,
   runOwnedCommand,
 } from "../../dist/process/OwnedCommand.js";
-import { ArtifactResourceScope } from "../../dist/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../dist/resources/ArtifactResourceScope.js";
 import { AnalysisCleanupLease } from "../../dist/resources/AnalysisCleanupLease.js";
 import { retainOwnedCommandCleanup } from "../../dist/providers/OwnedCommandCleanup.js";
 

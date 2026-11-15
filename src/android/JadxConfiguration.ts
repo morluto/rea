@@ -47,7 +47,7 @@ import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { ZipArtifactReader } from "../artifacts/ZipArtifactReader.js";
 import type { DoctorProviderCheck } from "../ports/DoctorProviderInspection.js";

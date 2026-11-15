@@ -7,7 +7,7 @@ import { z } from "zod";
 import {
   ArtifactResourceScope,
   type ArtifactResourceOwner,
-} from "../artifacts/ArtifactResourceScope.js";
+} from "../resources/ArtifactResourceScope.js";
 import type { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import {
   ArtifactReaderFailure,

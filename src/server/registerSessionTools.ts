@@ -2,7 +2,7 @@ import type { CapabilityAvailabilityProbes } from "../application/CapabilityAvai
 import { openBinaryTargetSelection } from "../contracts/sessionLifecycleInputs.js";
 import { registerNativeFunctionMatchingTool } from "./registerNativeFunctionMatchingTool.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { workflowUnknownInput } from "../application/investigation/WorkflowUnknown.js";
 
 import {

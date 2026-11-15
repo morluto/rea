@@ -7,7 +7,7 @@ import { Client } from "@modelcontextprotocol/client";
 import { createOwnedMcpStdioTransport } from "./owned-mcp-stdio.mjs";
 import { createVerifierCommands } from "./verify-commands.mjs";
 
-import { ArtifactResourceScope } from "../../dist/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../dist/resources/ArtifactResourceScope.js";
 import { AnalysisCleanupLease } from "../../dist/resources/AnalysisCleanupLease.js";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 

@@ -16,7 +16,7 @@ import {
   type ArtifactEntry,
   type ArtifactReader,
 } from "../../src/resources/ArtifactReader.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { GodotPckArtifactReader } from "../../src/artifacts/GodotPckArtifactReader.js";
 import { NodeSeaArtifactReader } from "../../src/artifacts/NodeSeaArtifactReader.js";
 import { nodeSeaElf } from "../../src/artifacts/nodeSea/NodeSea.fixture.js";

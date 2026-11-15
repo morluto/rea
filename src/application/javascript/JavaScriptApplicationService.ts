@@ -9,7 +9,7 @@ import { z } from "zod";
 
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { translateArtifactFailure } from "../../artifacts/ArtifactOperationFailure.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import {
   analyzeJavaScriptApplicationInputSchema,
   type JavaScriptApplicationAnalysisResult,

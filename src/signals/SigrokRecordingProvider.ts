@@ -47,7 +47,7 @@ import {
   artifactResourceDialect,
   createArtifactAnalysisResources,
 } from "../providers/artifactResourceFailure.js";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+import { readStableArtifact } from "../resources/readStableArtifact.js";
 import {
   assertArtifactCommandPath,
   selectArtifactCommandPath,

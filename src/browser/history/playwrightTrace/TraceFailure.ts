@@ -9,7 +9,7 @@ import {
 import { ArtifactOperationError } from "../../../domain/artifactOperationError.js";
 import { PLAYWRIGHT_TRACE_OPERATION as operation } from "../../../domain/playwrightTrace/playwrightTrace.js";
 import { ArtifactReaderFailure } from "../../../resources/ArtifactReader.js";
-import { artifactFileCancellationCause } from "../../../artifacts/ArtifactFileOperation.js";
+import { artifactFileCancellationCause } from "../../../resources/ArtifactFileOperation.js";
 import { isSelectedRegularFileError } from "../../../filesystem/RegularFile.js";
 import {
   stableArtifactInputFailure,
