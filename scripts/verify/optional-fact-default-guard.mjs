@@ -14,10 +14,8 @@
 // The source is tokenized by source-tokens.mjs, so only executable
 // expressions are counted and exemption markers are read only from comments.
 
-import { expressionKeywords, tokenize } from "./source-tokens.mjs";
-
-// The reason must say something; a bare marker does not exempt a default.
-const exemptionMarker = /optional-fact-default:\s*\S+(?:\s+\S+){2,}/u;
+import { isReasonMarker } from "./reason-marker.mjs";
+import { tokenize } from "./source-tokens.mjs";
 
 const comparisonOrCountFile =
   /\/[^/]*(?:compar|diff|delta|reconcil|coverage|summar|count|match)[^/]*\.ts$/iu;
@@ -50,7 +48,7 @@ const matchingOpen = (tokens, close) => {
 
 /** Ends a callee or object, so a following `(` or `[` is a call or element read. */
 const endsOperand = (token) =>
-  (token?.kind === "id" && !expressionKeywords.has(token.text)) ||
+  (token?.kind === "id" && token.keyword !== true) ||
   kind(token) === ")" ||
   kind(token) === "]";
 
@@ -134,7 +132,8 @@ export const optionalFactDefaultCount = (source) => {
   };
   const exempt = new Set(
     comments
-      .filter(({ text }) => exemptionMarker.test(text))
+      // A marker without a reason does not exempt a default.
+      .filter(({ text }) => isReasonMarker(text, "optional-fact-default"))
       .map(({ end }) => lineOf(end - 1)),
   );
   let count = 0;

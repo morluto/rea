@@ -12,7 +12,8 @@ const punctuator =
   /\?\?=|\?\?|\?\.(?!\d)|\.\.\.|=>|[!=]==?|[<>]=?|&&=?|\|\|=?|\*\*=?|[-+*%&|^/]=|\+\+|--|[{}()[\];,.<>+\-*/%&|^!~?:=@]/uy;
 
 // After these keywords an expression starts, so `/` opens a regular expression.
-export const expressionKeywords = new Set([
+// A property name such as `row.return` is not a keyword.
+const expressionKeywords = new Set([
   "await",
   "case",
   "delete",
@@ -32,26 +33,31 @@ export const expressionKeywords = new Set([
 // A parenthesised head after these keywords ends where a statement starts.
 const controlKeywords = new Set(["if", "while", "for", "with"]);
 
-// After a closing bracket, `++` or `--` an operand has ended, so `/` divides,
-// except after the `)` that closes a control head such as `if (…)`, where a
-// statement (and so a regular expression) starts.
+// After a closing bracket, `++`, `--`, an operand or a complete template an
+// expression has ended, so `/` divides. An expression starts after any other
+// punctuator, an expression keyword, the `)` that closes a control head such
+// as `if (…)`, and template text that opens a `${` substitution.
 const regexAllowedAfter = (token) =>
   token === undefined ||
+  token.opensSubstitution === true ||
+  token.keyword === true ||
   (token.kind === "punct" && token.controlHead === true) ||
-  (token.kind === "punct" && !/^(?:[)\]}]|\+\+|--)$/u.test(token.text)) ||
-  (token.kind === "id" && expressionKeywords.has(token.text));
+  (token.kind === "punct" && !/^(?:[)\]}]|\+\+|--)$/u.test(token.text));
 
-/** End of a template's text from `at` (after a backtick or a substitution's `}`). */
+/**
+ * End of a template's text from `at` (after a backtick or a substitution's
+ * `}`), and whether that text opens a `${` substitution.
+ */
 const templateEnd = (source, at, braces) => {
   while (at < source.length) {
     if (source[at] === "\\") at += 2;
-    else if (source[at] === "`") return at + 1;
+    else if (source[at] === "`") return { end: at + 1, opens: false };
     else if (source[at] === "$" && source[at + 1] === "{") {
       braces.push("template");
-      return at + 2;
+      return { end: at + 2, opens: true };
     } else at += 1;
   }
-  return at;
+  return { end: at, opens: false };
 };
 
 /** End of a quoted string opened at `at`. */
@@ -91,6 +97,10 @@ const commentEnd = (source, at) => {
   return end === -1 ? source.length : end + 2;
 };
 
+/** Whether a name after this token is a property name, not a keyword. */
+const isMemberAccess = (token) =>
+  token?.kind === "punct" && (token.text === "." || token.text === "?.");
+
 const wordPatterns = [
   ["id", identifier],
   ["number", number],
@@ -116,7 +126,7 @@ const wordToken = (source, at) => {
  * are tracked through nested `${…}` substitutions with a brace stack.
  */
 export const tokenize = (source) => {
-  /** @type {{ kind: string, text: string, start: number, controlHead?: true }[]} */
+  /** @type {import("./source-tokens.d.mts").SourceToken[]} */
   const tokens = [];
   // One entry per open `(`: whether it opens a control head.
   const parens = [];
@@ -137,12 +147,14 @@ export const tokenize = (source) => {
       tokens.push({ kind: "string", text: "", start });
     } else if (char === "`" || (char === "}" && braces.at(-1) === "template")) {
       if (char === "}") braces.pop();
-      at = templateEnd(source, at + 1, braces);
+      const text = templateEnd(source, at + 1, braces);
+      at = text.end;
       // Template text after a substitution's `}` closes that substitution.
       tokens.push({
         kind: char === "}" ? "substitution-end" : "string",
         text: "",
         start,
+        ...(text.opens ? { opensSubstitution: true } : {}),
       });
     } else if (char === "/" && regexAllowedAfter(tokens.at(-1))) {
       at = regexEnd(source, at);
@@ -157,17 +169,19 @@ export const tokenize = (source) => {
       if (token.text === "(") {
         const previous = tokens.at(-1);
         // `x.if(…)` and `x?.for(…)` are member calls, not control heads.
-        const member = tokens.at(-2);
         parens.push(
           previous?.kind === "id" &&
             controlKeywords.has(previous.text) &&
-            !(
-              member?.kind === "punct" &&
-              (member.text === "." || member.text === "?.")
-            ),
+            !isMemberAccess(tokens.at(-2)),
         );
       } else if (token.text === ")" && parens.pop() === true)
         token.controlHead = true;
+      else if (
+        token.kind === "id" &&
+        expressionKeywords.has(token.text) &&
+        !isMemberAccess(tokens.at(-1))
+      )
+        token.keyword = true;
       tokens.push(token);
       if (token.text === "{") braces.push("block");
       else if (token.text === "}") braces.pop();

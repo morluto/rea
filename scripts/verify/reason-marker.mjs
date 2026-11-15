@@ -31,9 +31,16 @@ const scan = (raw) => {
   return { code: code + raw.slice(last), lineComments };
 };
 
+/**
+ * Whether a comment is a `// <name>: <reason>` marker with a non-empty reason.
+ * @param {string} comment
+ * @param {string} name
+ */
+export const isReasonMarker = (comment, name) =>
+  new RegExp(`^//\\s*${name}:\\s*\\S`, "u").test(comment);
+
 const markerIn = (comment, names) =>
-  comment !== undefined &&
-  names.some((name) => new RegExp(`^//\\s*${name}:\\s*\\S`, "u").test(comment));
+  comment !== undefined && names.some((name) => isReasonMarker(comment, name));
 
 const exempted = ({ codeLines, lineComments }, index, names) => {
   if (markerIn(lineComments.get(index), names)) return true;

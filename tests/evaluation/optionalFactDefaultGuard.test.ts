@@ -68,6 +68,12 @@ it("honours an exemption marker that gives a reason", () => {
       "// optional-fact-default:\nconst offset = page.offset ?? 0;",
     ),
   ).toBe(1);
+  // Any non-empty reason exempts, as for the other reason markers.
+  expect(
+    optionalFactDefaultCount(
+      "// optional-fact-default: request option\nconst offset = page.offset ?? 0;",
+    ),
+  ).toBe(0);
   expect(
     optionalFactDefaultCount(
       "// optional-fact-default: request default, not observed\n\nconst n = report.count ?? 0;",
@@ -103,6 +109,29 @@ it("counts executable defaults only, whatever strings and regular expressions ho
 });
 
 it("tracks template substitutions and division", () => {
+  // A substitution starts an expression, so its `/` opens a regular
+  // expression whose `/*` does not hide the code after the template.
+  expect(
+    optionalFactDefaultCount(
+      "const s = `${/[/*]/.test(name)}`;\nconst n = report.count ?? 0;",
+    ),
+  ).toBe(1);
+  expect(
+    optionalFactDefaultCount(
+      "const s = `${a} and ${/[/*]/.test(b)}`;\nconst n = report.count ?? 0;",
+    ),
+  ).toBe(1);
+  // A complete template ends an operand, so `/` after it divides.
+  expect(
+    optionalFactDefaultCount(
+      "const r = `${a}` / 2; const n = report.count ?? 0; // /",
+    ),
+  ).toBe(1);
+  // A keyword-named property is an operand, so `/` after it divides.
+  for (const name of ["return", "typeof", "in", "yield"])
+    expect(
+      optionalFactDefaultCount(`const r = row.${name} / (report.count ?? 0);`),
+    ).toBe(1);
   expect(
     optionalFactDefaultCount(
       "const t = `${{ a: 1 }.a} x ?? 0`; const n = report.count ?? 0;",

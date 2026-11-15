@@ -75,6 +75,10 @@ it("reads regular expressions and template substitutions as code", () => {
   ).toBe(0);
   expect(count("const t = `${/* s.slice(0, MAX) */ 1}`;")).toBe(0);
   expect(count("const t = `${s.slice(0, MAX)}`;")).toBe(1);
+  // A regular expression opening a substitution does not hide later code.
+  expect(
+    count("const t = `${/[/*]/.test(v)}`;\nconst kept = items.slice(0, MAX);"),
+  ).toBe(1);
 });
 
 it("reads a regular expression after a control head as a statement", () => {
