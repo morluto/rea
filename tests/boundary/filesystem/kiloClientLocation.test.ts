@@ -70,6 +70,18 @@ it("selects the last present Kilo layer, as rea mcp add does", async () => {
   ).toContain("kilo");
 });
 
+it("selects an existing file in a KILO_CONFIG_DIR spelled with a dot segment", async () => {
+  const home = await createTestTempDirectory("rea-kilo-config-dir-dot-");
+  const custom = join(home, "profiles", "kilo");
+  await mkdir(custom, { recursive: true });
+  await writeFile(join(custom, "kilo.jsonc"), "{}");
+  const environment = { KILO_CONFIG_DIR: `${home}/profiles/./kilo` };
+  const row = await kiloRow(home, environment);
+  expect(row?.configPath).toBe(join(custom, "kilo.jsonc"));
+  expect(row?.configPaths).toContain(row?.configPath);
+  expect(await mcpAddTarget(home, environment)).toBe(row?.configPath);
+});
+
 it("plans kilo.json in an empty KILO_CONFIG_DIR", async () => {
   const home = await createTestTempDirectory("rea-kilo-config-dir-");
   const custom = join(home, "custom-kilo");

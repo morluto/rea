@@ -195,7 +195,8 @@ export const parseClientRegistrationPolicy = (
       ? ok(parsed.data)
       : err(registrationError(parsed.error));
   }
-  if (client.format === "opencode") {
+  // Kilo keeps OpenCode's launcher and environment shape.
+  if (client.format === "opencode" || client.format === "kilo") {
     const entry = opencodeLauncherSchema
       .extend({
         environment: jsonRecordSchema(z.string()).optional(),
