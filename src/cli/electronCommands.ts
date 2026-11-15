@@ -1,16 +1,12 @@
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 
-import { isAbsolute, resolve, sep } from "node:path";
-
 import { Cli, z } from "incur";
-import { nulFreeStringSchema } from "../domain/localPath.js";
-
-import { logCliCommand } from "../cliLogging.js";
 
 import { electronActiveObservationInputSchema } from "../domain/javascript/electronActiveObservation.js";
 import { ELECTRON_TOOL_CONTRACTS } from "../contracts/javascript/electronToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
 import {
+  inspectWithService,
   registerContractCommand,
   registerContractDocumentCommand,
   type ContractCommandContext,
@@ -27,12 +23,12 @@ import type { Logger } from "pino";
 
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { createElectronFuseService } from "../composition/electronFuses.js";
+import { ELECTRON_FUSE_PROVIDER_IDENTITY } from "../electron/ElectronFuseProviderIdentity.js";
 
 import {
   javaScriptApplicationCliProjection,
   runJavaScriptApplicationCommand,
 } from "./javascriptApplicationAnalysis.js";
-import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import type { ElectronActiveObservationPort } from "../application/javascript/ElectronActiveObservationPort.js";
 import {
@@ -61,44 +57,29 @@ export const registerElectronCommands = (
 const registerElectronFuseCommand = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
-): void => {
-  cli.command(CLI_COMMANDS.inspectElectronFuses, {
-    description:
-      "Inspect packaged Electron fuse bytes without launching the application",
-    args: z.object({
-      path: nulFreeStringSchema.describe(
-        "Local Electron .app, Electron Framework binary, PE executable, or ELF executable",
-      ),
-    }),
-    run: ({ args }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, CLI_COMMANDS.inspectElectronFuses, async () => {
-          const service = createElectronFuseService();
-          return finishAnalysisCommand(
-            () =>
-              service.inspect(
-                { path: absoluteElectronFusePath(args.path) },
-                { signal },
-              ),
-            service,
-            service.provider.identity.id,
-            "inspect_electron_fuses",
-            signal,
-          ).then(projectCliAnalysisResult);
-        }),
-      ),
-  });
-};
-
-/** Anchor relative input without changing which file symlink/.. selects. */
-const absoluteElectronFusePath = (path: string): string => {
-  if (path === "") return path;
-  // Win32 resolves dot components before directory links, including drive-relative paths.
-  if (sep === "\\") return resolve(path);
-  if (isAbsolute(path)) return path;
-  const base = process.cwd();
-  return `${base}${base.endsWith(sep) ? "" : sep}${path}`;
-};
+): void =>
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(ELECTRON_TOOL_CONTRACTS, "inspect_electron_fuses"),
+    {
+      command: CLI_COMMANDS.inspectElectronFuses,
+      description:
+        "Inspect packaged Electron fuse bytes without launching the application",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      fields: {
+        path: {
+          description:
+            "Local Electron .app, Electron Framework binary, PE executable, or ELF executable",
+        },
+      },
+    },
+    inspectWithService(
+      createElectronFuseService,
+      ELECTRON_FUSE_PROVIDER_IDENTITY.id,
+    ),
+  );
 
 const registerElectronActiveCommand = (
   cli: ReturnType<typeof Cli.create>,
