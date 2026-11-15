@@ -281,6 +281,8 @@ const PATH_SCOPES = {
     // The advertised absolute-path pattern is host-specific (#7151).
     "src/domain/localPath*.ts",
     "tests/boundary/mcp/absoluteLocalPathSchema.test.ts",
+    // Live advertisement, independent of the POSIX-generated catalog.
+    "tests/boundary/mcp/toolSchemaValidity.test.ts",
     "tests/boundary/filesystem/safeOutputTree.test.ts",
     "tests/boundary/providers/native/artifactProvider.archiveSafety.test.ts",
     "tests/boundary/providers/native/artifactProvider.extractionCompleteness.test.ts",

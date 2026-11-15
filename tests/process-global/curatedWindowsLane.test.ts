@@ -124,6 +124,7 @@ describe("curated Windows test lane", () => {
       expect.arrayContaining([
         "tests/boundary/mcp/advertisedDialect.test.ts",
         "tests/boundary/mcp/absoluteLocalPathSchema.test.ts",
+        "tests/boundary/mcp/toolSchemaValidity.test.ts",
       ]),
     );
   });
