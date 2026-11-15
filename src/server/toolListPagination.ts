@@ -9,6 +9,7 @@ import {
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { canonicalJson } from "../domain/comparisonSemantics.js";
+import { isRecord } from "../domain/isRecord.js";
 import {
   DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET,
   type McpToolsListPageBudget,
@@ -64,9 +65,6 @@ const decodeToolListCursor = (raw: string): ToolListCursor | undefined => {
  */
 const toolListDigest = (tools: readonly unknown[]): string =>
   createHash("sha256").update(canonicalJson(tools, "tools/list")).digest("hex");
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const toolsListCursorError = (
   message: JSONRPCResultResponse,
