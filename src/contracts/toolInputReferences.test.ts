@@ -5,10 +5,8 @@ import { z } from "zod";
 
 import { applicationFeatureSeedSchema } from "../domain/javascript/javascriptFeatureTraceSchemas.js";
 import { ADVERTISED_INPUT_SCHEMA_MAX_BYTES } from "./advertisedDialect.js";
-import {
-  presentAdvertisedInput,
-  presentAdvertisedInputSchema,
-} from "./compactInputSchema.js";
+import { advertiseToolInput } from "./advertisedTool.js";
+import { presentAdvertisedInput } from "./compactInputSchema.js";
 import { presentInputJsonSchema } from "./inputSchemaPresentation.js";
 import { toolContract } from "./toolContracts.js";
 import {
@@ -19,12 +17,11 @@ import { JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE } from "./javascript/javascript
 
 /** The input schema a client receives: presentation, then the portable dialect. */
 const advertise = (canonical: Record<string, unknown>) =>
-  presentAdvertisedInputSchema(
+  advertiseToolInput(
+    undefined,
     presentInputJsonSchema(canonical, () => undefined),
-    {
-      budgetBytes: ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
-    },
-  );
+    { budgetBytes: ADVERTISED_INPUT_SCHEMA_MAX_BYTES },
+  ).inputSchema;
 
 it.each(["draft-2020-12", "draft-07"] as const)(
   "honors projection options independently of cached wire transformations in %s",

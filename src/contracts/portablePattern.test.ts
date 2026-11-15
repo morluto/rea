@@ -7,7 +7,7 @@ import {
   ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
   portablePatternViolations,
 } from "./advertisedDialect.js";
-import { presentAdvertisedInputSchema } from "./compactInputSchema.js";
+import { advertiseToolInput } from "./advertisedTool.js";
 import { presentInputJsonSchema } from "./inputSchemaPresentation.js";
 import { presentOutputJsonSchema } from "./outputSchemaPresentation.js";
 import { projectPortablePattern } from "./portablePattern.js";
@@ -220,10 +220,11 @@ const PRESENTERS = [
     "input",
     // The input schema a client receives: presentation, then the dialect.
     (schema: Record<string, unknown>) =>
-      presentAdvertisedInputSchema(
+      advertiseToolInput(
+        undefined,
         presentInputJsonSchema(schema, () => undefined),
         { budgetBytes: ADVERTISED_INPUT_SCHEMA_MAX_BYTES },
-      ),
+      ).inputSchema,
   ],
   ["output", presentOutputJsonSchema],
 ] as const;

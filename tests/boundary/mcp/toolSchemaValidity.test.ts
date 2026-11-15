@@ -6,8 +6,8 @@ import { z } from "zod";
 
 import { advertisedInputExamples } from "../../../src/contracts/advertisedInputExamples.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
-import { presentAdvertisedInputSchema } from "../../../src/contracts/compactInputSchema.js";
-import { COMPACT_INPUT_SCHEMA_PRESENTATION } from "../../../src/config/mcpInputSchemaProfile.js";
+import { advertiseTool } from "../../../src/contracts/advertisedTool.js";
+import { advertisedToolPresentation } from "../../../src/config/mcpOutputSchemaProfile.js";
 import { emptyArraySchema } from "../../../src/domain/emptyArraySchema.js";
 import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
 import {
@@ -578,10 +578,10 @@ describe("MCP root input schemas", () => {
         if (contract === undefined || tool === undefined)
           throw new Error(`${name} was not advertised`);
         const validate = ajv.compile(
-          presentAdvertisedInputSchema(
-            tool.inputSchema,
-            COMPACT_INPUT_SCHEMA_PRESENTATION,
-          ),
+          advertiseTool(
+            { inputSchema: tool.inputSchema },
+            advertisedToolPresentation("off"),
+          ).inputSchema ?? {},
         );
         const base = {
           cdp_endpoint: "http://127.0.0.1:9222",
