@@ -19,6 +19,7 @@ import {
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import type {
   AnalysisCapturedOutput,
   AnalysisError,
@@ -370,7 +371,8 @@ const compilerInspectionError = (
 interface ProcessReaderRoot {
   readonly path: string;
   cleanupPromise?: Promise<void> | undefined;
-  cleanupAnchor?: ProviderCleanupError | undefined;
+  /** Reported by every removal failure until a retry removes the root. */
+  cleanupRelease?: AnalysisCleanupRelease | undefined;
 }
 
 interface ProcessReaderCompilation {
@@ -508,13 +510,12 @@ export const createDarwinProcessRunTokenReader = (
             },
             { cause, operation: "prepare_owned_process" },
           );
-          if (target.cleanupAnchor === undefined)
-            target.cleanupAnchor = failure;
-          else failure.bindCleanupDependencies([target.cleanupAnchor]);
-          throw failure;
+          throw (target.cleanupRelease ??= new AnalysisCleanupRelease()).bind(
+            failure,
+          );
         }
-        target.cleanupAnchor?.resolveCleanup();
-        target.cleanupAnchor = undefined;
+        target.cleanupRelease?.confirm();
+        target.cleanupRelease = undefined;
         if (root !== target) return;
         root = undefined;
         executable = undefined;
