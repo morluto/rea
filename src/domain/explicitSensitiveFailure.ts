@@ -331,6 +331,9 @@ const redactFailure = (
         ...context,
         ...resourceConstraintRecovery(error, text),
         ...(error.limit === undefined ? {} : { limit: error.limit }),
+        ...(error.requestSent === undefined
+          ? {}
+          : { requestSent: error.requestSent }),
       },
     );
   if (error instanceof ProviderCleanupError)
