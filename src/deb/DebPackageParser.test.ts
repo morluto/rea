@@ -16,6 +16,8 @@ import {
 import {
   DEB_PACKAGE_LIMITATIONS,
   parseDebPackage,
+  undecodableTarNamesLimitation,
+  unreadableRelationshipsDetail,
 } from "./DebPackageParser.js";
 import { replaceXzBindingForTests } from "./xzDecoder.js";
 
@@ -418,9 +420,7 @@ it("reports a PAX path that is not UTF-8 as a limitation", () => {
       ],
     }),
   );
-  expect(report.limitations).toContain(
-    "1 tar entry names or link targets are not UTF-8; they are shown with U+FFFD replacements and may not match md5sums.",
-  );
+  expect(report.limitations).toContain(undecodableTarNamesLimitation(1));
 });
 
 it("reads control files from the control.tar root, not nested paths", () => {
@@ -477,7 +477,7 @@ it("keeps UTF-8, surrounding spaces, and backslashes in tar names", () => {
     missing_from_inventory: 0,
     missing_from_md5sums: 0,
   });
-  expect(report.limitations.join("\n")).not.toContain("not UTF-8");
+  expect(report.limitations).not.toContain(undecodableTarNamesLimitation(1));
 });
 
 it("reports tar names that are not UTF-8 as a limitation", () => {
@@ -499,9 +499,7 @@ it("reports tar names that are not UTF-8 as a limitation", () => {
   expect(report.data_entries.map((entry) => entry.path)).toContain(
     "usr/bin/h\uFFFD",
   );
-  expect(report.limitations).toContain(
-    "1 tar entry names or link targets are not UTF-8; they are shown with U+FFFD replacements and may not match md5sums.",
-  );
+  expect(report.limitations).toContain(undecodableTarNamesLimitation(1));
 });
 
 it("keeps the md5sums cross-check unknown when md5sums is not UTF-8", () => {
@@ -616,8 +614,7 @@ it("keeps an unreadable dependency alternative as an issue and reports partial c
     kind: "malformed",
     member: "control.tar",
     field: "Depends",
-    detail:
-      'Depends has 1 unreadable alternative(s); the first is "libbar (2.0)".',
+    detail: unreadableRelationshipsDetail("Depends", 1, "libbar (2.0)"),
     offset: null,
   });
   expect(report.coverage.status).toBe("partial");
@@ -653,5 +650,7 @@ it("records one bounded issue for a field with many unreadable alternatives", ()
   );
   const depends = report.issues.filter((issue) => issue.field === "Depends");
   expect(depends).toHaveLength(1);
-  expect(depends[0]?.detail).toContain("5000 unreadable alternative(s)");
+  expect(depends[0]?.detail).toBe(
+    unreadableRelationshipsDetail("Depends", 5000, "("),
+  );
 });

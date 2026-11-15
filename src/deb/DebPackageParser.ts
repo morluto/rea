@@ -150,6 +150,18 @@ const tarType = (flag: number): DebTarEntry["type"] => {
   }
 };
 
+/** The issue detail for a relationship field with unreadable alternatives. */
+export const unreadableRelationshipsDetail = (
+  field: string,
+  count: number,
+  first: string,
+): string =>
+  `${field} has ${String(count)} unreadable alternative(s); the first is ${JSON.stringify(first)}.`;
+
+/** The limitation for tar entry names or link targets that are not UTF-8. */
+export const undecodableTarNamesLimitation = (count: number): string =>
+  `${String(count)} tar entry names or link targets are not UTF-8; they are shown with U+FFFD replacements and may not match md5sums.`;
+
 const pad512 = (size: number): number =>
   Math.ceil(size / TAR_BLOCK) * TAR_BLOCK;
 
@@ -674,7 +686,11 @@ const parseControl = (tar: TarParse, issues: DebPackageIssue[]): DebControl => {
           kind: "malformed",
           member: "control.tar",
           field: name,
-          detail: `${name} has ${String(parsed.unreadCount)} unreadable alternative(s); the first is ${JSON.stringify(first)}.`,
+          detail: unreadableRelationshipsDetail(
+            name,
+            parsed.unreadCount,
+            first,
+          ),
           offset: null,
         });
       }
@@ -898,9 +914,7 @@ export const parseDebPackage = (
   }
   for (const tar of [controlTar, dataTar])
     if (tar !== null && tar.undecodableNames > 0)
-      limitations.push(
-        `${String(tar.undecodableNames)} tar entry names or link targets are not UTF-8; they are shown with U+FFFD replacements and may not match md5sums.`,
-      );
+      limitations.push(undecodableTarNamesLimitation(tar.undecodableNames));
   if (controlMember === undefined)
     limitations.push("No control.tar member was present.");
   if (dataMember === undefined)
