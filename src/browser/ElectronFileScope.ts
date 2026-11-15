@@ -31,6 +31,7 @@ import {
   DEFAULT_ASAR_HEADER_ADMISSION,
   type AsarHeaderAdmission,
 } from "../config/asarHeaderAdmission.js";
+import { isRecord } from "../domain/isRecord.js";
 
 type ElectronFileOperation =
   | "inspect_electron_page"
@@ -373,9 +374,6 @@ const isAsarRegularFile = (
     parsed.data.link === undefined
   );
 };
-
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const throwIfAborted = (signal?: AbortSignal): void => {
   assertArtifactReadActive(signal);
