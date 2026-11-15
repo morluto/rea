@@ -937,6 +937,8 @@ jobs:
           tests/boundary/filesystem/directAnalysisSnapshotReplay.test.ts
           tests/boundary/mcp/rawBinaryMcp.test.ts
           tests/boundary/mcp/advertisedDialect.test.ts
+          tests/boundary/mcp/absoluteLocalPathSchema.test.ts
+          tests/boundary/mcp/toolSchemaValidity.test.ts
           tests/boundary/filesystem/safeOutputTree.test.ts
           tests/boundary/providers/native/artifactProvider.archiveSafety.test.ts
           tests/boundary/providers/native/artifactProvider.extractionCompleteness.test.ts
