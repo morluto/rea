@@ -506,12 +506,10 @@ export const browserScenarioSecretSchema = z.strictObject({
     )
     // A `.refine` states a refusal a caller reads only after sending a request.
     // Both characters break the child process's environment before any action
-    // runs, so the refusal is advertised too: unanchored `pattern` under `not`
-    // reads as "contains none of", and `\x2d`-style escapes are what this
-    // repository's advertised patterns already use.
-    .meta({
-      allOf: [{ not: { pattern: "=" } }, { not: { pattern: "\\x00" } }],
-    }),
+    // runs, so the refusal is advertised as an anchored complement class: one
+    // portable `pattern` keyword rather than a `not`/`allOf` pair, so the
+    // compact profile keeps the leaf instead of reducing it to a plain string.
+    .meta({ pattern: "^[^=\\x00]+$" }),
 });
 
 const snapshotKindSchema = z.enum([
