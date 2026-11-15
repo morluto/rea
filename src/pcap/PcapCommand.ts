@@ -38,7 +38,10 @@ import {
 } from "../process/WindowsBatchCommand.js";
 import { classifyLaunchFailure } from "../process/launchFailure.js";
 import { pcapToolUnavailable } from "./PcapConfiguration.js";
-import { PCAP_LIMITER_REMEDIATION } from "./PcapNativeBound.js";
+import {
+  attributePcapLimitedExit,
+  PCAP_LIMITER_REMEDIATION,
+} from "./PcapNativeBound.js";
 
 export type PcapCommandLauncher = NonNullable<
   Parameters<typeof runOwnedCommand>[2]
@@ -343,11 +346,40 @@ export const runPcapCommand = async (options: {
       selectedLimiter !== undefined &&
       cause instanceof OwnedCommandFailure &&
       cause.reason === "process"
-    )
-      throw new AnalysisProtocolError(
-        `The bounded packet command failed; whether the limiter or selected tool failed is unknown: ${diagnostic}`,
-        details,
-      );
+    ) {
+      if (cause.collectionFailure || cause.snapshot === null)
+        throw new AnalysisProtocolError(
+          `The bounded packet command failed before its exit was observed; whether the limiter or selected tool failed is unknown: ${diagnostic}`,
+          details,
+        );
+      const attributed = attributePcapLimitedExit(selectedLimiter, {
+        exitCode: cause.snapshot.exitCode,
+        signal: cause.snapshot.signal,
+        stderr: cause.snapshot.stderr.text,
+      });
+      if (attributed.stage === "limiter") {
+        const reason = `Selected capture limiter ${selectedLimiter} failed before starting ${command}: ${diagnostic}`;
+        throw new AnalysisCapabilityUnavailableError(
+          "pcap",
+          operation,
+          reason,
+          {
+            ...details,
+            userMessage: `${reason} ${PCAP_LIMITER_REMEDIATION}`,
+            remediationAction: PCAP_LIMITER_REMEDIATION,
+          },
+        );
+      }
+      if (attributed.stage === "tool-launch")
+        throw pcapToolUnavailable(
+          operation,
+          attributed.refusal === "missing"
+            ? `Selected tool ${command} was not found: ${diagnostic}`
+            : `Selected tool ${command} exists but could not be executed: ${diagnostic}`,
+          details,
+        );
+      // Otherwise prlimit started the tool; its exit and output are the tool's.
+    }
     if (options.inputPath === undefined)
       throw pcapToolUnavailable(
         operation,
