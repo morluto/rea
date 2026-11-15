@@ -143,11 +143,17 @@ const runApktool = async (
   environment: Readonly<Record<string, string | undefined>>,
   commands: ApktoolCommandCleanup,
   root: string,
+  platform: NodeJS.Platform,
 ): Promise<Result<{ stdout: string; stderr: string }, AnalysisError>> => {
   if (signal?.aborted === true) return err(cancelledBy(operation, signal));
   let invocation: ReturnType<typeof apktoolInvocation>;
   try {
-    invocation = apktoolInvocation(selection, arguments_, environment);
+    invocation = apktoolInvocation(
+      selection,
+      arguments_,
+      environment,
+      platform,
+    );
   } catch (cause) {
     if (!(cause instanceof WindowsBatchCommandError)) throw cause;
     const reason = `The apktool batch launcher cannot receive REA's decode paths through cmd.exe: ${cause.message}`;
@@ -277,6 +283,8 @@ const apktoolCommandFailure = (
 export interface ApktoolProviderOptions {
   readonly environment?: Readonly<Record<string, string | undefined>>;
   readonly removeWorkspace?: (path: string) => Promise<void>;
+  /** The host apktool runs on; defaults to the running host. */
+  readonly platform?: NodeJS.Platform;
 }
 
 type DecodeFacts = Pick<ApktoolDecodeResult, "client" | "target" | "locale"> &
@@ -294,6 +302,7 @@ type DecodeFacts = Pick<ApktoolDecodeResult, "client" | "target" | "locale"> &
  * (`--no-src`) because Java-source recovery belongs to the JADX family.
  */
 export class ApktoolProvider {
+  private readonly platform: NodeJS.Platform;
   private readonly selectedEnvironment:
     | Readonly<Record<string, string | undefined>>
     | undefined;
@@ -309,17 +318,18 @@ export class ApktoolProvider {
   #closePromise: Promise<void> | undefined;
 
   constructor(options: ApktoolProviderOptions = {}) {
+    this.platform = options.platform ?? HOST_PLATFORM.platform;
     this.selectedEnvironment =
       options.environment === undefined
         ? undefined
-        : snapshotEnvironment(options.environment, HOST_PLATFORM.platform);
+        : snapshotEnvironment(options.environment, this.platform);
     this.removeWorkspace = options.removeWorkspace;
   }
 
   private operationEnvironment(): Readonly<NodeJS.ProcessEnv> {
     return (
       this.selectedEnvironment ??
-      snapshotEnvironment(process.env, HOST_PLATFORM.platform)
+      snapshotEnvironment(process.env, this.platform)
     );
   }
 
@@ -359,12 +369,13 @@ export class ApktoolProvider {
     try {
       const selection = await resolveApktoolCommand(
         environment,
-        process.platform,
+        this.platform,
         signal,
       );
       await inspectApktoolClient(selection, this.#commands, {
         signal,
         environment,
+        platform: this.platform,
       });
       throwIfCancelled("inspect_apktool_client", signal);
       return {
@@ -439,12 +450,13 @@ export class ApktoolProvider {
     try {
       selection = await resolveApktoolCommand(
         environment,
-        process.platform,
+        this.platform,
         signal,
       );
       identity = await inspectApktoolClient(selection, this.#commands, {
         signal,
         environment,
+        platform: this.platform,
       });
     } catch (cause) {
       if (cause instanceof AnalysisError)
@@ -598,6 +610,7 @@ export class ApktoolProvider {
         environment,
         this.#commands,
         root,
+        this.platform,
       );
       if (!decoded.ok) {
         throw decoded.error;

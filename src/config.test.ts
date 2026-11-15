@@ -651,6 +651,22 @@ describe("default macOS Hopper launcher", () => {
     ).toBe(user);
   });
 
+  it("selects the default launcher by the selected host", () => {
+    const environment = { HOME: "/fixture/home" };
+    const launcher = (platform: NodeJS.Platform) => {
+      const parsed = parseConfig(environment, platform);
+      if (!parsed.ok) throw parsed.error;
+      return parsed.value.hopperLauncherPath;
+    };
+    expect(launcher("linux")).toBe(
+      defaultHopperLauncherPath("linux", "/fixture/home"),
+    );
+    expect(launcher("darwin")).toBe(
+      defaultHopperLauncherPath("darwin", "/fixture/home"),
+    );
+    expect(launcher("linux")).not.toBe(launcher("darwin"));
+  });
+
   it("keeps an explicit launcher path unchanged", () => {
     const configured = "/custom/../Hopper launcher";
     const parsed = parseConfig({ HOPPER_LAUNCHER_PATH: configured });
