@@ -1,3 +1,4 @@
+import { readerIntegrityFailure } from "../artifacts/StableArtifactFailure.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import { stat } from "node:fs/promises";
@@ -12,7 +13,6 @@ import type {
   AnalysisErrorOptions,
 } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisArtifactChangedError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
@@ -206,12 +206,7 @@ const nativePlistPrimaryFailure = (
       cause instanceof ArtifactReaderFailure &&
       cause.reason === "integrity"
     )
-      return new AnalysisArtifactChangedError(
-        "inspect_plist",
-        selection.path,
-        cause.message,
-        { cause },
-      );
+      return readerIntegrityFailure("inspect_plist", selection.path, cause);
     if (cause instanceof ArtifactReaderFailure && cause.reason === "limit") {
       const resource = cause.boundary ?? "memory";
       return resource === "file-size"

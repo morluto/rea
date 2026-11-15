@@ -1412,7 +1412,7 @@ const projectPrimarySessionError = (
       operation,
       physicalCause.path,
       physicalCause.reason,
-      context,
+      { ...context, integrityCheck: physicalCause.integrityCheck },
     );
   if (
     failure.kind === "admission" &&

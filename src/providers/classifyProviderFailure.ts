@@ -13,6 +13,7 @@ import {
   projectSelectedArtifactFileFailure,
   stableArtifactInputFailure,
   type RequestField,
+  readerIntegrityFailure,
 } from "../artifacts/StableArtifactFailure.js";
 import { completedStableArtifactObservation } from "../artifacts/StableArtifactObservation.js";
 import {
@@ -21,11 +22,7 @@ import {
   type AnalysisErrorOptions,
 } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import {
-  AnalysisArtifactChangedError,
-  cancelledBy,
-  carriedReason,
-} from "../domain/analysisErrorCore.js";
+import { cancelledBy, carriedReason } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   classifyProviderOutcome,
@@ -220,12 +217,10 @@ const fileFailure = (
     }
     if (file === undefined) return undefined;
     if (physical.reason === "integrity")
-      return new AnalysisArtifactChangedError(
-        operation,
-        file.path,
-        physical.message,
-        { ...details, cause },
-      );
+      return readerIntegrityFailure(operation, file.path, physical, {
+        ...details,
+        cause,
+      });
     if (physical.reason === "limit" && physical.boundary === "file-size")
       return file.fileSize?.(physical, { ...details, cause });
     if (physical.reason === "path" || physical.reason === "format")
