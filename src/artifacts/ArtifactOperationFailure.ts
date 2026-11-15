@@ -6,7 +6,7 @@ import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
-} from "./ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 
 /**
  * Translate one artifact boundary failure while retaining cleanup evidence. A

@@ -10,7 +10,7 @@ import type { ArtifactResourceScope } from "../../resources/ArtifactResourceScop
 import {
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
-} from "../../artifacts/ArtifactFileOperation.js";
+} from "../../resources/ArtifactFileOperation.js";
 import {
   readStableArtifact,
   assertStableArtifactState,

@@ -8,7 +8,7 @@ import {
   ArtifactFileCleanupFailure,
   artifactFilePrimaryFacts,
   withArtifactFileHandle,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import { ghidraSessionRoot } from "./GhidraSessionRoot.js";
 
 /**

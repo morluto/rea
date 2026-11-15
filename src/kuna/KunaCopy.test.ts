@@ -5,7 +5,7 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
 import { readFile, writeFile, type FileHandle } from "node:fs/promises";

@@ -2,7 +2,7 @@ import { classifyProviderFailure } from "../../providers/classifyProviderFailure
 import {
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
-} from "../../artifacts/ArtifactFileOperation.js";
+} from "../../resources/ArtifactFileOperation.js";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import { access, mkdir, stat, writeFile } from "node:fs/promises";
 import { constants, type Stats } from "node:fs";

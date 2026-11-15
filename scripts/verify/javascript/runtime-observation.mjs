@@ -9,7 +9,7 @@ import {
   ArtifactFileCleanupFailure,
   artifactFileCompletion,
   artifactFilePrimaryFacts,
-} from "../../../dist/artifacts/ArtifactFileOperation.js";
+} from "../../../dist/resources/ArtifactFileOperation.js";
 
 import { reconcileJavaScriptRuntimeEvidence } from "../../../dist/application/javascript/JavaScriptRuntimeReconciliationService.js";
 import { analyzeJavaScriptApplicationWithOwnedScope } from "../../lib/javascript-application-analysis.mjs";

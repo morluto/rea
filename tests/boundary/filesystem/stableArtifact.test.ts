@@ -17,7 +17,7 @@ import {
   ArtifactFileCleanupFailure,
   ArtifactFileCancelled,
   withArtifactFileHandle,
-} from "../../../src/artifacts/ArtifactFileOperation.js";
+} from "../../../src/resources/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 

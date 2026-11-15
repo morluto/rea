@@ -18,7 +18,7 @@ import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.j
 import {
   assertArtifactReadActive,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import {
   sameRegularFileState,
   RegularFileChangedError,

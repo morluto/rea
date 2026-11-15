@@ -34,7 +34,7 @@ import {
   artifactFilePrimaryFacts,
   artifactFileCancellationCause,
   artifactFileCompletion,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { BinaryResourceFailure } from "../native/metadata/BinaryContainer.js";
 import {

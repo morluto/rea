@@ -21,7 +21,7 @@ import {
   ArtifactEmbeddedFormatProbes,
   type ArtifactEmbeddedFormatProbeFacts,
 } from "../ArtifactEmbeddedFormatProbes.js";
-import { withArtifactRegularFile } from "../ArtifactFileOperation.js";
+import { withArtifactRegularFile } from "../../resources/ArtifactFileOperation.js";
 import type {
   ArtifactCleanupAttempt,
   ArtifactResourceOwner,

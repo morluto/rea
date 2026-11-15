@@ -7,7 +7,7 @@ import {
   artifactFilePrimaryFacts,
   assertArtifactReadActive,
   withArtifactRegularFile,
-} from "../../../artifacts/ArtifactFileOperation.js";
+} from "../../../resources/ArtifactFileOperation.js";
 import { projectStableArtifactFailure } from "../../../artifacts/StableArtifactFailure.js";
 import { assertArtifactFileSelectedSource } from "../../../artifacts/ArtifactFileSource.js";
 import { hashStableRootArtifactHandle } from "../../../artifacts/inventory/hashStableRootArtifact.js";

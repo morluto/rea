@@ -7,7 +7,7 @@ import { TsharkCaptureProvider } from "../../../src/captures/TsharkCaptureProvid
 import { SignalRecordingService } from "../../../src/application/signals/SignalRecordingService.js";
 import { PacketCaptureService } from "../../../src/application/captures/PacketCaptureService.js";
 import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
-import { withArtifactRegularFile } from "../../../src/artifacts/ArtifactFileOperation.js";
+import { withArtifactRegularFile } from "../../../src/resources/ArtifactFileOperation.js";
 import { readStableArtifact } from "../../../src/artifacts/readStableArtifact.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";

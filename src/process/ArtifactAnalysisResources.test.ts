@@ -8,7 +8,7 @@ import {
   ArtifactResourceRetryFailure,
   ArtifactResourceScope,
 } from "../resources/ArtifactResourceScope.js";
-import { withArtifactRegularFile } from "../artifacts/ArtifactFileOperation.js";
+import { withArtifactRegularFile } from "../resources/ArtifactFileOperation.js";
 import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";

@@ -13,15 +13,15 @@ import {
 import {
   ArtifactReaderFailure,
   artifactPrimaryCleanupLeases,
-} from "../resources/ArtifactReader.js";
+} from "./ArtifactReader.js";
 import type {
   ArtifactResourceOwner,
   ArtifactResourceScope,
-} from "../resources/ArtifactResourceScope.js";
+} from "./ArtifactResourceScope.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../resources/AnalysisCleanupLease.js";
+} from "./AnalysisCleanupLease.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 
 /** Artifact projection plus the exact descriptor owner and physical operation outcome. */

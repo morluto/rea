@@ -4,7 +4,7 @@ import { expect, it, onTestFinished, vi } from "vitest";
 import { writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { ArtifactFileCleanupFailure } from "../artifacts/ArtifactFileOperation.js";
+import { ArtifactFileCleanupFailure } from "../resources/ArtifactFileOperation.js";
 import { ArtifactAnalysisResources } from "./ArtifactAnalysisResources.js";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
 import { ok } from "../domain/result.js";

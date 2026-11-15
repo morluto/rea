@@ -127,7 +127,7 @@ import { ArtifactReaderFailure } from "../../src/resources/ArtifactReader.js";
 import { FirmwareProvider } from "../../src/firmware/FirmwareProvider.js";
 import { firmwareFailureDialect } from "../../src/firmware/FirmwareFailures.js";
 import { classifyProviderFailure } from "../../src/providers/classifyProviderFailure.js";
-import { ArtifactFileCleanupFailure } from "../../src/artifacts/ArtifactFileOperation.js";
+import { ArtifactFileCleanupFailure } from "../../src/resources/ArtifactFileOperation.js";
 import { AnalysisError } from "../../src/domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "../../src/domain/analysisErrorCore.js";
 import { PrivateRuntimeRoot } from "../../src/process/PrivateRuntimeRoot.js";

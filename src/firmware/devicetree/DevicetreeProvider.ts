@@ -14,7 +14,7 @@ import {
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
-} from "../../artifacts/ArtifactFileOperation.js";
+} from "../../resources/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import type { DevicetreePort } from "../../ports/binaryDiagnostics/DevicetreePort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";

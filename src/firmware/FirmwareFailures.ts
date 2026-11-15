@@ -3,7 +3,7 @@ import type { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js"
 import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import type {
   AnalysisCapturedOutput,
   AnalysisError,

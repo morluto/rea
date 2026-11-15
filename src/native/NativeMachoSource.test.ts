@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
-import { ArtifactFileCleanupFailure } from "../artifacts/ArtifactFileOperation.js";
+import { ArtifactFileCleanupFailure } from "../resources/ArtifactFileOperation.js";
 import { withNativeMachoSource } from "./NativeMachoSource.js";
 
 const control = vi.hoisted(() => ({ failClose: false, attempts: 0 }));

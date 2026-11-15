@@ -8,7 +8,7 @@ import { validateElfSectionTablePresence } from "../../domain/elfDeclaredRanges.
 import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
 import { createHash } from "node:crypto";
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../../resources/ArtifactFileOperation.js";
 import {
   readElfFixedHeader,
   type ElfFixedHeader,

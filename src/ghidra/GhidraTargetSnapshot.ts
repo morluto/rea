@@ -7,7 +7,7 @@ import {
   withArtifactFileHandle,
   assertArtifactReadActive,
   mapArtifactFileFailure,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { readArtifactFileChunks } from "../artifacts/readArtifactFileChunks.js";
 import {

@@ -12,7 +12,7 @@ import { SQLITE_PROVIDER_IDENTITY } from "../domain/sqlite/SqliteProviderIdentit
 import {
   withArtifactFileHandle,
   assertArtifactReadActive,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import {
   completedStableArtifact,
   readStableArtifact,

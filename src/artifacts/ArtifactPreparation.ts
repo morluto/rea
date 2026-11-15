@@ -1,4 +1,4 @@
-import { artifactReadCancelledBy } from "./ArtifactFileOperation.js";
+import { artifactReadCancelledBy } from "../resources/ArtifactFileOperation.js";
 
 /** Share one preparation while allowing another caller to retry its cancellation. */
 export class ArtifactPreparation {

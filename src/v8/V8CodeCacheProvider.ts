@@ -9,7 +9,7 @@ import {
   artifactFilePrimaryFacts,
   artifactSelectedPathErrno,
   type ArtifactFilePrimaryFacts,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import {
   projectArtifactCloseFailure,
   projectOwnedArtifactIdentityFailure,

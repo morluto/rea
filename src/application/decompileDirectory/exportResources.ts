@@ -11,7 +11,7 @@ import {
 import { join } from "node:path";
 
 import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
-import { ArtifactFileCleanupFailure } from "../../artifacts/ArtifactFileOperation.js";
+import { ArtifactFileCleanupFailure } from "../../resources/ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
 import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";

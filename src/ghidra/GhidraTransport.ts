@@ -14,7 +14,7 @@ import {
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import { readArtifactFileChunks } from "../artifacts/readArtifactFileChunks.js";
 import { sameRegularFileState } from "../filesystem/RegularFile.js";
 import {

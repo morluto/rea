@@ -1,4 +1,4 @@
-import { artifactOperationCause } from "../ArtifactFileOperation.js";
+import { artifactOperationCause } from "../../resources/ArtifactFileOperation.js";
 import { regularFileCancellation } from "../../filesystem/OwnedRegularFile.js";
 import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";

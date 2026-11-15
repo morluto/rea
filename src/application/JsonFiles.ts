@@ -44,7 +44,7 @@ import {
 } from "./RegularFileRead.js";
 import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import { bindArtifactFileCleanup } from "../resources/ArtifactFileOperation.js";
 import {
   type AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,

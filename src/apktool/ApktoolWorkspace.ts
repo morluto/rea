@@ -14,7 +14,7 @@ import {
   mapArtifactFileFailure,
   withArtifactFileHandle,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import {
   AnalysisInputError,
   AnalysisAccessDeniedError,

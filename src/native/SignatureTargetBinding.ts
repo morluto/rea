@@ -33,7 +33,7 @@ import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
 } from "../resources/AnalysisCleanupLease.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import { bindArtifactFileCleanup } from "../resources/ArtifactFileOperation.js";
 import { finalizedResult, runOwned } from "../providers/runOwned.js";
 import type { ArtifactResourceOwner } from "../resources/ArtifactResourceScope.js";
 

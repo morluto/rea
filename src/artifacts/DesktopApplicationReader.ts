@@ -7,7 +7,7 @@ import {
   type DirectoryArtifactEntry,
 } from "./DirectoryArtifactReader.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
-import { artifactFileCompletion } from "./ArtifactFileOperation.js";
+import { artifactFileCompletion } from "../resources/ArtifactFileOperation.js";
 import {
   ArtifactResourceScope,
   type ArtifactResourceOwner,

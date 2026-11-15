@@ -8,7 +8,7 @@ import {
   artifactFileCompletion,
   artifactFilePrimaryFacts,
   bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import {
   projectSelectedArtifactFileFailure,
   stableArtifactInputFailure,

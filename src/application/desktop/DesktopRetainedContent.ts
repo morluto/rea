@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
+import { bindArtifactFileCleanup } from "../../resources/ArtifactFileOperation.js";
 import {
   ArtifactResourceScope,
   type ArtifactCleanupAttempt,

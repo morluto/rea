@@ -8,7 +8,7 @@ import {
   artifactFilePrimaryFacts,
   bindArtifactFileCleanup,
   type ArtifactFilePrimaryFacts,
-} from "../../artifacts/ArtifactFileOperation.js";
+} from "../../resources/ArtifactFileOperation.js";
 import type { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import {
   completedStableArtifact,

@@ -12,7 +12,7 @@ import {
   artifactSelectedPathErrno,
   withArtifactFileHandle,
   assertArtifactReadActive,
-} from "./ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 
 /** Exact physical read completed before descriptor finalization. */
 export interface StableArtifactSnapshot {

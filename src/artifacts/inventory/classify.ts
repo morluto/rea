@@ -1,4 +1,4 @@
-import { artifactOperationCause } from "../ArtifactFileOperation.js";
+import { artifactOperationCause } from "../../resources/ArtifactFileOperation.js";
 import {
   nesContainerFormat,
   parseInesLayout,

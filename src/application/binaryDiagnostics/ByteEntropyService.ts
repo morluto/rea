@@ -38,7 +38,7 @@ import {
   assertArtifactReadActive,
   artifactFileCancellationCause,
   artifactSelectedPathErrno,
-} from "../../artifacts/ArtifactFileOperation.js";
+} from "../../resources/ArtifactFileOperation.js";
 import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { sameRegularFileState } from "../../filesystem/RegularFile.js";

@@ -10,7 +10,7 @@ import {
 import {
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
-} from "../../artifacts/ArtifactFileOperation.js";
+} from "../../resources/ArtifactFileOperation.js";
 import {
   pwntoolsFailureDialect,
   pwntoolsUnavailable,

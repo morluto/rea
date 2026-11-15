@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
-import { ArtifactFileCancelled } from "../../src/artifacts/ArtifactFileOperation.js";
+import { ArtifactFileCancelled } from "../../src/resources/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { AnalysisCancelledError } from "../../src/domain/analysisErrorCore.js";
 import { resolveGhidraProject } from "../../src/ghidra/GhidraProjectSnapshot.js";
@@ -9,11 +9,11 @@ import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 const fault = vi.hoisted(() => ({ reason: undefined as unknown }));
 vi.mock(
-  "../../src/artifacts/ArtifactFileOperation.js",
+  "../../src/resources/ArtifactFileOperation.js",
   async (importOriginal) => {
     const original =
       await importOriginal<
-        typeof import("../../src/artifacts/ArtifactFileOperation.js")
+        typeof import("../../src/resources/ArtifactFileOperation.js")
       >();
     return {
       ...original,

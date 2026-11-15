@@ -2,7 +2,7 @@ import {
   ArtifactFileCleanupFailure,
   artifactFilePrimaryFacts,
   bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import {
   retainProcessInspectionCleanup,
