@@ -3,11 +3,15 @@ import { createHash } from "node:crypto";
 import canonicalize from "canonicalize";
 import { z } from "zod";
 
-import type { BinaryTarget } from "./binaryTargetTypes.js";
+import type {
+  BinaryTarget,
+  UniversalMachOSliceIdentity,
+} from "./binaryTargetTypes.js";
 import { digestSchema } from "./digests.js";
 import { rawBinaryEntryPointSchema } from "./rawBinary.js";
 
 const flashOffsetSchema = z.number().int().min(0).max(0xffff_ffff).nullable();
+const fatCpuSchema = z.number().int().min(0).max(0xffff_ffff).nullable();
 
 /** Persisted facts inside a file's bytes that select what was analysed. */
 export const fileTargetSelectionSchema = z.discriminatedUnion("kind", [
@@ -19,6 +23,15 @@ export const fileTargetSelectionSchema = z.discriminatedUnion("kind", [
     kind: z.literal("esp-flash"),
     flash_offset: flashOffsetSchema,
     partition_table_offset: flashOffsetSchema,
+  }),
+  // One slice of a universal Mach-O. The FAT CPU declaration is null when
+  // target admission did not supply the validated FAT table.
+  z.strictObject({
+    kind: z.literal("universal-slice"),
+    offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    size: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+    cpu_type: fatCpuSchema,
+    cpu_subtype: fatCpuSchema,
   }),
 ]);
 
@@ -84,6 +97,24 @@ export const unknownTarget = (
  */
 export type TargetIdentity = FileTargetIdentity | UnknownTargetIdentity;
 
+/** The universal Mach-O slice a target selects, with its FAT CPU declaration when admitted. */
+const universalSliceSelection = (
+  slice: { readonly offset: number; readonly size: number },
+  declarations: readonly UniversalMachOSliceIdentity[] | undefined,
+): FileTargetSelection => {
+  const declared = declarations?.find(
+    (candidate) =>
+      candidate.offset === slice.offset && candidate.size === slice.size,
+  );
+  return {
+    kind: "universal-slice",
+    offset: slice.offset,
+    size: slice.size,
+    cpu_type: declared?.cpuType ?? null,
+    cpu_subtype: declared?.cpuSubtype ?? null,
+  };
+};
+
 /** The selection an open binary target makes inside its bytes, if any. */
 export const binaryTargetSelection = (
   target: BinaryTarget,
@@ -96,7 +127,9 @@ export const binaryTargetSelection = (
           flash_offset: target.espFlash.flashOffset,
           partition_table_offset: target.espFlash.partitionTableOffset,
         }
-      : null;
+      : target.format === "mach-o-universal"
+        ? universalSliceSelection(target.universalSlice, target.universalSlices)
+        : null;
 
 /** The one projection of an open binary target into its target identity. */
 export const binaryTargetIdentity = (

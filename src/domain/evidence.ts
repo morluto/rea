@@ -63,6 +63,7 @@ const SELECTION_FORMATS: Readonly<
 > = {
   "entry-point": ["raw-binary", "gamecube-dol"],
   "esp-flash": ["esp-flash-image"],
+  "universal-slice": ["mach-o-universal"],
 };
 /** The file identity an Evidence subject commits to, with its format-owned declaration. */
 const subjectIdentitySchema = withEvidenceSubjectDeclaration(
@@ -95,6 +96,8 @@ const unknownSubjectSchema = z.strictObject({
   local_path: z.null(),
 });
 const subjectSchema = z.union([fileSubjectSchema, unknownSubjectSchema]);
+/** The Evidence subject, for persistence formats that embed one. */
+export const evidenceSubjectSchema = subjectSchema;
 /** Source location attached to an evidence observation. */
 /** Source-location schema shared by evidence-bearing persistence formats. */
 export const evidenceLocationSchema = z.discriminatedUnion("kind", [
