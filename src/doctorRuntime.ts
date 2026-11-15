@@ -5,7 +5,7 @@ import {
   type DoctorProviderInspection,
 } from "./application/Doctor.js";
 import { fileURLToPath } from "node:url";
-import { inspectJebRegistration } from "./jeb/JebDoctor.js";
+import { inspectJebRegistration } from "./application/jeb/JebRegistrationInspection.js";
 import { readDesktopBuildFacts } from "./desktop/DesktopBuildDoctorFacts.js";
 import {
   JADX_DOCTOR_SETTINGS,
@@ -26,7 +26,7 @@ import {
 import { readIdaConfiguration } from "./ida/IdaConfiguration.js";
 import { selectLinuxPrivateDisplayStrategy } from "./hopper/LinuxPrivateDisplayProbe.js";
 import { ok } from "./domain/result.js";
-import { AnalysisCancelledError } from "./domain/analysisErrorCore.js";
+import { cancelledBy, carriedReason } from "./domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "./domain/providerCleanupError.js";
 import { AnalysisCleanupLeaseGroup } from "./artifacts/AnalysisCleanupLease.js";
 import type { RetainedResourceScope } from "./application/AnalysisProvider.js";
@@ -205,7 +205,9 @@ export const settingAffectsProbe = (
       // Java comes from JAVA_HOME when it is explicit; only then is PATH unused.
       return name !== "PATH" || read("JAVA_HOME") === undefined;
     case "ghidra":
-      // Both the install directory and the JDK fall back to PATH lookups.
+      // An existing project changes admission only on Windows, which cannot
+      // open one. Both the install directory and the JDK fall back to PATH.
+      if (name === "REA_GHIDRA_PROJECT_PATH") return platform === "win32";
       return (
         name !== "PATH" ||
         read("GHIDRA_INSTALL_DIR") === undefined ||
@@ -462,11 +464,7 @@ const inspectLinuxHopperDemoRuntime = async (
     };
     const failure =
       signal?.aborted === true
-        ? new AnalysisCancelledError("doctor", {
-            cause: signal.reason,
-            cleanup,
-            diagnostics,
-          })
+        ? cancelledBy("doctor", signal, { cleanup, diagnostics })
         : new ProviderCleanupError(
             "hopper",
             cleanup.resources,
@@ -477,8 +475,7 @@ const inspectLinuxHopperDemoRuntime = async (
     throw failure;
   }
   if (signal?.aborted === true)
-    throw new AnalysisCancelledError("doctor", {
-      cause: signal.reason,
+    throw cancelledBy("doctor", signal, {
       diagnostics: {
         hopper_demo_runtime: { private_display: { ...selection.diagnostic } },
       },
@@ -516,8 +513,7 @@ const inspectLinuxHopperDemoRuntime = async (
     embedded_python: pythonDiagnostic,
   };
   if (!python.ok && python.error.reason === "cancelled")
-    throw new AnalysisCancelledError("doctor", {
-      cause: python.error.cause,
+    throw cancelledBy("doctor", carriedReason(python.error.cause), {
       diagnostics: { hopper_demo_runtime: details },
     });
   if (selection.ok && pythonFailure === undefined)

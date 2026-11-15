@@ -71,7 +71,7 @@ Setup registers REA with your agent and installs matching workflow instructions.
 ## Quick start
 
 On Linux, Ghidra, JADX, firmware tool launches and static JavaScript/Electron
-analysis require a procps-compatible `ps` on REA's `PATH` for process ownership
+analysis require a procps-compatible system `ps` for process ownership
 checks. Recovery steps are in `docs/getting-started/installation.md` under
 "Linux owned-process prerequisite".
 

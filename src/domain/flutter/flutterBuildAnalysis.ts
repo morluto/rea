@@ -233,11 +233,7 @@ export const flutterResultSchemas = {
       ),
     }),
     string_pool: z.strictObject({
-      policy: dartPoolPolicySchema
-        .optional()
-        .describe(
-          "Effective selection and budgets; absent from older Evidence",
-        ),
+      policy: dartPoolPolicySchema.describe("Effective selection and budgets"),
       coverage: z
         .enum(["complete", "partial"])
         .describe(

@@ -2,22 +2,13 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import {
-  mkdir,
-  mkdtemp,
-  readFile,
-  readdir,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
-import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import {
   requireMcpEvidenceBundle,
@@ -25,10 +16,8 @@ import {
   mcpTextValue,
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
-import {
-  closeVerifierResources,
-  releaseAfter,
-} from "./lib/verifier-cleanup.mjs";
+import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
+import { onceConfirmed, VerifierFixture } from "./lib/verifier-fixture.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { WABT_OPERATION_TIMEOUT_MS } from "./lib/wabt-verifier-timeouts.mjs";
 
@@ -73,15 +62,18 @@ const assertEvidenceParity = (cli, mcp, path) => {
   assert.deepEqual(cliShared, mcp);
 };
 const run = createVerifierRun();
-const root = await PrivateRuntimeRoot.create({ prefix: "rea-wabt-verifier-" });
+const root = await VerifierFixture.open({ prefix: "rea-wabt-verifier-" });
 // Keep provider scratch outside the leased private input root. On Windows the
 // root's retained DELETE handle blocks child temp creation beneath that root.
-let childTempRoot;
+let childTemp;
 try {
-  childTempRoot = await mkdtemp(join(tmpdir(), "rea-wabt-child-temp-"));
+  childTemp = await VerifierFixture.open({
+    prefix: "rea-wabt-child-temp-",
+    private: false,
+  });
 } catch (cause) {
   try {
-    await root.close();
+    await root.release();
   } catch (cleanupCause) {
     throw new AggregateError(
       [cause, cleanupCause],
@@ -90,6 +82,7 @@ try {
   }
   throw cause;
 }
+const childTempRoot = childTemp.path;
 const client = new Client({ name: "wabt-artifact-verifier", version: "1" });
 const callTool = (request) =>
   client.callTool(request, { timeout: WABT_OPERATION_TIMEOUT_MS });
@@ -627,26 +620,28 @@ try {
 } catch (cause) {
   failures.push(cause);
 }
-// The MCP server child uses both roots until it exits, so they are released
-// only after the client and transport close. After that the residue check and
-// the two directories are independent owners; attempt each and keep failures.
+// The MCP server child uses both roots until it exits, so each is released
+// only after the client and transport close. The two roots are otherwise
+// independent; a leaked provider workspace keeps the child temp root.
+const closeClient = onceConfirmed(() => client.close());
+const closeTransport = onceConfirmed(() => transport.close());
+for (const fixture of [childTemp, root]) {
+  fixture.releaseAfter(closeClient);
+  fixture.releaseAfter(closeTransport);
+}
+childTemp.releaseAfter(async () =>
+  assert.ok(
+    !(await readdir(childTempRoot)).some((name) =>
+      name.startsWith("rea-wabt-"),
+    ),
+    "Provider workspace leaked",
+  ),
+);
 try {
-  await releaseAfter(
-    [() => client.close(), () => transport.close()],
-    () =>
-      closeVerifierResources([
-        async () =>
-          assert.ok(
-            !(await readdir(childTempRoot)).some((name) =>
-              name.startsWith("rea-wabt-"),
-            ),
-            "Provider workspace leaked",
-          ),
-        () => root.close(),
-        () => rm(childTempRoot, { recursive: true, force: true }),
-      ]),
-    `${root.path} and ${childTempRoot}`,
-  )();
+  await closeVerifierResources([
+    () => childTemp.release(),
+    () => root.release(),
+  ]);
 } catch (cause) {
   failures.push(cause);
 }

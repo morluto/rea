@@ -6,6 +6,7 @@ import {
   semanticWriteTargets,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
+import { childNodes } from "./javascriptSemanticTraversal.js";
 
 /**
  * How evaluating one syntax node can run code that the analyzed source does
@@ -31,7 +32,8 @@ import {
  * - `disposal`: `using` declarations call `Symbol.dispose` at scope exit.
  * - `class-definition`: heritage, computed keys, static blocks and static
  *   field values run when a class is defined.
- * - `decorator`: decorators are called with the decorated value.
+ * - `decorator`: a class definition calls its decorators with the class or
+ *   its members.
  * - `dynamic-import`: `import()` converts its specifier and reads its options.
  * - `dynamic-scope`: identifier lookups inside `with` read object properties.
  * - `jsx-element`: JSX compiles to a call into the configured runtime.
@@ -236,6 +238,14 @@ const member: Classifier<t.MemberExpression | t.OptionalMemberExpression> = (
 
 const computedMember: Classifier<t.Node> = coercion;
 
+/** Decorators on the class and its members, called with the class definition. */
+const classDecorators = (node: t.Class): readonly t.Decorator[] => [
+  ...(node.decorators ?? []),
+  ...node.body.body.flatMap((member) =>
+    "decorators" in member ? (member.decorators ?? []) : [],
+  ),
+];
+
 /** Members whose computed keys a definition evaluates and converts immediately. */
 const computedDefinitionMembers = (node: t.Function | t.Class): t.Node[] => {
   if (t.isObjectMethod(node))
@@ -248,8 +258,8 @@ const computedDefinitionMembers = (node: t.Function | t.Class): t.Node[] => {
 };
 
 /**
- * Expressions a definition runs immediately: heritage, computed keys, static
- * blocks and static field values. Deferred bodies and instance initializers
+ * Expressions a definition runs immediately: heritage, computed keys,
+ * decorators, static blocks and static field values. Deferred bodies and instance initializers
  * stay out; `this` inside static work is the class, not the enclosing receiver.
  */
 export const javaScriptDefinitionTimeExpressions = (
@@ -259,6 +269,7 @@ export const javaScriptDefinitionTimeExpressions = (
   ...computedDefinitionMembers(node).flatMap((member) =>
     "key" in member ? [member.key] : [],
   ),
+  ...(t.isClass(node) ? classDecorators(node) : []),
   ...(t.isClass(node)
     ? node.body.body.flatMap((member): t.Node[] =>
         t.isStaticBlock(member)
@@ -285,6 +296,27 @@ const classDefinition: Classifier<t.ClassDeclaration | t.ClassExpression> = (
 ) => [
   // Evaluating heritage reads `prototype` from the superclass.
   execution("class-definition", node, [node.superClass]),
+  // Each decorator is called with the class or one of its members, and a
+  // member decorator reaches the member's function or initializer, including
+  // an instance member the class itself does not run.
+  ...(classDecorators(node).length === 0
+    ? []
+    : [
+        execution("decorator", node, [
+          node,
+          ...node.body.body.flatMap((member): t.Node[] =>
+            !("decorators" in member) || (member.decorators ?? []).length === 0
+              ? []
+              : t.isClassMethod(member) || t.isClassPrivateMethod(member)
+                ? [member]
+                : "value" in member &&
+                    member.value !== null &&
+                    member.value !== undefined
+                  ? [member.value]
+                  : [],
+          ),
+        ]),
+      ]),
 ];
 
 const jsxElement: Classifier<t.JSXElement | t.JSXFragment> = (node) => {
@@ -306,8 +338,9 @@ const jsxElement: Classifier<t.JSXElement | t.JSXFragment> = (node) => {
   ];
 };
 
+/** Syntax this table does not describe exposes every operand it holds. */
 const unsupported: Classifier<t.Node> = (node) => [
-  execution("unsupported-syntax", node, []),
+  execution("unsupported-syntax", node, childNodes(node)),
 ];
 
 const moduleEvaluation: Classifier<t.Node> = (node) => [
@@ -414,8 +447,8 @@ const classifiers: {
       ...node.quasi.expressions,
     ]),
   ],
-  // The decorator expression is the callee; the decorated declaration escapes.
-  Decorator: (node, parent) => [execution("decorator", node, [parent])],
+  // Evaluating the decorator expression is ordinary; the class calls it.
+  Decorator: none,
   // Accessors, conversion and protocols.
   MemberExpression: member,
   OptionalMemberExpression: member,

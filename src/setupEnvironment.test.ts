@@ -12,7 +12,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { createDoctorHostFixture } from "./application/Doctor.fixture.js";
 import { runDoctor } from "./application/Doctor.js";
-import { inspectJebRegistration } from "./jeb/JebDoctor.js";
+import { inspectJebRegistration } from "./application/jeb/JebRegistrationInspection.js";
 import * as macHopperInstaller from "./application/MacHopper.js";
 import { runSetup } from "./application/Setup.js";
 import { discoverSetupState } from "./application/SetupPlan.js";

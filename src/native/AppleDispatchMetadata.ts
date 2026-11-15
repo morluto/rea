@@ -1,3 +1,7 @@
+import {
+  malformedInput,
+  parseFailureFromCause,
+} from "../domain/parseFailure.js";
 import { setImmediate as immediate } from "node:timers/promises";
 import { createHash } from "node:crypto";
 import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
@@ -14,12 +18,13 @@ import {
   type BinaryTarget,
 } from "../domain/binaryTargetTypes.js";
 import {
-  AnalysisCancelledError,
   AnalysisArtifactChangedError,
   AnalysisAccessDeniedError,
   AnalysisCapabilityUnavailableError,
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import {
   ArtifactFileCleanupFailure,
@@ -101,7 +106,7 @@ export function* decodeAppleDispatchMetadataSteps(
     // pointer-fixup coverage remains partial, and consumers that need to
     // distinguish null from an unresolved bind use resolvePointer directly.
     if (decodedPointer.kind === "unknown") return decodedPointer.raw;
-    throw new RangeError(decodedPointer.reason);
+    throw malformedInput("macho", decodedPointer.reason);
   };
   const bound = (address: bigint) => {
     const decodedPointer = decodePointer(address);
@@ -116,7 +121,7 @@ export function* decodeAppleDispatchMetadataSteps(
     try {
       fileOffset = offset(address);
     } catch (cause) {
-      if (!(cause instanceof RangeError)) throw cause;
+      if (parseFailureFromCause(cause) === undefined) throw cause;
       fileOffset = null;
     }
     return { address: `0x${address.toString(16)}`, file_offset: fileOffset };
@@ -135,7 +140,10 @@ export function* decodeAppleDispatchMetadataSteps(
     let end = start;
     while (end < bytes.length && end - start < 4096 && bytes[end] !== 0) end++;
     if (end === bytes.length || end - start >= 4096)
-      throw new RangeError("Unterminated or oversized metadata string");
+      throw malformedInput(
+        "macho",
+        "Unterminated or oversized metadata string",
+      );
     offset(address, end - start + 1);
     // A metadata C string owns every code point, including an initial U+FEFF.
     return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
@@ -362,10 +370,8 @@ export const inspectAppleDispatchMetadata = async (
         }
       : { maximum_bytes: options.maxInputBytes, source: "caller" as const };
   const maximumBytes = admission.maximum_bytes;
-  const cancelled = () =>
-    new AnalysisCancelledError(OPERATION, {
-      cause: signal?.reason,
-    });
+  // Called only after the caller's signal aborted.
+  const cancelled = () => cancelledBy(OPERATION, carriedReason(signal?.reason));
   const { bytes, digest } = await withArtifactRegularFile(
     target.path,
     resources,
@@ -431,9 +437,10 @@ export const appleDispatchMetadataFailure = (
           )
         : physical?.completionCancellation === undefined
           ? undefined
-          : new AnalysisCancelledError(OPERATION, {
-              cause: physical.completionCancellation.reason,
-            });
+          : cancelledBy(
+              OPERATION,
+              carriedReason(physical.completionCancellation.reason),
+            );
     const failure = new ProviderCleanupError(
       IDENTITY.id,
       cause.cleanup.resources,
@@ -480,9 +487,10 @@ const appleDispatchMetadataPrimaryFailure = (
         { cause },
       );
     if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-      return new AnalysisCancelledError(OPERATION, {
-        cause: artifactFileCancellationCause(cause),
-      });
+      return cancelledBy(
+        OPERATION,
+        carriedReason(artifactFileCancellationCause(cause)),
+      );
     if (
       cause instanceof ArtifactReaderFailure &&
       cause.reason === "unavailable"

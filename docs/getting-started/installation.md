@@ -442,12 +442,15 @@ selected engine. See [provider selection](cli.md#choose-a-provider).
 ### Linux owned-process prerequisite
 
 On Linux, REA's shared process supervisor requires a procps-compatible `ps`
-on REA's `PATH` for ownership checks before launching a child. Ghidra, JADX,
-firmware tools and static JavaScript/Electron analysis use these checks.
-Install your distribution's `procps` or `procps-ng` package, or put another
-procps-compatible `ps` on `PATH` before
+for ownership checks before launching a child. Ghidra, JADX, firmware tools
+and static JavaScript/Electron analysis use these checks. REA runs the first
+executable of `/bin/ps`, `/usr/bin/ps` and `/run/current-system/sw/bin/ps`
+(NixOS), and searches its own `PATH` only when none exists, so a wrapper or
+agent `PATH` cannot replace the system `ps`. On macOS REA always runs
+`/bin/ps`. Install your distribution's `procps` or `procps-ng` package before
 running those workflows. A missing or incompatible command causes a refusal
-before the supervised child starts.
+before the supervised child starts; its message and `ps_command` and
+`ps_source` diagnostics name the `ps` REA ran.
 
 The public error code varies by caller: `capability_unavailable`,
 `provider_unavailable` or `execution_failure`. Some provider adapters report
@@ -687,36 +690,45 @@ readiness for one task instead of auditing every integration, see
 Setup can configure these clients for REA's local MCP server. Grok Bot uses a manual
 hosted connector; see [its configuration](client-configuration.md#other-client-settings).
 
-| Client             | `--client` value |
-| ------------------ | ---------------- |
-| Claude Code        | `claude_code`    |
-| Claude Desktop     | `claude_desktop` |
-| Codex              | `codex`          |
-| Cursor             | `cursor`         |
-| CodeBuddy          | `codebuddy`      |
-| Cline CLI          | `cline`          |
-| Gemini CLI         | `gemini_cli`     |
-| Windsurf           | `windsurf`       |
-| Devin              | `devin`          |
-| OpenCode           | `opencode`       |
-| Antigravity        | `antigravity`    |
-| GitHub Copilot CLI | `copilot_cli`    |
-| Command Code       | `commandcode`    |
-| Qwen Code          | `qwen_code`      |
-| Kimi Code          | `kimi`           |
-| VS Code            | `vscode`         |
-| Grok Build         | `grok_build`     |
-| OMP                | `omp`            |
-| Pi                 | `pi`             |
-| Hermes             | `hermes`         |
-| Qoder              | `qoder`          |
-| Factory Droid      | `droid`          |
-| Trae               | `trae`           |
-| WorkBuddy          | `workbuddy`      |
-| LM Studio          | `lm_studio`      |
-| ZCode              | `zcode`          |
-| DeepSeek Harness   | `dsh`            |
-| FreeBuff           | `freebuff`       |
+| Client                    | `--client` value        |
+| ------------------------- | ----------------------- |
+| Claude Code               | `claude_code`           |
+| Claude Desktop            | `claude_desktop`        |
+| Codex                     | `codex`                 |
+| Cursor                    | `cursor`                |
+| CodeBuddy                 | `codebuddy`             |
+| Cline CLI                 | `cline`                 |
+| Gemini CLI                | `gemini_cli`            |
+| Windsurf                  | `windsurf`              |
+| Devin                     | `devin`                 |
+| OpenCode                  | `opencode`              |
+| Antigravity               | `antigravity`           |
+| GitHub Copilot CLI        | `copilot_cli`           |
+| Command Code              | `commandcode`           |
+| Qwen Code                 | `qwen_code`             |
+| Kimi Code                 | `kimi`                  |
+| VS Code                   | `vscode`                |
+| Grok Build                | `grok_build`            |
+| OMP                       | `omp`                   |
+| Pi                        | `pi`                    |
+| Hermes                    | `hermes`                |
+| Qoder                     | `qoder`                 |
+| Factory Droid             | `droid`                 |
+| Trae                      | `trae`                  |
+| WorkBuddy                 | `workbuddy`             |
+| LM Studio                 | `lm_studio`             |
+| ZCode                     | `zcode`                 |
+| DeepSeek Harness          | `dsh`                   |
+| FreeBuff                  | `freebuff`              |
+| Cline VS Code extension   | `cline_vscode`          |
+| Cline in VS Code Insiders | `cline_vscode_insiders` |
+| Cline in VSCodium         | `cline_vscodium`        |
+| Cline in Cursor           | `cline_cursor`          |
+| Cline in Windsurf         | `cline_windsurf`        |
+| Kiro                      | `kiro`                  |
+| Mastra Code               | `mastracode`            |
+| Zed                       | `zed`                   |
+| Amp                       | `amp`                   |
 
 `droid`, `dsh`, `kimi`, `qoder`, `trae`, `workbuddy`, and `zcode` require
 `rea-agents@6.5.0` or later. The 6.4.0 registry check above does not cover them.
@@ -724,6 +736,14 @@ hosted connector; see [its configuration](client-configuration.md#other-client-s
 `rea setup --client freebuff` as an unsupported client.
 
 `lm_studio` requires a release after 6.8.0.
+
+`cline_vscode`, `cline_vscode_insiders`, `cline_vscodium`, `cline_cursor`,
+`cline_windsurf`, `kiro`, `mastracode`, `zed` and `amp` require a release after
+6.9.0. Earlier releases could register Cline in VS Code, Kiro, Mastra Code, Zed
+and Amp only through `rea mcp add`, and could not register Cline in VS Code
+Insiders, VSCodium, Cursor or Windsurf at all; doctor, update and uninstall did
+not see those registrations. Current releases inspect, refresh and remove them
+like any other setup client.
 
 See [client configuration and troubleshooting](client-configuration.md) for
 configuration paths, profiles, trust policies, and schema-limit workarounds.
@@ -1062,14 +1082,17 @@ Loader selection reads the Mach-O container header, including FAT files with a
 single architecture. For FAT32 and FAT64 containers, REA validates the
 architecture table and selected Mach-O header, prepares a private thin image,
 and loads it with Hopper's native Mach-O loader instead of Hopper's implicit
-FAT slice choice. For arm64 targets, REA ranks subtype bases 0 (plain arm64) and
-2 (arm64e), ignoring capability bits for ranking while retaining the raw subtype
-for slice identity. These slices' function-entry encodings decode under
-`--aarch64`, ahead of Apple's arm64e.x1 variant (base subtype 12), which is
-selected only when it is the arm64 family's only candidate. REA checks the
-entire source's SHA-256 while copying the slice; source identity and reported
-offsets still refer to the original container. Any other ambiguous architecture
-subtype requires an explicitly extracted thin image; REA does not guess.
+FAT slice choice. Hopper reads the slice that `open_binary` admitted for the
+session, the same slice other tools and the session's Evidence name; it does not
+rank slices again. For arm64 targets, admission prefers subtype bases 0 (plain
+arm64), then 2 (arm64e), then 1 (arm64v8), ignoring capability bits for ranking
+while retaining the raw subtype for slice identity. These slices'
+function-entry encodings decode under `--aarch64`, ahead of Apple's arm64e.x1
+variant (base subtype 12), which is selected only when no preferred subtype is
+present. REA checks the entire source's SHA-256 while copying the slice; source
+identity and reported offsets still refer to the original container. When
+admission cannot choose one slice, open an explicitly extracted thin image; REA
+does not guess.
 Set `HOPPER_LOADER_ARGS_JSON` in REA's launch environment to a JSON array of
 strings to override the derived Hopper loader arguments, for example
 `["-l","Mach-O"]`. Empty string elements are preserved; NUL bytes are not
@@ -1282,12 +1305,20 @@ unchanged, failed or not-started outcomes. A partial failure returns a nonzero
 status while retaining successful client outcomes and recovery paths.
 
 User-level registration for a client that `rea setup` also supports uses that
-client's setup definition, so the same native read rules apply. Gemini CLI
+client's setup definition, so the same native read rules apply, and doctor,
+update and uninstall inspect, refresh and remove what it wrote. Goose, Junie,
+fx, MCPorter and Kilo Code are registered only by `rea mcp add` until their
+native layers and path overrides are modeled; doctor, update and uninstall do
+not yet see those registrations. Gemini CLI
 registration fails without writing when Gemini's system, defaults or trusted
 workspace settings exclude `rea`, leave it off a nonempty allowlist, or define
 a different `rea` entry with higher precedence. On Windows, registration refuses
 to write a Claude Desktop MSIX configuration the running app could overwrite,
 or any file this process's MSIX AppData redirection would divert.
+Because `rea mcp add` writes without an approval step, after it changes Claude
+Desktop's configuration it prints a notice on stderr: a running Claude Desktop
+can rewrite the file from memory and drop the registration, so quit it fully,
+rerun `rea mcp add`, then start it again. The JSON report is unchanged.
 
 `--no-global` writes only project-level settings. A selection containing Amp or
 another client without project storage fails before any writes; select those

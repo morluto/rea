@@ -1,4 +1,5 @@
 import { captureBudgets } from "../CaptureBudgets.js";
+import { readLeb128, ULEB64 } from "../../../domain/leb128.js";
 import { err, ok, type Result } from "../../../domain/result.js";
 import { setImmediate } from "node:timers/promises";
 import type { ProtobufField } from "../../../domain/protobufWire.js";
@@ -12,7 +13,10 @@ export class ProtobufBudget {
   charge(bytes: number): void {
     if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > this.#remaining)
       throw new CaptureFormatError(
-        "limit",
+        {
+          name: "protobuf-decoding",
+          maximum: captureBudgets().outputBytes,
+        },
         `Protobuf decoding exceeds max_reply_bytes (${String(captureBudgets().outputBytes)} bytes); raise that per-call allowance and retry.`,
       );
     this.#remaining -= bytes;
@@ -32,14 +36,8 @@ export const readProtobufVarint = (
   start: number,
   end = bytes.length,
 ): { value: bigint; end: number } | undefined => {
-  let value = 0n;
-  for (let index = 0; index < 10 && start + index < end; index++) {
-    const byte = bytes[start + index]!;
-    if (index === 9 && byte > 1) return undefined;
-    value |= BigInt(byte & 127) << BigInt(index * 7);
-    if (byte < 128) return { value, end: start + index + 1 };
-  }
-  return undefined;
+  const read = readLeb128(bytes, start, end, ULEB64);
+  return "failure" in read ? undefined : { value: read.value, end: read.next };
 };
 
 const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
