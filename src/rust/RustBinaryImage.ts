@@ -4,6 +4,7 @@ import {
   type ImageSection,
 } from "../native/metadata/BinaryContainer.js";
 import { malformedInput, unsupportedInput } from "../domain/parseFailure.js";
+import { keyedBy, uniqueKeyed } from "../domain/keyedCollection.js";
 import { readBinaryContainer } from "../native/metadata/readBinaryContainer.js";
 import type {
   RustAuditableMetadata,
@@ -81,13 +82,16 @@ const dependencySection = (
   sections: readonly ImageSection[],
 ): ImageSection | null => {
   const expected = format === "macho" ? "__DATA,.dep-v0" : ".dep-v0";
-  const matches = sections.filter((section) => section.name === expected);
-  if (matches.length > 1)
+  const selected = uniqueKeyed(
+    keyedBy(sections, ({ name }) => name),
+    expected,
+  );
+  if (!selected.ok)
     throw malformedInput(
       RUST_AUDITABLE_FORMAT,
       "Image contains more than one dependency section",
     );
-  const section = matches[0];
+  const section = selected.value;
   if (section === undefined) return null;
   if (section.compressed)
     throw unsupportedInput(

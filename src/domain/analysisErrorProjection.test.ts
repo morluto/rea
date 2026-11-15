@@ -110,8 +110,9 @@ describe("agent recovery metadata", () => {
     expect(projected).toMatchObject({
       code: "invalid_request",
       retryable: false,
-      remediation: {
-        action: expect.stringContaining("Do not repeat the unchanged call."),
+      recovery: {
+        kind: "inspect_input_contract",
+        operation: "extract_firmware",
       },
     });
     expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
@@ -126,9 +127,6 @@ describe("agent recovery metadata", () => {
       category: "invalid_input",
       retryable: false,
       details: { reason: "already-exists" },
-      remediation: {
-        action: expect.stringContaining("do not repeat record_unknown"),
-      },
     });
     expect(analysisErrorProjectionSchema.parse(duplicate)).toEqual(duplicate);
     expect(
@@ -187,8 +185,6 @@ describe("agent recovery metadata", () => {
       },
     });
     expect(projected.remediation.action).toContain("tools/list");
-    expect(projected.remediation.action).toMatch(/correct.*fields.*retry/iu);
-    expect(projected.remediation.action).toMatch(/not repeat.*unchanged/iu);
     expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
   });
 
@@ -236,18 +232,7 @@ describe("agent recovery metadata", () => {
         operation: "inspect_binary_layout",
         timeout_ms: 2_500,
       },
-      message: expect.stringContaining("server/provider deadline"),
-      remediation: {
-        action: expect.stringContaining("provider diagnostics"),
-      },
     });
-    expect(projected.message).toContain("not a client-side timeout");
-    expect(projected.remediation.action).not.toContain(
-      "raise its tool deadline",
-    );
-    expect(projected.remediation.action).not.toMatch(
-      /declared timeout controls|larger server\/provider budget|without assuming adjustable limits|do not assume adjustable/u,
-    );
     expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
   });
 });

@@ -219,6 +219,8 @@ export class HistoricalCaptureDecoder {
             input.capture_timeout_ms,
           ),
           diagnosticBytes: 1024 * 1024,
+          // Node adapters declare their V8 heap; the mitmproxy decoder is Python.
+          ...(adapter.heap === undefined ? {} : { runtime: "v8" as const }),
         },
         options?.signal === undefined ? {} : { signal: options.signal },
       );

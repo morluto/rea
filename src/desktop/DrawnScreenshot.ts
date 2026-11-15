@@ -2,6 +2,7 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { isOneColourPng } from "../browser/PngVisualDiff.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import { Deadline } from "../domain/deadline.js";
 
 /** How often REA retakes a first screenshot the desktop has not drawn on, and the time the retries share. */
 const DRAWN_POLL_MS = 500;
@@ -31,15 +32,15 @@ export const drawnScreenshot = async <Shot extends Screenshot>(
   take: (signal: AbortSignal) => Promise<Shot>,
   signal: AbortSignal,
 ): Promise<Shot> => {
-  const deadline = Date.now() + DRAWN_WAIT_MS;
+  const deadline = Deadline.after(DRAWN_WAIT_MS);
   let shot = await take(signal);
   while (!shot.isError && undrawn(shot)) {
-    const left = deadline - Date.now();
+    const left = deadline.remainingMs();
     if (left <= 0) break;
     await delay(Math.min(DRAWN_POLL_MS, left), undefined, { signal });
     const retry = AbortSignal.any([
       signal,
-      AbortSignal.timeout(Math.max(1, deadline - Date.now())),
+      AbortSignal.timeout(Math.max(1, deadline.remainingMs())),
     ]);
     try {
       shot = await take(retry);
