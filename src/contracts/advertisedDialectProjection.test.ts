@@ -102,6 +102,21 @@ it("does not make a union branch's omitted rule into global guidance", () => {
   expect(guidance.join(" ")).not.toContain('must not be "reserved"');
 });
 
+it("keeps a property named __proto__ as an own property", () => {
+  const canonical = JSON.parse(
+    '{"type":"object","properties":{"__proto__":{"type":"string"}},"required":["__proto__"],"additionalProperties":false}',
+  ) as Record<string, unknown>;
+  const { schema } = projectToAdvertisedDialect(canonical);
+  const properties = schema.properties as Record<string, unknown>;
+  expect(Object.getPrototypeOf(properties)).toBe(Object.prototype);
+  expect(Object.hasOwn(properties, "__proto__")).toBe(true);
+  expect(properties.__proto__).toEqual({ type: "string" });
+  expect(schema).toMatchObject({
+    required: ["__proto__"],
+    additionalProperties: false,
+  });
+});
+
 describe("portable advertised dialect projection", () => {
   it.each([
     ["string const", { const: "a" }, { type: "string", enum: ["a"] }],
