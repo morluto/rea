@@ -81,6 +81,50 @@ nativeTest.each([
   },
 );
 
+it("reports a SQLite worker that fails to launch and removes its snapshot before the next inspection", async () => {
+  const { database } = await createFixture();
+  const roots: string[] = [];
+  let launches = 0;
+  const provider = new SqliteDatabaseProvider(
+    process.env,
+    (spawn) => {
+      launches += 1;
+      if (launches === 1)
+        throw Object.assign(new Error("spawn E2BIG"), { code: "E2BIG" });
+      return spawnOwnedProviderProcess({
+        ...spawn,
+        arguments: spawn.arguments.map((argument, index) =>
+          index === 1 ? fileURLToPath(workerUrl) : argument,
+        ),
+      });
+    },
+    async () => {
+      const root = await PrivateRuntimeRoot.create({
+        prefix: "rea-sqlite-launch-",
+      });
+      roots.push(root.path);
+      return root;
+    },
+  );
+  onTestFinished(() => provider.close());
+
+  const refused = await provider.inspect({ path: database.path });
+  if (refused.ok) throw new Error("Expected a worker launch failure");
+  expect(refused.error.diagnostics).toMatchObject({
+    phase: "worker",
+    reason: "spawn E2BIG",
+  });
+  expect(refused.error.cleanupIncomplete).toBe(false);
+  expect(refused.error.capturedOutput).toBeUndefined();
+  const [refusedRoot] = roots;
+  if (refusedRoot === undefined) throw new Error("Missing private root");
+  await expectPrivateRootRemoved(refusedRoot);
+
+  const inspected = await provider.inspect({ path: database.path });
+  if (!inspected.ok) throw inspected.error;
+  expect(launches).toBe(2);
+});
+
 it("enforces a selected worker budget and completes the corrected same-database retry", async () => {
   const { database } = await createFixture();
   const original = await readFile(database.path);

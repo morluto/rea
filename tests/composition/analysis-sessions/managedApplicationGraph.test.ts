@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 
 import { projectManagedApplicationGraphEvidence } from "../../../src/application/managed/ManagedApplicationGraphService.js";
 import {
@@ -140,6 +141,38 @@ describe("managed application graph MethodDef scope", () => {
         /MethodDef row scope.*methods.*relations.*unknown/iu,
       ),
     );
+  });
+});
+
+describe("managed application graph cancellation", () => {
+  it("stops resolving retained managed sources when the caller cancels mid-request", () => {
+    const members = MANAGED_APPLICATION_GRAPH_EXAMPLE.managed_members;
+    const controller = new AbortController();
+    const reason = { request: "cancel managed graph projection" };
+    const looked: string[] = [];
+    const result = projectManagedApplicationGraphEvidence(
+      {
+        managed_members: {
+          kind: "retained-evidence",
+          evidence_id: members.evidence_id,
+        },
+        // Never read: cancellation is observed before this lookup.
+        managed_native_boundaries: {
+          kind: "retained-evidence",
+          evidence_id: `ev_${"b".repeat(64)}`,
+        },
+      },
+      (id) => {
+        looked.push(id);
+        controller.abort(reason);
+        return id === members.evidence_id ? members : undefined;
+      },
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("Expected cancellation");
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.cause).toBe(reason);
+    expect(looked).toEqual([members.evidence_id]);
   });
 });
 
