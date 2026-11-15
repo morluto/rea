@@ -6,6 +6,7 @@ import {
   type PlistDuplicateKeys,
 } from "../../domain/apple/plistDuplicateKeys.js";
 import { byteOrderMarkEncoding } from "../../domain/textByteOrderMark.js";
+import type { ParsedPropertyList } from "../../domain/propertyListKeys.js";
 import {
   binaryPlistObjectEnd,
   decodeBinaryPlistScalars,
@@ -91,6 +92,20 @@ export const binaryPlistDuplicateKeys = (
       duplicates.dictionary(container.keys);
   return duplicates.result();
 };
+
+/**
+ * A binary plist decoded with the source facts an XML or OpenStep decode
+ * carries: number literals and the keys a dictionary repeats.
+ */
+export const decodeBinaryPropertyList = (
+  bytes: Buffer,
+  plan: PlistDecodePreflight,
+  metadata: BinaryPlistScalarMetadata = scanBinaryPlistScalars(bytes, plan),
+): ParsedPropertyList => ({
+  value: decodeBinaryPlistValue(bytes, plan, metadata),
+  numberLiterals: metadata.literals,
+  duplicateKeys: binaryPlistDuplicateKeys(plan),
+});
 
 /** Decode validated source containers without losing dictionary keys or alias occurrence identity. */
 export const decodeBinaryPlistValue = (
