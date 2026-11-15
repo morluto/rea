@@ -1681,16 +1681,22 @@ export class RizinDebugSessionManager {
         ),
       );
     }
-    return stopped.status === "incomplete"
-      ? err(
-          this.#sessions.retainCleanupFailure(
-            session,
-            "rizin_debug_command",
-            stopped.reason,
-            { partialObservation: observation.evidence },
-          ),
-        )
-      : ok(observation);
+    if (stopped.status !== "incomplete") return ok(observation);
+    // The retained failure names why the session stopped, as a refusal does.
+    const stop = this.#stopReason(session);
+    return err(
+      this.#sessions.retainCleanupFailure(
+        session,
+        "rizin_debug_command",
+        stopped.reason,
+        {
+          partialObservation: observation.evidence,
+          ...(stop === undefined
+            ? {}
+            : { diagnostics: { session_stop: stop.code } }),
+        },
+      ),
+    );
   }
 
   #finalizeFailure(

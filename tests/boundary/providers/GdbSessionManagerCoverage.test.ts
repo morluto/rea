@@ -2345,8 +2345,13 @@ it("rejects the command queued behind a timed-out GDB request", async () => {
   const queued = manager.execute(started.value.session_id, "after-timeout");
   const firstResult = await first;
   expect(firstResult.ok).toBe(false);
+  // The timed-out command's own failure names why the session stopped.
   if (!firstResult.ok)
-    expect(firstResult.error._tag).toBe("AnalysisCapabilityUnavailableError");
+    expect(firstResult.error).toMatchObject({
+      _tag: "AnalysisCapabilityUnavailableError",
+      cleanupIncomplete: true,
+      diagnostics: { session_stop: "command-deadline" },
+    });
   const rejected = await queued;
 
   expect(rejected.ok).toBe(false);

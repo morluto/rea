@@ -1896,11 +1896,12 @@ export class GdbSessionManager {
       let pending!: PendingCommand;
       const timer = setTimeout(() => {
         session.pending.delete(token);
-        session.protocolError = {
+        const stop: DebuggerSessionStop = {
           code: "command-deadline",
           reason:
             "A GDB MI command timed out; untagged stream output can no longer be safely correlated with later commands.",
         };
+        session.protocolError = stop;
         pending.cleanup();
         const partial: GdbCommandResult = {
           command: pending.evidenceCommand,
@@ -1944,10 +1945,6 @@ export class GdbSessionManager {
             "The unrestricted GDB console can access local shell, filesystem, network, and target controls.",
           ],
         });
-        session.protocolError ??= {
-          code: "command-deadline",
-          reason: `A GDB command exceeded its ${String(acceptedDeadline.value)} ms deadline; owned-session shutdown was requested because output correlation can no longer be guaranteed.`,
-        };
         void this.#stopDebuggerOnly(session).then((stopped) => {
           if (
             stopped.status === "incomplete" &&
@@ -1971,6 +1968,7 @@ export class GdbSessionManager {
                   `GDB command output could not be correlated and its owned process could not be confirmed stopped: ${stopped.reason}`,
                   {
                     cause: timeout,
+                    diagnostics: { session_stop: stop.code },
                     cleanup: {
                       reason: stopped.reason,
                       resources: [session.id],
