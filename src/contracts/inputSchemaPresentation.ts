@@ -353,6 +353,7 @@ const normalizationContext = (
     fact: Fact;
   }[] = [];
   const changed: Fact[] = [];
+  const dynamic: Fact[] = [];
   const factAt = (
     schema: unknown,
     inherited: JsonSchemaScope | undefined,
@@ -420,6 +421,13 @@ const normalizationContext = (
         }
       }
     }
+    if (
+      scope?.dialect !== "draft-07" &&
+      (typeof schema.$dynamicRef === "string" ||
+        typeof schema.$recursiveRef === "string")
+    ) {
+      dynamic.push(fact);
+    }
     if (!ignoresSiblings)
       for (const child of schemaSubschemas(schema, {
         includeDefinitions: false,
@@ -446,6 +454,16 @@ const normalizationContext = (
           factAt(child, scope)?.evaluationDependents.add(fact);
       }
   }
+  // A dynamic target depends on the evaluation path, which this owner does
+  // not follow. Once anything widens, relax them like named anchors.
+  if (changed.length > 0)
+    for (const fact of dynamic) {
+      fact.opaqueReference = fact;
+      if (!fact.changed) {
+        fact.changed = true;
+        changed.push(fact);
+      }
+    }
   for (let index = 0; index < changed.length; index++)
     for (const dependent of changed[index]!.dependents)
       if (!dependent.changed) {
@@ -678,7 +696,11 @@ const normalizeAdvertisedSchema = (
           ].includes(key)
         )
           delete node[key];
-    } else delete node.$ref;
+    } else {
+      delete node.$ref;
+      delete node.$dynamicRef;
+      delete node.$recursiveRef;
+    }
     node.description = [
       node.description,
       "This referenced input schema is advertised in reduced form; the server validates the complete canonical input.",

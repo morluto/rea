@@ -145,6 +145,19 @@ describe("portable pattern projection", () => {
     expect(projectPortablePattern(source)).toEqual({ kind, pattern });
   });
 
+  it.each([
+    ["^😀$", "😀"],
+    ["^é😀+$", "é😀😀"],
+  ])("keeps the astral literal in %s in every V8 mode", (source, value) => {
+    const projection = projectPortablePattern(source);
+    expect(projection.kind).toBe("wider");
+    if (projection.kind === "unexpressible") return;
+    for (const flags of ["", "u", "v"])
+      expect(new RegExp(projection.pattern, flags).test(value), flags).toBe(
+        true,
+      );
+  });
+
   it.each(["^(a)\\1$", "^(?<n>a)\\k<n>$", "^[]$", "^(?i:a)$"])(
     "omits %s, which has no portable form",
     (source) => {
@@ -241,6 +254,26 @@ describe("advertised pattern presentation", () => {
       };
       const validate = new Ajv2020({ strict: false }).compile(present(schema));
       expect(validate({ name: "con" })).toBe(true);
+    },
+  );
+
+  it.each(PRESENTERS)(
+    "does not narrow %s through a dynamic reference",
+    (_kind, present) => {
+      const schema = {
+        $defs: {
+          name: { $dynamicAnchor: "name", type: "string", pattern: lookAround },
+        },
+        type: "object",
+        properties: { name: { not: { $dynamicRef: "#name" } } },
+      };
+      // Ajv does not resolve this dynamic anchor, so check the structure: the
+      // negation of a widened target cannot remain.
+      const presented = present(schema);
+      expect(JSON.stringify(presented)).not.toContain(lookAround);
+      expect(
+        (presented.properties as Record<string, unknown>).name,
+      ).not.toHaveProperty("not");
     },
   );
 
