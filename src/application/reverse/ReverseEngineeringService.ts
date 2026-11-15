@@ -1096,6 +1096,7 @@ export class ReverseEngineeringService {
       completion_status: completionStatus,
       artifact_sha256_after: absolutePath === undefined ? null : digestAfter,
       artifact_changed: absolutePath === undefined ? null : artifactChanged,
+      ...(rejection === undefined ? {} : { refusal: rejection.refusal }),
     };
     const limitations = [
       ...(absolutePath === undefined
@@ -1125,7 +1126,7 @@ export class ReverseEngineeringService {
           ]
         : []),
       ...(profile.limitations ?? []),
-      ...(rejection === undefined ? [] : [rejection]),
+      ...(rejection === undefined ? [] : [rejection.limitation]),
       ...(stdoutInvalidUtf8 || stderrInvalidUtf8
         ? [
             `Captured ${[
