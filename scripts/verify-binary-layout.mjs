@@ -1517,9 +1517,13 @@ if (failures.length > 0) {
       2,
     ),
   );
-  throw new AggregateError(
-    failures,
-    "Offline binary layout verification failed; cleanup failures are retained.",
+  throw Object.assign(
+    new AggregateError(
+      failures,
+      "Offline binary layout verification failed; cleanup failures are retained.",
+    ),
+    // The caller can retry the retained root from the final failure.
+    root.released ? {} : { cleanupLeases: [root] },
   );
 }
 console.log(

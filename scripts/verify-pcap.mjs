@@ -8,9 +8,11 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { toolContract } from "../dist/contracts/toolContracts.js";
 import { ArtifactResourceScope } from "../dist/artifacts/ArtifactResourceScope.js";
 import { requireMcpOutput } from "./lib/mcp-verifier-results.mjs";
-import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { hashVerifierFile } from "./lib/verifier-file-resources.mjs";
-import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 const args = process.argv.slice(2);
 if (args.includes("--help") || args.includes("-h")) {
@@ -59,7 +61,7 @@ fixture.releaseAfter(async () =>
     `Owned capture resources remain under ${root}`,
   ),
 );
-await withVerifierCleanup(async () => {
+await withVerifierFixture(fixture, async () => {
   await client.connect(transport);
   const readiness = await run("inspect_pcap_client", {});
   assert(readiness.client.tshark_version && readiness.client.capinfos_version);
@@ -103,7 +105,7 @@ await withVerifierCleanup(async () => {
       `[ok] ${result.packet_count} packets; ${result.endpoint_count} addresses; coverage=${result.coverage}`,
     );
   }
-}, [() => fixture.release()]);
+});
 console.log("All asserted pcap CLI/MCP checks passed");
 
 async function run(name, input) {

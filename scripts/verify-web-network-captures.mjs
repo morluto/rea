@@ -917,9 +917,13 @@ if (failures.length > 0) {
       2,
     ),
   );
-  throw new AggregateError(
-    failures,
-    "Historical capture verification failed; analysis and cleanup failures are retained.",
+  throw Object.assign(
+    new AggregateError(
+      failures,
+      "Historical capture verification failed; analysis and cleanup failures are retained.",
+    ),
+    // The caller can retry the retained root from the final failure.
+    runtime.released ? {} : { cleanupLeases: [runtime] },
   );
 }
 console.log(

@@ -583,9 +583,13 @@ console.log(
   ),
 );
 if (failures.length !== 0)
-  throw new AggregateError(
-    failures,
-    "Offline EVM interface verification failed; cleanup failures retained.",
+  throw Object.assign(
+    new AggregateError(
+      failures,
+      "Offline EVM interface verification failed; cleanup failures retained.",
+    ),
+    // The caller can retry the retained root from the final failure.
+    root.released ? {} : { cleanupLeases: [root] },
   );
 
 function permitsStdioSocketObservation(line, localDescriptors) {

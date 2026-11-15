@@ -5,7 +5,10 @@ import { join } from "node:path";
 import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
-import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 /** Layout reference in docs/deno-standalone.md. Not "whatever deno is on PATH". */
 const REQUIRED_DENO_VERSION = "2.9.8";
@@ -97,7 +100,7 @@ const member = (graph, suffix) =>
         row.format_metadata.source_path?.endsWith(`/${suffix}`)),
   );
 
-await withVerifierCleanup(async () => {
+await withVerifierFixture(root, async () => {
   const app = join(root.path, "main.ts");
   const asset = join(root.path, "asset.txt");
   const envFile = join(root.path, "app.env");
@@ -274,4 +277,4 @@ await withVerifierCleanup(async () => {
       2,
     ),
   );
-}, [() => root.release()]);
+});
