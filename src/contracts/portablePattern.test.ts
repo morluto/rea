@@ -145,27 +145,20 @@ describe("portable pattern projection", () => {
     expect(projectPortablePattern(source)).toEqual({ kind, pattern });
   });
 
+  // An astral literal is two UTF-16 units in V8 without `u`; a one-or-two
+  // unit atom would backtrack exponentially under a repeat.
   it.each([
-    ["^😀$", "😀"],
-    ["^é😀+$", "é😀😀"],
-  ])("keeps the astral literal in %s in every V8 mode", (source, value) => {
-    const projection = projectPortablePattern(source);
-    expect(projection.kind).toBe("wider");
-    if (projection.kind === "unexpressible") return;
-    for (const flags of ["", "u", "v"])
-      expect(new RegExp(projection.pattern, flags).test(value), flags).toBe(
-        true,
-      );
+    "^(a)\\1$",
+    "^(?<n>a)\\k<n>$",
+    "^[]$",
+    "^(?i:a)$",
+    "^😀$",
+    "^é😀+$",
+  ])("omits %s, which has no portable form", (source) => {
+    expect(projectPortablePattern(source)).toEqual({
+      kind: "unexpressible",
+    });
   });
-
-  it.each(["^(a)\\1$", "^(?<n>a)\\k<n>$", "^[]$", "^(?i:a)$"])(
-    "omits %s, which has no portable form",
-    (source) => {
-      expect(projectPortablePattern(source)).toEqual({
-        kind: "unexpressible",
-      });
-    },
-  );
 
   it("omits the unsafe unbounded base64 padding projection", () => {
     expect(
@@ -274,6 +267,20 @@ describe("advertised pattern presentation", () => {
       expect(
         (presented.properties as Record<string, unknown>).name,
       ).not.toHaveProperty("not");
+    },
+  );
+
+  it.each(PRESENTERS)(
+    "does not narrow %s through a URI naming an embedded resource",
+    (_kind, present) => {
+      const schema = {
+        $id: "https://example.test/root",
+        $defs: { name: { $id: "name", type: "string", pattern: lookAround } },
+        type: "object",
+        properties: { name: { not: { $ref: "https://example.test/name" } } },
+      };
+      const validate = new Ajv2020({ strict: false }).compile(present(schema));
+      expect(validate({ name: "con" })).toBe(true);
     },
   );
 
