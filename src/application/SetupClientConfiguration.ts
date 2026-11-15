@@ -1004,6 +1004,7 @@ const clientConfigurationDesired = async (
   return withInheritedGooseEnvironment(
     registration.value,
     format,
+    client,
     parsed,
     effective,
     providerEnvironment,
@@ -1011,19 +1012,20 @@ const clientConfigurationDesired = async (
 };
 
 /**
- * Goose replaces `envs` as a whole map per layer, so a default empty map in
- * the user file would hide an environment a lower layer supplies. Without a
- * user environment or a requested setting, the lower map stays in effect.
+ * Goose replaces `envs` as a whole map per layer, so a user map must carry the
+ * inherited one. When the user entry declares no environment and a lower layer
+ * does, setup writes no map unless a setting is requested, and then writes the
+ * inherited map with the requested settings applied last.
  */
 const withInheritedGooseEnvironment = (
   registration: Record<string, unknown>,
   format: ClientRegistrationDialect,
+  client: SetupClient,
   parsed: ClientConfigurationDocument | undefined,
   effective: ClientConfigurationDocument | undefined,
   providerEnvironment: SetupProviderEnvironment,
 ): Record<string, unknown> => {
-  if (format !== "goose" || Object.keys(providerEnvironment).length > 0)
-    return registration;
+  if (format !== "goose") return registration;
   const declaresEnvironment = (
     document: ClientConfigurationDocument | undefined,
   ) => {
@@ -1039,6 +1041,16 @@ const withInheritedGooseEnvironment = (
   };
   if (declaresEnvironment(parsed) || !declaresEnvironment(effective))
     return registration;
-  const { envs: _inherited, ...rest } = registration;
-  return rest;
+  if (Object.keys(providerEnvironment).length === 0) {
+    const { envs: _inherited, ...rest } = registration;
+    return rest;
+  }
+  const inherited = clientRegistrationEnvironment(
+    effective,
+    client,
+    providerEnvironment,
+    "fragment",
+  );
+  if (!inherited.ok) throw inherited.error;
+  return { ...registration, envs: { ...inherited.value } };
 };
