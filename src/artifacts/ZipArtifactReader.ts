@@ -401,7 +401,7 @@ export class ZipArtifactReader implements ArtifactReader {
 }
 
 /** Coverage of a central-directory listing, given the member region's byte account. */
-const zipListingCoverage = (
+export const zipListingCoverage = (
   account: ZipMemberRegionAccount | undefined,
 ): ArtifactReaderTraversal => {
   if (account === undefined)

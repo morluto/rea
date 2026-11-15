@@ -1,3 +1,4 @@
+import { ParseFailureError } from "../domain/parseFailure.js";
 import { expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import {
@@ -20,10 +21,7 @@ import {
 } from "./NugetNupkg.fixture.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { NUPKG_LIMITATIONS, parseNugetNupkg } from "./NugetNupkgParser.js";
-import {
-  NugetNupkgCapacityFailure,
-  NugetNupkgFormatFailure,
-} from "./NugetNupkg.errors.js";
+import { NugetNupkgCapacityFailure } from "./NugetNupkg.errors.js";
 
 const defaults = inspectNugetNupkgInputSchema.parse({
   path: "/artifacts/Demo.Package.nupkg",
@@ -178,7 +176,7 @@ it("refuses a non-ZIP file without claiming a package inventory", async () => {
   const bytes = Buffer.from("not a zip");
   await expect(
     parseNugetNupkg(bytes, artifactOf(bytes), defaults),
-  ).rejects.toBeInstanceOf(NugetNupkgFormatFailure);
+  ).rejects.toBeInstanceOf(ParseFailureError);
 });
 
 it("stops ZIP enumeration as soon as the entry budget is exceeded", async () => {
@@ -408,8 +406,8 @@ it("keeps a Zstandard dictionary refusal as an unsupported layout instead of a m
       artifactOf(bytes),
       defaults,
     ).catch((cause: unknown) => cause);
-    expect(failure).toBeInstanceOf(NugetNupkgFormatFailure);
-    expect(failure).toMatchObject({ kind: "unsupported" });
+    expect(failure).toBeInstanceOf(ParseFailureError);
+    expect(failure).toMatchObject({ failure: { kind: "unsupported" } });
     expect((failure as Error).message).toContain("Zstandard dictionary");
     expect(((failure as Error).cause as ArtifactReaderFailure).cause).toBe(
       refusal,
@@ -525,4 +523,48 @@ it("reports an encrypted manifest above the metadata budget without decoding it"
   });
   expect(report.coverage.examined_nuspec_bytes).toBe(0);
   expect(report.contents[0]?.encrypted).toBe(true);
+});
+
+it("follows no relationships when two members normalize to _rels/.rels", async () => {
+  const bytes = await nugetNupkgFixture({
+    extraMembers: {
+      "./_rels/.rels": manifestRels("/content/Other.nuspec"),
+      "content/Other.nuspec": ungroupedNuspec,
+    },
+  });
+  const report = nugetNupkgSchema.parse(
+    await parseNugetNupkg(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.nuspec).toMatchObject({
+    path: "Demo.Package.nuspec",
+    source: "root-nuspec",
+  });
+  expect(report.limitations).toContain(
+    "More than one ZIP member is the OPC relationships part; relationships were not followed and the .nuspec was selected by ZIP name when possible.",
+  );
+});
+
+it("reports unknown coverage when the central directory leaves bytes unaccounted", async () => {
+  const packed = Buffer.from(await nugetNupkgFixture());
+  // Splice opaque bytes in front of the central directory and move the
+  // end-of-central-directory offset past them, as an omitted local entry would.
+  const eocd = packed.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  const directory = packed.readUInt32LE(eocd + 16);
+  const hidden = Buffer.alloc(64, 0x41);
+  const bytes = Buffer.concat([
+    packed.subarray(0, directory),
+    hidden,
+    packed.subarray(directory),
+  ]);
+  bytes.writeUInt32LE(directory + hidden.length, eocd + hidden.length + 16);
+  const report = nugetNupkgSchema.parse(
+    await parseNugetNupkg(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.coverage.status).toBe("unknown");
+  expect(report.identity?.id).toBe("Demo.Package");
+  expect(
+    report.limitations.some((line) =>
+      line.includes("does not account for 64 byte"),
+    ),
+  ).toBe(true);
 });

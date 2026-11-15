@@ -1,9 +1,12 @@
 import { NUGET_NUPKG_PROVIDER_IDENTITY } from "./NugetNupkgProviderIdentity.js";
 import {
-  projectStableArtifactFailure,
-  stableArtifactInputRecovery,
   projectArtifactCloseFailure,
+  projectOwnedArtifactIdentityFailure,
+  projectSelectedArtifactFileFailure,
+  projectStableArtifactFailure,
+  stableArtifactInputFailure,
 } from "../artifacts/StableArtifactFailure.js";
+import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   type StableArtifactSnapshot,
@@ -12,19 +15,10 @@ import {
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
-  artifactSelectedPathErrno,
-  artifactFileCancellationCause,
 } from "../artifacts/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
-import {
-  AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
-  AnalysisInputError,
-  AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
-} from "../domain/analysisErrorCore.js";
+import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import {
   MAX_INSPECT_NUGET_NUPKG_ENTRIES,
   MAX_INSPECT_NUGET_NUPKG_FILE_BYTES,
@@ -32,10 +26,7 @@ import {
   type InspectNugetNupkgInput,
 } from "../domain/nuget/nupkg.js";
 import { err, ok } from "../domain/result.js";
-import {
-  NugetNupkgCapacityFailure,
-  NugetNupkgFormatFailure,
-} from "./NugetNupkg.errors.js";
+import { NugetNupkgCapacityFailure } from "./NugetNupkg.errors.js";
 import { parseNugetNupkg } from "./NugetNupkgParser.js";
 
 const OPERATION = "inspect_nuget_nupkg";
@@ -70,45 +61,24 @@ const nupkgFailurePrimary = (
   input: InspectNugetNupkgInput,
 ) => {
   const { cause, origin } = facts;
-  if (cause instanceof NugetNupkgFormatFailure)
-    return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(
-          OPERATION,
-          input.path,
-          cause.message,
-          { cause },
-        )
-      : new AnalysisInputError(OPERATION, { cause }, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: `Selected NuGet package ${input.path}: ${cause.message}`,
-          },
-        ]);
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "integrity"
-  )
-    return new AnalysisArtifactChangedError(
-      OPERATION,
-      input.path,
-      cause.message,
-      { cause },
-    );
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "cancelled"
-  )
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
-    });
+  const identityFailure = projectOwnedArtifactIdentityFailure(
+    facts,
+    OPERATION,
+    input.path,
+  );
+  if (identityFailure !== undefined) return identityFailure;
+  const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
+  if (formatFailure !== undefined) return formatFailure;
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure
   ) {
     if (cause.reason === "limit") {
+      const limits = {
+        max_file_bytes: input.max_file_bytes,
+        max_entries: input.max_entries,
+        max_nuspec_bytes: input.max_nuspec_bytes,
+      };
       // A reader limit with a typed fixed allowance (such as the ZIP Zstandard
       // window) cannot be lifted by worker or host memory, so carry that
       // recovery instead of a memory retry.
@@ -117,27 +87,15 @@ const nupkgFailurePrimary = (
           OPERATION,
           cause.boundary ?? "memory",
           cause.message,
-          {
-            max_file_bytes: input.max_file_bytes,
-            max_entries: input.max_entries,
-            max_nuspec_bytes: input.max_nuspec_bytes,
-          },
-          {
-            cause,
-            retryable: false,
-            fixedAllowance: cause.fixedAllowance,
-          },
+          limits,
+          { cause, retryable: false, fixedAllowance: cause.fixedAllowance },
         );
       const remediationAction = inputBudgetRemediation(cause, input);
       return new AnalysisResourceConstraintError(
         OPERATION,
         cause.boundary ?? "memory",
         cause.message,
-        {
-          max_file_bytes: input.max_file_bytes,
-          max_entries: input.max_entries,
-          max_nuspec_bytes: input.max_nuspec_bytes,
-        },
+        limits,
         {
           cause,
           ...(remediationAction === undefined
@@ -147,33 +105,15 @@ const nupkgFailurePrimary = (
       );
     }
     if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(
-        OPERATION,
-        { cause, ...stableArtifactInputRecovery(cause) },
-        [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: cause.message,
-          },
-        ],
-      );
+      return stableArtifactInputFailure(cause, OPERATION);
   }
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(OPERATION, input.path, cause.code, {
-        cause,
-      });
-    const pathErrno = artifactSelectedPathErrno(cause);
-    if (pathErrno !== undefined)
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_value",
-          message: `Selected NuGet package could not be read (${pathErrno}): ${input.path}.`,
-        },
-      ]);
-  }
+  const fileFailure = projectSelectedArtifactFileFailure(
+    cause,
+    OPERATION,
+    input.path,
+    "NuGet package",
+  );
+  if (fileFailure !== undefined) return fileFailure;
   return new ArtifactOperationError(
     OPERATION,
     origin === "owned-or-classified" && cause instanceof ArtifactReaderFailure

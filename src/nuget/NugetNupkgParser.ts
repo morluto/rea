@@ -1,3 +1,9 @@
+import { accountZipMemberRegion } from "../artifacts/ZipMemberRegion.js";
+import {
+  malformedInput,
+  ParseFailureError,
+  unsupportedInput,
+} from "../domain/parseFailure.js";
 import {
   ERR_AMBIGUOUS_ARCHIVE,
   ERR_BAD_FORMAT,
@@ -30,6 +36,7 @@ import {
   typedZipFailure,
   ZIP_READER_OPTIONS,
   zipEntryPath,
+  zipListingCoverage,
 } from "../artifacts/ZipArtifactReader.js";
 import { parseXmlDocument } from "../domain/xmlDocument.js";
 import { decodeXmlPlistText } from "../domain/propertyListXmlText.js";
@@ -42,7 +49,7 @@ import {
 } from "../domain/nuget/nupkg.js";
 import {
   NugetNupkgCapacityFailure,
-  NugetNupkgFormatFailure,
+  NUGET_NUPKG_FORMAT,
 } from "./NugetNupkg.errors.js";
 
 const ZIP_FORMAT_MESSAGES = new Set([
@@ -148,7 +155,7 @@ const wrapZipFailure = (
     });
   if (
     cause instanceof ArtifactReaderFailure ||
-    cause instanceof NugetNupkgFormatFailure ||
+    cause instanceof ParseFailureError ||
     cause instanceof NugetNupkgCapacityFailure
   )
     throw cause;
@@ -160,24 +167,24 @@ const wrapZipFailure = (
   if (typed instanceof ArtifactReaderFailure && typed.reason === "limit")
     throw typed;
   if (typed instanceof ArtifactReaderFailure && typed.reason === "unavailable")
-    throw new NugetNupkgFormatFailure(
-      "unsupported",
+    throw unsupportedInput(
+      NUGET_NUPKG_FORMAT,
       `NuGet package ZIP uses an unsupported layout: ${typed.message}`,
       { cause: typed },
     );
   const message = cause instanceof Error ? cause.message : String(cause);
   if (ZIP_UNSUPPORTED_MESSAGES.has(message))
-    throw new NugetNupkgFormatFailure(
-      "unsupported",
+    throw unsupportedInput(
+      NUGET_NUPKG_FORMAT,
       `NuGet package ZIP uses an unsupported layout: ${message}`,
     );
   if (ZIP_FORMAT_MESSAGES.has(message) || cause instanceof Error)
-    throw new NugetNupkgFormatFailure(
-      "malformed",
+    throw malformedInput(
+      NUGET_NUPKG_FORMAT,
       `NuGet package ZIP is malformed: ${message}`,
     );
-  throw new NugetNupkgFormatFailure(
-    "malformed",
+  throw malformedInput(
+    NUGET_NUPKG_FORMAT,
     "NuGet package ZIP could not be read.",
   );
 };
@@ -435,12 +442,21 @@ const findNuspec = (
 } => {
   // Every ZIP occurrence stays distinct: duplicate or case-variant names must
   // surface as ambiguity rather than collapse to an archive-order winner.
-  const matchTarget = (target: string) => {
-    const exact = files.filter((file) => file.name === target);
-    if (exact.length > 0) return exact;
-    const lower = target.toLowerCase();
-    return files.filter((file) => file.name.toLowerCase() === lower);
-  };
+  // Index once: every target is then a constant-time lookup, however many
+  // relationships the package declares.
+  const exactNames = new Map<string, (typeof files)[number][]>();
+  const foldedNames = new Map<string, (typeof files)[number][]>();
+  for (const file of files) {
+    const exact = exactNames.get(file.name);
+    if (exact === undefined) exactNames.set(file.name, [file]);
+    else exact.push(file);
+    const lower = file.name.toLowerCase();
+    const folded = foldedNames.get(lower);
+    if (folded === undefined) foldedNames.set(lower, [file]);
+    else folded.push(file);
+  }
+  const matchTarget = (target: string) =>
+    exactNames.get(target) ?? foldedNames.get(target.toLowerCase()) ?? [];
   if (relsXml !== undefined) {
     const targets = opcManifestTargets(relsXml, limitations);
     const resolved = [...new Set(targets.flatMap(matchTarget))];
@@ -485,13 +501,13 @@ export const parseNugetNupkg = async (
   signal?: AbortSignal,
 ): Promise<NugetNupkg> => {
   if (bytes.length !== artifact.bytes)
-    throw new NugetNupkgFormatFailure(
-      "malformed",
+    throw malformedInput(
+      NUGET_NUPKG_FORMAT,
       "Selected artifact length disagrees with the retained bytes.",
     );
   if (!hasZipSignature(bytes))
-    throw new NugetNupkgFormatFailure(
-      "malformed",
+    throw malformedInput(
+      NUGET_NUPKG_FORMAT,
       "Selected file is not a ZIP archive (NuGet .nupkg).",
     );
   const reader = new ZipReader(new Uint8ArrayReader(bytes), ZIP_READER_OPTIONS);
@@ -516,6 +532,26 @@ export const parseNugetNupkg = async (
     } catch (cause: unknown) {
       return wrapZipFailure(cause, signal);
     }
+    // The inventory comes from the central directory; local entries it omits
+    // are only visible as bytes no listed record accounts for.
+    const directoryOffset = reader.directoryOffset;
+    const listing = zipListingCoverage(
+      directoryOffset === undefined
+        ? undefined
+        : await accountZipMemberRegion(
+            entries.map((entry) => ({
+              offset: entry.offset,
+              compressedSize: entry.compressedSize,
+              uncompressedSize: entry.uncompressedSize,
+              crc32: entry.crc32,
+              zip64: entry.zip64,
+              dataDescriptor: entry.bitFlag?.dataDescriptor ?? false,
+            })),
+            directoryOffset,
+            (at, length) => Promise.resolve(bytes.subarray(at, at + length)),
+          ),
+    );
+    limitations.push(...listing.limitations);
     const files: { entry: FileEntry; name: string }[] = [];
     const contents: NugetNupkg["contents"] = [];
     for (const entry of entries) {
@@ -534,9 +570,16 @@ export const parseNugetNupkg = async (
         encrypted: entry.encrypted === true,
       });
     }
-    const rels = files.find(
+    const relsMembers = files.filter(
       (file) => file.name.toLowerCase() === "_rels/.rels",
     );
+    // Spellings such as "./_rels/.rels" normalize to the same logical path; with
+    // more than one, ZIP order would choose the manifest, so follow none.
+    if (relsMembers.length > 1)
+      limitations.push(
+        "More than one ZIP member is the OPC relationships part; relationships were not followed and the .nuspec was selected by ZIP name when possible.",
+      );
+    const rels = relsMembers.length === 1 ? relsMembers[0] : undefined;
     let relsXml: string | undefined;
     if (rels !== undefined) {
       if (rels.entry.encrypted)
@@ -574,7 +617,7 @@ export const parseNugetNupkg = async (
         contents,
         nuspec: null,
         coverage: {
-          status: "complete",
+          status: listing.status,
           entries: contents.length,
           examined_nuspec_bytes: 0,
         },
@@ -602,7 +645,7 @@ export const parseNugetNupkg = async (
           source: selected.source,
         },
         coverage: {
-          status: "complete",
+          status: listing.status,
           entries: contents.length,
           examined_nuspec_bytes: 0,
         },
@@ -639,7 +682,7 @@ export const parseNugetNupkg = async (
           source: selected.source,
         },
         coverage: {
-          status: "complete",
+          status: listing.status,
           entries: contents.length,
           examined_nuspec_bytes: nuspecBytes.length,
         },
@@ -671,7 +714,7 @@ export const parseNugetNupkg = async (
         source: selected.source,
       },
       coverage: {
-        status: "complete",
+        status: listing.status,
         entries: contents.length,
         examined_nuspec_bytes: nuspecBytes.length,
       },

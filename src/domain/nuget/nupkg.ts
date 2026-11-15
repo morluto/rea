@@ -173,7 +173,9 @@ export const nugetNupkgSchema = z.strictObject({
     })
     .nullable(),
   coverage: z.strictObject({
-    status: z.literal("complete"),
+    // Unknown when the central directory leaves member-region bytes
+    // unaccounted for: local entries it omits may exist there.
+    status: z.enum(["complete", "unknown"]),
     entries: uint,
     examined_nuspec_bytes: uint,
   }),

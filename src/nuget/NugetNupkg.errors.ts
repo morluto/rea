@@ -1,17 +1,8 @@
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import type { NUGET_NUPKG_LIMIT_MAXIMA } from "../domain/nuget/nupkg.js";
 
-/** Distinguish corrupt ZIP/.nuspec bytes from layouts outside this reader. */
-export class NugetNupkgFormatFailure extends Error {
-  constructor(
-    readonly kind: "malformed" | "unsupported",
-    message: string,
-    options?: ErrorOptions,
-  ) {
-    super(message, options);
-    this.name = "NugetNupkgFormatFailure";
-  }
-}
+/** The ParseFailure format of a NuGet .nupkg and its .nuspec. */
+export const NUGET_NUPKG_FORMAT = "nuget-nupkg";
 
 /** Resource boundary exceeded while inventorying members or decoding a .nuspec. */
 export class NugetNupkgCapacityFailure extends ArtifactReaderFailure {
