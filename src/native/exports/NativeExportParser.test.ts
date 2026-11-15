@@ -1378,35 +1378,53 @@ it.each(
 );
 
 describe("ELF sections of a once-only type", () => {
-  /** Retype the first ELF64 little-endian section header of type `from`. */
-  const retype = (bytes: Buffer, from: number, to: number): Buffer => {
+  const SHT_DYNSYM = 11;
+  const SHT_GNU_VERDEF = 0x6ffffffd;
+  const SHT_GNU_VERNEED = 0x6ffffffe;
+  const SHT_GNU_VERSYM = 0x6fffffff;
+  /**
+   * Retype the first ELF64 little-endian section header of type `from`,
+   * optionally relinking it to another section index.
+   */
+  const retype = (
+    bytes: Buffer,
+    from: number,
+    to: number,
+    link?: number,
+  ): Buffer => {
     const copy = Buffer.from(bytes);
     const offset = Number(copy.readBigUInt64LE(0x28));
     const width = copy.readUInt16LE(0x3a);
     const count = copy.readUInt16LE(0x3c);
     for (let index = 0; index < count; index++) {
-      const at = offset + index * width + 4;
-      if (copy.readUInt32LE(at) !== from) continue;
-      copy.writeUInt32LE(to, at);
+      const at = offset + index * width;
+      if (copy.readUInt32LE(at + 4) !== from) continue;
+      copy.writeUInt32LE(to, at + 4);
+      if (link !== undefined) copy.writeUInt32LE(link, at + 40);
       return copy;
     }
     throw new Error(`No section of type ${String(from)}`);
   };
-  const image = () =>
+  const symbols = [{ name: "stdout", type: 1, value: 0x28268n, version: 3 }];
+  const required = () =>
     elfExportImage({
-      symbols: [{ name: "stdout", type: 1, value: 0x28268n, version: 3 }],
+      symbols,
       versionRequirements: [{ index: 3, name: "GLIBC_2.2.5" }],
     });
 
   it("refuses an image that declares two dynamic symbol tables", () => {
-    expect(refusal(retype(image(), 0x6fffffff, 11))).toMatchObject({
+    expect(
+      refusal(retype(required(), SHT_GNU_VERSYM, SHT_DYNSYM)),
+    ).toMatchObject({
       kind: "malformed",
       message: "ELF image has more than one SHT_DYNSYM",
     });
   });
 
-  it("reads neither of two version requirement tables and says so", () => {
-    const result = parse(retype(image(), 0x6fffffff, 0x6ffffffe));
+  it("keeps exports but names no requirement when two requirement tables are declared", () => {
+    // The empty definition table becomes a second requirement table; the
+    // symbol version table stays linked to .dynsym.
+    const result = parse(retype(required(), SHT_GNU_VERDEF, SHT_GNU_VERNEED));
     expect(result.issues).toContainEqual(
       expect.objectContaining({
         code: "version_unresolved",
@@ -1414,5 +1432,43 @@ describe("ELF sections of a once-only type", () => {
           "Version requirements: the ELF declares 2 sections of this type, so none was read",
       }),
     );
+    expect(result.exports).toHaveLength(1);
+    expect(result.exports[0]).toMatchObject({ name: "stdout" });
+    expect(JSON.stringify(result.exports[0])).not.toContain("GLIBC_2.2.5");
+  });
+
+  it("names no version when two definition tables are declared", () => {
+    // The empty requirement table becomes a second definition table.
+    const result = parse(
+      retype(
+        elfExportImage({ symbols, versionDefinitions: ["lib", "V1", "V2"] }),
+        SHT_GNU_VERNEED,
+        SHT_GNU_VERDEF,
+      ),
+    );
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({
+        code: "version_unresolved",
+        message:
+          "Version definitions: the ELF declares 2 sections of this type, so none was read",
+      }),
+    );
+    expect(result.exports).toHaveLength(1);
+    expect(JSON.stringify(result.exports[0])).not.toMatch(/"V[12]"/u);
+  });
+
+  it("marks versions unknown when two version tables link to .dynsym", () => {
+    // The empty definition table becomes a second symbol version table
+    // linked to .dynsym (section 1).
+    const result = parse(retype(required(), SHT_GNU_VERDEF, SHT_GNU_VERSYM, 1));
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({
+        code: "version_unresolved",
+        message: "2 symbol version tables link to the dynamic symbol table",
+      }),
+    );
+    expect(result.exports).toEqual([
+      expect.objectContaining({ name: "stdout", version: "unknown" }),
+    ]);
   });
 });
