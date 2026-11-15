@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { lstat, mkdir, readdir } from "node:fs/promises";
 import { basename, dirname, isAbsolute } from "node:path";
 
@@ -122,9 +123,13 @@ export const writeOutputTree = async (
     | { readonly kind: "failed"; readonly cause: unknown };
   try {
     try {
-      tree = await SafeOutputTree.create(plan.physical, process.platform, {
-        acceptExistingEmpty: true,
-      });
+      tree = await SafeOutputTree.create(
+        plan.physical,
+        HOST_PLATFORM.platform,
+        {
+          acceptExistingEmpty: true,
+        },
+      );
     } catch (cause: unknown) {
       if (cause instanceof SafeOutputTreeCreationFailure) tree = cause.tree;
       throw cause;

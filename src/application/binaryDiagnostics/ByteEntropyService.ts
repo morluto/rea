@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
@@ -67,6 +68,8 @@ export class ByteEntropyService {
       "open" | "stat"
     > = { open, stat },
     resources: ArtifactResourceScope = new ArtifactResourceScope(),
+    // The selected path is read on this host unless a caller selects one.
+    private readonly platform: NodeJS.Platform = HOST_PLATFORM.platform,
   ) {
     this.#resources = resources;
   }
@@ -189,7 +192,7 @@ export class ByteEntropyService {
       admitted = true;
       // Only an admitted selected file may consult filesystem spelling. Do not
       // replace symlink/junction/8.3 aliases or touch source-derived paths.
-      if (process.platform === "win32") {
+      if (this.platform === "win32") {
         const canonical = await realpath(input.path).catch(() => undefined);
         assertArtifactReadActive(options?.signal);
         if (canonical?.toLowerCase() === input.path.toLowerCase())
