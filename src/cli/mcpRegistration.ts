@@ -3,6 +3,7 @@ import { Writable } from "node:stream";
 import { Help, z } from "incur";
 
 import {
+  mcpClientRegistrationWritten,
   registerMcpClients,
   type McpClientRegistrationOutcome,
 } from "../application/McpClientRegistration.js";
@@ -415,19 +416,19 @@ const presentRegistration = async (
   };
   await presentation.document(report, !report.ok);
   for (const outcome of outcomes) {
-    if (outcome.status !== "completed" || !outcome.result.ok) continue;
+    if (outcome.status !== "completed") continue;
     const target = targets.find(
       ({ id, configPath }) =>
         id === outcome.client && configPath === outcome.configPath,
     );
     const name = target?.displayName ?? outcome.client;
-    const { backupPath, status } = outcome.result.value;
-    if (backupPath !== undefined)
+    const { result } = outcome;
+    if (result.ok && result.value.backupPath !== undefined)
       process.stderr.write(
-        `${name} MCP registration backup retained at ${backupPath}\n`,
+        `${name} MCP registration backup retained at ${result.value.backupPath}\n`,
       );
     const notice =
-      status === "configured" && target?.setupClient !== undefined
+      mcpClientRegistrationWritten(result) && target?.setupClient !== undefined
         ? runningClientRewriteNotice(target.setupClient)
         : undefined;
     if (notice !== undefined) process.stderr.write(`${notice}\n`);
