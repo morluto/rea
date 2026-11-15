@@ -12,7 +12,10 @@ export class ProtobufBudget {
   charge(bytes: number): void {
     if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > this.#remaining)
       throw new CaptureFormatError(
-        "limit",
+        {
+          name: "protobuf-decoding",
+          maximum: captureBudgets().outputBytes,
+        },
         `Protobuf decoding exceeds max_reply_bytes (${String(captureBudgets().outputBytes)} bytes); raise that per-call allowance and retry.`,
       );
     this.#remaining -= bytes;

@@ -7,7 +7,14 @@ import {
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { analysisErrorProjectionSchema } from "../../contracts/errorSchemas.js";
 import { inspectWebNetworkCaptureInputSchema } from "../../domain/webNetworkCapture.js";
-import { historicalCaptureFailure } from "./CaptureFailures.js";
+import {
+  historicalCaptureFailure,
+  protobufCaptureFailure,
+} from "./CaptureFailures.js";
+import {
+  CaptureFormatError,
+  captureLimitForReply,
+} from "./CaptureFormatError.js";
 import { NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES } from "../../../tests/fixtures/captureDecoderLimits.js";
 import { redactExplicitFailure } from "../../domain/explicitSensitiveFailure.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
@@ -404,4 +411,61 @@ it("keeps physical capture read errors as provider failures", () => {
     code: "execution_failure",
     details: { diagnostics: { phase: "capture-read" } },
   });
+});
+
+it.each([
+  {
+    limit: { name: "protobuf-body", maximum: 1024 },
+    parameter: "max_input_bytes",
+    expected: "maximum_protobuf_body_bytes",
+  },
+  {
+    limit: { name: "protobuf-decoding", maximum: 2048 },
+    parameter: "max_reply_bytes",
+    expected: "maximum_encoded_capture_bytes",
+  },
+] as const)(
+  "names the $parameter budget for a $limit.name refusal",
+  ({ limit, parameter, expected }) => {
+    const input = inspectWebNetworkCaptureInputSchema.parse({
+      capture_path: "/selected/capture.har",
+      format: "har",
+    });
+    const projected = projectAnalysisError(
+      protobufCaptureFailure(
+        input,
+        new CaptureFormatError(limit, "Protobuf limit reached"),
+      ),
+    );
+    expect(projected).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: { reported_limits: { [expected]: limit.maximum } },
+      remediation: {
+        action: expect.stringContaining(`Increase ${parameter}`),
+      },
+    });
+  },
+);
+
+it("derives each decoder-child wire reason from the limit table", () => {
+  expect(
+    new CaptureFormatError(
+      { name: "nesting-depth", maximum: 64 },
+      "deep",
+      "/log",
+    ),
+  ).toMatchObject({ replyReason: "input-limit", pointer: "/log" });
+  expect(
+    new CaptureFormatError({ name: "expanded-input", maximum: 1 }, "big")
+      .replyReason,
+  ).toBe("expanded-limit");
+  expect(new CaptureFormatError("malformed", "bad").replyReason).toBe("format");
+  expect(new CaptureFormatError("unsupported", "no").replyReason).toBe(
+    "unsupported",
+  );
+  expect(captureLimitForReply("input-limit")).toBe("nesting-depth");
+  expect(captureLimitForReply("expanded-limit")).toBe("expanded-input");
+  // A reply-size refusal is not a decoder input limit.
+  expect(captureLimitForReply("limit")).toBeUndefined();
 });
