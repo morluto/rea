@@ -1,3 +1,4 @@
+import { DESKTOP_VIEW_DEFAULTS } from "../../domain/desktop/desktopViewPolicy.js";
 import { chmod, open, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -182,6 +183,25 @@ describe("desktop state view admission", () => {
       userMessage: expect.stringContaining(missing),
     });
   });
+});
+
+it("records the complete effective view policy and refuses state without it", async () => {
+  const evidence = await inspectDesktopApplicationState(
+    await writeCaptureFolder(capture()),
+    readers,
+  );
+  if (!("normalized_result" in evidence)) throw evidence;
+  const state = desktopApplicationStateSchema.parse(evidence.normalized_result);
+  expect(state.effective_view_policy).toEqual(DESKTOP_VIEW_DEFAULTS);
+  const { effective_view_policy: policy, ...unrecorded } = state;
+  const { sqlite_view_bytes: _bytes, ...partial } = policy;
+  for (const refused of [
+    unrecorded,
+    { ...state, effective_view_policy: partial },
+  ])
+    expect(desktopApplicationStateSchema.safeParse(refused).success).toBe(
+      false,
+    );
 });
 
 describe("inspectDesktopApplicationState", () => {
