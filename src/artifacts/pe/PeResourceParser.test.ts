@@ -1,5 +1,5 @@
 import { dosMz, nonPeWindowsMz } from "../../domain/binaryTarget.fixture.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {

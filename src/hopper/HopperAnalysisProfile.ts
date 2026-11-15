@@ -1,6 +1,8 @@
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceRetryFailure } from "../artifacts/ArtifactResourceScope.js";
+import {
+  AnalysisCleanupLease,
+  bindArtifactFileCleanup,
+  ArtifactResourceRetryFailure,
+} from "../resources/index.js";
 import {
   hashStableFile,
   stableFileHashCause,
@@ -19,7 +21,7 @@ import type {
   AnalysisProfileResolution,
   RetainedResourceScope,
   ProviderIdentity,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { createFunctionCoordinateContext } from "../domain/native/functionCoordinateContext.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import {

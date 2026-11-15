@@ -6,7 +6,11 @@ import { classifyProviderFailure } from "../../providers/classifyProviderFailure
 import {
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
-} from "../../artifacts/ArtifactFileOperation.js";
+  completedStableArtifact,
+  readStableArtifact,
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+} from "../../resources/index.js";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import { access, mkdir, stat, writeFile } from "node:fs/promises";
 import { constants, type Stats } from "node:fs";
@@ -14,7 +18,7 @@ import { randomUUID } from "node:crypto";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { AnalysisCapturedOutput } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
@@ -28,12 +32,6 @@ import {
   recordedCrashDebuggerSchema,
   type RecordedCrash,
 } from "../../domain/native/recordedCrash.js";
-import {
-  completedStableArtifact,
-  readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";

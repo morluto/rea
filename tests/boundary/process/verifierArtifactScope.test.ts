@@ -3,7 +3,7 @@ import {
   VerifierArtifactCleanupFailure,
   withVerifierArtifactScope,
 } from "../../../scripts/lib/verifier-artifact-scope.mjs";
-import type { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 it("retains the exact scope for retry and preserves the operation failure", async () => {

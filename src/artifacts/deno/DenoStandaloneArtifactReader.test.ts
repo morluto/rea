@@ -17,7 +17,7 @@ import { peResourceFixture } from "../pe/PeResources.fixture.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../../tests/fixtures/artifactInventory.js";
 import { artifactFormatDescriptor } from "../artifactFormats.js";
-import { ArtifactPathRegistry } from "../ArtifactPaths.js";
+import { ArtifactPathRegistry } from "../../resources/ArtifactPaths.js";
 import { DenoStandaloneArtifactReader } from "../DenoStandaloneArtifactReader.js";
 import { cArchiveExecutable } from "../pyinstaller/CArchive.fixture.js";
 import { locateDenoStandalone } from "./DenoStandaloneLocation.js";

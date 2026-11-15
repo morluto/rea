@@ -1,5 +1,5 @@
 import { ellipsisExcerpt } from "../../domain/excerpt.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/index.js";
 import {
   isPointerCheck,
   parseDesktopTask,

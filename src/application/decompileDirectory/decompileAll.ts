@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { PseudocodeAbsence } from "../../domain/native/pseudocodeAbsence.js";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/index.js";
 
 import {
   DECOMPILE_DIRECTORY_INDEX_NAME,
@@ -19,7 +19,7 @@ import { digestSchema } from "../../domain/digests.js";
 import type {
   AnalysisExecution,
   AnalysisOperationPort,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,

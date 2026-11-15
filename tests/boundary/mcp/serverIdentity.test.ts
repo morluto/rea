@@ -33,7 +33,7 @@ import { buildCapabilityInventory } from "../../../src/application/CapabilityInv
 import type {
   AnalysisProvider,
   CapabilityDescriptor,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 
 const availabilityProvider = (
   operations: readonly CapabilityDescriptor["operation"][] = [

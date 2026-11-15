@@ -22,7 +22,7 @@ import {
 import { resolvedAnalysisError } from "../../../../src/domain/analysisErrorBase.js";
 import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
-import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../../src/resources/ArtifactResourceScope.js";
 import {
   withSignatureTarget,
   verifySignatureTarget,

@@ -13,12 +13,10 @@ import { createEvidence } from "../../../src/domain/evidence.js";
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
-import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
-import {
-  analysisCliErrorEnvelopeSchema,
-  analysisErrorProjectionSchema,
-} from "../../../src/contracts/errorSchemas.js";
+import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
+import { analysisCliErrorEnvelopeSchema } from "../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 import { EvidenceFileError } from "../../../src/domain/evidenceErrors.js";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
@@ -791,7 +789,7 @@ it.each(["plan", "invalid"] as const)(
 
 it("retains both prior process and input cleanup authority", async () => {
   const { AnalysisCleanupLease } =
-    await import("../../../src/artifacts/AnalysisCleanupLease.js");
+    await import("../../../src/resources/AnalysisCleanupLease.js");
   const { ProcessCaptureError } =
     await import("../../../src/process/capture/ProcessCaptureError.js");
   const root = await createTestTempDirectory("rea-process-cli-mixed-owners-");
@@ -905,7 +903,7 @@ it("retains prior error and late cancellation with successful cleanup", async ()
 
 it("retains independent process and input owners after mixed cleanup failure", async () => {
   const { AnalysisCleanupLease } =
-    await import("../../../src/artifacts/AnalysisCleanupLease.js");
+    await import("../../../src/resources/AnalysisCleanupLease.js");
   const { ProcessCaptureError } =
     await import("../../../src/process/capture/ProcessCaptureError.js");
   const harness =
@@ -981,7 +979,7 @@ it.each(["completed", "failed"] as const)(
   "retries transient process cleanup after %s capture",
   async (outcome) => {
     const { AnalysisCleanupLease } =
-      await import("../../../src/artifacts/AnalysisCleanupLease.js");
+      await import("../../../src/resources/AnalysisCleanupLease.js");
     const { ProcessCaptureError } =
       await import("../../../src/process/capture/ProcessCaptureError.js");
     const { ok } = await import("../../../src/domain/result.js");
@@ -1030,7 +1028,7 @@ it.each(["completed", "failed"] as const)(
 
 it("closes the actual process owner when capture Evidence assembly throws", async () => {
   const { AnalysisCleanupLease } =
-    await import("../../../src/artifacts/AnalysisCleanupLease.js");
+    await import("../../../src/resources/AnalysisCleanupLease.js");
   const { ok } = await import("../../../src/domain/result.js");
   const harness =
     await import("../../../src/process/capture/ProcessHarness.js");
@@ -1080,7 +1078,7 @@ it("closes the actual process owner when capture Evidence assembly throws", asyn
 
 it("keeps unknown primary cleanup coverage when late cancellation wraps mixed owners", async () => {
   const { AnalysisCleanupLease } =
-    await import("../../../src/artifacts/AnalysisCleanupLease.js");
+    await import("../../../src/resources/AnalysisCleanupLease.js");
   const { ProcessCaptureError } =
     await import("../../../src/process/capture/ProcessCaptureError.js");
   const harness =

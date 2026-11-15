@@ -33,7 +33,9 @@ export class VerifierFixture {
    * Allocate a private root under `parent` (default: the OS temporary
    * directory). `private: false` allocates a plain temporary directory for
    * child scratch space: on Windows a private root keeps a DELETE handle that
-   * blocks children from creating temporary directories beneath it.
+   * blocks children from creating temporary directories beneath it. Its
+   * removal retries Windows sharing violations (`EBUSY`, `EPERM`) while a
+   * child that has exited still holds a handle on a file beneath it.
    */
   static async open({ prefix, parent, private: owned = true } = {}) {
     if (!owned) {
@@ -43,7 +45,13 @@ export class VerifierFixture {
       );
       return new VerifierFixture({
         path,
-        close: () => rm(path, { recursive: true, force: true }),
+        close: () =>
+          rm(path, {
+            recursive: true,
+            force: true,
+            maxRetries: 3,
+            retryDelay: 25,
+          }),
       });
     }
     const { PrivateRuntimeRoot } = await importVerifierSource(

@@ -1,8 +1,5 @@
 import { isAbsolute, posix, win32 } from "node:path";
-import {
-  absoluteCallerPath,
-  appendCallerPath,
-} from "../filesystem/callerPath.js";
+import { absoluteCallerPath, appendCallerPath } from "./callerPath.js";
 
 /** Per-user cache directory that REA owns for Kuna on this host. */
 export const defaultKunaCacheDirectory = (

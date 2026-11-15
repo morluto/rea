@@ -1,6 +1,6 @@
 import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
 import { setImmediate as immediate } from "node:timers/promises";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../../resources/index.js";
 import {
   MachoLoadCommandCursor,
   readMachoLoadCommandTableHeader,

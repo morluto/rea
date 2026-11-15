@@ -8,7 +8,7 @@ import type { AnySchema } from "ajv";
 import type { DeviceManager } from "frida";
 import { afterAll, expect, it, onTestFinished } from "vitest";
 
-import type { FridaInstrumentationPort } from "../../../src/application/frida/FridaInstrumentationPort.js";
+import type { FridaInstrumentationPort } from "../../../src/ports/frida/FridaInstrumentationPort.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { FridaInstrumentationManager } from "../../../src/frida/FridaInstrumentationManager.js";

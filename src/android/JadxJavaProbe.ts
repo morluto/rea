@@ -2,7 +2,7 @@ import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import type { ProcessInspectionFailure } from "../process/ProcessInspectionCleanup.js";
 import { classifyLaunchFailureCode } from "../process/launchFailure.js";
 import { randomUUID } from "node:crypto";
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import {
   AnalysisError,
   type AnalysisCapturedOutput,

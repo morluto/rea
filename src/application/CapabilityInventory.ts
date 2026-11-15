@@ -15,7 +15,7 @@ import { sqliteDatabaseCapability } from "./sqlite/SqliteDatabaseCapability.js";
 import type {
   OptionalProviderLoadFailures,
   OptionalProviderLoadFailure,
-} from "./OptionalObservationProviders.js";
+} from "../ports/OptionalObservationProviders.js";
 import type {
   CommandProviderLaunchFailures,
   ReverseEngineeringOperation,
@@ -48,8 +48,8 @@ import { isMachOFormat } from "../domain/binaryTargetTypes.js";
 import type {
   AnalysisOperation,
   ProviderAvailability,
-} from "./AnalysisProvider.js";
-import type { JebAnalysisAvailability } from "./jeb/JebAnalysisPort.js";
+} from "../ports/AnalysisProvider.js";
+import type { JebAnalysisAvailability } from "../ports/jeb/JebAnalysisPort.js";
 import { FRIDA_TOOL_CONTRACTS } from "../contracts/fridaToolContracts.js";
 import { TOOL_CONTRACTS } from "../contracts/toolContracts.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";

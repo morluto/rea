@@ -13,7 +13,7 @@ import {
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, type Result } from "../domain/result.js";
-import type { AnalysisExecution } from "./AnalysisProvider.js";
+import type { AnalysisExecution } from "../ports/AnalysisProvider.js";
 import type { BinarySession } from "./binary/BinarySession.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import {

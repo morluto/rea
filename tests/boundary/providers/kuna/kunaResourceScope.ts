@@ -1,5 +1,5 @@
 import { createInspectionResources } from "../../../fixtures/inspectionResources.js";
-import type { RetainedResourceScope } from "../../../../src/application/AnalysisProvider.js";
+import type { RetainedResourceScope } from "../../../../src/ports/AnalysisProvider.js";
 import type { KunaInstallationOptions } from "../../../../src/kuna/KunaInstallation.js";
 import { inspectKunaInstallation } from "../../../../src/kuna/KunaInstallation.js";
 import { inspectKunaProvider } from "../../../../src/kuna/KunaDoctor.js";

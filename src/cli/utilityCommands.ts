@@ -5,7 +5,7 @@ import { cliDecimalField } from "./options.js";
 
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { createHistoricalSourceSummary } from "../domain/referenceSourceSummary.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/index.js";
 import { importReferenceSource } from "../application/ReferenceSourceImport.js";
 import {
   referenceSourceImportAnalysisError,

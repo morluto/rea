@@ -2,8 +2,8 @@ import { Cli } from "incur";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it } from "vitest";
 
-import type { JebAnalysisPort } from "../../../src/application/jeb/JebAnalysisPort.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import type { JebAnalysisPort } from "../../../src/ports/jeb/JebAnalysisPort.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { registerJebCommands } from "../../../src/cli/jebCommands.js";
 import { silentLogger } from "../../../src/logger.js";
 import { ok } from "../../../src/domain/result.js";

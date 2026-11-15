@@ -3,13 +3,13 @@ import { expect, it } from "vitest";
 import {
   projectAnalysisError,
   projectAnalysisErrorWithoutCapturedOutput,
-} from "../../domain/analysisErrorProjection.js";
-import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
-import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
-import { err } from "../../domain/result.js";
-import type { AnalysisClient } from "../AnalysisProvider.js";
-import { closeAnalysisClient } from "../AnalysisClientCleanup.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+} from "../domain/analysisErrorProjection.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { err } from "../domain/result.js";
+import type { AnalysisClient } from "../ports/AnalysisProvider.js";
+import { closeAnalysisClient } from "./AnalysisClientCleanup.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 
 const clientClosingWith = (cause: unknown): AnalysisClient => ({
   execute: () => Promise.resolve(err(new ProviderCleanupError("x", [], {}))),

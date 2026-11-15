@@ -3,7 +3,7 @@ import type { BridgeMaxReplyBytes } from "../../../../src/config/bridgeMaxReplyB
 import { GhidraProvider } from "../../../../src/ghidra/GhidraProvider.js";
 import { fixtureDosLoadImage } from "../../../../src/ghidra/GhidraLoadImage.fixture.js";
 import { jsonValueSchema } from "../../../../src/domain/jsonValue.js";
-import { artifactFilePrimaryFacts } from "../../../../src/artifacts/ArtifactFileOperation.js";
+import { artifactFilePrimaryFacts } from "../../../../src/resources/ArtifactFileOperation.js";
 import {
   AnalysisCancelledError,
   OwnerCancellation,
@@ -29,7 +29,7 @@ import { ConfigurationError } from "../../../../src/domain/configurationErrors.j
 import { withVerifierCleanup } from "../../../../scripts/lib/verifier-cleanup.mjs";
 import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
 import type { Logger } from "pino";
-import type { ProgressUpdate } from "../../../../src/application/ProgressReporter.js";
+import type { ProgressUpdate } from "../../../../src/ports/ProgressReporter.js";
 
 import { err, ok } from "../../../../src/domain/result.js";
 import * as GhidraTransport from "../../../../src/ghidra/GhidraTransport.js";

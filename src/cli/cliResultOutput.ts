@@ -4,7 +4,7 @@ import type { Writable } from "node:stream";
 import { Filter } from "incur";
 import { estimateTokenCount } from "tokenx";
 
-import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../domain/analysisErrorProjectionSchema.js";
 import type { ParsedCliOutputArguments } from "../cliOutput.js";
 import {
   normalizeCliArguments,

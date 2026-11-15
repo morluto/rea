@@ -4,7 +4,7 @@ import { buffer } from "node:stream/consumers";
 
 import { describe, expect, it } from "vitest";
 
-import type { ArtifactEntry } from "../../../src/artifacts/ArtifactReader.js";
+import type { ArtifactEntry } from "../../../src/resources/ArtifactReader.js";
 import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 

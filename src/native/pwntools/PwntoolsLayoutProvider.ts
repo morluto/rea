@@ -8,7 +8,7 @@ import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { PwntoolsDecoder, type PwntoolsLauncher } from "./PwntoolsDecoder.js";
 import { PWNTOOLS_PROVIDER_IDENTITY } from "./PwntoolsProviderIdentity.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
-import type { BinaryLayoutPort } from "../../application/binaryDiagnostics/BinaryLayoutPort.js";
+import type { BinaryLayoutPort } from "../../ports/binaryDiagnostics/BinaryLayoutPort.js";
 import type { z } from "zod";
 
 /** ELF-specific projection around the shared owned pwntools decoder boundary. */

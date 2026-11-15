@@ -31,7 +31,7 @@ import { PacketCaptureService } from "../../../src/application/captures/PacketCa
 import { SignalRecordingService } from "../../../src/application/signals/SignalRecordingService.js";
 import { TsharkCaptureProvider } from "../../../src/captures/TsharkCaptureProvider.js";
 import { SigrokRecordingProvider } from "../../../src/signals/SigrokRecordingProvider.js";
-import { readStableArtifact } from "../../../src/artifacts/readStableArtifact.js";
+import { readStableArtifact } from "../../../src/resources/readStableArtifact.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import type { LinuxResourceLimits } from "../../../src/process/LinuxResourceLimits.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";

@@ -5,9 +5,9 @@ import {
 } from "../application/analysisView/AnalysisViewService.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
-import type { OptionalProviderLoadFailure } from "../application/OptionalObservationProviders.js";
+import type { OptionalProviderLoadFailure } from "../ports/OptionalObservationProviders.js";
 
-import type { BrowserObservationPort } from "../application/BrowserObservationPort.js";
+import type { BrowserObservationPort } from "../ports/BrowserObservationPort.js";
 import {
   analyzeWebBundle,
   captureWebScreenshot,

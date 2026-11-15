@@ -1,5 +1,10 @@
 import type { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
-import { failedJavaScriptStaticAnalysis } from "./javascriptStaticAnalysisHelpers.js";
+import {
+  failedJavaScriptStaticAnalysis,
+  detectVendors,
+  registrationKey,
+  stringValue,
+} from "./javascriptStaticAnalysisHelpers.js";
 import type { JavaScriptMemberMutationAllowance } from "./javascriptSemanticWorkAllowance.js";
 import {
   JAVASCRIPT_SEMANTIC_PRECISION_DEFAULTS,
@@ -35,11 +40,6 @@ import { semanticResourceLimitReason } from "./javascriptSemanticResourceLimits.
 import { createStaticPathIntrinsicQuery } from "./javascriptStaticPathIntrinsics.js";
 import { createSemanticExpressionShapeResolver } from "./javascriptSemanticExpressionShapes.js";
 import { finishElectronBrowserWindowsSteps } from "./electronStaticAnalysisBrowser.js";
-import {
-  detectVendors,
-  registrationKey,
-  stringValue,
-} from "./javascriptStaticAnalysisHelpers.js";
 import {
   addReference,
   addEndpoint,

@@ -27,7 +27,7 @@ import {
   type TransportSendOptions,
 } from "@modelcontextprotocol/server";
 
-import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../domain/analysisErrorProjectionSchema.js";
 import { transportClosedByOwner } from "./transportOwnerClose.js";
 import type { CompactInputSchemaPresentation } from "../contracts/compactInputSchema.js";
 import {

@@ -18,7 +18,8 @@ export class VerifierFixture {
   constructor(root: VerifierFixtureRoot);
   /**
    * Allocate a `PrivateRuntimeRoot` under `parent` (default: the OS temporary
-   * directory), or a plain temporary directory with `private: false`.
+   * directory), or a plain temporary directory with `private: false`, whose
+   * removal retries Windows sharing violations.
    */
   static open(options?: {
     readonly prefix?: string;

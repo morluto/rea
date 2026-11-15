@@ -6,7 +6,7 @@ import {
   type ToolCallback,
 } from "@modelcontextprotocol/server";
 
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../contracts/artifactComparisonExample.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import {

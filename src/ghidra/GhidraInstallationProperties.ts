@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import {
   artifactFileCompletion,
   mapArtifactFileFailure,
   ArtifactFileCleanupFailure,
   artifactFilePrimaryFacts,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import {
   RegularFileCapacityError,
