@@ -242,9 +242,11 @@ describe("CDP connection response correlation", () => {
       const event = await eventPromise;
 
       expect(event.wireBytes).toBe(Buffer.byteLength(eventMessage, "utf8"));
-      expect(event.params).toEqual({
-        text: 'escaped quote: " slash: \\ unicode: 雪',
+      expect(event).toMatchObject({
+        sessionId: "session-1",
+        registered: undefined,
       });
+      expect(event).not.toHaveProperty("params");
       expect(deliveredEvents).toBe(1);
 
       const protocolFailure = new Promise((resolve) =>
@@ -296,8 +298,8 @@ describe("CDP connection event admission", () => {
         },
       });
       expect(right.registered).toBe(left.registered);
-      expect(left.params).toEqual(params);
-      expect(right.params).toBe(left.params);
+      expect(left).not.toHaveProperty("params");
+      expect(right).not.toHaveProperty("params");
     } finally {
       await connection.close();
     }
