@@ -315,6 +315,8 @@ export interface ContractDocumentContext<
   readonly operation: string;
   /** The document as decoded, before its caller paths were resolved. */
   readonly spelled: unknown;
+  /** The admitted delivery, for a projection with `evidenceDelivery`. */
+  readonly delivery: CliEvidenceDeliveryChoice | undefined;
   /** The projection's CLI-only options, whose effect the handler owns. */
   readonly cliOptions: CliOptions;
   /**
@@ -336,21 +338,21 @@ export const contractDocumentCommandDescriptions = (
   documentDescriptions.get(cli) ?? [];
 
 /**
- * A document field the projection omits is refused with its reason rather
- * than passed to an owner that would act on it.
+ * A document field the projection omits or takes as an option is refused
+ * with its reason rather than passed to an owner that would act on it.
  */
-const omittedDocumentFieldError = (
+const refusedDocumentFieldError = (
   operation: string,
-  omitted: Readonly<Record<string, string>>,
+  refusals: Readonly<Record<string, string>>,
   document: unknown,
 ): AnalysisError | undefined => {
   if (typeof document !== "object" || document === null) return undefined;
-  const issues = Object.entries(omitted)
+  const issues = Object.entries(refusals)
     .filter(([field]) => Object.hasOwn(document, field))
-    .map(([field, reason]) => ({
+    .map(([field, message]) => ({
       code: "custom" as const,
       path: [field],
-      message: `${field} is not accepted by this command: ${reason}`,
+      message,
       input: (document as Readonly<Record<string, unknown>>)[field],
     }));
   return issues.length === 0
@@ -379,7 +381,9 @@ export const registerContractDocumentCommand = <
 ): void => {
   const description = describeContractDocumentCommand(contract, projection);
   const options = Object.fromEntries(
-    description.cliOnlyOptions.map(({ key, schema }) => [key, schema]),
+    [...description.deliveryOptions, ...description.cliOnlyOptions].map(
+      ({ key, schema }) => [key, schema],
+    ),
   );
   cli.command(description.command, {
     description: description.description,
@@ -406,15 +410,18 @@ export const registerContractDocumentCommand = <
     }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, description.command, async () => {
+          // Delivery options are checked before the document is read.
+          const delivery = description.admitDelivery(values);
+          if (!delivery.ok) return projectAnalysisError(delivery.error);
           const decoded = await parseCliJsonInput(
             args[description.key]!,
             contract.name,
             signal,
           );
           if (!decoded.ok) return decoded.error;
-          const refused = omittedDocumentFieldError(
+          const refused = refusedDocumentFieldError(
             contract.name,
-            description.omitted,
+            description.documentRefusals,
             decoded.value,
           );
           if (refused !== undefined) return projectAnalysisError(refused);
@@ -424,6 +431,7 @@ export const registerContractDocumentCommand = <
               signal,
               operation: contract.name,
               spelled: decoded.value,
+              delivery: delivery.value,
               sessionTarget:
                 description.sessionTarget === undefined
                   ? undefined

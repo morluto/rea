@@ -125,6 +125,66 @@ describe("compiled CLI JSON document omissions", () => {
       });
       expect(result.exitCode).toBe(1);
     });
+
+  // Delivery is chosen by options beside the document; a delivery field in
+  // the document names its option instead of being dropped or misread.
+  for (const [command, operation, field, message] of [
+    [
+      "compare-static-and-observed-endpoints",
+      "compare_static_and_observed_endpoints",
+      "detail",
+      "pass --detail beside it",
+    ],
+    [
+      "compare-static-and-observed-endpoints",
+      "compare_static_and_observed_endpoints",
+      "view",
+      "pass --view beside it",
+    ],
+    [
+      "capture-browser-scenario",
+      "capture_browser_scenario",
+      "detail",
+      "pass --detail beside it",
+    ],
+    [
+      "validate-browser-scenario",
+      "capture_browser_scenario",
+      "detail",
+      "pass --detail to capture-browser-scenario",
+    ],
+  ] as const)
+    cliTest(
+      `${command} refuses ${field} inside the document`,
+      async ({ cli }) => {
+        const root = await createTestTempDirectory("rea-cli-json-flagged-");
+        const result = await cli.run({
+          arguments: [
+            command,
+            JSON.stringify({
+              [field]: field === "view" ? { collection: "matches" } : "summary",
+            }),
+            "--json",
+          ],
+          environment: {
+            HOME: root,
+            XDG_CONFIG_HOME: root,
+            XDG_CACHE_HOME: root,
+          },
+        });
+        expect(result.json).toMatchObject({
+          code: "invalid_request",
+          category: "invalid_input",
+          details: {
+            operation,
+            issues: [
+              { path: [field], message: expect.stringContaining(message) },
+            ],
+          },
+        });
+        expect(result.exitCode).toBe(1);
+      },
+    );
 });
 
 describe("compiled CLI JSON document caller paths", () => {
