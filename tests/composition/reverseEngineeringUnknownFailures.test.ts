@@ -109,7 +109,7 @@ it.each([
               throw cause;
             }
           : stat,
-      run,
+      runOwned: run,
       commands: {
         objdump: () =>
           ok({

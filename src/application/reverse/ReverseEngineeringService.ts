@@ -56,7 +56,6 @@ import type {
   ReverseEngineeringProviderCommand,
 } from "./ReverseEngineeringCommandPort.js";
 import {
-  execFileOutput,
   execFileOutputFailure,
   HOST_SPAWN_CAPACITY_CODES,
 } from "../../process/ExecFileOutput.js";
@@ -121,7 +120,6 @@ const MAX_ACTIVE_CAPTURE_BYTES =
 export interface ReverseEngineeringServiceOptions {
   readonly environment?: Readonly<NodeJS.ProcessEnv>;
   readonly commands: ReverseEngineeringCommandPort;
-  readonly run?: ReverseEngineeringCommandRunner;
   readonly runOwned?: typeof runOwnedCommand;
   readonly digest?: typeof digestFile;
   readonly stat?: (path: string) => Promise<Stats>;
@@ -131,7 +129,12 @@ interface ReverseEngineeringCommandRunner {
   (
     command: string,
     arguments_: readonly string[],
-    options?: Parameters<typeof execFileOutput>[2],
+    options: {
+      readonly env: NodeJS.ProcessEnv;
+      readonly signal: AbortSignal | undefined;
+      readonly timeout: number;
+      readonly maxBuffer: number;
+    },
   ): Promise<{
     readonly stdout: string;
     readonly stderr: string;
@@ -253,16 +256,14 @@ export class ReverseEngineeringService {
   constructor(options: ReverseEngineeringServiceOptions) {
     this.#environment = { ...(options.environment ?? process.env) };
     this.#commands = options.commands;
-    this.#run =
-      options.run ??
-      runOwnedCommandOutput(
-        options.runOwned ?? runOwnedCommand,
-        (owner, cleanup) =>
-          this.#pendingCleanup.set(owner, {
-            observation: cleanup,
-            failures: this.#pendingCleanup.get(owner)?.failures ?? new Set(),
-          }),
-      );
+    this.#run = runOwnedCommandOutput(
+      options.runOwned ?? runOwnedCommand,
+      (owner, cleanup) =>
+        this.#pendingCleanup.set(owner, {
+          observation: cleanup,
+          failures: this.#pendingCleanup.get(owner)?.failures ?? new Set(),
+        }),
+    );
     this.#digest = options.digest ?? digestFile;
     this.#stat = options.stat ?? statPath;
   }
@@ -691,7 +692,6 @@ export class ReverseEngineeringService {
         },
         signal,
         timeout: timeoutMs,
-        stopSignal: "SIGTERM",
         maxBuffer: outputBudgetBytes,
       });
       stdout = output.stdout;
@@ -1361,7 +1361,7 @@ const runOwnedCommandOutput =
       cleanup: AnalysisCleanupObservation,
     ) => void,
   ): ReverseEngineeringCommandRunner =>
-  async (command, args, options = {}) => {
+  async (command, args, options) => {
     const spawnEnv = { ...options.env };
     try {
       const snapshot = await runOwned(
@@ -1375,9 +1375,8 @@ const runOwnedCommandOutput =
           sweepTokenOwnedProcesses: true,
         },
         {
-          timeoutMs: options.timeout ?? DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
-          diagnosticBytes:
-            options.maxBuffer ?? DEFAULT_REVERSE_COMMAND_OUTPUT_BYTES,
+          timeoutMs: options.timeout,
+          diagnosticBytes: options.maxBuffer,
           acceptNonZeroExit: true,
         },
         { signal: options.signal },
