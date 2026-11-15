@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { inflateSync } from "node:zlib";
+import { decodePreviewPng } from "./raw-raster-png-test-helper.mjs";
 import { test } from "node:test";
 import {
   previewRawRasterExperiment,
@@ -23,18 +23,20 @@ const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 test("PNG stores RGBA8 pixels and manifest hashes the full selected range", () => {
   const source = Uint8Array.from([99, 1, 2, 3, 42, 88]);
   const result = previewRawRasterExperiment(source, layout);
-  assert.equal(result.ok, true);
+  if (!result.ok) throw result.error;
   const { png, manifest } = result.value;
-  assert.deepEqual([...png.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
-  assert.equal(png.readUInt32BE(16), 1);
-  assert.equal(png.readUInt32BE(20), 1);
-  assert.equal(png[24], 8);
-  assert.equal(png[25], 6);
-  const idatLength = png.readUInt32BE(33);
-  assert.equal(png.subarray(37, 41).toString(), "IDAT");
-  assert.deepEqual(
-    [...inflateSync(png.subarray(41, 41 + idatLength))],
-    [0, 1, 2, 3, 255],
+  assert.deepEqual(decodePreviewPng(png), {
+    width: 1,
+    height: 1,
+    rgba: [1, 2, 3, 255],
+  });
+  const brokenChecksum = Buffer.from(png);
+  brokenChecksum[29] ^= 1;
+  assert.throws(() => decodePreviewPng(brokenChecksum), /checksum/);
+  assert.throws(() => decodePreviewPng(png.subarray(0, png.length - 12)));
+  assert.throws(
+    () => decodePreviewPng(Buffer.concat([png, Buffer.from([0])])),
+    /truncated PNG chunk/,
   );
   assert.equal(manifest.sourceRange.sha256, sha256(source.subarray(1, 5)));
   assert.equal(manifest.output.sha256, sha256(png));
@@ -51,6 +53,9 @@ test("demo writes synthetic PNG and manifest without clobbering an existing dire
   try {
     await writeSyntheticPreview(out);
     const before = await readFile(join(out, "preview.png"));
+    const decoded = decodePreviewPng(before);
+    assert.equal(decoded.width, 2);
+    assert.equal(decoded.height, 2);
     assert.equal(
       JSON.parse(await readFile(join(out, "manifest.json"), "utf8")).decoding
         .width,

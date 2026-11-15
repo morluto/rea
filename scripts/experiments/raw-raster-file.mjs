@@ -5,6 +5,7 @@ import {
   ArtifactFileSource,
   assertArtifactFileSelectedSource,
 } from "../../src/artifacts/ArtifactFileSource.ts";
+import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.ts";
 import { readArtifactRange } from "../../src/artifacts/ArtifactCarrierRange.ts";
 import { resolveArtifactSourcePath } from "../../src/artifacts/ArtifactSelectedSource.ts";
 import {
@@ -12,6 +13,30 @@ import {
   previewRawRasterExperiment,
   writePreviewResult,
 } from "./raw-raster-preview.mjs";
+
+// Keep both the primary failure and the exact cleanup capability on failure.
+// The existing resource scope owns retry/idempotence; do not invent another
+// descriptor owner or discard a source whose close did not complete.
+async function withFileSource(path, label, operation) {
+  const source = new ArtifactFileSource(path, label);
+  const resources = new ArtifactResourceScope();
+  let outcome = { kind: "completed" };
+  let result;
+  try {
+    result = await operation(source);
+  } catch (cause) {
+    outcome = { kind: "failed", cause };
+  }
+  const cleanup = await resources.release({
+    kind: "lease",
+    resource: label,
+    lease: { release: () => source.close() },
+  });
+  if (cleanup.kind === "failed")
+    throw resources.cleanupFailure(outcome, [cleanup]);
+  if (outcome.kind === "failed") throw outcome.cause;
+  return result;
+}
 
 /** Reads only the admitted selected range. Rejects leaf symlinks and non-files.
  * Metadata stability is observed before/after reading, not an immutable snapshot
@@ -30,8 +55,7 @@ export async function previewRawRasterFile(
       "includeSourcePaths must be a boolean; only true opts in to exporting personal source paths.",
     );
   // Let native lookup interpret the caller's spelling; do not normalize file/.. .
-  const source = new ArtifactFileSource(inputPath, "Experimental raster");
-  try {
+  return withFileSource(inputPath, "Experimental raster", async (source) => {
     const descriptor = await source.readSelectedPath();
     const sourceResolvedPath = await resolveArtifactSourcePath(inputPath);
     await assertArtifactFileSelectedSource(
@@ -95,9 +119,7 @@ export async function previewRawRasterFile(
         },
       },
     };
-  } finally {
-    await source.close();
-  }
+  });
 }
 
 export async function writeFilePreview(
@@ -111,8 +133,7 @@ export async function writeFilePreview(
 }
 
 async function readLayout(path) {
-  const source = new ArtifactFileSource(path, "Experimental raster layout");
-  try {
+  return withFileSource(path, "Experimental raster layout", async (source) => {
     const descriptor = await source.readSelectedPath();
     if (descriptor.initial.size > 64 * 1024)
       throw new Error("Layout JSON exceeds the experimental 64 KiB allowance.");
@@ -129,9 +150,7 @@ async function readLayout(path) {
       throw new Error("Layout JSON was truncated during reading.");
     await source.readSelectedPath();
     return JSON.parse(bytes.toString("utf8"));
-  } finally {
-    await source.close();
-  }
+  });
 }
 
 const USAGE = `Usage: node --import tsx scripts/experiments/raw-raster-file.mjs [--max-memory-mib N] [--include-source-paths] INPUT_FILE LAYOUT_JSON NEW_OUTPUT_DIRECTORY

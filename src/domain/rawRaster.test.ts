@@ -24,8 +24,8 @@ it.each([
     { ...layout, format, length: input.length, stride: input.length },
     budget,
   );
-  expect(result.ok).toBe(true);
-  if (result.ok) expect([...result.value.rgba]).toEqual(output);
+  if (!result.ok) throw result.error;
+  expect([...result.value.rgba]).toEqual(output);
   expect([...bytes]).toEqual(input);
 });
 it("honors byte subviews, explicit range, padding, bottom-up rows and optional last padding", () => {
@@ -44,11 +44,9 @@ it("honors byte subviews, explicit range, padding, bottom-up rows and optional l
     },
     budget,
   );
-  expect(result.ok).toBe(true);
-  if (result.ok) {
-    expect([...result.value.rgba]).toEqual([4, 5, 6, 255, 1, 2, 3, 255]);
-    expect(result.value.consumedSpan).toBe(7);
-  }
+  if (!result.ok) throw result.error;
+  expect([...result.value.rgba]).toEqual([4, 5, 6, 255, 1, 2, 3, 255]);
+  expect(result.value.consumedSpan).toBe(7);
 });
 it.each([
   { offset: -1 },
@@ -77,9 +75,12 @@ it("checks both source and RGBA expansion allowances", () => {
   expect(
     decodeRawRaster(bytes, layout, { maxSourceBytes: 3, maxOutputBytes: 3 }).ok,
   ).toBe(false);
-  expect(
-    decodeRawRaster(bytes, layout, { maxSourceBytes: 3, maxOutputBytes: 4 }).ok,
-  ).toBe(true);
+  const admitted = decodeRawRaster(bytes, layout, {
+    maxSourceBytes: 3,
+    maxOutputBytes: 4,
+  });
+  if (!admitted.ok) throw admitted.error;
+  expect([...admitted.value.rgba]).toEqual([1, 2, 3, 255]);
 });
 it("rejects absent layout and invalid caller allowances", () => {
   expect(decodeRawRaster(new Uint8Array(3), null, budget).ok).toBe(false);
@@ -96,8 +97,8 @@ it("includes selected trailing bytes in admission, not pixel output", () => {
     { ...layout, length: 4 },
     budget,
   );
-  expect(result.ok).toBe(true);
-  if (result.ok) expect(result.value.consumedSpan).toBe(3);
+  if (!result.ok) throw result.error;
+  expect(result.value.consumedSpan).toBe(3);
 });
 it("steps multiple columns and top-down rows independently", () => {
   const result = decodeRawRaster(
@@ -105,11 +106,10 @@ it("steps multiple columns and top-down rows independently", () => {
     { ...layout, length: 9, width: 2, height: 2, stride: 5, format: "gray8" },
     budget,
   );
-  expect(result.ok).toBe(true);
-  if (result.ok)
-    expect([...result.value.rgba]).toEqual([
-      1, 1, 1, 255, 2, 2, 2, 255, 5, 5, 5, 255, 6, 6, 6, 255,
-    ]);
+  if (!result.ok) throw result.error;
+  expect([...result.value.rgba]).toEqual([
+    1, 1, 1, 255, 2, 2, 2, 255, 5, 5, 5, 255, 6, 6, 6, 255,
+  ]);
 });
 it("distinguishes malformed layout from capacity exhaustion", () => {
   const malformed = decodeRawRaster(
@@ -131,13 +131,12 @@ it("admits a bounded selection in a large file without allocating file or pixels
     { ...layout, offset: 2 ** 39 },
     budget,
   );
-  expect(result.ok).toBe(true);
-  if (result.ok)
-    expect(result.value).toEqual({
-      layout: { ...layout, offset: 2 ** 39 },
-      channelCount: 3,
-      consumedSpan: 3,
-    });
+  if (!result.ok) throw result.error;
+  expect(result.value).toEqual({
+    layout: { ...layout, offset: 2 ** 39 },
+    channelCount: 3,
+    consumedSpan: 3,
+  });
   expect(admitRawRaster(NaN, layout, budget).ok).toBe(false);
   expect(admitRawRaster(-1, layout, budget).ok).toBe(false);
 });
@@ -166,16 +165,12 @@ it.each(["msb-first", "lsb-first"])(
       0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
     ]);
     const result = decodeRawRaster(bytes, { ...indexed, bitOrder }, budget);
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      const indices = Array.from({ length: 16 }, (_, i) =>
-        bitOrder === "msb-first" ? i : i ^ 1,
-      );
-      expect([...result.value.rgba]).toEqual(
-        indices.flatMap((i) => palette[i]!),
-      );
-      expect(result.value.layout).toEqual({ ...indexed, bitOrder });
-    }
+    if (!result.ok) throw result.error;
+    const indices = Array.from({ length: 16 }, (_, i) =>
+      bitOrder === "msb-first" ? i : i ^ 1,
+    );
+    expect([...result.value.rgba]).toEqual(indices.flatMap((i) => palette[i]!));
+    expect(result.value.layout).toEqual({ ...indexed, bitOrder });
   },
 );
 it("indexed4 ignores odd-width unused nibble, honors subview, stride and bottom-up", () => {
@@ -195,13 +190,11 @@ it("indexed4 ignores odd-width unused nibble, honors subview, stride and bottom-
     },
     budget,
   );
-  expect(result.ok).toBe(true);
-  if (result.ok) {
-    expect([...result.value.rgba]).toEqual(
-      [4, 5, 6, 1, 2, 3].flatMap((i) => palette[i]!),
-    );
-    expect(result.value.consumedSpan).toBe(5);
-  }
+  if (!result.ok) throw result.error;
+  expect([...result.value.rgba]).toEqual(
+    [4, 5, 6, 1, 2, 3].flatMap((i) => palette[i]!),
+  );
+  expect(result.value.consumedSpan).toBe(5);
 });
 it.each([
   { palette: undefined },
@@ -228,10 +221,12 @@ it("indexed palette is copied and indexed-only options are refused on direct for
     { ...indexed, palette: mutable },
     budget,
   );
-  expect(result.ok).toBe(true);
+  if (!result.ok) throw result.error;
   mutable[0]![0] = 255;
-  if (result.ok && result.value.layout.format === "indexed4")
-    expect(result.value.layout.palette[0]).toEqual(palette[0]);
+  expect(result.value.layout.format).toBe("indexed4");
+  if (result.value.layout.format !== "indexed4")
+    throw new Error("Expected indexed4 layout");
+  expect(result.value.layout.palette[0]).toEqual(palette[0]);
   expect(
     decodeRawRaster(new Uint8Array(3), { ...layout, palette }, budget).ok,
   ).toBe(false);

@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { test } from "node:test";
 import { previewRawRasterFile, writeFilePreview } from "./raw-raster-file.mjs";
+import { decodePreviewPng } from "./raw-raster-png-test-helper.mjs";
 const layout = {
   offset: 1,
   length: 4,
@@ -109,30 +110,60 @@ test(
     }),
 );
 
-test("rejects source changes and truncation during reading before output", async () =>
-  withSource(async ({ root, path, bytes }) => {
+test("rejects source changes after reading before output", async () =>
+  withSource(async ({ root, path }) => {
     const { ArtifactFileSource } =
       await import("../../src/artifacts/ArtifactFileSource.ts");
     const original = ArtifactFileSource.prototype.readSelectedPath;
-    for (const mutation of ["truncate", "change"]) {
-      await writeFile(path, bytes);
-      let reads = 0;
-      ArtifactFileSource.prototype.readSelectedPath = async function (...args) {
-        reads++;
-        if (mutation === "change" && reads === 2)
-          await writeFile(path, Buffer.from([99, 9, 8, 7, 42, 88]));
-        const admitted = await original.apply(this, args);
-        if (mutation === "truncate" && reads === 1)
-          await writeFile(path, Buffer.from([99]));
-        return admitted;
+    let rangeRead = false;
+    ArtifactFileSource.prototype.readSelectedPath = async function (...args) {
+      const admitted = await original.apply(this, args);
+      const read = admitted.handle.read.bind(admitted.handle);
+      admitted.handle.read = async (...readArgs) => {
+        const result = await read(...readArgs);
+        rangeRead = true;
+        await writeFile(path, Buffer.from([99, 9, 8, 7, 42, 88]));
+        return result;
       };
-      try {
-        const output = join(root, mutation);
-        await assert.rejects(writeFilePreview(path, layout, output));
-        await assert.rejects(stat(output), { code: "ENOENT" });
-      } finally {
-        ArtifactFileSource.prototype.readSelectedPath = original;
-      }
+      return admitted;
+    };
+    try {
+      const output = join(root, "changed");
+      await assert.rejects(writeFilePreview(path, layout, output));
+      assert.equal(rangeRead, true);
+      await assert.rejects(stat(output), { code: "ENOENT" });
+    } finally {
+      ArtifactFileSource.prototype.readSelectedPath = original;
+    }
+  }));
+
+test("rejects physical EOF at the selected-range read before output", async () =>
+  withSource(async ({ root, path }) => {
+    const { ArtifactFileSource } =
+      await import("../../src/artifacts/ArtifactFileSource.ts");
+    const original = ArtifactFileSource.prototype.readSelectedPath;
+    let rangeRead = false;
+    ArtifactFileSource.prototype.readSelectedPath = async function (...args) {
+      const admitted = await original.apply(this, args);
+      const read = admitted.handle.read.bind(admitted.handle);
+      admitted.handle.read = async (...readArgs) => {
+        rangeRead = true;
+        assert.equal(readArgs[3], layout.offset);
+        await writeFile(path, Buffer.from([99]));
+        return read(...readArgs);
+      };
+      return admitted;
+    };
+    try {
+      const output = join(root, "truncated");
+      await assert.rejects(
+        writeFilePreview(path, layout, output),
+        /Selected raster range was truncated during reading/,
+      );
+      assert.equal(rangeRead, true);
+      await assert.rejects(stat(output), { code: "ENOENT" });
+    } finally {
+      ArtifactFileSource.prototype.readSelectedPath = original;
     }
   }));
 
@@ -157,8 +188,8 @@ test("real-file command accepts explicit layout JSON and exports PNG", async () 
       1,
     );
     assert.deepEqual(
-      [...(await readFile(join(output, "preview.png"))).subarray(0, 8)],
-      [137, 80, 78, 71, 13, 10, 26, 10],
+      decodePreviewPng(await readFile(join(output, "preview.png"))),
+      { width: 1, height: 1, rgba: [1, 2, 3, 255] },
     );
   }));
 
@@ -276,7 +307,6 @@ test("indexed4 file CLI preserves explicit palette, nibble order, alpha and rang
   withSource(async ({ root, path }) => {
     const { execFile } = await import("node:child_process");
     const { promisify } = await import("node:util");
-    const { inflateSync } = await import("node:zlib");
     const palette = Array.from({ length: 16 }, (_, i) => [
       i,
       255 - i,
@@ -318,16 +348,11 @@ test("indexed4 file CLI preserves explicit palette, nibble order, alpha and rang
       createHash("sha256").update(source.subarray(1)).digest("hex"),
     );
     const png = await readFile(join(output, "preview.png"));
-    const rows = inflateSync(png.subarray(41, 41 + png.readUInt32BE(33)));
-    assert.deepEqual(
-      [...rows],
-      [
-        0,
-        ...[4, 5, 6].flatMap((i) => palette[i]),
-        0,
-        ...[1, 2, 3].flatMap((i) => palette[i]),
-      ],
-    );
+    assert.deepEqual(decodePreviewPng(png), {
+      width: 3,
+      height: 2,
+      rgba: [4, 5, 6, 1, 2, 3].flatMap((i) => palette[i]),
+    });
     assert.deepEqual(await readFile(path), source);
   }));
 
