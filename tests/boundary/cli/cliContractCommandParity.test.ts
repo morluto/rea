@@ -82,9 +82,13 @@ const probes = (field: z.ZodType): readonly unknown[] => {
   return values;
 };
 
+/** The field admits a number, possibly alongside null. */
 const isNumeric = (field: z.ZodType): boolean => {
   const json = inputJsonSchema(field);
-  return json.type === "integer" || json.type === "number";
+  const branches = Array.isArray(json.anyOf)
+    ? (json.anyOf as Record<string, unknown>[])
+    : [json];
+  return branches.some(({ type }) => type === "integer" || type === "number");
 };
 
 /** Argv omission is an absent key, never an explicit undefined. */
@@ -111,6 +115,9 @@ const expectedAdmission = (
     }
     return admits(contractField, decoded) && decoded !== undefined;
   }
+  if (parameter.nullFlag !== undefined && value === null)
+    // Null is spelled by the bare flag, never by the limit option.
+    return false;
   if (parameter.callerPath) {
     // A caller path is validated as typed: an empty value never becomes the
     // working directory. A nonempty value is resolved, then the contract rules.
@@ -136,8 +143,8 @@ const registeredField = (
 const contractShape = (description: ContractCliDescription) =>
   description.fields;
 
-/** A caller-relative target, or the first probe the positional admits. */
-const positionalValue = (
+/** A caller-relative target, or the first probe the argument admits. */
+const requiredValue = (
   description: ContractCliDescription,
   parameter: ContractCliParameter,
 ): unknown =>
@@ -149,23 +156,38 @@ const positionalValue = (
           admits(registeredField(description, parameter), value),
       );
 
-/** Parsed option values plus admitted positionals. */
+/** Parsed option values plus admitted positionals and required options. */
 const argvValues = (
   description: ContractCliDescription,
   options: Readonly<Record<string, unknown>>,
-): Record<string, unknown> => ({
-  ...(registered.get(description.command)!.options as z.ZodObject).parse(
-    options,
-  ),
-  ...Object.fromEntries(
-    description.parameters
-      .filter(({ positional }) => positional)
-      .map((parameter) => [
-        parameter.key,
-        positionalValue(description, parameter),
-      ]),
-  ),
-});
+): Record<string, unknown> => {
+  const required = description.parameters.filter(
+    (parameter) =>
+      !admits(registeredField(description, parameter), undefined) &&
+      (parameter.positional || !Object.hasOwn(options, parameter.key)),
+  );
+  const filled = Object.fromEntries(
+    required.map((parameter) => [
+      parameter.key,
+      requiredValue(description, parameter),
+    ]),
+  );
+  return {
+    ...(registered.get(description.command)!.options as z.ZodObject).parse({
+      ...options,
+      ...Object.fromEntries(
+        required
+          .filter(({ positional }) => !positional)
+          .map(({ key }) => [key, filled[key]]),
+      ),
+    }),
+    ...Object.fromEntries(
+      required
+        .filter(({ positional }) => positional)
+        .map(({ key }) => [key, filled[key]]),
+    ),
+  };
+};
 
 const each = descriptions.map(
   (description) => [description.command, description] as const,
@@ -188,6 +210,13 @@ describe("CLI commands projected from tool contracts", () => {
         "inspect-apk-signature",
         "inspect-desktop-application",
         "inspect-evm-interface",
+        "audit-release-exposure",
+        "inspect-il2cpp-metadata",
+        "inspect-gpu-code-objects",
+        "inspect-signal-decoders",
+        "decode-signal-recording",
+        "inspect-packet-fields",
+        "inspect-packet-capture",
       ]),
     );
   });
@@ -240,8 +269,8 @@ describe("CLI commands projected from tool contracts", () => {
           expect(admits(contractField, "rel/x"), parameter.field).toBe(false);
           expect(admits(contractField, absoluteCallerPath("rel/x"))).toBe(true);
         }
-        if (parameter.viewSelection) {
-          // The view is JSON text decoded when the command runs; see below.
+        if (parameter.runtimeJson !== undefined) {
+          // JSON text decoded when the command runs; see below.
           for (const value of [undefined, "", "{", "{}"])
             expect(admits(cliField, value), parameter.key).toBe(true);
           continue;
@@ -324,15 +353,174 @@ describe("CLI commands projected from tool contracts", () => {
   });
 });
 
+describe("CLI-only options of contract commands", () => {
+  it.each(each)(
+    "%s keeps its CLI-only options out of the contract input",
+    (_command, description) => {
+      const cliKeys = description.cliOnlyOptions.map(({ key }) => key);
+      const values = Object.fromEntries(cliKeys.map((key) => [key, "set"]));
+      const input = description.toContractInput(values);
+      for (const key of cliKeys) {
+        expect(Object.values(input), key).not.toContain("set");
+        expect(Object.keys(description.fields), key).not.toContain(key);
+      }
+    },
+  );
+
+  it("refuses CLI-only options that collide with or depend on unknown keys", () => {
+    const contract = {
+      name: "probe",
+      inputSchema: z.object({ value: z.string().optional() }),
+    };
+    expect(() =>
+      describeContractCommand(contract, {
+        command: "probe",
+        description: "Probe",
+        cliOptions: { value: z.string().optional() },
+      }),
+    ).toThrow("probe projects two fields to one CLI key");
+    expect(() =>
+      describeContractCommand(contract, {
+        command: "probe",
+        description: "Probe",
+        cliOptions: { extra: z.string().optional() },
+        cliOptionDependencies: { extra: ["missing"] },
+      }),
+    ).toThrow("probe has no CLI option missing");
+    const described = describeContractCommand(contract, {
+      command: "probe",
+      description: "Probe",
+      cliOptions: { extra: z.string().optional() },
+      cliOptionDependencies: { extra: ["value"] },
+    });
+    expect(described.optionConstraints).toEqual({
+      dependentRequired: { extra: ["value"] },
+    });
+    expect(described.cliOptionValues({ value: "a", extra: "b" })).toEqual({
+      extra: "b",
+    });
+    expect(described.toContractInput({ value: "a", extra: "b" })).toEqual({
+      value: "a",
+    });
+  });
+});
+
+const decodingAtRunTime = each.filter(([, description]) =>
+  description.parameters.some(({ runtimeJson }) => runtimeJson !== undefined),
+);
+
+describe("JSON decoded when contract commands run", () => {
+  it.each(decodingAtRunTime)(
+    "%s refuses text that is not JSON before analysis",
+    (_command, description) => {
+      for (const parameter of description.parameters) {
+        if (parameter.runtimeJson === undefined) continue;
+        const malformed = description.admit(
+          argvValues(description, {
+            detail: "summary",
+            evidence_output: "out.json",
+            [parameter.key]: "{",
+          }),
+        );
+        expect(malformed.ok, parameter.key).toBe(false);
+        if (!malformed.ok)
+          expect(malformed.error.issues).toEqual([
+            expect.objectContaining({
+              path: [parameter.key],
+              reason: "invalid_format",
+              message: parameter.runtimeJson,
+            }),
+          ]);
+      }
+    },
+  );
+
+  it.each(decodingAtRunTime)(
+    "%s admits what its contract admits once decoded",
+    (_command, description) => {
+      const mismatches: string[] = [];
+      const details = description.evidenceDelivery
+        ? (["complete", "summary"] as const)
+        : [undefined];
+      for (const parameter of description.parameters) {
+        if (parameter.runtimeJson === undefined) continue;
+        for (const detail of details)
+          for (const text of ["{}", "[]", "null", '{"unknown":1}', '["x"]']) {
+            const values = argvValues(description, {
+              ...(detail === undefined
+                ? {}
+                : { detail, evidence_output: "out.json" }),
+              [parameter.key]: text,
+            });
+            const expected = description.contract.inputSchema.safeParse({
+              ...description.toContractInput({
+                ...values,
+                [parameter.key]: undefined,
+              }),
+              ...(detail === undefined ? {} : { detail }),
+              [parameter.field]: JSON.parse(text) as unknown,
+            }).success;
+            if (description.admit(values).ok !== expected)
+              mismatches.push(
+                `${parameter.key} ${String(detail)} ${text} expected ${String(expected)}`,
+              );
+          }
+      }
+      expect(mismatches).toEqual([]);
+    },
+  );
+});
+
+const nullFlagged = each.filter(([, description]) =>
+  description.parameters.some(({ nullFlag }) => nullFlag !== undefined),
+);
+
+describe("Null-limit flags of contract commands", () => {
+  it.each(nullFlagged)(
+    "%s spells null with its flag and refuses the flag with a limit",
+    (_command, description) => {
+      const parameter = description.parameters.find(
+        ({ nullFlag }) => nullFlag !== undefined,
+      )!;
+      const flag = parameter.nullFlag!;
+      expect(description.cliOnlyOptions.map(({ key }) => key)).toContain(flag);
+      expect(admits(contractShape(description)[parameter.field]!, null)).toBe(
+        true,
+      );
+      const all = argvValues(description, { [flag]: true });
+      expect(description.toContractInput(all)[parameter.field]).toBeNull();
+      expect(
+        description.contract.inputSchema.safeParse(
+          description.toContractInput(all),
+        ).error,
+      ).toBe(undefined);
+      expect(description.checkOptions?.(all)).toEqual([]);
+      const both = { ...all, [parameter.key]: 1 };
+      expect(description.checkOptions?.(both)).toEqual([
+        expect.objectContaining({
+          path: [flag],
+          message: `${flag} and ${parameter.key} are mutually exclusive`,
+        }),
+      ]);
+      expect(description.optionConstraints?.not).toEqual({
+        required: [flag, parameter.key],
+        properties: { [flag]: { const: true } },
+      });
+      const bounded = argvValues(description, { [parameter.key]: 1 });
+      expect(description.toContractInput(bounded)[parameter.field]).toBe(1);
+    },
+  );
+});
+
 const delivering = each.filter(
-  ([, description]) => description.delivery !== undefined,
+  ([, description]) => description.evidenceDelivery,
 );
 
 describe("Evidence delivery of contract commands", () => {
   it.each(delivering)(
     "%s refuses summary delivery without --evidence_output before analysis",
     (_command, description) => {
-      const refused = description.delivery!(
+      const refused = description.admit(
         argvValues(description, { detail: "summary" }),
       );
       expect(refused.ok).toBe(false);
@@ -341,55 +529,13 @@ describe("Evidence delivery of contract commands", () => {
           ["evidence_output"],
         ]);
       expect(
-        description.delivery!(
+        description.admit(
           argvValues(description, {
             detail: "summary",
             evidence_output: "out.json",
           }),
         ).ok,
       ).toBe(true);
-    },
-  );
-
-  it.each(
-    delivering.filter(([, description]) =>
-      description.parameters.some(({ viewSelection }) => viewSelection),
-    ),
-  )(
-    "%s decodes --view when it runs and admits what its contract admits",
-    (_command, description) => {
-      const view = description.parameters.find(
-        ({ viewSelection }) => viewSelection,
-      )!;
-      const malformed = description.delivery!(
-        argvValues(description, {
-          detail: "summary",
-          evidence_output: "out.json",
-          [view.key]: "{",
-        }),
-      );
-      expect(malformed.ok).toBe(false);
-      if (!malformed.ok)
-        expect(malformed.error.issues).toEqual([
-          expect.objectContaining({ path: ["view"], reason: "invalid_format" }),
-        ]);
-      const mismatches: string[] = [];
-      for (const detail of ["complete", "summary"] as const)
-        for (const text of ["{}", "[]", "null", '{"unknown":1}']) {
-          const values = argvValues(description, {
-            detail,
-            evidence_output: "out.json",
-            [view.key]: text,
-          });
-          const expected = description.contract.inputSchema.safeParse({
-            ...description.toContractInput(values),
-            detail,
-            view: JSON.parse(text) as unknown,
-          }).success;
-          if (description.delivery!(values).ok !== expected)
-            mismatches.push(`${detail} ${text} expected ${String(expected)}`);
-        }
-      expect(mismatches).toEqual([]);
     },
   );
 
