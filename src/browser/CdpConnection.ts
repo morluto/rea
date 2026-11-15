@@ -77,6 +77,8 @@ class CdpTransportCore {
   #closed = false;
   #closePromise: Promise<void> | undefined;
   #protocolFailed = false;
+  /** What a subscriber threw while handling an event; the protocol failure's cause. */
+  #listenerFailure: unknown;
   #transportFailure: "disconnected" | "payload_limit" = "disconnected";
   root!: CdpConnection;
 
@@ -157,7 +159,7 @@ class CdpTransportCore {
   ): Promise<unknown> {
     const { operation } = context;
     if (this.#protocolFailed)
-      throw new BrowserObservationError(operation, "protocol_error");
+      throw this.transportError("protocol_error", operation);
     if (this.#closed || this.socket.readyState !== WebSocket.OPEN)
       throw this.transportError(this.#transportFailure, operation);
     if (signal?.aborted === true)
@@ -367,7 +369,18 @@ class CdpTransportCore {
       }),
       wireBytes: bytes.byteLength,
     };
-    for (const listener of this.#listeners) listener(event);
+    for (const listener of this.#listeners) {
+      try {
+        listener(event);
+      } catch (cause: unknown) {
+        // A subscriber that cannot consume an event leaves its session's view
+        // of the target incomplete. Fail the connection closed with that cause
+        // instead of letting it escape the socket callback.
+        this.#listenerFailure = cause;
+        this.#failPending("protocol_error");
+        return;
+      }
+    }
   }
 
   #receiveResponse(message: Record<string, unknown>, id: number): void {
@@ -458,16 +471,18 @@ class CdpTransportCore {
     reason: "disconnected" | "protocol_error" | "payload_limit",
     operation: BrowserObservationOperation,
   ): BrowserObservationError {
+    if (reason === "payload_limit")
+      return new BrowserObservationError(operation, reason, {
+        detail: noRuntimeOverrideSentence(
+          `CDP message exceeded the ${String(this.maxPayloadBytes)} byte protocol budget.`,
+          cdpCommandTimeoutUnrelatedControl(operation),
+        ),
+      });
     return new BrowserObservationError(
       operation,
       reason,
-      reason === "payload_limit"
-        ? {
-            detail: noRuntimeOverrideSentence(
-              `CDP message exceeded the ${String(this.maxPayloadBytes)} byte protocol budget.`,
-              cdpCommandTimeoutUnrelatedControl(operation),
-            ),
-          }
+      reason === "protocol_error" && this.#listenerFailure !== undefined
+        ? { cause: this.#listenerFailure }
         : undefined,
     );
   }
