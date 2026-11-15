@@ -14,10 +14,7 @@ import {
   allowedSanitizedUrl,
   delayWithCancellation,
   isHttpUrl,
-  numberValue,
-  recordValue,
   cdpStringValue,
-  type UnknownRecord,
 } from "./CdpCaptureValues.js";
 import { classifyCdpFrameUrl } from "./CdpCaptureDocuments.js";
 import { selectCdpFrameIdentity } from "./CdpFrameIdentity.js";
@@ -50,7 +47,6 @@ type TimelineEvent = WebObservationSession["timeline"][number];
 
 interface TimelineEntryOptions {
   readonly type: TimelineEvent["type"];
-  readonly params: UnknownRecord;
   readonly timestamp?: number | null;
   readonly frameId?: string | null;
   readonly loaderId?: string | null;
@@ -228,26 +224,16 @@ class TimelineCapture {
 
   #ingestArmed(event: CdpTransportEvent, bufferedBeforeArm = false): void {
     if (this.stopped) return;
-    const params = recordValue(event.params);
-    if (params === undefined) {
-      if (
-        event.method === "Page.frameRequestedNavigation" ||
-        event.method === "Page.frameNavigated" ||
-        event.method === "Page.navigatedWithinDocument"
-      )
-        this.completeness.exclude("timeline", "invalid_protocol_value");
-      return;
-    }
     const contextOnly =
       bufferedBeforeArm && hasNoComparableProducerTimestamp(event.method);
     if (contextOnly) this.#hasUnknownEventTime = true;
     const frame = cdpFrameEvent(event);
     if (frame?.facts.kind === "requested")
-      return this.#navigationRequested(frame, params, contextOnly);
+      return this.#navigationRequested(frame, contextOnly);
     if (frame?.facts.kind === "navigated")
-      return this.#navigationCommitted(frame, params, contextOnly);
+      return this.#navigationCommitted(frame, contextOnly);
     if (frame?.facts.kind === "within_document")
-      return this.#sameDocument(frame, params, contextOnly);
+      return this.#sameDocument(frame, contextOnly);
     const registered = event.registered;
     switch (registered?.method) {
       case "Network.requestWillBeSent": {
@@ -262,18 +248,14 @@ class TimelineCapture {
       case "Network.loadingFinished":
         this.#forgetRequest(registered.payload.requestId);
         return;
-    }
-    switch (event.method) {
       case "Page.lifecycleEvent":
-        this.#lifecycle(params);
-        break;
-      case "Inspector.targetCrashed":
-        this.targetTerminated(params);
-        break;
+        this.#lifecycle(registered.payload);
+        return;
       case "Target.detachedFromTarget":
-        this.sessionDetached(params);
-        break;
+        this.sessionDetached();
+        return;
     }
+    if (event.method === "Inspector.targetCrashed") this.targetTerminated();
   }
 
   arm(timestamp: number): void {
@@ -332,11 +314,10 @@ class TimelineCapture {
     this.#listeners.clear();
   }
 
-  targetTerminated(params: UnknownRecord = {}): void {
+  targetTerminated(): void {
     if (this.#endReason !== undefined) return;
     this.#add({
       type: "target_terminated",
-      params,
       timestamp: null,
       rawUrl: null,
       requestId: null,
@@ -345,11 +326,10 @@ class TimelineCapture {
     this.end("target_terminated");
   }
 
-  sessionDetached(params: UnknownRecord = {}): void {
+  sessionDetached(): void {
     if (this.#endReason !== undefined) return;
     this.#add({
       type: "session_detached",
-      params,
       timestamp: null,
       rawUrl: null,
       requestId: null,
@@ -362,7 +342,6 @@ class TimelineCapture {
     if (this.#endReason !== undefined) return;
     this.#add({
       type: "transport_disconnected",
-      params: {},
       timestamp: null,
       rawUrl: null,
       requestId: null,
@@ -394,23 +373,19 @@ class TimelineCapture {
     this.completeness.exclude("timeline", reason);
   }
 
-  #navigationRequested(
-    frame: CdpFrameEvent,
-    params: UnknownRecord,
-    contextOnly: boolean,
-  ): void {
+  #navigationRequested(frame: CdpFrameEvent, contextOnly: boolean): void {
     const identity = selectCdpFrameIdentity(frame.facts, this.mainFrameId);
     if (identity.identityIssue !== null || identity.parentIssue !== null)
       this.completeness.exclude("timeline", "invalid_protocol_value");
     if (identity.selection !== "main") return;
-    const reason = safeDetail(params.reason);
+    const reason = safeDetail(frame.reason);
     const rawUrl = reportedFrameUrl(frame.url);
     const destination =
       rawUrl === undefined ? undefined : scopedUrl(rawUrl, this.allowedOrigins);
     if (!contextOnly) this.#pendingReload = reason === "reload";
     this.#add({
       type: "navigation_requested",
-      params,
+      frameId: identity.frameId,
       timestamp: null,
       rawUrl: rawUrl ?? null,
       requestId: null,
@@ -420,12 +395,9 @@ class TimelineCapture {
   }
 
   #navigationCommitted(
-    { facts, url: observation }: CdpFrameEvent,
-    params: UnknownRecord,
+    { facts, url: observation, transitionType }: CdpFrameEvent,
     contextOnly: boolean,
   ): void {
-    // The raw record is retained as timeline evidence only.
-    const frame = recordValue(params.frame);
     const identity = selectCdpFrameIdentity(facts, this.mainFrameId);
     if (identity.identityIssue !== null || identity.parentIssue !== null)
       this.completeness.exclude("timeline", "invalid_protocol_value");
@@ -447,13 +419,14 @@ class TimelineCapture {
         !identity.isRootReplacement && !contextOnly && this.#pendingReload
           ? "same_origin_reload"
           : "navigation_committed",
-      params: { ...params, frameId: frame?.id, loaderId: frame?.loaderId },
+      frameId: facts.frameId,
+      loaderId: facts.loaderId ?? null,
       timestamp: null,
       rawUrl: rawUrl ?? null,
       destinationScope:
         destination.scope === "unknown" ? null : destination.scope,
       requestId: null,
-      detail: safeDetail(frame?.transitionType),
+      detail: safeDetail(transitionType),
     });
     if (observation.kind !== "observed") this.invalidateFinalUrl();
     if (this.#stopIfOutOfScope(destination)) return;
@@ -462,11 +435,7 @@ class TimelineCapture {
     this.finalUrl = destination.url ?? null;
   }
 
-  #sameDocument(
-    frame: CdpFrameEvent,
-    params: UnknownRecord,
-    contextOnly: boolean,
-  ): void {
+  #sameDocument(frame: CdpFrameEvent, contextOnly: boolean): void {
     const identity = selectCdpFrameIdentity(frame.facts, this.mainFrameId);
     if (identity.identityIssue !== null || identity.parentIssue !== null)
       this.completeness.exclude("timeline", "invalid_protocol_value");
@@ -475,7 +444,7 @@ class TimelineCapture {
     const destination = scopedUrl(rawUrl, this.allowedOrigins);
     this.#add({
       type: "same_document_navigation",
-      params,
+      frameId: identity.frameId,
       timestamp: null,
       rawUrl: rawUrl ?? null,
       requestId: null,
@@ -513,7 +482,6 @@ class TimelineCapture {
       this.completeness.exclude("timeline", "invalid_protocol_value");
     this.#add({
       type: "redirect",
-      params: facts.source ?? {},
       frameId: facts.frameId ?? null,
       loaderId: facts.loaderId ?? null,
       timestamp: eventTime.timestamp,
@@ -622,7 +590,6 @@ class TimelineCapture {
     if (!eventTime.keep) return;
     this.#add({
       type: "load_failed",
-      params: facts.source ?? {},
       frameId: request.frameId,
       loaderId: request.loaderId ?? null,
       timestamp: eventTime.timestamp,
@@ -650,9 +617,9 @@ class TimelineCapture {
     return { keep: true, timestamp };
   }
 
-  #lifecycle(params: UnknownRecord): void {
-    if (cdpStringValue(params.frameId) !== this.mainFrameId) return;
-    const timestamp = numberValue(params.timestamp);
+  #lifecycle(lifecycle: CdpEventPayload<"Page.lifecycleEvent">): void {
+    if (lifecycle.frameId !== this.mainFrameId) return;
+    const timestamp = lifecycle.timestamp;
     if (
       timestamp === undefined ||
       timestamp < 0 ||
@@ -664,27 +631,25 @@ class TimelineCapture {
     if (timestamp <= this.#armTimestamp) return;
     this.#add({
       type: "lifecycle",
-      params,
+      timestamp,
+      frameId: lifecycle.frameId,
+      loaderId: lifecycle.loaderId ?? null,
       rawUrl: null,
       requestId: null,
-      detail: safeDetail(params.name),
+      detail: safeDetail(lifecycle.name),
     });
   }
 
   #add(options: TimelineEntryOptions): void {
     const {
       type,
-      params,
+      timestamp,
       rawUrl = null,
       requestId = null,
       detail = null,
     } = options;
     const destination =
       rawUrl == null ? null : scopedUrl(rawUrl, this.allowedOrigins);
-    const timestamp =
-      options.timestamp === undefined
-        ? numberValue(params.timestamp)
-        : options.timestamp;
     if (
       timestamp === undefined ||
       timestamp === null ||
@@ -703,14 +668,8 @@ class TimelineCapture {
         timestamp === undefined || (timestamp !== null && timestamp < 0)
           ? null
           : timestamp,
-      frame_id:
-        options.frameId === undefined
-          ? boundedId(params.frameId)
-          : options.frameId,
-      loader_id:
-        options.loaderId === undefined
-          ? boundedId(params.loaderId)
-          : options.loaderId,
+      frame_id: options.frameId ?? null,
+      loader_id: options.loaderId ?? null,
       request_id: requestId ?? null,
       url: destination?.scope === "approved" ? destination.url : null,
       destination_scope: options.destinationScope ?? destination?.scope ?? null,
@@ -833,9 +792,6 @@ const scopedUrl = (
     ? { url: null, scope: "outside_policy" }
     : { url: null, scope: "unsupported" };
 };
-
-const boundedId = (value: unknown): string | null =>
-  cdpStringValue(value) ?? null;
 
 const safeDetail = (value: unknown): string | null => {
   const detail = cdpStringValue(value)?.toLowerCase();

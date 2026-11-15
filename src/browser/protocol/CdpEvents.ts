@@ -62,6 +62,10 @@ export interface CdpFrameEvent {
   readonly facts: CdpFrameFacts;
   /** `missing` for attach and detach events, which carry no URL. */
   readonly url: CdpFrameUrlObservation;
+  /** The reported reason of a requested navigation. */
+  readonly reason: string | undefined;
+  /** The committed frame's reported transition type. */
+  readonly transitionType: string | undefined;
 }
 
 const frameEvent = (kind: CdpFrameEventKind) =>
@@ -76,6 +80,11 @@ const frameEvent = (kind: CdpFrameEventKind) =>
     return {
       facts: cdpFrameEventPayloadFacts(kind, params),
       url: observeCdpFrameUrl(urlSource),
+      reason: kind === "requested" ? cdpStringValue(record?.reason) : undefined,
+      transitionType:
+        kind === "navigated"
+          ? cdpStringValue(recordValue(record?.frame)?.transitionType)
+          : undefined,
     };
   });
 
@@ -133,6 +142,68 @@ const requestWillBeSent = z.unknown().transform((params) => ({
   runtime: runtimeRequestSchema.safeParse(params),
 }));
 
+/** The flat session a target event names; undefined when missing or malformed. */
+const targetDetached = z.unknown().transform((params) => ({
+  sessionId: cdpStringValue(recordValue(params)?.sessionId),
+}));
+
+const targetAttached = z.unknown().transform((params) => {
+  const record = recordValue(params);
+  const targetInfo = recordValue(record?.targetInfo);
+  return {
+    sessionId: cdpStringValue(record?.sessionId),
+    targetId: cdpStringValue(targetInfo?.targetId),
+    targetType: cdpStringValue(targetInfo?.type),
+  };
+});
+
+/** A non-flat child session's protocol message, still JSON text. */
+const targetMessage = z.unknown().transform((params) => {
+  const record = recordValue(params);
+  return {
+    sessionId: cdpStringValue(record?.sessionId),
+    message: cdpStringValue(record?.message),
+  };
+});
+
+/**
+ * A pause's call frames. Resuming is target-wide, so a consumer that resumes
+ * needs every frame's identity; the declaration is kept as one parse result.
+ */
+const debuggerPaused = z.unknown().transform((params) =>
+  z
+    .object({
+      callFrames: z.array(
+        z.object({
+          callFrameId: z.string(),
+          location: z.object({ scriptId: z.string() }),
+        }),
+      ),
+    })
+    .safeParse(params),
+);
+
+/** A frame lifecycle milestone; the timeline decides frame selection and time policy. */
+const lifecycleEvent = z.unknown().transform((params) => {
+  const record = recordValue(params);
+  return {
+    frameId: cdpStringValue(record?.frameId),
+    loaderId: cdpStringValue(record?.loaderId),
+    name: cdpStringValue(record?.name),
+    timestamp: numberValue(record?.timestamp),
+  };
+});
+
+/**
+ * Declared WebMCP tools. A missing or non-list inventory is undefined, never
+ * empty; malformed entries keep their positions as undefined.
+ */
+const webMcpTools = z.unknown().transform((params) => ({
+  tools: admitRecords(recordValue(params)?.tools)?.map((tool) =>
+    recordValue(tool),
+  ),
+}));
+
 /**
  * One payload schema per subscribed event. The connection parses each
  * registered event once, before any subscriber sees it. A schema never
@@ -152,12 +223,20 @@ const CDP_EVENT_PAYLOADS = {
     .unknown()
     .transform(readCdpExecutionContextDestroyed),
   "Runtime.consoleAPICalled": consoleApiCalled,
+  "Runtime.executionContextsCleared": z.unknown().transform(() => ({})),
+  "Debugger.paused": debuggerPaused,
+  "Target.receivedMessageFromTarget": targetMessage,
   "Network.requestWillBeSent": requestWillBeSent,
   "Network.responseReceived": z.unknown().transform(readCdpResponseReceived),
   "Network.loadingFinished": z.unknown().transform(readCdpLoadingFinished),
   "Network.loadingFailed": z.unknown().transform(readCdpLoadingFailed),
   "Network.webSocketCreated": z.unknown().transform(readCdpWebSocketCreated),
   "Network.webSocketFrameSent": z.unknown().transform(readCdpWebSocketFrame),
+  "Target.attachedToTarget": targetAttached,
+  "Target.detachedFromTarget": targetDetached,
+  "Page.lifecycleEvent": lifecycleEvent,
+  "WebMCP.toolsAdded": webMcpTools,
+  "WebMCP.toolsRemoved": webMcpTools,
   "Network.webSocketFrameReceived": z
     .unknown()
     .transform(readCdpWebSocketFrame),
@@ -178,6 +257,12 @@ export type CdpRegisteredEvent = {
     readonly payload: CdpEventPayload<E>;
   };
 }[CdpEventName];
+
+/** The registered event of one method (distributes over a union of methods). */
+export type CdpRegisteredEventOf<E extends CdpEventName> = Extract<
+  CdpRegisteredEvent,
+  { readonly method: E }
+>;
 
 const isRegistered = (method: string): method is CdpEventName =>
   Object.hasOwn(CDP_EVENT_PAYLOADS, method);
