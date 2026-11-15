@@ -123,15 +123,25 @@ describe("subject target identity", () => {
         identity: { ...record.subject.identity, ...identity },
       },
     });
-    expect(() =>
-      parseEvidence(
+    // The schema has no ID check, so only the format-owned declaration can refuse it.
+    expect(
+      evidenceSchema.safeParse(
         forged({
           format: "gamecube-dol",
           architecture: "arm",
           selection: null,
         }),
-      ),
-    ).toThrow();
+      ).success,
+    ).toBe(false);
+    expect(
+      evidenceSchema.safeParse(
+        forged({
+          format: "gamecube-dol",
+          architecture: "powerpc",
+          selection: { kind: "entry-point", entry_point: "0x80003100" },
+        }),
+      ).success,
+    ).toBe(true);
     expect(() =>
       parseEvidence(
         forged({
