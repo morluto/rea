@@ -13,6 +13,7 @@
 
 ### Features
 
+* **cli:** warn after mcp add writes Claude Desktop's configuration ([#10696](https://github.com/morluto/rea/issues/10696)) ([b0e3257](https://github.com/morluto/rea/commit/b0e32578ae2cd01e704cce8ac20c7ee3a332d719))
 * **cutter:** identify the running plugin's source and refuse a modified one ([#10731](https://github.com/morluto/rea/issues/10731)) ([0c38229](https://github.com/morluto/rea/commit/0c38229dd3534f62a0f6c5d3fe4e6ca3bc9e940d))
 * **errors:** type refusals at the producer with a total recovery ([#10577](https://github.com/morluto/rea/issues/10577)) ([e83e3fa](https://github.com/morluto/rea/commit/e83e3fa8a075484cbdfd46c4c563b7c4875fc3cf))
 * **python:** decode CPython 3.14 and 3.15 pyc code objects ([1d08253](https://github.com/morluto/rea/commit/1d08253ff2cb68838b93cf9275000c39bf1f507a)), closes [#8206](https://github.com/morluto/rea/issues/8206)
@@ -229,6 +230,7 @@
 * **ci:** use four Vitest workers on hosted runners ([#10399](https://github.com/morluto/rea/issues/10399)) ([3403338](https://github.com/morluto/rea/commit/3403338ea05d231fc1b8d45c80d74e026d266a3f))
 * **cli:** load only the registrar a one-shot command needs ([b990eb4](https://github.com/morluto/rea/commit/b990eb496d10ca7d31b98edd2d22a4f58f41c4f5))
 * **mcp:** build advertised tool schemas once per contract ([#10421](https://github.com/morluto/rea/issues/10421)) ([fcc0a8c](https://github.com/morluto/rea/commit/fcc0a8c4547b78168ed4479aab8c1b5266e223ee))
+* **mcp:** run Kilo's read-only Git probes through execFileOutput's process group ([#10800](https://github.com/morluto/rea/issues/10800)) ([7a7a917](https://github.com/morluto/rea/commit/7a7a917e8f6ff2c7f098dd24e3cf59c124d203d9))
 * **tests:** run plain CLI commands on the file's shared process ([#10412](https://github.com/morluto/rea/issues/10412)) ([b3657c5](https://github.com/morluto/rea/commit/b3657c557f6431d259b2fcb65e73a7c2d48bd4a4))
 
 
@@ -238,6 +240,7 @@
 * **apple-ips:** report crash-report format failures through ParseFailure ([#10665](https://github.com/morluto/rea/issues/10665)) ([d482bb9](https://github.com/morluto/rea/commit/d482bb936946e3cc36cc750dc7d12c6926fd8cb1))
 * **application:** own the finalization precedence in runOwned ([#10645](https://github.com/morluto/rea/issues/10645)) ([2e1e659](https://github.com/morluto/rea/commit/2e1e6593f266b859d2f0fc858d51ed2f280b6849))
 * **artifacts:** classify container formats through one recognizer table ([#10629](https://github.com/morluto/rea/issues/10629)) ([a0d96e5](https://github.com/morluto/rea/commit/a0d96e520e71b8b0e82601e045864c173716e3b7))
+* **browser:** decide target_changed from one document identity owner ([#10703](https://github.com/morluto/rea/issues/10703)) ([cc4f00d](https://github.com/morluto/rea/commit/cc4f00d6cae663f7fd8862ae0c9e6496a96f03b6))
 * **browser:** register target, storage and acknowledgement CDP replies ([#10630](https://github.com/morluto/rea/issues/10630)) ([3e94008](https://github.com/morluto/rea/commit/3e9400873eb9d66d9b41248e52128595d0dd7cd3))
 * **browser:** send only CDP commands with registered result schemas ([#10666](https://github.com/morluto/rea/issues/10666)) ([254bb21](https://github.com/morluto/rea/commit/254bb218579148df8d899843329e29180464eab9))
 * **capture:** report decoder failures through ParseFailure with named limits ([#10708](https://github.com/morluto/rea/issues/10708)) ([d9daf09](https://github.com/morluto/rea/commit/d9daf09ea558094d0629d2a33420d0c9ec52dff9))
