@@ -1,3 +1,4 @@
+import { Budget } from "../../../domain/budget.js";
 import { strictUtf8Decoder } from "../../../domain/strictUtf8.js";
 import { captureBudgets } from "../CaptureBudgets.js";
 import { readLeb128, ULEB64 } from "../../../domain/leb128.js";
@@ -8,19 +9,18 @@ import { CaptureFormatError } from "../CaptureFormatError.js";
 
 /** One charge covers all selected records, including temporary interpretation strings. */
 export class ProtobufBudget {
-  #remaining = captureBudgets().outputBytes;
+  readonly #bytes = new Budget(captureBudgets().outputBytes);
   #work = 0;
   constructor(readonly signal?: AbortSignal) {}
   charge(bytes: number): void {
-    if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > this.#remaining)
-      throw new CaptureFormatError(
-        {
-          name: "protobuf-decoding",
-          maximum: captureBudgets().outputBytes,
-        },
-        `Protobuf decoding exceeds max_reply_bytes (${String(captureBudgets().outputBytes)} bytes); raise that per-call allowance and retry.`,
-      );
-    this.#remaining -= bytes;
+    this.#bytes.charge(
+      bytes,
+      () =>
+        new CaptureFormatError(
+          { name: "protobuf-decoding", maximum: this.#bytes.maximum },
+          `Protobuf decoding exceeds max_reply_bytes (${String(this.#bytes.maximum)} bytes); raise that per-call allowance and retry.`,
+        ),
+    );
   }
   async checkpoint(): Promise<void> {
     this.signal?.throwIfAborted();

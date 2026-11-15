@@ -665,7 +665,7 @@ export const projectIl2cppMetadataView = (
         ...(binary === undefined ? {} : { binary }),
         counts,
       },
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   }
   const nativeUnavailable =

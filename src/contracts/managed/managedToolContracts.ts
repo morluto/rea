@@ -5,6 +5,7 @@ import type { ToolContract } from "../toolContractTypes.js";
 import { managedOutputSchemas } from "../toolOutputSchemaGroups.js";
 import { toolContractMetadata } from "../toolEffects.js";
 import { absoluteLocalPathStringSchema } from "../../domain/localPath.js";
+import { distinctItems } from "../../domain/schemaConstraints.js";
 import { analysisDetailSchema } from "../analysisDetail.js";
 import { managedInspectionBudgetShape } from "../../domain/managed/managedInspectionLimits.js";
 
@@ -25,20 +26,19 @@ export const managedArtifactInputSchema = managedTargetInputSchema.extend({
 
 /** Member inspection may select declaring types before members are decoded. */
 export const managedMembersInputSchema = managedArtifactInputSchema.extend({
-  type_names: z
-    .array(
-      z
-        .string()
-        .min(1)
-        .describe(
-          "Exact declaring-type full_name: namespace-qualified for top-level types (System.Threading.Monitor); nested types report their bare name, so it selects every nested type of that name",
-        ),
-    )
-    .min(1)
-    .refine((names) => new Set(names).size === names.length, {
-      message: "type_names must not repeat a name",
-    })
-    .meta({ uniqueItems: true })
+  type_names: distinctItems(
+    z
+      .array(
+        z
+          .string()
+          .min(1)
+          .describe(
+            "Exact declaring-type full_name: namespace-qualified for top-level types (System.Threading.Monitor); nested types report their bare name, so it selects every nested type of that name",
+          ),
+      )
+      .min(1),
+    "type_names must not repeat a name",
+  )
     .describe(
       "Inspect only the fields, methods, call edges, and field accesses declared by these exact type full names, and the user strings their method bodies load; omit to inspect every type. Unmatched names are reported in selection.unmatched_type_names.",
     )

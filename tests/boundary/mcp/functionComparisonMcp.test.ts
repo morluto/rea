@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema } from "ajv";
 import { functionSnapshotFixture } from "../../../src/domain/functionDossierEvidence.fixture.js";
@@ -551,12 +552,11 @@ it("advertises Swift literal coverage as a pair through the MCP SDK", async () =
   const tool = (await harness.client.listTools()).tools.find(
     ({ name }) => name === "analyze_function",
   );
-  if (tool?.outputSchema === undefined)
-    throw new Error("Missing output schema");
+  if (tool === undefined) throw new Error("Missing output schema");
   const validate = new Ajv2020({
     strict: false,
     validateFormats: false,
-  }).compile(tool.outputSchema as AnySchema);
+  }).compile(canonicalOutputSchema(tool.name) as AnySchema);
   const original = FUNCTION_COMPARISON_EXAMPLE.left;
   for (const [literals, omissions, valid] of [
     [false, false, true],

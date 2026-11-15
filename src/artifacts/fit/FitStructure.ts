@@ -311,6 +311,7 @@ const imageHashes = (
       throw new ArtifactReaderFailure(
         "integrity",
         `FIT image ${nodeName(image)} ${name} ${algo} value is ${String(value.bytes)} bytes; ${algo} values are ${String(expected)} bytes`,
+        { integrityCheck: "declared-digest" },
       );
     // Copy the value so the devicetree buffer can be released.
     hashes.push({

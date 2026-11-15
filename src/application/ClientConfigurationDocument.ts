@@ -532,22 +532,24 @@ export const clientServerForEdit = (
 
 /**
  * Return `parsed.document` with `servers` at its server table. A legacy OpenCode
- * V1 member named in `removeLegacy` is removed beside a native V2 table.
+ * V1 member named in `removeLegacy` is removed beside a native V2 table. The
+ * platform names the environment identity a Cordis entry is written with.
  */
 export const withClientServers = (
   parsed: ClientConfigurationDocument,
   servers: Record<string, unknown>,
+  platform: NodeJS.Platform,
   removeLegacy?: string,
 ): Record<string, unknown> => {
   // The Harness patch list upserts or removes by entry id, not by table.
   if (parsed.dialect === "dsh")
     return Object.hasOwn(servers, PRODUCT_IDENTITY.mcpServerKey)
-      ? editDshDocument(
-          parsed,
-          clientConfigurationRecordSchema.parse(
+      ? editDshDocument(parsed, {
+          desired: clientConfigurationRecordSchema.parse(
             servers[PRODUCT_IDENTITY.mcpServerKey],
           ),
-        )
+          platform,
+        })
       : editDshDocument(parsed);
   if (parsed.serversPath.length === 0) return { ...servers };
   const [key = "", nested] = parsed.serversPath;

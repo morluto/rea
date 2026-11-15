@@ -337,6 +337,7 @@ const inspectAssetCatalogEntry = async (input: {
     throw new ArtifactReaderFailure(
       "integrity",
       `Asset catalog changed before inspection: ${entry.path}`,
+      { integrityCheck: "member-identity" },
     );
   let output: string;
   try {
@@ -353,6 +354,7 @@ const inspectAssetCatalogEntry = async (input: {
     throw new ArtifactReaderFailure(
       "integrity",
       `Asset catalog changed during inspection: ${entry.path}`,
+      { integrityCheck: "member-identity" },
     );
   const capturedOutput: AnalysisCapturedOutput = {
     stdout: output,

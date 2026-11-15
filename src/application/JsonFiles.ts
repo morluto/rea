@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   link,
   lstat,
@@ -378,7 +379,7 @@ const writeTextPartsOwned = async (
   const requestedPath = absoluteCallerPath(path);
   try {
     assertWriteActive(cancellation);
-    if (process.platform !== "win32" && requestedPath.endsWith("/"))
+    if (HOST_PLATFORM.platform !== "win32" && requestedPath.endsWith("/"))
       return err(
         new EvidenceFileError("write", "not-file", { path: requestedPath }),
       );

@@ -1,3 +1,4 @@
+import { joinCoverageStatus, type CoverageStatus } from "../coverage.js";
 import type {
   ManagedMemberComparisonResult,
   ManagedMemberComparisonSide,
@@ -17,22 +18,33 @@ export const buildComparisonCoverage = ({
   right,
   selectionAgreement,
 }: ComparisonCoverageInput): ManagedMemberComparisonResult["coverage"] => {
-  const leftStatus = sideCoverageStatus(left);
-  const rightStatus = sideCoverageStatus(right);
-  const unknownInput =
-    left.coverage.state !== "complete" ||
-    right.coverage.state !== "complete" ||
-    selectionAgreement !== "same" ||
-    !sameMethodRows(left, right);
+  // An unavailable side examined nothing, and an unknown selection agreement
+  // cannot tell whether both sides cover the same types: either makes the
+  // comparison unknown, even beside a known gap.
+  const joined = joinCoverageStatus([
+    sideCoverageKnowledge(left),
+    sideCoverageKnowledge(right),
+    selectionAgreement === "unknown"
+      ? "unknown"
+      : selectionAgreement === "different" || !sameMethodRows(left, right)
+        ? "partial"
+        : "complete",
+  ]);
   return {
-    status:
-      !unknownInput && leftStatus === "complete" && rightStatus === "complete"
-        ? "complete-within-inputs"
-        : "partial",
-    left_status: leftStatus,
-    right_status: rightStatus,
+    status: joined === "complete" ? "complete-within-inputs" : joined,
+    left_status: sideCoverageStatus(left),
+    right_status: sideCoverageStatus(right),
   };
 };
+
+const sideCoverageKnowledge = (
+  result: ManagedMemberInspection,
+): CoverageStatus =>
+  result.coverage.state === "unavailable"
+    ? "unknown"
+    : result.coverage.state === "complete"
+      ? "complete"
+      : "partial";
 
 /** Full MethodDef coverage is required before inferring cross-build absence. */
 export const hasCompleteMethodRows = (

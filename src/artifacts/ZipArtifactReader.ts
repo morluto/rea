@@ -163,6 +163,7 @@ class NodeFileReader extends Reader<string> {
       throw new ArtifactReaderFailure(
         "integrity",
         `ZIP source ended before its admitted extent: ${this.path}`,
+        { integrityCheck: "read-coverage" },
       );
     await this.verify();
     return bytes;
@@ -285,6 +286,7 @@ export class ZipArtifactReader implements ArtifactReader {
           throw new ArtifactReaderFailure(
             "integrity",
             `ZIP member identity changed during enumeration: ${entry.filename}`,
+            { integrityCheck: "entry-metadata" },
           );
         if (stored === undefined)
           this.#entries.set(metadata.adapterKey, {
@@ -323,6 +325,10 @@ export class ZipArtifactReader implements ArtifactReader {
         new ArtifactReaderFailure(
           "integrity",
           "ZIP entry metadata does not match this reader's inventory",
+          {
+            integrityCheck:
+              stored === undefined ? "foreign-entry" : "entry-metadata",
+          },
         ),
       );
     const source = stored.source;

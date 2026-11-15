@@ -214,7 +214,11 @@ export const managedMemberComparisonResultSchema = z.strictObject({
   methods: z.array(methodComparisonItemSchema),
   fields: z.array(fieldComparisonItemSchema),
   coverage: z.strictObject({
-    status: z.enum(["complete-within-inputs", "partial"]),
+    status: z
+      .enum(["complete-within-inputs", "partial", "unknown"])
+      .describe(
+        "complete-within-inputs only when both observations are complete over the same selected scope and method rows; unknown when a side is unavailable or the selected scope agreement cannot be established.",
+      ),
     left_status: z.enum(["complete", "partial", "unavailable"]),
     right_status: z.enum(["complete", "partial", "unavailable"]),
   }),

@@ -8,6 +8,7 @@ import {
   AnalysisCancelledError,
   AnalysisTimeoutError,
   AnalysisResourceConstraintError,
+  AnalysisArtifactChangedError,
 } from "./analysisErrorCore.js";
 import { ArtifactOperationError } from "./artifactOperationError.js";
 import {
@@ -1515,6 +1516,24 @@ it("does not offer entry-policy retries for integrity refusals without a declare
   expect(native.remediation.action).not.toContain("record-and-continue");
 });
 
+it.each([undefined, false, true])(
+  "projects whether a refused request was sent (%s) and omits an unknown value",
+  (requestSent) => {
+    const details = projectAnalysisError(
+      new AnalysisResourceConstraintError(
+        "cutter_command",
+        "transport",
+        "Cutter request exceeds its frame limit",
+        { max_request_bytes: 8192 },
+        requestSent === undefined ? {} : { requestSent },
+      ),
+    ).details;
+    if (requestSent === undefined)
+      expect(details).not.toHaveProperty("request_sent");
+    else expect(details).toMatchObject({ request_sent: requestSent });
+  },
+);
+
 it("preserves ordinary configuration recovery and projects a producer-owned session repair", () => {
   const settings = [{ setting: "REA_EXAMPLE", constraint: "must be positive" }];
   const original = projectAnalysisError(
@@ -1850,6 +1869,21 @@ describe("analysis error projection: composed failures for a caller lifetime", (
     expect(projectAnalysisError(composed, "invocation").details).toEqual(
       projectAnalysisError(composed).details,
     );
+  });
+
+  it("keeps the named integrity check when redaction rebuilds an artifact change", () => {
+    const error = new AnalysisArtifactChangedError(
+      "inspect_artifact",
+      "/target/secret-token.bin",
+      "member changed",
+      { integrityCheck: "member-identity" },
+    );
+    const redacted = redactExplicitFailure(error, ["secret-token"]);
+    expect(redacted).not.toBe(error);
+    expect(projectAnalysisError(redacted)).toMatchObject({
+      code: "artifact_changed",
+      details: { integrity_check: "member-identity" },
+    });
   });
 
   it("keeps continuing guidance through redaction and redacts its text", () => {

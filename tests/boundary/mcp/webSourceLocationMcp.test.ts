@@ -1,3 +1,4 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { traceSourceMap } from "../../../src/javascript/sourceMaps/TraceSourceMap.js";
 import {
   webSourceLocationArgs as args,
@@ -50,14 +51,14 @@ it("publishes valid SDK schemas and records the named module trace without a bin
   const advertised = (await client.listTools()).tools.find(
     (tool) => tool.name === "trace_web_source_location",
   );
-  if (advertised?.outputSchema === undefined)
+  if (advertised === undefined)
     throw new Error("module trace must advertise both schemas");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   const inputSchema: Record<string, unknown> = advertised.inputSchema;
   expect(ajv.validate(inputSchema, args)).toBe(true);
   const response = await client.callTool(
     { name: "trace_web_source_location", arguments: args },
-    { toolDefinition: advertised },
+    { toolDefinition: withCanonicalOutputSchema(advertised) },
   );
   expect(response.isError).not.toBe(true);
   const parsed = toolContract("trace_web_source_location").outputSchema.parse(

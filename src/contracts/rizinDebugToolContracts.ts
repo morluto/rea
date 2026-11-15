@@ -20,6 +20,7 @@ const commandResult = z.strictObject({
 export const RIZIN_DEBUG_TOOL_CONTRACTS = [
   {
     name: "start_rizin_debug_session",
+    availability: { host: "persistentDebugger" },
     ...toolContractMetadata("start_rizin_debug_session"),
     kind: "native-provider",
     description:

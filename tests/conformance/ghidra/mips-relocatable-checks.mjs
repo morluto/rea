@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { parseMipsReadelf } from "./mips-checks.mjs";
+import { FIXTURE_TOOLS, fixtureCommand } from "./fixture-toolchain.mjs";
 
 const execute = promisify(execFile);
 const RELOCATION_TYPES = new Map([
@@ -90,7 +91,7 @@ export function parseMipsRelocatableReadelf(text) {
 
 /** Independent reader is a bounded test prerequisite, never an REA provider. */
 export async function inspectMipsRelocatableReadelf(path, byteOrder, floatAbi) {
-  const command = process.env.REA_MIPS_READELF ?? "readelf";
+  const command = fixtureCommand(FIXTURE_TOOLS.mipsReadelf);
   const options = {
     env: { ...process.env, LC_ALL: "C" },
     timeout: 10000,

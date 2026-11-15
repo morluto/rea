@@ -1,3 +1,4 @@
+import { readRuntimeSetting } from "../config/runtimeAnalysisSettings.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
@@ -454,16 +455,16 @@ export const launchRegexMatchingLimitation = (
   deadline: RegexMatchingDeadline = DEFAULT_REGEX_MATCHING_DEADLINE,
   request: RegexWorkerHeapRequest = DEFAULT_REGEX_WORKER_HEAP_REQUEST,
 ): string => {
-  try {
-    return regexMatchingLimitation(
+  const limitation = readRuntimeSetting(() =>
+    regexMatchingLimitation(
       resolveLaunchRegexWorkerHeap(launchExecArgv, launchNodeOptions, request),
       deadline,
       request,
-    );
-  } catch (cause: unknown) {
-    if (!(cause instanceof ConfigurationError)) throw cause;
-    return "Regex mode is unavailable until its invalid launch configuration is corrected with update_analysis_settings or by restarting REA. Inspect analysis settings for the affected value.";
-  }
+    ),
+  );
+  return limitation.ok
+    ? limitation.value
+    : "Regex mode is unavailable until its invalid launch configuration is corrected with update_analysis_settings or by restarting REA. Inspect analysis settings for the affected value.";
 };
 
 /**
@@ -599,23 +600,17 @@ export interface RegexConfigurationSnapshot {
 export const snapshotRegexConfiguration = (
   selectedDeadline: RegexMatchingDeadline = DEFAULT_REGEX_MATCHING_DEADLINE,
   selectedHeap: RegexWorkerHeapRequest = DEFAULT_REGEX_WORKER_HEAP_REQUEST,
-): Result<RegexConfigurationSnapshot, ConfigurationError> => {
-  try {
-    return ok({
-      deadline: {
-        deadlineMs: selectedDeadline.deadlineMs,
-        source: selectedDeadline.source,
-      },
-      heapRequest: {
-        heapMiB: selectedHeap.heapMiB,
-        source: selectedHeap.source,
-      },
-    });
-  } catch (cause: unknown) {
-    if (cause instanceof ConfigurationError) return err(cause);
-    throw cause;
-  }
-};
+): Result<RegexConfigurationSnapshot, ConfigurationError> =>
+  readRuntimeSetting(() => ({
+    deadline: {
+      deadlineMs: selectedDeadline.deadlineMs,
+      source: selectedDeadline.source,
+    },
+    heapRequest: {
+      heapMiB: selectedHeap.heapMiB,
+      source: selectedHeap.source,
+    },
+  }));
 
 /** Match an inventory off the service thread, and prove worker exit before returning. */
 export const matchRegexValues = async (input: {

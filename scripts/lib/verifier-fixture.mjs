@@ -93,6 +93,26 @@ export class VerifierFixture {
   }
 
   /**
+   * Close resources the verifier is done with before the fixture is released,
+   * such as an auxiliary MCP client. Each cleanup runs now, in order, even
+   * after an earlier one fails. One that fails stays registered, so `release`
+   * retries it and keeps the root until it confirms; the failures are thrown.
+   */
+  async closeEarly(cleanups) {
+    const failures = [];
+    for (const cleanup of cleanups) {
+      const once = this.releaseAfter(onceConfirmed(cleanup));
+      try {
+        await once();
+      } catch (cause) {
+        failures.push(cause);
+      }
+    }
+    if (failures.length > 0)
+      throw new AggregateError(failures, "Verifier cleanup failed");
+  }
+
+  /**
    * Keep the root for good: something that may still use its files cannot be
    * confirmed stopped and has no cleanup this fixture could retry (an owned
    * command whose cleanup is incomplete). Every release then fails, naming
@@ -106,15 +126,30 @@ export class VerifierFixture {
 
   /** Concurrent callers share one attempt; a failed attempt can be retried. */
   release() {
+    return this.#settle(true);
+  }
+
+  /**
+   * Run every registered cleanup as `release` does, then keep the root for a
+   * reviewer instead of removing it, and name it and `reason` on stderr. A
+   * run keeps its fixture this way only on request; a cleanup that fails
+   * retains the root as `release` would, and a later `keep` retries it.
+   */
+  async keep(reason) {
+    await this.#settle(false);
+    process.stderr.write(`Keeping verifier fixture ${this.path}: ${reason}\n`);
+  }
+
+  #settle(removeRoot) {
     if (this.#released) return Promise.resolve();
     this.#registrationClosed = true;
-    this.#releasing ??= this.#attemptRelease().finally(() => {
+    this.#releasing ??= this.#attemptRelease(removeRoot).finally(() => {
       this.#releasing = undefined;
     });
     return this.#releasing;
   }
 
-  async #attemptRelease() {
+  async #attemptRelease(removeRoot) {
     const failures = [];
     const unconfirmed = [];
     for (const cleanup of this.#pending) {
@@ -133,6 +168,8 @@ export class VerifierFixture {
           `Retained verifier fixture ${this.path} because a cleanup that may still use it did not confirm.`,
         ),
       ]);
+    // A kept root stays allocated; it is not released.
+    if (!removeRoot) return;
     try {
       await this.#root.close();
     } catch (cause) {
