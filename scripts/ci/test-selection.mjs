@@ -46,21 +46,48 @@ const isCheckerInput = (path) =>
   /\.d\.m?ts$/u.test(path) ||
   /^scripts\/verify\/baselines\/[^/]+\.json$/u.test(path) ||
   /^scripts\/verify\/advertised-schemas\/tools\/[^/]+\.json$/u.test(path);
-// Verifier scripts are imported by their tests like source modules. Other
-// scripts (build, test runners, CI) shape every run and are not traced.
+// Verifier scripts are imported by their tests like source modules.
+const isVerifier = (path) =>
+  /^scripts\/(verify-[^/]+|verify\/.+)\.mjs$/u.test(path);
+// Shared script modules. A change is traced through the tests, verifiers and
+// other shared modules that import it; any other consumer (build, test
+// runners, configuration) shapes every run, so it selects the full suite.
+const isScriptLibrary = (path) =>
+  !isCheckerInput(path) && /^scripts\/lib\/.+\.m?[jt]s$/u.test(path);
+// Other scripts (build, test runners, CI) shape every run and are not traced.
 const isModule = (path) =>
   !isCheckerInput(path) &&
   (/^(src|tests)\/.+\.m?ts$/u.test(path) ||
-    /^scripts\/(verify-[^/]+|verify\/.+)\.mjs$/u.test(path));
+    isVerifier(path) ||
+    isScriptLibrary(path));
 // Test-only modules pass a change through to the tests that use them.
 // Production importers never widen the selection transitively.
 const isHelper = (path) =>
   !isTest(path) &&
   (/^tests\/.+\.m?ts$/u.test(path) ||
-    /^src\/.+\.fixture[^/]*\.ts$/u.test(path));
+    /^src\/.+\.fixture[^/]*\.ts$/u.test(path) ||
+    isVerifier(path) ||
+    isScriptLibrary(path));
+// Files outside src/ and tests/ that can run or load a shared script module:
+// other scripts, root configuration, package metadata, hooks and workflows.
+const isScriptConsumer = (path) =>
+  !isHelper(path) &&
+  !isCheckerInput(path) &&
+  (/^scripts\/.+\.(?:m?[jt]s|cjs)$/u.test(path) ||
+    (/^[^/]+\.(?:m?[jt]s|cjs|json)$/u.test(path) &&
+      path !== "package-lock.json") ||
+    /^\.github\/.+\.ya?ml$/u.test(path) ||
+    /^\.husky\/[^/]+$/u.test(path));
 // Prose that tests may read by path. Other non-module inputs (fixtures, data,
 // scripts, workflows, package metadata) are not traced, so they run everything.
 const isProse = (path) => path.endsWith(".md") && !/^(src|tests)\//u.test(path);
+/** Why a changed path cannot be traced to tests, if it cannot. */
+const untracedInput = (path) =>
+  SHARED_BOUNDARY.test(path)
+    ? `Shared boundary: ${path}`
+    : !isModule(path) && !isProse(path) && !isCheckerInput(path)
+      ? `Input is not traced to tests: ${path}`
+      : undefined;
 
 const SPECIFIER =
   /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+|\bvi\.mock\(\s*)["'](\.{1,2}\/[^"']+)["']/gu;
@@ -71,25 +98,17 @@ const importsOf = (path, source) =>
     return [target, target.replace(/\.(m?)js$/u, ".$1ts")];
   });
 
-const full = (reason) => ({ version: 2, mode: "full", reason, groups: [] });
-
 /**
- * Plan the portable tests one CI run executes.
+ * Trace the tests a change affects.
  *
- * `snapshot` lists the tracked `src/` and `tests/` paths of the revision under
- * test and reads them; it is consulted only when a subset is possible.
+ * `snapshot` lists the tracked paths of the revision under test and reads
+ * them. `selected` maps each affected test to the first reason that selected
+ * it: `changed`, `imports`, `beside`, `owner` or `names`. `untraced` names
+ * inputs whose consumers cannot be traced to tests; CI runs the complete suite
+ * for them, while a bounded local gate runs the traced selection.
  */
-export function planTestSelection({ files, event, tier, code, snapshot }) {
-  // `ci:full` selects the full tier, so it also lands here.
-  if (event !== "pull_request" || tier !== "fast")
-    return full("Main, ci:full and qualification runs execute every test");
-  if (!code) return full("No portable tests run for this change");
-  if (!files.length) return full("No changed paths available");
-  for (const path of files) {
-    if (SHARED_BOUNDARY.test(path)) return full(`Shared boundary: ${path}`);
-    if (!isModule(path) && !isProse(path) && !isCheckerInput(path))
-      return full(`Input is not traced to tests: ${path}`);
-  }
+export function traceAffectedTests({ files, snapshot }) {
+  const untraced = files.flatMap((path) => untracedInput(path) ?? []);
 
   const tracked = snapshot.list();
   const trackedSet = new Set(tracked);
@@ -112,7 +131,8 @@ export function planTestSelection({ files, event, tier, code, snapshot }) {
   );
   for (const path of files) if (isTest(path)) select(path, "changed");
 
-  // Close over test-only helpers, then take the tests that import a change.
+  // Close over test-only helpers, verifiers and shared script modules, then
+  // take the tests that import a change.
   const affected = new Set(changedModules);
   for (let grew = true; grew;) {
     grew = false;
@@ -129,10 +149,29 @@ export function planTestSelection({ files, event, tier, code, snapshot }) {
     if (imports.get(test).some((target) => affected.has(target)))
       select(test, "imports");
 
+  // A shared script module that another script, configuration file, hook or
+  // workflow imports or names by file name can shape every run.
+  const libraries = [...affected].filter(isScriptLibrary);
+  if (libraries.length) {
+    const consumers = tracked.filter(isScriptConsumer);
+    const consumerSources = snapshot.read(consumers);
+    for (const consumer of consumers) {
+      const source = consumerSources.get(consumer) ?? "";
+      const targets = new Set(importsOf(consumer, source));
+      const library = libraries.find(
+        (path) => targets.has(path) || source.includes(posix.basename(path)),
+      );
+      if (library !== undefined)
+        untraced.push(
+          `Script consumer is not traced: ${consumer} uses ${library}`,
+        );
+    }
+  }
+
   for (const path of changedModules) {
     // Same-stem tests, and same-directory tests that scan their directory's
     // sources by path instead of importing them.
-    const stem = path.replace(/\.m?ts$/u, "");
+    const stem = path.replace(/\.m?[jt]s$/u, "");
     for (const test of tests)
       if (
         posix.dirname(test) === posix.dirname(path) &&
@@ -150,7 +189,28 @@ export function planTestSelection({ files, event, tier, code, snapshot }) {
   for (const path of files)
     for (const test of tests)
       if ((sources.get(test) ?? "").includes(path)) select(test, "names");
+  return { selected, untraced };
+}
 
+const full = (reason) => ({ version: 2, mode: "full", reason, groups: [] });
+
+/**
+ * Plan the portable tests one CI run executes.
+ *
+ * `snapshot` lists the tracked paths of the revision under test and reads
+ * them; it is consulted only when a subset is possible.
+ */
+export function planTestSelection({ files, event, tier, code, snapshot }) {
+  // `ci:full` selects the full tier, so it also lands here.
+  if (event !== "pull_request" || tier !== "fast")
+    return full("Main, ci:full and qualification runs execute every test");
+  if (!code) return full("No portable tests run for this change");
+  if (!files.length) return full("No changed paths available");
+  // Decide from the paths alone before reading the snapshot.
+  const untracedPath = files.map(untracedInput).find(Boolean);
+  if (untracedPath !== undefined) return full(untracedPath);
+  const { selected, untraced } = traceAffectedTests({ files, snapshot });
+  if (untraced.length) return full(untraced[0]);
   const paths = [...selected.keys()].sort();
   if (!paths.length)
     return full("No test imports, names or sits beside a changed path");

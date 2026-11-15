@@ -93,9 +93,57 @@ it("lets checker-only inputs and prose select nothing by themselves", () => {
   expect(plan(["scripts/verify/baselines/x.json"], sources)).toMatchObject({
     mode: "full",
   });
-  expect(plan(["scripts/lib/shared.mjs"], sources)).toMatchObject({
+});
+
+it("traces shared script modules to their tests and falls back for other consumers", () => {
+  const sources = {
+    "scripts/lib/shared.mjs": "",
+    "scripts/lib/wrapper.mjs": 'export * from "./shared.mjs";',
+    "scripts/verify-thing.mjs": 'import "./lib/wrapper.mjs";',
+    "scripts/lib/unused.mjs": "",
+    "tests/boundary/filesystem/shared.test.ts":
+      'import "../../../scripts/lib/shared.mjs";',
+    "tests/boundary/filesystem/verifier.test.ts":
+      'await import("../../../scripts/verify-thing.mjs");',
+    "tests/boundary/filesystem/other.test.ts": "",
+    "package.json":
+      '{"scripts":{"verify:thing":"node scripts/verify-thing.mjs"}}',
+  };
+  // Through another shared module and a verifier to the tests that import them.
+  expect(selectedFiles(plan(["scripts/lib/shared.mjs"], sources))).toEqual([
+    "tests/boundary/filesystem/shared.test.ts",
+    "tests/boundary/filesystem/verifier.test.ts",
+  ]);
+  // A build script, configuration or package script that loads it is untraced.
+  expect(
+    plan(["scripts/lib/shared.mjs"], {
+      ...sources,
+      "scripts/build.mjs": 'import { x } from "./lib/wrapper.mjs";',
+    }),
+  ).toMatchObject({
     mode: "full",
-    reason: "Input is not traced to tests: scripts/lib/shared.mjs",
+    reason:
+      "Script consumer is not traced: scripts/build.mjs uses scripts/lib/wrapper.mjs",
+  });
+  expect(
+    plan(["scripts/lib/unused.mjs"], {
+      ...sources,
+      "package.json": '{"scripts":{"x":"node scripts/lib/unused.mjs"}}',
+    }),
+  ).toMatchObject({
+    mode: "full",
+    reason:
+      "Script consumer is not traced: package.json uses scripts/lib/unused.mjs",
+  });
+  // A module no test reaches keeps the existing fallback.
+  expect(plan(["scripts/lib/unused.mjs"], sources)).toMatchObject({
+    mode: "full",
+    reason: "No test imports, names or sits beside a changed path",
+  });
+  // Other scripts remain untraced inputs.
+  expect(plan(["scripts/build.mjs"], sources)).toMatchObject({
+    mode: "full",
+    reason: "Input is not traced to tests: scripts/build.mjs",
   });
 });
 
