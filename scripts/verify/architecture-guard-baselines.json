@@ -193,7 +193,6 @@
     "src/javascript/sourceMaps/SourceMapFormat.ts": 1,
     "src/native/AppleMachoSelection.ts": 1,
     "src/native/MachoCommandNames.ts": 1,
-    "src/native/apple/AppleIps.errors.ts": 1,
     "src/python/PythonPyc.errors.ts": 1
   },
   "parser-json-parse": {
