@@ -1,3 +1,4 @@
+import { coverageStatusSchema } from "../coverage.js";
 import { z } from "zod";
 import { javascriptSourceRangeSchema } from "./javascriptSourceCoordinates.js";
 import { digestSchema, prefixedDigestSchema } from "../digests.js";
@@ -202,6 +203,15 @@ export const applicationCoverageSchema = z.union([
   }),
 ]);
 export type ApplicationCoverage = z.infer<typeof applicationCoverageSchema>;
+
+/**
+ * An application graph's coverage status: the shared coverage vocabulary plus
+ * `unavailable`, for a graph whose producer could not run.
+ */
+export const applicationCoverageStatusSchema = z.enum([
+  ...coverageStatusSchema.options,
+  "unavailable",
+]);
 
 /** Construct complete bounded coverage under the stated configured limits. */
 export const completeApplicationCoverage = (
