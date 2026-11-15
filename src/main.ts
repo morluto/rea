@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
 import { snapshotEnvironment } from "./process/snapshotEnvironment.js";
-import { CURRENT_ENTRYPOINT_PATH } from "./process/CurrentEntrypointPath.js";
-import { pathToFileURL } from "node:url";
-import { realpathSync } from "node:fs";
+import {
+  CURRENT_ENTRYPOINT_PATH,
+  isDirectEntrypoint,
+} from "./process/CurrentEntrypointPath.js";
 
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 
@@ -195,19 +196,6 @@ export const runMcpHttpEntrypoint = async (
     );
   } finally {
     latch.release();
-  }
-};
-
-/** Return false when the runtime's argv path is synthetic or no longer exists. */
-const isDirectEntrypoint = (
-  entryPath: string | undefined,
-  moduleUrl: string,
-): boolean => {
-  if (entryPath === undefined) return false;
-  try {
-    return pathToFileURL(realpathSync(entryPath)).href === moduleUrl;
-  } catch {
-    return false;
   }
 };
 
