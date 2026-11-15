@@ -24,7 +24,37 @@ import {
 import {
   ElfNoteSectionNameBudgetFailure,
   parseElfNotes,
+  readGnuPropertyWords,
+  walkElfNoteTables,
 } from "./ElfNoteParser.js";
+
+it.each([
+  { order: "descending", type: 0xc0000001, little: true },
+  { order: "duplicate", type: 0xc0000002, little: true },
+  { order: "descending", type: 0xc0000001, little: false },
+  { order: "duplicate", type: 0xc0000002, little: false },
+])(
+  "rejects $order GNU property types (little-endian: $little)",
+  ({ type, little }) => {
+    const note = gnuPropertyNote(little);
+    const words = () =>
+      readGnuPropertyWords(
+        walkElfNoteTables(
+          note,
+          little,
+          [{ offset: 0, size: note.length, alignment: 8 }],
+          1,
+        ),
+        little,
+        8,
+      );
+    expect(words().get(0xc0000002)?.value).toBe(3);
+    const secondPropertyOffset = note.length - 16;
+    if (little) note.writeUInt32LE(type, secondPropertyOffset);
+    else note.writeUInt32BE(type, secondPropertyOffset);
+    expect(words).toThrow(expect.objectContaining({ reason: "format" }));
+  },
+);
 
 const defaults = inspectElfNotesInputSchema.parse({
   path: "/artifacts/app",
