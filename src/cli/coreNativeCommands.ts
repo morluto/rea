@@ -31,6 +31,7 @@ import {
   nativeOpenOptionFields,
   snapshotSelectionOption,
 } from "./options.js";
+import type { NativeOpenCliFlags } from "./options.js";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import {
@@ -38,12 +39,25 @@ import {
   cliEvidenceDeliveryInputError,
   publishCliAnalysisEvidence,
 } from "./analysisEvidenceDelivery.js";
+import {
+  AnalysisInputError,
+  AnalysisOutputError,
+} from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
+import type { EvidenceBundle } from "../domain/evidenceBundle.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 
 const bytePatternInputSchema = z
   .object(bytePatternFields)
   .superRefine(validateBytePattern);
+
+const cliError = (
+  error: Parameters<typeof projectAnalysisError>[0],
+): JsonValue =>
+  ({
+    error: "Analysis failed",
+    ...projectAnalysisError(error),
+  }) as JsonValue;
 
 /** Register native load-image, memory, and annotation CLI commands. */
 export const registerCoreNativeCommands = (
@@ -563,9 +577,11 @@ const registerAnnotationCommand = (
     description: "Edit function annotations and return refreshed analysis",
     args: z.object({
       path: localPathStringSchema.describe("Local executable path"),
-      procedure: nativeFunctionAnnotationsInputSchema.shape.procedure.describe(
-        "Function name or address; Ghidra resolves interior addresses to the containing function and edits its entry",
-      ),
+      procedure: nativeFunctionAnnotationsInputSchema.shape.procedure
+        .optional()
+        .describe(
+          "Function name or address; Ghidra resolves interior addresses to the containing function and edits its entry; omit with --batch",
+        ),
     }),
     options: z.object({
       name: z.string().min(1).optional().describe("Analyst function name"),
@@ -577,25 +593,176 @@ const registerAnnotationCommand = (
         .string()
         .optional()
         .describe("Inline entry comment; empty text clears it"),
+      batch: z
+        .string()
+        .optional()
+        .describe(
+          'Annotation sidecar JSON to replay: { functions: [{ address, name?, comment?, "inline-comment"? }] }. Applies entries in order; reports one result per entry; exits nonzero when any entry failed',
+        ),
       ...nativeOpenOptionFields,
     }),
     run: ({ args, options }) =>
       logCliCommand(logger, CLI_COMMANDS.annotateNativeFunction, () =>
-        runDirectAnalysis(
-          args.path,
-          "annotate_native_function",
-          {
-            procedure: args.procedure,
-            ...(options.name === undefined ? {} : { name: options.name }),
-            ...(options.comment === undefined
-              ? {}
-              : { comment: options.comment }),
-            ...(options["inline-comment"] === undefined
-              ? {}
-              : { inline_comment: options["inline-comment"] }),
-          },
-          directAnalysisOptionsFromCli(logger, options),
-        ).then(projectCliAnalysisResult),
+        options.batch === undefined
+          ? runSingleAnnotation(args, options, runDirectAnalysis, logger)
+          : runBatchAnnotation(
+              args as { readonly path: string },
+              options as AnnotationCommandOptions & { readonly batch: string },
+              runDirectAnalysis,
+              logger,
+            ),
       ),
   });
+};
+
+const runSingleAnnotation = async (
+  args: { readonly path: string; readonly procedure?: string | undefined },
+  options: AnnotationCommandOptions,
+  runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
+  logger: Logger,
+) => {
+  if (args.procedure === undefined)
+    return cliError(
+      new AnalysisInputError("annotate_native_function", undefined, [
+        {
+          path: ["procedure"],
+          reason: "missing_argument",
+          message:
+            "Provide a procedure, or use --batch to replay an annotation sidecar",
+        },
+      ]),
+    );
+  return annotateProcedure(
+    args.path,
+    args.procedure,
+    options,
+    runDirectAnalysis,
+    logger,
+  ).then(projectCliAnalysisResult);
+};
+
+const annotateProcedure = async (
+  path: string,
+  procedure: string,
+  options: AnnotationCommandOptions,
+  runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
+  logger: Logger,
+) =>
+  runDirectAnalysis(
+    path,
+    "annotate_native_function",
+    {
+      procedure,
+      ...(options.name === undefined ? {} : { name: options.name }),
+      ...(options.comment === undefined ? {} : { comment: options.comment }),
+      ...(options["inline-comment"] === undefined
+        ? {}
+        : { inline_comment: options["inline-comment"] }),
+    },
+    directAnalysisOptionsFromCli(logger, options),
+  );
+
+const annotationSidecarSchema = z.object({
+  functions: z
+    .array(
+      z
+        .object({
+          address: z.string().min(1),
+          name: z.string().min(1).optional(),
+          comment: z.string().optional(),
+          "inline-comment": z.string().optional(),
+        })
+        .strict(),
+    )
+    .min(1),
+});
+
+type AnnotationCommandOptions = NativeOpenCliFlags & {
+  readonly name?: string | undefined;
+  readonly comment?: string | undefined;
+  readonly ["inline-comment"]?: string | undefined;
+  readonly batch?: string | undefined;
+};
+
+const runBatchAnnotation = async (
+  args: { readonly path: string },
+  options: AnnotationCommandOptions & { readonly batch: string },
+  runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
+  logger: Logger,
+) => {
+  const { readFile } = await import("node:fs/promises");
+  let raw: string;
+  try {
+    raw = await readFile(options.batch, "utf8");
+  } catch (cause) {
+    return cliError(
+      new AnalysisInputError("annotate_native_function", undefined, [
+        {
+          path: ["batch"],
+          reason: "invalid_value",
+          message: `Cannot read the annotation sidecar: ${String(cause)}`,
+        },
+      ]),
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (cause) {
+    return cliError(
+      new AnalysisInputError("annotate_native_function", undefined, [
+        {
+          path: ["batch"],
+          reason: "invalid_value",
+          message: `The annotation sidecar is not valid JSON: ${String(cause)}`,
+        },
+      ]),
+    );
+  }
+  const sidecar = annotationSidecarSchema.safeParse(parsed);
+  if (!sidecar.success) {
+    return cliError(
+      new AnalysisInputError("annotate_native_function", undefined, [
+        {
+          path: ["batch"],
+          reason: "invalid_value",
+          message: `The annotation sidecar does not match the expected shape: ${sidecar.error.message}`,
+        },
+      ]),
+    );
+  }
+  const results: JsonValue[] = [];
+  let failed = 0;
+  for (const entry of sidecar.data.functions) {
+    const result = await annotateProcedure(
+      args.path,
+      entry.address,
+      {
+        ...options,
+        name: entry.name,
+        comment: entry.comment,
+        "inline-comment": entry["inline-comment"],
+      },
+      runDirectAnalysis,
+      logger,
+    );
+    if (!result.ok) failed += 1;
+    results.push(projectCliAnalysisResult(result) as JsonValue);
+  }
+  return {
+    ok: failed === 0,
+    error:
+      failed === 0
+        ? undefined
+        : {
+            code: "execution_failure",
+            message: `${failed} of ${results.length} annotation entries failed`,
+          },
+    batch: {
+      path: options.batch,
+      entries: results.length,
+      failed,
+    },
+    results,
+  } as unknown as JsonValue;
 };
