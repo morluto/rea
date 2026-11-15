@@ -818,9 +818,16 @@ it("stops pending actions when the lock is refused while they wait", async () =>
     }),
     application_root: dirname(process.execPath),
   });
-  await waitFor(() => expect(windows).toHaveBeenCalled());
-  refusal.abort();
-  const result = await capture;
+  let result: Awaited<typeof capture>;
+  try {
+    await waitFor(() => expect(windows).toHaveBeenCalled());
+    refusal.abort();
+    result = await capture;
+  } finally {
+    // A failed wait still stops and joins the capture before mocks restore.
+    await provider.close();
+    await capture;
+  }
 
   if (result.ok) throw new Error("Expected the handed-off launch to fail");
   expect(application.close).toHaveBeenCalled();
