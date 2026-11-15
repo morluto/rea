@@ -146,6 +146,11 @@ register("rea_native_declarations", ({ path }) => {
       mode === "partial-native-inventory"
         ? ["Controlled unreadable second DEX member"]
         : [],
+    manifest_splits: {
+      status: "observed",
+      required_split_types: [],
+      split_required: false,
+    },
   });
 });
 register("get_app_info", () => {

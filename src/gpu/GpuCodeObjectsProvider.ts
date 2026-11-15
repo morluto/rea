@@ -87,7 +87,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
           "capacity",
           "One GPU inspection is already active",
           { concurrent_inspections: 1 },
-          { retryable: true },
+          { retryable: true, measuredExhaustion: true },
         ),
       );
     this.#busy = true;

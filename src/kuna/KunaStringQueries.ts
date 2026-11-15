@@ -1,8 +1,9 @@
 import type { RegexConfigurationSnapshot } from "../process/RegexMatcher.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
+  cancelledBy,
+  isAborted,
 } from "../domain/analysisErrorCore.js";
 import {
   analysisSearchPredicate,
@@ -44,10 +45,7 @@ export class KunaStringQueries {
       AnalysisError
     >
   > {
-    if (signal?.aborted === true)
-      return err(
-        new AnalysisCancelledError(operation, { cause: signal?.reason }),
-      );
+    if (signal?.aborted === true) return err(cancelledBy(operation, signal));
     const address =
       operation === "list_strings" && parameters.address !== undefined
         ? normalizeKunaAddress(parameters.address)
@@ -67,10 +65,7 @@ export class KunaStringQueries {
     const inventory = await this.#load(installation, operation, signal);
     if (!inventory.ok)
       return err(kunaQueryFailureForCaller(inventory.error, operation));
-    if (this.#cancelled(signal))
-      return err(
-        new AnalysisCancelledError(operation, { cause: signal?.reason }),
-      );
+    if (isAborted(signal)) return err(cancelledBy(operation, signal));
     const available = inventory.value.items;
     let items: KunaStringItem[] | undefined;
     if (address !== undefined)
@@ -160,10 +155,6 @@ export class KunaStringQueries {
       void pending.promise.then(release, release);
     }
     return this.work.wait(this.#pending, signal, operation);
-  }
-
-  #cancelled(signal: AbortSignal | undefined): boolean {
-    return signal?.aborted === true;
   }
 
   /** Called only after session-owned work has drained. */

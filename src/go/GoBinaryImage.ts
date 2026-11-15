@@ -122,14 +122,18 @@ export const readGoBinaryImage = (
       );
   };
   verifyMapping(32);
-  const reader = new BinaryReader(bytes, byte_order === "little");
+  const reader = new BinaryReader(
+    bytes,
+    byte_order === "little",
+    container.format,
+  );
   const ptrSize = bytes[header + 14];
   const flags = bytes[header + 15] ?? 0;
   if ((flags & ~3) !== 0)
     throw new BinaryFormatFailure(
       "unsupported",
       "Go build-info flags contain an unsupported format bit",
-      true,
+      { undecodedContent: true },
     );
   if ((flags & 2) === 0 && (flags & 1) !== (byte_order === "big" ? 1 : 0))
     throw new BinaryFormatFailure(
