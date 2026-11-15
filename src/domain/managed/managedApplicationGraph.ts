@@ -113,22 +113,8 @@ export const managedApplicationGraphResultSchema = z
       fields: z.int().min(0),
       pinvoke_imports: z.int().min(0),
       native_implementations: z.int().min(0),
-      // Graphs projected before call and field-access edges existed omit these
-      // counters; null means those relations were not projected, not zero.
-      calls: z
-        .int()
-        .min(0)
-        .nullable()
-        .default(null)
-        .describe("calls edges; null for graphs projected before calls edges"),
-      field_accesses: z
-        .int()
-        .min(0)
-        .nullable()
-        .default(null)
-        .describe(
-          "accesses edges; null for graphs projected before accesses edges",
-        ),
+      calls: z.int().min(0).describe("calls edges"),
+      field_accesses: z.int().min(0).describe("accesses edges"),
     }),
     graph: javascriptApplicationGraphSchema,
     coverage: z.strictObject({

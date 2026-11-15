@@ -1,28 +1,26 @@
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import type { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   ArtifactFileCleanupFailure,
-  artifactFileCompletion,
-  artifactFileCancellationCause,
   bindArtifactFileCleanup,
 } from "../artifacts/ArtifactFileOperation.js";
-import {
+import type {
+  AnalysisCapturedOutput,
   AnalysisError,
-  type AnalysisCapturedOutput,
-  type AnalysisErrorOptions,
+  AnalysisErrorOptions,
 } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
   cancelledBy,
-  carriedReason,
+  isAborted,
+  type AbortedSignal,
 } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import type { ProviderFailureDialect } from "../providers/classifyProviderFailure.js";
 import type { FirmwareDeadline } from "./FirmwareDeadline.js";
 import { firmwareDeadlineElapsed } from "./FirmwareDeadline.js";
 import { z } from "zod";
@@ -91,30 +89,34 @@ type FirmwarePublicationProgress = {
   readonly total_files: number;
 };
 
+/** The signal one firmware phase passed to its work, and the deadline that phase armed. */
+export interface FirmwarePhase {
+  readonly signal: AbortSignal;
+  readonly deadline: FirmwareDeadline;
+  readonly publication?: FirmwarePublicationProgress | undefined;
+}
+
 interface FirmwareFailureContext {
   readonly engine: string;
   readonly operation: string;
-  readonly deadline?: FirmwareDeadline | undefined;
+  /** The phase whose signal the failed work observed; absent outside a phase. */
+  readonly phase?: FirmwarePhase | undefined;
   readonly treeCleanupLease?: AnalysisCleanupLease | undefined;
-  readonly publication?: FirmwarePublicationProgress | undefined;
 }
 
 const timeoutFailure = (
   operation: string,
   reason: unknown,
   deadline: FirmwareDeadline,
-  options: Pick<AnalysisErrorOptions, "partialObservation"> & {
-    readonly publication?: FirmwarePublicationProgress | undefined;
-  } = {},
+  publication: FirmwarePublicationProgress | undefined,
+  details: Omit<AnalysisErrorOptions, "cause"> = {},
 ): AnalysisTimeoutError =>
   new AnalysisTimeoutError(operation, deadline.timeoutMs, {
+    ...details,
     cause: reason,
-    partialObservation: options.partialObservation,
     diagnostics: {
       phase: deadline.phase,
-      ...(options.publication === undefined
-        ? {}
-        : { publication: options.publication }),
+      ...(publication === undefined ? {} : { publication }),
     },
     ...(deadline.phase === "publication"
       ? {
@@ -128,98 +130,38 @@ const timeoutFailure = (
         }),
   });
 
-/** Translate the producing file owner's outcome without guessing from a later signal. */
-export const firmwareFailure = (
-  cause: unknown,
-  context: FirmwareFailureContext,
-): AnalysisError => {
-  const { engine, operation, deadline, treeCleanupLease, publication } =
-    context;
-  if (
-    cause instanceof AnalysisCancelledError &&
-    deadline?.signal.aborted &&
-    cause.cause === deadline.signal.reason
-  )
-    return timeoutFailure(operation, cause.cause, deadline, {
-      partialObservation: cause.partialObservation,
-      publication,
-    });
-  if (cause instanceof AnalysisError) return cause;
-  if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {
-    const cleanup = new ProviderCleanupError(
-      engine,
-      cause.cleanup.resources,
-      { reason: cause.cleanup.reason },
-      { operation, cause },
-    );
-    bindArtifactFileCleanup(cause, cleanup);
-    if (cause.cleanupLeases === undefined)
-      treeCleanupLease?.bindCleanupError(cleanup);
-    if (cause instanceof ArtifactFileCleanupFailure) {
-      const outcome = cause.fileCleanupFailure.outcome;
-      const cancellation = artifactFileCompletion(cause)?.cancellation;
-      const primary =
-        outcome.kind === "failed"
-          ? firmwareFailure(outcome.cause, context)
-          : cancellation !== undefined
-            ? firmwareCancellation(
-                operation,
-                cancellation.reason,
-                deadline,
-                publication,
-              )
-            : undefined;
-      if (primary !== undefined)
-        return analysisErrorWithCleanupFailure(
-          primary,
-          cleanup,
-          operation,
-        ).bindCleanupDependencies([primary, cleanup]);
-    }
-    if (cause.reason === "cancelled")
-      return analysisErrorWithCleanupFailure(
-        firmwareCancellation(
-          operation,
-          artifactFileCancellationCause(cause),
-          deadline,
-          publication,
-        ),
-        cleanup,
-        operation,
-      ).bindCleanupDependencies([cleanup]);
-    return cleanup;
-  }
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-    return firmwareCancellation(
-      operation,
-      artifactFileCancellationCause(cause),
-      deadline,
-      publication,
-    );
-  if (cause instanceof z.ZodError)
-    return new AnalysisOutputError(
-      operation,
-      "Tool report violated the pinned producer protocol",
-      { cause },
-    );
-  return new ProviderAdapterError(engine, operation, {
-    cause,
-    diagnostics: {
-      reason: cause instanceof Error ? cause.message : String(cause),
-    },
-  });
-};
-
-/** Classify the interruption actually observed, before composing cleanup failures. */
-export const firmwareCancellation = (
+/**
+ * The phase deadline's timeout when that deadline, not the caller, aborted the
+ * phase signal. The deadline owns its own expiry; no cancellation is reread.
+ */
+const deadlineTimeout = (
   operation: string,
-  reason: unknown,
+  phase: FirmwarePhase,
+  details?: Omit<AnalysisErrorOptions, "cause">,
+): AnalysisTimeoutError | undefined =>
+  phase.signal.aborted &&
+  phase.deadline.signal.aborted &&
+  phase.signal.reason === phase.deadline.signal.reason
+    ? timeoutFailure(
+        operation,
+        phase.signal.reason,
+        phase.deadline,
+        phase.publication,
+        details,
+      )
+    : undefined;
+
+/** What an aborted phase signal reports: its deadline's timeout, else the caller's cancellation. */
+export const firmwareSignalInterruption = (
+  operation: string,
+  signal: AbortedSignal,
   deadline?: FirmwareDeadline,
   publication?: FirmwarePublicationProgress,
 ): AnalysisError =>
-  deadline?.signal.aborted && reason === deadline.signal.reason
-    ? timeoutFailure(operation, reason, deadline, { publication })
-    : cancelledBy(operation, carriedReason(reason));
+  (deadline === undefined
+    ? undefined
+    : deadlineTimeout(operation, { signal, deadline, publication })) ??
+  cancelledBy(operation, signal);
 
 /** Preserve observed cancellation identity; otherwise enforce the monotonic budget. */
 export const firmwarePhaseInterruption = (
@@ -228,8 +170,67 @@ export const firmwarePhaseInterruption = (
   deadline: FirmwareDeadline,
   publication?: FirmwarePublicationProgress,
 ): AnalysisError | undefined =>
-  signal.aborted
-    ? firmwareCancellation(operation, signal.reason, deadline, publication)
+  isAborted(signal)
+    ? firmwareSignalInterruption(operation, signal, deadline, publication)
     : firmwareDeadlineElapsed(deadline)
-      ? timeoutFailure(operation, undefined, deadline, { publication })
+      ? timeoutFailure(operation, undefined, deadline, publication)
       : undefined;
+
+/**
+ * Firmware's dialect for the shared provider failure classifier. A read the
+ * phase's deadline cancelled reports that deadline's timeout; a read whose own
+ * cleanup failed reports the firmware cleanup error, bound to the extraction
+ * tree when the read has no descriptor lease, beside the read's primary.
+ */
+export const firmwareFailureDialect = (
+  context: FirmwareFailureContext,
+): ProviderFailureDialect => {
+  const { engine, operation, phase, treeCleanupLease } = context;
+  return {
+    providerId: engine,
+    operation,
+    recognise: (cause, details) =>
+      cause instanceof z.ZodError
+        ? new AnalysisOutputError(
+            operation,
+            "Tool report violated the pinned producer protocol",
+            { ...details, cause },
+          )
+        : undefined,
+    ...(phase === undefined
+      ? {}
+      : {
+          interruption: (details) => deadlineTimeout(operation, phase, details),
+        }),
+    readCleanup: (read, primary) => {
+      const cleanup = new ProviderCleanupError(
+        engine,
+        read.cleanup.resources,
+        { reason: read.cleanup.reason },
+        { operation, cause: read },
+      );
+      bindArtifactFileCleanup(read, cleanup);
+      if (read.cleanupLeases === undefined)
+        treeCleanupLease?.bindCleanupError(cleanup);
+      if (primary === undefined) return cleanup;
+      // A file operation's own outcome shares its cleanup; a cancelled read's does not.
+      return analysisErrorWithCleanupFailure(
+        primary,
+        cleanup,
+        operation,
+      ).bindCleanupDependencies(
+        read instanceof ArtifactFileCleanupFailure
+          ? [primary, cleanup]
+          : [cleanup],
+      );
+    },
+    unclassified: (cause, details) =>
+      new ProviderAdapterError(engine, operation, {
+        ...details,
+        cause,
+        diagnostics: {
+          reason: cause instanceof Error ? cause.message : String(cause),
+        },
+      }),
+  };
+};

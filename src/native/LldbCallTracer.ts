@@ -63,6 +63,7 @@ import { LldbReadbackFiles } from "./LldbReadbackFiles.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { resolvedAnalysisError } from "../domain/analysisErrorBase.js";
+import { runOwned } from "../providers/runOwned.js";
 import {
   readLldbObservationJournal,
   readBoundedPrefix,
@@ -270,128 +271,105 @@ export class LldbCallTracer implements NativeCallTracer {
       processStopped: true,
       targetStopped: true,
     };
-    let result: Result<NativeCallTrace, AnalysisError>;
-    try {
-      result = await this.#run(lldb.value, owner, request, signal);
-    } catch (cause: unknown) {
-      const partial = await partialNativeObservation({
-        request,
-        files: owner.files,
-        pidPath: paths.pid,
-        stdoutPath: paths.stdoutCapture,
-        stderrPath: paths.stderrCapture,
-        observationPath: paths.observations,
-        version: null,
-        reason: "tracer-failure",
-      });
-      if (
-        !owner.processStopped ||
-        !owner.targetStopped ||
-        owner.files.hasPending
-      )
-        this.#pendingCleanup = owner;
-      const failure = new ProviderAdapterError(PROVIDER, OPERATION, {
-        cause,
-        diagnostics: { reason: errorReason(cause) },
-        partialObservation: partial.observation,
-        ...(this.#pendingCleanup === owner
-          ? {
-              cleanup: {
-                reason: "LLDB trace failed while owned resources remain",
-                resources: lldbCleanupResources(owner),
-              },
-            }
-          : {}),
-      });
-      result = err(retainPartialReadFailures(failure, partial.readFailures));
-    }
-    if (result.ok && signal?.aborted)
-      result = err(
-        new AnalysisCancelledError(OPERATION, {
-          cause: signal.reason,
-          partialObservation: partialObservationFromTrace(
+    let primaryFailure: AnalysisError | undefined;
+    const finalized = await runOwned(
+      async (): Promise<Result<NativeCallTrace, AnalysisError>> => {
+        try {
+          return await this.#run(lldb.value, owner, request, signal);
+        } catch (cause: unknown) {
+          const partial = await partialNativeObservation({
             request,
-            result.value,
-            "cancelled",
-          ),
-        }),
-      );
-    if (owner.files.hasPending) this.#pendingCleanup = owner;
-    if (this.#pendingCleanup === owner) {
-      if (!result.ok && result.error.cleanupIncomplete) {
-        if (owner.files.hasPending) {
-          const files = lldbCleanupFailure(
-            owner,
-            "LLDB readback descriptor cleanup remains incomplete",
-            owner.files.cleanupCause,
-          );
-          result.error.retainSecondaryFailure(files, {
-            readback_cleanup: projectAnalysisError(files),
+            files: owner.files,
+            pidPath: paths.pid,
+            stdoutPath: paths.stdoutCapture,
+            stderrPath: paths.stderrCapture,
+            observationPath: paths.observations,
+            version: null,
+            reason: "tracer-failure",
           });
+          if (
+            !owner.processStopped ||
+            !owner.targetStopped ||
+            owner.files.hasPending
+          )
+            this.#pendingCleanup = owner;
+          const failure = new ProviderAdapterError(PROVIDER, OPERATION, {
+            cause,
+            diagnostics: { reason: errorReason(cause) },
+            partialObservation: partial.observation,
+            ...(this.#pendingCleanup === owner
+              ? {
+                  cleanup: {
+                    reason: "LLDB trace failed while owned resources remain",
+                    resources: lldbCleanupResources(owner),
+                  },
+                }
+              : {}),
+          });
+          return err(retainPartialReadFailures(failure, partial.readFailures));
         }
-        return err(bindLldbCleanup(result.error, owner));
-      }
-      const cleanup = lldbCleanupFailure(
-        owner,
-        "LLDB readback descriptor cleanup remains incomplete",
-        owner.files.cleanupCause,
-        result.ok
-          ? partialObservationFromTrace(request, result.value)
-          : undefined,
-      );
-      return result.ok
-        ? err(cleanup)
-        : err(
-            analysisErrorWithCleanupFailure(
-              result.error,
-              cleanup,
-              OPERATION,
-            ).bindCleanupDependencies([result.error, cleanup]),
-          );
-    }
-    let rootCleanup: Result<void, unknown>;
-    try {
-      await releaseLldbRuntime(owner);
-      rootCleanup = ok(undefined);
-    } catch (cause: unknown) {
-      rootCleanup = err(cause);
-      this.#pendingCleanup = owner;
-    }
-    if (result.ok && signal?.aborted)
-      result = err(
-        new AnalysisCancelledError(OPERATION, {
-          cause: signal.reason,
-          partialObservation: partialObservationFromTrace(
+      },
+      {
+        providerId: PROVIDER,
+        operation: OPERATION,
+        signal,
+        inspectPrimary: (primary) => {
+          if (!primary.ok) primaryFailure = primary.error;
+        },
+        close: async () => {
+          if (owner.files.hasPending) this.#pendingCleanup = owner;
+          if (this.#pendingCleanup === owner) {
+            // A primary that already reports this cleanup keeps owning it;
+            // its unreleased readback files are a secondary failure.
+            if (primaryFailure?.cleanupIncomplete === true) {
+              if (owner.files.hasPending) {
+                const files = lldbCleanupFailure(
+                  owner,
+                  "LLDB readback descriptor cleanup remains incomplete",
+                  owner.files.cleanupCause,
+                );
+                primaryFailure.retainSecondaryFailure(files, {
+                  readback_cleanup: projectAnalysisError(files),
+                });
+              }
+              bindLldbCleanup(primaryFailure, owner);
+              return;
+            }
+            // The runtime root stays retained while its process or files do.
+            throw lldbCleanupFailure(
+              owner,
+              "LLDB readback descriptor cleanup remains incomplete",
+              owner.files.cleanupCause,
+            );
+          }
+          try {
+            await releaseLldbRuntime(owner);
+          } catch (cause: unknown) {
+            this.#pendingCleanup = owner;
+            if (primaryFailure?.cleanupIncomplete === true)
+              bindLldbCleanup(primaryFailure, owner);
+            throw lldbCleanupFailure(owner, errorReason(cause), cause);
+          }
+        },
+        // A cancellation keeps the trace as cancelled; a retained cleanup
+        // keeps it as the completed trace it was.
+        partial: (trace, replacedBy) =>
+          partialObservationFromTrace(
             request,
-            result.value,
-            "cancelled",
+            trace,
+            replacedBy === "cancellation" ? "cancelled" : "cleanup-failure",
           ),
-        }),
+      },
+    );
+    if (finalized.kind === "completed") return ok(finalized.value);
+    if (
+      finalized.kind !== "completed-cleanup-retained" &&
+      finalized.cleanup.kind === "released"
+    )
+      return err(
+        resolvedAnalysisError(bindLldbCleanup(finalized.error, owner)),
       );
-    if (!rootCleanup.ok) {
-      const cleanup = lldbCleanupFailure(
-        owner,
-        errorReason(rootCleanup.error),
-        rootCleanup.error,
-        result.ok
-          ? partialObservationFromTrace(request, result.value)
-          : undefined,
-      );
-      if (!result.ok && result.error.cleanupIncomplete)
-        bindLldbCleanup(result.error, owner);
-      return result.ok
-        ? err(cleanup)
-        : err(
-            analysisErrorWithCleanupFailure(
-              result.error,
-              cleanup,
-              OPERATION,
-            ).bindCleanupDependencies([result.error, cleanup]),
-          );
-    }
-    return result.ok
-      ? result
-      : err(resolvedAnalysisError(bindLldbCleanup(result.error, owner)));
+    return err(finalized.error);
   }
 
   /** Retry retained LLDB cleanup without abandoning its process or runtime owner. */

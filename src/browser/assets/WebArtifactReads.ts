@@ -19,8 +19,9 @@ import {
 } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisCancelledError,
   AnalysisInputError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
@@ -179,9 +180,10 @@ const webArtifactPrimaryError = (
     cause instanceof ArtifactReaderFailure &&
     cause.reason === "cancelled"
   )
-    return new AnalysisCancelledError(context.operation, {
-      cause: artifactFileCancellationCause(cause),
-    });
+    return cancelledBy(
+      context.operation,
+      carriedReason(artifactFileCancellationCause(cause)),
+    );
   if (
     origin === "owned-or-classified" &&
     signal?.aborted === true &&
@@ -191,9 +193,7 @@ const webArtifactPrimaryError = (
         "code" in cause &&
         cause.code === "ABORT_ERR"))
   )
-    return new AnalysisCancelledError(context.operation, {
-      cause: signal.reason,
-    });
+    return cancelledBy(context.operation, signal);
   const selection = context.callerSelected
     ? selectedFileError({ cause, origin }, context)
     : undefined;
