@@ -19,7 +19,6 @@ import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import { RegularFileCleanupFailure } from "../../../../src/filesystem/OwnedRegularFile.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { makeLauncher, ownedGroupCleanup } from "./kunaVersionProbeProcess.js";
-import { createDeferred } from "../../../fixtures/binarySession.js";
 
 const writeProbe = async (
   root: string,
@@ -239,28 +238,18 @@ it.skipIf(process.platform === "win32")(
     const reason = Object.freeze({
       request: "cancel while inherited stdout stays open",
     });
-    const childExited = createDeferred<void>();
     try {
       const pending = inspectKunaInstallation(
         { REA_KUNA_COMMAND: executable },
         {
           resourceScope: resourceScopeFor(scope),
-          processLauncher: async (options) => {
-            const launched = await launcher.launcher(options);
-            if (
-              launched.process.exitCode !== null ||
-              launched.process.signalCode !== null
-            )
-              childExited.resolve();
-            else launched.process.once("exit", () => childExited.resolve());
-            return launched;
-          },
+          processLauncher: launcher.launcher,
           signal: controller.signal,
           probeTimeoutMs: 10_000,
         },
       );
       await waitForFile(parentExited);
-      await childExited.promise;
+      await launcher.exits[0];
       controller.abort(reason);
       const cause = await pending.catch((error: unknown) => error);
       const cancellation = kunaInstallationCancellation(cause);
