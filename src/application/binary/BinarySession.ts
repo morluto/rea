@@ -77,7 +77,10 @@ import {
   prepareSessionExecution,
 } from "./BinarySessionExecution.js";
 import { closeAnalysisClient } from "../AnalysisClientCleanup.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  analysisErrorWithCleanupFailure,
+} from "../../domain/analysisErrorCleanup.js";
 import { ConfigurationError } from "../../domain/configurationErrors.js";
 import type { AnalysisCleanupRetry } from "../../domain/analysisErrorRecovery.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
@@ -927,11 +930,11 @@ export class BinarySession
           const primary = completionFailure(value, retired.error);
           const failure =
             retired.error.cleanupIncomplete && primary !== retired.error
-              ? analysisErrorWithCleanupFailure(
+              ? analysisErrorWithCleanupDependencies(
                   primary,
                   retired.error,
                   operationName,
-                ).bindCleanupDependencies([primary, retired.error])
+                )
               : primary;
           return err(
             isAborted(signal)
