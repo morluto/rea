@@ -1,3 +1,4 @@
+import { HOST_PLATFORM, type HostPlatform } from "../platform/HostPlatform.js";
 import { PeLoadConfigService } from "../application/binaryDiagnostics/PeLoadConfigService.js";
 import { PeLoadConfigProvider } from "../native/pe/PeLoadConfigProvider.js";
 import { BinaryHardeningService } from "../application/binaryDiagnostics/BinaryHardeningService.js";
@@ -79,14 +80,20 @@ export const createKernelBuildConfigService = (): KernelBuildConfigService =>
 /** Compose the offline adapter without import-time I/O or dependency acquisition. */
 export const createBinaryLayoutService = (
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
+  host: HostPlatform = HOST_PLATFORM,
 ): BinaryLayoutService =>
-  new BinaryLayoutService(new PwntoolsLayoutProvider(environment));
+  new BinaryLayoutService(
+    new PwntoolsLayoutProvider(environment, undefined, undefined, host),
+  );
 
 /** Compose recorded-core inspection without acquiring a debugger or toolchain. */
 export const createRecordedCrashService = (
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
+  host: HostPlatform = HOST_PLATFORM,
 ): RecordedCrashService =>
-  new RecordedCrashService(new PwntoolsRecordedCrashProvider(environment));
+  new RecordedCrashService(
+    new PwntoolsRecordedCrashProvider(environment, undefined, undefined, host),
+  );
 
 /** Provider-free local byte analysis. */
 export const createByteEntropyService = (

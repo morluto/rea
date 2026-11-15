@@ -1,5 +1,6 @@
 import { capturedProviderOutput } from "../../process/capturedProviderOutput.js";
 import { selectArtifactCommandPath } from "../../process/ArtifactCommandPath.js";
+import type { HostPlatform } from "../../platform/HostPlatform.js";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { access, stat } from "node:fs/promises";
@@ -89,12 +90,14 @@ export class WakaruCleanupFailure extends ProviderCleanupError {
 /** Resolve and fingerprint explicitly configured tools; acquire nothing at startup. */
 export const resolveWakaruCommand = async (
   environment: Readonly<Record<string, string | undefined>>,
+  /** The host Wakaru runs on; it is admitted on Linux x64 only. */
+  host: HostPlatform,
   resources?: ArtifactResourceScope,
   signal?: AbortSignal,
 ) => {
   const configured = environment.REA_WAKARU_COMMAND;
   if (
-    !wakaruHostSupported(process.platform, process.arch) ||
+    !wakaruHostSupported(host.platform, host.architecture) ||
     configured === undefined ||
     !isAbsolute(configured)
   )

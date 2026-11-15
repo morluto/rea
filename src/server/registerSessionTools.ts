@@ -93,6 +93,7 @@ interface ProcessToolRegistration {
   >;
   readonly resourceScope: ProcessCaptureResourceScope;
   readonly environment: Readonly<NodeJS.ProcessEnv>;
+  readonly platform: NodeJS.Platform;
 }
 
 const registerProcessTools = ({
@@ -102,6 +103,7 @@ const registerProcessTools = ({
   captureContract,
   resourceScope,
   environment,
+  platform,
 }: ProcessToolRegistration): void => {
   const admission = withAdmittedAnalysis({ kind: "session", session });
   server.registerTool(
@@ -123,7 +125,7 @@ const registerProcessTools = ({
                 prepareProcessScenarioPlan(
                   input,
                   environment,
-                  process.platform,
+                  platform,
                   context.mcpReq.signal,
                 ),
             );
@@ -134,7 +136,7 @@ const registerProcessTools = ({
               );
             const evidence = createProcessScenarioPlanEvidence(
               prepared.value,
-              process.platform,
+              platform,
             );
             const recorded = session.recordEvidence(evidence);
             if (!recorded.ok)
@@ -155,7 +157,7 @@ const registerProcessTools = ({
               captureProcessScenario(
                 input,
                 context.mcpReq.signal,
-                process.platform,
+                platform,
                 environment,
                 undefined,
                 undefined,
@@ -263,6 +265,8 @@ export interface SessionToolOptions extends Partial<CapabilityAvailabilityProbes
   readonly artifactResources: ArtifactResourceScope;
   /** Server environment snapshot that process capture resolves and inherits. */
   readonly environment: Readonly<NodeJS.ProcessEnv>;
+  /** The host process capture plans for and runs on. */
+  readonly platform: NodeJS.Platform;
   readonly startedAt?: string;
   readonly availabilityPolicy?: () => AvailabilityPolicy;
 }
@@ -395,6 +399,7 @@ export const registerSessionTools = (
     availabilityPolicy: sessionAvailabilityPolicy(
       options.availabilityPolicy,
       {},
+      options.platform,
     ),
     androidAnalysisAvailability:
       options.androidAnalysisAvailability ?? missingAndroidAvailability,
@@ -439,6 +444,7 @@ export const registerSessionTools = (
     captureContract,
     resourceScope: processResources,
     environment: options.environment,
+    platform: options.platform,
   });
   const closeServer = server.close.bind(server);
   server.close = async () => {

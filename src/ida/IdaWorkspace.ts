@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
+
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { open, realpath, stat, type FileHandle } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, normalize } from "node:path";
@@ -24,7 +26,7 @@ export const idaFileDigest = async (path: string): Promise<string> => {
 
 /** Compare host-local spellings without collapsing POSIX symlink/.. traversal. */
 export const sameIdaHostPath = (left: string, right: string): boolean =>
-  process.platform === "win32"
+  HOST_PLATFORM.platform === "win32"
     ? normalize(left).toLowerCase() === normalize(right).toLowerCase()
     : isAbsolute(left) === isAbsolute(right) &&
       absoluteCallerPath(left) === absoluteCallerPath(right);

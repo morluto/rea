@@ -1338,6 +1338,10 @@ it.each([
   if (mode === "line-budget") {
     expect(result.error).toMatchObject({
       _tag: "AnalysisResourceConstraintError",
+      resource: "memory",
+      reason: "Decoder discovery exceeds the 65,536-line representation budget",
+      reportedLimits: { line_budget: 65536 },
+      fixedAllowance: { kind: "capture" },
     });
     expect(result.error.capturedOutput?.stdout).toBe(
       "ID: uart" + "\n".repeat(65536),
