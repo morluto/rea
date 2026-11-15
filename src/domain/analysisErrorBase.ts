@@ -194,8 +194,6 @@ export abstract class AnalysisError extends Error {
    * then completion is read from the owners when asked, never pushed here.
    */
   #cleanupIncomplete: boolean;
-  /** The owner of this error's own resources reported their release. */
-  #ownCleanupReleased = false;
   #ownedCleanupResources: readonly string[];
   #cleanupResourceOwner: AnalysisCleanupResourceOwner | undefined;
   #cleanupCompletionOwner: AnalysisCleanupResourceOwner | undefined;
@@ -271,7 +269,6 @@ export abstract class AnalysisError extends Error {
    * resources of its own, and any other error waits for its owner.
    */
   #ownCleanupPending(): boolean {
-    if (this.#ownCleanupReleased) return false;
     if (this.#cleanupReleaseClaims.size === 0)
       return this.#cleanupDependencies === undefined;
     for (const claim of this.#cleanupReleaseClaims)
@@ -422,16 +419,6 @@ export abstract class AnalysisError extends Error {
       this.#cleanupResourceProjection = resourceProjection;
     for (const dependency of dependencies)
       if (dependency.cleanupIncomplete) pending.add(dependency);
-    return this;
-  }
-
-  /**
-   * Record that the owner of this error's own resources confirmed their
-   * release. Bound dependencies keep their own records, so the error still
-   * reads them before it reports completion.
-   */
-  resolveCleanup(): this {
-    this.#ownCleanupReleased = true;
     return this;
   }
 

@@ -25,6 +25,7 @@ import { passiveNetworkCapture } from "../../tests/fixtures/passiveNetworkCaptur
 import { analyzeWebBundleFixture } from "../../tests/support/browser/analyzeWebBundleFixture.js";
 import { analyzeWebBundleInputSchema } from "../domain/webBundleAnalysis.js";
 import { inspectWebPageInputSchema } from "../domain/browserObservation.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 const input = {
   cdp_endpoint: {
@@ -182,7 +183,7 @@ it.each([true, false])(
     });
     if (wrapperRetainsFacts)
       expect(failure.partialObservation).toBe(primary.partialObservation);
-    failure.resolveCleanup();
+    releaseOwnedCleanup(failure);
     expect(resolvedAnalysisError(failure)).toBe(primary);
     expect(
       parseEvidence(

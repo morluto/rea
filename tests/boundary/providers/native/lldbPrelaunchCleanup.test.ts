@@ -12,6 +12,7 @@ import { NativeCommandFailure } from "../../../../src/native/CommandRunner.js";
 import { LldbCallTracer } from "../../../../src/native/LldbCallTracer.js";
 import { DarwinProcessOwnershipInspectionError } from "../../../../src/process/DarwinProcessRunTokenReader.js";
 import * as processBoundary from "../../../../src/process/ProviderProcess.js";
+import { releaseOwnedCleanup } from "../../../support/cleanupRelease.js";
 
 const tool = {
   invocationPath: "/usr/bin/true",
@@ -34,7 +35,7 @@ const preparation = (cancellation?: { readonly reason: unknown }) => {
     { reason: "controlled root deletion failure" },
   );
   const close = vi.fn(async () => {
-    marker.resolveCleanup();
+    releaseOwnedCleanup(marker);
   });
   const failure = new DarwinProcessOwnershipInspectionError(
     "controlled compiler failure",

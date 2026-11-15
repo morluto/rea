@@ -14,6 +14,7 @@ import { createTestProviderRouter } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
 
 const expectRecoveredBatch = (response: CallToolResult, owned: string) => {
   expect(parseMcpToolError(response).error).toMatchObject({
@@ -97,7 +98,7 @@ it("keeps a batch cleanup owner and its completed prefix after source retention 
         if (!allow) return err(failure);
         await rm(owned, { recursive: true });
         pending = false;
-        failure.resolveCleanup();
+        releaseOwnedCleanup(failure);
         return ok(null);
       },
     })),

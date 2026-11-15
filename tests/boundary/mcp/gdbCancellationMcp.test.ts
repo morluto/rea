@@ -34,6 +34,7 @@ import {
   validateDebuggerStatusResponse,
   waitForStartedFile,
 } from "../../support/reverseDebuggerMcpTestHelpers.js";
+import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
 
 it.skipIf(process.platform === "win32")(
   "keeps a failed GDB startup closed through MCP and retries its retained owner before console admission",
@@ -556,7 +557,7 @@ it("recovers only the owning debugger cleanup and reopens admitted analysis", as
     status: () => undefined,
     close: async (sessionId: string) => {
       closeCalls.push(sessionId);
-      if (sessionId === ownerId) retainedFailure.resolveCleanup();
+      if (sessionId === ownerId) releaseOwnedCleanup(retainedFailure);
       return ok({ target_state: "unknown" as const });
     },
     retryCleanupFailures: async () => ok(null),
