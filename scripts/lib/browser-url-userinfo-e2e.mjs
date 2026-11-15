@@ -37,9 +37,8 @@ export async function verifyBrowserUrlUserInfo(endpoint, origin) {
     );
     await loadFixturePage(connection, `${origin}/app?userinfo-probe`);
     const producerUrls = [];
-    connection.onEvent(({ registered }) => {
-      if (registered?.method === "Debugger.scriptParsed")
-        producerUrls.push(registered.payload.facts.url);
+    connection.onRegisteredEvent("Debugger.scriptParsed", (registered) => {
+      producerUrls.push(registered.payload.facts.url);
     });
     await connection.send("Debugger.enable");
     const browserUrl = await connection.send("Runtime.evaluate", {
@@ -142,16 +141,14 @@ async function loadFixturePage(connection, url) {
   const load = new Promise((resolve) => {
     resolveLoaded = resolve;
   });
-  const unsubscribe = connection.onEvent((event) => {
-    const registered = event.registered;
-    if (
-      registered?.method !== "Page.lifecycleEvent" ||
-      registered.payload.name !== "load"
-    )
-      return;
-    loaded.add(registered.payload.loaderId);
-    if (registered.payload.loaderId === loaderId) resolveLoaded();
-  });
+  const unsubscribe = connection.onRegisteredEvent(
+    "Page.lifecycleEvent",
+    (registered) => {
+      if (registered.payload.name !== "load") return;
+      loaded.add(registered.payload.loaderId);
+      if (registered.payload.loaderId === loaderId) resolveLoaded();
+    },
+  );
   try {
     await connection.send("Page.enable");
     await connection.send("Page.setLifecycleEventsEnabled", { enabled: true });

@@ -418,14 +418,12 @@ async function reloadFixture(connection) {
       () => reject(new Error("Fixture reload did not commit")),
       5000,
     );
-    const remove = connection.onEvent((event) => {
-      const registered = event.registered;
-      if (
-        registered?.method === "Page.frameNavigated" &&
-        registered.payload.facts.parentRelation === "root"
-      )
-        resolve();
-    });
+    const remove = connection.onRegisteredEvent(
+      "Page.frameNavigated",
+      (registered) => {
+        if (registered.payload.facts.parentRelation === "root") resolve();
+      },
+    );
     dispose = () => {
       clearTimeout(timer);
       remove();

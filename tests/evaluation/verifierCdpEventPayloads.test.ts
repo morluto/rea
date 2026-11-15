@@ -1,6 +1,9 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { CdpConnection } from "../../src/browser/CdpConnection.js";
+import type { CdpEventName } from "../../src/browser/protocol/CdpEvents.js";
+import { startFakeCdpBrowser } from "../fixtures/fakeCdpBrowser.js";
 
 const scriptsRoot = resolve(import.meta.dirname, "../../scripts");
 
@@ -13,35 +16,59 @@ async function* scriptFiles(directory: string): AsyncGenerator<string> {
 }
 
 /**
- * `CdpReceivedEvent` has no raw `params`; TypeScript enforces that for
- * `src/`. JavaScript verifiers subscribe to the same `CdpConnection`, so read
- * each `onEvent` callback's parameter and reject any raw payload access.
+ * JavaScript verifiers subscribe to the same `CdpConnection` as TypeScript,
+ * but the compiler does not check the event names they match. They subscribe
+ * through `onRegisteredEvent`, which refuses an unregistered name when the
+ * subscription is made, as `CdpConnection.send` does for commands; a raw
+ * `onEvent` subscriber compares names no check would catch.
  */
 describe("verifier CDP event subscribers", () => {
-  it("read only the registered parse of each event", async () => {
+  it("refuses an unregistered event name before subscribing", async () => {
+    const browser = await startFakeCdpBrowser();
+    const connection = await CdpConnection.connect(
+      browser.browserWebSocketUrl,
+      "inspect_web_page",
+    );
+    try {
+      expect(() =>
+        connection.onRegisteredEvent(
+          "Page.notRegistered" as CdpEventName,
+          () => undefined,
+        ),
+      ).toThrow(
+        expect.objectContaining({
+          _tag: "BrowserObservationError",
+          reason: "protocol_error",
+        }),
+      );
+      const received: string[] = [];
+      connection.onRegisteredEvent("Page.lifecycleEvent", (registered) =>
+        received.push(registered.payload.name ?? ""),
+      );
+      browser.emitEvent({
+        method: "Page.frameDetached",
+        params: { frameId: "main" },
+      });
+      browser.emitEvent({
+        method: "Page.lifecycleEvent",
+        params: { frameId: "main", loaderId: "loader", name: "load" },
+      });
+      await expect.poll(() => received).toEqual(["load"]);
+    } finally {
+      await connection.close();
+      await browser.close();
+    }
+  });
+
+  it("subscribe only through the registered-event check", async () => {
     const raw: string[] = [];
-    let subscribers = 0;
     for await (const path of scriptFiles(scriptsRoot)) {
       const source = await readFile(path, "utf8");
-      for (const match of source.matchAll(
-        /\.onEvent\(\s*(?:\(\s*(\{[^}]*\}|\w+)\s*\)|(\w+))\s*=>/gu,
-      )) {
-        subscribers += 1;
-        const parameter = (match[1] ?? match[2])!;
-        const body = source.slice(match.index, match.index + 2_000);
-        const reads = parameter.startsWith("{")
-          ? /\bparams\b/u.test(parameter)
-          : new RegExp(
-              String.raw`\b${parameter}(?:\?)?\.params\b|\b${parameter}\[\s*["']params["']\s*\]|\{[^}]*\bparams\b[^}]*\}\s*=\s*${parameter}\b`,
-              "u",
-            ).test(body);
-        if (reads)
-          raw.push(
-            `${relative(scriptsRoot, path)}:${String(source.slice(0, match.index).split("\n").length)}`,
-          );
-      }
+      for (const match of source.matchAll(/\.onEvent\(/gu))
+        raw.push(
+          `${relative(scriptsRoot, path)}:${String(source.slice(0, match.index).split("\n").length)}`,
+        );
     }
-    expect(subscribers).toBeGreaterThan(0);
     expect(raw).toEqual([]);
   });
 });
