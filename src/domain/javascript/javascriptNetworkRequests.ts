@@ -4,7 +4,6 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
-import { semanticOpaqueGlobalMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
 import {
   resolveSemanticBindingState,
   semanticStableInitializer,
@@ -12,7 +11,10 @@ import {
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 import * as t from "@babel/types";
-import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference.js";
+import {
+  isIntrinsicGlobalReference,
+  isUnmodifiedGlobalReference,
+} from "./javascriptSemanticGlobalReference.js";
 
 export const isFetchCall = (
   node: t.Node,
@@ -96,8 +98,12 @@ const isXhrOpenRequest = (
   }
   if (
     !t.isNewExpression(receiver) ||
-    !isUnmodifiedGlobalReference(receiver.callee, bindings, "XMLHttpRequest") ||
-    semanticOpaqueGlobalMayHaveChanged(callee, bindings)
+    !isIntrinsicGlobalReference(
+      receiver.callee,
+      bindings,
+      "XMLHttpRequest",
+      callee,
+    )
   )
     return false;
   return index === undefined && seen.size > 0 ? undefined : true;

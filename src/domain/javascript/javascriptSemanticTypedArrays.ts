@@ -1,8 +1,7 @@
 import * as t from "@babel/types";
 
 import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
-import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference.js";
-import { semanticOpaqueGlobalMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
+import { isIntrinsicGlobalReference } from "./javascriptSemanticGlobalReference.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 
 const typedArrayConstructors = [
@@ -25,10 +24,9 @@ export const isIntrinsicTypedArrayConstruction = (
   node: t.NewExpression,
   state: JavaScriptSemanticAnalysisState,
 ): boolean =>
-  !semanticOpaqueGlobalMayHaveChanged(node, state) &&
   typedArrayConstructors.some(
     (name) =>
-      isUnmodifiedGlobalReference(node.callee, state, name) &&
+      isIntrinsicGlobalReference(node.callee, state, name, node) &&
       !state.ambientEscapes.covers(["global", name]),
   );
 
