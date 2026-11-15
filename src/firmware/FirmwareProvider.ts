@@ -352,10 +352,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
     let signal = withCaller(deadline);
     let outcome: Outcome;
     try {
-      if (signal.aborted)
-        throw new AnalysisCancelledError(request.operation, {
-          cause: signal.reason,
-        });
+      if (signal.aborted) throw cancelledBy(request.operation, signal);
       if (request.operation === "extract_firmware")
         await SafeOutputTree.checkDestination(
           request.input.output_directory,

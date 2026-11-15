@@ -62,6 +62,7 @@ import {
   bufferedJsonParts,
   jsonParts,
 } from "../../domain/jsonSerialization.js";
+import { isRecord } from "../../domain/isRecord.js";
 
 /** Where the environment card is served. */
 export const ENVIRONMENT_CARD_PATH = "/.well-known/agent-env.json";
@@ -80,9 +81,6 @@ class EnvironmentMcpServer extends RequestTrackingMcpServer {
     return super.connect(new TargetContentTransport(transport));
   }
 }
-
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** At most this many messages in one data-plane batch; a larger batch is refused whole. */
 const MAX_RPC_BATCH_MESSAGES = 100;

@@ -54,6 +54,7 @@ input.on('line', (line) => {
         args: [script],
         env: registrationEnvironment,
         mode: "attached",
+        protocol: "legacy",
         timeoutMs: 5000,
       },
       selected,
