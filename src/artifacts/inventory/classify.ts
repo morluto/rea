@@ -1,6 +1,9 @@
 import {
   artifactOperationCause,
   ArtifactReaderFailure,
+  openRootArtifact,
+  releaseRootArtifact,
+  abortIfNeeded,
 } from "../../resources/index.js";
 import {
   nesContainerFormat,
@@ -54,11 +57,6 @@ import {
   classifyStableRootArtifactHandle,
   type HashResult,
 } from "../ArtifactHash.js";
-import {
-  openRootArtifact,
-  releaseRootArtifact,
-  abortIfNeeded,
-} from "../../resources/index.js";
 import type { ArtifactInventoryOptions } from "./types.js";
 import { readMachoHeaderPrefixFacts } from "../../domain/apple/machoContainer.js";
 import { hasDiskImageSignature } from "../../domain/apple/diskImageFormat.js";

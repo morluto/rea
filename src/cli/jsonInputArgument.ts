@@ -1,5 +1,7 @@
 import { z } from "incur";
 
+import { jsonDocumentText } from "../domain/schemaConstraints.js";
+
 const JSON_SCHEMA_DIALECT = "$schema";
 const wrapperTypes = new Set([
   "optional",
@@ -62,12 +64,8 @@ export const jsonInputArgument = (
   description: string,
   schema: z.ZodType,
 ): z.ZodString => {
-  const argument = z.string().describe(description);
-  const contentSchema = jsonInputContentSchema(schema);
-  return contentSchema === undefined
-    ? argument.meta({ contentMediaType: "application/json" })
-    : argument.meta({
-        contentMediaType: "application/json",
-        contentSchema,
-      });
+  return jsonDocumentText(
+    z.string().describe(description),
+    jsonInputContentSchema(schema),
+  );
 };

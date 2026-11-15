@@ -11,6 +11,7 @@ import {
   bindArtifactFileCleanup,
   ArtifactReaderFailure,
   ArtifactResourceScope,
+  withArtifactTargetIdentity,
 } from "../resources/index.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
@@ -30,7 +31,6 @@ import {
 } from "./apple/KeyedArchiveReader.js";
 import { traceDylibResolution } from "./apple/DylibResolutionReader.js";
 import { dirname } from "node:path";
-import { withArtifactTargetIdentity } from "../resources/index.js";
 import { inventoryArtifact } from "./inventory/ArtifactInventory.js";
 import { extractArtifact } from "./extraction/ArtifactExtraction.js";
 import { analyzeInterfaceBuilderBundle } from "./apple/InterfaceBuilderAnalysis.js";

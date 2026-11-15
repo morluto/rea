@@ -1,5 +1,5 @@
 import { unknownTarget } from "../domain/targetIdentity.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
@@ -79,11 +79,11 @@ export class CutterBridgeService {
       );
       if (!receipt.ok)
         return err(
-          analysisErrorWithCleanupFailure(
+          analysisErrorWithCleanupDependencies(
             pending.failure,
             receipt.error,
             "cutter_command",
-          ).bindCleanupDependencies([pending.failure, receipt.error]),
+          ),
         );
       if (!receipt.value) return err(pending.failure);
       pending.release.confirm();
@@ -135,11 +135,11 @@ export class CutterBridgeService {
             );
       throw pending.ok
         ? failure
-        : analysisErrorWithCleanupFailure(
+        : analysisErrorWithCleanupDependencies(
             pending.error,
             failure,
             "close_cutter",
-          ).bindCleanupDependencies([pending.error, failure]);
+          );
     }
     if (!pending.ok) throw pending.error;
   }

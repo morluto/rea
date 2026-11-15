@@ -1,6 +1,6 @@
 import { unknownTarget } from "../../domain/targetIdentity.js";
 import { projectAnalysisErrorWithoutCapturedOutput } from "../../domain/analysisErrorProjection.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 import { isNativeObservationOperation } from "../../domain/native/nativeObservation.js";
 import { dispatchQueuedInterrupts } from "../../process/queuedInterrupts.js";
@@ -193,11 +193,11 @@ const cancelledFileViewResult = <T>(
     });
   return err(
     !result.ok && result.error.cleanupIncomplete
-      ? analysisErrorWithCleanupFailure(
+      ? analysisErrorWithCleanupDependencies(
           cancellation,
           result.error,
           INSPECT_ANALYSIS_VIEW_OPERATION,
-        ).bindCleanupDependencies([result.error])
+        )
       : cancellation,
   );
 };

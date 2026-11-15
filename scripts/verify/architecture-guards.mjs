@@ -691,7 +691,7 @@ checkCounted(
 // AnalysisError has no push API. Composing dependency sets with
 // bindCleanupDependencies() is being replaced, so it may not spread.
 checkCounted(
-  "bindCleanupDependencies() composition outside the error base (compose through analysisErrorWithCleanupDependencies or runOwned, or copy lease claims)",
+  "bindCleanupDependencies() composition outside the error base (compose through analysisErrorWithCleanupDependencies, analysisErrorWithCloseRejection(s) for close rejections whose completion may be unknown, or runOwned, or copy lease claims)",
   "cleanup-dependency-binding",
   files,
   /\.bindCleanupDependencies\(/gu,
