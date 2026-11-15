@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
 import { apkSignatureAdmission } from "./ApkSignatureAdmission.js";
 
-import { createAnalysisExecution } from "../application/AnalysisProvider.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../ports/AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type {
   ApkSignatureExecution,
   ApkSignaturePort,
-} from "../application/apkSignature/ApkSignaturePort.js";
+} from "../ports/apkSignature/ApkSignaturePort.js";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {

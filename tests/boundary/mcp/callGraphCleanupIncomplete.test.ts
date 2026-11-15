@@ -8,7 +8,7 @@ import { z } from "zod";
 import {
   createAnalysisExecution,
   type AnalysisOperationPort,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";

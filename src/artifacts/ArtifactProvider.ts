@@ -19,7 +19,7 @@ import {
   type CapabilityDescriptor,
   type ProviderIdentity,
   type ExecutionOptions,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import {
   inspectBundleKeyedArchive,
   inspectStandaloneKeyedArchive,

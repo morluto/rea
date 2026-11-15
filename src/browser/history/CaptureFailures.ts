@@ -1,7 +1,7 @@
 import { javaScriptWorkerMemoryLimitBytes } from "../../process/JavaScriptWorkerMemoryLimit.js";
 import { captureBudgets } from "./CaptureBudgets.js";
 import { analysisSettingLimit } from "../../domain/analysisSettingDefinitions.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import {
   AnalysisCleanupLeaseGroup,
   type AnalysisCleanupLease,

@@ -39,7 +39,7 @@ import type {
   ProviderAvailability,
   ProviderIdentity,
   ProviderTargetSupport,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import type { AppConfig } from "../config/types.js";
 import {
   createAnalysisProfile,

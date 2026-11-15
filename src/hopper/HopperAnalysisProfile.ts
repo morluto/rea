@@ -19,7 +19,7 @@ import type {
   AnalysisProfileResolution,
   RetainedResourceScope,
   ProviderIdentity,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { createFunctionCoordinateContext } from "../domain/native/functionCoordinateContext.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import {

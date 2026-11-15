@@ -12,7 +12,7 @@ import {
   type ProviderAvailability,
   type ProviderIdentity,
   type ProviderTargetSupport,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import { createAnalysisProfile } from "../../domain/analysisProfile.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";

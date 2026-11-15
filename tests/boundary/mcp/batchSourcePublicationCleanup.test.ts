@@ -3,7 +3,7 @@ import type { CallToolResult } from "@modelcontextprotocol/server";
 import { access, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import { InvestigationRecords } from "../../../src/application/investigation/InvestigationRecords.js";
 import { createEvidence } from "../../../src/domain/evidence.js";

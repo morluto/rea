@@ -44,7 +44,7 @@ import {
   type LeaseFailure,
   type OwnedLease,
 } from "../../process/OwnedLease.js";
-import type { RetainedResourceScope } from "../AnalysisProvider.js";
+import type { RetainedResourceScope } from "../../ports/AnalysisProvider.js";
 import { ExportResources } from "./exportResources.js";
 import { decompileInputError } from "./inputError.js";
 import { compareProcedureAddresses } from "./selection.js";

@@ -343,7 +343,7 @@ const PATH_SCOPES = {
     "src/server/registerSqliteTools.ts",
     "src/application/DirectAnalysisStatus*.ts",
     "src/application/CapabilityInventory*.ts",
-    "src/application/AnalysisProvider*.ts",
+    "src/ports/AnalysisProvider*.ts",
     "src/contracts/toolContracts.ts",
     "src/contracts/toolContractTypes.ts",
     "src/contracts/toolEffects*.ts",

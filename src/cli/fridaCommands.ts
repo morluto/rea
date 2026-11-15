@@ -7,7 +7,7 @@ import { FridaInstrumentationService } from "../application/frida/FridaInstrumen
 import type {
   FridaInstrumentationPort,
   FridaRemoteConnection,
-} from "../application/frida/FridaInstrumentationPort.js";
+} from "../ports/frida/FridaInstrumentationPort.js";
 import { createFridaInstrumentationProvider } from "../composition/frida.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";

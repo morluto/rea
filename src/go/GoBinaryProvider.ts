@@ -19,8 +19,8 @@ import {
 } from "../artifacts/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
-import type { GoBinaryPort } from "../application/go/GoBinaryPort.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
+import type { GoBinaryPort } from "../ports/go/GoBinaryPort.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisOutputError,

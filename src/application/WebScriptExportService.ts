@@ -32,7 +32,7 @@ import {
   type ExportWebScriptsInput,
 } from "../domain/webScriptExport.js";
 import { WebScriptExportError } from "../domain/webScriptExportError.js";
-import type { ExecutionOptions } from "./AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import { WEB_SCRIPT_EXPORT_PROVIDER as PROVIDER } from "../domain/investigationProviders.js";
 import {
   readRegularFile,

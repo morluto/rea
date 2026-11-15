@@ -1,7 +1,7 @@
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
 import { JebAnalysisService } from "../application/jeb/JebAnalysisService.js";
-import type { JebAnalysisPort } from "../application/jeb/JebAnalysisPort.js";
+import type { JebAnalysisPort } from "../ports/jeb/JebAnalysisPort.js";
 import { createJebAnalysisProvider } from "../composition/jeb.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";

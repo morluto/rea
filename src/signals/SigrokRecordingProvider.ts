@@ -34,7 +34,7 @@ import {
   createAnalysisExecution,
   type AnalysisExecution,
   type ExecutionOptions,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import type { SignalRecordingPort } from "../application/signals/SignalRecordingService.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {

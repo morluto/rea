@@ -16,7 +16,7 @@ import {
   type ProviderAvailability,
   type ProviderIdentity,
   type ProviderTargetSupport,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import { createAnalysisProfile } from "../../domain/analysisProfile.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import type { ProviderOperationHealth } from "../../domain/providerOperationHealth.js";

@@ -16,8 +16,8 @@ import {
   readStableArtifact,
 } from "../artifacts/readStableArtifact.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import type { PythonPycPort } from "../application/python/PythonPycPort.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { PythonPycPort } from "../ports/python/PythonPycPort.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import {

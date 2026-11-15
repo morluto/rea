@@ -10,8 +10,8 @@ import type {
   WasmArtifactExecutionOptions,
   WasmArtifactExecution,
   WasmArtifactPort,
-} from "../application/wasm/WasmArtifactPort.js";
-import { createAnalysisExecution } from "../application/AnalysisProvider.js";
+} from "../ports/wasm/WasmArtifactPort.js";
+import { createAnalysisExecution } from "../ports/AnalysisProvider.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import {
   completedStableArtifact,

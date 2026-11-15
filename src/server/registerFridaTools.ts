@@ -8,7 +8,7 @@ import { FridaInstrumentationService } from "../application/frida/FridaInstrumen
 import type {
   FridaInstrumentationPort,
   FridaRemoteConnection,
-} from "../application/frida/FridaInstrumentationPort.js";
+} from "../ports/frida/FridaInstrumentationPort.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";

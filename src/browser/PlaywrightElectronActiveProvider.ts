@@ -19,11 +19,11 @@ import type { _electron as electron } from "playwright-core";
 import type {
   ExecutionOptions,
   ProviderIdentity,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import type {
   CanonicalElectronActiveObservationInput,
   ElectronActiveObservationPort,
-} from "../application/javascript/ElectronActiveObservationPort.js";
+} from "../ports/javascript/ElectronActiveObservationPort.js";
 import type { ElectronActiveObservationResult } from "../domain/javascript/electronActiveObservation.js";
 import {
   AnalysisError,

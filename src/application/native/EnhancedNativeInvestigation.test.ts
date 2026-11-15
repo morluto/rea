@@ -8,7 +8,7 @@ import {
   createAnalysisExecution,
   type AnalysisExecution,
   type AnalysisOperation,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,

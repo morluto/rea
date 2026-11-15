@@ -29,7 +29,7 @@ import {
   evmInterfaceExecution,
   evmInterfaceFixture,
 } from "../fixtures/evm/interface.js";
-import type { EvmInterfaceExecution } from "../../src/application/evm/EvmInterfacePort.js";
+import type { EvmInterfaceExecution } from "../../src/ports/evm/EvmInterfacePort.js";
 
 it("retains valid web-network observations and validates malformed ones before cancellation", async () => {
   const report = {

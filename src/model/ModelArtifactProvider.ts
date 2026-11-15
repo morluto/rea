@@ -1,12 +1,12 @@
 import { readerIntegrityFailure } from "../artifacts/StableArtifactFailure.js";
 import { MODEL_ARTIFACT_PROVIDER_IDENTITY } from "./ModelArtifactProviderIdentity.js";
 import { lstat, type FileHandle } from "node:fs/promises";
-import type { ModelArtifactPort } from "../application/model/ModelArtifactPort.js";
+import type { ModelArtifactPort } from "../ports/model/ModelArtifactPort.js";
 import {
   createModelArtifactEvidence,
   createModelArtifactPartialEvidence,
 } from "../domain/model/modelArtifactEvidence.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type {
   ModelArtifact,
   ModelArtifactPartial,

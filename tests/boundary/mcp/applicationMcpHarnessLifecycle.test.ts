@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { expect, it, vi } from "vitest";
 
-import type { AnalysisClient } from "../../../src/application/AnalysisProvider.js";
+import type { AnalysisClient } from "../../../src/ports/AnalysisProvider.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { err, ok } from "../../../src/domain/result.js";
 import {

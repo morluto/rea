@@ -9,7 +9,7 @@ import {
 import type {
   AnalysisClient,
   AnalysisProvider,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { HopperStartError } from "../../../src/domain/hopperErrors.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";

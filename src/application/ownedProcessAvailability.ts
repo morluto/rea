@@ -8,7 +8,7 @@ import {
   LINUX_PROCESS_OWNERSHIP_REMEDIATION,
   LinuxOwnedProcessPrerequisiteError,
 } from "../process/ProcessOwnershipObservation.js";
-import type { ProviderAvailability } from "./AnalysisProvider.js";
+import type { ProviderAvailability } from "../ports/AnalysisProvider.js";
 
 // Provider adapters re-attribute capability errors and keep the original as cause.
 const prerequisiteRefusal = (

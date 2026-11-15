@@ -16,8 +16,8 @@ import {
   type ArtifactFilePrimaryFacts,
 } from "../../artifacts/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import type { PeCertificatesPort } from "../../application/binaryDiagnostics/PeCertificatesPort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+import type { PeCertificatesPort } from "../../ports/binaryDiagnostics/PeCertificatesPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import {
   AnalysisInputError,

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import {
   artifactFileCompletion,
   mapArtifactFileFailure,

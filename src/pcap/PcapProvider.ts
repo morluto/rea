@@ -10,7 +10,7 @@ import {
   type ProviderAvailability,
   createAnalysisExecution,
   type AnalysisExecution,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import {
   pcapResultSchemas,
   PCAP_CAPTURE_HOST_REMEDIATION,

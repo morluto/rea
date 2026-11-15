@@ -2,7 +2,7 @@ import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.j
 import type {
   AnalysisProfileResolution,
   ProviderIdentity,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { createFunctionCoordinateContext } from "../domain/native/functionCoordinateContext.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
