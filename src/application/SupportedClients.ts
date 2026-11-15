@@ -117,6 +117,16 @@ interface ClientPathContext {
   readonly home: string;
   readonly platform: NodeJS.Platform;
   readonly env: Readonly<NodeJS.ProcessEnv>;
+  readonly systemPaths?: ClientSystemPaths;
+}
+
+/**
+ * Fixed system-wide files a client reads that no environment variable moves.
+ * Omitted entries use the client's native location; a caller supplies one only
+ * to isolate the host's real file.
+ */
+export interface ClientSystemPaths {
+  readonly gooseSystemConfig?: string;
 }
 
 /** One resolved configuration location and its detection evidence. */
@@ -937,13 +947,14 @@ const gooseLocation = (
  * loads it twice, and its last load decides precedence.
  */
 const gooseConfigPaths = (context: ClientPathContext) => [
-  context.platform === "win32"
-    ? win32.join(
-        context.env.PROGRAMDATA || "C:\\ProgramData",
-        "goose",
-        "config.yaml",
-      )
-    : "/etc/goose/config.yaml",
+  context.systemPaths?.gooseSystemConfig ??
+    (context.platform === "win32"
+      ? win32.join(
+          context.env.PROGRAMDATA || "C:\\ProgramData",
+          "goose",
+          "config.yaml",
+        )
+      : "/etc/goose/config.yaml"),
   ...gooseAdditionalConfigFiles(context),
   gooseUserConfigPath(context),
 ];
@@ -1801,8 +1812,9 @@ export const supportedClients = (
   home: string,
   platform: NodeJS.Platform = process.platform,
   env: ClientPathContext["env"] = process.env,
+  systemPaths: ClientSystemPaths = {},
 ): readonly SetupClient[] => {
-  const context = { home, platform, env };
+  const context = { home, platform, env, systemPaths };
   const definitions: readonly ClientDefinition[] = SUPPORTED_CLIENT_DEFINITIONS;
   return definitions.map((definition) => {
     try {
