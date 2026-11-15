@@ -258,11 +258,16 @@ export interface JavaScriptBindingIndex {
     referenceNode: t.Node,
     propertyPath?: JavaScriptSemanticPropertyPath,
   ): JavaScriptSemanticReferenceEffectsAtSite;
-  /** Stop at the first relevant prior/uncertain effect without retaining a report. */
-  referenceMayHaveChangedAt(
-    site: t.Node,
-    referenceNode: t.Node,
-    propertyPath?: JavaScriptSemanticPropertyPath,
+  /**
+   * The effect log's read query: whether reading `target` (at `path`, or the
+   * member path `target` spells) at `read` may observe a recorded effect. It
+   * stops at the first such effect, and answers true until member-mutation
+   * facts are complete.
+   */
+  mayObserve(
+    read: t.Node,
+    target: t.Node,
+    path?: JavaScriptSemanticPropertyPath,
   ): boolean;
   referencesSteps(): Generator<void, readonly JavaScriptSemanticReference[]>;
 }

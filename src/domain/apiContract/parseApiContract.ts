@@ -1,3 +1,4 @@
+import { Budget } from "../budget.js";
 import { escapeJsonPointerToken } from "../jsonPointer.js";
 import {
   AnalysisCancelledError,
@@ -60,14 +61,13 @@ class ContractInventory {
   readonly operations: ApiContract["operations"] = [];
   readonly references: ApiContract["path_item_references"] = [];
   readonly diagnostics: ApiContractDiagnostic[] = [];
-  #retainedBytes = 0;
+  readonly #retainedBytes = new Budget(API_CONTRACT_FACT_BYTES);
 
   constructor(readonly artifact: ApiContractArtifact) {}
 
   reserve(bytes: number): Result<void, AnalysisError> {
     // Includes object/index overhead and repeated escaped Evidence delivery, not just source bytes.
-    this.#retainedBytes += bytes;
-    return this.#retainedBytes <= API_CONTRACT_FACT_BYTES
+    return this.#retainedBytes.tryCharge(bytes)
       ? ok(undefined)
       : err(
           new AnalysisResourceConstraintError(

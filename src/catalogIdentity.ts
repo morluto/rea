@@ -25,7 +25,11 @@ import {
   type McpOutputSchemaProfile,
 } from "./config/mcpOutputSchemaProfile.js";
 import { COMPACT_INPUT_SCHEMA_PRESENTATION } from "./config/mcpInputSchemaProfile.js";
-import { RECORDED_CATALOG_DIGEST_PROFILES } from "./recordedCatalogDigests.js";
+import {
+  RECORDED_CATALOG_DIGEST_PROFILES,
+  type CatalogDigestProfiles,
+  type CatalogDigests,
+} from "./recordedCatalogDigests.js";
 
 /**
  * Digested per-tool projection. Every contract field that changes what a
@@ -141,11 +145,6 @@ export const createCatalogDigests = (
     compactPresentation,
     outputSchemaProfile,
   );
-
-export type CatalogDigests = ReturnType<typeof digestCatalogs>;
-export type CatalogDigestProfiles = Readonly<
-  Record<McpOutputSchemaProfile, CatalogDigests>
->;
 
 /** Build-time identities share schema conversion across both output profiles. */
 export const createCatalogDigestProfiles = (
