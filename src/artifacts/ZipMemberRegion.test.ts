@@ -9,7 +9,7 @@ import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory
 import type { ArtifactReaderTraversal } from "../resources/ArtifactReader.js";
 import { scanReader } from "./inventory/scanReader.js";
 import { ZipArtifactReader } from "./ZipArtifactReader.js";
-import { accountZipMemberRegion } from "./ZipMemberRegion.js";
+import { accountZipMemberRegion } from "../domain/zip/zipMemberRegion.js";
 
 interface Member {
   readonly name: string;

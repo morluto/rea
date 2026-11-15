@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   bindArtifactFileCleanup,
   AnalysisCleanupLease,
@@ -92,7 +93,7 @@ export class HopperProvider implements AnalysisProviderCandidate {
     private readonly config: AppConfig,
     private readonly logger: Logger,
     environment: Readonly<NodeJS.ProcessEnv>,
-    private readonly platform: NodeJS.Platform = process.platform,
+    private readonly platform: NodeJS.Platform = HOST_PLATFORM.platform,
     /**
      * Linux launcher authentication from Hopper setup, supplied by
      * composition. Without it a Linux launch is refused before Hopper runs.
@@ -350,13 +351,16 @@ export class HopperProvider implements AnalysisProviderCandidate {
               }
             : { launchMode: "native" as const }),
         },
-        this.linuxLauncherVerification === undefined
-          ? {}
-          : {
-              verifyLinuxLauncher: this.linuxLauncherVerification.inspect,
-              retryPublisherCleanup:
-                this.linuxLauncherVerification.retryCleanup,
-            },
+        {
+          platform: this.platform,
+          ...(this.linuxLauncherVerification === undefined
+            ? {}
+            : {
+                verifyLinuxLauncher: this.linuxLauncherVerification.inspect,
+                retryPublisherCleanup:
+                  this.linuxLauncherVerification.retryCleanup,
+              }),
+        },
       ),
       ...(context === undefined ? {} : { runId: context.runId }),
       readStartupTimeoutMs: () => this.config.hopperStartupTimeoutMs,

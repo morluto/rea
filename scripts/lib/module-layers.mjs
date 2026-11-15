@@ -110,7 +110,6 @@ export const UNIT_LAYERS = Object.freeze(
       "main.ts",
       "mcpDoctor.ts",
       "mcpDoctorOptions.ts",
-      "mcpStartupPolicy.ts",
       "recordedCatalogDigests.ts",
       "recordedCliCommandRegistrations.ts",
       "recordedMcpCatalog.ts",
@@ -325,6 +324,7 @@ export const ENTRY_FILES = Object.freeze(
       javascript: [
         "analysis/JavaScriptAnalysisTransfer.ts",
         "analysis/JavaScriptAnalysisWorkerServer.ts",
+        "analysis/JavaScriptSourceAnalysis.ts",
         "recovery/WakaruCommand.ts",
         "recovery/WakaruProvider.ts",
         "recovery/WakaruProviderIdentity.ts",
@@ -420,6 +420,21 @@ export const PROVIDER_DEPENDENCIES = Object.freeze([
     // browser's CDP client (endpoint discovery, connection, target sessions
     // and captured value projection) instead of keeping a second client.
     reason: "the V8 inspector reuses the browser provider's CDP client",
+  }),
+  Object.freeze({
+    from: "browser",
+    to: "electron",
+    files: Object.freeze([
+      "ElectronFuseFailures.ts",
+      "ElectronFusePath.ts",
+      "ElectronFuseReader.ts",
+    ]),
+    // Active Electron capture launches the target with inspect arguments,
+    // which the EnableNodeCliInspectArguments fuse can silently disable.
+    // The preflight reads that fuse with the electron provider's fuse reader
+    // and reports its failures, instead of parsing the fuse wire twice.
+    reason:
+      "active Electron capture checks the inspect-arguments fuse with the electron provider's fuse reader",
   }),
 ]);
 

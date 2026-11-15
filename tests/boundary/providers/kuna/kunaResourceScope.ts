@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../../src/platform/HostPlatform.js";
 import { createInspectionResources } from "../../../fixtures/inspectionResources.js";
 import type { RetainedResourceScope } from "../../../../src/ports/AnalysisProvider.js";
 import type { KunaInstallationOptions } from "../../../../src/kuna/KunaInstallation.js";
@@ -17,15 +18,21 @@ export const withKunaResourceScope = async <T>(
 
 export const inspectKunaInstallationOwned = (
   environment: Readonly<NodeJS.ProcessEnv>,
-  options: Omit<KunaInstallationOptions, "resourceScope"> = {},
+  options: Omit<KunaInstallationOptions, "resourceScope" | "platform"> & {
+    readonly platform?: NodeJS.Platform;
+  } = {},
 ) =>
   withKunaResourceScope((resourceScope) =>
-    inspectKunaInstallation(environment, { ...options, resourceScope }),
+    inspectKunaInstallation(environment, {
+      platform: HOST_PLATFORM.platform,
+      ...options,
+      resourceScope,
+    }),
   );
 
 export const inspectKunaProviderOwned = (
   environment: Readonly<NodeJS.ProcessEnv>,
-  platform?: NodeJS.Platform,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
 ) =>
   withKunaResourceScope((resourceScope) =>
     inspectKunaProvider(environment, platform, { resourceScope }),

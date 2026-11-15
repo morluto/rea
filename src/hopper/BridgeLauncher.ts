@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { execFile } from "node:child_process";
 import { chmod, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join } from "node:path";
@@ -202,7 +203,12 @@ export class HopperApplicationLauncher implements BridgeLauncher {
   constructor(
     readonly options: HopperApplicationLauncherOptions,
     readonly dependencies: HopperApplicationLauncherDependencies = {},
-  ) {}
+  ) {
+    this.#platform = dependencies.platform ?? HOST_PLATFORM.platform;
+  }
+
+  /** The host Hopper runs on; defaults to the running host. */
+  readonly #platform: NodeJS.Platform;
 
   async cleanup(): Promise<Result<null, ProviderCleanupError>> {
     const failures: ProviderCleanupError[] = [];
@@ -411,7 +417,7 @@ export class HopperApplicationLauncher implements BridgeLauncher {
     let launched = false;
     try {
       if (signal?.aborted === true) return err(hopperCancelledBySignal(signal));
-      if ((this.dependencies.platform ?? process.platform) === "darwin") {
+      if (this.#platform === "darwin") {
         // The vendor helper embeds argv in AppleScript quoted literals. Check
         // the actual prepared paths before even starting the application. Do
         // not rewrite caller names or double-escape values passed to the helper.
@@ -460,7 +466,7 @@ export class HopperApplicationLauncher implements BridgeLauncher {
       const display = await this.#privateDisplay(signal);
       if (!display.ok) return display;
       const nativeHelperVerified =
-        (this.dependencies.platform ?? process.platform) === "darwin" &&
+        this.#platform === "darwin" &&
         this.options.launchMode === "native" &&
         (await (
           this.dependencies.verifyNativeHelper ?? verifyMacHopperNativeHelper
@@ -523,7 +529,7 @@ export class HopperApplicationLauncher implements BridgeLauncher {
               ? { nativeHelperVerified: true as const }
               : {}),
             // Argument admission above established literal handoff semantics.
-            ...((this.dependencies.platform ?? process.platform) === "darwin"
+            ...(this.#platform === "darwin"
               ? { authorizationDenialBeforeHandoff: true as const }
               : {}),
           });
@@ -541,7 +547,7 @@ export class HopperApplicationLauncher implements BridgeLauncher {
   async #acquireLaunchLease(
     runId: string,
   ): Promise<Result<OwnedLease | undefined, HopperStartError>> {
-    const platform = this.dependencies.platform ?? process.platform;
+    const platform = this.#platform;
     const applicationLease =
       platform === "linux" && usesLinuxDemo(this.options);
     if (!applicationLease && platform !== "darwin") return ok(undefined);

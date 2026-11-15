@@ -4,7 +4,7 @@ import {
   LC,
   machoLoadCommandName,
 } from "../domain/apple/machoLoadCommandCodes.js";
-import type { MachoCommandNames } from "./MachoCommandNames.js";
+import type { MachoCommandNames } from "../domain/apple/machoCommandNames.js";
 
 const PLATFORM_NAMES = new Map<number, string>([
   [1, "MACOS"],

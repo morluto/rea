@@ -72,6 +72,7 @@ import { OwnedDebuggerSessionRegistry } from "../process/OwnedDebuggerSessionReg
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
 import { utf8HeadExcerpt } from "../domain/utf8HeadExcerpt.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 
 const CLEANUP_COMMAND_TIMEOUT_MS = 1_000;
 const STARTUP_TIMEOUT_MS = 30_000;
@@ -312,7 +313,7 @@ export class RizinDebugSessionManager {
     this.#maxSessions = limits.maxSessions;
     this.#maxPendingCommands = limits.maxPendingCommands;
     this.#launchCommandOutput = limits.maxCommandOutputBytes;
-    this.#platform = options.platform ?? process.platform;
+    this.#platform = options.platform ?? HOST_PLATFORM.platform;
     const stopProcess = options.stopProcess ?? stopOwnedDebuggerProcess;
     const platform = this.#platform;
     this.#sessions = new OwnedDebuggerSessionRegistry({

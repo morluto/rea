@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { javascriptSourceAnalysis } from "../../../src/composition/javascriptSourceAnalysis.js";
 
 import { createPackage } from "@electron/asar";
 import { expect, it, onTestFinished, vi } from "vitest";
@@ -44,9 +45,11 @@ it("retains a failed nested reader through blocked work and scope cleanup", asyn
   const input = analyzeJavaScriptApplicationInputSchema.parse({
     input_path: bundle,
   });
-  const firstFailure = await reconstructJavaScriptArtifact(input, scope).catch(
-    (cause: unknown) => cause,
-  );
+  const firstFailure = await reconstructJavaScriptArtifact(
+    input,
+    scope,
+    javascriptSourceAnalysis,
+  ).catch((cause: unknown) => cause);
   expect(firstFailure).toBeInstanceOf(ArtifactReaderFailure);
   expect(firstFailure).toMatchObject({
     cleanup: {
@@ -59,9 +62,11 @@ it("retains a failed nested reader through blocked work and scope cleanup", asyn
   expect(retainedReader).toBeDefined();
   expect(retainedReader).not.toBe(closedReaders[0]);
 
-  const blockedWork = await reconstructJavaScriptArtifact(input, scope).catch(
-    (cause: unknown) => cause,
-  );
+  const blockedWork = await reconstructJavaScriptArtifact(
+    input,
+    scope,
+    javascriptSourceAnalysis,
+  ).catch((cause: unknown) => cause);
   expect(blockedWork).toMatchObject({
     reason: "unavailable",
     cleanup: {

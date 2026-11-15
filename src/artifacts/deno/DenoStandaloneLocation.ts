@@ -38,7 +38,7 @@ import {
   readMachoContainer,
   readSliceCommandTable,
   type ReadAt,
-} from "../apple/MachoLoadCommandReader.js";
+} from "../../domain/apple/machoLoadCommandReader.js";
 import { abortIfNeeded } from "../ArtifactHash.js";
 import { ArtifactReaderFailure } from "../../resources/index.js";
 import { locatePeResourcePayloads } from "../pe/PeResourceLayout.js";

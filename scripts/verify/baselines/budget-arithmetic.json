@@ -1,13 +1,6 @@
 {
-  "src/application/environment/environmentStateStore.ts": 1,
   "src/artifacts/AsarHeader.ts": 1,
-  "src/domain/javascript/javascriptRouteScan.ts": 1,
-  "src/domain/python/marshalReader.ts": 1,
   "src/kuna/KunaJsonStream.ts": 1,
-  "src/kuna/KunaRunSlots.ts": 1,
   "src/process/BoundedOutputExcerpt.ts": 1,
-  "src/process/OwnedMcpStdioTransport.ts": 1,
-  "src/process/ProviderProcess.ts": 1,
-  "src/process/capture/ProcessSensitiveOutput.ts": 1,
-  "src/server/http/NodeHttpRequestOwner.ts": 1
+  "src/process/ProviderProcess.ts": 1
 }

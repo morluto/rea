@@ -94,7 +94,7 @@
   "src/rizin/RizinDebugSessionManager.ts": 1,
   "src/server/registerCloseLifecycleTool.ts": 1,
   "src/server/registerResetInvestigationTool.ts": 1,
-  "src/server/registerSessionStatusTool.ts": 1,
+  "src/server/sessionStatusTool.ts": 1,
   "src/sqlite/SqliteDatabaseProvider.ts": 8,
   "src/sqlite/SqliteDatabaseWorkerExecution.ts": 2,
   "src/wasm/WabtArtifactProvider.ts": 1

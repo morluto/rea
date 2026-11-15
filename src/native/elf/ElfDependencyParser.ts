@@ -37,7 +37,7 @@ import {
   mappedFileOffset,
 } from "../../domain/binaryContainer.js";
 import type { FileMapping } from "../../domain/virtualFileMapping.js";
-import { architectureForElfMachine } from "../metadata/ElfImage.js";
+import { architectureForElfMachine } from "../../domain/native/elfImage.js";
 import { Budget } from "../../domain/budget.js";
 
 const PT_LOAD = 1;

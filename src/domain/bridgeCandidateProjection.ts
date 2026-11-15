@@ -1,8 +1,9 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "./coverage.js";
 
 /** Coverage metadata for the bounded projection of candidate relationships. */
 export const bridgeCandidateCoverageSchema = z.strictObject({
-  status: z.enum(["complete", "partial"]),
+  status: knownCoverageStatusSchema,
   total_candidates: z.int().nonnegative(),
   emitted_candidates: z.int().nonnegative(),
   omitted_candidates: z.int().nonnegative(),

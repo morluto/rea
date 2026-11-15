@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { lstat, realpath } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
@@ -27,6 +28,8 @@ export class LocalWebScriptArtifacts implements WebScriptArtifactPort {
   constructor(
     readonly operation: WebArtifactReadContext["operation"],
     readonly resources = new ArtifactResourceScope(),
+    // The host whose filesystem holds the selected manifest.
+    readonly platform: NodeJS.Platform = HOST_PLATFORM.platform,
   ) {}
 
   close(): Promise<void> {
@@ -121,7 +124,7 @@ export class LocalWebScriptArtifacts implements WebScriptArtifactPort {
           "path",
           `Selected source path changes during normalization: ${selected.content.relative_path}`,
         );
-      if (process.platform === "win32" && portable.includes("\\"))
+      if (this.platform === "win32" && portable.includes("\\"))
         throw new ArtifactReaderFailure(
           "path",
           `Windows source path cannot contain backslashes as literal name characters: ${JSON.stringify(portable)}`,

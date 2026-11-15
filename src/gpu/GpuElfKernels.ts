@@ -22,8 +22,8 @@ import {
   readElfSectionDirectory,
   type NativeSection,
   type NativeSectionDirectory,
-} from "../native/metadata/NativeSectionDirectory.js";
-import { readElfStringBytes } from "../native/metadata/ElfStringTable.js";
+} from "../domain/native/nativeSectionDirectory.js";
+import { readElfStringBytes } from "../domain/native/elfStringBytes.js";
 import { readElfSymbol } from "../domain/elfSymbol.js";
 import {
   gpuCount,
