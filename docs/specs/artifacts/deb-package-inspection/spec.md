@@ -7,8 +7,9 @@ statement. For current behavior and limitations, see the
 ## Outcome
 
 A local `.deb` is an ar archive of `debian-binary`, `control.tar*`, and
-`data.tar*`. Without a dedicated reader, an analyst has to install the package
-or run `dpkg-deb`, which executes maintainer scripts and changes the host.
+`data.tar*`. Without a dedicated reader, an analyst installs the package with
+`dpkg`, which runs its maintainer scripts and changes the host, or shells out to
+`dpkg-deb`, which reads the archive but needs Debian tooling on the host.
 `rea inspect-deb-package <path>` reads one explicitly selected archive as
 static bytes and reports identity, relationships, script presence, and a
 bounded file inventory. The same facts are available through the
