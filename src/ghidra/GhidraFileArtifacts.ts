@@ -1,7 +1,7 @@
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { open } from "node:fs/promises";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   assertArtifactReadActive,
   artifactFileCancellationCause,
@@ -10,7 +10,7 @@ import {
   bindArtifactFileCleanup,
   withArtifactFileHandle,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import {
   readStableFileBytes,
   RegularFileCapacityError,

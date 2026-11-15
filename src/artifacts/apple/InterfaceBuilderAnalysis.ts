@@ -22,7 +22,7 @@ import {
 } from "../../domain/apple/interfaceBuilderKeyedArchive.js";
 import { streamChunkToBuffer } from "../StreamBytes.js";
 import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
-import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { ArtifactTraversalObservation } from "../ArtifactTraversalObservation.js";
 import {
   projectPlistValue,
@@ -50,7 +50,7 @@ import {
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactReaderTraversal,
-} from "../ArtifactReader.js";
+} from "../../resources/ArtifactReader.js";
 import {
   buildInterfaceBuilderAnalysis,
   interfaceBuilderLimitsSchema,

@@ -4,7 +4,10 @@ import {
   zstandardZipFixture,
   zstandardWindowFrameFixture,
 } from "../../tests/fixtures/zipZstandard.js";
-import { ArtifactReaderFailure, type ArtifactEntry } from "./ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  type ArtifactEntry,
+} from "../resources/ArtifactReader.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { once } from "node:events";

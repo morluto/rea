@@ -17,14 +17,14 @@ import { ConfigurationError } from "../domain/configurationErrors.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import {
   withArtifactFileHandle,
   withArtifactRegularFile,
   assertArtifactReadActive,
   artifactFilePrimaryFacts,
   mapArtifactFileFailure,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import {
   sameRegularFileState,
   RegularFileChangedError,

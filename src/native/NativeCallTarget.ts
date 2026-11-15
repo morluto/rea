@@ -20,15 +20,15 @@ import {
   RegularFileCleanupFailure,
   regularFileCancellation,
 } from "../filesystem/OwnedRegularFile.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import {
   ArtifactResourceRetryFailure,
   type ArtifactResourceScope,
-} from "../artifacts/ArtifactResourceScope.js";
+} from "../resources/ArtifactResourceScope.js";
 import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 
 const OPERATION = "observe_native_calls";
 

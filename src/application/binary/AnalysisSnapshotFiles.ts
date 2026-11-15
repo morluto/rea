@@ -23,7 +23,7 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import { readJsonObjectMembersFile, writeTextFile } from "../JsonFiles.js";
 import type { JsonObjectMemberReader } from "../JsonInputFile.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 
 type SnapshotFailure = EvidenceFileError | EvidenceIntegrityError;
 const READ_OPERATION = "open_binary";

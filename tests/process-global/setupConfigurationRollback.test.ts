@@ -146,7 +146,7 @@ import {
 } from "../../src/application/SetupClientConfiguration.js";
 import { RegularFileReadFailure } from "../../src/application/RegularFileRead.js";
 import { retryClientConfigurationCleanup } from "../../src/application/ClientConfigurationCleanup.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { RegularFileCleanupFailure } from "../../src/filesystem/OwnedRegularFile.js";
 import { OwnedFileHandle } from "../../src/filesystem/OwnedFileHandle.js";
 import type { DoctorHost } from "../../src/application/Doctor.js";
@@ -984,7 +984,7 @@ it("cleanup retry never adopts an opaque cancellation reason as another owner", 
   const { RegularFileOperationCancelled } =
     await import("../../src/filesystem/RegularFile.js");
   const { ArtifactResourceScope } =
-    await import("../../src/artifacts/ArtifactResourceScope.js");
+    await import("../../src/resources/ArtifactResourceScope.js");
   const { retryRegularFileCleanupFailures } =
     await import("../../src/application/RegularFileRead.js");
   const resources = new ArtifactResourceScope();

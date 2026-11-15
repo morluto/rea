@@ -29,7 +29,7 @@ import {
   type ByteEntropy,
 } from "../../domain/native/byteEntropy.js";
 import { err, type Result } from "../../domain/result.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import {
   withArtifactFileHandle,
   bindArtifactFileCleanup,
@@ -38,9 +38,9 @@ import {
   assertArtifactReadActive,
   artifactFileCancellationCause,
   artifactSelectedPathErrno,
-} from "../../artifacts/ArtifactFileOperation.js";
+} from "../../resources/ArtifactFileOperation.js";
 import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { sameRegularFileState } from "../../filesystem/RegularFile.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";

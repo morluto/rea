@@ -1,5 +1,5 @@
 import type { ArtifactOccurrence } from "../domain/artifactGraph.js";
-import type { ArtifactReader } from "./ArtifactReader.js";
+import type { ArtifactReader } from "../resources/ArtifactReader.js";
 import {
   ARTIFACT_FORMATS,
   type ArtifactReaderConstruction,

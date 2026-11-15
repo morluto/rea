@@ -1,4 +1,4 @@
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { primaryAnalysisError } from "../domain/analysisErrorBase.js";
 import { retainProcessInspectionCleanup } from "../providers/OwnedCommandCleanup.js";

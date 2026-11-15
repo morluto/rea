@@ -1,4 +1,4 @@
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { describe, expect, it } from "vitest";
 import {
   inspectPeLoadConfigInputSchema,

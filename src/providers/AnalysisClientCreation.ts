@@ -1,8 +1,8 @@
 import { analysisClientFailureForOperation } from "./AnalysisClientFailure.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
+import { bindArtifactFileCleanup } from "../resources/ArtifactFileOperation.js";
+import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type {

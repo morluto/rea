@@ -33,6 +33,7 @@ export const UNIT_LAYERS = Object.freeze(
       "filesystem",
       "platform",
       "process",
+      "resources",
       "windows",
       "generatedPackageMetadata.ts",
       "identity.ts",

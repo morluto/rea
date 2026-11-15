@@ -26,11 +26,11 @@ import {
   RegularFileChangedError,
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import {
   assertArtifactReadActive,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 
 /** Admission and search bounds for one Electron executable. */
 export const ELECTRON_FUSE_LIMITS = {

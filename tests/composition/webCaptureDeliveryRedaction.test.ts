@@ -11,7 +11,7 @@ import {
 import { createEvidence } from "../../src/domain/evidence.js";
 import { parseEvidenceBundle } from "../../src/domain/evidenceBundle.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
-import { analysisErrorProjectionSchema } from "../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../src/domain/analysisErrorProjectionSchema.js";
 import { AnalysisTimeoutError } from "../../src/domain/analysisErrorCore.js";
 import { err, ok } from "../../src/domain/result.js";
 import { historicalHar } from "../fixtures/historicalHar.js";

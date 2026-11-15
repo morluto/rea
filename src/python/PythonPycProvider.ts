@@ -9,13 +9,13 @@ import {
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
-} from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+} from "../resources/ArtifactFileOperation.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   type StableArtifactSnapshot,
   readStableArtifact,
-} from "../artifacts/readStableArtifact.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+} from "../resources/readStableArtifact.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import type { PythonPycPort } from "../ports/python/PythonPycPort.js";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";

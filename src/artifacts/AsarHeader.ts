@@ -3,8 +3,8 @@ import type { FileHandle } from "node:fs/promises";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import { findDuplicateJsonMember } from "../domain/jsonDuplicateMember.js";
 
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { assertArtifactReadActive } from "../resources/ArtifactFileOperation.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   ASAR_HEADER_ADMISSION_SETTING,

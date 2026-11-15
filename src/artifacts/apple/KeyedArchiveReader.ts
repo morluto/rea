@@ -9,7 +9,7 @@ import {
 import { basename, join } from "node:path";
 import { realpath } from "node:fs/promises";
 import { InternalInvariantError } from "../../domain/internalInvariant.js";
-import { readStableArtifact } from "../readStableArtifact.js";
+import { readStableArtifact } from "../../resources/readStableArtifact.js";
 import { projectStableArtifactFailure } from "../StableArtifactFailure.js";
 import { ARTIFACT_GRAPH_PROVIDER } from "../../domain/investigationProviders.js";
 import { z } from "zod";
@@ -45,15 +45,15 @@ import {
   DirectoryArtifactReader,
   DirectoryArtifactEntryAccessDenied,
 } from "../DirectoryArtifactReader.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
-import type { ArtifactEntry } from "../ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
+import type { ArtifactEntry } from "../../resources/ArtifactReader.js";
 import {
   artifactSelectedPathErrno,
   artifactFilePrimaryFacts,
   assertArtifactReadActive,
   bindArtifactFileCleanup,
-} from "../ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
+} from "../../resources/ArtifactFileOperation.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";

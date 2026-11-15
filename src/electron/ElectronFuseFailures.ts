@@ -1,12 +1,12 @@
 import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
 import { ELECTRON_FUSE_PROVIDER_IDENTITY } from "./ElectronFuseProviderIdentity.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   ArtifactFileCleanupFailure,
   artifactFileCompletion,
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";

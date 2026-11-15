@@ -6,7 +6,7 @@ import type {
 import type {
   DoctorProviderCheck,
   DoctorProviderInspection,
-} from "../application/Doctor.js";
+} from "../ports/DoctorProviderInspection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
   inspectJadxAvailability,

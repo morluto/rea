@@ -2,7 +2,7 @@ import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
 import { jsonRecordSchema } from "../domain/jsonRecord.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import {

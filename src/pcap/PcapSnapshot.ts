@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { chmod, open, stat, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,

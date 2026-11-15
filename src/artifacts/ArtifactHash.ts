@@ -2,7 +2,7 @@ import type { AsarHeaderAdmission } from "../config/asarHeaderAdmission.js";
 import { createHash } from "node:crypto";
 import type { Readable } from "node:stream";
 
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { streamChunkToBuffer } from "./StreamBytes.js";
 import {
   createArtifactClassificationProbe,

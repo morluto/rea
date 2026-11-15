@@ -56,7 +56,7 @@ import {
   RetainedRegularFileCleanupFailure,
   retryRegularFileCleanup,
 } from "../../src/application/RegularFileRead.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { createApplicationMcpHarness } from "../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../fixtures/binarySession.js";
 import { advertisedMcpToolSchemas } from "../fixtures/advertisedMcpTool.js";

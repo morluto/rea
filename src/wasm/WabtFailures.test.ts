@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { expect, it } from "vitest";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { wabtFailureDialect } from "./WabtFailures.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";

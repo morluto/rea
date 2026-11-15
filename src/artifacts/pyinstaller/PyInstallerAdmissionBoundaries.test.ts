@@ -3,7 +3,7 @@ import { expect, it, vi } from "vitest";
 import { withPyInstallerReader } from "../../../tests/fixtures/pyinstallerReader.js";
 import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
-import type { ArtifactEntry } from "../ArtifactReader.js";
+import type { ArtifactEntry } from "../../resources/ArtifactReader.js";
 import { PyInstallerPyzStore } from "./PyInstallerPyzStore.js";
 import {
   cArchiveExecutable,

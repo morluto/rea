@@ -5,7 +5,7 @@ import {
 import type { WebSourceLocationArtifactPort } from "../../ports/WebSourceLocationPorts.js";
 import type { WebScriptArtifactPort } from "../../ports/WebScriptArtifactPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import type { WebSourceLocationInput } from "../../domain/webSourceLocation.js";
 import { err, ok } from "../../domain/result.js";
 import { WebArtifactCleanup } from "../WebArtifactCleanup.js";

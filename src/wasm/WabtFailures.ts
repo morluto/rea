@@ -1,7 +1,7 @@
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { artifactFilePrimaryFacts } from "../artifacts/ArtifactFileOperation.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
+import { artifactFilePrimaryFacts } from "../resources/ArtifactFileOperation.js";
 import { utf8HeadExcerpt } from "../domain/utf8HeadExcerpt.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
 import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";

@@ -11,14 +11,14 @@ import {
 import {
   type StableArtifactSnapshot,
   readStableArtifact,
-} from "../artifacts/readStableArtifact.js";
+} from "../resources/readStableArtifact.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   assertArtifactReadActive,
-} from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+} from "../resources/ArtifactFileOperation.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type { GoBinaryPort } from "../ports/go/GoBinaryPort.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";

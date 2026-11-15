@@ -29,7 +29,7 @@ import {
   deliverAnalysisEvidence,
 } from "../../../src/application/EvidenceBundleCommands.js";
 import { EvidenceLedger } from "../../../src/application/investigation/EvidenceLedger.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { OwnedStagedOutput } from "../../../src/filesystem/OwnedStagedOutput.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";

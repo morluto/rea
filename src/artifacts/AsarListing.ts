@@ -3,7 +3,10 @@ import { setImmediate } from "node:timers/promises";
 import { z } from "zod";
 
 import { asarDeclaredSizeSchema, asarNodeSchema } from "./AsarNode.js";
-import { ArtifactReaderFailure, type ArtifactEntry } from "./ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  type ArtifactEntry,
+} from "../resources/ArtifactReader.js";
 import { assertAsarReadActive } from "./AsarFailure.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import {

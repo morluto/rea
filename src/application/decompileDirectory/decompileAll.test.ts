@@ -16,7 +16,7 @@ import {
   type AnalysisOperation,
   type AnalysisOperationPort,
 } from "../../ports/AnalysisProvider.js";
-import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
 import { EnhancedTools } from "../EnhancedTools.js";
 import { DecompileExport } from "./exportTree.js";
 import { ExportResources } from "./exportResources.js";

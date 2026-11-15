@@ -19,7 +19,7 @@ import {
   writeEnvironmentServeFiles,
 } from "../../../tests/fixtures/environmentServe.js";
 import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import {

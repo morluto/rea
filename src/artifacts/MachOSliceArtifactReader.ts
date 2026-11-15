@@ -1,4 +1,4 @@
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../resources/ArtifactFileOperation.js";
 import type { FileHandle } from "node:fs/promises";
 import { Readable } from "node:stream";
 
@@ -27,7 +27,7 @@ import {
   type ArtifactReader,
   type ArtifactReaderTraversal,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
+} from "../resources/ArtifactReader.js";
 import { streamChunkToBuffer } from "./StreamBytes.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import { readArtifactFileChunks } from "./readArtifactFileChunks.js";

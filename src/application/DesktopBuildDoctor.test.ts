@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import { SUPPORTED_NODE_VERSION_PROSE } from "../domain/runtimeVersion.js";
 import { createDoctorHostFixture } from "./Doctor.fixture.js";
-import { runDoctor, type DoctorCheck, type DoctorHost } from "./Doctor.js";
+import { runDoctor, type DoctorHost } from "./Doctor.js";
+import type { DoctorCheck } from "../ports/DoctorProviderInspection.js";
 import type { DesktopBuildFacts } from "./DesktopBuildDoctor.js";
 
 const ready: DesktopBuildFacts = {

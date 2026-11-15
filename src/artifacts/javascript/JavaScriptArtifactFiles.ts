@@ -5,7 +5,7 @@ import type { Readable } from "node:stream";
 
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import { AsarArtifactReader } from "../AsarArtifactReader.js";
-import type { ArtifactResourceScope } from "../ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import {
   ArtifactPathRegistry,
   normalizeArtifactPath,
@@ -14,7 +14,7 @@ import {
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactReader,
-} from "../ArtifactReader.js";
+} from "../../resources/ArtifactReader.js";
 import { streamChunkToBuffer } from "../StreamBytes.js";
 import { hashReadableToCompletion } from "../ArtifactHash.js";
 import type { ArtifactOccurrence } from "../../domain/artifactGraph.js";

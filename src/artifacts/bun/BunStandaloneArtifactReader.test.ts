@@ -9,7 +9,7 @@ import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowled
 import * as artifactPaths from "../ArtifactPaths.js";
 import { BunStandaloneArtifactReader } from "../BunStandaloneArtifactReader.js";
 import { inventoryArtifact } from "../inventory/ArtifactInventory.js";
-import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { resolveArtifactReaderLimits } from "../../domain/artifactReaderLimits.js";
 import {
   bunModuleGraphPayload,

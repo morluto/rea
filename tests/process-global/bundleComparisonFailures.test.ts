@@ -12,7 +12,7 @@ import {
   readImmutableEvidenceBundle,
   writeEvidenceBundle,
 } from "../../src/application/EvidenceBundleFiles.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { OwnedStagedOutput } from "../../src/filesystem/OwnedStagedOutput.js";
 import { OwnedFileHandle } from "../../src/filesystem/OwnedFileHandle.js";
 import { RetainedRegularFileCleanupFailure } from "../../src/application/RegularFileRead.js";

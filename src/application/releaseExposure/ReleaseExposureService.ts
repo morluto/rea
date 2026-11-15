@@ -1,6 +1,6 @@
 import { basename, dirname, posix, win32 } from "node:path";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { appendCallerPath } from "../../filesystem/callerPath.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { DesktopApplicationService } from "../artifacts/DesktopApplicationService.js";

@@ -12,8 +12,8 @@ import { classifyProviderFailure } from "../../../src/providers/classifyProvider
 import { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
 import { expect, it, onTestFinished, vi } from "vitest";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
-import type { StableArtifactFileSystem } from "../../../src/artifacts/readStableArtifact.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
+import type { StableArtifactFileSystem } from "../../../src/resources/readStableArtifact.js";
 import { captureSqliteDatabaseSnapshot } from "../../../src/sqlite/SqliteDatabaseSnapshot.js";
 import { inspectSqliteDatabaseSnapshot } from "../../../src/sqlite/SqliteDatabaseInspection.js";
 import { sqliteDatabaseDialect } from "../../../src/sqlite/SqliteDatabaseFailures.js";

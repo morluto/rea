@@ -37,8 +37,8 @@ import type {
 } from "../../ports/AnalysisProvider.js";
 import { AnalysisSnapshotCache } from "./AnalysisSnapshotCache.js";
 import { InvestigationRecords } from "../investigation/InvestigationRecords.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { bindRegularFileCleanup } from "../RegularFileRead.js";
 import {
   writeAnalysisSnapshot as writeSnapshotFile,

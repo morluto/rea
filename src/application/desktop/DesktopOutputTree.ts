@@ -5,7 +5,7 @@ import { basename, dirname, isAbsolute } from "node:path";
 import {
   ArtifactResourceScope,
   type ArtifactCleanupAttempt,
-} from "../../artifacts/ArtifactResourceScope.js";
+} from "../../resources/ArtifactResourceScope.js";
 import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
 import {
   outputDirectoryAdmissionRefusal,

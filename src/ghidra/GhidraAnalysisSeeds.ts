@@ -8,7 +8,7 @@ import type { AnalysisOperation } from "../ports/AnalysisProvider.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import {
   readGhidraProfileArtifact,
   writeGhidraProfileArtifact,

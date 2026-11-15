@@ -6,7 +6,7 @@ import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import type { ArtifactReaderTraversal } from "./ArtifactReader.js";
+import type { ArtifactReaderTraversal } from "../resources/ArtifactReader.js";
 import { scanReader } from "./inventory/scanReader.js";
 import { ZipArtifactReader } from "./ZipArtifactReader.js";
 import { accountZipMemberRegion } from "./ZipMemberRegion.js";

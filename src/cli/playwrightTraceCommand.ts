@@ -3,7 +3,7 @@ import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { projectArtifactCloseFailure } from "../artifacts/StableArtifactFailure.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { localPathStringSchema } from "../domain/localPath.js";

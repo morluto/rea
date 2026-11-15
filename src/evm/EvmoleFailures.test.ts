@@ -8,7 +8,7 @@ import { classifyProviderFailure } from "../providers/classifyProviderFailure.js
 
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   DEFAULT_EVM_TIMEOUT_MS,

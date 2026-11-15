@@ -14,7 +14,7 @@ import {
   withRegularFileCompletion,
   type RegularFileReadOptions,
 } from "../application/RegularFileRead.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {

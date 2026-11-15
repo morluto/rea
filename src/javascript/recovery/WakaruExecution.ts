@@ -5,7 +5,7 @@ import {
   type ExecutionOptions,
 } from "../../ports/AnalysisProvider.js";
 import type { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import {
   AnalysisArtifactChangedError,
   AnalysisCapabilityUnavailableError,

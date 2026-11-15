@@ -6,7 +6,7 @@ import { expect, it, vi } from "vitest";
 
 import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
 import { ArtifactProvider } from "../../../../src/artifacts/ArtifactProvider.js";
-import { ArtifactReaderFailure } from "../../../../src/artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../../../src/resources/ArtifactReader.js";
 import { SafeOutputTree } from "../../../../src/artifacts/SafeOutputTree.js";
 import { artifactExtractionResultSchema } from "../../../../src/domain/artifactGraph.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";

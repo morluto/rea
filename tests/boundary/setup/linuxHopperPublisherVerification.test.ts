@@ -29,7 +29,7 @@ import {
   LinuxHopperPublisher,
   retryLinuxHopperPublisherCleanup,
 } from "../../../src/application/LinuxHopperPublisher.js";
-import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
 import {
   HOPPER_LINUX_PRIMARY_FINGERPRINT,
   HOPPER_RELEASES_URL,

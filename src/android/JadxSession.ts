@@ -33,7 +33,7 @@ import {
   readAndroidJniLibraries,
   type AndroidJniLibraries,
 } from "./AndroidJniLibraries.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { jadxOperationTimeoutGuidance } from "./JadxOperationTimeout.js";
 import { JadxMcpTransport, type JadxLauncher } from "./JadxMcpTransport.js";
 import {

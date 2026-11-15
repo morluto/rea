@@ -41,16 +41,16 @@ import { ownedProcessPrerequisiteAvailability } from "../application/ownedProces
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   ArtifactFileCancelled,
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { ZipArtifactReader } from "../artifacts/ZipArtifactReader.js";
-import type { DoctorProviderCheck } from "../application/Doctor.js";
+import type { DoctorProviderCheck } from "../ports/DoctorProviderInspection.js";
 import {
   JADX_JAR_CONFIGURATION_REMEDIATION,
   JADX_JAVA_PROBE_REMEDIATION,

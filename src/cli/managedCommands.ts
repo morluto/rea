@@ -10,7 +10,7 @@ import { MANAGED_WORKFLOW_TOOL_CONTRACTS } from "../contracts/managed/managedWor
 import { contractNamed } from "./contractCliDescription.js";
 import { registerContractDocumentCommand } from "./contractCommand.js";
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { MANAGED_STATIC_PROVIDER } from "../domain/investigationProviders.js";
 import { ok } from "../domain/result.js";
 import {

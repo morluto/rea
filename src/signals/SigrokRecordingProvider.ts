@@ -35,8 +35,8 @@ import {
   type AnalysisExecution,
   type ExecutionOptions,
 } from "../ports/AnalysisProvider.js";
-import type { SignalRecordingPort } from "../application/signals/SignalRecordingService.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import type { SignalRecordingPort } from "../ports/signals/SignalRecordingPort.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   ARTIFACT_PRODUCER_LIMITATION,
   ArtifactAnalysisResources,
@@ -47,7 +47,7 @@ import {
   artifactResourceDialect,
   createArtifactAnalysisResources,
 } from "../providers/artifactResourceFailure.js";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+import { readStableArtifact } from "../resources/readStableArtifact.js";
 import {
   assertArtifactCommandPath,
   selectArtifactCommandPath,
