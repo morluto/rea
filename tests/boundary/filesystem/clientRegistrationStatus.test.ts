@@ -136,6 +136,30 @@ describe("client registration status", () => {
 });
 
 describe("client registration environment validation", () => {
+  it("reports invalid LM Studio runtime settings without requiring an explicit profile", async () => {
+    const home = await createTestTempDirectory("rea-lm-studio-env-");
+    await mkdir(join(home, ".lmstudio"));
+    await writeFile(
+      join(home, ".lmstudio/mcp.json"),
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            command: "npx",
+            args: ["-y", PRODUCT_IDENTITY.registrationPackageSpecifier, "mcp"],
+            env: { REA_MCP_INPUT_SCHEMA_PROFILE: "invalid" },
+          },
+        },
+      }),
+    );
+    const statuses = await readClientRegistrationStatuses(home, "/current/rea");
+    expect(statuses).toContainEqual(
+      expect.objectContaining({
+        client: "lm_studio",
+        state: "invalid",
+        remediation: expect.stringContaining("REA_MCP_INPUT_SCHEMA_PROFILE"),
+      }),
+    );
+  });
   it("reports an otherwise aligned registration invalid for a bad tool-family scope", async () => {
     const home = await createTestTempDirectory("rea-registration-env-");
     await mkdir(join(home, ".cursor"));

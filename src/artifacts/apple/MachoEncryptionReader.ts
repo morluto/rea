@@ -1,3 +1,4 @@
+import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
 import type {
   MachoEncryptedRange,
   MachoEncryptionCommand,
@@ -17,10 +18,6 @@ import {
   type ReadAt,
 } from "./MachoLoadCommandReader.js";
 
-const LC_SEGMENT = 0x1;
-const LC_SEGMENT_64 = 0x19;
-const LC_ENCRYPTION_INFO = 0x21;
-const LC_ENCRYPTION_INFO_64 = 0x2c;
 // loader.h: encryption_info_command is five 32-bit words; the 64-bit form adds `pad`.
 const ENCRYPTION_COMMAND_SIZE = { 32: 20, 64: 24 } as const;
 // loader.h section types whose bytes occupy no file range.
@@ -178,7 +175,7 @@ const readSlice = async (
       else encryption.first ??= checked.command;
     } else if (
       segments !== null &&
-      (command.command === LC_SEGMENT || command.command === LC_SEGMENT_64)
+      (command.command === LC.SEGMENT || command.command === LC.SEGMENT_64)
     ) {
       segmentRecords += mappingRecords(command);
       if (segmentRecords > budget.remaining) segments = null;
@@ -254,7 +251,7 @@ const readSlice = async (
 };
 
 const isEncryptionCommand = (command: number): boolean =>
-  command === LC_ENCRYPTION_INFO || command === LC_ENCRYPTION_INFO_64;
+  command === LC.ENCRYPTION_INFO || command === LC.ENCRYPTION_INFO_64;
 
 const decodeEncryptionCommand = ({
   command,
@@ -264,7 +261,7 @@ const decodeEncryptionCommand = ({
   const view = viewOf(body);
   const word = (at: number): number | null =>
     body.byteLength >= at + 4 ? view.getUint32(at, true) : null;
-  const wide = command === LC_ENCRYPTION_INFO_64;
+  const wide = command === LC.ENCRYPTION_INFO_64;
   return {
     kind: wide ? "LC_ENCRYPTION_INFO_64" : "LC_ENCRYPTION_INFO",
     index,
@@ -378,10 +375,10 @@ const mapRange = (
 ): MachoEncryptedRange["mapping"] => {
   const segments: SegmentFacts[] = [];
   for (const command of segmentCommands) {
-    if ((command.command === LC_SEGMENT_64) !== header.wide)
+    if ((command.command === LC.SEGMENT_64) !== header.wide)
       return {
         status: "unknown",
-        reason: `load command ${command.index} ${command.command === LC_SEGMENT_64 ? "LC_SEGMENT_64" : "LC_SEGMENT"} appears in a ${header.wide ? 64 : 32}-bit image`,
+        reason: `load command ${command.index} ${command.command === LC.SEGMENT_64 ? "LC_SEGMENT_64" : "LC_SEGMENT"} appears in a ${header.wide ? 64 : 32}-bit image`,
       };
     const segment = decodeSegment(command);
     if (typeof segment === "string")
@@ -460,7 +457,7 @@ const unmapped = (from: number, to: number) => ({
  * each section record that fits in its `cmdsize`, decoded and reported once.
  */
 const mappingRecords = ({ command, body }: MachoLoadCommand): number => {
-  const wide = command === LC_SEGMENT_64;
+  const wide = command === LC.SEGMENT_64;
   return (
     2 +
     Math.max(
@@ -476,7 +473,7 @@ const decodeSegment = ({
   body,
   index,
 }: MachoLoadCommand): SegmentFacts | string => {
-  const wide = command === LC_SEGMENT_64;
+  const wide = command === LC.SEGMENT_64;
   const parsed = readMachoSegmentHeader(body, wide, true);
   if (!parsed.ok)
     return `load command ${index} is too short for a segment command`;
