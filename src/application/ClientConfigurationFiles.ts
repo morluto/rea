@@ -335,6 +335,37 @@ export const inlineRegistrationOverride = (
 };
 
 /**
+ * The string settings the inline layer declares in REA's entry environment,
+ * or an empty record when no inline layer sets REA's entry.
+ */
+export const inlineRegistrationEnvironment = (
+  sources: readonly ClientConfigurationSource[],
+): Readonly<Record<string, string>> => {
+  const name = PRODUCT_IDENTITY.mcpServerKey;
+  const declaring = sources.find(
+    (layer) =>
+      layer.inlineOrigin !== undefined &&
+      (Object.hasOwn(layer.servers, name) ||
+        Object.hasOwn(layer.legacyServers, name)),
+  );
+  if (declaring === undefined) return {};
+  const entry = Object.hasOwn(declaring.servers, name)
+    ? declaring.servers[name]
+    : declaring.legacyServers[name];
+  const environment = isRecord(entry)
+    ? entry[declaring.environmentKey]
+    : undefined;
+  return isRecord(environment)
+    ? Object.fromEntries(
+        Object.entries(environment).filter(
+          (setting): setting is [string, string] =>
+            typeof setting[1] === "string",
+        ),
+      )
+    : {};
+};
+
+/**
  * An entry as the client launches it: Windows environment names are one name
  * whatever their case, so `PATH` and an equal `Path` start the same server.
  */

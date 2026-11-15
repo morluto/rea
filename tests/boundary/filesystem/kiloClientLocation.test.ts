@@ -578,6 +578,60 @@ it("leaves an aligned Kilo registration out of update maintenance when KILO_CONF
   ]);
 });
 
+it("reports a Kilo registration whose KILO_CONFIG_CONTENT differs only in a discovered provider path as needing setup", async () => {
+  const home = await createTestTempDirectory("rea-kilo-update-discovered-");
+  const root = join(home, ".config", "kilo");
+  await mkdir(root, { recursive: true });
+  await writeFile(
+    join(root, "kilo.json"),
+    JSON.stringify({ mcp: { rea: { type: "local", command, enabled: true } } }),
+  );
+  const inline = (environment: Record<string, string>) =>
+    JSON.stringify({ mcp: { rea: { environment } } });
+  const hopper = "/Applications/Hopper Disassembler.app/Contents/MacOS/hopper";
+  const scope = await existingMaintenanceScope(home, command[1] ?? "", {
+    KILO_CONFIG_CONTENT: inline({ HOPPER_LAUNCHER_PATH: hopper }),
+  });
+  // Setup may discover this launcher and write the same value, so update
+  // can neither maintain nor refuse the client: its alignment is unknown.
+  expect(scope.clients).not.toContain("kilo");
+  expect(scope.unresolved).toEqual([
+    expect.objectContaining({
+      client: "kilo",
+      state: "unknown",
+      remediation: expect.stringMatching(
+        /KILO_CONFIG_CONTENT sets HOPPER_LAUNCHER_PATH .*Run rea setup to check and refresh it\.$/,
+      ),
+    }),
+  ]);
+
+  // An explicit selection or another setting is a conflict update can prove.
+  for (const environment of [
+    {
+      HOPPER_LAUNCHER_PATH: "/opt/hopper",
+      KILO_CONFIG_CONTENT: inline({ HOPPER_LAUNCHER_PATH: hopper }),
+    },
+    {
+      KILO_CONFIG_CONTENT: inline({ HOPPER_LAUNCHER_PATH: hopper, FOO: "bar" }),
+    },
+  ]) {
+    const refused = await existingMaintenanceScope(
+      home,
+      command[1] ?? "",
+      environment,
+    );
+    expect(refused.unresolved).toEqual([
+      expect.objectContaining({
+        client: "kilo",
+        state: "aligned",
+        remediation: expect.stringContaining(
+          "KILO_CONFIG_CONTENT overrides REA's rea registration",
+        ),
+      }),
+    ]);
+  }
+});
+
 it("inspects REA's Kilo entry that only KILO_CONFIG_CONTENT sets when no Kilo folder exists", async () => {
   const home = await createTestTempDirectory("rea-kilo-inline-evidence-");
   const statuses = await readClientRegistrationStatuses(

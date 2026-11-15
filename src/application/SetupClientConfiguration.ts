@@ -3,6 +3,7 @@ import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { readClientPolicyBlock } from "./GeminiClientSettings.js";
 import {
   readClientConfigurationFiles,
+  inlineRegistrationEnvironment,
   inlineRegistrationOrigins,
   inlineRegistrationOverride,
   clientConfigurationForWrite,
@@ -27,8 +28,10 @@ import {
   serializeClientConfiguration,
   withClientServers,
   type ClientConfigurationDocument,
+  type ClientInlineConfiguration,
   type ClientRegistrationDialect,
 } from "./ClientConfigurationDocument.js";
+import { DISCOVERED_REGISTRATION_SETTINGS } from "./SetupRegistrationEnvironment.js";
 import { dshDocument, DshCordisDocument } from "./DshCordisPatch.js";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
@@ -497,6 +500,8 @@ interface ClientRefresh {
   readonly original: string | undefined;
   readonly parsed: ClientConfigurationDocument | undefined;
   readonly desired: unknown;
+  /** The layers the registration was read from. */
+  readonly sources: readonly ClientConfigurationSource[];
   /** Why setup refuses this write: a client policy or an overriding inline layer. */
   readonly refusal: string | undefined;
 }
@@ -549,7 +554,13 @@ const readClientRefresh = async (
   );
   const override = inlineOverrideBlocker(client, files.value, desired);
   if (override !== undefined)
-    return ok({ original, parsed, desired, refusal: override });
+    return ok({
+      original,
+      parsed,
+      desired,
+      sources: files.value,
+      refusal: override,
+    });
   const policy = await readClientPolicyBlock(
     client,
     parsed,
@@ -558,9 +569,21 @@ const readClientRefresh = async (
   );
   if (!policy.ok) {
     throwCleanupFailure(policy.error);
-    return ok({ original, parsed, desired, refusal: policy.error.detail });
+    return ok({
+      original,
+      parsed,
+      desired,
+      sources: files.value,
+      refusal: policy.error.detail,
+    });
   }
-  return ok({ original, parsed, desired, refusal: policy.value });
+  return ok({
+    original,
+    parsed,
+    desired,
+    sources: files.value,
+    refusal: policy.value,
+  });
 };
 
 /** Determine whether an existing client configuration matches the desired registration. */
@@ -594,21 +617,36 @@ export const clientConfigurationAligned = async (
   }
 };
 
+/** Why maintenance leaves a client to setup, with whether alignment is known. */
+export interface ClientRefreshRefusal {
+  readonly alignment: "refused" | "unknown";
+  readonly remediation: string;
+}
+
 /**
- * Why setup would refuse to refresh this client's registration with
- * `command`: a client policy or a read-only inline layer that would override
- * the refreshed entry. Update maintenance asks before selecting a client,
- * because one refused client blocks the whole setup plan. Registration
- * ownership is not checked here; the caller has already established it.
- * A supplied scope retains the owner of a file whose cleanup failed.
+ * Why update maintenance cannot refresh a client with `command`: setup's
+ * refusal (a client policy, an unreadable layer, or a read-only inline layer
+ * that would override the refreshed entry), or `unknown` alignment when the
+ * inline layer differs only in settings setup discovers from the installed
+ * providers. Maintenance has only the explicitly selected settings and does
+ * not run that discovery, so such a client needs `rea setup`. One refused
+ * client blocks the whole setup plan, so maintenance asks before selecting a
+ * client. Registration ownership is not checked here; the caller has already
+ * established it. A supplied scope retains the owner of a file whose cleanup
+ * failed.
  */
 export const clientRefreshRefusal = async (
   client: SetupClient,
   providerEnvironment: SetupProviderEnvironment,
   command: readonly string[],
   resources?: ArtifactResourceScope,
-): Promise<string | undefined> => {
-  if (client.configPathError !== undefined) return client.configPathError;
+): Promise<ClientRefreshRefusal | undefined> => {
+  const refused = (remediation: string): ClientRefreshRefusal => ({
+    alignment: "refused",
+    remediation,
+  });
+  if (client.configPathError !== undefined)
+    return refused(client.configPathError);
   try {
     const refresh = await readClientRefresh(
       client,
@@ -619,13 +657,77 @@ export const clientRefreshRefusal = async (
     );
     // An unreadable or malformed layer is a refusal too: setup's preflight
     // reports it the same way.
-    return refresh.ok ? refresh.value.refusal : refresh.error.detail;
+    if (!refresh.ok) return refused(refresh.error.detail);
+    if (refresh.value.refusal === undefined) return undefined;
+    const discovered = await discoveredInlineOverride(
+      client,
+      providerEnvironment,
+      command,
+      refresh.value,
+    );
+    return discovered === undefined
+      ? refused(refresh.value.refusal)
+      : {
+          alignment: "unknown",
+          remediation: `${discovered.origin} sets ${discovered.settings.join(", ")} in REA's ${PRODUCT_IDENTITY.mcpServerKey} registration for ${client.configPath}; setup discovers ${discovered.settings.length === 1 ? "that setting" : "those settings"} from the installed providers and update does not, so REA cannot tell whether this registration is current. Run ${PRODUCT_IDENTITY.cliBinary} setup to check and refresh it.`,
+        };
   } catch (cause: unknown) {
     if (cause instanceof RegularFileCleanupFailure) throw cause;
     if (cause instanceof ConfigurationError)
-      return `${cause.message}: ${cause.settings.map(({ setting, constraint }) => `${setting}: ${constraint}`).join("; ")}`;
-    return `The configuration could not be read. Check its permissions before rerunning setup. ${cause instanceof Error ? cause.message : String(cause)}`;
+      return refused(
+        `${cause.message}: ${cause.settings.map(({ setting, constraint }) => `${setting}: ${constraint}`).join("; ")}`,
+      );
+    return refused(
+      `The configuration could not be read. Check its permissions before rerunning setup. ${cause instanceof Error ? cause.message : String(cause)}`,
+    );
   }
+};
+
+/**
+ * The inline layer and the discovered settings that alone explain its
+ * override: it clears when the refreshed entry takes the inline layer's values
+ * for settings setup may discover and the caller did not select.
+ */
+const discoveredInlineOverride = async (
+  client: SetupClient,
+  providerEnvironment: SetupProviderEnvironment,
+  command: readonly string[],
+  refresh: ClientRefresh,
+): Promise<
+  | {
+      readonly origin: ClientInlineConfiguration["origin"];
+      readonly settings: readonly string[];
+    }
+  | undefined
+> => {
+  const origin = inlineRegistrationOverride(
+    client,
+    refresh.sources,
+    refresh.desired,
+  );
+  if (origin === undefined) return undefined;
+  const declared = inlineRegistrationEnvironment(refresh.sources);
+  const adopted = Object.fromEntries(
+    DISCOVERED_REGISTRATION_SETTINGS.flatMap((setting) => {
+      const value = declared[setting];
+      return Object.hasOwn(providerEnvironment, setting) || value === undefined
+        ? []
+        : [[setting, value]];
+    }),
+  );
+  const settings = Object.keys(adopted);
+  if (settings.length === 0) return undefined;
+  const desired = await clientConfigurationDesired(
+    client,
+    { ...providerEnvironment, ...adopted },
+    command,
+    refresh.parsed,
+    refresh.sources,
+  );
+  return inlineRegistrationOverride(client, refresh.sources, desired) ===
+    undefined
+    ? { origin, settings }
+    : undefined;
 };
 
 /** Preflight one client configuration before setup presents any mutations. */

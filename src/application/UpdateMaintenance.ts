@@ -163,7 +163,8 @@ export const existingMaintenanceScope = async (
     // that would override the refreshed entry) blocks the whole setup plan,
     // so ask setup's own refusal check first and report that client instead
     // of selecting it. An aligned registration is checked too: setup still
-    // preflights it.
+    // preflights it. When the conflict involves only provider settings setup
+    // discovers, alignment is unknown here, not aligned or refused.
     const refusal = await clientRefreshRefusal(
       client,
       settings,
@@ -171,7 +172,11 @@ export const existingMaintenanceScope = async (
       resources,
     );
     if (refusal !== undefined) {
-      unresolved.push({ ...registration, remediation: refusal });
+      unresolved.push({
+        ...registration,
+        ...(refusal.alignment === "unknown" ? { state: "unknown" } : {}),
+        remediation: refusal.remediation,
+      });
       continue;
     }
     clients.push(registration.client);
