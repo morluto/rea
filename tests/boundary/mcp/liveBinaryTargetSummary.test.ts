@@ -246,16 +246,7 @@ it.each(["draft-2020-12", "draft-07"] as const)(
       toolContract("binary_session"),
     )["~standard"].jsonSchema.output({ target });
     const validate = new AjvJsonSchemaValidator().getValidator(advertised);
-    // One representative per distinct projection shape; the complete target matrix is above.
-    for (const format of [
-      "elf",
-      "raw-binary",
-      "gamecube-dol",
-      "zip",
-    ] as const) {
-      const selected = targets.find((candidate) => candidate.format === format);
-      if (selected === undefined)
-        throw new Error(`Missing canonical fixture: ${format}`);
+    for (const selected of targets) {
       const value = {
         result: { ...sessionFacts, ...binaryTargetSummary(selected) },
       };
@@ -264,7 +255,7 @@ it.each(["draft-2020-12", "draft-07"] as const)(
       );
       expect(validate(value).valid).toBe(true);
     }
-    for (const classification of impossible.slice(0, 4)) {
+    for (const classification of impossible) {
       const value = {
         result: { ...sessionFacts, ...identity, ...classification },
       };
