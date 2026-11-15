@@ -655,7 +655,6 @@
     "src/process/capture/ProcessCaptureEnvironment.ts": 1,
     "src/process/capture/ProcessCaptureLifecycle.ts": 3,
     "src/process/capture/ProcessHarness.ts": 1,
-    "src/process/capture/ProcessSampling.ts": 4,
     "src/process/capture/ProcessScenarioRuntimeValidation.ts": 1,
     "src/process/ownedDebuggerSession.ts": 2,
     "src/process/snapshotEnvironment.ts": 2,

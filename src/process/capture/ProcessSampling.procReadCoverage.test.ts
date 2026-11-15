@@ -261,6 +261,7 @@ const start = (runId = fixture.runId) => {
   const samples: ProcessSample[] = [];
   const resourceScope = new ProcessCaptureResourceScope();
   const stop = startProcessSampler({
+    platform: process.platform,
     rootPid: 100,
     runId,
     started: 0,
@@ -735,6 +736,7 @@ it("adopts the failed run-token descriptor into the actual capture scope before 
     fixture.runIdReadResolve = resolve;
   });
   const stop = startProcessSampler({
+    platform: process.platform,
     rootPid: 100,
     runId: fixture.runId,
     resourceScope,
