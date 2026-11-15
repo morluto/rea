@@ -186,12 +186,24 @@ const handlerSuppliedFields = (
   ...description.handlerFields,
 ];
 
-/** The contract schema one parameter supplies: a field, or a flattened member. */
+/**
+ * The contract schema one parameter supplies: a field, a flattened member,
+ * or a field group's optional object of its fields.
+ */
 const suppliedField = (
   description: ContractCliDescription,
   parameter: ContractCliParameter,
 ): z.ZodType => {
-  const field = contractShape(description)[parameter.field]!;
+  const shape = contractShape(description);
+  if (parameter.group !== undefined)
+    return z
+      .strictObject(
+        Object.fromEntries(
+          parameter.group.map((field) => [field, shape[field]!]),
+        ),
+      )
+      .optional();
+  const field = shape[parameter.field]!;
   if (parameter.member === undefined) return field;
   // A member is omittable when it or any enclosing object is.
   let supplied: z.ZodType = field;
@@ -401,12 +413,6 @@ const contractBuilt: ReadonlySet<string> = new Set(
   ),
 );
 
-/**
- * Commands named after a public tool contract that still register by hand.
- * Migrating one removes it here; this list may only shrink.
- */
-const HAND_REGISTERED_CONTRACT_COMMANDS = ["inspect-android-jni-bindings"];
-
 /** Contract-built commands whose name differs from their contract's. */
 const RENAMED_CONTRACT_COMMANDS = [
   "analyze",
@@ -430,7 +436,7 @@ it("builds every contract-named command from its contract", () => {
     [...named]
       .filter((name) => registered.has(name) && !contractBuilt.has(name))
       .toSorted(),
-  ).toEqual(HAND_REGISTERED_CONTRACT_COMMANDS);
+  ).toEqual([]);
   expect(
     [...contractBuilt].filter((name) => !named.has(name)).toSorted(),
   ).toEqual(RENAMED_CONTRACT_COMMANDS);
@@ -466,7 +472,11 @@ describe("CLI commands projected from tool contracts", () => {
     (_command, description) => {
       expect(
         [
-          ...new Set(description.parameters.map(({ field }) => field)),
+          ...new Set(
+            description.parameters.flatMap(
+              ({ field, group }) => group ?? [field],
+            ),
+          ),
           ...Object.keys(description.omitted),
           ...Object.keys(description.fixedFields),
           ...handlerSuppliedFields(description),
@@ -825,14 +835,29 @@ describe("JSON decoded when contract commands run", () => {
             // The command hands admission a JSON input already decoded.
             if (parameter.jsonInput)
               values[parameter.key] = JSON.parse(text) as unknown;
-            const expected = description.contract.inputSchema.safeParse({
-              ...description.toContractInput({
-                ...values,
-                [parameter.key]: undefined,
-              }),
-              ...(detail === undefined ? {} : { detail }),
-              [parameter.field]: JSON.parse(text) as unknown,
-            }).success;
+            const decoded = JSON.parse(text) as unknown;
+            const { group } = parameter;
+            // A field group supplies the members of a JSON object, each one
+            // of its fields; other JSON is refused before the contract.
+            const supplied =
+              group === undefined
+                ? { [parameter.field]: decoded }
+                : typeof decoded === "object" &&
+                    decoded !== null &&
+                    !Array.isArray(decoded) &&
+                    Object.keys(decoded).every((key) => group.includes(key))
+                  ? decoded
+                  : undefined;
+            const expected =
+              supplied !== undefined &&
+              description.contract.inputSchema.safeParse({
+                ...description.toContractInput({
+                  ...values,
+                  [parameter.key]: undefined,
+                }),
+                ...(detail === undefined ? {} : { detail }),
+                ...supplied,
+              }).success;
             if (description.admit(values).ok !== expected)
               mismatches.push(
                 `${parameter.key} ${String(detail)} ${text} expected ${String(expected)}`,
@@ -1824,5 +1849,109 @@ describe("Operation choices selected by an option", () => {
     expect(() => describeOperationChoices(base, projection)).toThrow(
       "other does not project to probe's options",
     );
+  });
+});
+
+describe("Contract command field groups", () => {
+  const contract = {
+    name: "group_probe",
+    inputSchema: z.strictObject({
+      path: z.string(),
+      name: z.string().optional(),
+      tags: z.array(z.string()).optional(),
+    }),
+  };
+  const grouped = (
+    fields: readonly [
+      "name" | "tags" | "path",
+      ...("name" | "tags" | "path")[],
+    ],
+  ) =>
+    describeContractCommand(contract, {
+      command: "group-probe",
+      description: "Probe",
+      positionals: ["path"],
+      fieldGroups: {
+        query: {
+          fields,
+          description: "JSON selection",
+          invalidJson: "query must be a JSON selection object.",
+        },
+      },
+    });
+
+  it("supplies each member of one JSON object option as its contract field", () => {
+    const description = grouped(["name", "tags"]);
+    expect(description.parameters.map(({ key }) => key)).toEqual([
+      "path",
+      "query",
+    ]);
+    const admitted = description.admit({
+      path: "/x",
+      query: '{"name":"a","tags":["b"]}',
+    });
+    expect(admitted.ok && admitted.value.input).toEqual({
+      path: "/x",
+      name: "a",
+      tags: ["b"],
+    });
+    expect(description.admit({ path: "/x" }).ok).toBe(true);
+  });
+
+  it.each([
+    ["[]", ["query"], "invalid_format"],
+    ['{"path":"/y"}', ["query", "path"], undefined],
+    ['{"name":1}', ["name"], undefined],
+  ])("refuses the group %s", (text, path, reason) => {
+    const admitted = grouped(["name", "tags"]).admit({
+      path: "/x",
+      query: text,
+    });
+    expect(admitted.ok).toBe(false);
+    if (admitted.ok) return;
+    expect(admitted.error.issues[0]).toMatchObject({
+      path,
+      ...(reason === undefined ? {} : { reason }),
+    });
+  });
+
+  it("refuses a group member an object rule names", () => {
+    expect(() =>
+      describeContractCommand(
+        {
+          name: "group_probe",
+          inputSchema: contract.inputSchema.meta({
+            dependentRequired: { name: ["tags"] },
+          }),
+        },
+        {
+          command: "group-probe",
+          description: "Probe",
+          positionals: ["path"],
+          fieldGroups: {
+            query: {
+              fields: ["name", "tags"],
+              description: "x",
+              invalidJson: "x",
+            },
+          },
+        },
+      ),
+    ).toThrow("group_probe.name is grouped but named by an input rule");
+  });
+
+  it("refuses a required or twice-projected group member", () => {
+    expect(() => grouped(["path"])).toThrow(
+      "group_probe.path is projected twice",
+    );
+    expect(() =>
+      describeContractCommand(contract, {
+        command: "group-probe",
+        description: "Probe",
+        fieldGroups: {
+          query: { fields: ["path"], description: "x", invalidJson: "x" },
+        },
+      }),
+    ).toThrow("group_probe.path is a required group member");
   });
 });
