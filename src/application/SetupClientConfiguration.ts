@@ -1,6 +1,7 @@
 import { readClientPolicyBlock } from "./GeminiClientSettings.js";
 import {
   readClientConfigurationFiles,
+  inlineRegistrationOrigins,
   inlineRegistrationOverride,
   clientConfigurationForWrite,
   clientWriteDialect,
@@ -251,6 +252,11 @@ const configureClientDocument = async (
     files.value,
     resolveProviderRequestBudget,
   );
+  // The settings written now can differ from the ones inspection admitted,
+  // for example a Hopper path set by an installation earlier in this setup.
+  const override = inlineOverrideBlocker(client, files.value, desired);
+  if (override !== undefined)
+    return { status: "failed", reason: "read_only_override", detail: override };
   if (
     registrationCurrent(parsed, desired) &&
     (await privateProfileCurrent(client, original))
@@ -771,11 +777,7 @@ const registrationOwnershipBlocker = (
       // An inline layer is named by its origin; it has no path.
       paths: [
         ...(client.configPaths ?? [client.configPath]),
-        ...sources.flatMap(({ inlineOrigin, servers }) =>
-          inlineOrigin !== undefined && Object.hasOwn(servers, name)
-            ? [inlineOrigin]
-            : [],
-        ),
+        ...inlineRegistrationOrigins(client),
       ],
     });
   const fragment = parsed.servers[name];
