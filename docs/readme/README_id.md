@@ -399,6 +399,11 @@ Terima kasih kepada semua orang yang menggunakan REA, melaporkan bug, meminta fi
 
 Lihat [DISCLAIMER.md](../../DISCLAIMER.md) untuk panduan penggunaan yang bertanggung jawab.
 
+> [!WARNING]
+> **Peringatan Pemblokiran Akun & Khusus untuk Target Resmi:** Penyedia dan platform AI (seperti Anthropic, OpenAI, Cursor, dll.) menerapkan filter keamanan otomatis dan pemantauan penyalahgunaan. Menginstruksikan agen AI untuk mendekompilasi perangkat lunak berpemilik, mengekstrak kekayaan intelektual yang dilindungi, atau melewati perlindungan DRM dan anti-cheat melanggar kebijakan penggunaan AI yang wajar dan dapat mengakibatkan penangguhan atau pemblokiran permanen terhadap akun dan akses API.
+>
+> Hanya gunakan REA pada perangkat lunak milik Anda sendiri, kode domain publik, atau target yang izin pemeriksaannya Anda miliki secara eksplisit. Rekayasa balik perangkat lunak berpemilik tanpa izin tidak memberikan hak atas kode yang dihasilkan serta dapat melanggar undang-undang hak cipta dan ketentuan layanan.
+
 REA ditujukan untuk penelitian, pendidikan, interoperabilitas, pelestarian perangkat lunak, dan analisis perangkat lunak yang Anda miliki atau diizinkan untuk Anda periksa, sesuai hukum.
 
 The project's position on illegal or unauthorized use covers all REA

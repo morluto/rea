@@ -378,6 +378,11 @@ Grazie a tutti coloro che usano REA, segnalano bug, propongono funzionalità, te
 
 Consulta [DISCLAIMER.md](../../DISCLAIMER.md) per le indicazioni sull'uso responsabile.
 
+> [!WARNING]
+> **Avviso di blocco dell'account e uso esclusivamente autorizzato:** I provider di IA e le piattaforme (come Anthropic, OpenAI, Cursor e altri) utilizzano filtri di sicurezza automatizzati e monitoraggio degli abusi. Istruire agenti di IA a decompilare software proprietario, estrarre proprietà intellettuale protetta o eludere protezioni DRM e anti-cheat viola i criteri d'uso accettabile dell'IA e può comportare la sospensione immediata e il blocco permanente di account e chiavi API.
+>
+> Utilizza REA solo su software di tua proprietà, di pubblico dominio o per cui possiedi un'autorizzazione esplicita. Il reverse engineering non autorizzato di software proprietario non conferisce diritti sul codice generato e può violare le leggi sul diritto d'autore e i termini di servizio.
+
 REA è destinato alla ricerca, alla formazione, all’interoperabilità, alla conservazione del software e all’analisi di software di tua proprietà o che sei autorizzato a esaminare, nel rispetto della legge.
 
 The project's position on illegal or unauthorized use covers all REA

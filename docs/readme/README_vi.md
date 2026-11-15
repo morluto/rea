@@ -381,6 +381,11 @@ Cảm ơn mọi người đã sử dụng REA, báo lỗi, đề xuất tính n�
 
 Xem [DISCLAIMER.md](../../DISCLAIMER.md) để biết hướng dẫn sử dụng có trách nhiệm.
 
+> [!WARNING]
+> **Cảnh báo khóa tài khoản & chỉ sử dụng cho mục tiêu được cấp phép:** Các nhà cung cấp và nền tảng AI (như Anthropic, OpenAI, Cursor, v.v.) áp dụng các bộ lọc an toàn và giám sát lạm dụng tự động. Việc hướng dẫn các agent AI dịch ngược phần mềm độc quyền, trích xuất tài sản trí tuệ được bảo vệ, hoặc vượt qua các biện pháp bảo vệ DRM và chống gian lận vi phạm chính sách sử dụng AI và có thể dẫn đến việc tài khoản cũng như khóa API bị đình chỉ hoặc cấm vĩnh viễn.
+>
+> Chỉ sử dụng REA trên phần mềm bạn sở hữu, mã nguồn thuộc phạm vi công cộng, hoặc các mục tiêu mà bạn có sự cho phép rõ ràng. Kỹ thuật đảo ngược phần mềm độc quyền khi chưa được cấp phép không trao quyền sở hữu đối với mã được tạo ra và có thể vi phạm luật bản quyền cũng như điều khoản dịch vụ.
+
 REA dành cho nghiên cứu, giáo dục, khả năng tương tác, bảo tồn phần mềm và phân tích phần mềm bạn sở hữu hoặc được phép kiểm tra, trong khuôn khổ pháp luật.
 
 The project's position on illegal or unauthorized use covers all REA
