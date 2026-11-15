@@ -93,6 +93,21 @@ it("refuses an unsupported form as an unsupported target, keeping undecoded cont
   });
 });
 
+it("keeps observed facts on an unsupported target as diagnostics", () => {
+  const observed = { lead: { name: "demo-1.0.0-1" } };
+  const error = project(
+    new ParseFailureError({
+      kind: "unsupported",
+      format: "rpm",
+      detail: "RPM signature type 0 is not the header signature format.",
+      undecodedContent: false,
+      observed,
+    }),
+  );
+  expect(error).toBeInstanceOf(AnalysisUnsupportedTargetError);
+  expect(error?.diagnostics).toEqual({ observed });
+});
+
 it("leaves a limit and any other cause to the producer", () => {
   expect(
     project(

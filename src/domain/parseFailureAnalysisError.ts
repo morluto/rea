@@ -9,7 +9,8 @@ import { ParseFailureError } from "./parseFailure.js";
  *
  * Malformed and truncated bytes are an invalid `field` (the input that
  * selected the artifact, `path` by default), carrying any facts the parser
- * observed first; unsupported bytes are an unsupported target. A `limit` and
+ * observed first; unsupported bytes are an unsupported target that keeps those
+ * facts as `diagnostics.observed`. A `limit` and
  * any other cause return `undefined`:
  * a limit's recovery names a budget only its producer knows.
  */
@@ -29,7 +30,13 @@ export const parseFailureAnalysisError = (
         operation,
         path,
         failure.detail,
-        { cause, undecodedContent: failure.undecodedContent },
+        {
+          cause,
+          undecodedContent: failure.undecodedContent,
+          ...(failure.observed === undefined
+            ? {}
+            : { diagnostics: { observed: failure.observed } }),
+        },
       );
     case "malformed":
     case "truncated":

@@ -108,6 +108,34 @@ mcpTest(
 );
 
 mcpTest(
+  "keeps lead facts when the signature type is unsupported",
+  async ({ mcp }) => {
+    const { client, session } = await connect(mcp);
+    try {
+      const root = await createTestTempDirectory("rea-rpm-signature-");
+      const path = join(root, "old-signature.rpm");
+      await writeFile(
+        path,
+        rpmBinaryPackageFixture({ lead: { signatureType: 0 } }),
+      );
+      const response = await client.callTool({
+        name: "inspect_rpm_package",
+        arguments: { path },
+      });
+      expect(response.isError).toBe(true);
+      const { error } = parseMcpToolError(response);
+      expect(error).toMatchObject({
+        code: "unsupported_target",
+        details: { operation: "inspect_rpm_package" },
+      });
+      expect(JSON.stringify(error)).toContain("demo-1.0.0-1");
+    } finally {
+      await session.close();
+    }
+  },
+);
+
+mcpTest(
   "keeps lead facts when a truncated header is refused",
   async ({ mcp }) => {
     const { client, session } = await connect(mcp);
