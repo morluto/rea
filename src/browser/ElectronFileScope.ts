@@ -13,10 +13,10 @@ import {
   assertArtifactReadActive,
   bindArtifactFileCleanup,
   withArtifactFileHandle,
-} from "../artifacts/ArtifactFileOperation.js";
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+} from "../resources/index.js";
 import { asarNodeSchema } from "../artifacts/AsarNode.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
   regularFileState,
   sameRegularFileState,

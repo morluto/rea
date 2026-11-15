@@ -1,4 +1,4 @@
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisTimeoutError,

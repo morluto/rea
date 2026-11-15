@@ -7,20 +7,16 @@ import {
   projectStableArtifactFailure,
   projectArtifactCloseFailure,
   stableArtifactInputFailure,
-} from "../artifacts/StableArtifactFailure.js";
-import {
   type StableArtifactSnapshot,
   readStableArtifact,
-} from "../artifacts/readStableArtifact.js";
-import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   assertArtifactReadActive,
-} from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
-import type { GoBinaryPort } from "../application/go/GoBinaryPort.js";
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
+import type { GoBinaryPort } from "../ports/go/GoBinaryPort.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisOutputError,
@@ -40,7 +36,7 @@ import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { readGoBinaryImage, type GoBinaryImage } from "./GoBinaryImage.js";
 import { requireSelectedNativeImage } from "../native/metadata/MachoSliceSelection.js";
-import { BinaryResourceFailure } from "../native/metadata/BinaryContainer.js";
+import { BinaryResourceFailure } from "../domain/binaryContainer.js";
 
 const OPERATION = "inspect_go_binary";
 

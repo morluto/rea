@@ -1,6 +1,6 @@
 import { InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, vi } from "vitest";
-import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../ports/AnalysisProvider.js";
 import { parseMcpToolError } from "../../tests/fixtures/mcpToolError.js";
 import {
   mcpTest as it,

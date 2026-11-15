@@ -3,12 +3,12 @@ import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { assertArtifactCommandPath } from "../process/ArtifactCommandPath.js";
 import { join } from "node:path";
-import type { FirmwareAnalysisPort } from "../application/firmware/FirmwareAnalysisPort.js";
+import type { FirmwareAnalysisPort } from "../ports/firmware/FirmwareAnalysisPort.js";
 import {
   createAnalysisExecution,
   type AnalysisExecution,
   type ExecutionOptions,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import {
   firmwareResultSchemas,
   DEFAULT_FIRMWARE_ANALYSIS_TIMEOUT_MS,
@@ -31,8 +31,10 @@ import { jsonValueSchema } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
-import { SafeOutputTree } from "../artifacts/SafeOutputTree.js";
-import { outputDirectoryAdmissionRefusal } from "../artifacts/SafeOutputTreeAdmission.js";
+import {
+  SafeOutputTree,
+  outputDirectoryAdmissionRefusal,
+} from "../resources/index.js";
 import { publishFirmwareExtraction } from "./FirmwarePublication.js";
 import {
   BINWALK_PROVIDER_IDENTITY,
@@ -65,7 +67,7 @@ import {
   firmwarePhaseInterruption,
   firmwareSignalInterruption,
 } from "./FirmwareFailures.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/index.js";
 
 type Outcome = Awaited<ReturnType<FirmwareAnalysisPort["execute"]>>;
 interface PendingFirmwareCleanup {

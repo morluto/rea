@@ -40,7 +40,12 @@ export interface AppConfig {
   readonly ghidraCheckpointDirectory?: string;
   readonly ghidraNativeAotJar?: string;
   readonly ilspyCmdPath: string | undefined;
-  readonly hopperLauncherPath: string;
+  /**
+   * The caller's `HOPPER_LAUNCHER_PATH`, unchanged. Undefined selects
+   * automatic discovery, which the Hopper provider performs
+   * (src/hopperPaths/HopperLauncherDiscovery.ts).
+   */
+  readonly hopperLauncherPath: string | undefined;
   readonly hopperStartupTimeoutMs: number;
   /** Whether `hopperStartupTimeoutMs` came from the launch environment. */
   readonly hopperStartupTimeoutSource: "default" | "setting" | "runtime";

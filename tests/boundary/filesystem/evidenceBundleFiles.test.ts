@@ -29,7 +29,7 @@ import {
   publishEvidenceDelivery,
 } from "../../../src/application/EvidenceBundleCommands.js";
 import { EvidenceLedger } from "../../../src/application/investigation/EvidenceLedger.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { OwnedStagedOutput } from "../../../src/filesystem/OwnedStagedOutput.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
@@ -39,7 +39,7 @@ import {
   withEvidenceCallerInputPath,
   type Evidence,
 } from "../../../src/domain/evidence.js";
-import { writeTextParts } from "../../../src/application/JsonFiles.js";
+import { writeTextParts } from "../../../src/resources/TextFileWrite.js";
 import { failFileReadAfterAbort } from "../../support/failFileReadAfterAbort.js";
 import { holdFirstFileRead } from "../../support/holdFirstFileRead.js";
 import { JsonInputPhysicalReadFailure } from "../../../src/application/JsonInputFile.js";

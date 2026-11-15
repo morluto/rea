@@ -1,4 +1,4 @@
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { execFile } from "node:child_process";
 import { constants } from "node:fs";
 import { promisify } from "node:util";

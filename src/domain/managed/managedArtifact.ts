@@ -384,9 +384,8 @@ const managedNativeImplementationSchema = z.object({
 
 const targetRowResolvedSchema = z
   .boolean()
-  .exactOptional()
   .describe(
-    "True when the producer resolved the operand to a matching member row with a decoded signature and owner; false means unresolved. Omitted by historical observations. Does not establish runtime binding.",
+    "True when the producer resolved the operand to a matching member row with a decoded signature and owner; false means unresolved. Does not establish runtime binding.",
   );
 
 const managedCallEdgeSchema = z.object({

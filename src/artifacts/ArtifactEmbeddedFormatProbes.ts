@@ -19,7 +19,7 @@ import {
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
 import { findDotnetBundleHeader } from "./dotnet/DotnetBundle.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/index.js";
 import { abortIfNeeded } from "./ArtifactHash.js";
 import { locateGodotPck, type GodotPckLocation } from "./GodotPckLocation.js";
 import {

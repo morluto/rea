@@ -2,13 +2,13 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { open, unlink } from "node:fs/promises";
 
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import {
+  ArtifactResourceScope,
   ArtifactFileCleanupFailure,
   artifactFilePrimaryFacts,
   withArtifactFileHandle,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import { ghidraSessionRoot } from "./GhidraSessionRoot.js";
 
 /**

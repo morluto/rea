@@ -71,11 +71,11 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import {
   ArtifactFileCleanupFailure,
   artifactFilePrimaryFacts,
-} from "../../src/artifacts/ArtifactFileOperation.js";
+} from "../../src/resources/ArtifactFileOperation.js";
 import { observeGhidraEndpoint } from "../../src/ghidra/GhidraTransport.js";
 import { GhidraClient } from "../../src/ghidra/GhidraClient.js";
 import {

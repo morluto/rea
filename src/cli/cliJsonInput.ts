@@ -21,7 +21,7 @@ import { ownCliProcessResource } from "./cliResources.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/index.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,

@@ -10,7 +10,7 @@ import {
   SIGN_IN_START,
 } from "../domain/desktop/appWithheld.js";
 import type { ToolContract } from "./toolContractTypes.js";
-import { toolContractMetadata } from "./toolEffects.js";
+import { toolContractMetadata, toolEffects } from "./toolEffects.js";
 
 const EXAMPLE_ID = "00000000-0000-4000-8000-000000000001";
 const strings = z.array(z.string());
@@ -82,7 +82,14 @@ export const withheldOutputFields = {
 /** Record the person's consent, in their words, for the export to ship and to gate seeding withheld state. */
 export const RECORD_BUILD_CONSENT_CONTRACT = {
   name: "record_build_consent",
-  ...toolContractMetadata("record_build_consent"),
+  ...toolContractMetadata(
+    "record_build_consent",
+    // Keeps the person's consent with the computer for the export to ship.
+    toolEffects({
+      mutatesSession: true,
+      idempotent: false,
+    }),
+  ),
   kind: "application",
   description:
     "Record a consent the person gave, in their own words, after you asked them: kind licence when they accepted a licence the app or its installer shows, which you then accept on their behalf, or seed_sign_in when they allowed the bundle to hold their sign-in or licence state. Never record one they did not give. The consent is kept with the computer; the export writes every one into the bundle's consent.json, and seeds withheld state only with a seed_sign_in consent.",

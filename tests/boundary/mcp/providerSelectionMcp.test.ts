@@ -1,4 +1,7 @@
-import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
@@ -22,7 +25,7 @@ import {
   type AnalysisProviderInspectionOptions,
   type CapabilityDescriptor,
   type ProviderIdentity,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
@@ -1179,7 +1182,7 @@ it.each(["compact"] as const)(
       if (definition === undefined) throw new Error(`Missing tool ${name}`);
       return mcp.callTool(
         { name, arguments: args },
-        { toolDefinition: definition },
+        { toolDefinition: withCanonicalOutputSchema(definition) },
       );
     };
     expect(structured(await call("binary_session")).result).toMatchObject({

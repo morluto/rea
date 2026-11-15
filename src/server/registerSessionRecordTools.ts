@@ -9,7 +9,7 @@ import {
   evidenceBundleExportReceipt,
 } from "../application/EvidenceBundleFiles.js";
 import { toolContract } from "../contracts/toolContracts.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import { err, ok } from "../domain/result.js";
 import { cancelledBy } from "../domain/analysisErrorCore.js";
 import { inspectEvidenceBundle } from "../application/investigation/InspectEvidenceBundle.js";

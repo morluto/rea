@@ -1,5 +1,7 @@
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import {
+  assertArtifactReadActive,
+  ArtifactReaderFailure,
+} from "../../resources/index.js";
 import {
   type BinaryHardeningImage,
   type BinaryHardeningRow,
@@ -13,7 +15,7 @@ import {
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
-} from "../metadata/BinaryContainer.js";
+} from "../../domain/binaryContainer.js";
 import { peSubjectArchitecture } from "../../domain/peMachine.js";
 import type { PeDataDirectory } from "../../domain/peOptionalHeader.js";
 import { readPeImage } from "../metadata/PeImage.js";

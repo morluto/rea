@@ -3,7 +3,7 @@ import {
   evmInterfaceSchema,
 } from "../../domain/evm/evmInterface.js";
 import type { ToolContract } from "../toolContractTypes.js";
-import { toolContractMetadata } from "../toolEffects.js";
+import { toolContractMetadata, toolEffects } from "../toolEffects.js";
 import {
   analysisDetailSchema,
   analysisDetailOutputSchemaOf,
@@ -22,7 +22,14 @@ export const INSPECT_EVM_INTERFACE_CONTRACT = {
   name: "inspect_evm_interface",
   availability: { host: "evmInterface" },
   cli: true,
-  ...toolContractMetadata("inspect_evm_interface"),
+  ...toolContractMetadata(
+    "inspect_evm_interface",
+    toolEffects({
+      mutatesSession: true,
+      writesFilesystem: true,
+      launchesProcess: true,
+    }),
+  ),
   kind: "artifact-provider",
   requiresActiveTarget: true,
   description:

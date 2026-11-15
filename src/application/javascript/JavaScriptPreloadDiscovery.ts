@@ -9,7 +9,7 @@ import {
 import { translateArtifactFailure } from "../../artifacts/ArtifactOperationFailure.js";
 import type { JavaScriptArtifactFileSet } from "../../domain/javascript/javascriptArtifactFiles.js";
 import type { JavaScriptSourceAnalysisLimits } from "../../domain/javascript/javascriptSourceAnalysis.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../../resources/index.js";
 import { createJavaScriptSourceAnalysis } from "../../artifacts/javascript/JavaScriptSourceAnalysis.js";
 import { createJavaScriptPackageTypeLookup } from "./JavaScriptArtifactAnalysis.js";
 import { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";

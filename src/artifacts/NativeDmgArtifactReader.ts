@@ -11,7 +11,7 @@ import {
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
+} from "../resources/index.js";
 import { DirectoryArtifactReader } from "./DirectoryArtifactReader.js";
 import { declaredArtifactEntries } from "./ArtifactTraversalObservation.js";
 import {

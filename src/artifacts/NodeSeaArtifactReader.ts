@@ -10,8 +10,8 @@ import type { NodeSeaMetadata } from "../domain/artifactFormatMetadata.js";
 import {
   ArtifactPathRegistry,
   normalizeArtifactPath,
-} from "./ArtifactPaths.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+} from "../resources/index.js";
+import { ArtifactReaderFailure } from "../resources/index.js";
 import { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
 import {
   decodeNodeSeaBlob,

@@ -3,10 +3,10 @@ import {
   ArtifactFileCancelled,
   ArtifactFileCleanupFailure,
   withArtifactRegularFile,
-} from "../../artifacts/ArtifactFileOperation.js";
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+} from "../../resources/index.js";
 import { fileSnapshotPartialObservationSchema } from "../../domain/fileSnapshotObservation.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { OwnedDirectoryHandle } from "../../filesystem/OwnedDirectoryHandle.js";
 import { createHash } from "node:crypto";
 import {
@@ -18,7 +18,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
-import { normalizeArtifactPath } from "../../artifacts/ArtifactPaths.js";
+import { normalizeArtifactPath } from "../../resources/index.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,

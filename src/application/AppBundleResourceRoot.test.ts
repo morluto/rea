@@ -12,7 +12,7 @@ import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
-import { createAnalysisExecution } from "./AnalysisProvider.js";
+import { createAnalysisExecution } from "../ports/AnalysisProvider.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import {
   findAppBundleResourceRoot,

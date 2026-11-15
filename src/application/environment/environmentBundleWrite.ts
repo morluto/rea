@@ -11,18 +11,22 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { EnvironmentBundlePublication } from "../../domain/environmentBundleExport.js";
-import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
-import { ArtifactFileCleanupFailure } from "../../artifacts/ArtifactFileOperation.js";
+import {
+  AnalysisCleanupLease,
+  ArtifactFileCleanupFailure,
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+} from "../../resources/index.js";
 import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
 import { readFileHandleChunks } from "../../filesystem/readFileHandleChunks.js";
-import { streamChunkToBuffer } from "../../artifacts/StreamBytes.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
-import { outputDirectoryAdmissionRefusal } from "../../artifacts/SafeOutputTreeAdmission.js";
-import { SafeOutputTreeCreationFailure } from "../../artifacts/SafeOutputTreeCreationFailure.js";
+import {
+  streamChunkToBuffer,
+  SafeOutputTree,
+  outputDirectoryAdmissionRefusal,
+  SafeOutputTreeCreationFailure,
+} from "../../resources/index.js";
 import { RegularFileChangedError } from "../../filesystem/RegularFile.js";
-import { withRegularFile } from "../RegularFileRead.js";
+import { withRegularFile } from "../../process/RegularFileRead.js";
 import {
   ENVIRONMENT_EXPORT_OPERATION,
   type EnvironmentBundlePlan,

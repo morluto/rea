@@ -73,16 +73,12 @@ export const registerWebNetworkCaptureCommands = (
       const service = createWebNetworkCaptureService(environment);
       const descriptor = callerInputs[DESCRIPTOR_PATH] as string | undefined;
       return deliverCliAnalysisEvidence({
+        run: () => service.inspect(input, { signal }),
         // Evidence keeps each caller path as the caller spelled it.
-        run: () =>
-          service.inspect(
-            input,
-            { signal },
-            {
-              capture: callerInputs.capture_path as string,
-              ...(descriptor === undefined ? {} : { descriptor }),
-            },
-          ),
+        callerInputPath: callerInputs.capture_path as string,
+        ...(descriptor === undefined
+          ? {}
+          : { callerInputPaths: { descriptor_set_path: descriptor } }),
         service,
         providerId: "web-network-capture",
         operation: "inspect_web_network_capture",

@@ -2,7 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { ArtifactProvider } from "../../../src/artifacts/ArtifactProvider.js";
-import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
 import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import * as processOutput from "../../../src/process/ExecFileOutput.js";

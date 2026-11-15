@@ -25,7 +25,7 @@ import {
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
-} from "../../../../src/artifacts/ArtifactReader.js";
+} from "../../../../src/resources/ArtifactReader.js";
 
 it.each(["absent", "valid", "uninterpretable"] as const)(
   "preserves %s lipo fields through native observations and structural slice inventory",

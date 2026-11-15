@@ -1,4 +1,4 @@
-import { ArtifactResourceScope } from "../../dist/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../dist/resources/ArtifactResourceScope.js";
 
 /** A failed close retains the scope that can retry all of its owners. */
 export class VerifierArtifactCleanupFailure extends AggregateError {

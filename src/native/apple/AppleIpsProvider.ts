@@ -1,4 +1,18 @@
-import { completedStableArtifactObservation } from "../../artifacts/StableArtifactObservation.js";
+import {
+  completedStableArtifactObservation,
+  type StableArtifactSnapshot,
+  projectOwnedArtifactIdentityFailure,
+  projectSelectedArtifactFileFailure,
+  projectStableArtifactFailure,
+  stableArtifactInputFailure,
+  projectArtifactCloseFailure,
+  ArtifactReaderFailure,
+  readStableArtifact,
+  artifactFilePrimaryFacts,
+  type ArtifactFilePrimaryFacts,
+  assertArtifactReadActive,
+  ArtifactResourceScope,
+} from "../../resources/index.js";
 import { FieldReader } from "./AppleIpsFieldReader.js";
 import {
   type AppleIps,
@@ -12,24 +26,8 @@ import {
   MAX_INSPECT_APPLE_IPS_THREADS,
   type InspectAppleIpsInput,
 } from "../../domain/native/appleIps.js";
-import type { StableArtifactSnapshot } from "../../artifacts/readStableArtifact.js";
-import {
-  projectOwnedArtifactIdentityFailure,
-  projectSelectedArtifactFileFailure,
-  projectStableArtifactFailure,
-  stableArtifactInputFailure,
-  projectArtifactCloseFailure,
-} from "../../artifacts/StableArtifactFailure.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
-import {
-  artifactFilePrimaryFacts,
-  type ArtifactFilePrimaryFacts,
-  assertArtifactReadActive,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import type { AppleIpsPort } from "../../application/binaryDiagnostics/AppleIpsPort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+import type { AppleIpsPort } from "../../ports/binaryDiagnostics/AppleIpsPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";

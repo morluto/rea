@@ -5,7 +5,7 @@ import {
   type JavaScriptSemanticGraphProjection,
 } from "../../src/application/javascript/JavaScriptSemanticGraphBuilder.js";
 import { createJavaScriptSourceAnalysis } from "../../src/artifacts/javascript/JavaScriptSourceAnalysis.js";
-import type { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import type { JavaScriptArtifactFileSet } from "../../src/domain/javascript/javascriptArtifactFiles.js";
 import { withArtifactResourceScope } from "./artifactInventory.js";
 

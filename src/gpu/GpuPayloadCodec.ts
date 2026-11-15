@@ -1,9 +1,9 @@
 import { nodeCodecResult } from "../compression/NodeCodecResult.js";
 import { constants, inflate, zstdDecompress } from "node:zlib";
 import { promisify } from "node:util";
-import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
-import { decodeLz4Block } from "./Lz4Block.js";
-import { rejectGpu } from "./GpuSource.js";
+import { assertArtifactReadActive } from "../resources/index.js";
+import { decodeLz4Block } from "../artifacts/Lz4Block.js";
+import { GPU_OBJECT_BYTES, rejectGpu } from "./GpuSource.js";
 const unzip = promisify(inflate);
 const unzstd = promisify(zstdDecompress);
 /** Completed codec bytes and their encoded extent share one completion owner. */
@@ -47,7 +47,8 @@ export const decodeGpuPayload = async (
   signal?: AbortSignal,
 ): Promise<Buffer> => {
   assertArtifactReadActive(signal);
-  if (compression === "lz4") return decodeLz4Block(bytes, expected, signal);
+  if (compression === "lz4")
+    return decodeLz4Block(bytes, expected, GPU_OBJECT_BYTES, signal);
   const decoded = await decodeGpuPayloadStream(
     bytes,
     compression,

@@ -22,7 +22,7 @@ import {
   BinaryResourceFailure,
   declaredFileRange,
   type ElfDynamicSegment,
-} from "./BinaryContainer.js";
+} from "../../domain/binaryContainer.js";
 import { decodeElfSectionNameTable } from "./ElfSectionNameTable.js";
 
 /** A borrowed positional source. Drivers own admission, cancellation and file identity. */

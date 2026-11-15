@@ -1,7 +1,7 @@
 import { digestCanonicalValue } from "../../../domain/canonicalDigest.js";
 import { Budget } from "../../../domain/budget.js";
 import { AnalysisResourceConstraintError } from "../../../domain/analysisErrorCore.js";
-import type { ArtifactEntry } from "../../../artifacts/ArtifactReader.js";
+import type { ArtifactEntry } from "../../../resources/index.js";
 import {
   PLAYWRIGHT_TRACE_LIMITS,
   PLAYWRIGHT_TRACE_OPERATION,

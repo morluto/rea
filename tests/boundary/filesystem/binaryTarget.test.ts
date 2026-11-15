@@ -61,7 +61,7 @@ import {
   FIT_EMBEDDED,
   FIT_EXTERNAL,
 } from "../../../src/artifacts/fit/FitImage.fixture.js";
-import { devicetreeFixture } from "../../../src/firmware/devicetree/Devicetree.fixture.js";
+import { devicetreeFixture } from "../../../src/domain/firmware/devicetree.fixture.js";
 
 it.each([
   [4000, false],

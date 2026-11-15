@@ -1,3 +1,7 @@
+import {
+  capturedProviderOutput,
+  providerResultDiagnostics,
+} from "../process/capturedProviderOutput.js";
 import { EvmAdmissionError } from "./EvmAdmissionError.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import type { ProviderRejectionCode } from "../domain/providerSelection.js";
@@ -15,26 +19,22 @@ import {
   createAnalysisExecution,
   type ExecutionOptions,
   type ProviderAvailability,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import type {
   EvmInterfaceExecution,
   EvmInterfacePort,
-} from "../application/evm/EvmInterfacePort.js";
+} from "../ports/evm/EvmInterfacePort.js";
 import {
   completedStableArtifact,
   readStableArtifact,
-} from "../artifacts/readStableArtifact.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import {
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
-import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
+} from "../resources/index.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import {
   OwnedCommandFailure,
   ownedCommandResources,
@@ -72,7 +72,6 @@ import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import {
   evmFailureDialect,
-  capturedEvmOutput,
   evmReplyBudgetFailure,
   type EvmFileSizeFailureEvidence,
 } from "./EvmoleFailures.js";
@@ -675,7 +674,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
           },
         },
       );
-      const capturedOutput = capturedEvmOutput(execution);
+      const capturedOutput = capturedProviderOutput(execution);
       retainedOutput = capturedOutput;
       let reply: z.output<typeof replySchema>;
       try {
@@ -823,11 +822,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
         functions: projectEvmoleFunctions(reply.raw),
         discovery_completeness: "unknown",
         runtime_execution: "not-performed",
-        diagnostics: {
-          stdout: execution.stdout.text,
-          stderr: execution.stderr.text,
-          truncated: capturedOutput.truncated,
-        },
+        diagnostics: providerResultDiagnostics(capturedOutput),
         limitations,
       });
       if (!validated.success)

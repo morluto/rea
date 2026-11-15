@@ -5,7 +5,7 @@ import type { GhidraInstallationFileOptions } from "./GhidraInstallationProperti
 import { err, ok, type Result } from "../domain/result.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
-import { withArtifactRegularFile } from "../artifacts/ArtifactFileOperation.js";
+import { withArtifactRegularFile } from "../resources/index.js";
 import { readStableFilePrefix } from "../filesystem/readStableFileBytes.js";
 import { ghidraFileFailure } from "./GhidraFileArtifacts.js";
 

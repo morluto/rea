@@ -22,7 +22,7 @@ import {
   existingMaintenanceScope,
   planIntegrationMaintenance,
 } from "../../../src/application/UpdateMaintenance.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { ok } from "../../../src/domain/result.js";
 import type { DoctorHost } from "../../../src/application/Doctor.js";
 import { ConfigurationError } from "../../../src/domain/configurationErrors.js";

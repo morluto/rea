@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { AnalysisTimeoutError } from "../domain/analysisErrorCore.js";
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";

@@ -3,7 +3,7 @@ import type { Evidence } from "../domain/evidence.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { err, type Result } from "../domain/result.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/index.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
 import { parseAnalysisInput } from "../application/AnalysisInput.js";
