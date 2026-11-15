@@ -463,7 +463,6 @@ it.each(["empty", "span"])(
         : parsed.value.kind === "opaque"
           ? parsed.value.limitation
           : undefined;
-      expect(message).toBeDefined();
       expect(message?.length).toBeLessThan(256);
       expect(message).toContain("table index 0");
     });
@@ -615,16 +614,18 @@ it("keeps genuine destination collisions on files without annotating same-path m
           note.includes("case-insensitive destination"),
         ),
       ).toBe(false);
+      const files = inventory.occurrences.filter(
+        (row) => row.entry_kind === "file" && row.logical_path !== ".",
+      );
+      expect(files.map((row) => row.logical_path).sort()).toEqual(
+        [logical, logical.toUpperCase()].sort(),
+      );
       expect(
-        inventory.occurrences
-          .filter(
-            (row) => row.entry_kind === "file" && row.logical_path !== ".",
-          )
-          .every((row) =>
-            row.limitations.some((note) =>
-              note.includes("case-insensitive destination"),
-            ),
+        files.every((row) =>
+          row.limitations.some((note) =>
+            note.includes("case-insensitive destination"),
           ),
+        ),
       ).toBe(true);
     },
   );

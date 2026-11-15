@@ -1,17 +1,19 @@
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { z } from "zod";
 
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import { ownedJsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 const responseSchema = z.discriminatedUnion("ok", [
   z.strictObject({
     id: z.int().positive(),
     ok: z.literal(true),
-    result: jsonValueSchema,
+    result: ownedJsonValueSchema,
   }),
   z.strictObject({
-    id: z.int().positive(),
+    // Id 0 is reserved for a connection-level failure: the bridge could not
+    // parse the request, so it cannot name the request id it rejects.
+    id: z.int().nonnegative(),
     ok: z.literal(false),
     error: z
       .object({
@@ -21,6 +23,9 @@ const responseSchema = z.discriminatedUnion("ok", [
       .strict(),
   }),
 ]);
+
+/** Response id the bridge uses for a failure not tied to one request. */
+export const GHIDRA_CONNECTION_FAILURE_ID = 0;
 
 /** Validated response emitted by REA's packaged Ghidra script. */
 export type GhidraBridgeResponse = z.infer<typeof responseSchema>;

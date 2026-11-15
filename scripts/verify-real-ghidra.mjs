@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { verifyProjectCoverage } from "./verify-real-ghidra-project-coverage.mjs";
+
 import { execFile } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -320,6 +322,10 @@ try {
   const customPath = process.env.GHIDRA_TARGET_PATH;
   const custom =
     customPath === undefined ? null : await verifyTarget(customPath, "custom");
+  const projectCoverage =
+    !crossFormat && !aarch64JumpTableOnly && process.platform !== "win32"
+      ? await verifyProjectCoverage(verifierRun)
+      : null;
   report = {
     ok: true,
     provider: { id: "ghidra", version: SUPPORTED_GHIDRA_VERSION },
@@ -340,6 +346,7 @@ try {
       ? (crossResults[0]?.native_api_cli ?? null)
       : jumpTable.native_api_cli,
     native_value_e2e: debug.native_values,
+    selected_project_coverage: projectCoverage,
     relocation_symbols: relocationSymbols,
     custom_target: custom === null ? null : summary(custom),
     cleanup: "complete",

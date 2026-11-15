@@ -16,10 +16,7 @@ import { ProviderAdapterError } from "./providerAdapterError.js";
 import { analysisErrorWithCleanupFailure } from "./analysisErrorCleanup.js";
 import { resolvedAnalysisError } from "./analysisErrorBase.js";
 import { createEvidence } from "./evidence.js";
-import {
-  redactExplicitFailure,
-  redactExplicitPointer,
-} from "./explicitSensitiveFailure.js";
+import { redactExplicitFailure } from "./explicitSensitiveFailure.js";
 
 const context = {
   diagnostics: {
@@ -88,6 +85,30 @@ it.each([
   expect(JSON.stringify(projected)).not.toContain("explicit-secret");
 });
 
+it("preserves sanitized capability recovery specificity", () => {
+  for (const [options, expected] of [
+    [{ remediationAction: "Repair explicit-secret" }, "Repair [REDACTED]"],
+    [
+      { fallbackRemediationAction: "Select explicit-secret" },
+      "Select [REDACTED]",
+    ],
+  ] as const) {
+    const error = new AnalysisCapabilityUnavailableError(
+      "provider",
+      "inspect",
+      "unsupported",
+      options,
+    );
+    const sanitized = redactExplicitFailure(error, ["explicit-secret"]);
+    expect(projectAnalysisError(sanitized).remediation.action).toBe(expected);
+    if (!(sanitized instanceof AnalysisCapabilityUnavailableError))
+      throw new Error("expected capability failure");
+    expect(sanitized.remediationAction === undefined).toBe(
+      "fallbackRemediationAction" in options,
+    );
+  }
+});
+
 it.each([
   ["/metadata/private~1~0/numeric", ["private/~"], "/metadata"],
   ["/metadata/private/child", ["private"], "/metadata"],
@@ -95,7 +116,13 @@ it.each([
 ])(
   "preserves a real parent for excluded pointer identities: %s",
   (pointer, values, expected) => {
-    expect(redactExplicitPointer(pointer, values)).toBe(expected);
+    const failure = new AnalysisInputError("inspect", undefined, [
+      { path: ["capture_path", pointer], reason: "invalid_format" },
+    ]);
+    const redacted = redactExplicitFailure(failure, values);
+    if (!(redacted instanceof AnalysisInputError))
+      throw new Error("Expected a redacted input error");
+    expect(redacted.issues[0]?.path).toEqual(["capture_path", expected]);
   },
 );
 
@@ -171,6 +198,49 @@ it("redacts cleanup primaries and mirrors the source error's live status", () =>
   });
 });
 
+it("retains sanitized finalization failures and their independent cleanup status", () => {
+  const primary = new AnalysisInputError("inspect_web_network_capture", {
+    userMessage: "declared-marker capture is invalid",
+  });
+  const reason = new Error("cancelled during reply finalization");
+  const cancellation = new AnalysisCancelledError(
+    "inspect_web_network_capture",
+    { cause: reason, diagnostics: { note: "declared-marker finalization" } },
+  );
+  const cleanup = new ProviderCleanupError(
+    "har",
+    ["/tmp/declared-marker-runtime"],
+    { reason: "declared-marker runtime close failed" },
+    { operation: "inspect_web_network_capture" },
+  );
+  primary.retainSecondaryFailure(cancellation);
+  primary.retainSecondaryFailure(cleanup);
+
+  const redacted = redactExplicitFailure(primary, ["declared-marker"]);
+  const [retainedCancellation, retainedCleanup] = redacted.secondaryFailures;
+  expect(retainedCancellation).toBeInstanceOf(AnalysisCancelledError);
+  expect(retainedCancellation?.cause).toBe(reason);
+  expect(retainedCleanup).toBeInstanceOf(ProviderCleanupError);
+  expect(retainedCleanup?.cleanupIncomplete).toBe(true);
+  expect(redacted.cleanupIncomplete).toBe(false);
+  const projected = projectAnalysisError(redacted);
+  expect(projected.code).toBe("invalid_request");
+  expect(projected.details?.secondary_failures).toMatchObject([
+    {
+      code: "cancelled",
+      details: { diagnostics: { note: "[REDACTED] finalization" } },
+    },
+    {
+      code: "cleanup_incomplete",
+      details: { resources: ["/tmp/[REDACTED]-runtime"] },
+    },
+  ]);
+  expect(JSON.stringify(projected)).not.toContain("declared-marker");
+  cleanup.resolveCleanup();
+  expect(retainedCleanup?.cleanupIncomplete).toBe(false);
+  expect(redacted.cleanupIncomplete).toBe(false);
+});
+
 it("keeps a named timeout control through explicit-value redaction", () => {
   const error = new AnalysisTimeoutError(
     "analyze_javascript_application",
@@ -221,6 +291,25 @@ it("preserves a retryable capability failure through explicit-value redaction", 
   expect(projectAnalysisError(result).retryable).toBe(true);
   expect(JSON.stringify(projectAnalysisError(result))).not.toContain("private");
 });
+
+it.each([
+  ["file-size", false],
+  ["memory", undefined],
+] as const)(
+  "preserves %s resource refusal retryability through redaction",
+  (resource, retryable) => {
+    const source = new AnalysisResourceConstraintError(
+      "inspect_pe_resources",
+      resource,
+      "Selected artifact exceeds 64 bytes",
+      { max_file_bytes: 64 },
+      retryable === undefined ? {} : { retryable },
+    );
+    expect(redactExplicitFailure(source, ["secret"])).toMatchObject({
+      retryable,
+    });
+  },
+);
 
 it("coarsens format issue pointers without creating replacement coordinates", () => {
   const error = new AnalysisInputError(

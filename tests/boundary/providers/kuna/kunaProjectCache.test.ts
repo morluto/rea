@@ -33,6 +33,7 @@ import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import { RegularFileCleanupFailure } from "../../../../src/filesystem/OwnedRegularFile.js";
 import * as stableFileHash from "../../../../src/filesystem/StableFileHash.js";
 import { ProviderCleanupError } from "../../../../src/domain/providerCleanupError.js";
+import type { AnalysisError } from "../../../../src/domain/analysisErrorBase.js";
 import {
   fakeKunaCalls,
   setFakeKunaBehavior,
@@ -594,7 +595,6 @@ it("blocks repeated cache reads while a retained hash descriptor cannot close", 
       expect(originals.size).toBe(1);
     }
     const closed = await warmCache.close();
-    expect(closed.ok).toBe(false);
     if (closed.ok) throw new Error("Close lost the retained hash owner");
     expect(closed.error.cleanupIncomplete).toBe(true);
     expect(new Set(closed.error.cleanupResources).size).toBe(2);
@@ -634,17 +634,15 @@ it("keeps hash cleanup aggregates pending through retained staging removal", asy
     .mockRejectedValue(persistentCloseCause);
   let stagingPath: string | undefined;
   let retainedPath: string | undefined;
-  let buildFailure: ProviderCleanupError | undefined;
+  let buildFailure: AnalysisError | undefined;
   const aggregates: ProviderCleanupError[] = [];
   try {
     const built = await cache.build({
       installation,
       ...(await target("program")),
     });
-    expect(built.ok).toBe(false);
     if (built.ok) throw new Error("Expected the retained hash close to fail");
-    expect(built.error).toBeInstanceOf(ProviderCleanupError);
-    if (!(built.error instanceof ProviderCleanupError)) throw built.error;
+    expect(built.error.cleanupIncomplete).toBe(true);
     buildFailure = built.error;
 
     const [staging] = await entries(cacheRoot, "staging");
@@ -654,13 +652,11 @@ it("keeps hash cleanup aggregates pending through retained staging removal", asy
     await chmod(stagingPath, 0o500);
 
     const firstClose = await cache.close();
-    expect(firstClose.ok).toBe(false);
     if (firstClose.ok) throw new Error("Close lost the retained descriptor");
     aggregates.push(firstClose.error);
 
     close.mockRestore();
     const stagingClose = await cache.close();
-    expect(stagingClose.ok).toBe(false);
     if (stagingClose.ok) throw new Error("Close lost the retained staging");
     aggregates.push(stagingClose.error);
     retainedPath = stagingClose.error.cleanupResources[0];

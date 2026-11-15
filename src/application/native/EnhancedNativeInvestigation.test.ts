@@ -642,10 +642,6 @@ describe("native dispatch inventory", () => {
       label: "malformed value with a legacy name",
       entry: { ...methodInventoryEntry, value: 42, name: methodName },
     },
-    {
-      label: "undeclared field",
-      entry: { address: "0x1000", value: methodName, unexpected: true },
-    },
   ])(
     "rejects $label inventory in both dispatch consumers",
     async ({ entry }) => {
@@ -663,12 +659,32 @@ describe("native dispatch inventory", () => {
           error: {
             _tag: "AnalysisOutputError",
             operation: "list_names",
-            reason: "provider returned an invalid inventory",
+            reason: "Provider returned an invalid name inventory",
           },
         });
       }
     },
   );
+
+  it("accepts an inventory row with an undeclared provider field in both dispatch consumers", async () => {
+    const tools = new EnhancedTools(
+      testAnalysis({
+        list_names: () =>
+          execution("list_names", [
+            { ...methodInventoryEntry, provider_rank: 1 },
+          ]),
+      }),
+    );
+    for (const [operation, parameters] of [
+      ["inspect_native_dispatch_metadata", { max_records: 10 }],
+      ["trace_native_ui_action", { action: "buildTapped:" }],
+    ] as const) {
+      const result = await tools.execute(operation, parameters);
+      expect(result.ok ? null : result.error._tag).not.toBe(
+        "AnalysisOutputError",
+      );
+    }
+  });
 });
 
 describe("native UI query outcomes", () => {
@@ -941,4 +957,148 @@ it("retains both initial cleanup owners until each lease releases", async () => 
   expect(result.error.cleanupIncomplete).toBe(false);
   expect(result.error.cleanupResources).toEqual([]);
   expect(result.error.cleanupPrimary).toBe(metadata);
+});
+
+it.each([
+  { max_depth: 4, truncated: true, reason: "source_graph_truncated" },
+  { max_depth: 0, truncated: true, reason: "max_depth_reached" },
+  { max_depth: 0, truncated: false, reason: "max_depth_reached" },
+])(
+  "retains decoder coverage alongside $reason (source truncated: $truncated)",
+  async ({ max_depth, truncated, reason }) => {
+    const coverage = {
+      facet: "objects:Main.nib",
+      status: "partial" as const,
+      reason: "object_limit_reached",
+      examined: 2,
+      omitted: 1,
+    };
+    const result = await new EnhancedTools(
+      testAnalysis(
+        {
+          list_names: () => execution("list_names", []),
+        },
+        { ...graph, truncated, coverage: [coverage] },
+      ),
+    ).execute("trace_native_ui_action", {
+      action: "buildTapped:",
+      max_depth,
+    });
+    if (!result.ok) throw result.error;
+    expect(result.value).toMatchObject({ truncated: true, reason });
+    expect(result.value).toHaveProperty(
+      "coverage",
+      expect.arrayContaining([coverage]),
+    );
+    const trace = nativeInvestigationTraceSchema.parse(result.value);
+    if (truncated)
+      expect(trace.limitations).toContain(
+        "The supplied graph was truncated; relationships omitted from that source remain unknown.",
+      );
+    else
+      expect(trace.limitations).not.toContain(
+        "The supplied graph was truncated; relationships omitted from that source remain unknown.",
+      );
+  },
+);
+
+it("retains measured UI output bounds without guessing a source truncation cause", async () => {
+  const result = await new EnhancedTools(
+    testAnalysis({
+      list_names: () => execution("list_names", []),
+    }),
+  ).execute("trace_native_ui_action", { action: "buildTapped:", max_edges: 1 });
+  if (!result.ok) throw result.error;
+  const trace = nativeInvestigationTraceSchema.parse(result.value);
+  expect(trace).toMatchObject({
+    truncated: true,
+    reason: "native_trace_output_bound_reached",
+  });
+  expect(trace.limitations).not.toContain(
+    "The supplied graph was truncated; relationships omitted from that source remain unknown.",
+  );
+  expect(trace.coverage).toContainEqual(
+    expect.objectContaining({
+      facet: "interface_builder_graph",
+      status: "partial",
+      reason: "native_trace_output_bounds_reached",
+    }),
+  );
+  expect(
+    trace.coverage.find(({ facet }) => facet === "interface_builder_graph")
+      ?.omitted,
+  ).toBeGreaterThan(0);
+});
+
+it.each([
+  { extraUiBranch: false, reason: "native_call_traversal_bound_reached" },
+  { extraUiBranch: true, reason: "max_depth_reached" },
+])(
+  "retains measured native and UI cutoffs (UI branch: $extraUiBranch)",
+  async ({ extraUiBranch, reason }) => {
+    const uiGraph = extraUiBranch
+      ? {
+          ...graph,
+          nodes: [
+            ...graph.nodes,
+            ...["nested", "deeper"].map((id) => ({ ...graph.nodes[0]!, id })),
+          ],
+          edges: [
+            ...graph.edges,
+            ...[
+              { from: "controller", to: "nested" },
+              { from: "nested", to: "deeper" },
+            ].map(({ from, to }) => ({
+              ...graph.edges[0]!,
+              id: `${from}:${to}`,
+              from,
+              to,
+              relation: "contains" as const,
+            })),
+          ],
+        }
+      : graph;
+    const result = await new EnhancedTools(
+      testAnalysis(
+        {
+          list_names: () => execution("list_names", [methodInventoryEntry]),
+        },
+        uiGraph,
+      ),
+    ).execute("trace_native_ui_action", {
+      action: "buildTapped:",
+      max_depth: 2,
+    });
+    if (!result.ok) throw result.error;
+    expect(result.value).toMatchObject({ truncated: true, reason });
+    expect(result.value).toHaveProperty(
+      "coverage",
+      expect.arrayContaining([
+        expect.objectContaining({ facet: "static_native_calls", omitted: 1 }),
+      ]),
+    );
+    if (extraUiBranch)
+      expect(result.value).toHaveProperty(
+        "limitations",
+        expect.arrayContaining([
+          "Native call expansion stopped at a traversal bound.",
+        ]),
+      );
+  },
+);
+
+it("keeps a complete UI graph trace untruncated when no bound is reached", async () => {
+  const result = await new EnhancedTools(
+    testAnalysis({
+      list_names: () => execution("list_names", []),
+    }),
+  ).execute("trace_native_ui_action", { action: "buildTapped:" });
+  if (!result.ok) throw result.error;
+  expect(result.value).toMatchObject({ truncated: false, reason: null });
+  expect(result.value).toHaveProperty(
+    "limitations",
+    expect.not.arrayContaining([
+      "The supplied graph was truncated; relationships omitted from that source remain unknown.",
+    ]),
+  );
 });

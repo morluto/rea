@@ -1,16 +1,23 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { crc32 } from "node:zlib";
+import { Uint8ArrayReader, ZipReader } from "@zip.js/zip.js";
 
 import { describe, expect, it } from "vitest";
 
 import { readZipView } from "../../../src/application/desktop/DesktopZipView.js";
+import {
+  decodeZipEntryText,
+  ZIP_READER_OPTIONS,
+  zipEntryPath,
+} from "../../../src/artifacts/ZipArtifactReader.js";
 import type { DesktopTaskCheck } from "../../../src/domain/desktop/appTask.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { detectStateFormat } from "../../../src/domain/desktop/stateFormats.js";
 import {
   emptyEntriesArchive,
   odtArchive,
+  unicodePathExtra,
   withZip64End,
   zipArchive,
   type ZipMember,
@@ -63,6 +70,139 @@ const sqliteHeader = Buffer.concat([
   Buffer.from("SQLite format 3\0"),
   Buffer.alloc(84),
 ]);
+
+it("gives the UTF-8 flag precedence over a Unicode Path for names and formats", async () => {
+  const storedName = "legacy.txt";
+  const extra = unicodePathExtra(storedName, "café.json");
+  const archive = zipArchive([
+    { name: storedName, data: "42", flags: 0x800, centralExtra: extra },
+    { name: "other.txt", data: "42", centralExtra: extra },
+  ]);
+
+  expect(await sameView(archive)).toMatchObject({
+    entries: [
+      { name: storedName, format: "text" },
+      { name: "other.txt", format: "text" },
+    ],
+  });
+});
+
+it.each([
+  "file",
+  "crc",
+  "version",
+  "short",
+  "superseded-utf8",
+  "flagged",
+  "empty",
+  "nul",
+])(
+  "keeps the ZIP decoder's final Unicode Path choice through bounded views (%s)",
+  async (kind) => {
+    const name = "settings.json";
+    const displayed =
+      kind === "empty" ? "" : kind === "nul" ? "kept\0.json" : name;
+    const first = unicodePathExtra(
+      name,
+      kind === "superseded-utf8" ? Buffer.from([0xff]) : "hidden/",
+    );
+    let last = unicodePathExtra(name, displayed);
+    if (kind === "crc") last.writeUInt32LE(0, 5);
+    if (kind === "version") last[4] = 2;
+    if (kind === "short") last = Buffer.from([0x75, 0x70, 1, 0, 1]);
+    const archive = zipArchive([
+      {
+        name,
+        data: '{"zoom":2}',
+        flags: kind === "flagged" ? 0x800 : 0,
+        centralExtra: Buffer.concat([first, last]),
+      },
+      { name: "control.txt", data: "unaffected" },
+    ]);
+    // The complete production decoder is the semantic control for the bounded
+    // preflight, including invalid final claims falling back to the raw name.
+    const reader = new ZipReader(
+      new Uint8ArrayReader(archive),
+      ZIP_READER_OPTIONS,
+    );
+    try {
+      expect(
+        (await reader.getEntries({ decodeText: decodeZipEntryText })).map(
+          (entry) => ({
+            name: zipEntryPath(entry),
+            directory: entry.directory,
+          }),
+        ),
+      ).toEqual([
+        { name: displayed, directory: false },
+        { name: "control.txt", directory: false },
+      ]);
+    } finally {
+      await reader.close();
+    }
+    expect(await sameView(archive)).toMatchObject({
+      entries: [
+        {
+          name: displayed,
+          format: "json",
+          view: { zoom: 2 },
+          view_error: null,
+        },
+        { name: "control.txt", view_error: null },
+      ],
+      entry_count: 2,
+      truncated: false,
+    });
+  },
+);
+
+it("refuses invalid UTF-8 in the selected Unicode claim while preserving an unrelated extra field", async () => {
+  const name = "settings.json";
+  const opaque = Buffer.from([0xfe, 0xca, 3, 0, 1, 2, 3]);
+  const archive = (last: Buffer) =>
+    zipArchive([
+      {
+        name,
+        data: '{"zoom":2}',
+        centralExtra: Buffer.concat([
+          unicodePathExtra(name, "hidden/"),
+          opaque,
+          last,
+        ]),
+      },
+    ]);
+  expect(await sameView(archive(unicodePathExtra(name, name)))).toMatchObject({
+    entry_count: 1,
+    entries: [{ name, view: { zoom: 2 } }],
+    truncated: false,
+  });
+  const invalid = archive(unicodePathExtra(name, Buffer.from([0xff])));
+  await expectSameViews([invalid]);
+  expect(await readZipView(invalid)).toEqual({
+    ok: false,
+    error: "not a readable zip archive",
+  });
+});
+
+it("excludes a final Unicode directory without consuming a retained file slot", async () => {
+  const name = "settings.json";
+  const archive = zipArchive([
+    {
+      name,
+      data: "not a file view",
+      centralExtra: Buffer.concat([
+        unicodePathExtra(name, name),
+        unicodePathExtra(name, "hidden/"),
+      ]),
+    },
+    { name: "control.json", data: '{"kept":true}' },
+  ]);
+  expect(await sameView(archive)).toMatchObject({
+    entries: [{ name: "control.json", view: { kept: true } }],
+    entry_count: 1,
+    truncated: false,
+  });
+});
 
 describe("zip views in the exported module", () => {
   it("lists entries in archive order with the formats and views REA reads", async () => {
@@ -334,7 +474,7 @@ describe("zip entries the exported module cannot fully read", () => {
     );
     // Parsing the 4,200,004-byte entry before refusing it traced about 110 MB here.
     expect(peak).toBeLessThan(4 * objects.length);
-  }, 60_000);
+  });
 
   it("keeps a JSON entry nested too deeply on that entry and reads its siblings, as REA does", async () => {
     const nested = (levels: number) =>

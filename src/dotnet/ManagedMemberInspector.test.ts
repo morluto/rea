@@ -18,11 +18,11 @@ import { edges } from "./ManagedMemberRows.js";
 import { parseUserStrings } from "./ManagedUserStrings.js";
 import {
   readCompressed,
-  signature,
   isParsedTokenInstruction,
   type DecodedMethod,
   type ManagedMethod,
 } from "./ManagedMemberInspectorCore.js";
+import { signature } from "../../tests/fixtures/managedSignature.js";
 import { decodeInstructions } from "./ManagedMemberInstructionDecoder.js";
 import { ManagedReaderFailure } from "./ManagedReaderFailure.js";
 import { managedTypeReferences } from "./ManagedTypeReferences.js";
@@ -515,8 +515,9 @@ it.each([
       code: "invalid-row",
       scope,
       offset: blobOffset + operandOffset,
-      detail:
-        "TypeDefOrRefOrSpec operand 0x7 is invalid: coded index tag 3 is not defined",
+      detail: expect.stringMatching(
+        /TypeDefOrRefOrSpec.*0x7.*tag 3.*not defined/i,
+      ),
     });
   },
 );
@@ -914,24 +915,19 @@ describe("managed edge target declaring types", () => {
     ]);
   });
 
-  it("reads Evidence recorded before declaring types were named as unknown", () => {
+  it("refuses member Evidence without declaring-type names", () => {
     const current = inspect({});
-    const parsed = managedMemberInspectionSchema.parse({
+    const parsed = managedMemberInspectionSchema.safeParse({
       ...current,
       member_refs: current.member_refs.map(
-        ({ parent_name: _omitted, ...legacy }) => legacy,
-      ),
-      call_edges: current.call_edges.map(
-        ({ target_declaring_type: _omitted, ...legacy }) => legacy,
-      ),
-      field_accesses: current.field_accesses.map(
-        ({ field_declaring_type: _omitted, ...legacy }) => legacy,
+        ({ parent_name: _omitted, ...withoutName }) => withoutName,
       ),
     });
-
-    expect(parsed.member_refs[0]?.parent_name).toBeNull();
-    expect(parsed.call_edges[0]?.target_declaring_type).toBeNull();
-    expect(parsed.field_accesses[0]?.field_declaring_type).toBeNull();
+    expect(parsed.error?.issues[0]?.path).toEqual([
+      "member_refs",
+      0,
+      "parent_name",
+    ]);
   });
 });
 
@@ -1451,20 +1447,14 @@ describe("managed exported types", () => {
     expect(result.exported_types).toBeNull();
   });
 
-  it("reads member Evidence recorded before exported types as unexamined", () => {
+  it("refuses member Evidence without the exported-type inventory", () => {
     const bytes = buildManagedPeFixture();
-    const { exported_types: _omitted, ...legacy } = inspectManagedMembersBytes(
-      bytes,
-      managedPeFixtureTarget(bytes),
-    );
-    const parsed = managedMemberInspectionSchema.parse(legacy);
-
-    expect(parsed.exported_types).toBeNull();
-    expect(comparisonLimitations(parsed, parsed)).toContainEqual(
-      expect.stringMatching(
-        /did not examine ExportedType.*exported and forwarded types are unknown/iu,
-      ),
-    );
+    const { exported_types: _omitted, ...withoutExported } =
+      inspectManagedMembersBytes(bytes, managedPeFixtureTarget(bytes));
+    expect(
+      managedMemberInspectionSchema.safeParse(withoutExported).error?.issues[0]
+        ?.path,
+    ).toEqual(["exported_types"]);
   });
 
   it("retains an exported type whose implementation is out of range as partial", () => {
@@ -1652,16 +1642,12 @@ describe("managed user strings", () => {
     });
   });
 
-  it("leaves user strings unexamined when CLI metadata is unavailable or predates them", () => {
+  it("leaves user strings unexamined when CLI metadata is unavailable", () => {
     const native = buildNativePeFixture();
     expect(
       inspectManagedMembersBytes(native, managedPeFixtureTarget(native))
         .user_strings,
     ).toBeNull();
-
-    const { user_strings: _omitted, ...legacy } = inspect({});
-    const parsed = managedMemberInspectionSchema.parse(legacy);
-    expect(parsed.user_strings).toBeNull();
   });
 });
 
@@ -1692,14 +1678,15 @@ describe("managed user string issues", () => {
           code: "invalid-heap-index",
           scope: "metadata.#US:0x06000001",
           offset: null,
-          detail: "ldstr operand does not name an item inside #US",
+          detail: expect.stringMatching(/ldstr operand.*does not name.*#US/i),
         },
         {
           code: "missing-stream",
           scope: "metadata.#US",
           offset: null,
-          detail:
-            "2 distinct ldstr operand(s) reference #US, but the metadata has no #US stream",
+          detail: expect.stringMatching(
+            /2 distinct ldstr.*#US.*no #US stream/i,
+          ),
         },
       ],
     });
@@ -2478,8 +2465,9 @@ describe("managed metadata reference bounds", () => {
       issues: [
         expect.objectContaining({
           code: "invalid-row",
-          detail:
-            "MemberRef parent coded index 0x0 is null, but the Class column must reference a row",
+          detail: expect.stringMatching(
+            /MemberRef parent.*0x0.*null.*Class.*reference a row/i,
+          ),
         }),
       ],
     });
@@ -2634,6 +2622,8 @@ it("decodes generic instantiation member signatures as complete coverage", () =>
 });
 
 it.each([
+  ["null TypeDef row", Buffer.from([0x06, 0x12, 0x00])],
+  ["out-of-range TypeRef row", Buffer.from([0x06, 0x12, 0x25])],
   ["reserved TypeDefOrRef tag", Buffer.from([0x06, 0x12, 0x07])],
   ["missing TypeSpec row", Buffer.from([0x06, 0x12, 0x06])],
 ])(

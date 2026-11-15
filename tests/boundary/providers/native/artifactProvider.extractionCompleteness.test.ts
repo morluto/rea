@@ -104,8 +104,7 @@ it.each(["file", "directory"] as const)(
     );
     await expect(materialize()).rejects.toMatchObject({
       reason: "integrity",
-      message:
-        "Inventoried regular artifact entries were not materialized: z/missing.txt",
+      message: expect.stringMatching(/not materialized.*z\/missing\.txt/iu),
     });
     await expect(access(output)).rejects.toThrow();
     expect(
@@ -130,8 +129,9 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     onTestFinished(() => chmod(child, 0o755));
     await expect(materialize()).rejects.toMatchObject({
       reason: "integrity",
-      message:
-        "Inventoried regular artifact entries were not materialized: child/selected.txt",
+      message: expect.stringMatching(
+        /not materialized.*child\/selected\.txt/iu,
+      ),
     });
     await expect(access(output)).rejects.toThrow();
     await chmod(child, 0o755);

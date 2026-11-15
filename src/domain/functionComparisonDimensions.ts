@@ -16,7 +16,6 @@ import {
   nameAndSwiftProjection,
   normalizeCfg,
   referencedStringProjection,
-  sorted,
   swiftLiteralCoverage,
   swiftLiteralSitesConflict,
 } from "./functionComparisonNormalization.js";
@@ -34,7 +33,7 @@ type ComparisonContext = Pick<
   DimensionResultInput,
   "links" | "providersDiffer"
 > & {
-  readonly sameEntry: boolean;
+  readonly sameIdentity: boolean;
   readonly coordinateContext: FunctionSnapshotCoordinateContext;
 };
 
@@ -559,7 +558,7 @@ const compareIdentity = (
   context: ComparisonContext,
 ): FunctionDimension => {
   if (
-    !context.sameEntry &&
+    !context.sameIdentity &&
     (!hasStableNativeSymbol(
       left.dossier.procedure.name,
       left.dossier.procedure.symbol,

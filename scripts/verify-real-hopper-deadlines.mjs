@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { copyFile, mkdtemp, realpath, rm } from "node:fs/promises";
+import { copyFile, mkdtemp, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { firstProcedureAddress } from "./lib/real-hopper-assertions.mjs";
+import { HopperDeadlineCleanup } from "./lib/hopper-deadline-cleanup.mjs";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import { ArtifactResourceScope } from "../dist/artifacts/ArtifactResourceScope.js";
 import { AnalysisCleanupLease } from "../dist/artifacts/AnalysisCleanupLease.js";
@@ -29,6 +30,7 @@ const root = await realpath(
 );
 const target = join(root, "deadline-fixture");
 const profileResources = new ArtifactResourceScope();
+const cleanupOwner = new HopperDeadlineCleanup(root, profileResources);
 const profileResourceScope = {
   retain: (owner, resource) =>
     profileResources.retain({
@@ -40,6 +42,7 @@ const profileResourceScope = {
 };
 let client;
 let primaryFailure;
+let operationFailed = false;
 try {
   await copyFile(fixtures.primary.path, target);
   const parsed = await parseBinaryTarget(target);
@@ -148,31 +151,19 @@ try {
     ),
   );
 } catch (cause) {
+  operationFailed = true;
   primaryFailure = cause;
   throw cause;
 } finally {
-  let cleanupFailure;
-  if (client !== undefined) {
-    const closed = await client.close();
-    if (!closed.ok) cleanupFailure = closed.error;
-  }
   try {
-    await profileResources.close();
-  } catch (cause) {
-    cleanupFailure =
-      cleanupFailure === undefined
-        ? cause
-        : new AggregateError(
-            [cleanupFailure, cause],
-            "Hopper profile and client cleanup failed",
-          );
-  }
-  await rm(root, { recursive: true, force: true });
-  if (cleanupFailure !== undefined)
-    throw primaryFailure === undefined
-      ? cleanupFailure
-      : new AggregateError(
+    if (client !== undefined) cleanupOwner.setClient(client);
+    await cleanupOwner.close();
+  } catch (cleanupFailure) {
+    throw operationFailed
+      ? new AggregateError(
           [primaryFailure, cleanupFailure],
           "Hopper verification and cleanup failed",
-        );
+        )
+      : cleanupFailure;
+  }
 }

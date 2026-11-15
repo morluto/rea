@@ -29,8 +29,6 @@ vi.mock("../../src/composition/javascriptRuntimeObservation.js", () => ({
   },
 }));
 
-const TIMEOUT_MS = 20_000;
-
 describe("JavaScript runtime observation CLI parity", () => {
   const resources: Array<{ close(): Promise<unknown> }> = [];
 
@@ -114,7 +112,6 @@ describe("JavaScript runtime observation CLI parity", () => {
         await provider.close();
       }
     },
-    TIMEOUT_MS,
   );
 
   test("waits for provider cleanup and retains completed Evidence on failure", async () => {
@@ -149,28 +146,35 @@ describe("JavaScript runtime observation CLI parity", () => {
         );
       },
     };
-    const cli = Cli.create("rea-runtime-cleanup-test", { sync: false });
-    registerJavaScriptRuntimeObservationCommands(cli, silentLogger, {});
-    let stdout = "";
-    await cli.serve(
-      ["list-javascript-runtime-targets", "http://127.0.0.1:9229", "--json"],
-      { exit: () => {}, stdout: (chunk) => (stdout += chunk) },
-    );
+    const previousExitCode = process.exitCode;
+    process.exitCode = 0;
+    try {
+      const cli = Cli.create("rea-runtime-cleanup-test", { sync: false });
+      registerJavaScriptRuntimeObservationCommands(cli, silentLogger, {});
+      let stdout = "";
+      await cli.serve(
+        ["list-javascript-runtime-targets", "http://127.0.0.1:9229", "--json"],
+        { exit: () => {}, stdout: (chunk) => (stdout += chunk) },
+      );
 
-    expect(closeAttempts, stdout).toBe(1);
-    expect(JSON.parse(stdout)).toMatchObject({
-      code: "cleanup_incomplete",
-      details: {
-        operation: "list_javascript_runtime_targets",
-        partial_observation: {
+      expect(closeAttempts, stdout).toBe(1);
+      expect(JSON.parse(stdout)).toMatchObject({
+        code: "cleanup_incomplete",
+        details: {
           operation: "list_javascript_runtime_targets",
-          normalized_result: {
-            runtime: { product: "node.js/v24" },
-            targets: [],
+          partial_observation: {
+            operation: "list_javascript_runtime_targets",
+            normalized_result: {
+              runtime: { product: "node.js/v24" },
+              targets: [],
+            },
           },
         },
-      },
-    });
+      });
+      expect(process.exitCode).toBe(1);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
   });
 });
 

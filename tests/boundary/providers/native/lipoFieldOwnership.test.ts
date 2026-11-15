@@ -167,7 +167,6 @@ it("refuses retained raw-field expansion as capacity rather than a malformed lip
     "list_architectures",
     path,
   );
-  expect(refused.ok).toBe(false);
   if (refused.ok) throw new Error("Expected lipo field retention refusal");
   expect(refused.error).toMatchObject({
     _tag: "AnalysisResourceConstraintError",

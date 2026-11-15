@@ -609,7 +609,9 @@ it("inspects committed WAL schema and rows while preserving every source artifac
       returned_rows: 1,
       truncated: true,
       row_limit: 1,
-      order: "unspecified",
+      order: "rowid",
+      row_offset: 0,
+      next_row_offset: 1,
     },
   });
   for (const artifact of original) {
@@ -816,8 +818,9 @@ it("attributes table and column selection failures to their own arguments", asyn
         {
           path: ["columns"],
           reason: "invalid_format",
-          message:
-            "Selected column does not exist with that exact name in table records: nope",
+          message: expect.stringMatching(
+            /column.*exact name.*table records.*nope/i,
+          ),
         },
       ],
     },
@@ -1211,6 +1214,72 @@ it.each(["UTF-8", "UTF-16le", "UTF-16be"] as const)(
   },
 );
 
+it("returns the first sample of a truncated rowid-shadowing table without a next offset", async () => {
+  const workspace = await createTestWorkspace("rea-sqlite-shadowed-");
+  onTestFinished(() => removeTestWorkspace(workspace.root));
+  const path = workspace.path("shadowed.db");
+  const writer = new DatabaseSync(path);
+  writer.exec(
+    `CREATE TABLE shadowed(rowid TEXT, _rowid_ TEXT, oid TEXT);
+     INSERT INTO shadowed VALUES ('a', 'a', 'a'), ('b', 'b', 'b');`,
+  );
+  writer.close();
+  const provider = createProvider();
+  onTestFinished(() => provider.close());
+  const result = await provider.inspect({
+    path,
+    table: "shadowed",
+    row_limit: 1,
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value.result).toMatchObject({
+    rows: {
+      table: "shadowed",
+      order: "unspecified",
+      row_limit: 1,
+      returned_rows: 1,
+      truncated: true,
+      row_offset: 0,
+      next_row_offset: null,
+    },
+  });
+});
+
+it("attributes a refused row offset to row_offset across the worker round trip", async () => {
+  const workspace = await createTestWorkspace("rea-sqlite-shadowed-");
+  onTestFinished(() => removeTestWorkspace(workspace.root));
+  const path = workspace.path("shadowed.db");
+  const writer = new DatabaseSync(path);
+  writer.exec(
+    `CREATE TABLE shadowed(rowid TEXT, _rowid_ TEXT, oid TEXT);
+     INSERT INTO shadowed VALUES ('a', 'a', 'a'), ('b', 'b', 'b');`,
+  );
+  writer.close();
+  const provider = createProvider();
+  onTestFinished(() => provider.close());
+  const result = await provider.inspect({
+    path,
+    table: "shadowed",
+    row_offset: 1,
+  });
+  if (result.ok) throw new Error("Expected a rejected row offset");
+  // The worker refuses this offset itself, so the refusal has to survive the
+  // reply schema and arrive as an input error naming the caller's argument
+  // rather than as an unparsable reply.
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "invalid_request",
+    details: {
+      issues: [
+        {
+          path: ["row_offset"],
+          reason: "invalid_format",
+          message: expect.stringContaining("row_offset"),
+        },
+      ],
+    },
+  });
+});
+
 it("retains an unavailable virtual module definition without executing it", async () => {
   const workspace = await createTestWorkspace("rea-sqlite-virtual-");
   onTestFinished(() => removeTestWorkspace(workspace.root));
@@ -1297,6 +1366,32 @@ nativeTest(
     const acquiredPid = pid;
     expect(() => process.kill(acquiredPid, 0)).toThrow();
     await expectPrivateRootRemoved(ownedRoot);
+  },
+);
+
+nativeTest(
+  "reports the worker's V8 heap report even when its output overflows the diagnostic budget",
+  async () => {
+    const { database } = await createFixture();
+    const provider = new SqliteDatabaseProvider({}, (spawn) =>
+      spawnOwnedProviderProcess({
+        ...spawn,
+        arguments: [
+          "-e",
+          `process.stderr.write('FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory\\n'); process.stdout.write('x'.repeat(${String(SQLITE_DATABASE_LIMITS.diagnosticBytes + 1)})); setInterval(() => {}, 1000)`,
+        ],
+      }),
+    );
+    onTestFinished(() => provider.close());
+    const result = await provider.inspect({ path: database.path });
+    if (result.ok) throw new Error("Expected heap exhaustion");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        resource: "memory",
+        reported_limits: { javascript_heap_bytes: 256 * 1024 * 1024 },
+      },
+    });
   },
 );
 

@@ -264,11 +264,7 @@ const collectTransportFacts = (
     return;
   }
   for (const [frameIndex, frame] of data.frames.entries()) {
-    if (
-      !object(frame) ||
-      frame.frame_type === undefined ||
-      frame.frame_type === null
-    ) {
+    if (!object(frame) || typeof frame.frame_type !== "string") {
       fact.incomplete_fact_records.push(ordinal);
       continue;
     }
@@ -378,7 +374,7 @@ const packetEvent = (name: unknown): boolean =>
 const object = (value: unknown): value is Record<string, unknown> =>
   captureObject(value) && !(value instanceof LosslessNumber);
 const invalid = (message: string, pointer: string): never => {
-  throw new CaptureFormatError("format", message, pointer);
+  throw new CaptureFormatError("malformed", message, pointer);
 };
 
 /** Canonicalize JSON integer notation exactly, checking expansion before allocation. */

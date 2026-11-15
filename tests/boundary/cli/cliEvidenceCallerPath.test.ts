@@ -27,7 +27,6 @@ it("retains the original file selection when final cleanup fails", async () => {
     "inspect",
     new AbortController().signal,
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected cleanup failure");
   expect(result.error).toMatchObject({
     code: "cleanup_incomplete",
@@ -80,7 +79,6 @@ it("binds authenticated partial Evidence but preserves raw partial observations"
       "inspect",
       new AbortController().signal,
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected cancellation");
     expect(result.error.details?.partial_observation).toMatchObject(expected);
     if ("kind" in expected)

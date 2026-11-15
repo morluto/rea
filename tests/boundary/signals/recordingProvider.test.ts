@@ -213,6 +213,42 @@ it("refuses new acquisition after provider shutdown", async () => {
   expect(f.calls()).toBe(0);
 });
 
+it("recovers the same recording with caller producer budgets and preserves inherited enforcement", async () => {
+  const f = await fixture();
+  const refused = await f.service.decode({
+    path: f.path,
+    decoders: "uart",
+    producer_limits: { input_bytes: 1 },
+  });
+  expect(refused).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisResourceConstraintError" },
+  });
+  if (refused.ok) throw new Error("Expected input-budget refusal");
+  expect(analysisErrorRemediationAction(refused.error)).toContain(
+    "producer_limits.input_bytes",
+  );
+  const selected = {
+    input_bytes: 1024,
+    output_bytes: 2048,
+    command_timeout_ms: 1000,
+    address_space_bytes: 2147483648,
+    file_bytes: 2097152,
+    cpu_seconds: 45,
+  };
+  const recovered = await f.service.decode({
+    path: f.path,
+    decoders: "uart",
+    producer_limits: selected,
+  });
+  if (!recovered.ok) throw recovered.error;
+  const report = signalRecordingSchema.parse(recovered.value.normalized_result);
+  expect(report.annotations_text).not.toBe("");
+  expect(report.selection.producer_limits).toEqual(selected);
+  expect(report.limits).toEqual({ ...selected, file_bytes: 1048576 });
+  expect(report.resource_limiter.arguments).toContain("--cpu=45:45");
+});
+
 it("pages literal output without changing decoder arguments or normalizing text", async () => {
   const f = await fixture("many");
   for (const [options, first, count] of [
@@ -691,36 +727,43 @@ it("projects sigrok's zero-exit missing-channel refusal through CLI and MCP with
     },
   });
 
-  const cli = Cli.create("signal-channel-refusal-test", { sync: false });
-  registerSignalCommands(cli, silentLogger, {}, f.service);
-  let stdout = "";
-  await cli.serve(
-    [
-      "decode-signal-recording",
-      f.path,
-      "--decoders",
-      "uart:rx=NONEXISTENT:baudrate=9600",
-      "--format",
-      "json",
-    ],
-    {
-      stdout: (text) => {
-        stdout += text;
+  const previousExitCode = process.exitCode;
+  process.exitCode = 0;
+  try {
+    const cli = Cli.create("signal-channel-refusal-test", { sync: false });
+    registerSignalCommands(cli, silentLogger, {}, f.service);
+    let stdout = "";
+    await cli.serve(
+      [
+        "decode-signal-recording",
+        f.path,
+        "--decoders",
+        "uart:rx=NONEXISTENT:baudrate=9600",
+        "--format",
+        "json",
+      ],
+      {
+        stdout: (text) => {
+          stdout += text;
+        },
+        exit: () => {},
       },
-      exit: () => {},
-    },
-  );
-  expect(JSON.parse(stdout)).toMatchObject({
-    code: "invalid_request",
-    details: {
-      issues: [{ path: ["decoders"], reason: "invalid_value" }],
-      captured_output: {
-        exit_code: 0,
-        stdout: "1000-1105 uart-1: Start bit\n",
-        stderr: expect.stringContaining(refusal),
+    );
+    expect(JSON.parse(stdout)).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [{ path: ["decoders"], reason: "invalid_value" }],
+        captured_output: {
+          exit_code: 0,
+          stdout: "1000-1105 uart-1: Start bit\n",
+          stderr: expect.stringContaining(refusal),
+        },
       },
-    },
-  });
+    });
+    expect(process.exitCode).toBe(1);
+  } finally {
+    process.exitCode = previousExitCode;
+  }
 });
 
 it("does not match channel refusals by substring", async () => {
@@ -734,42 +777,49 @@ it("does not match channel refusals by substring", async () => {
 
 it("projects a missing bare channel target as invalid decoder input through the CLI", async () => {
   const f = await fixture("missing-channel-target");
-  const cli = Cli.create("signal-channel-target-test", { sync: false });
-  registerSignalCommands(cli, silentLogger, {}, f.service);
-  let stdout = "";
-  await cli.serve(
-    [
-      "decode-signal-recording",
-      f.path,
-      "--decoders",
-      "uart:rx:baudrate=9600",
-      "--format",
-      "json",
-    ],
-    {
-      stdout: (text) => {
-        stdout += text;
-      },
-      exit: () => {},
-    },
-  );
-  expect(JSON.parse(stdout)).toMatchObject({
-    code: "invalid_request",
-    details: {
-      issues: [
-        {
-          path: ["decoders"],
-          reason: "invalid_value",
-          message: expect.stringContaining('Channel name for "rx" missing.'),
-        },
+  const previousExitCode = process.exitCode;
+  process.exitCode = 0;
+  try {
+    const cli = Cli.create("signal-channel-target-test", { sync: false });
+    registerSignalCommands(cli, silentLogger, {}, f.service);
+    let stdout = "";
+    await cli.serve(
+      [
+        "decode-signal-recording",
+        f.path,
+        "--decoders",
+        "uart:rx:baudrate=9600",
+        "--format",
+        "json",
       ],
-      captured_output: {
-        exit_code: 0,
-        stdout: "1000-1105 uart-1: Start bit\n",
-        stderr: expect.stringContaining('Channel name for "rx" missing.'),
+      {
+        stdout: (text) => {
+          stdout += text;
+        },
+        exit: () => {},
       },
-    },
-  });
+    );
+    expect(JSON.parse(stdout)).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [
+          {
+            path: ["decoders"],
+            reason: "invalid_value",
+            message: expect.stringContaining('Channel name for "rx" missing.'),
+          },
+        ],
+        captured_output: {
+          exit_code: 0,
+          stdout: "1000-1105 uart-1: Start bit\n",
+          stderr: expect.stringContaining('Channel name for "rx" missing.'),
+        },
+      },
+    });
+    expect(process.exitCode).toBe(1);
+  } finally {
+    process.exitCode = previousExitCode;
+  }
 });
 
 it("does not classify an unselected bare channel warning as caller input", async () => {
@@ -890,33 +940,40 @@ it("reports an unknown decoder ID as the rejected field of each MCP operation", 
 
 it("reports an unknown decoder help selection as CLI invalid input", async () => {
   const f = await fixture("unknown-decoder");
-  const cli = Cli.create("signal-refusal-test", { sync: false });
-  registerSignalCommands(cli, silentLogger, {}, f.service);
-  let stdout = "";
-  await cli.serve(
-    [
-      "inspect-signal-decoders",
-      "--decoder",
-      "nosuchdecoder",
-      "--format",
-      "json",
-    ],
-    {
-      stdout: (text) => {
-        stdout += text;
+  const previousExitCode = process.exitCode;
+  process.exitCode = 0;
+  try {
+    const cli = Cli.create("signal-refusal-test", { sync: false });
+    registerSignalCommands(cli, silentLogger, {}, f.service);
+    let stdout = "";
+    await cli.serve(
+      [
+        "inspect-signal-decoders",
+        "--decoder",
+        "nosuchdecoder",
+        "--format",
+        "json",
+      ],
+      {
+        stdout: (text) => {
+          stdout += text;
+        },
+        exit: () => {},
       },
-      exit: () => {},
-    },
-  );
-  expect(JSON.parse(stdout)).toMatchObject({
-    code: "invalid_request",
-    message: expect.stringContaining("Omit decoder"),
-    details: {
-      operation: "inspect_signal_decoders",
-      issues: [{ path: ["decoder"], reason: "invalid_value" }],
-      captured_output: { exit_code: 1 },
-    },
-  });
+    );
+    expect(JSON.parse(stdout)).toMatchObject({
+      code: "invalid_request",
+      message: expect.stringContaining("Omit decoder"),
+      details: {
+        operation: "inspect_signal_decoders",
+        issues: [{ path: ["decoder"], reason: "invalid_value" }],
+        captured_output: { exit_code: 1 },
+      },
+    });
+    expect(process.exitCode).toBe(1);
+  } finally {
+    process.exitCode = previousExitCode;
+  }
 });
 
 it.each([
@@ -1274,7 +1331,6 @@ it.each([
     {},
     { signal: f.controller.signal },
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected failure");
   expect(result.error).toMatchObject({
     operation: "inspect_signal_decoders",
@@ -1298,10 +1354,11 @@ it.each([
       throw new Error("Expected command-output allowance refusal");
     expect(result.error).toMatchObject({
       resource: "memory",
+      reportedLimits: { output_bytes: 4194304 },
       retryable: false,
     });
     expect(analysisErrorRemediationAction(result.error)).toContain(
-      "The retained command-output allowance",
+      "producer_limits.output_bytes",
     );
     expect(analysisErrorRemediationAction(result.error)).not.toMatch(
       /Review the reported worker memory limits/u,

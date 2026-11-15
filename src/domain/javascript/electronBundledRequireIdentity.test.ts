@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { runInNewContext } from "node:vm";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource as analyzeUnknownHostSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
+import { analyzeCommonJsStaticFixture as analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 
 // Webpack 5 standalone bootstrap with an Electron external, as emitted for
 // `target: "electron-main"`.
@@ -30,6 +31,17 @@ const expectUnresolved = (source: string) => {
     ),
   ).toEqual([]);
 };
+
+it("does not claim Electron host identity from an unbound require in unknown context", () => {
+  const analysis = analyzeUnknownHostSource(bootstrap(EXTERNAL, CONSUMER));
+  expect(analysis.electron.browser_windows).toContainEqual(
+    expect.objectContaining({
+      preload_path: "./preload.js",
+      loader_authority: "candidate",
+    }),
+  );
+  expect(analysis.analysis_coverage?.applicability.electron).toBe("unknown");
+});
 
 describe("Electron identity through Webpack externals", () => {
   it.each([
@@ -301,6 +313,27 @@ describe("Webpack loader alias bounds", () => {
         semantic_resource_limits: expect.arrayContaining(["alias-selections"]),
       },
     });
+  });
+});
+
+it("reports the alias budget when a destructured external alias chain exceeds it", () => {
+  // 520 const hops exceed the default 512 alias selections; the origin is not
+  // claimed, and the walk reports its limit instead of a silent absence.
+  const hops = Array.from(
+    { length: 520 },
+    (_, index) => `const a${index + 1}=a${index};`,
+  ).join("");
+  const analysis = analyzeJavaScriptStaticSource(
+    bootstrap(
+      EXTERNAL,
+      `const a0=n(45840);${hops}const{BrowserWindow}=a520;new BrowserWindow({});`,
+    ),
+  );
+  expect(analysis.electron.browser_windows).toEqual([]);
+  expect(analysis.analysis_coverage).toMatchObject({
+    examination: {
+      semantic_resource_limits: expect.arrayContaining(["alias-selections"]),
+    },
   });
 });
 
@@ -619,4 +652,79 @@ describe("Webpack identity through erased TypeScript syntax", () => {
       expectUnresolved(bootstrap(EXTERNAL, CONSUMER, entry));
     },
   );
+});
+
+describe("Electron members destructured from a Webpack external binding", () => {
+  const WINDOW = 'webPreferences:{preload:"./p.js",nodeIntegration:true}';
+  const directIpc = (source: string) =>
+    electronOf(source).ipc.filter(
+      ({ resolution_basis: basis }) => basis !== "wrapper-substitution",
+    );
+
+  it.each([
+    ["a shorthand pattern", "const{BrowserWindow}=s;new BrowserWindow"],
+    ["a renamed pattern", "const{BrowserWindow:W}=s;new W"],
+    ["a two-hop alias", "const w=s;const{BrowserWindow}=w;new BrowserWindow"],
+    ["a plain alias", "const w=s;new w.BrowserWindow"],
+  ])("follows the window class through %s", (_name, consumer) => {
+    expect(
+      electronOf(
+        bootstrap(EXTERNAL, `const s=n(45840);${consumer}({${WINDOW}});`),
+      ).browser_windows,
+    ).toMatchObject([{ preload_path: "./p.js" }]);
+  });
+
+  it.each([
+    [
+      "a top-level registration",
+      'const s=n(45840);const{app,ipcMain}=s;ipcMain.handle("chan",async()=>[]);',
+    ],
+    [
+      "a guarded registration in a nested function",
+      'const s=n(45840);const{app,ipcMain}=s;const init=()=>{if(!ipcMain||!app)return;ipcMain.on("chan",()=>{})};init();',
+    ],
+  ])("follows destructured IPC through %s", (_name, consumer) => {
+    expect(directIpc(bootstrap(EXTERNAL, consumer))).toMatchObject([
+      { channel: "chan", side: "main" },
+    ]);
+  });
+
+  it.each([
+    [
+      "a reassigned external binding",
+      "let s=n(45840);s=other;const{BrowserWindow}=s;",
+    ],
+    [
+      "an overwritten class member",
+      "const s=n(45840);s.BrowserWindow=class{};const{BrowserWindow}=s;",
+    ],
+    [
+      "an overwritten member through an alias",
+      "const s=n(45840);const w=s;w.BrowserWindow=class{};const{BrowserWindow}=s;",
+    ],
+    ["a cyclic alias", "var a=b,b=a;const{BrowserWindow}=a;"],
+    [
+      "an alias read before its hoisted source is initialized",
+      "var saved=s;var s=n(45840);const{BrowserWindow}=saved;",
+    ],
+    ["a different table key", "const s=n(45841);const{BrowserWindow}=s;"],
+    [
+      "a rebindable binding exposed to direct eval",
+      "let s=n(45840);eval(code);const{BrowserWindow}=s;",
+    ],
+  ])("keeps %s unresolved", (_name, prefix) => {
+    expect(
+      electronOf(
+        bootstrap(EXTERNAL, `${prefix}new BrowserWindow({${WINDOW}});`),
+      ).browser_windows,
+    ).toEqual([]);
+  });
+
+  it("keeps a require alias exposed to direct eval unresolved", () => {
+    expect(
+      electronOf(
+        `let s=require("electron");eval(code);const{BrowserWindow}=s;new BrowserWindow({${WINDOW}});`,
+      ).browser_windows,
+    ).toEqual([]);
+  });
 });

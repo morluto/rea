@@ -136,10 +136,19 @@ it.each<[string, JsonObject | undefined, string]>([
 });
 
 it.each<[string, JsonValue | undefined]>([
-  ["", { a: [{ b: 1 }, { b: [2, 3] }], "x/y": { "m~n": true }, "": "blank" }],
+  [
+    "",
+    {
+      a: [{ b: 1 }, { b: [2, 3] }],
+      "x/y": { "m~n": true },
+      "~1": "literal tilde-one",
+      "": "blank",
+    },
+  ],
   ["/a/0/b", 1],
   ["/a/1/b/1", 3],
   ["/x~1y/m~0n", true],
+  ["/~01", "literal tilde-one"],
   ["/", "blank"],
   ["/a/2/b", undefined],
   ["/a/01/b", undefined],
@@ -151,6 +160,7 @@ it.each<[string, JsonValue | undefined]>([
   const body = {
     a: [{ b: 1 }, { b: [2, 3] }],
     "x/y": { "m~n": true },
+    "~1": "literal tilde-one",
     "": "blank",
   };
   expect(valueAt(body, pointer)).toEqual(expected);
@@ -787,7 +797,6 @@ it.each(["__proto__", "constructor"])(
       generator().generate,
     );
     for (const result of [created, updated]) {
-      expect(result.ok).toBe(true);
       if (!result.ok) throw new Error(result.error);
       expect(
         Object.getOwnPropertyDescriptor(result.value, field)?.value,

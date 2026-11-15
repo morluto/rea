@@ -3,7 +3,10 @@ import type { Logger } from "pino";
 
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import { toolContract } from "../contracts/toolContracts.js";
-import { AnalysisInputError } from "../domain/analysisErrorCore.js";
+import {
+  RIZIN_DEBUG_SESSION_TOOLS,
+  unknownDebuggerSessionError,
+} from "../domain/debuggerSessionErrors.js";
 import type { RizinDebugSessionManager } from "../rizin/RizinDebugSessionManager.js";
 import {
   runOwnedCleanupWithExternalMutationAdmission,
@@ -57,9 +60,7 @@ export const registerRizinDebugTools = (
         () => manager.retryCleanupFailures(),
         (value) => ({ session_id: value.session_id }),
       );
-      return result.ok
-        ? delivery.toCallToolResult({ ok: true, value: result.value }, start)
-        : delivery.toCallToolResult(result, start);
+      return delivery.toCallToolResult(result, start);
     },
   );
   server.registerTool(
@@ -101,7 +102,13 @@ export const registerRizinDebugTools = (
       const result = manager.status(input.session_id);
       if (result === undefined)
         return delivery.toCallToolResult(
-          { ok: false, error: new AnalysisInputError(status.name) },
+          {
+            ok: false,
+            error: unknownDebuggerSessionError(
+              RIZIN_DEBUG_SESSION_TOOLS,
+              status.name,
+            ),
+          },
           status,
         );
       return delivery.toCallToolResult(
@@ -127,9 +134,7 @@ export const registerRizinDebugTools = (
             manager.close(input.session_id),
           ),
       );
-      return result.ok
-        ? delivery.toCallToolResult({ ok: true, value: result.value }, close)
-        : delivery.toCallToolResult(result, close);
+      return delivery.toCallToolResult(result, close);
     },
   );
 };

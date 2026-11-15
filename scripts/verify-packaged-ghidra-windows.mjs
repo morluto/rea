@@ -75,8 +75,10 @@ if (!internalWorkspace) {
         commands === undefined ? workspaceOwner.close() : commands.close(),
     ]);
   } catch (cause) {
-    if (typeof cause.stdout === "string") process.stdout.write(cause.stdout);
-    if (typeof cause.stderr === "string") process.stderr.write(cause.stderr);
+    const stdout = cause?.snapshot?.stdout?.text;
+    const stderr = cause?.snapshot?.stderr?.text;
+    if (typeof stdout === "string") process.stdout.write(stdout);
+    if (typeof stderr === "string") process.stderr.write(stderr);
     throw cause;
   }
   const report = JSON.parse(result.stdout);

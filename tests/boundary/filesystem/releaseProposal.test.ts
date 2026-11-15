@@ -15,6 +15,7 @@ import { z } from "zod";
 
 import {
   applyReleasePleasePatch,
+  createReleaseProposal,
   describeReleaseProposalError,
   releaseProposalSearchDepth,
 } from "../../../scripts/lib/release-proposal.mjs";
@@ -409,6 +410,145 @@ async function releaseFixture({
   );
   return { manifest, github, requests, pages, historyQueries };
 }
+
+const mergedRelease = {
+  number: 7104,
+  body: "Release notes",
+  merged_at: "2026-11-12T08:58:31Z",
+  merge_commit_sha: latest,
+  base: { ref: "main" },
+  head: {
+    ref: "release-please--branches--main--components--rea-agents",
+    repo: { full_name: "fixture/rea" },
+  },
+  labels: [],
+};
+const proposalContext = {
+  repository: "fixture/rea",
+  sourceSha: latest,
+  targetBranch: "main",
+  eventName: "push",
+};
+const proposalReads =
+  (pages: unknown) => async (command: string, args: string[]) => {
+    if (command === "gh") return JSON.stringify(pages);
+    if (command === "git" && args[0] === "rev-parse") return "false\n";
+    if (command === "git" && args[0] === "rev-list") return "2\n";
+    throw new Error(`Unexpected proposal read: ${command} ${args.join(" ")}`);
+  };
+
+it("defers the release merge's push while its tag has not been created", async () => {
+  const fixture = await releaseFixture({ releases: [] });
+  // This is the original failure while the publication workflow creates the tag.
+  await expect(fixture.manifest.createPullRequests()).rejects.toThrow(
+    "no matching release or tag found",
+  );
+  const loadManifest = vi.fn(async () => fixture.manifest);
+  await expect(
+    createReleaseProposal(
+      proposalReads([[], [mergedRelease]]),
+      proposalContext,
+      loadManifest,
+    ),
+  ).resolves.toEqual({ kind: "release-merge", pullRequest: 7104 });
+  expect(loadManifest).not.toHaveBeenCalled();
+});
+
+it.each([
+  { name: "ordinary push", prs: [] },
+  { name: "unmerged PR", prs: [{ ...mergedRelease, merged_at: null }] },
+  {
+    name: "ordinary PR with no description",
+    prs: [
+      {
+        ...mergedRelease,
+        body: null,
+        head: { ...mergedRelease.head, ref: "feature" },
+      },
+    ],
+  },
+  {
+    name: "deleted head repository",
+    prs: [{ ...mergedRelease, head: { ...mergedRelease.head, repo: null } }],
+  },
+  {
+    name: "different merge commit",
+    prs: [{ ...mergedRelease, merge_commit_sha: baseline }],
+  },
+  {
+    name: "fork release branch",
+    prs: [
+      {
+        ...mergedRelease,
+        head: { ...mergedRelease.head, repo: { full_name: "fork/rea" } },
+      },
+    ],
+  },
+  {
+    name: "ordinary feature PR",
+    prs: [
+      { ...mergedRelease, head: { ...mergedRelease.head, ref: "feature" } },
+    ],
+  },
+  {
+    name: "another base branch",
+    prs: [{ ...mergedRelease, base: { ref: "release/6.7.0" } }],
+  },
+])("keeps a genuinely missing release fatal for $name", async ({ prs }) => {
+  const fixture = await releaseFixture({ releases: [] });
+  await expect(
+    createReleaseProposal(
+      proposalReads([prs]),
+      proposalContext,
+      async () => fixture.manifest,
+    ),
+  ).rejects.toThrow("no matching release or tag found");
+});
+
+it.each(["workflow_dispatch", undefined])(
+  "does not defer manual proposal preparation for event %s",
+  async (eventName) => {
+    const fixture = await releaseFixture({ releases: [] });
+    const run = vi.fn(proposalReads([[mergedRelease]]));
+    await expect(
+      createReleaseProposal(
+        run,
+        { ...proposalContext, eventName },
+        async () => fixture.manifest,
+      ),
+    ).rejects.toThrow("no matching release or tag found");
+    expect(run.mock.calls.every(([command]) => command === "git")).toBe(true);
+  },
+);
+
+it.each([
+  { name: "malformed API response", pages: { message: "unavailable" } },
+  {
+    name: "ambiguous release identity",
+    pages: [[mergedRelease, { ...mergedRelease, number: 7105 }]],
+  },
+])("fails closed on $name before preparing a proposal", async ({ pages }) => {
+  const loadManifest = vi.fn();
+  await expect(
+    createReleaseProposal(proposalReads(pages), proposalContext, loadManifest),
+  ).rejects.toThrow();
+  expect(loadManifest).not.toHaveBeenCalled();
+});
+
+it("preserves an API failure instead of treating the push as ordinary", async () => {
+  const failure = new Error("GitHub lookup unavailable");
+  const loadManifest = vi.fn();
+  await expect(
+    createReleaseProposal(
+      async () => {
+        throw failure;
+      },
+      proposalContext,
+      loadManifest,
+    ),
+  ).rejects.toBe(failure);
+  expect(loadManifest).not.toHaveBeenCalled();
+});
 
 it("builds the root Node proposal without commit-file lookups and retains extra-file updates", async () => {
   const fixture = await releaseFixture();
@@ -903,7 +1043,11 @@ const releasePatchFixture = async () => {
   await mkdir(directory, { recursive: true });
   await writeFile(join(project, "package.json"), '{"type":"module"}');
   await writeFile(patchPath, patch);
-  for (const script of ["release-proposal.mjs", "release-notes.mjs"])
+  for (const script of [
+    "release-proposal.mjs",
+    "release-notes.mjs",
+    "release-pull-request.mjs",
+  ])
     await copyFile(
       join(source, "scripts/lib", script),
       join(project, "scripts/lib", script),

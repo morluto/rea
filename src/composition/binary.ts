@@ -14,6 +14,7 @@ import { AnalysisProviderRegistry } from "../application/binary/AnalysisProvider
 import { composeBinarySession } from "../application/binary/BinarySessionComposition.js";
 import { LazyAnalysisProvider } from "../application/binary/LazyAnalysisProvider.js";
 import { ManagedStaticProvider } from "../dotnet/ManagedStaticProvider.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   BUNDLE_ARTIFACT_RESOURCE_OPERATIONS,
   BUNDLE_NATIVE_RESOURCE_OPERATIONS,
@@ -46,7 +47,7 @@ export const createNativeDispatchBinarySession = (
   selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
 ): BinarySession =>
   composeDeepBinarySession(
-    config,
+    runtimeAnalysisConfig(config),
     logger,
     selectedEnvironment,
     "inspect_native_dispatch_metadata",
@@ -69,7 +70,7 @@ const composeDeepBinarySession = (
   });
   const auxiliaryDeclarations = auxiliaryAnalysisProviderDeclarations(
     environment,
-    process.platform,
+    HOST_PLATFORM.platform,
     settings,
   );
   const nativeInspectionAvailable =
@@ -88,7 +89,7 @@ const composeDeepBinarySession = (
     auxiliaryDeclarations.map(
       (declaration) => new LazyAnalysisProvider(declaration),
     ),
-    createBundleResourceFactory(environment, process.platform, settings),
+    createBundleResourceFactory(environment, HOST_PLATFORM.platform, settings),
   );
 };
 

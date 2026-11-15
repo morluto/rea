@@ -219,7 +219,6 @@ it.each([
           ? { signal: controller.signal }
           : undefined,
       );
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected the first root close to fail");
       const originalError = result.error;
       if (scenario === "physical-before-late-cancel")
@@ -286,7 +285,6 @@ it("keeps descriptor cleanup in close aggregates until the exact file lease rele
   });
   try {
     const result = await provider.inspect({ path: input, encoding: "hex" });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected an artifact descriptor failure");
     expect(result.error.cleanupIncomplete).toBe(true);
     expect(result.error.partialObservation).toEqual({
@@ -380,7 +378,6 @@ it("keeps a mixed root and reply-descriptor aggregate pending until both owners 
   );
   try {
     const result = await provider.inspect({ path: input, encoding: "hex" });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected reply descriptor cleanup failure");
     const original = result.error;
     expect(original.cleanupIncomplete).toBe(true);
@@ -503,7 +500,6 @@ it("releases a retained process independently while a root cleanup retry remains
   );
   try {
     const result = await provider.inspect({ path: input, encoding: "hex" });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected retained process cleanup failure");
     const original = result.error;
     expect(original.cleanupIncomplete).toBe(true);
@@ -617,7 +613,6 @@ it("preserves an active cancellation through denied owned-group cleanup and late
       { path: input, encoding: "hex" },
       { signal: controller.signal },
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected cancelled worker cleanup failure");
     const original = result.error;
     expect(original.cleanupIncomplete).toBe(true);

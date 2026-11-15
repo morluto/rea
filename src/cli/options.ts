@@ -1,4 +1,5 @@
 import { z } from "incur";
+import { localPathStringSchema } from "../domain/localPath.js";
 
 import {
   executableFormatHintSchema,
@@ -23,13 +24,6 @@ type DecimalWrapper =
       readonly kind: "optional" | "exactOptional" | "nullable" | "readonly";
     };
 
-/** Parse decimal integer tokens before Number coercion can erase their syntax. */
-export const cliIntegerArgument = (min: number) =>
-  z
-    .string()
-    .regex(DECIMAL_INTEGER_TOKEN, "Expected a decimal integer")
-    .pipe(z.coerce.number<string>().safe().min(min));
-
 const decimalToken = (domain: z.ZodNumber) =>
   z
     .string()
@@ -41,10 +35,12 @@ const unwrapSchema = (field: { unwrap: () => unknown }): z.ZodType =>
   field.unwrap() as z.ZodType;
 
 /**
- * Incur advertises Zod's output view. Publish the input view so the decimal
- * token guard survives `--schema` and other SDK conversions.
+ * Incur advertises Zod's output view. Publish the input view so an argv token
+ * grammar that transforms text survives `--schema` and other SDK conversions.
  */
-const publishDecimalInput = (field: z.ZodType): z.ZodType => {
+export const publishArgvInput = <Field extends z.ZodType>(
+  field: Field,
+): Field => {
   const { $schema: _dialect, ...inputSchema } = z.toJSONSchema(field, {
     io: "input",
   });
@@ -148,7 +144,7 @@ export const cliDecimalField = <Field extends z.ZodType>(
     numeric.description === undefined
       ? admitted
       : admitted.describe(numeric.description);
-  return publishDecimalInput(described) as z.ZodType<z.output<Field>>;
+  return publishArgvInput(described) as z.ZodType<z.output<Field>>;
 };
 
 /** Adapt each numeric property of a shared shape; other properties stay unchanged. */
@@ -169,9 +165,7 @@ export const providerSelectionOption = analysisProviderSelectorSchema
   );
 
 /** Optional path to the local analysis snapshot loaded or updated by a command. */
-export const snapshotSelectionOption = z
-  .string()
-  .min(1)
+export const snapshotSelectionOption = localPathStringSchema
   .optional()
   .describe("Load and update a local analysis snapshot");
 
@@ -179,7 +173,7 @@ export const snapshotSelectionOption = z
  * Explicit interpretation for headerless native executable formats. Flash
  * dumps take their offsets on the artifact commands instead.
  */
-export const formatSelectionOption = executableFormatHintSchema
+const formatSelectionOption = executableFormatHintSchema
   .exclude(["esp-flash-image"])
   .optional()
   .describe(

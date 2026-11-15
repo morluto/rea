@@ -1,3 +1,4 @@
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import {
   createAnalysisExecution,
   type AnalysisClient,
@@ -35,7 +36,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, extname, join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 const client = (fail = false): AnalysisClient => ({
   execute: () => Promise.resolve(fail ? err(new HopperStartError()) : ok(null)),
@@ -235,7 +236,15 @@ it("drains session calls and retires analysis after an admitted external mutatio
     },
     (_value, error) => error,
   );
-  await started.promise;
+  onTestFinished(async () => {
+    release.resolve();
+    try {
+      await mutation;
+    } finally {
+      await session.close();
+    }
+  });
+  await awaitAcknowledgement(started.promise, mutation, "external mutation");
   const queuedAnalysis = session.execute("address_name", {});
   expect(calls).toEqual([]);
 
@@ -528,7 +537,6 @@ it("keeps an externally mutated session unbound until cleanup is retried", async
   );
 
   expect(closeAttempts).toBe(1);
-  expect(mutation.ok).toBe(false);
   if (mutation.ok) throw new Error("Expected cleanup failure");
   expect(mutation.error).toBeInstanceOf(ProviderCleanupError);
   expect(mutation.error.cleanupIncomplete).toBe(true);
@@ -895,8 +903,8 @@ describe("snapshot invalidation at mutation dispatch", () => {
         ...parameters,
         name: "after",
       });
-      await started.promise;
       try {
+        await awaitAcknowledgement(started.promise, writing, "session write");
         const during = await session.execute("address_name", parameters);
         if (!during.ok) throw during.error;
         expect(during.value.result).toBe("after");
@@ -1457,22 +1465,6 @@ describe("typed unavailability without dispatching", () => {
     expect(await session.close()).toEqual({ ok: true, value: null });
   });
 
-  it("keeps the active client when a switch fails", async () => {
-    const [first, second] = await createBinarySessionTargets();
-    let created = 0;
-    const session = createTestBinarySession(() => client(created++ === 1));
-    expect((await session.open(first)).ok).toBe(true);
-    expect((await session.open(second)).ok).toBe(false);
-    expect(await session.status()).toMatchObject({
-      open: true,
-      sha256:
-        "7692c3ad3540bb803c020b3aee66cd8887123234ea0c6e7143c0add73ff431ed",
-      architecture: null,
-    });
-    expect(JSON.stringify(await session.status())).toContain("first.hop");
-    expect(created).toBe(3);
-  });
-
   it("orders calls between queued transitions without deadlocking", async () => {
     const [first, second] = await createBinarySessionTargets();
     const clients: ControllableAnalysisClient[] = [];
@@ -1730,14 +1722,19 @@ describe("cancellation during profile resolution", () => {
         openSettled = true;
         return result;
       });
-    await admitted.promise;
-    controller.abort(reason);
     let closeSettled = false;
-    const closing = session.close().then((result) => {
-      closeSettled = true;
-      return result;
-    });
+    let closing: ReturnType<typeof session.close> | undefined;
     try {
+      await awaitAcknowledgement(
+        admitted.promise,
+        opening,
+        "profile admission",
+      );
+      controller.abort(reason);
+      closing = session.close().then((result) => {
+        closeSettled = true;
+        return result;
+      });
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(observedSignal?.reason).toBe(reason);
       expect(openSettled).toBe(false);
@@ -1752,9 +1749,13 @@ describe("cancellation during profile resolution", () => {
       expect(created).toBe(0);
       expect(await session.status()).toMatchObject({ cleanup_pending: false });
     } finally {
+      controller.abort(reason);
       release.resolve();
-      await Promise.all([opening, closing]);
-      await session.close();
+      try {
+        await Promise.all([opening, closing]);
+      } finally {
+        await session.close();
+      }
     }
   });
 });
@@ -1800,6 +1801,13 @@ describe("cancellation during client transitions", () => {
     expect(clients[1]?.closed).toBe(1);
     expect(clients[0]?.closed).toBe(1);
     expect(clients[2]?.closed).toBe(0);
+    expect(await session.status()).toMatchObject({
+      open: true,
+      sha256:
+        "7692c3ad3540bb803c020b3aee66cd8887123234ea0c6e7143c0add73ff431ed",
+      architecture: null,
+    });
+    expect(clients).toHaveLength(3);
     expect(JSON.stringify(await session.status())).toContain("first.hop");
     await session.close();
     await session.close();

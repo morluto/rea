@@ -27,9 +27,11 @@ const serve = async (cli: CliInstance, argv: readonly string[]) => {
     .object({
       args: z
         .object({ properties: z.record(z.string(), z.unknown()) })
+        .passthrough()
         .optional(),
       options: z
         .object({ properties: z.record(z.string(), z.unknown()) })
+        .passthrough()
         .optional(),
     })
     .parse(JSON.parse(stdout));
@@ -162,4 +164,116 @@ it("advertises the domain constraints for android, adb settings, and browser sel
     expect(
       parser.args.safeParse({ path: "app.apk", className: "" }).success,
     ).toBe(false);
+});
+
+it("advertises selection dependencies after omittable-default projection", async () => {
+  const cli = createCli({});
+  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  for (const [command, invalid, valid] of [
+    [
+      "inspect-packet-fields",
+      { all: true, limit: 1 },
+      { all: false, limit: 1 },
+    ],
+    [
+      "inspect-signal-decoders",
+      { all: true, limit: 1 },
+      { all: false, limit: 1 },
+    ],
+    [
+      "inspect-packet-capture",
+      { fields: ["ip.src"], all_matches: true, match_limit: 1 },
+      { fields: ["ip.src"], all_matches: false, match_limit: 1 },
+    ],
+    [
+      "decode-signal-recording",
+      { decoders: "uart", all_lines: true, line_limit: 1 },
+      { decoders: "uart", all_lines: false, line_limit: 1 },
+    ],
+    [
+      "inspect-il2cpp-metadata",
+      { genericInstances: true },
+      { genericInstances: false },
+    ],
+    [
+      "inspect-il2cpp-metadata",
+      { architecture: "arm64" },
+      { binary: "lib.dylib", architecture: "arm64" },
+    ],
+    [
+      "inspect-il2cpp-metadata",
+      { ghidraSeeds: "seeds.txt" },
+      { binary: "lib.so", ghidraSeeds: "seeds.txt" },
+    ],
+    [
+      "inspect-il2cpp-metadata",
+      { seedBase: "0x1000" },
+      { binary: "lib.so", ghidraSeeds: "seeds.txt", seedBase: "0x1000" },
+    ],
+    [
+      "import-reference-source",
+      { outlineDepth: 2, detail: "full" },
+      { outlineDepth: 2, detail: "summary" },
+    ],
+  ] as const) {
+    const schema = (await serve(cli, [command, "--schema", "--json"])).options;
+    expect(schema, command).toBeDefined();
+    const validate = ajv.compile(schema as AnySchema);
+    expect(
+      validate(invalid),
+      `${command} invalid ${JSON.stringify(invalid)}`,
+    ).toBe(false);
+    expect(validate(valid), `${command} valid ${JSON.stringify(valid)}`).toBe(
+      true,
+    );
+  }
+});
+
+it("rejects invalid selected paths before inspecting a target", async () => {
+  const cli = createCli({});
+  for (const [args, field, code] of [
+    [
+      ["inspect-apple-ips", "missing.ips", "--join-path="],
+      "joinPath",
+      "too_small",
+    ],
+    [
+      ["match-native-functions", "missing.json", "--evidence_output="],
+      "evidence_output",
+      "too_small",
+    ],
+    [
+      ["match-native-functions", "missing.json", "--evidence_output=bad\0path"],
+      "evidence_output",
+      "invalid_format",
+    ],
+    [
+      [
+        "match-native-functions",
+        "missing.json",
+        "--evidence_output=bad\ud800path",
+      ],
+      "evidence_output",
+      "invalid_format",
+    ],
+    [
+      ["match-native-functions", "missing.json", "--source_bundle="],
+      "source_bundle.0",
+      "too_small",
+    ],
+    [["import-reference-source", ""], "root", "too_small"],
+  ] as const) {
+    let stdout = "";
+    await cli.serve([...args, "--json"], {
+      env: {},
+      exit: () => {},
+      stdout: (text) => {
+        stdout += text;
+      },
+    });
+    expect(JSON.parse(stdout), args.join(" ")).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fieldErrors: [{ path: field, code }],
+    });
+  }
 });

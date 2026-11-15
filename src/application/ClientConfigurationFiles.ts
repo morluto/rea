@@ -5,6 +5,7 @@ import {
   effectiveClientServer,
   parseClientConfiguration,
   type ClientConfigurationDocument,
+  type ClientConfigurationFormat,
   type ClientRegistrationDialect,
 } from "./ClientConfigurationDocument.js";
 import type { SetupClient } from "./SupportedClients.js";
@@ -13,6 +14,7 @@ import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.j
 import type { ConfigurationError } from "../domain/configurationErrors.js";
 import { mergeEnvironmentOverrides } from "../process/snapshotEnvironment.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
+import { isRecord } from "../domain/isRecord.js";
 
 /** A parsed layer retains its path so rereading the write target replaces only that layer. */
 export interface ClientConfigurationSource extends ClientConfigurationDocument {
@@ -22,14 +24,14 @@ export interface ClientConfigurationSource extends ClientConfigurationDocument {
 const invalidEnvironment = (
   path: string,
   error: ConfigurationError,
-  overrides: Readonly<Record<string, string>> = {},
-  platform: NodeJS.Platform = process.platform,
+  overrides: Readonly<Record<string, string>> | undefined,
+  platform: NodeJS.Platform,
 ): ClientConfigurationFileError => {
   const constraints = error.settings
     .map(({ setting, constraint }) => `${setting}: ${constraint}`)
     .join("; ");
   const overrideNames = new Set(
-    Object.keys(overrides).map((name) =>
+    Object.keys(overrides ?? {}).map((name) =>
       platform === "win32" ? name.toUpperCase() : name,
     ),
   );
@@ -88,7 +90,7 @@ export const readConfigurationText = async (
 /** Read and parse one configuration at its source boundary. */
 export const readConfigurationFile = async (
   path: string,
-  format: SetupClient["format"],
+  format: ClientConfigurationFormat | undefined,
   resources?: ArtifactResourceScope,
 ): Promise<
   Result<ClientConfigurationDocument | undefined, ClientConfigurationFileError>
@@ -128,6 +130,7 @@ export const readClientConfigurationFiles = async (
     if (document.value !== undefined) {
       const environment = clientRegistrationEnvironment(
         document.value,
+        client,
         path === client.configPath ? writeOverrides : undefined,
         "fragment",
         platform,
@@ -146,6 +149,7 @@ export const readClientConfigurationFiles = async (
   }
   const environment = clientRegistrationEnvironment(
     effectiveClientConfiguration(documents, undefined, platform),
+    client,
     writeOverrides,
     "effective",
     platform,
@@ -164,7 +168,7 @@ export const readClientConfigurationFiles = async (
 
 /** OpenCode merges server objects in file order, replacing arrays and scalar values. */
 const mergeConfigurationValue = (previous: unknown, next: unknown): unknown => {
-  if (!isObject(previous) || !isObject(next)) return next;
+  if (!isRecord(previous) || !isRecord(next)) return next;
   return Object.fromEntries(
     [...new Set([...Object.keys(previous), ...Object.keys(next)])].map(
       (key) => [
@@ -176,8 +180,6 @@ const mergeConfigurationValue = (previous: unknown, next: unknown): unknown => {
     ),
   );
 };
-const isObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** Native OpenCode dialect applies across all selected configuration layers. */
 export const clientWriteDialect = (
@@ -233,6 +235,14 @@ export const effectiveClientConfiguration = (
             return document === undefined ? [] : [document];
           },
         );
+  return mergeClientConfigurationDocuments(documents, platform);
+};
+
+/** Merge admitted layers without re-reading or changing their source documents. */
+export const mergeClientConfigurationDocuments = (
+  documents: readonly ClientConfigurationDocument[],
+  platform: NodeJS.Platform = process.platform,
+): ClientConfigurationDocument | undefined => {
   const last = documents.at(-1);
   if (last === undefined) return undefined;
   if (documents.length === 1) return last;
@@ -249,12 +259,12 @@ export const effectiveClientConfiguration = (
       const key = document.environmentKey;
       if (
         name === PRODUCT_IDENTITY.mcpServerKey &&
-        isObject(merged) &&
-        isObject(merged[key])
+        isRecord(merged) &&
+        isRecord(merged[key])
       ) {
         const before =
-          isObject(previous) && isObject(previous[key]) ? previous[key] : {};
-        const after = isObject(next) && isObject(next[key]) ? next[key] : {};
+          isRecord(previous) && isRecord(previous[key]) ? previous[key] : {};
+        const after = isRecord(next) && isRecord(next[key]) ? next[key] : {};
         servers[name] = {
           ...merged,
           [key]: mergeEnvironmentOverrides(before, after, platform),

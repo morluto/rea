@@ -1,9 +1,9 @@
-import { z } from "zod";
+import {
+  MAX_NODE_TIMER_DELAY_MS,
+  timerDurationMsSchema,
+} from "./analysisResourceLimits.js";
 
 import type { BrowserObservationOperation } from "./browserObservationErrors.js";
-
-/** Largest delay supported without overflowing Node timers. */
-export const MAX_BROWSER_DEADLINE_MS = 2_147_483_647;
 
 /**
  * CDP command and WebSocket handshake deadline. Discovery and cleanup grace
@@ -19,13 +19,7 @@ export const CDP_CLEANUP_GRACE_MS = 5_000;
 
 /** Optional caller deadline. An omitted field stays absent in Evidence. */
 export const optionalBrowserDeadlineMs = (description: string) =>
-  z
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_BROWSER_DEADLINE_MS)
-    .optional()
-    .describe(description);
+  timerDurationMsSchema.optional().describe(description);
 
 export const selectedBrowserDeadlineMs = (
   selected: number | undefined,
@@ -38,9 +32,9 @@ export const browserDeadlineIncrease = (
   defaultMs: number,
   cli: string,
 ): string =>
-  timeoutMs < MAX_BROWSER_DEADLINE_MS
-    ? `Increase ${key} above ${String(timeoutMs)} (integer milliseconds from 1 to ${String(MAX_BROWSER_DEADLINE_MS)}; omitted means ${String(defaultMs)}), or use ${cli} on the CLI.`
-    : `${key} is already at the maximum ${String(MAX_BROWSER_DEADLINE_MS)} ms; do not increase it further.`;
+  timeoutMs < MAX_NODE_TIMER_DELAY_MS
+    ? `Increase ${key} above ${String(timeoutMs)} (integer milliseconds from 1 to ${String(MAX_NODE_TIMER_DELAY_MS)}; omitted means ${String(defaultMs)}), or use ${cli} on the CLI.`
+    : `${key} is already at the maximum ${String(MAX_NODE_TIMER_DELAY_MS)} ms; do not increase it further.`;
 
 export const browserDeadlineRetry =
   "Applies on the next call. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.";
@@ -58,10 +52,32 @@ export const noRuntimeOverrideSentence = (
 
 /** Handshake and per-command deadline shared by CDP browser tools. */
 export const webRuntimeCommandTimeoutSchema = optionalBrowserDeadlineMs(
-  `CDP WebSocket handshake and per-command response deadline in milliseconds (default ${String(DEFAULT_CDP_COMMAND_TIMEOUT_MS)}). Omitted means ${String(DEFAULT_CDP_COMMAND_TIMEOUT_MS)} and applies on the next call. deadlineExpired for a handshake or command is not the caller observation window, not the ${String(CDP_DISCOVERY_RESPONSE_TIMEOUT_MS)} ms CDP discovery response deadline, and not the ${String(CDP_CLEANUP_GRACE_MS)} ms cleanup grace. It also bounds passive script-source collection and the inspection/source-join phase that share this deadline. Does not raise the fixed protocol, retained-event, or source byte budgets. CDP discovery and cleanup grace have no runtime override.`,
+  `CDP WebSocket handshake and per-command response deadline in milliseconds (default ${String(DEFAULT_CDP_COMMAND_TIMEOUT_MS)}). Omitted means ${String(DEFAULT_CDP_COMMAND_TIMEOUT_MS)} and applies on the next call. deadlineExpired for a handshake or command is not the caller observation window, not the CDP discovery deadline (default ${String(CDP_DISCOVERY_RESPONSE_TIMEOUT_MS)} ms, or discovery_timeout_ms where supported), and not the ${String(CDP_CLEANUP_GRACE_MS)} ms cleanup grace. It also bounds passive script-source collection and the inspection/source-join phase that share this deadline. Does not raise the fixed protocol, retained-event, or source byte budgets, or the cleanup grace, which have no runtime override.`,
+);
+
+/** Per-response HTTP discovery and browser-socket discovery deadline. */
+export const browserDiscoveryTimeoutSchema = optionalBrowserDeadlineMs(
+  `Loopback CDP HTTP discovery per-response deadline and browser-socket handshake plus discovery (Browser.getVersion, Target.getTargets) deadline in milliseconds (default ${String(CDP_DISCOVERY_RESPONSE_TIMEOUT_MS)}). Omitted means ${String(CDP_DISCOVERY_RESPONSE_TIMEOUT_MS)} and applies on the next call. Separate from command_timeout_ms, the caller observation window, and the ${String(CDP_CLEANUP_GRACE_MS)} ms cleanup grace. Does not raise the fixed HTTP discovery document or WebSocket protocol byte budgets, which have no runtime override.`,
 );
 
 export type CdpCommandDeadlinePhase = "handshake" | "command" | "source-join";
+
+/**
+ * Operations whose public input accepts discovery_timeout_ms. Other CDP callers
+ * keep the fixed numeric discovery deadline and must not advertise a setting they lack.
+ */
+const DISCOVERY_TIMEOUT_OPERATIONS = new Set<BrowserObservationOperation>([
+  "list_browser_targets",
+  "inspect_web_page",
+  "analyze_web_bundle",
+  "observe_web_session",
+  "discover_webmcp_tools",
+  "capture_web_screenshot",
+]);
+
+export const cdpDiscoveryTimeoutIsSelectable = (
+  operation: BrowserObservationOperation,
+): boolean => DISCOVERY_TIMEOUT_OPERATIONS.has(operation);
 
 /**
  * Operations whose public input accepts command_timeout_ms. Other CDP callers
@@ -121,7 +137,43 @@ export const cdpCommandDeadlineRecovery = (
   }
   return {
     userMessage: `${subject} This is not the caller observation window, not the ${String(CDP_DISCOVERY_RESPONSE_TIMEOUT_MS)} ms CDP discovery deadline, and not the ${String(CDP_CLEANUP_GRACE_MS)} ms cleanup grace.`,
-    remediationAction: `${browserDeadlineIncrease("command_timeout_ms", timeoutMs, DEFAULT_CDP_COMMAND_TIMEOUT_MS, "--command-timeout-ms")} ${browserDeadlineRetry} command_timeout_ms does not raise the fixed protocol, retained-event, or source byte budgets, the ${String(CDP_DISCOVERY_RESPONSE_TIMEOUT_MS)} ms CDP discovery response deadline, or the ${String(CDP_CLEANUP_GRACE_MS)} ms cleanup grace. Those have no runtime override.`,
+    remediationAction: `${browserDeadlineIncrease("command_timeout_ms", timeoutMs, DEFAULT_CDP_COMMAND_TIMEOUT_MS, "--command-timeout-ms")} ${browserDeadlineRetry} command_timeout_ms does not raise the CDP discovery deadline (default ${String(CDP_DISCOVERY_RESPONSE_TIMEOUT_MS)} ms, or discovery_timeout_ms where supported), nor the fixed protocol, retained-event, or source byte budgets or the ${String(CDP_CLEANUP_GRACE_MS)} ms cleanup grace, which have no runtime override.`,
+  };
+};
+
+/** Name the CDP discovery deadline, and name discovery_timeout_ms only when the operation accepts it. */
+export const cdpDiscoveryTimeoutRecovery = (
+  operation: BrowserObservationOperation,
+  timeoutMs: number,
+  phase: "response" | "browser-socket",
+  budgetDescription: string,
+): { readonly userMessage: string; readonly remediationAction: string } => {
+  const unrelatedCommand = cdpCommandTimeoutUnrelatedControl(operation);
+  if (!cdpDiscoveryTimeoutIsSelectable(operation)) {
+    const subject =
+      phase === "response"
+        ? `CDP discovery response exceeded its ${String(timeoutMs)} ms deadline.`
+        : `CDP browser-socket discovery exceeded its ${String(timeoutMs)} ms deadline.`;
+    const fixed = noRuntimeOverrideSentence(
+      `${budgetDescription} and the ${String(timeoutMs)} ms discovery deadline stay fixed.`,
+      unrelatedCommand,
+    );
+    return {
+      userMessage: `${subject} ${fixed}`,
+      remediationAction: fixed,
+    };
+  }
+  const subject =
+    phase === "response"
+      ? `CDP discovery response exceeded its ${String(timeoutMs)} ms discovery_timeout_ms deadline (deadlineExpired).`
+      : `CDP browser-socket discovery exceeded its ${String(timeoutMs)} ms discovery_timeout_ms deadline (deadlineExpired).`;
+  const fixedBudget = noRuntimeOverrideSentence(
+    `${budgetDescription} stays fixed.`,
+    unrelatedCommand,
+  );
+  return {
+    userMessage: `${subject} This is not the caller observation window and not the ${String(CDP_CLEANUP_GRACE_MS)} ms cleanup grace. ${fixedBudget}`,
+    remediationAction: `${browserDeadlineIncrease("discovery_timeout_ms", timeoutMs, CDP_DISCOVERY_RESPONSE_TIMEOUT_MS, "--discovery-timeout-ms")} ${browserDeadlineRetry} ${fixedBudget}`,
   };
 };
 
@@ -136,3 +188,8 @@ export const selectedCdpCommandTimeoutMs = (
   selected: number | undefined,
 ): number =>
   selectedBrowserDeadlineMs(selected, DEFAULT_CDP_COMMAND_TIMEOUT_MS);
+
+export const selectedCdpDiscoveryTimeoutMs = (
+  selected: number | undefined,
+): number =>
+  selectedBrowserDeadlineMs(selected, CDP_DISCOVERY_RESPONSE_TIMEOUT_MS);

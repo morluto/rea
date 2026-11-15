@@ -3,7 +3,15 @@ import { createInspectionResources } from "../../tests/fixtures/inspectionResour
 import { missingJavaProbe } from "./GhidraInstallation.fixture.js";
 import { ok as javaProbeOk } from "../domain/result.js";
 import type { GhidraJavaObservation } from "./GhidraJavaProbe.js";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from "vitest";
 
 import { runDoctor, type DoctorHost } from "../application/Doctor.js";
 import { createDoctorHostFixture } from "../application/Doctor.fixture.js";
@@ -18,7 +26,9 @@ import {
   inspectSystemGhidraProvider,
   projectGhidraDoctorInspection,
 } from "./GhidraDoctor.js";
-import { GHIDRA_RESTRICTED_TEMP_REMEDIATION } from "./GhidraTemporaryDirectory.js";
+import { GhidraProvider } from "./GhidraProvider.js";
+import { parseConfig } from "../config/parseConfig.js";
+import { silentLogger } from "../logger.js";
 
 let inspectionResources = createInspectionResources();
 afterEach(async () => {
@@ -251,6 +261,48 @@ describe("Windows Ghidra doctor authority", () => {
     });
   });
 
+  it("reports the verified NTFS and ReFS native authority boundary", async () => {
+    vi.mocked(nativeLoader.systemWindowsNativeAuthority).mockReturnValue({
+      available: true,
+      authority: {
+        inspection: {
+          abiVersion: 1,
+          nodeApiVersion: 8,
+          architecture: "x64",
+          filesystem: {
+            requestedPath: "D:\\probe",
+            finalPath: "D:\\probe",
+            filesystem: "ReFS",
+            volumeSerial: "0".repeat(16),
+            fileId: "0".repeat(32),
+            size: 0,
+            directory: true,
+          },
+          privateDacl: true,
+          privateBridgeDescriptorAccess: true,
+          atomicJobAssignment: true,
+          killOnOwnerClose: true,
+        },
+        call: () => {
+          throw new Error("Unexpected native call");
+        },
+      },
+    });
+    const projected = projectGhidraDoctorInspection(
+      await inspection({
+        installDir: "C:\\tools\\ghidra_12.1.4_PUBLIC",
+        platform: "win32",
+      }),
+    );
+    expect(projected.checks).toContainEqual(
+      expect.objectContaining({
+        name: "native_authority",
+        ok: true,
+        detail: expect.stringContaining("local NTFS/ReFS only"),
+      }),
+    );
+  });
+
   it("fails provider-scoped Windows readiness without blaming installation", async () => {
     const ghidra = await inspection({
       installDir: "C:\\tools\\ghidra_12.1.4_PUBLIC",
@@ -423,11 +475,16 @@ describe("Windows Ghidra temporary directory check", () => {
       ok: false,
       code: "temp_directory_unwritable",
       classification: "runtime_failure",
-      remediation: GHIDRA_RESTRICTED_TEMP_REMEDIATION,
+      remediation: expect.stringMatching(
+        /TMP and TEMP.*allowed tree.*no dot-prefixed element.*restart REA/iu,
+      ),
       details: { directory: "C:\\sandbox\\tmp", system_code: "EPERM" },
     });
     expect(check?.detail).toContain("C:\\sandbox\\tmp");
     expect(check?.detail).not.toMatch(/antivirus|DACL/iu);
+    expect(check?.remediation).toMatch(
+      /java_home\.save.*creating that file in advance does not help/iu,
+    );
   });
 
   it("reports a retained probe file whose cleanup doctor retries", async () => {
@@ -471,17 +528,151 @@ describe("Windows Ghidra temporary directory check", () => {
     );
   });
 
-  it("does not probe when no Windows installation was selected", async () => {
-    const probe = vi.fn(() => Promise.reject(new Error("unexpected probe")));
+  it("omits the temporary directory check when no Windows installation was selected", async () => {
     const projected = await inspectSystemGhidraProvider(
       {},
       inspectionResources.owner,
-      undefined,
-      probe,
     );
-    expect(probe).not.toHaveBeenCalled();
     expect(projected.checks.map(({ name }) => name)).not.toContain(
       "temp_directory",
     );
   });
 });
+
+const unavailableAuthority = {
+  available: false,
+  failureStage: "self-test",
+  retryable: true,
+  reason: "cleanup failed (145)",
+} as const;
+
+it.each([
+  { name: "selects", environment: { REA_GHIDRA_PROJECT_PATH: "C:\\p\\a.gpr" } },
+  { name: "omits", environment: {} },
+] as const)(
+  "reads REA_GHIDRA_PROJECT_PATH from the registration when it $name a project on Windows",
+  async ({ environment }) => {
+    const authority = vi
+      .spyOn(nativeLoader, "systemWindowsNativeAuthority")
+      .mockReturnValue(unavailableAuthority);
+    onTestFinished(() => authority.mockRestore());
+    const projected = await inspectSystemGhidraProvider(
+      { GHIDRA_INSTALL_DIR: "C:\\tools\\ghidra", ...environment },
+      inspectionResources.owner,
+      undefined,
+      "win32",
+    );
+    expect(projected.available).toBe(false);
+    const check = projected.checks.find(
+      ({ name }) => name === "existing_project",
+    );
+    if ("REA_GHIDRA_PROJECT_PATH" in environment)
+      expect(check).toMatchObject({ ok: false, code: "unsupported_host" });
+    else expect(check).toBeUndefined();
+  },
+);
+
+it("does not claim probe deletion failed when only descriptor cleanup remains", async () => {
+  const projected = projectGhidraDoctorInspection(
+    await inspection({ installDir: "C:\\tools\\ghidra", platform: "win32" }),
+    {
+      ok: false,
+      directory: "C:\\work",
+      stage: "cleanup",
+      code: "EIO",
+      message: "descriptor close not confirmed",
+    },
+  );
+  const check = projected.checks.find(({ name }) => name === "temp_directory");
+  expect(check).toMatchObject({ ok: false, details: { stage: "cleanup" } });
+  expect(check?.detail).toContain("could not clean up a probe file");
+  expect(check?.detail).not.toContain("could not delete");
+  expect(check?.detail).not.toContain("remains");
+});
+
+it.each([
+  {
+    name: "a usable Linux installation",
+    platform: "linux",
+    java: true,
+    native: undefined,
+    project: false,
+  },
+  {
+    name: "missing Java",
+    platform: "linux",
+    java: false,
+    native: undefined,
+    project: false,
+  },
+  {
+    name: "unavailable Windows native authority",
+    platform: "win32",
+    java: true,
+    native: unavailableAuthority,
+    project: false,
+  },
+  {
+    name: "an existing project on Linux",
+    platform: "linux",
+    java: true,
+    native: undefined,
+    project: true,
+  },
+  {
+    name: "an existing project on Windows",
+    platform: "win32",
+    java: true,
+    native: unavailableAuthority,
+    project: true,
+  },
+] as const)(
+  "doctor and provider readiness project one admission: $name",
+  async ({ platform, java, native, project }) => {
+    if (native !== undefined) {
+      const authority = vi
+        .spyOn(nativeLoader, "systemWindowsNativeAuthority")
+        .mockReturnValue(native);
+      onTestFinished(() => authority.mockRestore());
+    }
+    const overrides = java ? {} : { probeJava: () => missingJavaProbe };
+    const doctor = projectGhidraDoctorInspection(
+      await inspection({ installDir: INSTALL, platform }, overrides),
+      undefined,
+      { existingProject: project },
+    );
+    const config = parseConfig({
+      GHIDRA_INSTALL_DIR: INSTALL,
+      ...(project ? { REA_GHIDRA_PROJECT_PATH: "/projects/target.gpr" } : {}),
+    });
+    if (!config.ok) throw config.error;
+    const provider = new GhidraProvider(
+      config.value,
+      silentLogger,
+      {},
+      {
+        ...installationHost(overrides, platform),
+        platform,
+        architecture: "x64",
+      },
+    );
+    try {
+      const availability = await provider.inspectAvailability();
+      expect(doctor.available).toBe(availability.status === "available");
+      expect(doctor.available).toBe(
+        !(project && platform === "win32") &&
+          java &&
+          native?.available !== false,
+      );
+      if (availability.status === "unavailable")
+        expect(doctor.checks).toContainEqual(
+          expect.objectContaining({
+            ok: false,
+            remediation: availability.remediation,
+          }),
+        );
+    } finally {
+      await provider.closeOwnedResources();
+    }
+  },
+);

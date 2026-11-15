@@ -10,13 +10,9 @@ import {
   decodeKeyedArchiveBytes,
   inspectBundleKeyedArchive,
 } from "./KeyedArchiveReader.js";
-import {
-  PlistNestingLimitError,
-  unknownDateLimitation,
-} from "../../domain/apple/plistValue.js";
+import { PlistNestingLimitError } from "../../domain/apple/plistValue.js";
 import { deeplyNestedXmlPlist } from "../../../tests/fixtures/keyedArchiveXmlNesting.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { scanBinaryPlistScalars } from "./PlistScalars.js";
 import { embedSubmillisecondDateInWideIntegerPayload } from "../../../tests/fixtures/binaryPlistScalarAlias.js";
 import {
   readBinaryPlistObjectOffset,
@@ -53,6 +49,17 @@ const binaryArchiveWithDate = (): Buffer =>
     }),
   );
 
+// Locate the known binary date independently of the scanner under test.
+const fixtureDateOffset = (bytes: Buffer, seconds: number): number => {
+  const encoded = Buffer.alloc(9);
+  encoded[0] = 0x33;
+  encoded.writeDoubleBE(seconds, 1);
+  const offset = bytes.indexOf(encoded);
+  if (offset < 0 || bytes.indexOf(encoded, offset + 1) !== -1)
+    throw new Error("binary archive fixture must contain exactly one date");
+  return offset;
+};
+
 const binaryArchiveWithOverlappingDate = (): Buffer => {
   const bytes = Buffer.from(
     buildBinary({
@@ -65,19 +72,17 @@ const binaryArchiveWithOverlappingDate = (): Buffer => {
       $top: { root: { UID: 1 } },
     }),
   );
-  const date = scanBinaryPlistScalars(bytes).dates[0];
-  if (date === undefined)
-    throw new Error("binary archive fixture lost its date");
-  bytes.writeDoubleBE(0.0005, date.payloadOffset);
+  const dateOffset = fixtureDateOffset(bytes, 0);
+  bytes.writeDoubleBE(0.0005, dateOffset + 1);
   const objectTable = readBinaryPlistObjectTableLayout(bytes);
   for (let objectId = 0; objectId < objectTable.objectCount; objectId += 1) {
     const offset = readBinaryPlistObjectOffset(bytes, objectTable, objectId);
-    if (offset !== date.offset && bytes[offset] === 0x40) {
+    if (offset !== dateOffset && bytes[offset] === 0x40) {
       writeBinaryPlistObjectOffset(
         bytes,
         objectTable,
         objectId,
-        date.payloadOffset + 1,
+        dateOffset + 2,
       );
       return bytes;
     }
@@ -87,14 +92,12 @@ const binaryArchiveWithOverlappingDate = (): Buffer => {
 
 const binaryArchiveDateCrossingOffsetTable = (): Buffer => {
   const bytes = Buffer.from(binaryArchiveWithDate());
-  const date = scanBinaryPlistScalars(bytes).dates[0];
-  if (date === undefined)
-    throw new Error("binary archive fixture lost its date");
+  const dateOffset = fixtureDateOffset(bytes, 0.1);
   const objectTable = readBinaryPlistObjectTableLayout(bytes);
   let dateObjectId = -1;
   for (let objectId = 0; objectId < objectTable.objectCount; objectId += 1) {
     if (
-      readBinaryPlistObjectOffset(bytes, objectTable, objectId) === date.offset
+      readBinaryPlistObjectOffset(bytes, objectTable, objectId) === dateOffset
     )
       dateObjectId = objectId;
   }
@@ -151,11 +154,7 @@ describe("keyed archive scalar projection", () => {
         offset: 0,
         limit: 2,
       }),
-    ).toThrow(
-      expect.objectContaining({
-        message: "binary plist date object is truncated",
-      }),
-    );
+    ).toThrow(/date.*truncated/iu);
   });
 
   it("keeps overlapping date precision unknown without changing its sibling object", () => {
@@ -585,6 +584,9 @@ const dateScalar = (iso8601: string | null) => ({
   value: { $plist_type: "date", iso8601 },
 });
 
+const oneUnknownDate = /\b1 date value.*could not represent.*timestamps/iu;
+const twoUnknownDates = /\b2 date value.*could not represent.*timestamps/iu;
+
 describe("binary keyed archive dates", () => {
   const selection = { offset: 0, limit: 10 };
 
@@ -594,7 +596,11 @@ describe("binary keyed archive dates", () => {
     expect(graph.objects[1]).toMatchObject(
       dateScalar("2001-01-01T00:00:00.100Z"),
     );
-    expect(graph.limitations).not.toContain(unknownDateLimitation(1));
+    expect(graph.limitations).not.toContainEqual(
+      expect.stringMatching(
+        /date value.*decoder could not represent.*timestamps/iu,
+      ),
+    );
     expect(Buffer.compare(bytes, pythonBinaryDateControl)).toBe(0);
     expect(createHash("sha256").update(bytes).digest("hex")).toBe(
       "39f08db8341bd74220352dfd559485515cce1e6035e08f27a59ab8f856374a30",
@@ -609,11 +615,19 @@ describe("binary keyed archive dates", () => {
     expect(inspected.objects[1]).toMatchObject(
       dateScalar("2001-01-01T00:00:00.100Z"),
     );
-    expect(inspected.limitations).not.toContain(unknownDateLimitation(1));
+    expect(inspected.limitations).not.toContainEqual(
+      expect.stringMatching(
+        /date value.*decoder could not represent.*timestamps/iu,
+      ),
+    );
     expect(
       Buffer.compare(await readFile(join(root, "archive.plist")), bytes),
     ).toBe(0);
   });
+});
+
+describe("binary keyed archive invalid dates", () => {
+  const selection = { offset: 0, limit: 10 };
 
   it.each(
     [0x30, 0x31, 0x32, 0x34].map(
@@ -626,11 +640,17 @@ describe("binary keyed archive dates", () => {
         copy[offset] = marker;
       });
       const original = Buffer.from(bytes);
-      expect(() => decodeKeyedArchiveBytes(bytes, selection)).toThrow(
-        new TypeError(
-          `binary plist date marker 0x${marker.toString(16)} is invalid`,
-        ),
-      );
+      let decodeFailure: unknown;
+      try {
+        decodeKeyedArchiveBytes(bytes, selection);
+      } catch (cause: unknown) {
+        decodeFailure = cause;
+      }
+      expect(decodeFailure).toBeInstanceOf(TypeError);
+      if (!(decodeFailure instanceof Error))
+        throw new Error("Expected invalid date marker to fail");
+      expect(decodeFailure.message).toContain(`0x${marker.toString(16)}`);
+      expect(decodeFailure.message).toMatch(/date marker.*invalid/iu);
       expect(Buffer.compare(bytes, original)).toBe(0);
       if (marker === 0x30)
         expect(createHash("sha256").update(bytes).digest("hex")).toBe(
@@ -648,7 +668,7 @@ describe("binary keyed archive dates", () => {
       ).rejects.toMatchObject({
         name: "ArtifactReaderFailure",
         reason: "format",
-        message: `Cannot decode selected Foundation keyed archive: binary plist date marker 0x${marker.toString(16)} is invalid`,
+        message: expect.stringContaining(decodeFailure.message),
       });
       expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
     },
@@ -664,7 +684,9 @@ describe("binary keyed archive dates", () => {
     expect(JSON.stringify(graph.objects[1]?.value)).not.toContain(
       "2001-01-01T00:00:00.100Z",
     );
-    expect(graph.limitations).toContain(unknownDateLimitation(1));
+    expect(graph.limitations).toContainEqual(
+      expect.stringMatching(oneUnknownDate),
+    );
     expect(graph.limitations).not.toContainEqual(
       expect.stringMatching(/number metadata.*could not.*observed/iu),
     );
@@ -680,7 +702,9 @@ describe("binary keyed archive dates", () => {
       parameters: { path: "archive.plist" },
     });
     expect(inspected.objects[1]).toMatchObject(dateScalar(null));
-    expect(inspected.limitations).toContain(unknownDateLimitation(1));
+    expect(inspected.limitations).toContainEqual(
+      expect.stringMatching(oneUnknownDate),
+    );
     expect(
       Buffer.compare(
         await readFile(join(root, "archive.plist")),
@@ -720,7 +744,9 @@ describe("binary keyed archive dates", () => {
       { $plist_type: "date", iso8601: null },
       { $plist_type: "date", iso8601: null },
     ]);
-    expect(mixedGraph.limitations).toContain(unknownDateLimitation(2));
+    expect(mixedGraph.limitations).toContainEqual(
+      expect.stringMatching(twoUnknownDates),
+    );
     expect(Buffer.compare(mixed, mixedOriginal)).toBe(0);
   });
 });
@@ -797,16 +823,16 @@ describe("binary plist date object region", () => {
     bytes.writeBigUInt64BE(BigInt(offsetTable), trailer + 24);
     expect(() =>
       estimateBinaryPlistExpansion(bytes, 1024 * 1024, { bounds: "strict" }),
-    ).toThrow(new TypeError("binary plist date object is truncated"));
+    ).toThrow(/date.*truncated/iu);
     // Decoder bounds extend other objects to the end of the file. The date
     // payload still has to end at the offset table. The keyed-archive reader
     // uses those bounds and must refuse the same payload.
     expect(() =>
       estimateBinaryPlistExpansion(bytes, 1024 * 1024, { bounds: "decoder" }),
-    ).toThrow(new TypeError("binary plist date object is truncated"));
+    ).toThrow(/date.*truncated/iu);
     expect(() =>
       decodeKeyedArchiveBytes(bytes, { offset: 0, limit: 1 }),
-    ).toThrow(new TypeError("binary plist date object is truncated"));
+    ).toThrow(/date.*truncated/iu);
   });
 
   it("refuses a decoder-bounds date whose marker sits past the offset table", () => {
@@ -825,10 +851,10 @@ describe("binary plist date object region", () => {
     bytes.writeBigUInt64BE(8n, trailer + 24);
     expect(() =>
       estimateBinaryPlistExpansion(bytes, 1024 * 1024, { bounds: "decoder" }),
-    ).toThrow(new TypeError("binary plist date object is truncated"));
+    ).toThrow(/date.*truncated/iu);
     expect(() =>
       decodeKeyedArchiveBytes(bytes, { offset: 0, limit: 1 }),
-    ).toThrow(new TypeError("binary plist date object is truncated"));
+    ).toThrow(/date.*truncated/iu);
   });
 });
 

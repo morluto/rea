@@ -1,5 +1,4 @@
-import { constants as bufferConstants } from "node:buffer";
-import { getHeapStatistics } from "node:v8";
+import { Deadline } from "../domain/deadline.js";
 import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -24,6 +23,11 @@ import {
   type BrowserScenarioSaveResponse,
 } from "../domain/browserScenarioValues.js";
 import type { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
+import {
+  scenarioSerializationAllowance,
+  scenarioQueryLength,
+  uriComponentLength,
+} from "./BrowserScenarioSerialization.js";
 
 type RequestAction = Extract<BrowserScenarioAction, { action: "request" }>;
 
@@ -35,7 +39,7 @@ type PageResponse =
   | { readonly error: string };
 
 /** A request step that could not be sent or did not answer as expected. */
-export class ScenarioRequestError extends Error {
+class ScenarioRequestError extends Error {
   override readonly name = "ScenarioRequestError";
 }
 
@@ -160,18 +164,12 @@ const headerValue = async (
   return readPageValue(step, value, label);
 };
 
-/** Append declared query entries after any literal query the path carries, leaving that query as written. */
+/** Append admitted query entries after any literal query the path carries, leaving that query as written. */
 const withQuery = (
   url: URL,
   entries: readonly (readonly [string, string])[],
 ): string => {
   if (entries.length === 0) return url.href;
-  const added = entries
-    .map(
-      ([name, value]) =>
-        `${encodeURIComponent(name)}=${encodeURIComponent(value)}`,
-    )
-    .join("&");
   // fetch drops the fragment; cut it at its "#" even when nothing follows it.
   const hash = url.href.indexOf("#");
   const base = hash < 0 ? url.href : url.href.slice(0, hash);
@@ -180,6 +178,16 @@ const withQuery = (
     : base.endsWith("?") || base.endsWith("&")
       ? ""
       : "&";
+  const budget =
+    scenarioSerializationAllowance() - base.length - separator.length;
+  if (scenarioQueryLength(entries, budget, "uri-component") > budget)
+    throw requestEnvelopeError();
+  const added = entries
+    .map(
+      ([name, value]) =>
+        `${encodeURIComponent(name)}=${encodeURIComponent(value)}`,
+    )
+    .join("&");
   return `${base}${separator}${added}`;
 };
 
@@ -190,7 +198,12 @@ interface PageRequest {
   readonly method: string;
   readonly headers: [string, string][];
   readonly body: string | undefined;
-  readonly deadline: number | undefined;
+  /**
+   * The step deadline on the page's wall clock. The host keeps a monotonic
+   * deadline and converts what is left of it when the request is built,
+   * because the page cannot read the host's monotonic clock.
+   */
+  readonly deadlineEpochMs: number | undefined;
   /** Return the response text up to this many characters, for a step that saves values from it. */
   readonly readLimit: number | undefined;
 }
@@ -217,16 +230,27 @@ const sendFromPage = (
           "Request steps require a page without a controlling service worker so cancellation can guard dispatch.",
       };
     const remaining =
-      request.deadline === undefined
+      request.deadlineEpochMs === undefined
         ? undefined
-        : request.deadline - Date.now();
+        : request.deadlineEpochMs - Date.now();
     if (remaining !== undefined && remaining <= 0)
       return { error: "The request ran out of time before it was sent." };
+    // This callback runs in the page, which cannot reach REA's modules, so
+    // its abort reasons are page-native DOMExceptions defined here.
     const controller = new AbortController();
     const timer =
       remaining === undefined
         ? undefined
-        : setTimeout(() => controller.abort(), remaining);
+        : setTimeout(
+            () =>
+              controller.abort(
+                new DOMException(
+                  "The request ran out of time.",
+                  "TimeoutError",
+                ),
+              ),
+            remaining,
+          );
     try {
       const answer = await fetch(request.url, {
         method: request.method,
@@ -272,7 +296,9 @@ const sendFromPage = (
         }
       return { status: answer.status };
     } catch (cause: unknown) {
-      controller.abort();
+      controller.abort(
+        new DOMException("The request is no longer needed.", "AbortError"),
+      );
       return {
         error: cause instanceof Error ? cause.message : String(cause),
       };
@@ -298,7 +324,7 @@ export const performScenarioRequest = async (input: {
   const deadline =
     action.timeout_ms === undefined
       ? undefined
-      : Date.now() + action.timeout_ms;
+      : Deadline.after(action.timeout_ms);
   const pageOrigin = originOf(page.url());
   if (pageOrigin !== startOrigin)
     throw new ScenarioRequestError(
@@ -315,7 +341,7 @@ export const performScenarioRequest = async (input: {
   );
   const step = { page, url, stepId: action.step_id, secrets };
   const headers: [string, string][] = [];
-  const envelopeLimit = requestSerializationAllowance();
+  const envelopeLimit = scenarioSerializationAllowance();
   let headerBytes = 2;
   const headerValues = new Map<string, number>();
   const appendHeader = (name: string, value: string): void => {
@@ -348,8 +374,7 @@ export const performScenarioRequest = async (input: {
   if (action.json !== undefined && !hasContentType)
     appendHeader("content-type", "application/json");
   // A step the boundary abandoned, or whose time ran out while values were read, sends nothing.
-  const remaining = deadline === undefined ? undefined : deadline - Date.now();
-  if (signal?.aborted === true || (remaining !== undefined && remaining <= 0))
+  if (signal?.aborted === true || deadline?.expired() === true)
     throw new ScenarioRequestError(
       `Request step ${action.step_id} ran out of time before its request was sent.`,
     );
@@ -362,7 +387,8 @@ export const performScenarioRequest = async (input: {
     method: action.method,
     headers,
     body: json === undefined ? undefined : JSON.stringify(json),
-    deadline,
+    deadlineEpochMs:
+      deadline === undefined ? undefined : Date.now() + deadline.remainingMs(),
     readLimit:
       action.save.length > 0 ? MAX_SAVED_RESPONSE_CHARACTERS : undefined,
   };
@@ -374,7 +400,7 @@ export const performScenarioRequest = async (input: {
         method: action.method,
         headers: [],
         body: request.body ?? null,
-        deadline: deadline ?? null,
+        deadlineEpochMs: request.deadlineEpochMs ?? null,
         readLimit: request.readLimit ?? null,
       },
       envelopeLimit,
@@ -412,10 +438,7 @@ export const performScenarioRequest = async (input: {
       await route.fallback();
       return;
     }
-    if (
-      signal?.aborted === true ||
-      (deadline !== undefined && Date.now() >= deadline)
-    )
+    if (signal?.aborted === true || deadline?.expired() === true)
       await route.abort("aborted");
     else {
       await route.fallback();
@@ -466,6 +489,7 @@ export const performScenarioRequest = async (input: {
     }
   }
   if (action.save.length > 0) {
+    assertResponseSaveActive(action.step_id, deadline, signal);
     saveValues(action.step_id, response.body, action.save, secrets);
     if (observedRequest !== undefined && !ambiguousRequest)
       secrets.markResponseSecretsReady(observedRequest);
@@ -481,7 +505,7 @@ export const withSavedPlaceholders = (
   secrets: BrowserScenarioSecrets,
   placeholder: RegExp = SAVED_PLACEHOLDER,
 ): string => {
-  const limit = requestSerializationAllowance();
+  const limit = scenarioSerializationAllowance();
   let expandedUnits = text.length;
   if (expandedUnits > limit)
     throw new ScenarioRequestError(
@@ -493,8 +517,7 @@ export const withSavedPlaceholders = (
       let replacement = encoded.get(name);
       if (replacement === undefined) {
         const raw = String(secrets.savedValue(name));
-        // A UTF-16 unit needs at most nine ASCII characters under URI encoding.
-        if (raw.length * 9 > limit)
+        if (uriComponentLength(raw, limit) > limit)
           throw new ScenarioRequestError(
             "Saved URL encoding exceeds the current heap/string serialization allowance.",
           );
@@ -553,11 +576,23 @@ const namesResponse = (
   );
 };
 
+/** Publication must still belong to the step after its last asynchronous boundary. */
+const assertResponseSaveActive = (
+  stepId: string,
+  deadline: Deadline | undefined,
+  signal: AbortSignal | undefined,
+): void => {
+  if (signal?.aborted === true || deadline?.expired() === true)
+    throw new ScenarioRequestError(
+      `Step ${stepId} ended before its saved response was read, so nothing was saved.`,
+    );
+};
+
 /** Settle as the work does, or fail the step once its deadline passes or it is cancelled, so late work saves nothing. */
 const beforeStepEnds = <T>(
   work: Promise<T>,
   stepId: string,
-  deadline: number | undefined,
+  deadline: Deadline | undefined,
   signal: AbortSignal | undefined,
 ): Promise<T> =>
   new Promise<T>((resolve, reject) => {
@@ -575,8 +610,7 @@ const beforeStepEnds = <T>(
       );
     };
     work.catch(() => undefined);
-    const remaining =
-      deadline === undefined ? undefined : deadline - Date.now();
+    const remaining = deadline?.remainingMs();
     if (
       signal?.aborted === true ||
       (remaining !== undefined && remaining <= 0)
@@ -621,7 +655,7 @@ export const awaitSavedResponse = (
   },
 ): SavedResponseWait => {
   const { stepId, spec, startOrigin, timeout, secrets, signal } = step;
-  const deadline = timeout === undefined ? undefined : Date.now() + timeout;
+  const deadline = timeout === undefined ? undefined : Deadline.after(timeout);
   const pattern = pathPattern(spec.path);
   const started = new Set<Request>();
   const protectResponse = secrets.responseProtector(stepId, spec.save);
@@ -647,9 +681,11 @@ export const awaitSavedResponse = (
     let response: Awaited<typeof waiting>;
     try {
       response = await beforeStepEnds(waiting, stepId, deadline, signal);
-    } catch {
+    } catch (cause: unknown) {
+      if (cause instanceof ScenarioRequestError) throw cause;
       throw new ScenarioRequestError(
-        `Step ${stepId}: no ${spec.method} ${spec.path} response arrived before the step's timeout, so nothing was saved.`,
+        `Step ${stepId}: no ${spec.method} ${spec.path} response could be read, so nothing was saved: ${cause instanceof Error ? cause.message : String(cause)}`,
+        { cause },
       );
     }
     const assertUnambiguous = (): void => {
@@ -672,6 +708,7 @@ export const awaitSavedResponse = (
     if (!body.ok)
       throw new ScenarioRequestError(`Step ${stepId}: ${body.error.message}`);
     assertUnambiguous();
+    assertResponseSaveActive(stepId, deadline, signal);
     saveValues(stepId, body.value, spec.save, secrets);
     secrets.markResponseSecretsReady(response.request());
   };
@@ -683,22 +720,12 @@ const requestEnvelopeError = (): ScenarioRequestError =>
     "Expanded request envelope exceeds the current heap/string serialization allowance; reduce repeated values or raise the parent Node heap and restart.",
   );
 
-/** Allow for the expanded tree, stringify, Playwright transport and browser-side copies. */
-const REQUEST_JSON_ALLOCATION_FACTOR = 16;
-const requestSerializationAllowance = (): number =>
-  Math.min(
-    bufferConstants.MAX_STRING_LENGTH,
-    Math.floor(
-      getHeapStatistics().total_available_size / REQUEST_JSON_ALLOCATION_FACTOR,
-    ),
-  );
-
 /** Count serialization expansion without allocating substituted strings or their serialized copies. */
 const admitSavedJson = (
   value: JsonValue,
   secrets: BrowserScenarioSecrets,
 ): void => {
-  const limit = requestSerializationAllowance();
+  const limit = scenarioSerializationAllowance();
   let bytes = 0;
   const savedSizes = new Map<string, number>();
   const charge = (size: number): void => {

@@ -1,9 +1,15 @@
+import type { InterfaceBuilderAnalysis } from "./apple/interfaceBuilderGraph.js";
+import type { PartialTaskMeasurement } from "./desktop/taskDifficulty.js";
+import type { AppleIpsPartialObservation } from "./native/appleIps.js";
 import type { PlaywrightTrace } from "./playwrightTrace/playwrightTrace.js";
+import type { ApiContract } from "./apiContract/apiContract.js";
 import type { GraphqlContract } from "./apiContract/graphqlContract.js";
 import type { SavedAnalysisSnapshotPartialObservation } from "./savedAnalysisSnapshot.js";
 import type { AnalysisSettingLimit } from "./analysisSettings.js";
 import type { JsonValue } from "./jsonValue.js";
 import type { AnalysisCleanupRetry } from "./analysisErrorRecovery.js";
+import type { EnvironmentBundlePublication } from "./environmentBundleExport.js";
+import type { HistoricalSourceGraph } from "./referenceSourceGraph.js";
 
 /** Stable tags exposed by safe analysis-error projections. */
 const ANALYSIS_ERROR_TAGS = [
@@ -115,6 +121,48 @@ export interface AnalysisCleanupResourceOwner {
   readonly cleanupResources: readonly string[] | undefined;
 }
 
+/** A lease-backed claim whose owner records the confirmed release. */
+export interface AnalysisCleanupReleaseClaim {
+  readonly cleanupReleased: boolean;
+}
+
+/** Result completed before its source Evidence could be published. */
+export type SourcePublicationCompletion =
+  | {
+      readonly kind: "unretained-evidence";
+      readonly source_closure: "not-established";
+      readonly evidence: Evidence;
+    }
+  | {
+      readonly kind: "retained-evidence";
+      readonly source_closure: "not-established";
+      readonly evidence_id: string;
+    }
+  | {
+      readonly kind: "unretained-observation";
+      readonly source_closure: "not-established";
+      readonly observation: Readonly<Record<string, JsonValue>>;
+    }
+  | {
+      readonly kind: "inline-evidence";
+      readonly retention: "one-shot-session" | "unknown";
+      readonly source_closure: "not-established";
+      readonly evidence: Evidence;
+    }
+  | {
+      readonly kind: "omitted";
+      readonly source_closure: "not-established";
+      readonly reason:
+        | "primary-authentication-failed"
+        | "insufficient-authentication-headroom"
+        | "recovery-input-invalid";
+    };
+
+export interface SourcePublicationRecovery {
+  readonly source: AnalysisPartialObservation | undefined;
+  readonly completed: SourcePublicationCompletion;
+}
+
 /** Base class for expected analysis, provider, and session failures. */
 export abstract class AnalysisError extends Error {
   limit: Readonly<AnalysisSettingLimit> | undefined;
@@ -129,7 +177,6 @@ export abstract class AnalysisError extends Error {
   #cleanupResourceProjection:
     | { readonly cleanupResources: readonly string[] }
     | undefined;
-  #cleanupDependents: WeakRef<AnalysisError>[] = [];
   readonly diagnostics: Readonly<Record<string, JsonValue>> | undefined;
   readonly continuingCallerGuidance:
     | Readonly<AnalysisContinuingCallerGuidance>
@@ -137,12 +184,20 @@ export abstract class AnalysisError extends Error {
   readonly invocationDiagnostics:
     | Readonly<Record<string, JsonValue>>
     | undefined;
-  readonly capturedOutput: AnalysisCapturedOutput | undefined;
+  #capturedOutput: AnalysisCapturedOutput | undefined;
+  get capturedOutput(): AnalysisCapturedOutput | undefined {
+    return this.#capturedOutput;
+  }
   readonly cleanup: AnalysisCleanupObservation | undefined;
-  cleanupIncomplete: boolean;
+  /**
+   * This error's own unresolved cleanup. With bound dependencies, completion
+   * is read from them when asked instead of being pushed to each dependent.
+   */
+  #cleanupIncomplete: boolean;
   #ownedCleanupResources: readonly string[];
   #cleanupResourceOwner: AnalysisCleanupResourceOwner | undefined;
   #cleanupCompletionOwner: AnalysisCleanupResourceOwner | undefined;
+  readonly #cleanupReleaseClaims: AnalysisCleanupReleaseClaim[] = [];
   #cleanupRetry: AnalysisCleanupRetry | undefined;
   #secondaryFailures: AnalysisError[] = [];
   constructor(message: string, options?: AnalysisErrorOptions) {
@@ -161,12 +216,12 @@ export abstract class AnalysisError extends Error {
       options?.invocationDiagnostics === undefined
         ? undefined
         : structuredClone(options.invocationDiagnostics);
-    this.capturedOutput =
+    this.#capturedOutput =
       options?.capturedOutput === undefined
         ? undefined
         : { ...options.capturedOutput };
     this.cleanup = options?.cleanup;
-    this.cleanupIncomplete = options?.cleanup !== undefined;
+    this.#cleanupIncomplete = options?.cleanup !== undefined;
     this.#ownedCleanupResources = [...(options?.cleanup?.resources ?? [])];
     this.partialObservation = options?.partialObservation;
   }
@@ -175,10 +230,53 @@ export abstract class AnalysisError extends Error {
   readonly userCategory: "cancelled" | undefined = undefined;
   readonly executionFailure: string | undefined = undefined;
   partialObservation: AnalysisPartialObservation | undefined;
+  sourcePublicationRecovery: SourcePublicationRecovery | undefined;
   workflowUnknownPublication: WorkflowUnknownPublication | undefined;
+
+  /** Keep the failed source and completed result with their error owner. */
+  retainSourcePublication(completed: SourcePublicationCompletion): this {
+    this.sourcePublicationRecovery = {
+      source: this.partialObservation,
+      completed,
+    };
+    this.partialObservation = undefined;
+    return this;
+  }
 
   get cleanupPrimary(): AnalysisError | undefined {
     return this.#cleanupPrimary;
+  }
+
+  /**
+   * Whether owned resources remain unreleased, read from the owners when
+   * asked. Bound dependencies decide it once bound; otherwise a released
+   * lease claim completes it. Completion is monotonic, so a later binding
+   * cannot reopen it.
+   */
+  get cleanupIncomplete(): boolean {
+    if (!this.#cleanupIncomplete) return false;
+    const dependencies = this.#cleanupDependencies;
+    if (dependencies === undefined) {
+      if (!this.#cleanupReleaseClaims.some((claim) => claim.cleanupReleased))
+        return true;
+    } else
+      for (const dependency of dependencies)
+        if (dependency.cleanupIncomplete) return true;
+    this.#cleanupIncomplete = false;
+    dependencies?.clear();
+    this.#cleanupReleaseClaims.length = 0;
+    return false;
+  }
+
+  /** Read completion from a lease owner instead of having it pushed here. */
+  bindCleanupReleaseClaim(claim: AnalysisCleanupReleaseClaim): this {
+    this.#cleanupReleaseClaims.push(claim);
+    return this;
+  }
+
+  /** A subclass whose own resources are unreleased when it is constructed. */
+  protected markCleanupIncomplete(incomplete: boolean): void {
+    this.#cleanupIncomplete = incomplete;
   }
   /** Later typed failures retained without changing the primary error cause. */
   get secondaryFailures(): readonly AnalysisError[] {
@@ -257,6 +355,19 @@ export abstract class AnalysisError extends Error {
     return this;
   }
 
+  /** Retain facts on every primary that cleanup settlement can reveal. */
+  retainPrimaryDiagnostics(
+    diagnostics: Readonly<Record<string, JsonValue>>,
+  ): this {
+    for (
+      let error: AnalysisError | undefined = this;
+      error !== undefined;
+      error = error.cleanupPrimary
+    )
+      error.retainDiagnostics(diagnostics);
+    return this;
+  }
+
   /** Diagnostics recorded for a caller with this lifetime. */
   diagnosticsFor(
     callerLifetime: AnalysisCallerLifetime,
@@ -282,24 +393,22 @@ export abstract class AnalysisError extends Error {
     dependencies: readonly AnalysisError[],
     resourceProjection?: { readonly cleanupResources: readonly string[] },
   ): this {
+    // Settle the dependencies already bound before adding more: completion is
+    // monotonic, so a dependency bound after they released cannot reopen it.
+    if (!this.cleanupIncomplete) this.#cleanupDependencies?.clear();
     const pending = (this.#cleanupDependencies ??= new Set<AnalysisError>());
     if (resourceProjection !== undefined)
       this.#cleanupResourceProjection = resourceProjection;
-    for (const dependency of dependencies) {
-      if (!dependency.cleanupIncomplete || pending.has(dependency)) continue;
-      pending.add(dependency);
-      dependency.#cleanupDependents = [
-        ...dependency.#cleanupDependents.filter(
-          (reference) => reference.deref() !== undefined,
-        ),
-        new WeakRef(this),
-      ];
-    }
+    for (const dependency of dependencies)
+      if (dependency.cleanupIncomplete) pending.add(dependency);
     if (pending.size === 0) this.resolveCleanup();
     return this;
   }
 
-  /** Clear live cleanup status only after its owning resource confirms retry success. */
+  /**
+   * Clear live cleanup status only after its owning resource confirms retry
+   * success. Errors composed from this one read the change on their next check.
+   */
   resolveCleanup(): this {
     if (
       [...(this.#cleanupDependencies ?? [])].some(
@@ -308,16 +417,19 @@ export abstract class AnalysisError extends Error {
     )
       return this;
     this.#cleanupDependencies?.clear();
-    this.cleanupIncomplete = false;
-    for (const reference of this.#cleanupDependents)
-      reference.deref()?.resolveCleanup();
-    this.#cleanupDependents = [];
+    this.#cleanupIncomplete = false;
     return this;
   }
 
   /** Retain a completed observation when a later step fails. */
   retainPartialObservation(observation: AnalysisPartialObservation): this {
     this.partialObservation ??= observation;
+    return this;
+  }
+
+  /** Keep command output observed before this error without replacing the owner. */
+  retainCapturedOutput(output: AnalysisCapturedOutput): this {
+    this.#capturedOutput ??= { ...output };
     return this;
   }
 
@@ -342,6 +454,20 @@ export const primaryAnalysisError = (error: AnalysisError): AnalysisError => {
   while (error.cleanupPrimary !== undefined) error = error.cleanupPrimary;
   return error;
 };
+
+/** Find the completed publication outcome owned anywhere in a cleanup chain. */
+export const sourcePublicationRecoveryOf = (
+  error: AnalysisError,
+): SourcePublicationRecovery | undefined => {
+  for (
+    let owner: AnalysisError | undefined = error;
+    owner !== undefined;
+    owner = owner.cleanupPrimary
+  )
+    if (owner.sourcePublicationRecovery !== undefined)
+      return owner.sourcePublicationRecovery;
+  return undefined;
+};
 import type {
   PartialProcessCaptureObservation,
   ProcessCaptureCleanupReport,
@@ -349,7 +475,10 @@ import type {
 import type { FileOffsetPartialObservation } from "./native/fileOffsetPartialObservation.js";
 import type { NativeCallPartialObservation } from "./native/nativeCallPartialObservation.js";
 import type { HopperCallerReconciliationPartial } from "./native/hopperCallerReconciliation.js";
-import type { ElectronActivePartialObservation } from "./javascript/electronActiveObservation.js";
+import type {
+  ElectronActiveObservationResult,
+  ElectronActivePartialObservation,
+} from "./javascript/electronActiveObservation.js";
 import type { JavaScriptRuntimeObservation } from "./javascript/javascriptRuntimeObservation.js";
 import type {
   ArtifactInventoryPartialObservation,
@@ -359,7 +488,10 @@ import type { WebScriptExportPartialObservation } from "./webScriptExport.js";
 import type { JavaScriptRecoveryPartialObservation } from "./javascript/javascriptRecovery.js";
 import type { BrowserScenarioPartialObservation } from "./browserScenarioCapture.js";
 import type { Evidence } from "./evidence.js";
-import type { ElectronPagePartialObservation } from "./javascript/electronObservation.js";
+import type {
+  ElectronPageInspection,
+  ElectronPagePartialObservation,
+} from "./javascript/electronObservation.js";
 import type { AndroidPartialObservation } from "./android/androidPartialObservation.js";
 import type { FirmwarePartialObservation } from "./firmware/firmwareAnalysis.js";
 import type {
@@ -402,8 +534,17 @@ import type { WebArtifactAcquisition } from "./webArtifactAcquisition.js";
 
 /** Provider-neutral evidence collected before a typed analysis failure. */
 export type AnalysisPartialObservation =
+  | InterfaceBuilderAnalysis
+  | PartialTaskMeasurement
+  | {
+      readonly kind: "omitted-observation";
+      readonly reason:
+        | "insufficient-authentication-headroom"
+        | "recovery-input-invalid";
+    }
   | { readonly kind: "unretained-evidence"; readonly evidence: Evidence }
   | { readonly kind: "retained-evidence"; readonly evidence_id: string }
+  | ApiContract
   | GraphqlContract
   | PlaywrightTrace
   | SavedAnalysisSnapshotPartialObservation
@@ -413,6 +554,7 @@ export type AnalysisPartialObservation =
   | FridaDeviceList
   | FridaProcessList
   | WebModuleResolutionObservation
+  | HistoricalSourceGraph
   | WebNetworkCapture
   | NativeLoadImagePartialObservation
   | NativeAotSnapshotObservation
@@ -422,6 +564,7 @@ export type AnalysisPartialObservation =
   | HopperCallerReconciliationPartial
   | FileOffsetPartialObservation
   | ElectronActivePartialObservation
+  | ElectronActiveObservationResult
   | BrowserScenarioPartialObservation
   | WebPageInspection
   | WebBundleAnalysis
@@ -434,10 +577,12 @@ export type AnalysisPartialObservation =
   | ArtifactInventoryPartialObservation
   | ArtifactExtractionPartialObservation
   | WebScriptExportPartialObservation
+  | EnvironmentBundlePublication
   | JavaScriptRecoveryPartialObservation
   | Evidence
   | BinaryLayout
   | RecordedCrash
+  | AppleIpsPartialObservation
   | RecordedCrashPartialObservation
   | AndroidPartialObservation
   | FirmwarePartialObservation
@@ -445,6 +590,7 @@ export type AnalysisPartialObservation =
   | InspectSignature
   | InspectMacho
   | ElectronPagePartialObservation
+  | ElectronPageInspection
   | AdbActivityStartPartialObservation
   | AdbAcquiredFilePartialObservation
   | AdbPackagePullPartialObservation

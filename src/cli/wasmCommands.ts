@@ -1,5 +1,4 @@
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
-import { localPathStringSchema } from "../domain/localPath.js";
 import { compareWasmInterfaces } from "../application/wasm/WasmInterfaceComparisonService.js";
 import { parseCliJsonInput } from "../cliJsonInput.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -7,19 +6,16 @@ import { z } from "incur";
 import { wasmArtifactModule } from "../composition/wasm.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
-import { cliDecimalField } from "./options.js";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
-import { absoluteCallerPath } from "../filesystem/callerPath.js";
-import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
+import {
+  inspectWithService,
+  registerContractCommand,
+} from "./contractCommand.js";
 import {
   evidenceBundleOption,
   runEvidenceInputCommand,
 } from "./evidenceInputCommand.js";
-import {
-  inspectWasmArtifactInputSchema,
-  wasmArtifactPathsSchema,
-} from "../domain/wasm/wasmArtifact.js";
 
 /** Resolve all caller-selected artifact paths through the shared workflow. */
 export const registerWasmCommands = (
@@ -66,49 +62,31 @@ export const registerWasmCommands = (
       ),
   });
   const service = wasmArtifactModule.create(environment);
-  cli.command(wasmArtifactModule.cliCommand, {
-    description: "Inspect an explicit local WASM artifact with WABT",
-    args: z.object({
-      path: localPathStringSchema.describe("Local WASM artifact"),
-    }),
-    options: z.object({
-      commandTimeoutMs: cliDecimalField(
-        inspectWasmArtifactInputSchema.shape.command_timeout_ms,
-      ),
-      glue_paths: wasmArtifactPathsSchema(localPathStringSchema)
-        .optional()
-        .describe("Selected local JavaScript glue paths"),
-      candidate_paths: wasmArtifactPathsSchema(localPathStringSchema)
-        .optional()
-        .describe("Explicit local WASM candidates"),
-    }),
-    run: ({ args, options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, wasmArtifactModule.cliCommand, () =>
-          finishCliEvidenceCommand(
-            args.path,
-            () =>
-              service.inspect(
-                {
-                  path: absoluteCallerPath(args.path),
-                  ...(options.commandTimeoutMs === undefined
-                    ? {}
-                    : { command_timeout_ms: options.commandTimeoutMs }),
-                  glue_paths: options.glue_paths?.map((path) =>
-                    absoluteCallerPath(path),
-                  ),
-                  candidate_paths: options.candidate_paths?.map((path) =>
-                    absoluteCallerPath(path),
-                  ),
-                },
-                { signal },
-              ),
-            service,
-            "wabt-artifact",
-            "inspect_wasm_artifact",
-            signal,
-          ).then(projectCliAnalysisResult),
-        ),
-      ),
-  });
+  registerContractCommand(
+    cli,
+    logger,
+    wasmArtifactModule.contract,
+    {
+      command: wasmArtifactModule.cliCommand,
+      description: "Inspect an explicit local WASM artifact with WABT",
+      positionals: ["path"],
+      callerPaths: ["path", "glue_paths", "candidate_paths"],
+      fields: {
+        path: { description: "Local WASM artifact" },
+        glue_paths: {
+          name: "glue_paths",
+          description: "Selected local JavaScript glue paths",
+        },
+        candidate_paths: {
+          name: "candidate_paths",
+          description: "Explicit local WASM candidates",
+        },
+      },
+      omit: {
+        detail:
+          "One-shot output is complete Evidence; this command has no summary delivery",
+      },
+    },
+    inspectWithService(() => service, "wabt-artifact"),
+  );
 };

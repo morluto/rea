@@ -32,7 +32,6 @@ it.each([
       withEvidenceSources(cancelled ? err(primary) : ok("complete"), [source]),
       sourceOwner === undefined ? undefined : { sourceOwner },
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected recording failure");
     expect(result.error).toBe(cancelled ? primary : failure);
     expect(primary.secondaryFailures).toEqual(cancelled ? [failure] : []);

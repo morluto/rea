@@ -43,6 +43,7 @@ import type {
 import { VITE_OUTPUT_DEPENDENCY_PREFIX } from "./javascriptStaticAnalysisTypes.js";
 import {
   resolveSemanticBindingState,
+  semanticBindingLookupAt,
   semanticStableInitializer,
   type JavaScriptBindingIndex,
   type JavaScriptSemanticAnalysisState,
@@ -50,12 +51,15 @@ import {
 import {
   isUnmodifiedGlobalReference,
   isUnmodifiedImportMetaUrl,
-} from "./javascriptSemanticAmbientWrites.js";
+} from "./javascriptSemanticGlobalReference.js";
 import {
   evaluateSemanticExpression,
   evaluateSemanticExpressionProvenance,
 } from "./javascriptSemanticValues.js";
-import { semanticTopLevelEffectFollowsCapture } from "./javascriptSemanticMutationInitializers.js";
+import {
+  semanticBindingAtRead,
+  semanticTopLevelEffectFollowsCapture,
+} from "./javascriptSemanticMutationInitializers.js";
 import {
   semanticFactoryLoaderMemberAt,
   semanticRequireCallAt,
@@ -86,10 +90,26 @@ export const inspectCall = (
       bindings,
       accumulator.factoryRequireBindingIds,
     ) !== "local";
+  const unwrappedCallee = unwrapJavaScriptExpression(node.callee).node;
+  const invocationMember =
+    (t.isMemberExpression(unwrappedCallee) ||
+      t.isOptionalMemberExpression(unwrappedCallee)) &&
+    ["call", "apply"].includes(
+      semanticStaticPropertyKey(
+        unwrappedCallee.property,
+        unwrappedCallee.computed,
+      ) ?? "",
+    );
   const deferredModuleRequire =
     semanticModuleRequireReceiver(node) !== undefined ||
     semanticModuleRequireCallAt(node, bindings, false) ||
-    deferredRequireResolve;
+    deferredRequireResolve ||
+    (invocationMember &&
+      semanticRequireCallAt(
+        node,
+        bindings,
+        accumulator.factoryRequireBindingIds,
+      ) !== undefined);
   if (deferredModuleRequire) accumulator.pendingModuleRequireCalls.push(node);
   const requireCall = deferredModuleRequire
     ? null
@@ -106,6 +126,9 @@ export const inspectCall = (
       ...(requireCall.loader === undefined
         ? {}
         : { loader: requireCall.loader }),
+      ...(requireCall.loaderAuthority === undefined
+        ? {}
+        : { loaderAuthority: requireCall.loaderAuthority }),
     });
   const chunkLoad = chunkLoadSpecifier(node, bindings, context);
   if (chunkLoad !== null)
@@ -160,9 +183,16 @@ export const inspectCall = (
     });
   inspectEndpointCall(node, name, first, context, bindings);
   inspectStorageCall(node, name, first, context, bindings);
+  const renderer =
+    name === "loadFile" ||
+    name.endsWith(".loadFile") ||
+    name === "loadURL" ||
+    name.endsWith(".loadURL")
+      ? context.rendererLoad?.(node.callee, node)
+      : undefined;
   if (
     (name === "loadFile" || name.endsWith(".loadFile")) &&
-    context.rendererLoad?.(node.callee, node) === true
+    renderer !== undefined
   ) {
     const argument = argumentNode(node.arguments[0]);
     const filePath =
@@ -185,6 +215,7 @@ export const inspectCall = (
             : {}),
           resolution_context: "filesystem-expression",
           mechanism: `call:${name}`,
+          ...renderer,
           module_key: null,
           location: range(node),
         },
@@ -192,7 +223,7 @@ export const inspectCall = (
   }
   if (
     (name === "loadURL" || name.endsWith(".loadURL")) &&
-    context.rendererLoad?.(node.callee, node) === true
+    renderer !== undefined
   ) {
     if (first === undefined) accumulator.unknownFindings += 1;
     else
@@ -205,6 +236,7 @@ export const inspectCall = (
           path: first,
           resolution_context: "module-specifier",
           mechanism: `call:${name}`,
+          ...renderer,
           module_key: null,
           location: range(node),
         },
@@ -279,28 +311,33 @@ const requireCallSpecifier = (
   node: JavaScriptCallLike,
   bindings: JavaScriptSemanticAnalysisState,
   context: FindingContext,
-  resolveMemberChanged = false,
+  index?: JavaScriptBindingIndex,
 ): {
   readonly specifier: string | undefined;
   readonly operation: "load" | "resolve";
   readonly resolutionBasePath?: string;
   readonly loader?: "commonjs-loader" | "factory-loader" | "create-require";
+  readonly loaderAuthority?: "candidate";
 } | null => {
   const call = semanticRequireCallAt(
     node,
     bindings,
     context.accumulator.factoryRequireBindingIds,
+    index,
   );
   if (call === undefined || call.loader === "local") return null;
-  if (
-    resolveMemberChanged ||
-    call.loader === "unknown" ||
-    !call.sourceRelative
-  ) {
+  if (call.loader === "unknown" || !call.sourceRelative) {
     context.accumulator.unknownFindings += 1;
+    const candidate =
+      !call.memberUnproven && call.loaderAuthority === "candidate"
+        ? (argumentValue(call.arguments?.[0]) ?? undefined)
+        : undefined;
     return {
-      specifier: undefined,
-      operation: resolveMemberChanged ? "load" : call.operation,
+      specifier: candidate,
+      operation: call.operation,
+      ...(candidate === undefined
+        ? {}
+        : { loaderAuthority: "candidate" as const }),
     };
   }
   return {
@@ -325,23 +362,7 @@ export const finishModuleRequireCalls = (
   index: JavaScriptBindingIndex,
 ): void => {
   for (const node of context.accumulator.pendingModuleRequireCalls) {
-    const resolveMemberChanged =
-      isRequireResolveCall(node) &&
-      (t.isMemberExpression(node.callee) ||
-        t.isOptionalMemberExpression(node.callee)) &&
-      index
-        .effectsForReferenceAt(node, node.callee.object, ["resolve"])
-        .effects.some(
-          ({ kind, timing }) =>
-            timing !== "after" &&
-            (kind === "member-write" || kind === "escape"),
-        );
-    const call = requireCallSpecifier(
-      node,
-      index.bindings,
-      context,
-      resolveMemberChanged,
-    );
+    const call = requireCallSpecifier(node, index.bindings, context, index);
     if (call !== null)
       addReference(context, {
         node,
@@ -355,6 +376,9 @@ export const finishModuleRequireCalls = (
         // still names a bundle module key, not a package. Dropping the loader here
         // would read that key as an external specifier.
         ...(call.loader === undefined ? {} : { loader: call.loader }),
+        ...(call.loaderAuthority === undefined
+          ? {}
+          : { loaderAuthority: call.loaderAuthority }),
       });
   }
   context.accumulator.pendingModuleRequireCalls.length = 0;
@@ -363,14 +387,14 @@ export const finishModuleRequireCalls = (
   );
 };
 
-const isRequireResolveCall = (
-  node: JavaScriptCallLike,
-): node is t.CallExpression | t.OptionalCallExpression =>
-  (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
-  (t.isMemberExpression(node.callee) ||
-    t.isOptionalMemberExpression(node.callee)) &&
-  semanticStaticPropertyKey(node.callee.property, node.callee.computed) ===
-    "resolve";
+const isRequireResolveCall = (node: JavaScriptCallLike): boolean => {
+  if (t.isNewExpression(node)) return false;
+  const callee = unwrapJavaScriptExpression(node.callee).node;
+  return (
+    (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
+    semanticStaticPropertyKey(callee.property, callee.computed) === "resolve"
+  );
+};
 
 const chunkLoadSpecifier = (
   node: JavaScriptCallLike,
@@ -391,7 +415,7 @@ const chunkLoadSpecifier = (
 const vitePreloadDependencySpecifiers = (
   node: JavaScriptCallLike,
   name: string,
-  table: readonly (string | undefined)[] | null,
+  table: FindingContext["vitePreloadDependencyTable"],
   bindings: JavaScriptSemanticAnalysisState,
 ): readonly (string | undefined)[] => {
   if (
@@ -400,10 +424,23 @@ const vitePreloadDependencySpecifiers = (
     !t.isArrayExpression(node.arguments[0])
   )
     return [];
+  const callee = unwrapJavaScriptExpression(node.callee).node;
+  const lookup = semanticBindingLookupAt(bindings, callee, name);
+  if (lookup.kind !== "binding" && lookup.kind !== "uncertain-binding")
+    return [];
+  const projected = semanticBindingAtRead(lookup.binding, callee, bindings);
+  // An ordered read drops assignments that have not happened yet. An
+  // unresolved read keeps the single stable initializer, which is how a
+  // captured call still names the helper when nothing else writes it.
+  const visible =
+    projected.status === "ordered" ? projected.binding : lookup.binding;
+  if (semanticStableInitializer(visible, bindings)?.node !== table.helper)
+    return [];
   const indexes = node.arguments[0].elements;
   // Explicit cache overrides change which table the helper reads. Retain the
   // call slots as unknown unless every override is statically undefined.
   if (
+    lookup.kind !== "binding" ||
     !node.arguments
       .slice(1)
       .every((argument) => isExplicitDefaultArgument(argument, bindings))
@@ -413,7 +450,7 @@ const vitePreloadDependencySpecifiers = (
     if (element === null || !t.isNumericLiteral(element)) return undefined;
     const index = element.value;
     return Number.isSafeInteger(index) && index >= 0
-      ? viteDependencySpecifier(table[index])
+      ? viteDependencySpecifier(table.dependencies[index])
       : undefined;
   });
 };
@@ -453,8 +490,9 @@ type ViteMapDepsFunction =
 /** Index the canonical Vite helper's cache initializer from parsed syntax. */
 export const indexVitePreloadDependencyTable = (
   program: t.Program,
-  erasedSyntaxNodes: WeakSet<t.Node>,
-): readonly (string | undefined)[] | null => {
+  bindings: JavaScriptSemanticAnalysisState,
+): FindingContext["vitePreloadDependencyTable"] => {
+  const { erasedSyntaxNodes } = bindings;
   const helpers: ViteMapDepsFunction[] = [];
   traverseJavaScriptValueAst(program, erasedSyntaxNodes, {
     enter: (node) => {
@@ -477,7 +515,7 @@ export const indexVitePreloadDependencyTable = (
   const mapIdentifier = t.isAssignmentPattern(mapParameter)
     ? mapParameter.left
     : mapParameter;
-  if (!t.isIdentifier(mapIdentifier)) return [];
+  if (!t.isIdentifier(mapIdentifier)) return { helper, dependencies: [] };
   const tables: t.ArrayExpression[] = [];
   traverseJavaScriptValueAst(helper, erasedSyntaxNodes, {
     skip: (node) => t.isFunction(node),
@@ -495,9 +533,9 @@ export const indexVitePreloadDependencyTable = (
         tables.push(node.right);
     },
   });
-  if (tables.length !== 1) return [];
+  if (tables.length !== 1) return { helper, dependencies: [] };
   const table = tables[0];
-  if (table === undefined) return [];
+  if (table === undefined) return { helper, dependencies: [] };
   // A spread contributes an unknown number of entries, so every later slot
   // has an unknown index; leave those out instead of shifting them.
   const spread = table.elements.findIndex((element) =>
@@ -520,6 +558,17 @@ export const indexVitePreloadDependencyTable = (
         semanticIdentifierRole(node, parent, readAncestors) === null
       )
         return;
+      const lookup = semanticBindingLookupAt(bindings, node, node.name);
+      if (lookup.kind === "ambient" || lookup.kind === "captured") return;
+      if (lookup.kind === "binding" || lookup.kind === "uncertain-binding") {
+        // A later reassignment removes the whole-binding initializer. The
+        // mutation is still the helper when the ordered read at this site is.
+        const projected = semanticBindingAtRead(lookup.binding, node, bindings);
+        const visible =
+          projected.status === "ordered" ? projected.binding : lookup.binding;
+        if (semanticStableInitializer(visible, bindings)?.node !== helper)
+          return;
+      }
       if (
         (t.isCallExpression(parent) || t.isOptionalCallExpression(parent)) &&
         parent.callee === node
@@ -528,7 +577,12 @@ export const indexVitePreloadDependencyTable = (
       escapedOrMutated = true;
     },
   });
-  return escapedOrMutated ? dependencies.map(() => undefined) : dependencies;
+  return {
+    helper,
+    dependencies: escapedOrMutated
+      ? dependencies.map(() => undefined)
+      : dependencies,
+  };
 };
 
 const requestConstructorUrl = (
@@ -551,7 +605,8 @@ const inspectEndpointCall = (
   context: FindingContext,
   bindings: JavaScriptSemanticAnalysisState,
 ): void => {
-  if (isKnownNetworkRequest(node, bindings, context)) {
+  const networkAuthority = networkRequestAuthority(node, bindings, context);
+  if (networkAuthority !== undefined) {
     const target = argumentNode(node.arguments[0]);
     if (target === undefined) return;
     const literal =
@@ -565,6 +620,9 @@ const inspectEndpointCall = (
         kind: "network",
         value: literal,
         mechanism: `call:${name}`,
+        ...(networkAuthority === "candidate"
+          ? { interpretation: "candidate" }
+          : {}),
       });
       return;
     }
@@ -578,7 +636,7 @@ const inspectEndpointCall = (
       context.accumulator.pendingNetworkCalls.push({ node, name });
       return;
     }
-    addPartialNetworkEndpoint(context, node, name, target);
+    addPartialNetworkEndpoint(context, node, name, target, networkAuthority);
     return;
   }
   // A local or shadowed function with a familiar network name is not a known
@@ -642,21 +700,26 @@ const isNetworkRequestSpelling = (name: string): boolean =>
   name === "navigator.sendBeacon";
 
 /** Confirm that the call resolves to a built-in network API at this source site. */
-const isKnownNetworkRequest = (
+const networkRequestAuthority = (
   node: JavaScriptCallLike,
   bindings: JavaScriptSemanticAnalysisState,
   context: FindingContext,
-): boolean => {
-  if (isBrowserNetworkRequest(node, bindings)) return true;
+): "proven" | "candidate" | undefined => {
+  if (isBrowserNetworkRequest(node, bindings)) return "proven";
   const callee = unwrapJavaScriptExpression(node.callee).node;
   if (
     (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
     (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
-    semanticStaticPropertyKey(callee.property, callee.computed) === "loadURL" &&
-    context.rendererLoad?.(node.callee, node) === true
-  )
-    return true;
-  return false;
+    semanticStaticPropertyKey(callee.property, callee.computed) === "loadURL"
+  ) {
+    const renderer = context.rendererLoad?.(node.callee, node);
+    return renderer === undefined
+      ? undefined
+      : renderer.loader_authority === "candidate"
+        ? "candidate"
+        : "proven";
+  }
+  return undefined;
 };
 
 /** Finish queued targets after shared member-mutation facts are indexed. */
@@ -666,7 +729,8 @@ export const finishPartialNetworkEndpoints = (
   index: JavaScriptBindingIndex,
 ): void => {
   for (const { node, name } of context.accumulator.pendingNetworkCalls) {
-    if (!isKnownNetworkRequest(node, bindings, context)) {
+    const authority = networkRequestAuthority(node, bindings, context);
+    if (authority === undefined) {
       if (!isIntrinsicMapLookup(node, bindings, index))
         inspectLiteralEndpointCall(node, name, context);
       continue;
@@ -680,8 +744,9 @@ export const finishPartialNetworkEndpoints = (
         kind: "network",
         value: resolved,
         mechanism: `call:${name}`,
+        ...(authority === "candidate" ? { interpretation: "candidate" } : {}),
       });
-    else addPartialNetworkEndpoint(context, node, name, target);
+    else addPartialNetworkEndpoint(context, node, name, target, authority);
   }
   context.accumulator.pendingNetworkCalls.length = 0;
   context.accumulator.endpoints.sort(
@@ -694,6 +759,7 @@ const addPartialNetworkEndpoint = (
   node: JavaScriptCallLike,
   name: string,
   target: t.Node,
+  authority: "proven" | "candidate",
 ): void =>
   addEndpoint(context, {
     node,
@@ -701,6 +767,7 @@ const addPartialNetworkEndpoint = (
     // Partial values preserve the original expression text, byte for byte.
     value: sourceSlice(context.source, target),
     mechanism: `call:${name}`,
+    ...(authority === "candidate" ? { interpretation: "candidate" } : {}),
     resolution: "partial",
   });
 
@@ -997,6 +1064,9 @@ export const addReference = (
         ? {}
         : { resolution_base_path: input.resolutionBasePath }),
       ...(input.loader === undefined ? {} : { loader: input.loader }),
+      ...(input.loaderAuthority === undefined
+        ? {}
+        : { loader_authority: input.loaderAuthority }),
       module_key: null,
       location: range(input.node),
     },

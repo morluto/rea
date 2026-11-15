@@ -1,3 +1,4 @@
+import { isMachOFormat } from "../binaryTargetTypes.js";
 import { getEvidenceInputContract } from "../evidenceInputContract.js";
 import { managedNativeVerificationRequestSchema } from "./managedNativeVerificationSchemas.js";
 
@@ -9,7 +10,7 @@ import { analysisInputErrorFromIssues } from "../inputIssueProjection.js";
 import { readEvidence, readEvidencePayload } from "../evidenceValidation.js";
 import { err, ok, type Result } from "../result.js";
 import { functionDossierSchema } from "../native/functionDossier.js";
-import { retainedInspectMachoSchema } from "../native/nativeInspection.js";
+import { inspectMachoSchema } from "../native/nativeInspection.js";
 import {
   managedNativeBoundaryInspectionSchema,
   type ManagedNativeBoundaryInspection,
@@ -30,10 +31,19 @@ export interface ManagedNativeVerificationSource {
   readonly nativeObservations: readonly ManagedNativeObservationFacts[];
 }
 
+/** Module lookup semantics proved by the native subject's format. */
+export type ManagedNativePlatform = "pe" | "elf" | "mach-o" | null;
+
 export interface ManagedNativeObservationFacts {
   readonly evidence: Evidence;
   readonly symbols: readonly NativeSymbol[];
   readonly supported: boolean;
+  readonly platform: ManagedNativePlatform;
+  /** Coverage of an export inventory; function observations are targeted. */
+  readonly exportCoverage?: {
+    readonly exhaustive: boolean;
+    readonly limitations: readonly string[];
+  };
 }
 
 const inputFailure = (
@@ -53,15 +63,26 @@ const readNativeObservation = (
   const read = readEvidence(raw);
   if (!read.ok) return read;
   const evidence = read.value;
+  const format = evidence.subject?.format;
+  const platform: ManagedNativePlatform = isMachOFormat(format)
+    ? "mach-o"
+    : format === "pe" || format === "elf"
+      ? format
+      : null;
   if (evidence.operation === "inspect_macho") {
     const payload = readEvidencePayload(
-      retainedInspectMachoSchema,
+      inspectMachoSchema,
       evidence.normalized_result,
     );
     if (!payload.ok) return payload;
     return ok({
       evidence,
+      platform,
       supported: true,
+      exportCoverage: {
+        exhaustive: payload.value.exports.exhaustive,
+        limitations: payload.value.exports.limitations,
+      },
       symbols: payload.value.exports.items.map((symbol) => ({
         evidence_id: evidence.evidence_id,
         operation: evidence.operation,
@@ -81,6 +102,7 @@ const readNativeObservation = (
     if (!payload.ok) return payload;
     return ok({
       evidence,
+      platform,
       supported: true,
       symbols: [
         {
@@ -95,7 +117,12 @@ const readNativeObservation = (
       ],
     });
   }
-  return ok({ evidence, supported: false, symbols: [] });
+  return ok({
+    evidence,
+    platform,
+    supported: false,
+    symbols: [],
+  });
 };
 
 /** Authenticate and parse source Evidence once, retaining it for session recording. */

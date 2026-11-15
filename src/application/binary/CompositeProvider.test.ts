@@ -113,7 +113,6 @@ it("retains every failed child resource across composite cleanup retries", async
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const closed = await client.close();
-    expect(closed.ok).toBe(false);
     if (closed.ok) throw new Error("Expected composite cleanup failure");
     expect(closed.error).toMatchObject({
       cleanupIncomplete: true,
@@ -158,7 +157,6 @@ it("preserves one child's typed cleanup error unchanged", async () => {
 
   const closed = await client.close();
 
-  expect(closed.ok).toBe(false);
   if (closed.ok) throw new Error("Expected child cleanup failure");
   expect(closed.error).toBe(child.cleanupError);
 });
@@ -306,7 +304,6 @@ it.each([1, 2])(
       release();
     }
     const first = await closing;
-    expect(first.ok).toBe(false);
     if (first.ok) throw new Error("Expected retained child cleanup");
     expect(notifications).toEqual([
       ...children.map((child) => child.cleanupError),
@@ -318,7 +315,6 @@ it.each([1, 2])(
 
     notifications.length = 0;
     const retried = await closeAnalysisClient(client, "composite", options);
-    expect(retried.ok).toBe(false);
     if (retried.ok) throw new Error("Expected failed cleanup retry");
     expect(notifications).toEqual([
       ...children.map((child) => child.cleanupError),

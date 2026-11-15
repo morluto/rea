@@ -2,7 +2,6 @@ import { z } from "zod";
 
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { emptyArraySchema } from "../emptyArraySchema.js";
-import { evidenceSchema } from "../evidence.js";
 import { evidenceInputSchema } from "../evidenceReference.js";
 import {
   cliMetadataGuidSchema,
@@ -26,9 +25,9 @@ import {
 import { keyMembers } from "./managedMemberComparisonMatch.js";
 import { hasSignatureResolution } from "./managedMemberSignatureIdentity.js";
 import { digestSchema, prefixedDigestSchema } from "../digests.js";
+import { nonEmptyTextSchema } from "../textSchemas.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
-const boundedTextSchema = z.string().min(1);
 
 const memberComparisonShape = <Source extends z.ZodType>(source: Source) => ({
   left: source,
@@ -52,11 +51,6 @@ const distinctMemberSources = (
       message: "Managed member Evidence must be distinct",
     });
 };
-
-/** Two complete managed member observations for semantic consumers. */
-export const compareManagedMembersInputSchema = z
-  .strictObject(memberComparisonShape(evidenceSchema))
-  .superRefine(distinctMemberSources);
 
 /** Public member comparison selects records inline or by exact retained identity. */
 export const compareManagedMembersRequestSchema = z
@@ -139,7 +133,7 @@ const comparisonItemSchema = <
 
 const comparisonItemContextShape = {
   evidence_links: z.array(evidenceIdSchema).length(2),
-  limitations: z.array(boundedTextSchema),
+  limitations: z.array(nonEmptyTextSchema),
 };
 
 const methodComparisonItemSchema = comparisonItemSchema(
@@ -188,9 +182,8 @@ const comparisonSideSchema = z.strictObject({
         code: z.literal("resource-limit"),
       }),
     )
-    .optional()
     .describe(
-      "Resource-limit diagnostics reported by this source; an empty array means none were reported. Historical comparisons omit this field; omission does not establish that no resource limit occurred.",
+      "Resource-limit diagnostics reported by this source; an empty array means none were reported.",
     ),
 });
 
@@ -227,7 +220,7 @@ export const managedMemberComparisonResultSchema = z.strictObject({
     right_status: z.enum(["complete", "partial", "unavailable"]),
   }),
   evidence_links: z.array(evidenceIdSchema).length(2),
-  limitations: z.array(boundedTextSchema),
+  limitations: z.array(nonEmptyTextSchema),
 });
 
 export type ManagedMemberComparisonResult = z.infer<

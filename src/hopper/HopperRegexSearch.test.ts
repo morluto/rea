@@ -1,7 +1,10 @@
 import { expect, it, vi } from "vitest";
 import { HopperRegexSearch } from "./HopperRegexSearch.js";
 import { err, ok } from "../domain/result.js";
-import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCapabilityUnavailableError,
+  OwnerCancellation,
+} from "../domain/analysisErrorCore.js";
 import {
   HopperRemoteError,
   HopperTimeoutError,
@@ -247,6 +250,45 @@ it.each(
   },
 );
 
+it.each([false, true])(
+  "joins an active search on close and preserves earlier caller cancellation: %s",
+  async (callerFirst) => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const controller = new AbortController();
+    const search = new HopperRegexSearch({
+      callTool: async () => {
+        await gate;
+        return ok([]);
+      },
+    });
+    const pending = search.execute(
+      "search_strings",
+      { pattern: "fixture", mode: "regex", case_sensitive: false },
+      { signal: controller.signal },
+    );
+    if (callerFirst) controller.abort("caller stopped");
+    let finished = false;
+    const closing = search.close().then(() => {
+      finished = true;
+    });
+    await Promise.resolve();
+    expect(finished).toBe(false);
+    release();
+    expect(await pending).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCancelledError",
+        cause: callerFirst ? "caller stopped" : OwnerCancellation.ownerClosed,
+      },
+    });
+    await closing;
+    expect(finished).toBe(true);
+  },
+);
+
 it.each(
   [null, "caller stopped", { requested: "stop" }].flatMap((reason) =>
     (["inventory", "progress"] as const).map((stage) => ({ reason, stage })),
@@ -322,8 +364,7 @@ it("returns cancellation when the caller aborts after the regex worker settles",
   const reason = { request: "stop search" };
   regexMatch.afterSettle = () => controller.abort(reason);
   const search = new HopperRegexSearch({
-    callTool: async () =>
-      ok([{ address: "0x1000", value: "fixture" }] as never),
+    callTool: async () => ok([{ address: "0x1000", value: "fixture" }]),
   });
   try {
     const result = await search.execute(

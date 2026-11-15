@@ -15,7 +15,7 @@ import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirect
 import { PyInstallerArtifactReader } from "../PyInstallerArtifactReader.js";
 import { reconstructedPycHeader } from "./PythonBytecode.js";
 import { parsePythonPyc } from "../../python/PythonPycParser.js";
-import { inspectPythonPycInputSchema } from "../../domain/python/pythonPyc.js";
+import { pythonPycLimitsSchema } from "../../domain/python/pythonPyc.js";
 import {
   PYTHON_39_MAGIC,
   cArchiveExecutable,
@@ -29,6 +29,41 @@ const sha256 = (bytes: Buffer): string =>
   createHash("sha256").update(bytes).digest("hex");
 
 const PYTHON_313_MAGIC = Buffer.from("f30d0d0a", "hex");
+
+it.each(["close", "cancel"] as const)(
+  "does not complete a PyInstaller inventory after %s while paused",
+  async (interruption) => {
+    const path = join(await createTestTempDirectory("rea-pyi-paused-"), "app");
+    await writeFile(
+      path,
+      cArchiveExecutable({
+        layout: "2.1",
+        pythonVersion: 311,
+        members: [
+          {
+            name: "data",
+            typeCode: "x",
+            payload: Buffer.from("x"),
+            compress: false,
+          },
+        ],
+      }),
+    );
+    const reader = new PyInstallerArtifactReader(path);
+    const controller = new AbortController();
+    try {
+      const entries = reader.entries(controller.signal)[Symbol.asyncIterator]();
+      expect((await entries.next()).done).toBe(false);
+      if (interruption === "close") await reader.close();
+      else controller.abort();
+      await expect(entries.next()).rejects.toMatchObject({
+        reason: interruption === "close" ? "unavailable" : "cancelled",
+      });
+    } finally {
+      await reader.close();
+    }
+  },
+);
 
 const derived = (payload: Buffer): Buffer =>
   Buffer.concat([reconstructedPycHeader(PYTHON_39_MAGIC), payload]);
@@ -117,7 +152,7 @@ it("preserves legacy pyc bytes and derives only modern headerless CArchive bytec
         parsePythonPyc(
           bytes,
           { path: module.name, bytes: bytes.length, sha256: sha256(bytes) },
-          inspectPythonPycInputSchema.parse({ path: module.name }),
+          pythonPycLimitsSchema.parse({}),
         ).coverage.status,
       ).toBe("complete");
       expect(await buffer(await reader.open(entry))).toEqual(module.bytes);
@@ -590,12 +625,11 @@ it("rejects a truncated table of contents", async () => {
       tocBytes: Buffer.concat([Buffer.from([0, 0, 0, 64]), Buffer.alloc(16)]),
     }),
   );
-  await expect(scanCanonicalArtifactInventory(path)).rejects.toBeInstanceOf(
-    ArtifactReaderFailure,
+  const failure = await scanCanonicalArtifactInventory(path).catch(
+    (error: unknown) => error,
   );
-  await expect(scanCanonicalArtifactInventory(path)).rejects.toMatchObject({
-    reason: "format",
-  });
+  expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+  expect(failure).toMatchObject({ reason: "format" });
 });
 
 it("rejects a cookie whose package range is outside the file", async () => {
@@ -922,7 +956,7 @@ it("retains the descriptor owner when admission cleanup fails", async () => {
       reader.entries()[Symbol.asyncIterator]().next(),
     ).rejects.toMatchObject({
       reason: "format",
-      message: `PyInstaller source is not a regular file: ${directory}`,
+      message: expect.stringContaining(directory),
       cleanup: {
         reason: closeFailure.message,
         resources: [directory],

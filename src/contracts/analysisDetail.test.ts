@@ -2,12 +2,12 @@ import { expect, it } from "vitest";
 import { z } from "zod";
 import { Ajv2020 } from "ajv/dist/2020.js";
 
+import { projectAnalysisView } from "../domain/analysisView/analysisView.js";
 import {
   binaryLayoutSummaryViewResultSchema,
   javascriptApplicationSummaryViewResultSchema,
-  projectAnalysisView,
-  analysisViewRequestSchema,
-} from "../domain/analysisView/analysisView.js";
+} from "../domain/analysisView/analysisViewResult.js";
+import { analysisViewRequestSchema } from "../domain/analysisView/analysisViewRequest.js";
 import {
   analysisViewCaptureEvidence,
   analysisViewJavaScriptEvidence,
@@ -49,7 +49,12 @@ it("advertises only that operation's summary from analysis detail outputs", () =
     binaryLayoutSummaryViewResultSchema.safeParse(javascript.value).success,
   ).toBe(false);
 
-  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  const ajv = new Ajv2020({
+    strict: false,
+    validateFormats: false,
+    inlineRefs: false,
+    code: { optimize: false },
+  });
   const validators = Object.fromEntries(
     (
       [

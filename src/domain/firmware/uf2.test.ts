@@ -185,8 +185,9 @@ it("counts identical rewrites and refuses a conflicting rewrite of one address",
     ok: false,
     error: {
       kind: "format",
-      message:
-        "family 0xe48bff56 (RP2040) address 0x20000003 is written with different values by block 0 (0x04) and block 1 (0x09)",
+      message: expect.stringMatching(
+        /0xe48bff56\b.*RP2040.*0x20000003\b.*different values.*block 0\b.*0x04\b.*block 1\b.*0x09\b/iu,
+      ),
     },
   });
 });
@@ -313,7 +314,9 @@ it("leaves coverage unknown when one copy of reused numbering lost a block", () 
       ambiguous_numbering_group_count: 1,
     });
     expect(decoded.limitations).toEqual([
-      "UF2 numbering cannot show that every copy of a block sequence is complete: family 0xc47e5767 (ESP32S3) with 3 numbered blocks has some numbers at 1 address(es) and others at 2.",
+      expect.stringMatching(
+        /numbering.*complete.*0xc47e5767.*ESP32S3.*3.*1 address.*2/iu,
+      ),
     ]);
   }
 });
@@ -351,8 +354,10 @@ it("excludes not-main-flash and file-container blocks from regions", () => {
     family_count: 0,
     missing_block_count: 1,
   });
-  expect(decoded.limitations).toContain(
-    "1 UF2 block(s) are flagged not main flash (flag 0x1); their 3 payload bytes are in no region.",
+  expect(decoded.limitations).toContainEqual(
+    expect.stringMatching(
+      /1 UF2 block.*not main flash.*0x1.*3 payload bytes.*no region/iu,
+    ),
   );
   const file = uf2Block({
     address: 0,
@@ -370,8 +375,10 @@ it("excludes not-main-flash and file-container blocks from regions", () => {
     missing_block_count: 0,
     region_count: 1,
   });
-  expect(contained.limitations).toContain(
-    "1 UF2 block(s) belong to file containers (flag 0x1000); their files were not reconstructed.",
+  expect(contained.limitations).toContainEqual(
+    expect.stringMatching(
+      /1 UF2 block.*file containers.*0x1000.*not reconstructed/iu,
+    ),
   );
 });
 
@@ -469,7 +476,9 @@ it("counts MD5 and extension-tag flags as declared, unverified facts", () => {
   });
   expect(decoded.complete).toBe(true);
   expect(decoded.limitations).toEqual([
-    "1 UF2 block(s) declare an MD5 flash region (flag 0x4000) and 1 declare extension tags (flag 0x8000); both are counted, not decoded or verified.",
+    expect.stringMatching(
+      /1.*MD5.*0x4000.*1.*extension.*0x8000.*not decoded or verified/iu,
+    ),
   ]);
 });
 

@@ -55,15 +55,11 @@ mcpTest(
       const root = await createTestTempDirectory("rea-dtb-mcp-");
       const path = join(root, "board.dtb");
       await writeFile(path, devicetreeFixture());
-      const response = await client.callTool({
-        name: "inspect_devicetree",
-        arguments: { path, detail: "summary" },
-      });
+      const response = await client.callTool(
+        { name: "inspect_devicetree", arguments: { path, detail: "summary" } },
+        { toolDefinition: schemas.toolDefinition },
+      );
       expect(response.isError, JSON.stringify(response)).not.toBe(true);
-      expect(
-        schemas.ajv.validate(schemas.outputSchema, response.structuredContent),
-        JSON.stringify(schemas.ajv.errors),
-      ).toBe(true);
       const result = toolContract("inspect_devicetree").outputSchema.parse(
         response.structuredContent,
       ).normalized_result;
@@ -107,8 +103,6 @@ mcpTest(
       await session.close();
     }
   },
-  // Includes SDK schema conversion, dialect validation and two public calls.
-  60_000,
 );
 mcpTest(
   "pages nodes without repeating a large bootargs summary",
@@ -170,7 +164,6 @@ mcpTest(
       await session.close();
     }
   },
-  60_000,
 );
 mcpTest(
   "keeps a malformed canonical phandle unresolved in retained reference pages",
@@ -235,7 +228,6 @@ mcpTest(
       await session.close();
     }
   },
-  60_000,
 );
 mcpTest("rejects relative paths and unsupported versions", async ({ mcp }) => {
   const session = createTestBinarySession(() => {

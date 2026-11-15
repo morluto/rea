@@ -20,6 +20,7 @@ import {
   readClientConfigurationFiles,
 } from "../../../src/application/ClientConfigurationFiles.js";
 import { clientRegistrationEnvironmentDetails } from "../../../src/application/ClientRegistrationEnvironment.js";
+import { supportedClientRegistrationProfile } from "../../../src/application/SupportedClients.js";
 
 const command = currentClientRegistrationCommand({
   platform: process.platform,
@@ -68,6 +69,7 @@ it.each(["missing", "empty", "legacy", "native"] as const)(
       );
     const client = {
       name: "opencode",
+      registrationProfile: supportedClientRegistrationProfile("opencode"),
       format: "opencode",
       configPath: upper,
       configPaths: [lower, upper],
@@ -76,7 +78,6 @@ it.each(["missing", "empty", "legacy", "native"] as const)(
       await configureClientConfiguration(client, {}, command),
     ).toMatchObject({ status: "configured" });
     const files = await readClientConfigurationFiles(client);
-    expect(files.ok).toBe(true);
     if (!files.ok) throw new Error(files.error.detail);
     const effective = effectiveClientConfiguration(files.value);
     expect(effective?.dialect).toBe("opencode_v2");
@@ -126,6 +127,7 @@ const layered = async (lower: unknown, upper: unknown) => {
     await writeFile(path, sources[index]!);
   const client = {
     name: "opencode",
+    registrationProfile: supportedClientRegistrationProfile("opencode"),
     format: "opencode",
     configPath: paths[1]!,
     configPaths: paths,
@@ -162,12 +164,11 @@ it.skipIf(process.platform !== "win32").each([
       ),
     ).toMatchObject({ status: "configured" });
     const sources = await readClientConfigurationFiles(fixture.client);
-    expect(sources.ok).toBe(true);
     if (!sources.ok) throw new Error(sources.error.detail);
     const environment = clientRegistrationEnvironmentDetails(
       effectiveClientConfiguration(sources.value),
+      undefined,
     );
-    expect(environment.ok).toBe(true);
     if (!environment.ok) throw environment.error;
     expect(environment.value.timeoutInputs?.analysisProvider).toBe("ghidra");
     expect(environment.value.values).toHaveProperty(

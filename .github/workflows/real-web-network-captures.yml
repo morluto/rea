@@ -56,7 +56,8 @@ jobs:
         run: |
           capture_tool_root="${RUNNER_TEMP}/rea-mitmproxy-12.2.3"
           mkdir -p "${capture_tool_root}"
-          curl --fail --location --retry 3 --max-time 180 \
+          # This immutable GET may reset mid-body; retry it before checksum verification.
+          curl --fail --location --retry 3 --retry-all-errors --max-time 180 \
             https://downloads.mitmproxy.org/12.2.3/mitmproxy-12.2.3-linux-x86_64.tar.gz \
             --output "${capture_tool_root}/mitmproxy.tar.gz"
           echo '2e95286b618fa6fd33e5e62a78c2e5112571d85f42ec2bac29b97ee242bdb5c5  mitmproxy.tar.gz' \

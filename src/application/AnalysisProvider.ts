@@ -31,6 +31,7 @@ import type { ProgressReporter } from "./ProgressReporter.js";
 import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import type { ProcessLineageObservation } from "../process/ProcessOwnership.js";
 import type { ProviderOperationHealth } from "../domain/providerOperationHealth.js";
+import type { ProviderReleaseVerification } from "../domain/providerReleaseVerification.js";
 import {
   relationshipCoverageSchema,
   type RelationshipCoverage,
@@ -52,6 +53,11 @@ export interface ExecutionOptions {
    * supplied it.
    */
   readonly selectorOrigin?: "provider";
+  /**
+   * Whether the caller's catalog advertises an operation; refusal recovery
+   * names only advertised operations. Absent means every operation is.
+   */
+  readonly isOperationAdvertised?: (operation: AnalysisOperation) => boolean;
 }
 
 /** Closed operations accepted by provider-backed analysis sessions. */
@@ -291,6 +297,9 @@ export interface ProviderIdentity {
 /** Typed analysis profile resolved before provider startup; null means unresolved. */
 export interface AnalysisProfileResolution {
   readonly profile: AnalysisProfileCommitment | null;
+  /** Readiness fact for the resolved selection; omitted means not reported. */
+  readonly releaseVerification?: ProviderReleaseVerification;
+
   /** Closing a client can publish state that invalidates a previewed profile. */
   readonly refreshAfterRetirement?: true;
   /** Keep provider-private facts bound to this selection without Evidence serialization. */
@@ -360,6 +369,10 @@ export type CapabilityDescriptor = CapabilityAvailability & {
   readonly operation: Exclude<AnalysisOperation, "health">;
   readonly effects: CapabilityEffects;
   readonly limitations: readonly string[];
+  /** Whether analyze_function can supply value flow for some procedures. */
+  readonly nativeValueFlow?:
+    | { readonly status: "supported" }
+    | { readonly status: "unavailable"; readonly reason: string };
 };
 
 /** Factory and capability declaration for an analysis implementation. */

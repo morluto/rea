@@ -1,3 +1,4 @@
+import { procedureReferencesSchema } from "../domain/native/procedureReferences.js";
 import {
   nativeAddressListSchema,
   nativeObservationSourceSchemas,
@@ -11,6 +12,7 @@ import {
   nativeFunctionSummaryViewResultSchema,
   nativeInventorySummaryViewResultSchema,
   nativeFeatureTraceSummaryViewResultSchema,
+  nativeProcedureReferencesSummaryViewResultSchema,
   batchDecompileSummaryViewResultSchema,
   nativeLoadImageSummaryViewResultSchema,
   artifactInventorySummaryViewResultSchema,
@@ -18,7 +20,7 @@ import {
   machoSummaryViewResultSchema,
   managedArtifactSummaryViewResultSchema,
   managedMemberSummaryViewResultSchema,
-} from "../domain/analysisView/analysisView.js";
+} from "../domain/analysisView/analysisViewResult.js";
 import { literalFeatureTraceSchema } from "../domain/native/literalFeatureTrace.js";
 import { byteEntropySchema } from "../domain/native/byteEntropy.js";
 import { nativeFunctionMatchingSchema } from "../domain/native/functionMatching.js";
@@ -33,11 +35,6 @@ import {
   analysisBookmarkSchema,
   nativeInventoryRowsSchemas,
 } from "../domain/native/nativeInventory.js";
-import {
-  referenceEdgeSchema,
-  unresolvedCallSchema,
-} from "../domain/native/nativeReference.js";
-import { procedureIdentitySchema } from "../domain/native/procedureInfo.js";
 import { z } from "zod";
 import {
   evidenceBundleExportReceiptSchema,
@@ -102,13 +99,13 @@ import {
   analysisErrorProjectionSchema,
   analysisInputErrorProjectionSchema,
   analysisResourceErrorProjectionSchema,
+  evidenceIntegrityErrorProjectionSchema,
 } from "./errorSchemas.js";
 import { relationshipCoverageSchema } from "../domain/relationshipCoverage.js";
 import { nativeDispatchMetadataResultSchema } from "../domain/native/objcSwiftMetadata.js";
 import { nativeInvestigationTraceSchema } from "../domain/native/nativeInvestigationGraph.js";
 import {
   addressedEntry,
-  functionDossierOutput,
   lifecycleResultOf,
   nullableText,
   procedureInfoOutput,
@@ -126,6 +123,7 @@ import { electronFuseReportSchema } from "../domain/electron/electronFuses.js";
 const contextFacetErrorSchema = z.discriminatedUnion("code", [
   analysisInputErrorProjectionSchema,
   analysisResourceErrorProjectionSchema,
+  evidenceIntegrityErrorProjectionSchema,
 ]);
 const contextFacetSchema = z.discriminatedUnion("state", [
   z.object({ state: z.literal("available"), value: jsonValueSchema }),
@@ -234,14 +232,9 @@ export const officialOutputSchemas = {
         ),
     }),
   ),
-  procedure_references: evidenceResultOf(
-    z.object({
-      procedure: procedureIdentitySchema,
-      direction: z.enum(["incoming", "outgoing"]),
-      reference_kinds_available: z.boolean(),
-      unresolved_calls: z.array(unresolvedCallSchema),
-      references: z.array(referenceEdgeSchema),
-    }),
+  procedure_references: analysisDetailOutputSchemaOf(
+    procedureReferencesSchema,
+    nativeProcedureReferencesSummaryViewResultSchema,
   ),
   procedure_pseudo_code: analysisDetailOutputSchemaOf(
     nullableText,

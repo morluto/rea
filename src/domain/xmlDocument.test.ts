@@ -3,6 +3,7 @@ import {
   declaredDocumentType,
   isWellFormedXml,
   parseXmlDocument,
+  xmlElementRanges,
 } from "./xmlDocument.js";
 
 it.each([
@@ -43,7 +44,6 @@ it.each([
     doctype: "allow",
     lineEndings: "preserve",
   });
-  expect(parsed.ok).toBe(false);
   if (parsed.ok) throw new Error("Expected refusal");
   expect(parsed.error.reason).toBe("malformed");
   expect(parsed.error.cause).toBeDefined();
@@ -94,7 +94,6 @@ it("applies the consumer's explicit DTD policy", () => {
     '<!DOCTYPE root [<!ENTITY value "unused">]><root/>',
     { doctype: "reject", lineEndings: "preserve" },
   );
-  expect(parsed.ok).toBe(false);
   if (parsed.ok) throw new Error("Expected unsupported DTD");
   expect(parsed.error.reason).toBe("doctype");
 });
@@ -214,4 +213,34 @@ it("preserves Unicode separators under XML 1.0 normalization", () => {
   expect(parsed.value.documentElement?.textContent).toBe(
     "a\n\u0085b\n\u2028c\n\rd\u2029",
   );
+});
+
+it("gives the source range of each picked element, the outermost, through line breaks and astral characters", () => {
+  const source =
+    '<r xmlns:n="urn:n">\r\n<!-- <x n:k="1"/> --><x n:k="1">😀<x n:k="1"/></x>\r\n<x  n:k = \'1\' /><x k="1"/></r>';
+  const ranges = xmlElementRanges(
+    source,
+    (element) =>
+      element.local === "x" && element.attribute("urn:n", "k") === "1",
+    { doctype: "reject" },
+  );
+
+  if (!ranges.ok) throw ranges.error;
+  expect(
+    ranges.value.map(({ start, end }) => source.slice(start, end)),
+  ).toEqual(['<x n:k="1">😀<x n:k="1"/></x>', "<x  n:k = '1' />"]);
+  expect(
+    xmlElementRanges("<r><x></r>", () => true, { doctype: "reject" }).ok,
+  ).toBe(false);
+});
+
+it("selects sibling outermost matches after a deeply nested nonmatching branch", () => {
+  const source = `<root>${"<n>".repeat(4000)}${"</n>".repeat(4000)}<x><x/></x><x/></root>`;
+  const ranges = xmlElementRanges(source, ({ local }) => local === "x", {
+    doctype: "reject",
+  });
+  if (!ranges.ok) throw ranges.error;
+  expect(
+    ranges.value.map(({ start, end }) => source.slice(start, end)),
+  ).toEqual(["<x><x/></x>", "<x/>"]);
 });

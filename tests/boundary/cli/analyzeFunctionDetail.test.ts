@@ -72,7 +72,18 @@ it("rejects summary delivery without --evidence_output before any analysis", asy
   const h = harness();
   const out = await h.invoke({ detail: "summary" });
   expect(h.runDirectAnalysis).not.toHaveBeenCalled();
-  expect(JSON.stringify(out)).toContain("evidence_output");
+  expect(out).toMatchObject({
+    code: "invalid_request",
+    details: {
+      operation: "analyze_function",
+      issues: expect.arrayContaining([
+        expect.objectContaining({
+          path: ["evidence_output"],
+          reason: "invalid_value",
+        }),
+      ]),
+    },
+  });
 });
 
 it("summary delivery returns the compact view and writes a bundle inspect-analysis-view pages", async () => {
@@ -89,6 +100,9 @@ it("summary delivery returns the compact view and writes a bundle inspect-analys
     evidence_bundle: { path: string; bytes: number };
   };
   expect(h.runDirectAnalysis).toHaveBeenCalledOnce();
+  expect(h.runDirectAnalysis.mock.calls[0]?.[3]).toMatchObject({
+    includeEvidenceSources: true,
+  });
   expect(out.summary.normalized_result.kind).toBe("summary");
   expect(typeof out.summary.normalized_result.parent_evidence_id).toBe(
     "string",

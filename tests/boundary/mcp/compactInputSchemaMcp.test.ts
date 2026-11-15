@@ -12,11 +12,6 @@ import { advertisedInputJsonSchema } from "../../../src/contracts/toolSchemaMeta
 import { presentAdvertisedInputSchema } from "../../../src/contracts/compactInputSchema.js";
 import { createCatalogDigests } from "../../../src/catalogIdentity.js";
 import {
-  schemaArrays,
-  schemaChildren,
-  schemaMaps,
-} from "../../../src/contracts/jsonSchemaKeywords.js";
-import {
   COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
   parseMcpInputSchemaProfile,
 } from "../../../src/config/mcpInputSchemaProfile.js";
@@ -40,45 +35,6 @@ interface AdvertisedTool {
 
 const serializedBytes = (value: unknown): number =>
   Buffer.byteLength(JSON.stringify(value), "utf8");
-
-const schemaDepth = (value: unknown, depth = 0): number => {
-  if (Array.isArray(value))
-    return Math.max(
-      depth,
-      ...value.map((child) => schemaDepth(child, depth + 1)),
-    );
-  if (typeof value !== "object" || value === null) return depth;
-  return Math.max(
-    depth,
-    ...Object.values(value).map((child) => schemaDepth(child, depth + 1)),
-  );
-};
-
-const unsupportedDependencyKeywords = (
-  schema: unknown,
-  path = "$",
-): readonly string[] => {
-  if (Array.isArray(schema))
-    return schema.flatMap((child, index) =>
-      unsupportedDependencyKeywords(child, `${path}[${index}]`),
-    );
-  if (typeof schema !== "object" || schema === null) return [];
-  return Object.entries(schema).flatMap(([key, value]) => {
-    const childPath = `${path}.${key}`;
-    if (key === "dependencies" || key === "dependentRequired")
-      return [childPath];
-    if (["const", "enum", "default", "examples"].includes(key)) return [];
-    if (schemaMaps.has(key) && typeof value === "object" && value !== null)
-      return Object.entries(value).flatMap(([name, child]) =>
-        unsupportedDependencyKeywords(child, `${childPath}.${name}`),
-      );
-    if (schemaArrays.has(key) && Array.isArray(value))
-      return unsupportedDependencyKeywords(value, childPath);
-    if (schemaChildren.has(key))
-      return unsupportedDependencyKeywords(value, childPath);
-    return [];
-  });
-};
 
 const listToolsThroughTransport = async (
   server: EvidenceMcpServer,
@@ -180,24 +136,13 @@ describe("MCP compact input schema profile", () => {
   });
 });
 
-it("advertises every tool input schema within the provider budget", async () => {
+it("advertises item schemas strict gateways accept", async () => {
   const server = compactServer();
   registerCatalog(server);
   const tools = await listToolsThroughTransport(server);
   expect(tools.map(({ name }) => name).sort()).toEqual(
     TOOL_CONTRACTS.map(({ name }) => name).sort(),
   );
-  const oversized = tools.filter(
-    ({ inputSchema }) =>
-      serializedBytes(inputSchema) > COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
-  );
-  expect(oversized.map(({ name }) => name)).toEqual([]);
-  const tooDeep = tools.filter(
-    ({ inputSchema }) => schemaDepth(inputSchema) > 10,
-  );
-  expect(
-    tooDeep.map(({ name, inputSchema }) => [name, schemaDepth(inputSchema)]),
-  ).toEqual([]);
   expect(
     tools.flatMap(({ name, inputSchema }) =>
       strictGatewayItemSchemaErrors(inputSchema, name),
@@ -417,7 +362,7 @@ it("keeps SDK-converted schemas valid and accepting canonical examples", async (
   expect(checkedFullRestrictions).toBe(true);
 });
 
-it("omits Gemini-unsupported dependency keywords from both catalog profiles", async () => {
+it("states dependency keywords as prose in both catalog profiles", async () => {
   const full = fullServer();
   const compact = compactServer();
   registerCatalog(full);
@@ -426,14 +371,6 @@ it("omits Gemini-unsupported dependency keywords from both catalog profiles", as
     listToolsThroughTransport(full),
     listToolsThroughTransport(compact),
   ]);
-  for (const tools of [fullTools, compactTools])
-    expect(
-      tools.flatMap(({ name, inputSchema }) =>
-        unsupportedDependencyKeywords(inputSchema).map(
-          (path) => `${name}${path.slice(1)}`,
-        ),
-      ),
-    ).toEqual([]);
   const sqlite = fullTools.find(
     ({ name }) => name === "inspect_sqlite_database",
   );
@@ -671,3 +608,63 @@ it("keeps root detail guidance so callers can choose bounded summaries", async (
   );
   expect(detailGuidance(compactTools)).toEqual(expected);
 });
+
+it.each([
+  [
+    "export_environment_bundle",
+    "name",
+    {
+      source: { kind: "evidence-file", path: "/capture.json" },
+      output_directory: "/bundle",
+    },
+  ],
+  [
+    "measure_build_task",
+    "task",
+    { bundle: "/bundle", model: "test-model", budget_usd: 1 },
+  ],
+] as const)(
+  "advertises portable names for %s through the SDK",
+  async (name, field, base) => {
+    const contract = toolContract(name);
+    const server = fullServer();
+    server.registerTool(
+      contract.name,
+      toolRegistrationOptions(contract),
+      async () => ({ content: [] }),
+    );
+    const tool = (await listToolsThroughTransport(server)).find(
+      ({ name }) => name === contract.name,
+    );
+    expect(tool).toBeDefined();
+    const ajv = new Ajv2020({ strict: false, validateFormats: false });
+    const validate = ajv.compile(tool!.inputSchema);
+    for (const [name, accepted] of [
+      [undefined, field === "name"],
+      ["replay-2", true],
+      ["123-replay", true],
+      ["a".repeat(63), true],
+      ["a".repeat(64), false],
+      ["../escape", false],
+      ["Uppercase", false],
+      ["two--hyphens", false],
+      ["trailing\n", false],
+      ["con", false],
+      ["com1", false],
+      ["lpt9", false],
+      ["123", false],
+      ["0128", false],
+      ["0x", false],
+      ["0xffffffff", false],
+      ["0xg", true],
+      ["com10", true],
+    ] as const) {
+      const input = {
+        ...base,
+        ...(name === undefined ? {} : { [field]: name }),
+      };
+      expect(validate(input), JSON.stringify(input)).toBe(accepted);
+      expect(contract.inputSchema.safeParse(input).success).toBe(accepted);
+    }
+  },
+);

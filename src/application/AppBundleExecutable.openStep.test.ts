@@ -1,11 +1,10 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { parseOpenStep } from "plist";
 import { expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { resolveAppBundleExecutable } from "./AppBundleExecutable.js";
+import { resolveAppleBundleExecutable } from "./AppBundleExecutable.js";
 
 it.each([
   ["no comment", ""],
@@ -19,12 +18,11 @@ it.each([
   const executable = join(programs, "Fixture");
   const infoPlist = join(bundle, "Contents", "Info.plist");
   const source = `${prefix}{ CFBundleExecutable = Fixture; }`;
-  expect(parseOpenStep(source)).toEqual({ CFBundleExecutable: "Fixture" });
   await mkdir(programs, { recursive: true });
   await writeFile(infoPlist, source);
   await writeFile(executable, "fixture - never executed");
 
-  expect(await resolveAppBundleExecutable(bundle)).toEqual({
+  expect(await resolveAppleBundleExecutable(bundle)).toEqual({
     ok: true,
     value: { executable, infoPlist },
   });

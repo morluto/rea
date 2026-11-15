@@ -5,6 +5,20 @@ import type { Evidence } from "../evidence.js";
 import { analysisInputErrorFromIssues } from "../inputIssueProjection.js";
 import { err, ok, type Result } from "../result.js";
 import { ownedJsonValueSchema } from "../jsonValue.js";
+import { EvidenceIntegrityError } from "../evidenceErrors.js";
+
+/** Bind a projected artifact to the parent subject when one is recorded. */
+export const validateAnalysisViewSubject = (
+  subject: Evidence["subject"] | undefined,
+  artifactSha256: string | null | undefined,
+): Result<void, EvidenceIntegrityError> =>
+  subject == null || subject.digest.sha256 === artifactSha256
+    ? ok(undefined)
+    : err(
+        new EvidenceIntegrityError(
+          `Parent subject SHA-256 ${subject.digest.sha256} differs from analysis artifact SHA-256 ${artifactSha256 ?? "unknown"}.`,
+        ),
+      );
 
 /** Parent record already resolved from inline Evidence or a session reference. */
 export interface AnalysisViewParent {
@@ -12,6 +26,7 @@ export interface AnalysisViewParent {
   readonly operation: string;
   readonly predicateType: string;
   readonly normalizedResult: unknown;
+  readonly rawResult?: unknown;
   readonly provider?: Evidence["provider"];
   readonly analysisProfile?: Evidence["analysis_profile"];
   readonly authority?: Evidence["authority"];

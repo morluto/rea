@@ -5,7 +5,7 @@ import { afterAll, expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
 import { JAVASCRIPT_FEATURE_TRACE_EXAMPLE } from "../../../src/contracts/javascript/javascriptApplicationWorkflowExamples.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
 import { applicationFeatureTraceResultSchema } from "../../../src/domain/javascript/javascriptFeatureTraceSchemas.js";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
@@ -143,7 +143,13 @@ it.each(["full", "compact"] as const)(
     expect(summary.evidence.normalized_result).toMatchObject({
       kind: "summary",
       parent_operation: "trace_application_feature",
-      artifact: null,
+      artifact:
+        parent.subject === null
+          ? null
+          : {
+              path: parent.subject.local_path,
+              sha256: parent.subject.digest.sha256,
+            },
       summary: {
         trace_id: full.trace_id,
         source_evidence_id: full.source_evidence_id,

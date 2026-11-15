@@ -4,6 +4,7 @@ import { PassThrough } from "node:stream";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
+import { primaryAnalysisError } from "../../../../src/domain/analysisErrorBase.js";
 import { nativeCallObservationInputSchema } from "../../../../src/domain/native/nativeCallObservation.js";
 import { ProviderCleanupError } from "../../../../src/domain/providerCleanupError.js";
 import { err, ok } from "../../../../src/domain/result.js";
@@ -183,7 +184,7 @@ it("retries the tracer-owned resolver supervisor before another trace", async ()
   }
 });
 
-it("keeps resolver preparation cleanup with the foreign helper", async () => {
+it("releases resolver preparation cleanup through the transferred helper owner", async () => {
   const prepared = preparation();
   const failure = new NativeCommandFailure("lldb", "io", null, {
     cause: prepared.failure,
@@ -196,8 +197,8 @@ it("keeps resolver preparation cleanup with the foreign helper", async () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error._tag).toBe("ProviderAdapterError");
-    expect(result.error.cause).toBe(failure);
-    expect(result.error.diagnostics).toMatchObject({
+    expect(primaryAnalysisError(result.error).cause).toBe(failure);
+    expect(primaryAnalysisError(result.error).diagnostics).toMatchObject({
       phase: "process-preparation",
       tool: "lldb",
       reason: "io",
@@ -212,9 +213,9 @@ it("keeps resolver preparation cleanup with the foreign helper", async () => {
     expect(projectAnalysisError(result.error).code).toBe("cleanup_incomplete");
 
     expect((await tracer.close()).ok).toBe(true);
-    expect(prepared.close).not.toHaveBeenCalled();
-    expect(prepared.marker.cleanupIncomplete).toBe(true);
-    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(prepared.close).toHaveBeenCalledOnce();
+    expect(prepared.marker.cleanupIncomplete).toBe(false);
+    expect(result.error.cleanupIncomplete).toBe(false);
 
     await tracer.trace(request);
     expect(resolver).toHaveBeenCalledTimes(2);
@@ -242,10 +243,11 @@ it.each([
     const tracer = new LldbCallTracer({}, undefined, async () => err(failure));
     try {
       const result = await tracer.trace(request);
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected preparation failure");
-      expect(result.error._tag).toBe(tag);
-      expect(result.error.cause).toBe(abortReason);
+      expect(primaryAnalysisError(result.error)._tag).toBe(tag);
+      if (reason === "cancelled")
+        expect(primaryAnalysisError(result.error).cause).toBe(abortReason);
+      else expect(primaryAnalysisError(result.error).cause).toBe(failure);
       expect(result.error.capturedOutput?.stderr).toBe("compiler failed");
       expect(result.error.cleanupIncomplete).toBe(true);
       await prepared.close();

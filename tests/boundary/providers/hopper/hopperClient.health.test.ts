@@ -1,7 +1,8 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 
-import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
+import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
 
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { ok } from "../../../../src/domain/result.js";
@@ -11,6 +12,7 @@ import type {
 } from "../../../../src/hopper/BridgeLauncher.js";
 import { HopperClient } from "../../../../src/hopper/HopperClient.js";
 import { HopperFixtureLauncher } from "./hopperClient.fixture.js";
+import { waitFor } from "../../../support/testWait.js";
 
 class ObservedProcess extends EventEmitter {
   readonly stdout = new PassThrough();
@@ -59,7 +61,7 @@ const start = async (owned: boolean) => {
   onTestFinished(async () => {
     await client.close();
     for (const child of launcher.fixture.processes) child.kill();
-  }, 45_000);
+  });
   expect((await client.start()).ok).toBe(true);
   return { client, launcher };
 };
@@ -89,7 +91,7 @@ it("reports launch work until the first authenticated handshake completes", asyn
     await client.close();
   });
   const starting = client.callTool("current_document");
-  await entered;
+  await awaitAcknowledgement(entered, starting, "Hopper launch");
   expect(client.requestActivity()).toBeNull();
   expect(client.operationHealth()).toMatchObject({
     state: "busy",
@@ -120,7 +122,7 @@ describe("Hopper provider lifecycle health", () => {
     const pending = client.callTool("hang");
     await launcher.fixture.waitForRequest("hang");
     launcher.fixture.processes.at(-1)?.send({ disconnect: true });
-    await vi.waitFor(() =>
+    await waitFor(() =>
       expect(client.operationHealth().state).toBe("unreachable"),
     );
     expect(await pending).toMatchObject({
@@ -203,7 +205,7 @@ describe("Hopper provider lifecycle health", () => {
         },
       },
     );
-    await vi.waitFor(() =>
+    await waitFor(() =>
       expect(client.requestActivity()?.queuedRequests).toBe(1),
     );
     await launcher.fixture.release(request);
@@ -227,9 +229,7 @@ it("preserves an owned signal exit and diagnostics for active, queued and later 
   const active = client.callTool("hang");
   const request = await launcher.fixture.waitForRequest("hang");
   const queued = client.callTool("echo");
-  await vi.waitFor(() =>
-    expect(client.requestActivity()?.queuedRequests).toBe(1),
-  );
+  await waitFor(() => expect(client.requestActivity()?.queuedRequests).toBe(1));
   const token = launcher.fixture.tokens[0];
   launcher.observed.stderr.write(`API_KEY=local-evidence-kept ${token}\n`);
   launcher.observed.exit(null, "SIGTERM");

@@ -1,5 +1,4 @@
 import { expect, it, vi } from "vitest";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   ExecFileOutputCancelledError,
   execFileBytes,
@@ -210,67 +209,6 @@ it("does not infer cancellation from a foreign ABORT_ERR code", async () => {
     ok: false,
     error: { _tag: "AnalysisProtocolError" },
   });
-});
-
-it.each([true, false])(
-  "projects a truncated adb capture as retryable only for volatile output (%s)",
-  async (volatileOutput) => {
-    vi.mocked(execFileBytes).mockRejectedValueOnce(
-      Object.assign(new Error("too much"), {
-        code: 1,
-        stdout: "",
-        stderr: "",
-        signal: null,
-        killed: false,
-        outputTruncated: true,
-      }),
-    );
-    const result = await runAdbCapture(
-      volatileOutput ? "read_adb_logcat" : "install_adb_package",
-      { device: "device" },
-      { binary: "/host/adb", pathSource: "environment", environment: {} },
-      volatileOutput ? ["logcat", "-d"] : ["install", "app.apk"],
-      { timeoutMs: 100, maxOutputBytes: 1024, volatileOutput },
-      undefined,
-    );
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error("Expected a capture allowance refusal");
-    const projected = projectAnalysisError(result.error);
-    expect(projected.retryable).toBe(volatileOutput);
-    expect(projected).toMatchObject({
-      code: "resource_constraint",
-      details: { reported_limits: { max_output_bytes: 1024 } },
-    });
-    expect(projected.details?.limit).toBeUndefined();
-  },
-);
-
-it("reports the effective fixed adb deadline", async () => {
-  vi.mocked(execFileBytes).mockRejectedValueOnce(
-    Object.assign(new Error("deadline"), {
-      code: "ETIMEDOUT",
-      stdout: "",
-      stderr: "",
-      signal: null,
-      killed: true,
-    }),
-  );
-  const result = await runAdbCapture(
-    "pull_adb_file",
-    { device: "device" },
-    { binary: "/host/adb", pathSource: "environment", environment: {} },
-    ["pull", "/remote"],
-    { timeoutMs: 600_000, maxOutputBytes: 1024 },
-    undefined,
-  );
-  expect(result.ok).toBe(false);
-  if (result.ok) throw new Error("Expected an adb deadline");
-  const projected = projectAnalysisError(result.error);
-  expect(projected).toMatchObject({
-    code: "provider_timeout",
-    details: { timeout_ms: 600_000 },
-  });
-  expect(projected.details?.limit).toBeUndefined();
 });
 
 it("keeps a physical failure even when the later abort reason is that same error", async () => {

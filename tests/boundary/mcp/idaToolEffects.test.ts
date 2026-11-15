@@ -64,7 +64,11 @@ it("advertises attached IDA UI and network effects in SDK and session discovery"
     const registration = join(root, "registration.json");
     await writeFile(
       registration,
-      JSON.stringify({ command: "fixture", mode: "attached" }),
+      JSON.stringify({
+        command: "fixture",
+        mode: "attached",
+        protocol: "legacy",
+      }),
     );
     const config = parseConfig({ REA_IDA_MCP_CONFIG: registration });
     if (!config.ok) throw config.error;

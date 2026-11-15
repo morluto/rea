@@ -1,3 +1,4 @@
+import { projectAnalysisError } from "../../../domain/analysisErrorProjection.js";
 import { createHash } from "node:crypto";
 import { readFile, writeFile, open } from "node:fs/promises";
 import { expect, it } from "vitest";
@@ -51,11 +52,11 @@ it("imports real v10 recorder text with per-stream identity and resource presenc
     expect(
       report.events.find((row) => row.method === "click")?.selector,
     ).toContain("Load value");
-    expect(
-      report.events
-        .flatMap((row) => row.resource_references)
-        .every((row) => row.state === "present-unread"),
-    ).toBe(true);
+    const references = report.events.flatMap((row) => row.resource_references);
+    expect(references).toHaveLength(8);
+    expect(references.every((row) => row.state === "present-unread")).toBe(
+      true,
+    );
     expect((await readFile(fixture.path)).equals(bytes)).toBe(true);
   } finally {
     await resources.close();
@@ -128,10 +129,14 @@ it("keeps missing resource references explicit without turning page exhaustion i
     if (!result.ok) throw result.error;
     expect(result.value.summary.unavailable_references).toBe(8);
     expect(result.value.source_coverage.interpretation).toBe("partial");
+    const references = result.value.events.flatMap(
+      (row) => row.resource_references,
+    );
+    expect(references).toHaveLength(8);
     expect(
-      result.value.events
-        .flatMap((row) => row.resource_references)
-        .every((row) => row.state === "missing" && row.matching_members === 0),
+      references.every(
+        (row) => row.state === "missing" && row.matching_members === 0,
+      ),
     ).toBe(true);
   } finally {
     await resources.close();
@@ -197,6 +202,7 @@ it.each([
       if (!result.ok) throw result.error;
       expect(result.value.events).toHaveLength(events);
       expect(result.value.source_coverage.interpretation).toBe("partial");
+      expect(result.value.streams.length).toBeGreaterThan(0);
       expect(
         result.value.streams.every((stream) => stream.state === "unknown"),
       ).toBe(true);
@@ -217,7 +223,6 @@ it("refuses other declared trace versions with verified archive identity", async
     const result = await new PlaywrightTraceDecoder(resources).inspect(
       fixture.path,
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected version refusal");
     expect(result.error._tag).toBe("AnalysisUnsupportedTargetError");
     expect(
@@ -239,7 +244,6 @@ it("preserves opaque pre-cancellation without reading or claiming a source snaps
       "/unused.zip",
       controller.signal,
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected cancellation");
     expect(result.error._tag).toBe("AnalysisCancelledError");
     expect(result.error.cause).toBe(reason);
@@ -307,7 +311,6 @@ it("refuses oversized physical lines before parsing their representation", async
     const result = await new PlaywrightTraceDecoder(resources).inspect(
       fixture.path,
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected line capacity refusal");
     expect(result.error._tag).toBe("AnalysisResourceConstraintError");
     expect(resources.hasPending).toBe(false);
@@ -329,7 +332,6 @@ it("never promotes facts from a stream whose ZIP CRC fails", async () => {
     const result = await new PlaywrightTraceDecoder(resources).inspect(
       fixture.path,
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected CRC refusal");
     expect(result.error._tag).toBe("AnalysisInputError");
     const partial = playwrightTraceSchema.parse(
@@ -354,7 +356,6 @@ it("rejects a sparse over-budget archive before hashing or expansion", async () 
     const result = await new PlaywrightTraceDecoder(resources).inspect(
       fixture.path,
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected archive admission refusal");
     expect(result.error._tag).toBe("AnalysisResourceConstraintError");
     expect(result.error.partialObservation).toBeUndefined();
@@ -378,9 +379,32 @@ it("bounds JSON node expansion even when many tokens fit inside a small physical
     const result = await new PlaywrightTraceDecoder(resources).inspect(
       fixture.path,
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected node admission refusal");
     expect(result.error._tag).toBe("AnalysisResourceConstraintError");
+    expect(projectAnalysisError(result.error).details).toMatchObject({
+      refusal: { limit: 131072, unit: "parser nodes" },
+    });
+    expect(resources.hasPending).toBe(false);
+  } finally {
+    await resources.close();
+  }
+});
+
+it("names the nesting allowance, not the node allowance, for a deeply nested small record", async () => {
+  const trace =
+    header +
+    `{"type":"console","args":${"[".repeat(80)}${"]".repeat(80)},"time":1}\n`;
+  const fixture = await playwrightTraceFixture({ trace, network: "" });
+  const resources = new ArtifactResourceScope();
+  try {
+    const result = await new PlaywrightTraceDecoder(resources).inspect(
+      fixture.path,
+    );
+    if (result.ok) throw new Error("Expected nesting refusal");
+    expect(result.error._tag).toBe("AnalysisResourceConstraintError");
+    expect(projectAnalysisError(result.error).details).toMatchObject({
+      refusal: { limit: 64, unit: "nesting levels" },
+    });
     expect(resources.hasPending).toBe(false);
   } finally {
     await resources.close();

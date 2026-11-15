@@ -40,7 +40,7 @@ it.each([
     });
   },
 );
-it("rejects source text changed across the artifact port while retaining the original digest", async () => {
+it("rejects source text changed across the artifact port before acquiring the resolver", async () => {
   const artifacts = {
     ...webModuleArtifactsFixture("import(name)"),
     source: "import(other)",

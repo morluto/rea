@@ -95,7 +95,6 @@ it.skipIf(isRoot)(
           format: "plist",
         })
         .execute("inspect_keyed_archive", {});
-      expect(executed.ok).toBe(false);
       if (executed.ok) throw new Error("expected a denied read");
       expect(executed.error).toBeInstanceOf(AnalysisAccessDeniedError);
       expect(projectAnalysisError(executed.error)).toMatchObject({

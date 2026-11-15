@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createHistoricalSourceSummary } from "../../../src/domain/referenceSourceSummary.js";
 import fs from "node:fs";
 import {
@@ -23,10 +24,7 @@ import {
   RegularFileReadFailure,
 } from "../../../src/application/RegularFileRead.js";
 import { importReferenceSource } from "../../support/referenceSourceResourceScope.js";
-import {
-  parseReferenceSourceEntries,
-  projectReferenceSourceEntryFailure,
-} from "../../../src/application/ReferenceSourceImportEntries.js";
+import { parseReferenceSourceEntries } from "../../../src/application/ReferenceSourceImportEntries.js";
 import type { ReferenceSourceRead } from "../../../src/reference/ReferenceSourceReaderTypes.js";
 import { createHistoricalSourceManifest } from "../../../src/domain/referenceSourceGraph.js";
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
@@ -116,13 +114,24 @@ describe("reference source import projections", () => {
       ["file", "cancelled"],
       ["unknown", "unsupported"],
     ] as const) {
-      const message = projectReferenceSourceEntryFailure({
-        status: "failed",
-        path: "safe/path",
-        kind,
-        code,
-        message: "Observed entry failure at /owned/fixture/path",
-      });
+      const parsed = parseReferenceSourceEntries(
+        {
+          root: "/owned/fixture",
+          entries: [
+            {
+              status: "failed",
+              path: "safe/path",
+              kind,
+              code,
+              message: "Observed entry failure at /owned/fixture/path",
+            },
+          ],
+          bytesRead: 0,
+          limitations: [],
+        },
+        [],
+      );
+      const message = parsed.entries[0]?.limitations[0];
       expect(message).toContain(
         "Observed entry failure at /owned/fixture/path",
       );
@@ -234,7 +243,6 @@ describe("reference source ignore policy read failures", () => {
           new ArtifactResourceScope(),
         );
         expect(intercepted).toBe(true);
-        expect(result.ok).toBe(false);
         if (result.ok) throw new Error("Expected ignore policy read failure");
         expect(result.error.code).toBe(expected);
         expect(result.error.cause).toBe(
@@ -309,7 +317,6 @@ describe("reference source ignore policy cleanup ownership", () => {
         resources,
       );
       expect(interceptedRead).toBe(true);
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected ignore policy read failure");
       expect(result.error.code).toBe("io");
       expect(result.error.cause).toBe(physical);
@@ -373,7 +380,6 @@ describe("reference source ignore policy cleanup ownership", () => {
         new ArtifactResourceScope(),
       );
       expect(intercepted).toBe(true);
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected ignore policy read failure");
       expect(result.error.code).toBe("io");
       expect(result.error.cause).toBe(reason);
@@ -746,6 +752,7 @@ describe("reference source import behavior", () => {
           kind: "file",
           size,
           content_state: "hashed",
+          sha256: createHash("sha256").update("a".repeat(size)).digest("hex"),
         }),
       );
     }
@@ -803,6 +810,18 @@ describe("reference source import behavior", () => {
       await rm(outside, { recursive: true, force: true });
     }
   });
+
+  it.each([null, "stop import", { requested: "stop import" }])(
+    "preserves the caller's pre-admission cancellation reason %j",
+    async (reason) => {
+      const controller = new AbortController();
+      controller.abort(reason);
+      const result = await importTree("unopened-source", controller.signal);
+      if (result.ok) throw new Error("Expected cancellation");
+      expect(result.error.code).toBe("cancelled");
+      expect(result.error.cause).toBe(reason);
+    },
+  );
 
   it("records bounded local Git state without invoking Git", async () => {
     const parent = await createTestTempDirectory("rea-reference-git-");

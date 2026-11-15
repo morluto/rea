@@ -198,7 +198,7 @@ const registerDecompileCommand = (
   runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
 ): void => {
   cli.command(CLI_COMMANDS.decompile, {
-    description: `Read one part of an app as code. ${decompileSelectorGuidance} Equal positional and --procedure values are accepted; conflicts fail.`,
+    description: `Read one part of an app as code. ${decompileSelectorGuidance} Equal positional and --procedure values are accepted; conflicts fail. With Ghidra, a space-qualified address such as ram:0x... avoids file-offset fallback; inspect-native-load-image reports the observed default space.`,
     args: z.object({
       path: localPathStringSchema.describe("App or program path"),
       address: z
@@ -246,6 +246,7 @@ const registerDecompileCommand = (
                 ? "procedure"
                 : "file-offset",
               "procedure_pseudo_code",
+              "native",
             ),
             ...(options.analysis === undefined
               ? {}
@@ -295,7 +296,7 @@ const registerXrefsCommand = (
   runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
 ): void => {
   cli.command(CLI_COMMANDS.xrefs, {
-    description: `List bounded references to an analyzed address. ${namedAddressGuidance} ${equalSelectorGuidance}`,
+    description: `List bounded, untyped references to an analyzed address. For typed incoming references, use inspect-native-instruction at the target address where supported. ${namedAddressGuidance} ${equalSelectorGuidance}`,
     args: z.object({
       path: localPathStringSchema.describe("App or program path"),
       address: z
@@ -326,6 +327,7 @@ const registerXrefsCommand = (
               options.address,
               "address",
               "xrefs",
+              "native",
             ),
           },
           directAnalysisOptionsFromCli(logger, options),
@@ -450,9 +452,14 @@ const registerFunctionCommand = (
                 options.procedure,
                 "procedure",
                 "analyze_function",
+                "native",
               ),
             },
-            { ...directAnalysisOptionsFromCli(logger, options), signal },
+            {
+              ...directAnalysisOptionsFromCli(logger, options),
+              signal,
+              includeEvidenceSources: options.evidence_output !== undefined,
+            },
           );
           return publishCliAnalysisEvidence(complete, delivery);
         }),
@@ -497,6 +504,7 @@ const registerInstructionsCommand = (
               options.procedure,
               "procedure",
               "read_function_instructions",
+              "native",
             ),
           },
           directAnalysisOptionsFromCli(logger, options),

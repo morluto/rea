@@ -115,8 +115,9 @@ it("extracts case-distinct names only when the destination can preserve them", a
   if (!caseSensitive) {
     if (extracted.ok) throw new Error("expected a destination case collision");
     expect(projectAnalysisError(extracted.error)).toMatchObject({
-      message:
-        "Destination filesystem cannot store both main.js and Main.js; inventory retains both logical names.",
+      message: expect.stringMatching(
+        /[Cc]annot store both main\.js and Main\.js.*inventory retains both/u,
+      ),
       details: { operation: "extract_artifact", reason: "path" },
     });
     await expect(lstat(output)).rejects.toMatchObject({ code: "ENOENT" });

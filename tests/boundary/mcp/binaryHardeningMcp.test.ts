@@ -3,7 +3,10 @@ import { join } from "node:path";
 import { expect } from "vitest";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { elfHardeningFixture } from "../../../src/native/hardening/BinaryHardening.fixture.js";
+import {
+  elfHardeningFixture,
+  machoHardeningFixture,
+} from "../../../src/native/hardening/BinaryHardening.fixture.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest } from "../../support/mcp/mcpFixture.js";
@@ -61,5 +64,47 @@ mcpTest(
       await session.close();
     }
   },
-  60_000,
+);
+
+mcpTest(
+  "reports an unknown ARM64 subtype without treating its display fallback as arm64e proof",
+  async ({ mcp }) => {
+    const session = createTestBinarySession(() => {
+      throw new Error("Must not start a deep provider");
+    });
+    const client = await mcp.connect(
+      createServer({ kind: "session", session }),
+    );
+    try {
+      const root = await createTestTempDirectory("rea-arm64-subtype-");
+      const path = join(root, "image");
+      for (const [subtype, state] of [
+        [0, "disabled"],
+        [1, "disabled"],
+        [2, "enabled"],
+        [0x8000000c, "enabled"],
+        [3, "unknown"],
+      ] as const) {
+        const bytes = machoHardeningFixture({ cpuSubtype: subtype });
+        await writeFile(path, bytes);
+        const response = await client.callTool({
+          name: "inspect_binary_hardening",
+          arguments: { path },
+        });
+        expect(response.isError, JSON.stringify(response.content)).not.toBe(
+          true,
+        );
+        const evidence = toolContract(
+          "inspect_binary_hardening",
+        ).outputSchema.parse(response.structuredContent);
+        const image = evidence.normalized_result.images[0];
+        expect(image?.status).toBe("parsed");
+        expect(
+          image?.rows.find((row) => row.property === "arm64e")?.state,
+        ).toBe(state);
+      }
+    } finally {
+      await session.close();
+    }
+  },
 );

@@ -1,6 +1,8 @@
+import { resolveScenarioSecrets } from "../../tests/fixtures/browserScenarioSecrets.js";
 import { expect, it } from "vitest";
 
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { resolvedAnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
@@ -20,7 +22,7 @@ import {
   expectDroppedPartial,
   expectKeptPartial,
   expectOwnerError,
-} from "./ownerObservationExpectation.fixture.js";
+} from "../../tests/fixtures/ownerObservationExpectation.js";
 
 const scenario = browserScenarioInputSchema.parse({
   browser: { mode: "launch", executable_path: "/fixture/chrome" },
@@ -48,7 +50,6 @@ const expectRetainedCapture = (
   result: Awaited<ReturnType<typeof runScenario>>,
   failure: AnalysisError,
 ) => {
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected the retained capture");
   expect(result.error).toBe(failure);
   expect(parseEvidence(result.error.partialObservation)).toMatchObject({
@@ -86,6 +87,39 @@ it("converts a raw scenario capture retained after cleanup failure", async () =>
   expectRetainedCapture(result, failure);
   if (!result.ok) expect(result.error.cleanupIncomplete).toBe(true);
 });
+
+it.each([false, true])(
+  "retains completed scenario Evidence after cleanup resolves (wrapper facts: %s)",
+  async (wrapperFacts) => {
+    const partial = { kind: "browser-scenario-observation" as const, capture };
+    const primary = new AnalysisCancelledError("capture_browser_scenario", {
+      partialObservation: partial,
+    });
+    const failure = new BrowserObservationError(
+      "capture_browser_scenario",
+      "cleanup_failed",
+      {
+        cleanupPrimary: primary,
+        cleanup: {
+          reason: "browser close failed",
+          resources: ["browser process"],
+        },
+        ...(wrapperFacts ? { partialObservation: partial } : {}),
+      },
+    );
+    const result = await runScenario(failure, scenarioIdentity);
+    if (result.ok) throw new Error("Expected cleanup failure");
+    expect(result.error).toBe(failure);
+    failure.resolveCleanup();
+    expect(resolvedAnalysisError(failure)).toBe(primary);
+    expect(parseEvidence(primary.partialObservation)).toMatchObject({
+      operation: "capture_browser_scenario",
+      normalized_result: capture,
+    });
+    if (wrapperFacts)
+      expect(failure.partialObservation).toBe(primary.partialObservation);
+  },
+);
 
 it.each([
   null,
@@ -171,6 +205,29 @@ it("keeps startup cancellation and its incomplete capture", async () => {
   expectKeptPartial(expectOwnerError(result, failure, reason), partial);
 });
 
+it("interprets only the retained observation's own JSON fields", async () => {
+  let reads = 0;
+  const partial = Object.defineProperty(
+    { capture: { completed: "source fact" } },
+    "kind",
+    {
+      get: () => {
+        reads++;
+        throw new Error("Hidden kind is not part of the observation");
+      },
+    },
+  );
+  const failure = new AnalysisCancelledError("capture_browser_scenario", {
+    partialObservation: partial as never,
+  });
+  const result = await runScenario(failure);
+  expectOwnerError(result, failure, failure.cause);
+  expect(reads).toBe(0);
+  expect(failure.partialObservation).toEqual({
+    capture: { completed: "source fact" },
+  });
+});
+
 it.each([{ steps: [undefined] }, { started_at: Number.NaN }])(
   "drops a non-JSON incomplete scenario capture and keeps cancellation primary",
   async (capturePartial) => {
@@ -197,11 +254,136 @@ it("rejects a successful capture that is not a completed scenario", async () => 
     captureScenario: async () => ok({} as BrowserScenarioCapture),
   };
   const result = await captureBrowserScenario(provider, scenario);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected a completed-capture refusal");
   expect(result.error).toBeInstanceOf(AnalysisOutputError);
   expect(result.error.message).toContain(
     "returned a malformed completed capture",
   );
   expect(result.error.partialObservation).toBeUndefined();
+});
+
+it("projects scenario own JSON before inspecting a hidden known property", async () => {
+  let reads = 0;
+  const { browser: _browser, ...rest } = capture;
+  const source = Object.defineProperty(rest, "browser", {
+    get: () => {
+      reads++;
+      throw new Error("hidden scenario browser getter");
+    },
+  });
+  const result = await captureBrowserScenario(
+    {
+      identity: () => scenarioIdentity,
+      captureScenario: async () => ok(source as BrowserScenarioCapture),
+    },
+    scenario,
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+  expect(reads).toBe(0);
+});
+
+it.each([false, true])(
+  "retains scenario nested own metadata (cleanup primary: %s)",
+  async (cleanup) => {
+    const source = {
+      ...capture,
+      steps: capture.steps.map((step) => ({
+        ...step,
+        before_url: {
+          ...step.before_url,
+          provider_metadata: { source_id: "caller-source" },
+        },
+      })),
+    };
+    const primary = new AnalysisCancelledError("capture_browser_scenario", {
+      partialObservation: {
+        kind: "browser-scenario-observation",
+        capture: source,
+      },
+    });
+    const failure = new BrowserObservationError(
+      "capture_browser_scenario",
+      "cleanup_failed",
+      {
+        cleanupPrimary: primary,
+        cleanup: {
+          reason: "controlled close failure",
+          resources: ["browser process"],
+        },
+      },
+    );
+    const result = await captureBrowserScenario(
+      {
+        identity: () => scenarioIdentity,
+        captureScenario: async () => (cleanup ? err(failure) : ok(source)),
+      },
+      scenario,
+    );
+    const evidence = result.ok
+      ? result.value
+      : parseEvidence(primary.partialObservation);
+    if (cleanup) {
+      expect(result).toMatchObject({ ok: false });
+      failure.resolveCleanup();
+      expect(resolvedAnalysisError(failure)).toBe(primary);
+    } else expect(result.ok).toBe(true);
+    expect(evidence.raw_result).toEqual(source);
+    expect(evidence.normalized_result).not.toHaveProperty(
+      "steps.0.before_url.provider_metadata",
+    );
+  },
+);
+
+it("omits redundant raw scenario JSON for an unchanged capture", async () => {
+  const result = await captureBrowserScenario(
+    {
+      identity: () => scenarioIdentity,
+      captureScenario: async () => ok(capture),
+    },
+    scenario,
+  );
+  if (!result.ok) throw result.error;
+  expect(result.value.raw_result).toBeNull();
+});
+
+it("retains only post-redaction scenario source while preserving harmless metadata", async () => {
+  const selected = browserScenarioInputSchema.parse({
+    ...scenario,
+    secrets: [
+      { secret_id: "selected", environment_variable: "DECLARED_VALUE" },
+    ],
+  });
+  const secret = "explicit-source-secret";
+  const privacy = resolveScenarioSecrets(selected, { DECLARED_VALUE: secret });
+  const sanitized = privacy.sanitizeUrl(
+    `https://transport-user:transport-password@fixture.test/?selected=${secret}&token=public-local-value`,
+  );
+  const source = {
+    ...capture,
+    steps: capture.steps.map((step) => ({
+      ...step,
+      before_url: {
+        ...sanitized,
+        provider_metadata: { source_id: "harmless-source" },
+      },
+    })),
+  };
+  const result = await captureBrowserScenario(
+    {
+      identity: () => scenarioIdentity,
+      captureScenario: async () => ok(source),
+    },
+    selected,
+  );
+  if (!result.ok) throw result.error;
+  expect(result.value.raw_result).toEqual(source);
+  const recorded = JSON.stringify(result.value);
+  for (const privateValue of [secret, "transport-user", "transport-password"])
+    expect(recorded).not.toContain(privateValue);
+  expect(recorded).toContain("harmless-source");
+  expect(recorded).toContain("public-local-value");
+  expect(sanitized.redacted).toBe(true);
 });

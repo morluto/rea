@@ -98,8 +98,6 @@ const PATH_SCOPES = {
     "tests/boundary/providers/GdbCommandQueue.test.ts",
     "tests/boundary/providers/gdbTestHelpers.ts",
     "tests/boundary/providers/RizinDebugSessionCoverage.part*.test.ts",
-    "tests/boundary/providers/RizinCommandTimeout.test.ts",
-    "tests/boundary/providers/RizinTimeoutEvidence.test.ts",
     "tests/boundary/providers/RizinDebugSession*.test.ts",
     "tests/boundary/providers/RizinInferiorTty.test.ts",
     "tests/boundary/providers/RizinDecoderInputs.test.ts",
@@ -144,6 +142,7 @@ const PATH_SCOPES = {
     "tests/boundary/providers/hopper/hopperClient.helperFailure.test.ts",
     "tests/boundary/providers/hopper/bridgeBootstrapCleanup.test.ts",
     "tests/boundary/providers/hopper/bridgeTargetLease.integration.test.ts",
+    "tests/boundary/cli/hopperLaunchFailureCli.test.ts",
     "src/artifacts/NativeDmg*.ts",
     "src/native/Apple*",
     "src/native/NativeMacOS*",
@@ -170,6 +169,7 @@ const PATH_SCOPES = {
     "tests/boundary/process/nativeUiVerifierLane.test.ts",
     "tests/conformance/native/ui-offscreen.swift",
     "tests/boundary/cli/nativeSignatureCli.test.ts",
+    "tests/boundary/cli/nativeMachoImportNamesCli.test.ts",
     "tests/boundary/cli/nativeMachoArm64_32Cli.test.ts",
     "tests/boundary/cli/nativeMachoEncryptionCli.test.ts",
     "tests/boundary/mcp/nativeSignatureTargetBindingMcp.test.ts",
@@ -184,6 +184,9 @@ const PATH_SCOPES = {
   // Four-host installed-package matrix and the Windows curated lane.
   package: [
     ...WINDOWS_EXECUTABLE_SELECTION_INPUTS,
+    // Selected-file spelling requires the real Windows identity workflow.
+    "src/application/binaryDiagnostics/ByteEntropyService.ts",
+    "tests/acceptance/byteEntropyWindowsIdentity.test.ts",
     // Both host compilers must be exercised when their installation, options,
     // or entrypoints change; Linux's accelerated checker cannot stand in for Go.
     "scripts/run-typescript.*",
@@ -241,13 +244,27 @@ const PATH_SCOPES = {
     "scripts/windows-capabilities.mjs",
     "scripts/prepack.mjs",
     "scripts/prepare.mjs",
-    "scripts/lib/release-proposal.mjs",
+    "scripts/lib/release-proposal.*",
+    "scripts/lib/release-pull-request.mjs",
     "patches/release-please+17.3.0.patch",
     "tests/boundary/filesystem/releaseProposal.test.ts",
     "scripts/rea.mjs",
     "scripts/lib/cli-process-environment.mjs",
+    "scripts/lib/runtime-admission.mjs",
+    "scripts/lib/runtime-admission.d.mts",
     "install.sh",
     "src/config/**",
+    // The darwin package baseline runs packaged Hopper commands against the
+    // fake bridge, through the reply contracts and the domain schemas they
+    // are built from. Check a change to either side before merge, not after.
+    "tests/fixtures/fakeLauncher.mjs",
+    "tests/fixtures/fakeHopper*.mjs",
+    "bridge/hopper_bridge.py",
+    "src/hopper/HopperReplyContracts.ts",
+    "src/hopper/HopperProvider.ts",
+    // The contracts import native domain schemas transitively; cover them
+    // all rather than a hand list that drifts.
+    "src/domain/native/!(*.test).ts",
     "src/application/Setup*.ts",
     "src/application/Uninstall*.ts",
     "src/application/ClientConfiguration*.ts",
@@ -260,6 +277,13 @@ const PATH_SCOPES = {
     "src/contracts/sessionPathInputs.test.ts",
     "tests/boundary/filesystem/directAnalysisSnapshotReplay.test.ts",
     "tests/boundary/mcp/rawBinaryMcp.test.ts",
+    "src/contracts/advertisedDialect*.ts",
+    "tests/boundary/mcp/advertisedDialect.test.ts",
+    // The advertised absolute-path pattern is host-specific (#7151).
+    "src/domain/localPath*.ts",
+    "tests/boundary/mcp/absoluteLocalPathSchema.test.ts",
+    // Live advertisement, independent of the POSIX-generated catalog.
+    "tests/boundary/mcp/toolSchemaValidity.test.ts",
     "tests/boundary/filesystem/safeOutputTree.test.ts",
     "tests/boundary/providers/native/artifactProvider.archiveSafety.test.ts",
     "tests/boundary/providers/native/artifactProvider.extractionCompleteness.test.ts",
@@ -492,6 +516,8 @@ const PATH_SCOPES = {
     "src/contracts/toolEffects.ts",
     "scripts/rea.mjs",
     "scripts/lib/cli-process-environment.mjs",
+    "scripts/lib/runtime-admission.mjs",
+    "scripts/lib/runtime-admission.d.mts",
     "src/process/**",
     "src/artifacts/SafeOutputTree.ts",
     "scripts/verify/javascript/recovery.mjs",
@@ -631,8 +657,12 @@ const PATH_SCOPES = {
     "src/ghidra/GhidraJavaProperties.ts",
     "src/ghidra/GhidraReleasePolicy.ts",
     "scripts/verify-ghidra-bridge-sources.mjs",
-    "tests/conformance/ghidra/ReaArmContextProbe.java",
+    "tests/conformance/ghidra/ReaInstructionContextProbe.java",
+    "tests/conformance/ghidra/ReaComputedCallCoverageProbe.java",
     "tests/conformance/ghidra/ReaDecodeProbe.java",
+    "scripts/verify-ghidra-loader-relocation.mjs",
+    "tests/conformance/ghidra/ReaLoaderRelocationProbe.java",
+    "tests/conformance/ghidra/loader-relocation*.c",
     ".github/workflows/ghidra-bridge-sources.yml",
   ],
   website: [

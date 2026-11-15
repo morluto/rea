@@ -3,10 +3,12 @@ import type { GhidraCheckpointSelection } from "./GhidraCheckpoint.js";
 import type { BridgeMaxRequestBytes } from "../config/bridgeMaxRequestBytes.js";
 import type { Result } from "../domain/result.js";
 import type { LinuxCgroupMemoryState } from "../process/LinuxCgroupMemory.js";
+import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import type { GhidraLauncher } from "./GhidraLauncher.js";
 import type { GhidraSessionError } from "./GhidraSessionError.js";
 import type { GhidraSessionInfo } from "./GhidraSessionValues.js";
 import type { GhidraTransportKind } from "./GhidraTransport.js";
+import type { NativeValueFlowLimits } from "../domain/native/nativeValueFlow.js";
 
 /** Result of opening and authenticating one headless Ghidra session. */
 export type GhidraStartResult = Result<GhidraSessionInfo, GhidraSessionError>;
@@ -14,6 +16,8 @@ export type GhidraStartResult = Result<GhidraSessionInfo, GhidraSessionError>;
 /** Cancellation and deadline controls shared by authenticated requests. */
 export interface GhidraRequestOptions {
   readonly decompileTimeoutSeconds?: number | null;
+  readonly decompileMaxPayloadMiB?: number | null;
+  readonly valueFlowLimits?: NativeValueFlowLimits;
   readonly signal?: AbortSignal;
   /** Internal startup/shutdown deadline; analysis calls have no fixed deadline. */
   readonly timeoutMs?: number;
@@ -53,8 +57,13 @@ export interface GhidraClientOptions {
   readonly readStartupTimeoutMs?: () => number;
   readonly onDiagnostic?: (event: GhidraDiagnostic) => void;
   readonly logger?: Logger;
-  /** Observes REA's memory cgroup around a run; defaults to the Linux cgroup v2 reader. */
-  readonly readMemoryCgroup?: () => Promise<LinuxCgroupMemoryState | undefined>;
+  /**
+   * Observes REA's memory cgroup around a run; defaults to the Linux cgroup v2
+   * reader. A file whose close fails is handed to `retainFailedClose`.
+   */
+  readonly readMemoryCgroup?: (options: {
+    readonly retainFailedClose: (path: string, owner: OwnedFileHandle) => void;
+  }) => Promise<LinuxCgroupMemoryState | undefined>;
   /** Effective request ceiling; defaults to the configured bridge ceiling. */
   readonly bridgeMaxRequestBytes?: BridgeMaxRequestBytes;
 }

@@ -235,6 +235,30 @@ it("filters forwarding aliases and reuses exact-address xrefs without inventory 
   }
 });
 
+it("distinguishes exact xrefs from recorded pointer rows to forwarding aliases", async () => {
+  const { open } = await session("rea-kuna-pointer-alias-", {
+    version: { stdout: "kuna 1.990\n" },
+    pointerAliasReferences: true,
+  });
+  const client = open();
+  try {
+    const answer = await run(client, "xrefs", { address: "0x2000" });
+    expect(answer.result).toEqual(["0x1004", "0x1100"]);
+    expect(answer.rawResult).toMatchObject({
+      references: {
+        pointers: [{ to_address: "0x2000" }, { to_address: "0x3000" }],
+      },
+    });
+    expect(answer.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("compare each row's to_address"),
+      ]),
+    );
+  } finally {
+    await client.close();
+  }
+});
+
 it("resolves an xref procedure name without starting the project export", async () => {
   const { open, kuna } = await session("rea-kuna-named-xrefs-");
   const client = open();
@@ -281,10 +305,8 @@ it("caps distinct pending xrefs and cancels queued work without launching it", a
   );
   try {
     await expect
-      .poll(
-        async () =>
-          (await fakeKunaCalls(kuna)).some(({ argv }) => argv[0] === "xrefs"),
-        { timeout: 5000 },
+      .poll(async () =>
+        (await fakeKunaCalls(kuna)).some(({ argv }) => argv[0] === "xrefs"),
       )
       .toBe(true);
     expect(await client.execute("xrefs", { address: "0x5000" })).toMatchObject({

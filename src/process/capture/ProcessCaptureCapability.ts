@@ -25,7 +25,7 @@ export interface ProcessCaptureProbeOptions {
 }
 
 /** Probe the native PTY seam and explain loader failures at their source. */
-export const processCaptureProbeFailureReason = (cause: unknown): string => {
+const processCaptureProbeFailureReason = (cause: unknown): string => {
   const error = cause instanceof Error ? cause : new Error(String(cause));
   const code = "code" in error ? String(error.code) : "";
   const diagnostic = error.message;

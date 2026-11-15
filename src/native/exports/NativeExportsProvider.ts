@@ -1,29 +1,28 @@
+import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
 import {
+  imageFileSizeRemediation,
+  projectSelectedArtifactFileFailure,
+  projectOwnedArtifactIdentityFailure,
   projectStableArtifactFailure,
-  stableArtifactInputRecovery,
+  stableArtifactInputFailure,
   projectArtifactCloseFailure,
 } from "../../artifacts/StableArtifactFailure.js";
-import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
+import {
+  type StableArtifactSnapshot,
+  readStableArtifact,
+} from "../../artifacts/readStableArtifact.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   assertArtifactReadActive,
-  artifactFileCancellationCause,
 } from "../../artifacts/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import type { NativeExportsPort } from "../../application/binaryDiagnostics/NativeExportsPort.js";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+import type { ResourceConstraintRecovery } from "../../domain/analysisErrorCore.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
-  AnalysisInputError,
-  AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
   MAX_INSPECT_NATIVE_EXPORTS_FILE_BYTES,
@@ -32,11 +31,12 @@ import {
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok } from "../../domain/result.js";
 import { NATIVE_EXPORTS_PROVIDER } from "../../domain/investigationProviders.js";
+import { BinaryResourceFailure } from "../metadata/BinaryContainer.js";
 import {
-  BinaryFormatFailure,
-  BinaryResourceFailure,
-} from "../metadata/BinaryContainer.js";
-import { parseNativeExports } from "./NativeExportParser.js";
+  NativeExportLimitFailure,
+  type NativeExportLimit,
+  parseNativeExports,
+} from "./NativeExportParser.js";
 
 const OPERATION = "inspect_native_exports";
 
@@ -58,9 +58,10 @@ export class NativeExportsProvider implements NativeExportsPort {
   }
 
   async inspect(input: InspectNativeExportsInput, options?: ExecutionOptions) {
+    let snapshot: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
-        const snapshot = await readStableArtifact(
+        snapshot = await readStableArtifact(
           input.path,
           input.max_file_bytes,
           options?.signal,
@@ -77,15 +78,34 @@ export class NativeExportsProvider implements NativeExportsPort {
         return ok(report);
       });
     } catch (cause) {
-      return err(nativeExportsFailure(cause, input));
+      return err(nativeExportsFailure(cause, input, snapshot));
     }
   }
 }
 
-const fileSizeRemediation = (input: InspectNativeExportsInput): string =>
-  input.max_file_bytes >= MAX_INSPECT_NATIVE_EXPORTS_FILE_BYTES
-    ? `The image exceeds the ${String(MAX_INSPECT_NATIVE_EXPORTS_FILE_BYTES)}-byte input ceiling this operation accepts. This release has no runtime override. Select a smaller artifact.`
-    : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`;
+/** Recovery for one exhausted allowance, chosen from the parser's structured tag. */
+const limitRecovery = (
+  limit: NativeExportLimit | null,
+  maximum: number,
+): ResourceConstraintRecovery => {
+  switch (limit) {
+    case "rows":
+      return fixedAllowanceOptions(
+        `The ${String(maximum)}-entry native export inventory allowance`,
+        "count",
+      );
+    case "retained_text":
+      return fixedAllowanceOptions(
+        `The ${String(maximum)}-byte native export retained-text allowance`,
+        "bytes",
+      );
+    case null:
+      return fixedAllowanceOptions(
+        "The native export structural decoding allowance",
+        "parser",
+      );
+  }
+};
 
 const nativeExportsFailurePrimary = (
   facts: ArtifactFilePrimaryFacts,
@@ -94,25 +114,12 @@ const nativeExportsFailurePrimary = (
   const { cause, origin } = facts;
   if (origin === "owned-or-classified" && cause instanceof AnalysisError)
     return cause;
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "integrity"
-  )
-    return new AnalysisArtifactChangedError(
-      OPERATION,
-      input.path,
-      cause.message,
-      { cause },
-    );
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "cancelled"
-  )
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
-    });
+  const identityFailure = projectOwnedArtifactIdentityFailure(
+    facts,
+    OPERATION,
+    input.path,
+  );
+  if (identityFailure !== undefined) return identityFailure;
   if (cause instanceof BinaryResourceFailure)
     return new AnalysisResourceConstraintError(
       OPERATION,
@@ -121,29 +128,14 @@ const nativeExportsFailurePrimary = (
       { boundary: cause.boundary, maximum: cause.maximum_bytes },
       {
         cause,
-        ...fixedAllowanceOptions(
-          "The native export inventory allowance",
-          "count",
+        ...limitRecovery(
+          cause instanceof NativeExportLimitFailure ? cause.limit : null,
+          cause.maximum_bytes,
         ),
       },
     );
-  if (cause instanceof BinaryFormatFailure)
-    return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(
-          OPERATION,
-          input.path,
-          cause.message,
-          {
-            cause,
-          },
-        )
-      : new AnalysisInputError(OPERATION, { cause }, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: `Selected artifact ${input.path}: ${cause.message}`,
-          },
-        ]);
+  const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
+  if (formatFailure !== undefined) return formatFailure;
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure
@@ -157,30 +149,22 @@ const nativeExportsFailurePrimary = (
         {
           cause,
           retryable: false,
-          remediationAction: fileSizeRemediation(input),
+          remediationAction: imageFileSizeRemediation(
+            input.max_file_bytes,
+            MAX_INSPECT_NATIVE_EXPORTS_FILE_BYTES,
+          ),
         },
       );
     if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(
-        OPERATION,
-        { cause, ...stableArtifactInputRecovery(cause) },
-        [{ path: ["path"], reason: "invalid_format", message: cause.message }],
-      );
+      return stableArtifactInputFailure(cause, OPERATION);
   }
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(OPERATION, input.path, cause.code, {
-        cause,
-      });
-    if (isSelectedRegularFileError(cause))
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_value",
-          message: `Selected image could not be read (${String(cause.code)}): ${input.path}.`,
-        },
-      ]);
-  }
+  const fileFailure = projectSelectedArtifactFileFailure(
+    cause,
+    OPERATION,
+    input.path,
+    "image",
+  );
+  if (fileFailure !== undefined) return fileFailure;
   return new ProviderAdapterError(NATIVE_EXPORTS_PROVIDER.id, OPERATION, {
     cause,
     diagnostics: {
@@ -193,6 +177,7 @@ const nativeExportsFailurePrimary = (
 const nativeExportsFailure = (
   cause: unknown,
   input: InspectNativeExportsInput,
+  snapshot?: StableArtifactSnapshot,
 ): AnalysisError => {
   const primary = nativeExportsFailurePrimary(
     artifactFilePrimaryFacts(cause),
@@ -204,5 +189,6 @@ const nativeExportsFailure = (
     input.path,
     NATIVE_EXPORTS_PROVIDER.id,
     OPERATION,
+    snapshot,
   );
 };

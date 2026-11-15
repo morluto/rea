@@ -19,7 +19,7 @@ import { ghidraApplicationProperties } from "./GhidraInstallationPolicy.js";
 import { ghidraFileFailure } from "./GhidraFileArtifacts.js";
 
 /** Metadata admission budget, not a Java Properties format limit. */
-export const MAX_GHIDRA_INSTALLATION_PROPERTIES_BYTES = 1024 * 1024;
+const MAX_GHIDRA_INSTALLATION_PROPERTIES_BYTES = 1024 * 1024;
 export interface GhidraInstallationFileOptions {
   readonly resourceOwner: RetainedResourceScope;
   readonly signal?: AbortSignal;

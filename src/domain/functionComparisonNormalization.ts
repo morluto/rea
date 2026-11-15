@@ -49,13 +49,21 @@ export const functionMatch = (
             left_name: leftName,
             right_name: rightName,
           };
+  }
+  if (left.evidence.evidence_id === right.evidence.evidence_id)
+    return {
+      status: "matched",
+      method: "same-evidence",
+      left_name: leftName,
+      right_name: rightName,
+    };
+  if (coordinateContext === "common")
     return {
       status: "ambiguous",
       method: "explicit",
       left_name: leftName,
       right_name: rightName,
     };
-  }
   const stableNames =
     hasStableNativeSymbol(leftName, left.dossier.procedure.symbol) &&
     hasStableNativeSymbol(rightName, right.dossier.procedure.symbol);

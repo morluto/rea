@@ -1,3 +1,7 @@
+import {
+  resolvePwntoolsLimits,
+  type PwntoolsProducerLimits,
+} from "../../domain/native/pwntoolsResourceLimits.js";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import { join } from "node:path";
 import {
@@ -8,20 +12,26 @@ import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
 import {
   PWNTOOLS_MEMORY_FAILURE_EXIT,
   PWNTOOLS_FILE_SIZE_FAILURE_EXIT,
-  PWNTOOLS_LIMITS,
 } from "./PwntoolsRelease.js";
 import { z } from "zod";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 
 /** Actual limits reported by the owned bridge after lowering inherited soft limits. */
 export const pwntoolsResourceLimitsSchema = z.strictObject({
-  address_space_bytes: z
-    .int()
-    .nonnegative()
-    .max(PWNTOOLS_LIMITS.addressSpaceBytes),
-  cpu_seconds: z.int().nonnegative().max(PWNTOOLS_LIMITS.cpuSeconds),
-  file_size_bytes: z.int().nonnegative().max(PWNTOOLS_LIMITS.outputBytes),
+  address_space_bytes: z.int().nonnegative(),
+  cpu_seconds: z.int().nonnegative(),
+  file_size_bytes: z.int().nonnegative(),
 });
+
+/** A report must fit this operation's selected ceilings, including raised budgets. */
+export const pwntoolsResourceLimitsSchemaFor = (
+  limits: PwntoolsProducerLimits,
+) =>
+  pwntoolsResourceLimitsSchema.extend({
+    address_space_bytes: z.int().nonnegative().max(limits.address_space_bytes),
+    cpu_seconds: z.int().nonnegative().max(limits.cpu_seconds),
+    file_size_bytes: z.int().nonnegative().max(limits.file_bytes),
+  });
 
 /** A missing or invalid report leaves limits unknown and retains its read failure. */
 export interface PwntoolsLimitReport {
@@ -44,6 +54,7 @@ export const readPwntoolsFailureEvidence = async (
   cause: unknown,
   rootPath?: string,
   resources?: ArtifactResourceScope,
+  selectedLimits: PwntoolsProducerLimits = resolvePwntoolsLimits(),
 ): Promise<PwntoolsFailureEvidence> => {
   const finalizationFailures: Record<string, string> = {};
   let limitReport: PwntoolsLimitReport | undefined;
@@ -115,7 +126,9 @@ export const readPwntoolsFailureEvidence = async (
       const decoded = safeParseUtf8Json(reported.bytes);
       if (!decoded.ok) throw decoded.cause;
       limitReport = {
-        limits: pwntoolsResourceLimitsSchema.parse(decoded.value),
+        limits: pwntoolsResourceLimitsSchemaFor(selectedLimits).parse(
+          decoded.value,
+        ),
         failure: null,
       };
     } catch (reportFailure: unknown) {

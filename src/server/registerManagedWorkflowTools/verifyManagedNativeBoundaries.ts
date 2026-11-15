@@ -49,6 +49,7 @@ export const registerVerifyManagedNativeBoundaries = (
           const recordedSources = recordEvidenceSources(
             options.recordEvidence,
             execution.sourceEvidence,
+            { evidence: execution.evidence },
           );
           if (!recordedSources.ok)
             return server.delivery.toCallToolResult(

@@ -16,6 +16,7 @@ import {
   type McpServerOptions,
   type RegisteredTool,
   type RegisteredPrompt,
+  type ServerContext,
   type PromptCallback,
   type RequestId,
   type ScopeChallengeHandler,
@@ -27,6 +28,7 @@ import {
 } from "@modelcontextprotocol/server";
 
 import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
+import { transportClosedByOwner } from "./transportOwnerClose.js";
 import {
   presentAdvertisedInputSchema,
   type CompactInputSchemaPresentation,
@@ -42,12 +44,11 @@ import type { EvidenceWriter } from "../application/investigation/InvestigationR
 import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  CallerAbort,
+  OwnerCancellation,
   type AnalysisInputIssue,
 } from "../domain/analysisErrorCore.js";
-import {
-  projectAnalysisError,
-  projectAnalysisErrorWithoutPartialObservation,
-} from "../domain/analysisErrorProjection.js";
+import { projectAnalysisErrorWithoutPartialObservation } from "../domain/analysisErrorProjection.js";
 import { projectInputIssueGroupsWithinBudget } from "../domain/inputIssueProjection.js";
 import type { z } from "zod";
 import { createEvidence } from "../domain/evidence.js";
@@ -129,9 +130,6 @@ const hasAdvertisedInputJsonSchema = (value: unknown): boolean => {
     Reflect.get(jsonSchema, "input") !== undefined
   );
 };
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** Recognize the SDK's argument diagnostic after its wire size is checked. */
 const sdkInputValidationDiagnostic = (
@@ -290,13 +288,15 @@ export const forgetPendingMcpRequest = (
   pendingToolListCursors: Map<RequestId, string | undefined>,
   pendingCompletions: Map<RequestId, AbortController>,
   id: RequestId,
+  reason: CallerAbort | OwnerCancellation,
 ): void => {
   pendingTools.delete(id);
   pendingToolListCursors.delete(id);
-  pendingCompletions.get(id)?.abort();
+  pendingCompletions.get(id)?.abort(reason);
   pendingCompletions.delete(id);
 };
 import type { PromptCompletionSource } from "./promptCompletion.js";
+import { isRecord } from "../domain/isRecord.js";
 
 /** Standard-schema registration boundary shared with deferred SDK bindings. */
 export interface StandardToolRegistration {
@@ -351,11 +351,19 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     this.progressiveCatalog = catalog;
     const { name, ...config } = DISCOVER_TOOLS;
     // Transport discovery has no target or analysis lifecycle. Domain tools
-    // continue through registerTool and their original named handlers.
-    super.registerTool(name, config, (input, context) => {
-      context.mcpReq.signal.throwIfAborted();
-      return catalog.discover(input);
-    });
+    // continue through registerTool and their original named handlers. Its
+    // advertisement still follows the selected input presentation.
+    super.registerTool(
+      name,
+      {
+        ...config,
+        inputSchema: this.presentInputSchema(config.inputSchema),
+      },
+      (input, context) => {
+        context.mcpReq.signal.throwIfAborted();
+        return catalog.discover(input);
+      },
+    );
   }
 
   override sendToolListChanged(): void {
@@ -454,20 +462,7 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
   ): RegisteredTool {
     if (canReferenceInlineEvidence(config.inputSchema))
       this.registerEvidenceReferenceAlternative(name);
-    const budget = this.compactPresentation?.budgetBytes;
-    const inputSchema =
-      budget !== undefined &&
-      config !== undefined &&
-      hasAdvertisedInputJsonSchema(config.inputSchema)
-        ? transformAdvertisedInputJsonSchema(
-            config.inputSchema as Parameters<
-              typeof transformAdvertisedInputJsonSchema
-            >[0],
-            (projected) =>
-              presentAdvertisedInputSchema(projected, { budgetBytes: budget }),
-          )
-        : undefined;
-    const presentedSchema = inputSchema ?? config.inputSchema;
+    const presentedSchema = this.presentInputSchema(config.inputSchema);
     const registeredConfig =
       presentedSchema === undefined
         ? config
@@ -482,9 +477,31 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
       const request = currentMcpToolRequest();
       request?.beginHandler();
       try {
+        const normalized = (original: ServerContext): ServerContext =>
+          request === undefined
+            ? original
+            : {
+                ...original,
+                mcpReq: {
+                  ...original.mcpReq,
+                  signal: AbortSignal.any([
+                    request.cancellation.signal,
+                    original.mcpReq.signal,
+                  ]),
+                },
+              };
+        const invoke = () =>
+          config.inputSchema === undefined
+            ? (callback as ToolCallback<undefined>)(
+                normalized(input as ServerContext),
+              )
+            : (callback as ToolCallback<StandardSchemaWithJSON>)(
+                input,
+                normalized(context as ServerContext),
+              );
         return await (this.analysisSettings === undefined
-          ? callback(input, context)
-          : this.analysisSettings.run(() => callback(input, context)));
+          ? invoke()
+          : this.analysisSettings.run(invoke));
       } finally {
         request?.finishHandler();
       }
@@ -496,6 +513,20 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     );
     if (!this.advertisesTool(name)) registered.disable();
     return registered;
+  }
+
+  /**
+   * The input schema this server advertises for one registration: the
+   * selected compact presentation, or the registered schema unchanged. Every
+   * listed tool, including transport discovery, takes this one path.
+   */
+  private presentInputSchema<Schema>(schema: Schema): Schema {
+    const budget = this.compactPresentation?.budgetBytes;
+    if (budget === undefined || !hasAdvertisedInputJsonSchema(schema))
+      return schema;
+    return transformAdvertisedInputJsonSchema(schema, (projected) =>
+      presentAdvertisedInputSchema(projected, { budgetBytes: budget }),
+    );
   }
 
   /** Whether this process advertises one named operation. */
@@ -558,6 +589,7 @@ class ErrorEvidenceTransport implements Transport {
     string | undefined
   >();
   private readonly pendingCompletions = new Map<RequestId, AbortController>();
+  private closing = false;
 
   private get recordEvidence(): EvidenceWriter["recordEvidence"] | undefined {
     return this.currentEvidenceWriter();
@@ -639,13 +671,18 @@ class ErrorEvidenceTransport implements Transport {
       ) {
         const id = message.params?.["requestId"];
         if (typeof id === "string" || typeof id === "number") {
-          this.pendingValidation.get(id)?.cancel(message.params?.["reason"]);
+          const cancellation = new CallerAbort(
+            "request-cancelled",
+            message.params?.["reason"],
+          );
+          this.pendingValidation.get(id)?.cancel(cancellation);
           this.pendingValidation.delete(id);
           forgetPendingMcpRequest(
             this.pendingTools,
             this.pendingToolListCursors,
             this.pendingCompletions,
             id,
+            cancellation,
           );
         }
       }
@@ -663,13 +700,17 @@ class ErrorEvidenceTransport implements Transport {
     };
     transport.onerror = (error) => this.onerror?.(error);
     transport.onclose = () => {
+      const disconnected =
+        this.closing || transportClosedByOwner(this.transport)
+          ? OwnerCancellation.ownerClosed
+          : new CallerAbort("client-disconnected");
       this.pendingTools.clear();
       for (const validation of this.pendingValidation.values())
-        validation.cancel();
+        validation.cancel(disconnected);
       this.pendingValidation.clear();
       this.pendingToolListCursors.clear();
       for (const completion of this.pendingCompletions.values())
-        completion.abort();
+        completion.abort(disconnected);
       this.pendingCompletions.clear();
       this.onclose?.();
     };
@@ -687,16 +728,17 @@ class ErrorEvidenceTransport implements Transport {
   }
 
   async close(): Promise<void> {
+    this.closing = true;
     try {
       await this.transport.close();
     } finally {
       this.pendingTools.clear();
       for (const validation of this.pendingValidation.values())
-        validation.cancel();
+        validation.cancel(OwnerCancellation.ownerClosed);
       this.pendingValidation.clear();
       this.pendingToolListCursors.clear();
       for (const completion of this.pendingCompletions.values())
-        completion.abort();
+        completion.abort(OwnerCancellation.ownerClosed);
       this.pendingCompletions.clear();
     }
   }
@@ -780,11 +822,13 @@ class ErrorEvidenceTransport implements Transport {
       request?.finishPublication();
       if (!isJSONRPCRequest(message) && id !== undefined) {
         this.pendingValidation.delete(id);
+        // The reply settled the request, so REA ends any work it left behind.
         forgetPendingMcpRequest(
           this.pendingTools,
           this.pendingToolListCursors,
           this.pendingCompletions,
           id,
+          OwnerCancellation.ownerClosed,
         );
       }
     }
@@ -1071,9 +1115,12 @@ class ErrorEvidenceTransport implements Transport {
         "The MCP tool arguments exceed the configured input element allowance; schema validation and tool execution did not start.",
         { max_input_elements: this.maximumInputElements },
         {
-          remediationAction: this.evidenceReferenceAlternatives.has(tool)
-            ? 'If the source Evidence is retained, use {"kind":"retained-evidence","evidence_id":"ev_..."} for declared Evidence fields; use a summary\'s parent_evidence_id for its complete source. Otherwise import the originating Evidence bundle when available. Reduce the arguments, or restart REA with a larger REA_MCP_MAX_INPUT_ELEMENTS allowance.'
-            : "Reduce the combined array elements and object members in the arguments, or restart REA with a larger REA_MCP_MAX_INPUT_ELEMENTS allowance for this workload.",
+          remediationAction:
+            tool === "inspect_analysis_view"
+              ? 'If using inline Evidence, save the Evidence record as a local JSON file and use source {"kind":"evidence-file","path":"..."}; if it is retained, use its retained-evidence ID. Otherwise reduce the combined array elements and object members, or restart REA with a larger REA_MCP_MAX_INPUT_ELEMENTS allowance.'
+              : this.evidenceReferenceAlternatives.has(tool)
+                ? 'If the source Evidence is retained, use {"kind":"retained-evidence","evidence_id":"ev_..."} for declared Evidence fields; use a summary\'s parent_evidence_id for its complete source. Otherwise import the originating Evidence bundle when available. Reduce the arguments, or restart REA with a larger REA_MCP_MAX_INPUT_ELEMENTS allowance.'
+                : "Reduce the combined array elements and object members in the arguments, or restart REA with a larger REA_MCP_MAX_INPUT_ELEMENTS allowance for this workload.",
         },
       );
       const result = this.delivery.toErrorToolResult(error, targetContent);

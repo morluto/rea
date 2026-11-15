@@ -69,6 +69,11 @@ cliTest(
           }),
       REA_SWIFTC_COMPILE_TIMEOUT_MS: "180000",
       REA_LOG_LEVEL: "warn",
+      REA_ASAR_MAX_LISTING_BYTES: "134217728",
+      REA_GHIDRA_VALUE_FLOW_MAX_OPERATIONS: "6000",
+      REA_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION: "128",
+      REA_GHIDRA_VALUE_FLOW_MAX_EDGES: "24000",
+      REA_GHIDRA_DECOMPILE_MAX_PAYLOAD_MIB: "128",
       REA_REFERENCE_SECRET_PATTERNS_JSON: '["explicit-private-value"]',
       REA_ANALYSIS_PROVIDER: "ghidra",
       REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
@@ -761,7 +766,6 @@ cliTest(
       },
     });
   },
-  120_000,
 );
 
 for (const [client, provider] of [
@@ -783,6 +787,7 @@ for (const [client, provider] of [
           idaConfig,
           JSON.stringify({
             url: "http://127.0.0.1:12345/mcp",
+            protocol: "legacy",
             headers: { Authorization: "Bearer fixture-credential" },
             timeoutMs,
           }),
@@ -897,7 +902,6 @@ for (const [client, provider] of [
         });
       }
     },
-    120_000,
   );
 
 for (const invalidSetting of [
@@ -949,7 +953,6 @@ for (const invalidSetting of [
         code: "ENOENT",
       });
     },
-    120_000,
   );
 
 cliTest(
@@ -1012,5 +1015,4 @@ cliTest(
       code: "ENOENT",
     });
   },
-  120_000,
 );

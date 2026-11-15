@@ -184,7 +184,6 @@ it("preserves a native plist probe read denial over a simultaneous abort", async
       { path },
       { signal: controller.signal },
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected native plist read denial");
     expect(result.error).not.toBeInstanceOf(AnalysisCancelledError);
     expect(result.error.cause).toBe(physical);
@@ -215,7 +214,6 @@ it.each([false, true])(
         { path },
         { signal: controller.signal },
       );
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected plist probe cancellation");
       const primary = closeFails ? result.error.cleanupPrimary : result.error;
       expect(primary).toBeInstanceOf(AnalysisCancelledError);
@@ -339,7 +337,7 @@ it("keeps fuse sentinel offsets, states and complete-file digest across short re
     fault.path = path;
     fault.maximum = 2;
     expect(await provider.inspect({ path })).toEqual(expected);
-    const scanned = await readElectronFuseImage(path, { chunkBytes: 7 });
+    const scanned = await readElectronFuseImage(path);
     expect(scanned.sha256).toBe(
       createHash("sha256").update(bytes).digest("hex"),
     );
@@ -400,7 +398,6 @@ it("preserves cancellation during continued short reads and releases the descrip
       { path },
       { signal: controller.signal },
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected cancellation");
     expect(result.error).toBeInstanceOf(AnalysisCancelledError);
     expect(result.error.cause).toBe(reason);
@@ -416,7 +413,8 @@ it.each(["cancelled", "eof", "io"] as const)(
   async (outcome) => {
     const root = await createTestTempDirectory("rea-fuse-scan-short-read-");
     const path = join(root, "Electron");
-    await writeFile(path, thinFuseImage(OBSIDIAN_FUSE_BYTES).bytes);
+    const image = thinFuseImage(OBSIDIAN_FUSE_BYTES);
+    await writeFile(path, image.bytes);
     const controller = new AbortController();
     const physicalFailure = Object.assign(new Error("scan read failed"), {
       code: "EIO",
@@ -425,9 +423,8 @@ it.each(["cancelled", "eof", "io"] as const)(
     const scanPositions: number[] = [];
     fault.path = path;
     fault.beforeRead = (position, length) => {
-      // Header reads use their format windows. A seven-byte read at zero
-      // starts this invocation's explicitly selected scan window.
-      if (position === 0 && length === 7) {
+      // Header reads use their format windows; the scan starts with the full file.
+      if (position === 0 && length === image.bytes.length) {
         scanning = true;
         fault.maximum = 2;
       }
@@ -443,7 +440,6 @@ it.each(["cancelled", "eof", "io"] as const)(
     };
     const failure: unknown = await readElectronFuseImage(path, {
       signal: controller.signal,
-      chunkBytes: 7,
     }).catch((cause: unknown) => cause);
     expect(scanning).toBe(true);
     expect(scanPositions).toEqual([0, 2, 4]);

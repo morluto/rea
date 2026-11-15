@@ -74,9 +74,7 @@ const openTerminal = async (): Promise<Terminal> => {
     if (!exited) pty.kill();
     await ended;
   });
-  await expect
-    .poll(() => rizinTestTtyPathPattern.test(output), { timeout: 2_000 })
-    .toBe(true);
+  await expect.poll(() => rizinTestTtyPathPattern.test(output)).toBe(true);
   return {
     path: rizinTestTtyPathPattern.exec(output)![0],
     output: () => output,
@@ -235,9 +233,10 @@ const createManager = (
   options: NonNullable<
     ConstructorParameters<typeof RizinDebugSessionManager>[1]
   > = {},
+  environment: Readonly<NodeJS.ProcessEnv> = {},
 ): RizinDebugSessionManager => {
   const manager = new RizinDebugSessionManager(
-    { ...process.env, REA_RIZIN_COMMAND: launcher },
+    { PATH: process.env.PATH, ...environment, REA_RIZIN_COMMAND: launcher },
     options,
   );
   onTestFinished(() => manager.closeAll().catch(() => undefined));
@@ -310,11 +309,14 @@ it.skipIf(process.platform === "win32")(
       target: "cat",
       reportsInferior: false,
     });
-    const manager = createManager(current, {
-      // The launcher reports no inferior, so close needs no Linux /proc readback.
-      platform: "linux",
-      frameTimeoutMs: 3_000,
-    });
+    const manager = createManager(
+      current,
+      {
+        // The launcher reports no inferior, so close needs no Linux /proc readback.
+        platform: "linux",
+      },
+      { REA_DEBUGGER_COMMAND_DEADLINE_MS: "3000" },
+    );
     const sessionId = await startSession(manager, current);
 
     successValue(await manager.execute(sessionId, "resume-target"));
@@ -330,10 +332,7 @@ it.skipIf(process.platform === "win32")(
     // read it from the selected TTY, so the caller's input channel really works.
     current.terminal.write("rea-input-probe\n");
     await expect
-      .poll(
-        () => current.terminal.output().split("rea-input-probe").length - 1,
-        { timeout: 2_000 },
-      )
+      .poll(() => current.terminal.output().split("rea-input-probe").length - 1)
       .toBe(2);
     successValue(await manager.close(sessionId));
     expect(await current.commands()).toEqual(["resume-target", "dr", "olj"]);

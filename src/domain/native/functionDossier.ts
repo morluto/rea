@@ -106,7 +106,24 @@ export const functionDossierSchema = z
     facet_availability: functionFacetAvailabilitySchema.exactOptional(),
     limitations: z.array(z.string()),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (
+      (value.swift_string_literals === undefined) !==
+      (value.swift_string_literal_omissions === undefined)
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["swift_string_literal_omissions"],
+        message: "Swift literals and their omissions must be recorded together",
+      });
+  })
+  .meta({
+    dependentRequired: {
+      swift_string_literals: ["swift_string_literal_omissions"],
+      swift_string_literal_omissions: ["swift_string_literals"],
+    },
+  });
 
 /** Strict analyzed-function dossier shared by provider and comparison boundaries. */
 export type FunctionDossier = z.infer<typeof functionDossierSchema>;

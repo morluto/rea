@@ -8,7 +8,7 @@ import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
-import { cliDecimalField, cliIntegerArgument } from "./options.js";
+import { cliDecimalField } from "./options.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import {
   analysisEvidenceDeliveryOptions,
@@ -17,6 +17,9 @@ import {
 import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { explicitSensitiveValueOptions } from "./explicitSensitiveArguments.js";
+
+const recordOrdinal =
+  inspectWebNetworkCaptureInputSchema.shape.record_ordinals.unwrap().element;
 
 /** Expose offline historical capture inspection with the same selection contract as MCP. */
 export const registerWebNetworkCaptureCommands = (
@@ -51,10 +54,19 @@ export const registerWebNetworkCaptureCommands = (
         .optional()
         .describe("Fully qualified message type in the descriptor set"),
       record: z
-        .array(cliIntegerArgument(0))
+        .array(cliDecimalField(recordOrdinal))
         .optional()
         .describe("Zero-based producer ordinals; repeat to select several"),
       ...explicitSensitiveValueOptions,
+      maxInputBytes: cliDecimalField(
+        inspectWebNetworkCaptureInputSchema.shape.max_input_bytes,
+      ),
+      maxReplyBytes: cliDecimalField(
+        inspectWebNetworkCaptureInputSchema.shape.max_reply_bytes,
+      ),
+      maxNestingDepth: cliDecimalField(
+        inspectWebNetworkCaptureInputSchema.shape.max_nesting_depth,
+      ),
       // Decimal tokens only: numeric coercion would read "0x1" as 1 ms.
       captureTimeoutMs: cliDecimalField(
         inspectWebNetworkCaptureInputSchema.shape.capture_timeout_ms,
@@ -74,6 +86,15 @@ export const registerWebNetworkCaptureCommands = (
                     capture_path: absoluteCallerPath(args.capturePath),
                     format: args.format,
                     sensitive_values: options.sensitiveValue,
+                    ...(options.maxInputBytes === undefined
+                      ? {}
+                      : { max_input_bytes: options.maxInputBytes }),
+                    ...(options.maxReplyBytes === undefined
+                      ? {}
+                      : { max_reply_bytes: options.maxReplyBytes }),
+                    ...(options.maxNestingDepth === undefined
+                      ? {}
+                      : { max_nesting_depth: options.maxNestingDepth }),
                     ...([
                       options.protobufFraming,
                       options.protobufBodyPointer,
@@ -111,6 +132,12 @@ export const registerWebNetworkCaptureCommands = (
                       : { capture_timeout_ms: options.captureTimeoutMs }),
                   },
                   { signal },
+                  {
+                    capture: args.capturePath,
+                    ...(options.protobufSchema === undefined
+                      ? {}
+                      : { descriptor: options.protobufSchema }),
+                  },
                 ),
               service,
               providerId: "web-network-capture",

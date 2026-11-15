@@ -1,3 +1,7 @@
+import {
+  selectedSourceMapLimits,
+  type SourceMapLimits,
+} from "../domain/sourceMapLimits.js";
 import { WEB_SOURCE_LOCATION_PROVIDER } from "../domain/webTraceProviders.js";
 import { closeOwnedWebResources } from "./closeOwnedWebResources.js";
 import { createHash } from "node:crypto";
@@ -19,7 +23,6 @@ import {
 } from "../domain/webScriptArtifacts.js";
 import {
   DEFAULT_WEB_SOURCE_MAP_DECODE_TIMEOUT_MS,
-  WEB_SOURCE_MAP_LIMITS,
   webSourceLocationInputSchema,
   webSourceLocationResultSchema,
   webSourceMapReportSchema,
@@ -56,16 +59,17 @@ const LIMITATIONS = [
   "Lookup returns all segments at the greatest generated position not greater than the selected point, including earlier lines and generated-only segments. A mapped point does not establish an executed range or UI causality.",
   "Regular maps and inline indexed sections are supported. External section URLs are unsupported; unknown extensions are retained in raw map text and are not interpreted.",
 ];
-const codecBudget = (timeoutMs: number): string =>
-  `Complete evidence has a 4 MiB map, 32 MiB reply and a ${String(WEB_SOURCE_MAP_LIMITS.decodedRecords)}-record shared decoder budget for generated rows, mapping segments, leaf maps, source and name declarations, sourcesContent entries, and indexed sections. Generated rows and mapping segments have separate ${String(WEB_SOURCE_MAP_LIMITS.decodedRows)} and ${String(WEB_SOURCE_MAP_LIMITS.decodedSegments)} limits, and indexed maps have a ${String(WEB_SOURCE_MAP_LIMITS.sectionDepth)}-level section budget. The owned codec has a ${String(timeoutMs)} ms decode_timeout_ms deadline`;
+const codecBudget = (timeoutMs: number, limits: SourceMapLimits): string =>
+  `Complete evidence has a ${String(limits.mapBytes)}-byte map, ${String(limits.outputBytes)}-byte reply and a ${String(limits.decodedRecords)}-record shared decoder budget for generated rows, mapping segments, leaf maps, source and name declarations, sourcesContent entries, and indexed sections. Generated rows and mapping segments have separate ${String(limits.decodedRows)} and ${String(limits.decodedSegments)} limits, and indexed maps have a ${String(limits.sectionDepth)}-level section budget. The owned codec has a ${String(timeoutMs)} ms decode_timeout_ms deadline`;
 /** Bun accepts but ignores the codec's V8 heap flags; Windows enforces a commit limit instead. */
 const codecBudgetLimitation = (
   runtime: WebSourceMapReport["runtime"],
   timeoutMs: number,
+  limits: SourceMapLimits,
 ): string => {
-  const budget = codecBudget(timeoutMs);
+  const budget = codecBudget(timeoutMs, limits);
   if (runtime.id === "node-v8")
-    return `${budget}, ${String(WEB_SOURCE_MAP_LIMITS.codecHeapMiB)} MiB old-generation heap and one V8 worker; cleanup may extend the deadline. V8 heap limits do not establish aggregate RSS limits.`;
+    return `${budget}, ${String(limits.codecHeapMiB)} MiB old-generation heap and one V8 worker; cleanup may extend the deadline. V8 heap limits do not establish aggregate RSS limits.`;
   return runtime.process_memory_limit_bytes === null
     ? `${budget}; cleanup may extend the deadline. The codec ran on Bun, which does not enforce REA's V8 heap flags, so no codec heap limit is established.`
     : `${budget}; cleanup may extend the deadline. The codec ran on Bun, which does not enforce REA's V8 heap flags; a Windows Job Object limited its committed memory to ${String(runtime.process_memory_limit_bytes)} bytes, which is not a heap or RSS limit.`;
@@ -158,6 +162,9 @@ export class WebSourceLocationService {
         path: map.file.path,
         url: map.url,
         position: input.generated_position,
+        ...(input.source_map_limits === undefined
+          ? {}
+          : { limits: input.source_map_limits }),
         ...(input.decode_timeout_ms === undefined
           ? {}
           : { decodeTimeoutMs: input.decode_timeout_ms }),
@@ -171,7 +178,11 @@ export class WebSourceLocationService {
       input.decode_timeout_ms ?? DEFAULT_WEB_SOURCE_MAP_DECODE_TIMEOUT_MS;
     const limitations = [
       ...LIMITATIONS,
-      codecBudgetLimitation(report.value.runtime, decodeTimeoutMs),
+      codecBudgetLimitation(
+        report.value.runtime,
+        decodeTimeoutMs,
+        selectedSourceMapLimits(input.source_map_limits),
+      ),
     ];
     const normalized = webSourceLocationResultSchema.safeParse({
       ...report.value,
@@ -285,7 +296,7 @@ const verifyPairing = (
     map.url !== input.source_map.url ||
     Buffer.byteLength(map.text) !== map.file.bytes ||
     createHash("sha256").update(map.text).digest("hex") !== map.file.sha256 ||
-    map.file.bytes > WEB_SOURCE_MAP_LIMITS.mapBytes
+    map.file.bytes > selectedSourceMapLimits(input.source_map_limits).mapBytes
   )
     return invalidOutput(
       "Artifact port changed the selected source-map byte identity or URL context.",

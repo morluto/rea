@@ -1,3 +1,4 @@
+import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import { z } from "zod";
 import {
   AnalysisOutputError,
@@ -63,10 +64,7 @@ interface LipoOutput {
 }
 
 /** Parse `lipo -detailed_info` framing and deterministic slice metadata. */
-export const parseLipoOutput = (
-  output: string,
-  operandPath?: string,
-): LipoOutput => {
+const parseLipoOutput = (output: string, operandPath?: string): LipoOutput => {
   // The echoed FAT operand is one value, even when its pathname contains lines.
   if (operandPath !== undefined) {
     const header = `Fat header in: ${operandPath}`;
@@ -292,7 +290,15 @@ export const parseLipoCapture = (
           maximum_retained_bytes: NATIVE_COMMAND_OUTPUT_BUDGET_BYTES,
           required_retained_bytes: parsed.error.requiredBytes,
         },
-        { cause: parsed.error, retryable: false, capturedOutput },
+        {
+          cause: parsed.error,
+          capturedOutput,
+          ...fixedAllowanceOptions(
+            "The lipo field retention allowance",
+            "capture",
+            { limit: NATIVE_COMMAND_OUTPUT_BUDGET_BYTES, unit: "bytes" },
+          ),
+        },
       ),
     );
   return err(
@@ -315,6 +321,7 @@ const integer = (value: string | undefined): number | null => {
 
 const CPU_TYPES: Readonly<Record<string, number>> = {
   CPU_TYPE_X86: 7,
+  CPU_TYPE_I386: 7,
   CPU_TYPE_X86_64: 0x01000007,
   CPU_TYPE_ARM: 12,
   CPU_TYPE_ARM64: 0x0100000c,
@@ -325,6 +332,7 @@ const CPU_TYPES: Readonly<Record<string, number>> = {
 
 const CPU_SUBTYPES: Readonly<Record<string, number>> = {
   CPU_SUBTYPE_X86_ALL: 3,
+  CPU_SUBTYPE_I386_ALL: 3,
   CPU_SUBTYPE_X86_64_ALL: 3,
   CPU_SUBTYPE_X86_64_H: 8,
   CPU_SUBTYPE_ARM64_ALL: 0,
@@ -340,10 +348,15 @@ const CPU_SUBTYPES: Readonly<Record<string, number>> = {
 };
 
 /** Normalize known lipo names while retaining the producer's original text. */
+const ownCpuCode = (
+  codes: Readonly<Record<string, number>>,
+  name: string,
+): number | undefined => (Object.hasOwn(codes, name) ? codes[name] : undefined);
+
 const cpuTypeCode = (value: string | undefined): number | null => {
   if (value === undefined) return null;
   const numeric = unsigned32(value);
-  return numeric ?? CPU_TYPES[value] ?? null;
+  return numeric ?? ownCpuCode(CPU_TYPES, value) ?? null;
 };
 
 /** Normalize the subtype and its separately printed capability bits. */
@@ -354,7 +367,7 @@ const cpuSubtypeCode = (
   if (value === undefined) return null;
   const numeric = unsigned32(value);
   if (numeric !== null) return numeric;
-  const subtype = CPU_SUBTYPES[value];
+  const subtype = ownCpuCode(CPU_SUBTYPES, value);
   if (subtype === undefined) return null;
   if (value !== "CPU_SUBTYPE_ARM64E") {
     // Recent lipo prints an empty capabilities line, even for LIB64 slices.
@@ -378,7 +391,7 @@ const cpuSubtypeCode = (
 /** The subtype bits a lipo record names, without its capability byte. */
 const cpuSubtypeBase = (value: string | undefined): number | null => {
   if (value === undefined) return null;
-  const subtype = unsigned32(value) ?? CPU_SUBTYPES[value];
+  const subtype = unsigned32(value) ?? ownCpuCode(CPU_SUBTYPES, value);
   return subtype === undefined ? null : machoCpuSubtypeBase(subtype);
 };
 

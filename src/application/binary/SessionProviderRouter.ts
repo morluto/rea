@@ -129,18 +129,37 @@ export class SessionProviderRouter {
     );
   }
 
-  /** Candidate status authoritative for the active or target-free route. */
+  /** Preserve selection observations unless a caller requests a fresh inspection. */
   async candidateStatuses(
     route: SessionProviderRoute,
-    signal?: AbortSignal,
+    options: {
+      readonly signal?: AbortSignal;
+      readonly target?: BinaryTarget;
+      readonly refresh?: boolean;
+    } = {},
   ): Promise<readonly AnalysisProviderCandidateStatus[]> {
-    return (
-      route.selection?.candidates ??
-      this.registry.candidates(
-        undefined,
-        signal === undefined ? {} : { signal },
-      )
-    );
+    const { signal, target, refresh = false } = options;
+    const candidates =
+      refresh && route.selection !== undefined
+        ? await this.registry.candidates(
+            target,
+            signal === undefined ? {} : { signal },
+          )
+        : (route.selection?.candidates ??
+          (await this.registry.candidates(
+            undefined,
+            signal === undefined ? {} : { signal },
+          )));
+    const binding = route.binding;
+    if (binding === null) return candidates;
+    return candidates.map((candidate) => {
+      const selected = candidate.provider.id === binding.identity.id;
+      return {
+        ...candidate,
+        selected,
+        selectionSource: selected ? binding.selectionSource : null,
+      };
+    });
   }
 
   /** Produce exact candidate rejections for an intentionally unbound route. */

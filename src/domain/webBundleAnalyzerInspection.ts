@@ -1,3 +1,4 @@
+import type { JavaScriptSemanticPrecisionInput } from "./javascript/javascriptSemanticPrecision.js";
 import {
   isBrowserNetworkRequest,
   createXhrOpenRequestQuery,
@@ -19,11 +20,10 @@ import {
   completeSemanticSteps,
 } from "./javascript/javascriptSemanticTraversal.js";
 import { indexJavaScriptBindingsWithReceiversSteps } from "./javascript/javascriptSemanticAnalysis.js";
-import type { JavaScriptOpenReceiverFact } from "./javascript/javascriptSemanticAnalysis.js";
+import type { JavaScriptOpenReceiverFact } from "./javascript/javascriptSemanticReceiverFacts.js";
 import { isIntrinsicMapLookup } from "./javascript/javascriptSemanticMapOperations.js";
 import {
   semanticStaticPropertyKey,
-  semanticStaticPropertyName,
   isNullishJavaScriptSyntax,
   staticObjectProperty,
   staticObjectPropertyNames,
@@ -54,6 +54,7 @@ type Inference = WebBundleAnalysis["inferences"][number];
 export const analyzeScript = (
   script: IncludedScript,
   accumulator: AnalysisAccumulator,
+  precision?: JavaScriptSemanticPrecisionInput,
 ): JavaScriptRouteSourceFacts | null => {
   const file = parseJavaScriptSource(script.source.artifact.text);
   if (file === null) {
@@ -65,7 +66,11 @@ export const analyzeScript = (
     accumulator.recoveredScripts.push(script.script_key);
   detectVendorFingerprints(script, accumulator);
   const index = completeSemanticSteps(
-    indexJavaScriptBindingsWithReceiversSteps(file.program),
+    indexJavaScriptBindingsWithReceiversSteps(
+      file.program,
+      undefined,
+      precision,
+    ),
   );
   completeSemanticSteps(index.indexAmbientWritesSteps());
   const { receivers } = index;

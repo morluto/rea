@@ -4,8 +4,12 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 
 import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/config/mcpInputSchemaProfile.js";
 import { presentAdvertisedInputSchema } from "../../../src/contracts/compactInputSchema.js";
+import { SESSION_TOOL_CONTRACTS } from "../../../src/contracts/sessionToolContracts.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import { transformAdvertisedInputJsonSchema } from "../../../src/contracts/toolSchemaMetadata.js";
+import {
+  advertisedInputJsonSchema,
+  transformAdvertisedInputJsonSchema,
+} from "../../../src/contracts/toolSchemaMetadata.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 import { advertisedSchemaErrors } from "../../fixtures/mcpAdvertisedSchemaValidity.js";
 import { mcpTest } from "../../support/mcp/mcpFixture.js";
@@ -35,6 +39,30 @@ describe("Evidence input SDK boundaries", () => {
       start: { address: 1 },
     });
     expect(invalid.issues).toBeDefined();
+  });
+
+  it("advertises the Evidence union for described borrowed inputs", () => {
+    // `.describe()` rebuilds a schema from its definition; the borrowed
+    // declaration must survive it rather than advertise an unconstrained value.
+    const contract = SESSION_TOOL_CONTRACTS.find(
+      (item) => item.name === "match_native_functions",
+    );
+    if (contract === undefined)
+      throw new Error("Missing match_native_functions contract");
+    const properties = advertisedInputJsonSchema(contract).properties as Record<
+      string,
+      Record<string, unknown>
+    >;
+    for (const name of ["left", "right"]) {
+      const property = properties[name];
+      expect(property?.description, name).toBe(
+        `${name === "left" ? "Left" : "Right"} list_procedures Evidence or exact retained reference`,
+      );
+      const branches = property?.anyOf ?? property?.oneOf;
+      expect(Array.isArray(branches), name).toBe(true);
+      expect(JSON.stringify(branches)).toContain('"retained-evidence"');
+    }
+    expect(properties.left_observations).toMatchObject({ type: "array" });
   });
 
   mcpTest.for(["full", "compact"] as const)(

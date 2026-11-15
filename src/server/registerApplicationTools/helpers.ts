@@ -4,8 +4,8 @@ import type { ToolResultDelivery } from "../ToolResultDelivery.js";
 import { APPLICATION_TOOL_CONTRACTS } from "../../contracts/applicationToolContracts.js";
 import { inspectAnalysisViewValidated } from "../../application/analysisView/AnalysisViewService.js";
 import { recordEvidenceSources } from "../../application/investigation/recordEvidenceSources.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
-import type { AnalysisViewRequest } from "../../domain/analysisView/analysisView.js";
+import { cancelledBy } from "../../domain/analysisErrorCore.js";
+import type { AnalysisViewRequest } from "../../domain/analysisView/analysisViewRequest.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { ok } from "../../domain/result.js";
@@ -65,13 +65,14 @@ export const deliverApplicationEvidence = async (
   await setImmediate();
   if (signal.aborted)
     return delivery.toErrorToolResult(
-      new AnalysisCancelledError(contract.name, { cause: signal.reason }),
+      cancelledBy(contract.name, signal),
       contract.returnsTargetContent,
     );
   if (!selected.ok) return delivery.toCallToolResult(selected, contract);
   const sources = recordEvidenceSources(
     options.recordEvidence,
     execution.sources,
+    { evidence: selected.value },
   );
   if (!sources.ok) return delivery.toCallToolResult(sources, contract);
   const saved = recordApplicationResult(options, parent, unknownKind);

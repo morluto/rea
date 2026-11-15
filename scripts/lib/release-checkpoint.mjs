@@ -35,6 +35,16 @@ const codexServerConfigSchema = z.object({
     }),
   }),
 });
+const cursorPluginManifest = ".cursor-plugin/plugin.json";
+const cursorPluginServer = "mcp.json";
+const cursorServerConfigSchema = z.object({
+  mcpServers: z.object({
+    rea: z.object({
+      command: z.literal("npx"),
+      args: z.tuple([z.literal("-y"), z.string(), z.literal("mcp")]),
+    }),
+  }),
+});
 const sectionsSchema = z.object({
   versioning: z.string().optional(),
   "changelog-sections": z.array(
@@ -240,6 +250,20 @@ async function validateCandidate(git, sha, version, commits) {
         : manifest;
     launches.push([path, server.mcpServers.rea.args[1]]);
   }
+  const cursorManifest = await readJson(
+    git,
+    sha,
+    cursorPluginManifest,
+    versionSchema,
+  );
+  versions.push([cursorPluginManifest, cursorManifest.version]);
+  const cursorServer = await readJson(
+    git,
+    sha,
+    cursorPluginServer,
+    cursorServerConfigSchema,
+  );
+  const cursorPin = cursorServer.mcpServers.rea.args[1];
   // Catalogs are generated and checked from this candidate by the release job;
   // they are not version authority stored in the immutable source tree.
   const generated = await git([
@@ -262,6 +286,13 @@ async function validateCandidate(git, sha, version, commits) {
     }
   }
   // The launcher checks the scalar pin against the runtime in its own package.
+  // Compare manifest versions first so a wholly stale candidate reports the
+  // shared version authority before this Marketplace package specifier.
+  if (cursorPin !== `rea-agents@${version}`) {
+    throw new Error(
+      `${cursorPluginServer}@${sha} launches ${cursorPin}; release branch requires rea-agents@${version}.`,
+    );
+  }
   for (const [location, launched] of launches) {
     if (launched !== version) {
       throw new Error(

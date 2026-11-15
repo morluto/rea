@@ -1173,6 +1173,7 @@ describe("function comparison identity and malformed CFG", () => {
 const withLiterals = (base: "0x1000" | "0x2000", values: readonly string[]) =>
   functionDossierSchema.parse({
     ...dossier("return 0;", base),
+    swift_string_literal_omissions: [],
     swift_string_literals: values.map((value) => ({
       source_address: base,
       value,
@@ -1363,6 +1364,7 @@ describe("function comparison partial Swift literal omission interpretation", ()
   it("treats an omission record without decoded literals as partial coverage", () => {
     const omissionOnly = functionDossierSchema.parse({
       ...dossier("return 0;", "0x2000"),
+      swift_string_literals: [],
       swift_string_literal_omissions: [
         {
           source_address: "0x2004",
@@ -1538,8 +1540,9 @@ it.each([
           {
             path: ["status"],
             code: "custom",
-            message:
-              "Function comparison status contradicts its dimensions or function match.",
+            message: expect.stringMatching(
+              /status contradicts.*dimensions or function match/i,
+            ),
           },
         ]);
     }

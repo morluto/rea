@@ -1,4 +1,5 @@
 import { withPyInstallerReader } from "../../../tests/fixtures/pyinstallerReader.js";
+import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
 import { dirname, join } from "node:path";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { createHash, randomBytes } from "node:crypto";
@@ -13,6 +14,7 @@ import { hashReadable } from "../ArtifactHash.js";
 import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { marshalCode } from "../../python/PythonPyc.fixture.js";
+import * as artifactPaths from "../ArtifactPaths.js";
 import { PyInstallerPyzStore } from "./PyInstallerPyzStore.js";
 import {
   ArtifactReaderFailure,
@@ -311,7 +313,7 @@ it.each(["ENOENT", "ENOTDIR"] as const)(
           );
           expect(cause).toMatchObject({
             reason: "integrity",
-            message: `PyInstaller source identity changed: ${path}`,
+            message: expect.stringContaining(path),
           });
           expect(
             projectAnalysisError(
@@ -321,7 +323,7 @@ it.each(["ENOENT", "ENOTDIR"] as const)(
             category: "integrity_mismatch",
             details: {
               reason: "integrity",
-              detail: `PyInstaller source identity changed: ${path}`,
+              detail: expect.stringContaining(path),
             },
           });
         }
@@ -391,7 +393,11 @@ it.each([false, true])(
         void consumed.catch(() => undefined);
         let closing: Promise<void> | undefined;
         try {
-          await entered.promise;
+          await awaitAcknowledgement(
+            entered.promise,
+            consumed,
+            "PyInstaller operation",
+          );
           controller.abort(caller);
           let closed = false;
           closing = reader.close().then(() => {
@@ -615,7 +621,11 @@ it("joins a late private-file close and retries its failed owner after cancellat
       .next()
       .catch((cause: unknown) => cause);
     try {
-      await entered.promise;
+      await awaitAcknowledgement(
+        entered.promise,
+        listing,
+        "PyInstaller operation",
+      );
       let settled = false;
       const closing = reader.close().then(() => {
         settled = true;
@@ -689,7 +699,11 @@ for (const cancel of [false, true]) {
           (cause: unknown) => ({ ok: false as const, cause }),
         );
         try {
-          await entered.promise;
+          await awaitAcknowledgement(
+            entered.promise,
+            reading,
+            "PyInstaller operation",
+          );
           expect(output.readableEnded).toBe(false);
           expect(owner?.handle.fd).toBeGreaterThanOrEqual(0);
           if (cancel) {
@@ -700,7 +714,6 @@ for (const cancel of [false, true]) {
           release.resolve();
           const result = await reading;
           if (failClose || cancel) {
-            expect(result.ok).toBe(false);
             if (result.ok) throw new Error("Expected read failure");
             expect(result.cause).toMatchObject(
               failClose
@@ -709,7 +722,6 @@ for (const cancel of [false, true]) {
             );
             if (failClose) expect(owner?.handle.fd).toBeGreaterThanOrEqual(0);
           } else {
-            expect(result.ok).toBe(true);
             if (!result.ok) throw result.cause;
             expect(
               Buffer.compare(result.value.subarray(16), Buffer.from("body")),
@@ -826,7 +838,11 @@ it.each([false, true])(
           .catch((cause: unknown) => cause);
         let closing: Promise<void> | undefined;
         try {
-          await entered.promise;
+          await awaitAcknowledgement(
+            entered.promise,
+            first,
+            "PyInstaller operation",
+          );
           await setImmediate();
           expect(handles.size).toBe(1);
           caller.abort(reason);
@@ -863,3 +879,254 @@ it.each([false, true])(
     );
   },
 );
+
+it.each(
+  (["carrier", "private image"] as const).flatMap((stage) =>
+    ([false, true] as const).map((peer) => ({ stage, peer })),
+  ),
+)(
+  "isolates cancelled $stage parsing from a fresh inventory (concurrent: $peer)",
+  async ({ stage, peer }) => {
+    const payload = Buffer.from("body");
+    const bytes =
+      stage === "carrier"
+        ? archive(payload)
+        : cArchiveExecutable({
+            layout: "2.1",
+            pythonVersion: 309,
+            members: [
+              {
+                name: "PYZ.pyz",
+                typeCode: "z",
+                compress: true,
+                payload: pyzArchive({
+                  magic: PYTHON_39_MAGIC,
+                  modules: [{ name: "app", typeCode: 0, body: payload }],
+                }),
+              },
+            ],
+          });
+    await withPyInstallerReader(bytes, async (reader, handle) => {
+      const entered = deferred(),
+        release = deferred();
+      const caller = new AbortController();
+      const reason = new Error("cancel first archive parse");
+      const nativeRead = handle.read.bind(handle);
+      const spool = PyInstallerPyzStore.prototype.spool;
+      const images: FileHandle[] = [];
+      let held = false;
+      const pause = async () => {
+        if (held) return;
+        held = true;
+        entered.resolve();
+        await release.promise;
+      };
+      const reads = vi
+        .spyOn(handle, "read")
+        .mockImplementation(async (...args: unknown[]) => {
+          const result = await Reflect.apply(nativeRead, handle, args);
+          if (stage === "carrier") await pause();
+          return result;
+        });
+      const spools = vi
+        .spyOn(PyInstallerPyzStore.prototype, "spool")
+        .mockImplementation(async function (
+          this: PyInstallerPyzStore,
+          ...args
+        ) {
+          const result = await spool.apply(this, args);
+          images.push(result.handle);
+          if (stage === "private image") await pause();
+          return result;
+        });
+      const first = members(reader, caller.signal).then(
+        () => undefined,
+        (cause: unknown) => cause,
+      );
+      let second: Promise<ArtifactEntry[]> | undefined;
+      try {
+        await awaitAcknowledgement(
+          entered.promise,
+          first,
+          "PyInstaller operation",
+        );
+        expect(reader.formatMetadata()).toBeUndefined();
+        if (peer) {
+          second = members(reader);
+          void second.catch(() => undefined);
+        }
+        caller.abort(reason);
+        release.resolve();
+        expect(await first).toMatchObject({
+          reason: "cancelled",
+          cause: reason,
+        });
+        const retried = await (second ?? members(reader));
+        const selected = retried.find(
+          ({ path }) =>
+            path === (stage === "carrier" ? "data" : "PYZ.pyz/app.pyc"),
+        );
+        expect(selected).toBeDefined();
+        const content = await buffer(await reader.open(selected!));
+        expect(
+          content.subarray(stage === "carrier" ? 0 : 16).equals(payload),
+        ).toBe(true);
+        if (stage === "private image") {
+          expect(images).toHaveLength(2);
+          expect(images[0]!.fd).toBe(-1);
+        }
+      } finally {
+        release.resolve();
+        await first;
+        await second?.catch(() => undefined);
+        reads.mockRestore();
+        spools.mockRestore();
+      }
+    });
+  },
+);
+
+it("does not charge a cancelled namespace projection against the next parse", async () => {
+  const name = "a/".repeat(2000) + "x";
+  const names = [
+    name,
+    ...Array.from({ length: 256 }, (_, index) => `sibling-${index}`),
+  ];
+  const bytes = cArchiveExecutable({
+    layout: "2.1",
+    pythonVersion: 309,
+    members: names.map((name) => ({
+      name,
+      typeCode: "x",
+      payload: Buffer.alloc(0),
+      compress: false,
+    })),
+  });
+  await withPyInstallerReader(bytes, async (reader) => {
+    const caller = new AbortController();
+    const reason = new Error("cancel after namespace reservation");
+    let scheduled = false;
+    const normalize = artifactPaths.normalizeArtifactPath;
+    const paths = vi
+      .spyOn(artifactPaths, "normalizeArtifactPath")
+      .mockImplementation((path) => {
+        const result = normalize(path);
+        // The projection yields at its next batch after reserving this deep path.
+        if (path === name && !scheduled) {
+          scheduled = true;
+          globalThis.setImmediate(() => caller.abort(reason));
+        }
+        return result;
+      });
+    try {
+      await expect(members(reader, caller.signal)).rejects.toMatchObject({
+        reason: "cancelled",
+        cause: reason,
+      });
+      expect(reader.formatMetadata()).toBeUndefined();
+      const retried = await members(reader);
+      expect(retried.map(({ path }) => path)).toEqual(names);
+      expect(await buffer(await reader.open(retried[0]!))).toHaveLength(0);
+    } finally {
+      paths.mockRestore();
+    }
+  });
+});
+
+it("keeps a physical parse failure primary despite simultaneous caller cancellation", async () => {
+  await withPyInstallerReader(
+    archive(Buffer.from("body")),
+    async (reader, handle) => {
+      const entered = deferred(),
+        release = deferred();
+      const caller = new AbortController();
+      const io = new Error("carrier read EIO");
+      const reads = vi.spyOn(handle, "read").mockImplementation(async () => {
+        entered.resolve();
+        await release.promise;
+        caller.abort(new Error("caller also leaves"));
+        throw io;
+      });
+      const first = members(reader, caller.signal).catch(
+        (cause: unknown) => cause,
+      );
+      let second: Promise<unknown> | undefined;
+      try {
+        await awaitAcknowledgement(
+          entered.promise,
+          first,
+          "PyInstaller operation",
+        );
+        second = members(reader).catch((cause: unknown) => cause);
+        release.resolve();
+        const original = await first;
+        expect(original).toMatchObject({ reason: "io", cause: io });
+        expect(await second).toBe(original);
+        reads.mockRestore();
+        await expect(members(reader)).rejects.toBe(original);
+        expect(reader.formatMetadata()).toBeUndefined();
+      } finally {
+        release.resolve();
+        await Promise.allSettled([first, ...(second ? [second] : [])]);
+        reads.mockRestore();
+      }
+    },
+  );
+});
+
+it("retains failed cancelled-attempt cleanup and retries its exact private owner on close", async () => {
+  const bytes = cArchiveExecutable({
+    layout: "2.1",
+    pythonVersion: 309,
+    members: [
+      {
+        name: "PYZ.pyz",
+        typeCode: "z",
+        compress: true,
+        payload: pyzArchive({ magic: PYTHON_39_MAGIC, modules: [] }),
+      },
+    ],
+  });
+  await withPyInstallerReader(bytes, async (reader) => {
+    const caller = new AbortController();
+    const reason = new Error("cancel private parse");
+    const cleanupFailure = new Error("private cancelled close denied");
+    const spool = PyInstallerPyzStore.prototype.spool;
+    const nativeClose = OwnedFileHandle.prototype.close;
+    let retained: FileHandle | undefined;
+    let attempts = 0;
+    const spools = vi
+      .spyOn(PyInstallerPyzStore.prototype, "spool")
+      .mockImplementation(async function (this: PyInstallerPyzStore, ...args) {
+        const result = await spool.apply(this, args);
+        retained = result.handle;
+        caller.abort(reason);
+        return result;
+      });
+    const closes = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementation(async function (this: OwnedFileHandle) {
+        if (this.handle === retained && ++attempts === 1) throw cleanupFailure;
+        await nativeClose.call(this);
+      });
+    try {
+      const failure = await members(reader, caller.signal).catch(
+        (cause: unknown) => cause,
+      );
+      expect(failure).toMatchObject({
+        reason: "cancelled",
+        cancellation: { reason },
+        cleanup: { reason: expect.stringContaining(cleanupFailure.message) },
+      });
+      expect(retained?.fd).toBeGreaterThanOrEqual(0);
+      await expect(members(reader)).rejects.toBe(failure);
+      expect(spools).toHaveBeenCalledTimes(1);
+      await reader.close();
+      expect(attempts).toBe(2);
+      expect(retained?.fd).toBe(-1);
+    } finally {
+      spools.mockRestore();
+      closes.mockRestore();
+    }
+  });
+});

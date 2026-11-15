@@ -66,3 +66,24 @@ it("preserves valid Unicode, entity values and original archive identities", asy
   expect(result.next_offset).toBeNull();
   expect(result.truncated).toBe(true);
 });
+
+it("reports a dictionary key the archive declares twice", async () => {
+  const root = await createTestTempDirectory("rea-keyed-xml-repeat-");
+  await writeFile(
+    join(root, "Archive.plist"),
+    archive.replace(
+      "<key>$version</key>",
+      "<key>$archiver</key><string>NSKeyedArchiver</string><key>$version</key>",
+    ),
+  );
+  const result = await inspectBundleKeyedArchive({
+    bundlePath: root,
+    targetSha256: "a".repeat(64),
+    parameters: { path: "Archive.plist" },
+  });
+  expect(result.limitations).toContainEqual(
+    expect.stringContaining(
+      '1 dictionary(ies) declare a key more than once ("$archiver")',
+    ),
+  );
+});

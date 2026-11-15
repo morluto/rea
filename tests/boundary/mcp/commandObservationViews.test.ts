@@ -131,17 +131,16 @@ it("delivers ordered GDB records once and queries their retained parent after cl
     "inspect_analysis_view",
   );
   const input = { session_id: sessionId, command: capture.command };
-  const full = await client.callTool({ name: "gdb_console", arguments: input });
-  const summary = await client.callTool({
-    name: "gdb_console",
-    arguments: { ...input, detail: "summary" },
-  });
+  const full = await client.callTool(
+    { name: "gdb_console", arguments: input },
+    { toolDefinition: schemas.toolDefinition },
+  );
+  const summary = await client.callTool(
+    { name: "gdb_console", arguments: { ...input, detail: "summary" } },
+    { toolDefinition: schemas.toolDefinition },
+  );
   for (const reply of [full, summary]) {
     expect(reply.isError).not.toBe(true);
-    expect(
-      schemas.ajv.validate(schemas.outputSchema, reply.structuredContent),
-      JSON.stringify(schemas.ajv.errors),
-    ).toBe(true);
   }
   expect(parseEvidence(full.structuredContent)).toEqual(gdbEvidence());
   const selected = parseEvidence(summary.structuredContent);
@@ -174,23 +173,19 @@ it("delivers ordered GDB records once and queries their retained parent after cl
     name: "close_gdb_session",
     arguments: { session_id: sessionId },
   });
-  const queried = await client.callTool({
-    name: "inspect_analysis_view",
-    arguments: {
-      source: {
-        kind: "retained-evidence",
-        evidence_id: gdbEvidence().evidence_id,
+  const queried = await client.callTool(
+    {
+      name: "inspect_analysis_view",
+      arguments: {
+        source: {
+          kind: "retained-evidence",
+          evidence_id: gdbEvidence().evidence_id,
+        },
+        view: { kind: "summary" },
       },
-      view: { kind: "summary" },
     },
-  });
-  expect(
-    viewSchemas.ajv.validate(
-      viewSchemas.outputSchema,
-      queried.structuredContent,
-    ),
-    JSON.stringify(viewSchemas.ajv.errors),
-  ).toBe(true);
+    { toolDefinition: viewSchemas.toolDefinition },
+  );
   expect(parseEvidence(queried.structuredContent)).toEqual(selected);
   expect(ledger.get(gdbEvidence().evidence_id)).toEqual(gdbEvidence());
 });
@@ -207,19 +202,17 @@ it("keeps pathless objdump observations subjectless and preserves the default co
       detail: "summary",
     }),
   ).toBe(true);
-  const full = await client.callTool({
-    name: "inspect_with_objdump",
-    arguments: { operation: "architectures" },
-  });
-  const selected = await client.callTool({
-    name: "inspect_with_objdump",
-    arguments: { operation: "architectures", detail: "summary" },
-  });
-  for (const reply of [full, selected])
-    expect(
-      schemas.ajv.validate(schemas.outputSchema, reply.structuredContent),
-      JSON.stringify(schemas.ajv.errors),
-    ).toBe(true);
+  const full = await client.callTool(
+    { name: "inspect_with_objdump", arguments: { operation: "architectures" } },
+    { toolDefinition: schemas.toolDefinition },
+  );
+  const selected = await client.callTool(
+    {
+      name: "inspect_with_objdump",
+      arguments: { operation: "architectures", detail: "summary" },
+    },
+    { toolDefinition: schemas.toolDefinition },
+  );
   const parent = parseEvidence(full.structuredContent);
   const summary = parseEvidence(selected.structuredContent);
   expect(summary.normalized_result).toMatchObject({
@@ -315,7 +308,6 @@ it.each([true, false, null])(
       source: { kind: "inline", evidence: parent },
       view: { kind: "summary" },
     });
-    expect(selected.ok).toBe(true);
     if (!selected.ok) throw selected.error;
     expect(selected.value.normalized_result).toMatchObject({ summary: report });
     if (changed !== null) {

@@ -6,8 +6,10 @@ import {
   CAPABILITY_DECLARATIONS,
   type CapabilityDeclaration,
 } from "../../src/composition/capabilityDeclarations.js";
-import { TOOL_CONTRACTS } from "../../src/contracts/toolContracts.js";
-import { TOOL_CONTRACT_GROUPS } from "../../src/contracts/toolFamilies.js";
+import {
+  TOOL_CONTRACT_GROUPS,
+  TOOL_CONTRACTS,
+} from "../../src/contracts/toolContracts.js";
 import { QLOG_CAPTURE_PROVIDER_IDENTITY } from "../../src/browser/history/CaptureProviderIdentities.js";
 import { HARMONY_APPLICATION_PROVIDER } from "../../src/domain/investigationProviders.js";
 import {
@@ -26,8 +28,7 @@ const catalog = (
   >[0]["capabilityDeclarations"]["CAPABILITY_DECLARATIONS"],
 ) =>
   providerCatalog({
-    toolContracts: { TOOL_CONTRACTS },
-    toolFamilies: { TOOL_CONTRACT_GROUPS },
+    toolContracts: { TOOL_CONTRACTS, TOOL_CONTRACT_GROUPS },
     capabilityDeclarations: { CAPABILITY_DECLARATIONS: declarations },
   });
 
@@ -43,8 +44,8 @@ describe("whole canonical contract groups", () => {
     const added = { name: "new_valid_adb_operation" };
     const after = providerCatalog({
       capabilityDeclarations: { CAPABILITY_DECLARATIONS },
-      toolContracts: { TOOL_CONTRACTS: [...TOOL_CONTRACTS, added] },
-      toolFamilies: {
+      toolContracts: {
+        TOOL_CONTRACTS: [...TOOL_CONTRACTS, added],
         TOOL_CONTRACT_GROUPS: {
           ...TOOL_CONTRACT_GROUPS,
           ADB_TOOL_CONTRACTS: [

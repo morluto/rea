@@ -1,3 +1,4 @@
+import { EVIDENCE_FORMAT_REVISION } from "../../../src/domain/evidenceFormat.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { PRE_66_NULL_COVERAGE_EVIDENCE } from "../../../src/domain/evidenceLegacy.fixture.js";
 import {
@@ -23,7 +24,6 @@ import {
 } from "../../../src/domain/residualUnknown.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { JSON_BYTE_ORDER_MARK_MESSAGE } from "../../../src/application/Utf8JsonInput.js";
 
 const revisionBundle = () => {
   const records = ["open", "investigate"].map((operation) =>
@@ -254,8 +254,14 @@ cliTest.for([
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
       code: "evidence_integrity_mismatch",
-      message: JSON_BYTE_ORDER_MARK_MESSAGE,
-      remediation: { action: JSON_BYTE_ORDER_MARK_MESSAGE },
+      message: expect.stringMatching(
+        /byte-order mark.*UTF-8 without a byte-order mark/iu,
+      ),
+      remediation: {
+        action: expect.stringMatching(
+          /byte-order mark.*UTF-8 without a byte-order mark/iu,
+        ),
+      },
     });
     expect(await readFile(path, "utf8")).toBe(bom);
     await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });
@@ -466,7 +472,9 @@ cliTest(
     expect(json.stdout).toContain(JSON.stringify(result.text));
     expect(json.stdout).toContain(JSON.stringify(result.type));
     expect(json.stdout).toContain(JSON.stringify(result.literal));
-    const markdown = await cli.run({ arguments: [...base, "--format", "md"] });
+    const markdown = await cli.run({
+      arguments: [...base, "--format", "md"],
+    });
     expect(markdown.exitCode, markdown.stderr).toBe(0);
     expect(markdown.stdout).toContain("left\\|right\\\\tail<br>next");
     expect(markdown.stdout).toContain("List&lt;string&gt;");
@@ -480,7 +488,10 @@ cliTest(
     const root = await createTestTempDirectory("rea-legacy-coverage-identity-");
     const path = join(root, "legacy.json");
     const record = PRE_66_NULL_COVERAGE_EVIDENCE;
+    // A current-format bundle carrying the earlier record reaches the
+    // record-level identity diagnosis; an unmarked one is refused earlier.
     const bundle = {
+      evidence_format: EVIDENCE_FORMAT_REVISION,
       artifacts: [],
       providers: [record.provider],
       environments: [],

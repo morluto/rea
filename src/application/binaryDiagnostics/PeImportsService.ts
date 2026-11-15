@@ -1,3 +1,4 @@
+import { insideArtifact } from "./artifactRange.js";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { PeImportsPort } from "./PeImportsPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -101,8 +102,7 @@ const validReport = (
     readonly max_file_bytes: number;
   },
 ): boolean => {
-  const inside = ({ offset, bytes }: { offset: number; bytes: number }) =>
-    offset <= report.artifact.bytes - bytes;
+  const inside = insideArtifact(report.artifact.bytes);
   const dllCount = report.imports.length + report.delay_imports.length;
   if (
     report.artifact.bytes > input.max_file_bytes ||

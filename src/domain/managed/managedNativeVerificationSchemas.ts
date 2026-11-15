@@ -1,16 +1,15 @@
 import { z } from "zod";
 
 import { emptyArraySchema } from "../emptyArraySchema.js";
-import { evidenceSchema } from "../evidence.js";
 import { evidenceInputSchema } from "../evidenceReference.js";
 import {
   cliMetadataGuidSchema,
   managedNativeImportSchema,
 } from "./managedArtifact.js";
 import { digestSchema, prefixedDigestSchema } from "../digests.js";
+import { nonEmptyTextSchema } from "../textSchemas.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
-const textSchema = z.string().min(1);
 
 const nativeSymbolSchema = z.strictObject({
   evidence_id: evidenceIdSchema,
@@ -44,7 +43,7 @@ const pinvokeVerificationContextShape = {
   item_id: prefixedDigestSchema("mnv_pinvoke"),
   managed: verifiedManagedDeclarationSchema,
   evidence_links: z.array(evidenceIdSchema).min(1),
-  limitations: z.array(textSchema),
+  limitations: z.array(nonEmptyTextSchema),
 };
 
 const observedCandidatesSchema = z
@@ -138,11 +137,6 @@ const distinctNativeSources = (
   }
 };
 
-/** Complete record inputs used by the managed semantic owner and fixture builders. */
-export const managedNativeVerificationInputSchema = z
-  .strictObject(nativeVerificationShape(evidenceSchema))
-  .superRefine(distinctNativeSources);
-
 /** Public workflow sources may be inline records or exact retained identities. */
 export const managedNativeVerificationRequestSchema = z
   .strictObject(nativeVerificationShape(evidenceInputSchema))
@@ -186,13 +180,13 @@ export const managedNativeVerificationResultSchema = z
     }),
     pinvoke_imports: z.array(pinvokeVerificationSchema),
     native_implementations: z.strictObject({
-      runtime_provided: z.int().nonnegative().nullable().default(null),
+      runtime_provided: z.int().nonnegative(),
       unresolved: z.int().min(0),
-      reason: textSchema,
+      reason: nonEmptyTextSchema,
     }),
     coverage: verificationCoverageSchema,
     evidence_links: z.array(evidenceIdSchema).min(2),
-    limitations: z.array(textSchema),
+    limitations: z.array(nonEmptyTextSchema),
   })
   .superRefine((result, context) => {
     const observedNativeCount =

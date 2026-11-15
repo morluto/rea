@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { expect } from "vitest";
 import { z } from "zod";
 
-import { JSON_LINES_SELECTION_REMEDIATION } from "../../../src/cli/jsonLines.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { analyzeJavaScriptApplication } from "../../support/javascriptApplicationScope.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -69,7 +68,11 @@ for (const scenario of [
         expect(failure).toMatchObject({
           code: "invalid_request",
           category: "invalid_input",
-          remediation: { action: JSON_LINES_SELECTION_REMEDIATION },
+          remediation: {
+            action: expect.stringMatching(
+              /--format json.*record collection.*--filter-output/iu,
+            ),
+          },
           details: {
             issues: [
               {

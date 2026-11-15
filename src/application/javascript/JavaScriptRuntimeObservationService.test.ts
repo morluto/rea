@@ -1,10 +1,7 @@
 import { expect, it } from "vitest";
 
 import { BrowserObservationError } from "../../domain/browserObservationError.js";
-import {
-  AnalysisCancelledError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { err, ok } from "../../domain/result.js";
 import { parseEvidence } from "../../domain/evidence.js";
 import type { JavaScriptRuntimeTargetList } from "../../domain/javascript/javascriptRuntimeObservation.js";
@@ -20,7 +17,42 @@ import {
   expectOutputError,
   expectOwnerError,
   expectPreemptedCancellation,
-} from "../ownerObservationExpectation.fixture.js";
+} from "../../../tests/fixtures/ownerObservationExpectation.js";
+
+const runtimeObservation = javascriptRuntimeObservationSchema.parse({
+  runtime: {
+    product: "node.js/v24",
+    protocol_version: "1.3",
+    v8_version: "13",
+  },
+  target: {
+    target_id: "target",
+    protocol_type: "node",
+    attached: false,
+    location: { kind: "file", file_path: "/fixture.js" },
+    runtime_kind: "node",
+    runtime_kind_authority: "caller-declared-unverified",
+  },
+  capture: {
+    observation_ms: 0,
+    events_observed: 0,
+    events_retained: 0,
+    events_dropped: 0,
+    metadata_bytes_retained: 0,
+    truncated: false,
+    truncation_reasons: [],
+  },
+  scripts: {
+    items: [],
+    observed_total: 0,
+    excluded: { unsupported_location: 0, invalid_protocol_value: 0 },
+  },
+  execution_contexts: [],
+  directly_observed: ["Inspector target attached and queried."],
+  unavailable_without_instrumentation: [],
+  unknowns: [],
+  limitations: [],
+});
 
 const observeCancelled = async (partial: unknown) => {
   const reason = { requested: "stop before runtime observation completed" };
@@ -75,7 +107,6 @@ it("preserves failed Inspector cleanup when cancellation occurs during observati
     { signal: controller.signal },
   );
 
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected failed cleanup");
   expect(result.error).toBe(failure);
   expect(result.error.cleanupIncomplete).toBe(true);
@@ -176,40 +207,7 @@ it("does not let late cancellation hide an invalid completed Inspector report", 
 });
 
 it("converts a raw runtime observation retained by cleanup failure", async () => {
-  const observation = javascriptRuntimeObservationSchema.parse({
-    runtime: {
-      product: "node.js/v24",
-      protocol_version: "1.3",
-      v8_version: "13",
-    },
-    target: {
-      target_id: "target",
-      protocol_type: "node",
-      attached: false,
-      location: { kind: "file", file_path: "/fixture.js" },
-      runtime_kind: "node",
-      runtime_kind_authority: "caller-declared-unverified",
-    },
-    capture: {
-      observation_ms: 0,
-      events_observed: 0,
-      events_retained: 0,
-      events_dropped: 0,
-      metadata_bytes_retained: 0,
-      truncated: false,
-      truncation_reasons: [],
-    },
-    scripts: {
-      items: [],
-      observed_total: 0,
-      excluded: { unsupported_location: 0, invalid_protocol_value: 0 },
-    },
-    execution_contexts: [],
-    directly_observed: ["Inspector target attached and queried."],
-    unavailable_without_instrumentation: [],
-    unknowns: [],
-    limitations: [],
-  });
+  const observation = runtimeObservation;
   const failure = new BrowserObservationError(
     "observe_javascript_runtime",
     "cleanup_failed",
@@ -240,6 +238,7 @@ it("converts a raw runtime observation retained by cleanup failure", async () =>
     {
       inspector_endpoint: "http://127.0.0.1:9229",
       target_id: "target",
+      runtime_kind: "node",
       observation_ms: 0,
     },
   );
@@ -348,5 +347,77 @@ it.each([{ scripts: [undefined] }, { elapsed_ms: Number.NaN }])(
       expectOwnerError(result, failure, reason),
       "Inspector retained a non-JSON incomplete observation.",
     );
+  },
+);
+
+it.each([
+  [
+    "target",
+    {
+      ...runtimeObservation,
+      target: { ...runtimeObservation.target, target_id: "other-target" },
+    },
+  ],
+  [
+    "window",
+    {
+      ...runtimeObservation,
+      capture: { ...runtimeObservation.capture, observation_ms: 1 },
+    },
+  ],
+  [
+    "declared kind",
+    {
+      ...runtimeObservation,
+      target: {
+        ...runtimeObservation.target,
+        runtime_kind: "unknown" as const,
+      },
+    },
+  ],
+  [
+    "kind authority",
+    {
+      ...runtimeObservation,
+      target: {
+        ...runtimeObservation.target,
+        runtime_kind_authority: "not-declared" as const,
+      },
+    },
+  ],
+])(
+  "does not attest a provider's changed %s as the selected runtime observation",
+  async (_name, report) => {
+    const input = {
+      inspector_endpoint: "http://127.0.0.1:9229",
+      target_id: "target",
+      observation_ms: 0,
+      runtime_kind: "node" as const,
+    };
+    const provider: JavaScriptRuntimeObservationPort = {
+      identity: () => ({ id: "test", name: "Test", version: "1" }),
+      listTargets: async () => {
+        throw new Error("unused");
+      },
+      observe: async () => ok(report),
+    };
+    const completed = await observeJavaScriptRuntime(provider, input);
+    expect(completed).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisOutputError", partialObservation: report },
+    });
+    const primary = new AnalysisCancelledError("observe_javascript_runtime", {
+      partialObservation: report,
+    });
+    const failed = await observeJavaScriptRuntime(
+      { ...provider, observe: async () => err(primary) },
+      input,
+    );
+    expect(failed).toMatchObject({ ok: false, error: primary });
+    expect(primary.partialObservation).toEqual(report);
+    expect(primary.partialObservation).not.toHaveProperty("evidence_id");
+    expect(primary.secondaryFailures).toMatchObject([
+      { _tag: "AnalysisOutputError" },
+    ]);
   },
 );

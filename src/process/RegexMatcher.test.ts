@@ -1,3 +1,6 @@
+import { AnalysisSettings } from "../application/AnalysisSettings.js";
+import { parseConfig } from "../config/parseConfig.js";
+import { runtimeAnalysisConfig } from "../config/runtimeAnalysisSettings.js";
 import { expect, it } from "vitest";
 
 import {
@@ -5,15 +8,16 @@ import {
   regexMatchingDeadlineRecovery,
 } from "../config/regexMatchingDeadline.js";
 import {
+  regexWorkerHeapRequestContinuingRecovery,
   regexWorkerHeapRequestRecovery,
   DEFAULT_REGEX_WORKER_HEAP_REQUEST,
 } from "../config/regexWorkerHeapRequest.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
+  matchRegexValues,
   execArgvFromCommandLine,
   readLaunchExecArgv,
   readLaunchNodeOptions,
-  regexMatchingDeadlineError,
   regexMatchingLimitation,
   regexWorkerHeapError,
   resolveLaunchRegexWorkerHeap,
@@ -394,10 +398,6 @@ it("describes the effective heap and the configurable matching deadline", () => 
     expect(limitation.length).toBeLessThan(700);
     if (heap.kind === "effective")
       expect(limitation).toContain(`${String(heap.mib)} MiB`);
-    expect(
-      projectAnalysisError(regexMatchingDeadlineError("search_procedures"))
-        .remediation.action,
-    ).toContain(regexMatchingDeadlineRecovery(DEFAULT_REGEX_MATCHING_DEADLINE));
     const projected = projectAnalysisError(
       regexWorkerHeapError("search_procedures", new Error("heap"), heap),
     );
@@ -411,9 +411,6 @@ it("describes the effective heap and the configurable matching deadline", () => 
     expect(projected.remediation.action).toContain("--max-old-space-size");
     expect(projected.remediation.action).toContain(
       "--max-old-space-size-percentage",
-    );
-    expect(projected.remediation.action).toContain(
-      regexWorkerHeapRequestRecovery(DEFAULT_REGEX_WORKER_HEAP_REQUEST),
     );
     if (heap.kind === "unknown") {
       expect(projected.remediation.action).toContain(
@@ -483,7 +480,62 @@ it("keeps a selected heap request unless a positive Node flag overrides it", () 
     },
   });
   expect(projected.remediation.action).toContain(
-    regexWorkerHeapRequestRecovery(request),
+    regexWorkerHeapRequestContinuingRecovery(request),
   );
   expect(projected.details?.limit).toBeUndefined();
 });
+
+it.each([
+  ["regex.matching_deadline_ms", "REA_REGEX_MATCHING_DEADLINE_MS", 3000],
+  ["regex.worker_heap_request_mib", "REA_REGEX_WORKER_HEAP_REQUEST_MIB", 128],
+] as const)(
+  "preserves pre-aborted cancellation before invalid %s and rejects the invalid seed until overridden",
+  async (setting, environmentName, value) => {
+    const environment = { [environmentName]: "invalid" };
+    const parsed = parseConfig(environment);
+    if (!parsed.ok) throw parsed.error;
+    const settings = new AnalysisSettings(environment);
+    const config = runtimeAnalysisConfig(parsed.value, settings.read);
+    const input = {
+      operation: "search_strings",
+      pattern: "x",
+      caseSensitive: true,
+      values: ["x"],
+      deadline: config.regexMatchingDeadline,
+      heapRequest: config.regexWorkerHeapRequest,
+    };
+    const controller = new AbortController();
+    const reason = { stopped: true };
+    controller.abort(reason);
+    const cancelled = await settings.run(() =>
+      matchRegexValues({ ...input, signal: controller.signal }),
+    );
+    expect(cancelled).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError" },
+    });
+    if (!cancelled.ok) expect(cancelled.error.cause).toBe(reason);
+    const rejected = await settings.run(() => matchRegexValues(input));
+    expect(rejected).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "ConfigurationError",
+        settings: [expect.objectContaining({ setting: environmentName })],
+      },
+    });
+    expect(
+      settings.update({ changes: [{ setting, action: "set", value }] }).ok,
+    ).toBe(true);
+    expect(await settings.run(() => matchRegexValues(input))).toEqual({
+      ok: true,
+      value: [0],
+    });
+    expect(
+      settings.update({ changes: [{ setting, action: "reset" }] }).ok,
+    ).toBe(true);
+    expect(await settings.run(() => matchRegexValues(input))).toMatchObject({
+      ok: false,
+      error: { _tag: "ConfigurationError" },
+    });
+  },
+);

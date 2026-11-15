@@ -9,6 +9,7 @@ import {
   cliDecimalField,
   directAnalysisOptionsFromCli,
   nativeOpenOptionFields,
+  snapshotSelectionOption,
 } from "./options.js";
 import { decompileDirectoryInputSchema } from "../contracts/decompileDirectory.js";
 import type { CliInstance } from "./types.js";
@@ -26,7 +27,7 @@ export const registerDecompileDirectoryCommand = (
     description:
       "Write every function's pseudocode into a directory and return a manifest",
     args: z.object({
-      path: z.string().describe("App or program path"),
+      path: localPathStringSchema.describe("App or program path"),
     }),
     options: z.object({
       output: localPathStringSchema.describe(
@@ -72,13 +73,9 @@ export const registerDecompileDirectoryCommand = (
       ).describe(
         "Maximum functions to attempt after skipping verified files and recorded external functions",
       ),
-      snapshot: z
-        .string()
-        .min(1)
-        .optional()
-        .describe(
-          "Load a local analysis snapshot. decompile-all does not update it.",
-        ),
+      snapshot: snapshotSelectionOption.describe(
+        "Load a local analysis snapshot. decompile-all does not update it.",
+      ),
       ...nativeOpenOptionFields,
     }),
     run: ({ args, options }) =>

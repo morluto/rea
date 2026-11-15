@@ -10,7 +10,6 @@ import { access, readFile, readdir, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
-import { GHIDRA_ANNOTATIONS_RETAINED } from "../../dist/ghidra/GhidraProviderClient.js";
 import Ajv from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import { OFFICIAL_TOOL_CONTRACTS } from "../../dist/contracts/officialToolContracts.js";
@@ -23,6 +22,7 @@ import { verifyGhidraEntryAliases } from "./real-ghidra-entry-aliases.mjs";
 import { verifyGhidraNamespaceAnnotations } from "./real-ghidra-namespace-annotations.mjs";
 import { verifyGhidraBatchIdentity } from "./real-ghidra-batch-identity.mjs";
 import { verifyGhidraInstructionFlow } from "./real-ghidra-instruction-flow.mjs";
+import { verifyGhidraSearchFacts } from "./real-ghidra-search-facts.mjs";
 
 /** Probe real Ghidra location, annotation and error contracts through public adapters. */
 export async function verifyGhidraBoundaries(
@@ -211,7 +211,12 @@ export async function verifyGhidraBoundaries(
   );
   const names = await call("list_names");
   const batchIdentity = await verifyGhidraBatchIdentity(call, names);
-  const instructionFlow = await verifyGhidraInstructionFlow(call, names, cli);
+  const instructionFlow = await verifyGhidraInstructionFlow(
+    call,
+    names,
+    cli,
+    target,
+  );
   const leaf = names.find((item) =>
     item.value.endsWith("rea_ghidra_inventory_leaf"),
   );
@@ -410,6 +415,11 @@ export async function verifyGhidraBoundaries(
     (item) => item.value === "REA_GHIDRA_INVENTORY_ENTRY",
   );
   assert.ok(marker);
+  await verifyGhidraSearchFacts(call, {
+    strings,
+    procedures,
+    entryAddress: address,
+  });
   assert.ok(
     (
       await call("search_strings", { pattern: marker.value.toLowerCase() })
@@ -560,7 +570,11 @@ export async function verifyGhidraBoundaries(
   // The producer reason describes the failure; continuing-session guidance
   // is projected separately and the following live calls verify it.
   assert.match(regexError.details.reason, /stack while matching pattern/u);
-  assert.ok(regexError.message.includes(GHIDRA_ANNOTATIONS_RETAINED));
+  assert.ok(
+    regexError.message.includes(
+      "The active analysis session and annotations remain available.",
+    ),
+  );
   rejectedCalls++;
   const nestedPattern = "(".repeat(12000) + "a" + ")".repeat(12000);
   const compileFailure = await client.callTool(
@@ -598,9 +612,7 @@ export async function verifyGhidraBoundaries(
   const longString = strings.find((item) => item.value === longLiteral);
   assert.ok(longString, "The provider must retain the full regression literal");
   const literalMatches = await call("search_strings", { pattern: longLiteral });
-  assert.deepEqual(literalMatches, [
-    { address: longString.address, value: longLiteral },
-  ]);
+  assert.deepEqual(literalMatches, [longString]);
   assert.deepEqual(await cli("search", longLiteral), literalMatches);
   await assert.rejects(
     cli("search", regexPattern, ["--mode", "regex"]),

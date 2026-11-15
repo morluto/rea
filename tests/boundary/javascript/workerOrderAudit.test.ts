@@ -354,8 +354,9 @@ it("selects output EOF before a later abort when the current job has no terminal
     if (!result.ok)
       expect(result.error.error).toMatchObject({
         _tag: "AnalysisOutputError",
-        reason:
-          "JavaScript worker closed output before the operation received its terminal response",
+        reason: expect.stringMatching(
+          /worker closed output.*terminal response/i,
+        ),
       });
   } finally {
     await worker.close();
@@ -390,8 +391,9 @@ it("selects startup EOF before an abort queued by the same close event", async (
     if (!result.ok)
       expect(result.error.error).toMatchObject({
         _tag: "AnalysisOutputError",
-        reason:
-          "JavaScript worker closed output before the operation received its terminal response",
+        reason: expect.stringMatching(
+          /worker closed output.*terminal response/i,
+        ),
       });
   } finally {
     await worker.close();
