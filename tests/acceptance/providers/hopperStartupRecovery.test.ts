@@ -16,6 +16,7 @@ import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 import { acquireHopperTargetLease } from "../../../src/process/HopperLease.js";
 import { waitFor } from "../../support/testWait.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const statusSchema = z.object({ result: z.object({ open: z.boolean() }) });
 const test = workspaceCliTest.skipIf(process.platform !== "darwin");
@@ -92,7 +93,10 @@ test.for(["target", "loader"] as const)(
       stderr: "pipe",
       env: environment,
     });
-    const mcp = new Client({ name: "hopper-literal-boundary", version: "1" });
+    const mcp = new Client(
+      { name: "hopper-literal-boundary", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     onTestFinished(async () => {
       await closeVerifierResources([
         () => mcp.close(),
@@ -183,7 +187,10 @@ test("recovers a denied Hopper launch through the same stdio MCP session and CLI
     env: environment,
     stderr: "pipe",
   });
-  const mcp = new Client({ name: "hopper-startup-recovery", version: "1" });
+  const mcp = new Client(
+    { name: "hopper-startup-recovery", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   let stderr = "";
   transport.stderr?.on("data", (chunk: Buffer) => {
     stderr += chunk.toString();
@@ -289,7 +296,10 @@ test.for(["handoff", "not-found"] as const)(
         REA_LOG_LEVEL: "silent",
       },
     });
-    const mcp = new Client({ name: "hopper-late-readiness", version: "1" });
+    const mcp = new Client(
+      { name: "hopper-late-readiness", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const children: ChildProcess[] = [];
     let runtime: string | undefined;
     onTestFinished(async () => {
