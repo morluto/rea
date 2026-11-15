@@ -580,27 +580,22 @@ it("refuses oversize scriptlet text when the caller requested it", () => {
 });
 
 it.each([
-  [
-    "FILEMODES",
-    rpmMismatchedFileModesFixture,
-    /RPM FILEMODES has 1 entries for 2 BASENAMES rows/u,
-  ],
+  ["FILEMODES", rpmMismatchedFileModesFixture, "file inventory"],
   [
     "TRIGGERSCRIPTPROG",
     rpmMismatchedTriggerProgFixture,
-    /RPM TRIGGERSCRIPTPROG has 1 entries for 2 TRIGGERSCRIPTS/u,
+    "trigger script programs",
   ],
 ])(
   "refuses a %s array whose length does not match its rows",
-  (_, fixture, message) => {
+  (_, fixture, field) => {
     try {
       parse(fixture());
       throw new Error("expected a mismatched array refusal");
     } catch (cause) {
       expect(cause).toBeInstanceOf(ParseFailureError);
       if (!(cause instanceof ParseFailureError)) return;
-      expect(cause.kind).toBe("malformed");
-      expect(cause.message).toMatch(message);
+      expect(cause.failure).toMatchObject({ kind: "malformed", field });
       // The saved lead and signature facts survive the refusal.
       expect(cause.failure.observed).toMatchObject({
         lead: { magic: "edabeedb" },
