@@ -17,6 +17,7 @@ import {
   referenceEdgeSchema,
   unresolvedCallSchema,
 } from "../domain/native/nativeReference.js";
+import { outputContractDiagnostics } from "../domain/native/nativeProviderOutput.js";
 import { nativeSegmentListSchema } from "../domain/native/nativeSegments.js";
 import {
   procedureIdentitySchema,
@@ -163,7 +164,10 @@ export const parseHopperReply = <M extends HopperReplyMethod>(
         new AnalysisOutputError(
           operation,
           `Hopper bridge output did not match the ${method} contract`,
-          { cause: parsed.error },
+          {
+            cause: parsed.error,
+            diagnostics: outputContractDiagnostics(parsed.error, value),
+          },
         ),
       );
 };

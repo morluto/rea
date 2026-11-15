@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
 import { TextDecoder } from "node:util";
 
-import { decodeBinaryPlistValue } from "./BinaryPlistMaterializer.js";
+import { decodeBinaryPropertyList } from "./BinaryPlistMaterializer.js";
+import {
+  plistDuplicateKeyLimitations,
+  type PlistDuplicateKeys,
+} from "../../domain/apple/plistDuplicateKeys.js";
 
 import { appleResourceKeyFields } from "../../domain/apple/appleAssetCatalog.js";
 import {
@@ -116,6 +120,7 @@ const decodeInterfaceBuilderBundle = async (
   const unknownDates = new Map<string, number>();
   const datePrecisionOverlaps = new Map<string, number>();
   const unknownScalars = new Map<string, number>();
+  const duplicateKeys = new Map<string, PlistDuplicateKeys>();
   const nonFiniteReals = new Map<string, number>();
   const negativeZeroReals = new Map<string, number>();
   let omitted = 0;
@@ -228,6 +233,7 @@ const decodeInterfaceBuilderBundle = async (
           unknownDateCount,
           unknownScalarCount,
           numberLiterals,
+          duplicateKeys: repeatedKeys,
         } = nib === null
           ? decodePlist(bytes, xmlText, scalarPlan)
           : {
@@ -235,6 +241,7 @@ const decodeInterfaceBuilderBundle = async (
               unknownDateCount: 0,
               unknownScalarCount: 0,
               numberLiterals: undefined,
+              duplicateKeys: undefined,
             };
         requireInterfaceBuilderArchive(raw);
         if (nib !== null && nib.unexaminedSources.length > 0)
@@ -253,6 +260,8 @@ const decodeInterfaceBuilderBundle = async (
           datePrecisionOverlaps.set(entry.path, datePrecisionOverlapCount);
         if (unknownScalarCount !== 0)
           unknownScalars.set(entry.path, unknownScalarCount);
+        if (repeatedKeys !== undefined && repeatedKeys.replaced > 0)
+          duplicateKeys.set(entry.path, repeatedKeys);
         const documentHash = createHash("sha256").update(bytes).digest("hex");
         documents.push({
           relativePath: entry.path,
@@ -306,6 +315,7 @@ const decodeInterfaceBuilderBundle = async (
       unknownDates,
       datePrecisionOverlaps,
       unknownScalars,
+      duplicateKeys,
       nonFiniteReals,
       negativeZeroReals,
       invalid,
@@ -441,6 +451,7 @@ const finalizeHierarchyCoverage = (
     unknownDates: ReadonlyMap<string, number>;
     datePrecisionOverlaps: ReadonlyMap<string, number>;
     unknownScalars: ReadonlyMap<string, number>;
+    duplicateKeys: ReadonlyMap<string, PlistDuplicateKeys>;
     nonFiniteReals: ReadonlyMap<string, number>;
     negativeZeroReals: ReadonlyMap<string, number>;
     invalid: readonly string[];
@@ -460,6 +471,7 @@ const finalizeHierarchyCoverage = (
     unknownDates,
     datePrecisionOverlaps,
     unknownScalars,
+    duplicateKeys,
     nonFiniteReals,
     negativeZeroReals,
     invalid,
@@ -603,6 +615,11 @@ const finalizeHierarchyCoverage = (
       }),
       ...[...unknownScalars].map(
         ([path, count]) => `${path}: ${unknownScalarLimitation(count)}`,
+      ),
+      ...[...duplicateKeys].flatMap(([path, repeated]) =>
+        plistDuplicateKeyLimitations(repeated).map(
+          (limitation) => `${path}: ${limitation}`,
+        ),
       ),
       ...[...nonFiniteReals].map(
         ([path, count]) => `${path}: ${nonFiniteRealLimitation(count)}`,
@@ -1068,16 +1085,14 @@ const decodePlist = (
   readonly unknownDateCount: number;
   readonly unknownScalarCount: number;
   readonly numberLiterals: PlistNumberLiterals;
+  readonly duplicateKeys: PlistDuplicateKeys;
 } => {
   const binary = hasBinaryPlistSignature(bytes);
   const binaryScalarMetadata = binary
     ? scanBinaryPlistScalars(bytes, scalarPlan)
     : undefined;
-  const { value, numberLiterals } = binary
-    ? {
-        value: decodeBinaryPlistValue(bytes, scalarPlan, binaryScalarMetadata),
-        numberLiterals: binaryScalarMetadata!.literals,
-      }
+  const { value, numberLiterals, duplicateKeys } = binary
+    ? decodeBinaryPropertyList(bytes, scalarPlan, binaryScalarMetadata)
     : parseXmlWithinDecodeBudget(xmlText ?? decodeXmlPlistText(bytes));
   const projected = projectPlistValue(value);
   return {
@@ -1085,5 +1100,6 @@ const decodePlist = (
     unknownDateCount: projected.unknownDateCount,
     unknownScalarCount: projected.unknownScalarCount,
     numberLiterals,
+    duplicateKeys,
   };
 };

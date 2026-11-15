@@ -1,3 +1,5 @@
+import { malformedInput } from "../domain/parseFailure.js";
+import { expectedAppleMetadataReadFailure } from "./AppleMetadataReadFailure.js";
 import type { ObjcSwiftMetadata } from "../domain/native/objcSwiftMetadata.js";
 import type { Section } from "./AppleMachoSelection.js";
 import type { ObjcDispatchReaders } from "./AppleObjcDispatchFacets.js";
@@ -77,7 +79,10 @@ export const decodeObjcCategories = (input: {
         const category = read.pointer(field);
         const name = read.string(read.pointer(category));
         if (name.length === 0)
-          throw new TypeError("Objective-C category has an empty name");
+          throw malformedInput(
+            "macho",
+            "Objective-C category has an empty name",
+          );
         const external = boundClassName(read, category + 8n);
         const local = read.pointer(category + 8n);
         let className = external ?? null;
@@ -85,6 +90,7 @@ export const decodeObjcCategories = (input: {
           try {
             className = input.localClassName(local);
           } catch (cause: unknown) {
+            if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
             // The category's own name and methods do not depend on its owner;
             // keep them and report the unreadable class reference.
             input.issues.push(
@@ -166,6 +172,7 @@ export const decodeObjcCategories = (input: {
           evidence: read.evidence(category, "Objective-C category_t record"),
         });
       } catch (cause: unknown) {
+        if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
         const message = cause instanceof Error ? cause.message : String(cause);
         input.issues.push(
           issue(

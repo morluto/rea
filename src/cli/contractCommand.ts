@@ -3,13 +3,16 @@ import type { Logger } from "pino";
 
 import { logCliCommand } from "../cliLogging.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { Result } from "../domain/result.js";
+import { deliverCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
 import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import {
   describeContractCommand,
   type CliContractProjection,
+  type CliEvidenceDeliveryChoice,
   type ContractCliDescription,
   type ContractField,
   type ProjectedContract,
@@ -30,6 +33,8 @@ export interface ContractCommandContext {
   readonly operation: string;
   /** Each caller-path field as the caller spelled it, before resolution. */
   readonly callerInputs: Readonly<Record<string, string>>;
+  /** The admitted delivery, for a projection with `evidenceDelivery`. */
+  readonly delivery: CliEvidenceDeliveryChoice | undefined;
 }
 
 /** A closeable one-shot service that inspects one contract input. */
@@ -70,6 +75,31 @@ export const inspectWithService =
     ).then(projectCliAnalysisResult);
   };
 
+/**
+ * Inspect through a closeable service, then deliver complete Evidence or a
+ * summary with its bundle, recording the caller's spelling of `path`.
+ */
+export const deliverWithService =
+  (service: () => EvidenceInspectionService, providerId: string) =>
+  (input: unknown, context: ContractCommandContext) => {
+    const callerInputPath = primaryCallerPath(context);
+    const { delivery } = context;
+    if (delivery === undefined)
+      throw new Error(`${context.operation} does not declare evidenceDelivery`);
+    const owned = service();
+    return deliverCliAnalysisEvidence({
+      callerInputPath,
+      run: () => owned.inspect(input, { signal: context.signal }),
+      service: owned,
+      providerId,
+      operation: context.operation,
+      signal: context.signal,
+      detail: delivery.detail,
+      evidenceOutput: delivery.evidenceOutput,
+      ...(delivery.view === undefined ? {} : { view: delivery.view }),
+    });
+  };
+
 const descriptions = new WeakMap<CliInstance, ContractCliDescription[]>();
 
 /** Commands registered on this CLI through `registerContractCommand`. */
@@ -79,11 +109,14 @@ export const contractCommandDescriptions = (
 
 const incurOptions = (description: ContractCliDescription): z.ZodType => {
   const object = z.object(
-    Object.fromEntries(
-      description.parameters
+    Object.fromEntries([
+      ...description.parameters
         .filter(({ positional }) => !positional)
-        .map(({ key, schema }) => [key, schema]),
-    ),
+        .map(({ key, schema }) => [key, schema] as const),
+      ...description.cliOnlyOptions.map(
+        ({ key, schema }) => [key, schema] as const,
+      ),
+    ]),
   );
   const constrained =
     description.optionConstraints === undefined
@@ -146,8 +179,11 @@ export const registerContractCommand = <
     }) => {
       const values = { ...options, ...args };
       return withCommandCancellation((signal) =>
-        logCliCommand(logger, description.command, () =>
-          run(
+        logCliCommand(logger, description.command, async () => {
+          const delivery = description.delivery?.(values);
+          if (delivery?.ok === false)
+            return projectAnalysisError(delivery.error);
+          return run(
             description.toContractInput(values) as z.input<
               Contract["inputSchema"]
             >,
@@ -155,9 +191,10 @@ export const registerContractCommand = <
               signal,
               operation: contract.name,
               callerInputs: description.callerInputs(values),
+              delivery: delivery?.value,
             },
-          ),
-        ),
+          );
+        }),
       );
     },
   } as never);

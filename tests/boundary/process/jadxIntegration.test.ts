@@ -1,4 +1,5 @@
 import { SdkErrorCode } from "@modelcontextprotocol/client";
+import { packagedJadxBridgeIdentity } from "../../support/packagedJadxBridge.js";
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import { expect, it as test, onTestFinished, vi } from "vitest";
 import {
@@ -1002,6 +1003,7 @@ it("bounds each upstream call by the selected deadline instead of a fixed limit"
         snapshot: apk,
         jarHash: "0".repeat(64),
         bridgeHash: "0".repeat(64),
+        bridgeIdentity: packagedJadxBridgeIdentity(),
         signal: new AbortController().signal,
         timeoutMs: 300,
         resources: new ArtifactResourceScope(),
