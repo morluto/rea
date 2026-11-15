@@ -378,7 +378,6 @@ const HAND_REGISTERED_CONTRACT_COMMANDS = [
   "guided-workflows",
   "inspect-android-jni-bindings",
   "inspect-api-contract",
-  "inspect-playwright-trace",
   "inspect-web-event-listeners",
   "inspect-web-network-capture",
   "inspect-with-objdump",
