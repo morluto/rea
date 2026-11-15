@@ -673,13 +673,12 @@ it("returns exact committed unknown receipts when creation and update replies ov
               kind: "retained-evidence",
               evidence_id: unknown.mutation_evidence_ids[0],
             },
+            // Export, not a list_unknowns page: one head may not fit a page.
+            next_operation: "export_evidence_bundle",
           },
         },
       },
     });
-    const recovery = parseMcpToolError(response).error.remediation.action;
-    expect(recovery).toContain("export_evidence_bundle");
-    expect(recovery).not.toContain("or page list_unknowns");
     for (const id of unknown.mutation_evidence_ids)
       expect(session.evidenceById(id)).toBeDefined();
   };
@@ -689,9 +688,10 @@ it("returns exact committed unknown receipts when creation and update replies ov
     arguments: { offset: 0, limit: 1 },
   });
   expect(singlePage.isError).toBe(true);
-  expect(parseMcpToolError(singlePage).error.remediation.action).toContain(
-    "export_evidence_bundle",
-  );
+  // A one-row page cannot shrink; the route is export, not another page.
+  expect(parseMcpToolError(singlePage).error).toMatchObject({
+    details: { reported_limits: { next_operation: "export_evidence_bundle" } },
+  });
   const directory = await createTestTempDirectory("rea-unknown-overflow-");
   const path = join(directory, "bundle.json");
   const exported = await client.callTool({
@@ -866,11 +866,11 @@ it("recovers an oversized list with same-session paging or export", async () => 
       arguments: { domain: "overflow-list" },
     }),
   ).error;
-  expect(overflow.code).toBe("resource_constraint");
-  expect(overflow.remediation.action).toContain("same connection");
-  expect(overflow.remediation.action).toContain("smaller limit");
-  expect(overflow.remediation.action).toContain("export_evidence_bundle");
-  expect(overflow.remediation.action).not.toContain("CLI JSON");
+  // The list pages again on this connection rather than falling back to CLI.
+  expect(overflow).toMatchObject({
+    code: "resource_constraint",
+    details: { reported_limits: { next_operation: "list_unknowns" } },
+  });
   const first = await client.callTool({
     name: "list_unknowns",
     arguments: { domain: "overflow-list", offset: 0, limit: 1 },

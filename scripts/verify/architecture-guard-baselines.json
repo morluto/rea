@@ -375,7 +375,7 @@
     "src/firmware/FirmwarePublication.ts": 1,
     "src/flutter/FlutterBuildProvider.ts": 2,
     "src/frida/FridaInstrumentationManager.ts": 1,
-    "src/gdb/GdbSessionManager.ts": 3,
+    "src/gdb/GdbSessionManager.ts": 2,
     "src/ghidra/GhidraFileArtifacts.ts": 1,
     "src/ghidra/GhidraJavaProbe.ts": 1,
     "src/ghidra/GhidraNativeAotSnapshotOwner.ts": 2,
@@ -409,6 +409,7 @@
     "src/pcap/PcapSnapshot.ts": 1,
     "src/process/ArtifactAnalysisResources.ts": 3,
     "src/process/DarwinProcessRunTokenReader.ts": 2,
+    "src/process/OwnedDebuggerSessionRegistry.ts": 1,
     "src/process/capture/FilesystemSnapshot.ts": 1,
     "src/process/capture/ProcessCaptureError.ts": 3,
     "src/process/capture/ProcessCaptureLifecycle.ts": 1,
@@ -424,6 +425,9 @@
     "src/sqlite/SqliteDatabaseProvider.ts": 8,
     "src/sqlite/SqliteDatabaseWorkerExecution.ts": 2,
     "src/wasm/WabtArtifactProvider.ts": 1
+  },
+  "path-search-split": {
+    "src/process/capture/ProcessScenarioRuntimeValidation.ts": 1
   },
   "ambient-host-platform": {
     "src/adb/AdbConfiguration.ts": 1,

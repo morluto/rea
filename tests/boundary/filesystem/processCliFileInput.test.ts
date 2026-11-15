@@ -283,6 +283,13 @@ it("keeps a physical read primary when its cause is also the abort reason", asyn
   }
 });
 
+/** The process CLI's input-file refusal, naming whether reading or parsing failed. */
+const inputFileIssue = (fileReason: string) => ({
+  path: ["input_file"],
+  reason: "invalid_value",
+  observed: { file_reason: fileReason },
+});
+
 describe("process CLI input diagnostics", () => {
   it("keeps physical file I/O failures in the execution-error projection", async () => {
     const path = "/selected/scenario.json";
@@ -344,8 +351,9 @@ describe("process CLI input diagnostics", () => {
           {
             path: ["input_file"],
             reason: "invalid_value",
+            observed: { file_reason: "missing" },
             message: expect.stringContaining(
-              `Process input file could not be read: ${join(root, "missing.json")} (ENOENT`,
+              `${join(root, "missing.json")} (ENOENT`,
             ),
           },
         ],
@@ -360,16 +368,14 @@ describe("process CLI input diagnostics", () => {
       error: "Process command failed",
       code: "invalid_request",
       category: "invalid_input",
-      message: expect.stringContaining(
-        `Process input file is not valid UTF-8 JSON: ${malformed}`,
-      ),
+      message: expect.stringContaining(malformed),
       retryable: false,
       recovery: {
         kind: "inspect_input_contract",
         operation: "capture_process_scenario",
       },
       details: {
-        issues: [{ path: ["input_file"], reason: "invalid_value" }],
+        issues: [inputFileIssue("invalid-json")],
       },
     });
     expect(analysisCliErrorEnvelopeSchema.safeParse(invalidJson).success).toBe(
@@ -382,7 +388,9 @@ describe("process CLI input diagnostics", () => {
       category: "invalid_input",
       retryable: false,
       message: expect.stringContaining(invalidUtf8),
-      details: { issues: [{ path: ["input_file"], reason: "invalid_value" }] },
+      details: {
+        issues: [inputFileIssue("invalid-json")],
+      },
     });
     expect(
       analysisCliErrorEnvelopeSchema.safeParse(invalidUtf8Json).success,
@@ -399,7 +407,7 @@ describe("process CLI input diagnostics", () => {
       retryable: false,
       details: {
         operation: "compare_process_captures",
-        issues: [{ path: ["input_file"], reason: "invalid_value" }],
+        issues: [inputFileIssue("missing")],
       },
     });
     expect(

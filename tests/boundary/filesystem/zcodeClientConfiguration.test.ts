@@ -530,7 +530,7 @@ describe("ZCode disabled registrations", () => {
       state: "stale",
       remediation: expect.stringContaining("rea setup"),
     });
-    expect((await statusFor())?.remediation).not.toContain("enable: false");
+    expect(await statusFor()).not.toHaveProperty("manual_conflict");
 
     expect(
       (await configureClientConfiguration(client, {}, command)).status,
@@ -610,7 +610,7 @@ describe("ZCode disabled registrations", () => {
       state: "stale",
       // The fallback view of shared storage is preserved by setup, so its
       // disable is the manual conflict rather than a setup repair.
-      remediation: expect.stringContaining("enable: false"),
+      manual_conflict: "shared_disabled_activation",
     });
   });
 
