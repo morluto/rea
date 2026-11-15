@@ -20,6 +20,7 @@ import {
   releaseProposalSearchDepth,
 } from "../../../scripts/lib/release-proposal.mjs";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { copyScriptsWithImports } from "../../support/scriptImportClosure.js";
 
 const execute = promisify(execFile);
 const require = createRequire(import.meta.url);
@@ -1038,20 +1039,15 @@ const releasePatchFixture = async () => {
     if (member === undefined) throw new Error("Patch header omitted its path");
     return member;
   });
-  await mkdir(join(project, "scripts/lib"), { recursive: true });
   await mkdir(dirname(patchPath), { recursive: true });
   await mkdir(directory, { recursive: true });
   await writeFile(join(project, "package.json"), '{"type":"module"}');
   await writeFile(patchPath, patch);
-  for (const script of [
-    "release-proposal.mjs",
-    "release-notes.mjs",
-    "release-pull-request.mjs",
-  ])
-    await copyFile(
-      join(source, "scripts/lib", script),
-      join(project, "scripts/lib", script),
-    );
+  await copyScriptsWithImports(
+    ["scripts/lib/release-proposal.mjs"],
+    project,
+    source,
+  );
   for (const dependency of ["semver", "zod"])
     await symlink(
       dirname(require.resolve(`${dependency}/package.json`)),

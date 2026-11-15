@@ -9,6 +9,10 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import {
+  EVIDENCE_FORMAT_REVISION,
+  RECREATE_EVIDENCE_GUIDANCE,
+} from "../../../src/domain/evidenceFormat.js";
+import {
   createEvidence,
   evidenceSchema,
 } from "../../../src/domain/evidence.js";
@@ -243,6 +247,31 @@ describe("reconstruction obligation ledger process provider admission", () => {
   );
 });
 
+describe("reconstruction obligation ledger Evidence format", () => {
+  it.each([
+    ["an unmarked", undefined],
+    ["a later", EVIDENCE_FORMAT_REVISION + 1],
+  ])(
+    "refuses %s Evidence format through the format owner, not the SDK",
+    async (_label, revision) => {
+      const { evidence_format: _current, ...unmarked } = createEvidenceBundle(
+        [],
+      );
+      const bundle =
+        revision === undefined
+          ? unmarked
+          : { ...unmarked, evidence_format: revision };
+      await withLedgerClient(async (request) => {
+        const result = await request(bundle);
+        expect(result.isError).toBe(true);
+        expect(parseMcpToolError(result)).toMatchObject(
+          integrityError(RECREATE_EVIDENCE_GUIDANCE),
+        );
+      });
+    },
+  );
+});
+
 describe("reconstruction obligation ledger MCP parity", () => {
   it("rejects noncanonical source bundles before ledger generation", async () => {
     const records = ["first", "second"].map((label) =>
@@ -288,7 +317,7 @@ describe("reconstruction obligation ledger MCP parity", () => {
       });
       expect(result.isError).toBe(true);
       expect(parseMcpToolError(result)).toMatchObject(
-        integrityError("Evidence bundle manifests are not canonical"),
+        integrityError("Evidence bundle sections are not canonical: records"),
       );
     } finally {
       await client.close();

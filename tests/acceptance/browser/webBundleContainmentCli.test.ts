@@ -47,7 +47,6 @@ cliTest(
           "--total-analysis-timeout-ms",
           "1",
         ],
-        timeoutMs: 30_000,
       });
       expect(
         interrupted.exitCode,
@@ -74,7 +73,6 @@ cliTest(
 
       const recovered = await cli.run({
         arguments: baseArguments,
-        timeoutMs: 30_000,
       });
       expect(recovered.exitCode, recovered.stdout + recovered.stderr).toBe(0);
       expect(recovered.json).toMatchObject({

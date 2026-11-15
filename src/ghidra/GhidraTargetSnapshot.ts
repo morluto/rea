@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { open } from "node:fs/promises";
 import { extname, join } from "node:path";
 import {
@@ -50,7 +51,7 @@ export const createGhidraTargetSnapshot = async (
     runtimeRoot,
     `target-${expectedSha256.slice(0, 12)}${suffix}`,
   );
-  if ((options.platform ?? process.platform) === "win32") {
+  if ((options.platform ?? HOST_PLATFORM.platform) === "win32") {
     const observed = await windowsPrivateRuntime(runtimeRoot)
       .snapshot(
         sourcePath,

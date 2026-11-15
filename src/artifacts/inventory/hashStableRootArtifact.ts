@@ -166,7 +166,7 @@ export const hashStableRootArtifactHandle = async (
       throw new ArtifactReaderFailure(
         "integrity",
         `Root artifact changed during inventory: ${path}`,
-        { cause: cause.cause ?? cause },
+        { cause: cause.cause ?? cause, integrityCheck: "container-identity" },
       );
     throw artifactOperationCause(cause);
   }
@@ -174,6 +174,7 @@ export const hashStableRootArtifactHandle = async (
     throw new ArtifactReaderFailure(
       "integrity",
       `Root artifact changed during inventory: ${path}`,
+      { integrityCheck: "container-identity" },
     );
   abortIfNeeded(signal);
   return digest;

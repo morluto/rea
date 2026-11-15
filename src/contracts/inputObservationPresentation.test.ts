@@ -2,72 +2,77 @@ import { Ajv } from "ajv";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it } from "vitest";
 
-import { presentInputJsonSchema } from "./inputSchemaPresentation.js";
+import { z } from "zod";
 
-it.each(["draft-2020-12", "draft-07"] as const)(
-  "summarizes only declared observation schemas, preserving literal data in %s",
-  (target) => {
-    const literal = {
-      type: "object",
-      "x-rea-complete-observation": true,
-      properties: { producer_data: { type: "string" } },
-    };
-    const controls = {
-      type: "object",
-      properties: { match: { type: "string", minLength: 1 } },
-      required: ["match"],
-      additionalProperties: false,
-    };
-    const canonical = {
-      $schema:
-        target === "draft-07"
-          ? "http://json-schema.org/draft-07/schema#"
-          : "https://json-schema.org/draft/2020-12/schema",
-      type: "object",
-      properties: {
-        observation: {
-          type: "object",
-          description: "Complete result from the producer.",
-          "x-rea-complete-observation": true,
-          properties: { id: { type: "string" } },
-          required: ["id"],
-        },
-        controls,
-        literal: { const: literal },
-      },
-      required: ["observation", "controls", "literal"],
-      additionalProperties: false,
-    };
-    const presented = presentInputJsonSchema(canonical, () => undefined);
-    expect(presented).toHaveProperty("properties.observation", {
-      type: "object",
-      description: expect.stringContaining("complete canonical observation"),
-    });
-    expect(presented).toHaveProperty("properties.controls", controls);
-    expect(presented).toHaveProperty("properties.literal.const", literal);
-    const ajv =
-      target === "draft-07"
-        ? new Ajv({ strict: false })
-        : new Ajv2020({ strict: false });
-    const validate = ajv.compile(presented);
-    expect(
-      validate({ observation: {}, controls: { match: "x" }, literal }),
-    ).toBe(true);
-    expect(
-      validate({ observation: "{}", controls: { match: "x" }, literal }),
-    ).toBe(false);
-    expect(
-      validate({ observation: {}, controls: { match: "" }, literal }),
-    ).toBe(false);
-    expect(
-      ajv.compile(canonical)({
-        observation: {},
-        controls: { match: "x" },
-        literal,
-      }),
-    ).toBe(false);
-  },
-);
+import { BROWSER_TOOL_CONTRACTS } from "./browserToolContracts.js";
+import { presentInputJsonSchema } from "./inputSchemaPresentation.js";
+import {
+  advertisedInputJsonSchema,
+  COMPLETE_OBSERVATION_GUIDANCE,
+  toolOutputSchemaWithMetadata,
+} from "./toolSchemaMetadata.js";
+import { compareBrowserScenariosInputSchema } from "../domain/browserScenarioDiffValues.js";
+import { captureSnapshotSchema } from "../domain/webCaptureDiffSchemas.js";
+
+const browserContract = (name: string) => {
+  const found = BROWSER_TOOL_CONTRACTS.find(
+    (candidate) => candidate.name === name,
+  );
+  if (found === undefined) throw new Error(`Missing ${name}`);
+  return found;
+};
+
+it("advertises complete observations as opaque objects only on the wire", () => {
+  const comparison = browserContract("compare_web_captures");
+  const advertised = advertisedInputJsonSchema(comparison);
+  // Each opaque declaration is the field's own description, if any, followed
+  // by the shared instruction.
+  const declared = (description: string | undefined) => ({
+    type: "object",
+    description: [description, COMPLETE_OBSERVATION_GUIDANCE]
+      .filter((text) => text !== undefined)
+      .join(" "),
+  });
+  expect(advertised).toHaveProperty(
+    "properties.before.properties.inspection",
+    declared(captureSnapshotSchema.shape.inspection.description),
+  );
+  expect(advertised).toHaveProperty(
+    "properties.before.properties.webmcp.anyOf.0",
+    declared(undefined),
+  );
+  expect(advertised).toHaveProperty(
+    "properties.before_scenario",
+    declared(
+      compareBrowserScenariosInputSchema.shape.before_scenario.description,
+    ),
+  );
+  // Analyst-authored controls stay explicit.
+  expect(advertised).toHaveProperty(
+    "properties.normalization.properties.rules.items.required",
+    ["rule_id", "artifacts", "match", "replacement"],
+  );
+  const validate = new Ajv2020({ strict: false }).compile(advertised);
+  expect(validate({ before_scenario: {}, after_scenario: {} })).toBe(true);
+  expect(validate({ before_scenario: "{}", after_scenario: {} })).toBe(false);
+
+  // Every other projection of the same schemas stays canonical: the plain
+  // conversion behind `--schema`, and the producer's own output schema.
+  const plain = JSON.stringify(
+    z.toJSONSchema(comparison.inputSchema, { io: "input" }),
+  );
+  expect(plain).not.toContain(COMPLETE_OBSERVATION_GUIDANCE);
+  expect(plain).not.toContain("x-rea-");
+  // The full scenario capture declaration, including its step list.
+  expect(plain).toContain('"steps":{');
+  expect(
+    JSON.stringify(
+      toolOutputSchemaWithMetadata(browserContract("inspect_web_page"))[
+        "~standard"
+      ].jsonSchema.output({ target: "draft-2020-12" }),
+    ),
+  ).not.toContain(COMPLETE_OBSERVATION_GUIDANCE);
+});
 
 const referenceWideningCases: readonly {
   name: string;

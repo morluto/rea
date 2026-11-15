@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createHash } from "node:crypto";
@@ -193,7 +194,7 @@ it("runs every managed static inspection independently of an active native targe
     },
   });
   await assertFieldMemberRefToken(client, fieldTokenPath);
-}, 30_000);
+});
 
 it("compares observed call-target names through the managed MCP contract", async () => {
   const directory = await createTestTempDirectory("rea-managed-call-target-");
@@ -308,7 +309,7 @@ it("opens a managed PE and executes the managed static provider through MCP", as
     rightPath,
     assertOutput,
   );
-}, 30_000);
+});
 
 const verifyManagedCatalogAndNativeWorkflow = async (
   client: Client,
@@ -649,11 +650,9 @@ const createOutputAssertion = async (client: Client) => {
     ): void => {
       const contract = toolContract(name);
       const wire = tools.find((tool) => tool.name === name);
-      if (wire?.outputSchema === undefined)
+      if (wire === undefined)
         throw new Error(`Missing advertised output schema for ${name}`);
-      const valid = ajv.compile(
-        z.record(z.string(), z.unknown()).parse(wire.outputSchema),
-      );
+      const valid = ajv.compile(canonicalOutputSchema(wire.name));
       expect(valid(output), `${name} advertised output`).toBe(true);
       expect(contract.outputSchema.safeParse(output).success).toBe(true);
     },

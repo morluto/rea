@@ -79,7 +79,7 @@ export type PeImage = BinaryContainer & {
 
 /** Read PE32/PE32+ native image mappings and section facts. */
 export const readPeImage = (bytes: Buffer): PeImage => {
-  const reader = new BinaryReader(bytes, true);
+  const reader = new BinaryReader(bytes, true, "pe");
   const pe = peHeaderOffset(reader);
   const optional = pe + 24;
   const coff = readPeCoffHeader(bytes.subarray(pe + 4, pe + 24));

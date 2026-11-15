@@ -78,7 +78,7 @@ export const expandMcpSessionStatus = (status) => ({
 });
 
 /** Expand provider capability groups while retaining candidate identity/state. */
-export const expandProviderCandidates = (candidates) =>
+const expandProviderCandidates = (candidates) =>
   candidates.map((candidate) => ({
     ...candidate,
     capabilities: expandProviderCapabilities(

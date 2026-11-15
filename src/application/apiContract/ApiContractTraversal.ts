@@ -1,6 +1,6 @@
 import { setImmediate } from "node:timers/promises";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { cancelledBy, carriedReason } from "../../domain/analysisErrorCore.js";
 import { err, type Result } from "../../domain/result.js";
 import { API_CONTRACT_OPERATION as operation } from "../../domain/apiContract/apiContract.js";
 
@@ -9,7 +9,7 @@ const cancelSteps = <Value>(
   steps: Generator<void, Result<Value, AnalysisError>>,
   reason: unknown,
 ): Result<Value, AnalysisError> => {
-  const cancellation = new AnalysisCancelledError(operation, { cause: reason });
+  const cancellation = cancelledBy(operation, carriedReason(reason));
   try {
     const stopped = steps.throw(cancellation);
     if (stopped.done && !stopped.value.ok) return stopped.value;

@@ -1,3 +1,4 @@
+import { escapeJsonPointerToken } from "../jsonPointer.js";
 import type { JsonValue } from "../jsonValue.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
 import {
@@ -7,12 +8,7 @@ import {
 } from "./appTaskDraftNoise.js";
 import { isIdentifyingAttribute, isNameLikeKey } from "./attributeRank.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
-import {
-  elementText,
-  escapeToken,
-  isXmlElement,
-  resolvePointer,
-} from "./viewPointer.js";
+import { elementText, isXmlElement, resolvePointer } from "./viewPointer.js";
 
 /** How far a text check climbs from a run to the element an attribute names. */
 const MAX_CLIMB = 3;
@@ -185,7 +181,7 @@ export const textAttributes = (
     ...change.removed.flatMap((pointer) => own(ends.baseline, pointer)),
   ].filter(
     ({ owner, key }) =>
-      noise(`${owner}/attributes/${escapeToken(key)}`) === undefined,
+      noise(`${owner}/attributes/${escapeJsonPointerToken(key)}`) === undefined,
   );
 };
 

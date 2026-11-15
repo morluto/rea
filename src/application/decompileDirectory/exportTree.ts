@@ -1,3 +1,4 @@
+import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import {
@@ -105,6 +106,13 @@ export const classifyOutputPath = async (
       );
 };
 
+/** Retained records whose body ranges are unknown. */
+export interface UnknownBodies {
+  readonly count: number;
+  /** The reason every such record gives, or undefined when they differ. */
+  readonly sharedReason: string | undefined;
+}
+
 /** Owns one export directory and its append-only journal. */
 export class DecompileExport {
   private constructor(
@@ -146,6 +154,27 @@ export class DecompileExport {
    */
   lastWritten(address: string): DecompileDirectoryFunctionRecord | undefined {
     return this.written.get(address);
+  }
+
+  /**
+   * Retained non-external records whose body ranges are unknown, with their
+   * reason when every such record shares one. The index lists every retained
+   * record, so its summary must come from these records rather than from the
+   * functions the latest call attempted. External records have no file for a
+   * body caveat to qualify.
+   */
+  unknownBodies(): UnknownBodies {
+    let count = 0;
+    let sharedReason: string | undefined;
+    for (const record of this.records.values()) {
+      if (record.status === "external" || record.body.available) continue;
+      sharedReason =
+        count === 0 || sharedReason === record.body.reason
+          ? record.body.reason
+          : undefined;
+      count += 1;
+    }
+    return { count, sharedReason };
   }
 
   /**
@@ -709,10 +738,7 @@ const parseJournal = (
   const committedBytes = bytes.lastIndexOf(0x0a) + 1;
   let committed: string;
   try {
-    committed = new TextDecoder("utf-8", {
-      fatal: true,
-      ignoreBOM: true,
-    }).decode(bytes.subarray(0, committedBytes));
+    committed = decodeStrictUtf8(bytes.subarray(0, committedBytes), "preserve");
   } catch {
     return err(incompatibleJournal());
   }

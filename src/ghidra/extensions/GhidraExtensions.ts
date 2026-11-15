@@ -6,9 +6,9 @@ import { z } from "zod";
 import type { AppConfig } from "../../config/types.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisUnsupportedTargetError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
@@ -104,10 +104,7 @@ export const resolveGhidraExtensions = async (
     .run(async () => {
       const extensions: GhidraExtension[] = [];
       for (const adapter of adapters) {
-        if (signal?.aborted)
-          return err(
-            new AnalysisCancelledError("open_binary", { cause: signal.reason }),
-          );
+        if (signal?.aborted) return err(cancelledBy("open_binary", signal));
         const configured = adapter.configuredPath(config);
         if (configured === undefined) continue;
         const refusal = adapter.unsupportedReason(target, platform);
@@ -133,10 +130,7 @@ export const resolveGhidraExtensions = async (
           );
         }
       }
-      if (signal?.aborted)
-        return err(
-          new AnalysisCancelledError("open_binary", { cause: signal.reason }),
-        );
+      if (signal?.aborted) return err(cancelledBy("open_binary", signal));
       return ok(extensions);
     })
     .catch((cause: unknown) =>

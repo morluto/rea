@@ -1,43 +1,41 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { z } from "zod";
-import { expect, it } from "vitest";
+import { expect, it, onTestFinished } from "vitest";
 
 import {
   TOOL_CONTRACTS,
   toolContract,
 } from "../../../src/contracts/toolContracts.js";
-import { COMPACT_OUTPUT_SCHEMA_BUDGET_BYTES } from "../../../src/config/mcpOutputSchemaProfile.js";
-import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/config/mcpInputSchemaProfile.js";
-import type { CompactInputSchemaPresentation } from "../../../src/contracts/compactInputSchema.js";
+import {
+  COMPACT_OUTPUT_SCHEMA_BUDGET_BYTES,
+  resolveMcpOutputSchemaProfile,
+} from "../../../src/config/mcpOutputSchemaProfile.js";
+import { createServer as createProductionServer } from "../../../src/server/createServer.js";
+import { silentLogger } from "../../../src/logger.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import type { ToolContract } from "../../../src/contracts/toolContractTypes.js";
-import { FULL_CATALOG_IDENTITY } from "../../../src/catalogIdentity.js";
+import { DEFAULT_CATALOG_IDENTITY } from "../../../src/catalogIdentity.js";
 import type { McpOutputSchemaProfile } from "../../../src/config/mcpOutputSchemaProfile.js";
 import { advertisedSchemaErrors } from "../../fixtures/mcpAdvertisedSchemaValidity.js";
-import { advertisedInputJsonSchema } from "../../../src/contracts/toolSchemaMetadata.js";
 
-const createServer = (
-  outputSchemaProfile: McpOutputSchemaProfile,
-  compactInputPresentation:
-    | CompactInputSchemaPresentation
-    | undefined = undefined,
-) =>
+const createServer = (outputSchemaProfile: McpOutputSchemaProfile) =>
   new EvidenceMcpServer(
     { name: "output-schema-fixture", version: "1" },
     { capabilities: {} },
     undefined,
     createToolResultDelivery(10 * 1024 * 1024),
-    compactInputPresentation,
+    undefined,
     outputSchemaProfile,
   );
 
 it("omits only output schema advertisements and keeps canonical MCP output validation", async () => {
   const server = createServer("off");
-  expect(server.catalogIdentity.digests.combined_sha256).not.toBe(
-    FULL_CATALOG_IDENTITY.digests.combined_sha256,
+  expect(server.catalogIdentity.digests.combined_sha256).toBe(
+    DEFAULT_CATALOG_IDENTITY.digests.combined_sha256,
   );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
@@ -101,7 +99,7 @@ it("omits only output schema advertisements and keeps canonical MCP output valid
 it("bounds output schema advertisements and keeps canonical MCP output validation", async () => {
   const server = createServer("compact");
   expect(server.catalogIdentity.digests.combined_sha256).not.toBe(
-    FULL_CATALOG_IDENTITY.digests.combined_sha256,
+    DEFAULT_CATALOG_IDENTITY.digests.combined_sha256,
   );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
@@ -180,21 +178,10 @@ it("bounds output schema advertisements and keeps canonical MCP output validatio
   }
 });
 
-it("keeps the default compact-input catalog below a measured one-megabyte frame", async () => {
-  const compactInput: CompactInputSchemaPresentation = {
-    budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
-  };
-  const canonicalInputs = new Map<string, Record<string, unknown>>(
-    TOOL_CONTRACTS.map((contract) => [
-      contract.name,
-      advertisedInputJsonSchema(contract),
-    ]),
-  );
-  const measure = async (
-    profile: McpOutputSchemaProfile,
-    inputPresentation: CompactInputSchemaPresentation | undefined,
-  ): Promise<number> => {
-    const server = createServer(profile, inputPresentation);
+it("keeps both output profiles below a measured one-megabyte frame", async () => {
+  const names = new Set(TOOL_CONTRACTS.map(({ name }) => name));
+  const measure = async (profile: McpOutputSchemaProfile): Promise<number> => {
+    const server = createServer(profile);
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     const client = new Client({ name: "catalog-size-test", version: "1" });
@@ -210,15 +197,8 @@ it("keeps the default compact-input catalog below a measured one-megabyte frame"
     await client.connect(clientTransport);
     try {
       const listed = await client.listTools();
-      expect(listed.tools).toHaveLength(canonicalInputs.size);
-      expect(new Set(listed.tools.map((tool) => tool.name))).toEqual(
-        new Set(canonicalInputs.keys()),
-      );
-      if (inputPresentation === undefined)
-        for (const tool of listed.tools)
-          expect(tool.inputSchema, tool.name).toEqual(
-            canonicalInputs.get(tool.name),
-          );
+      expect(listed.tools).toHaveLength(names.size);
+      expect(new Set(listed.tools.map((tool) => tool.name))).toEqual(names);
       if (profile === "off")
         expect(
           listed.tools.every((tool) => tool.outputSchema === undefined),
@@ -250,18 +230,10 @@ it("keeps the default compact-input catalog below a measured one-megabyte frame"
     }
   };
 
-  const fullBytes = await measure("full", undefined);
-  const compactBytes = await measure("compact", compactInput);
-  const offBytes = await measure("off", compactInput);
-  const fullInputOffBytes = await measure("off", undefined);
-  expect(fullBytes).toBeGreaterThan(1024 * 1024);
+  const compactBytes = await measure("compact");
+  const offBytes = await measure("off");
   expect(compactBytes).toBeLessThan(1024 * 1024);
   expect(offBytes).toBeLessThan(1024 * 1024);
-  // Full input is an explicit guidance choice, not the bounded compatibility
-  // profile. Omitting output schemas must preserve those complete inputs.
-  expect(fullInputOffBytes).toBeGreaterThan(offBytes);
-  expect(fullInputOffBytes).toBeLessThan(fullBytes);
-  expect(compactBytes).toBeLessThan(fullBytes);
   expect(compactBytes).toBeGreaterThan(offBytes);
 });
 
@@ -369,4 +341,41 @@ it("rejects canonical-invalid output that the reduced advertisement accepts", as
     await client.close();
     await server.close();
   }
+});
+
+it("omits output schemas by default and still delivers validated structured results", async () => {
+  expect(resolveMcpOutputSchemaProfile(undefined)).toBe("off");
+  const session = createTestBinarySession(() => {
+    throw new Error("No deep provider may start for a catalog listing");
+  });
+  // An environment without the setting selects the product default.
+  const server = createProductionServer(
+    { kind: "session", session },
+    { environment: { HOME: process.env.HOME }, logger: silentLogger },
+  );
+  const client = new Client({ name: "default-output-profile", version: "1" });
+  onTestFinished(async () => {
+    await client.close();
+    await server.close();
+    await session.close();
+  });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  const { tools } = await client.listTools();
+  expect(tools).toHaveLength(TOOL_CONTRACTS.length);
+  expect(
+    tools.filter(({ outputSchema }) => outputSchema !== undefined),
+  ).toEqual([]);
+  // The SDK client accepts structured content from a tool without a listed
+  // output schema; REA validated it against the canonical contract.
+  const result = await client.callTool({
+    name: "list_unknowns",
+    arguments: {},
+  });
+  expect(result.isError).not.toBe(true);
+  expect(result.structuredContent).toEqual({
+    result: { items: [], total: 0, offset: 0, next_offset: null },
+  });
 });

@@ -1,3 +1,4 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { traceSourceMap } from "../../../src/javascript/sourceMaps/TraceSourceMap.js";
 import {
   webSourceLocationArgs as args,
@@ -50,21 +51,16 @@ it("publishes valid SDK schemas and records the named module trace without a bin
   const advertised = (await client.listTools()).tools.find(
     (tool) => tool.name === "trace_web_source_location",
   );
-  if (advertised?.outputSchema === undefined)
+  if (advertised === undefined)
     throw new Error("module trace must advertise both schemas");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   const inputSchema: Record<string, unknown> = advertised.inputSchema;
-  const outputSchema: Record<string, unknown> = advertised.outputSchema;
   expect(ajv.validate(inputSchema, args)).toBe(true);
-  const response = await client.callTool({
-    name: "trace_web_source_location",
-    arguments: args,
-  });
+  const response = await client.callTool(
+    { name: "trace_web_source_location", arguments: args },
+    { toolDefinition: withCanonicalOutputSchema(advertised) },
+  );
   expect(response.isError).not.toBe(true);
-  expect(
-    ajv.validate(outputSchema, response.structuredContent),
-    JSON.stringify(ajv.errors),
-  ).toBe(true);
   const parsed = toolContract("trace_web_source_location").outputSchema.parse(
     response.structuredContent,
   );
@@ -98,9 +94,12 @@ it("publishes valid SDK schemas and records the named module trace without a bin
 
 it("preserves missing Linux ps capability and recovery through source-map tracing", async () => {
   const directory = await createTestTempDirectory("source-map-missing-ps-");
-  const prepare = createSystemProcessOwnershipHost("linux", {
-    PATH: directory,
-  }).prepare;
+  // A Linux host with no ps at a fixed system location or on REA's PATH.
+  const prepare = createSystemProcessOwnershipHost(
+    "linux",
+    { PATH: directory },
+    { linuxPsLocations: [] },
+  ).prepare;
   if (prepare === undefined)
     throw new Error("Ownership preparation is required");
   const createRuntime = vi.fn(async () => {

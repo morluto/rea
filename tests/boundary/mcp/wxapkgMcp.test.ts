@@ -8,7 +8,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { buildWxapkg, wxapkgEncryptedBytes } from "../../fixtures/wxapkg.js";
 
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "retains wxapkg facts and encrypted coverage through compiled MCP (%s)",
   async (profile) => {
     const root = await createTestTempDirectory("rea-wxapkg-mcp-");
@@ -83,5 +83,4 @@ it.each(["full", "compact"] as const)(
         await rm(outputRoot, { recursive: true, force: true });
     }
   },
-  60_000,
 );

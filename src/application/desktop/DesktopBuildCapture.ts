@@ -2,7 +2,7 @@ import type { DownloadInstall } from "../../domain/desktop/appDownloadInstall.js
 import { z } from "zod";
 
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { cancelledBy } from "../../domain/analysisErrorCore.js";
 import type { BuildRequest } from "../../domain/desktop/appBuild.js";
 import {
   SIGN_IN_END,
@@ -28,7 +28,11 @@ import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
 import type { AgentEnvComputer } from "../../desktop/AgentEnvComputer.js";
-import type { ControlledComputer } from "../../desktop/BuildComputerController.js";
+import {
+  controller,
+  type Answer,
+  type ControlledComputer,
+} from "../../desktop/BuildComputerController.js";
 import { BuildComputerLongRuns } from "../../desktop/BuildComputerLongRuns.js";
 import {
   endedCapture,
@@ -37,12 +41,10 @@ import {
 } from "./DesktopBuildCaptureFailure.js";
 import {
   adapterError,
-  controller,
   errorText,
   refused,
   runRea,
   WORK,
-  type Answer,
 } from "./DesktopBuildCommands.js";
 import {
   exportBuild,
@@ -212,8 +214,7 @@ const checkExportRuntime = async (
       );
     return ok(undefined);
   } catch (cause: unknown) {
-    if (signal.aborted)
-      return err(new AnalysisCancelledError(START, { cause: signal.reason }));
+    if (signal.aborted) return err(cancelledBy(START, signal));
     const message = errorText(cause);
     const redacted = computer.redacted(message);
     return err(
@@ -677,7 +678,7 @@ export class DesktopBuildCapture {
         cause instanceof AnalysisError
           ? cause
           : signal.aborted
-            ? new AnalysisCancelledError(EXPORT, { cause: signal.reason })
+            ? cancelledBy(EXPORT, signal)
             : adapterError(EXPORT, errorText(cause), cause),
       );
     }

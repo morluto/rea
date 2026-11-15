@@ -18,6 +18,7 @@ import {
   sameArtifactEntry,
   type ArtifactEntry,
   type ArtifactReader,
+  type ArtifactTraversalOptions,
 } from "./ArtifactReader.js";
 import {
   findDotnetBundleHeader,
@@ -66,7 +67,10 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
     });
   }
 
-  async *entries(signal?: AbortSignal): AsyncIterable<ArtifactEntry> {
+  async *entries(
+    signal?: AbortSignal,
+    options?: ArtifactTraversalOptions,
+  ): AsyncIterable<ArtifactEntry> {
     const bundle = await this.#scope.run(async () => {
       this.#assertOpen(signal);
       const source = await this.#source.readSelectedPath(signal);
@@ -132,6 +136,8 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
       yield entry;
     }
     await this.#source.readSelectedPath(signal);
+    // Every manifest file is listed; manifest damage fails the traversal.
+    options?.onCoverage?.({ status: "complete", limitations: [] });
   }
 
   async open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {

@@ -225,21 +225,23 @@ const activeRuntimeFixture = () => {
   const root = join(process.cwd(), "active-runtime-fixture");
   const applicationPath = join(root, "main.js");
   const result = createElectronActiveObservationFixtureResult(applicationPath);
-  const evidence = createElectronActiveEvidence(
-    {
-      ...electronActiveObservationInputSchema.parse({
-        executable_path: process.execPath,
-        application_path: applicationPath,
-        application_root: root,
-      }),
+  const input = {
+    ...electronActiveObservationInputSchema.parse({
+      executable_path: process.execPath,
+      application_path: applicationPath,
       application_root: root,
-    },
+    }),
+    application_root: root,
+  };
+  const evidence = createElectronActiveEvidence(
+    input,
     result,
     {
       id: "rea-playwright-electron-active",
       name: "REA Playwright active Electron observation provider",
       version: "1",
     },
+    input,
   );
   return { evidence, result };
 };
@@ -305,7 +307,7 @@ describe("runtime reconciliation failure ownership through the public SDK", () =
     },
     {
       field: "parameters",
-      path: ["parameters", "application_root"],
+      path: ["parameters", "resolved_paths", "application_root"],
       reason: "invalid_type",
     },
     {
@@ -325,7 +327,13 @@ describe("runtime reconciliation failure ownership through the public SDK", () =
           confidence: evidence.confidence,
           parameters:
             field === "parameters"
-              ? { ...evidence.parameters, application_root: 3 }
+              ? {
+                  ...evidence.parameters,
+                  resolved_paths: {
+                    ...(evidence.parameters.resolved_paths as object),
+                    application_root: 3,
+                  },
+                }
               : evidence.parameters,
           result:
             field === "parameters"

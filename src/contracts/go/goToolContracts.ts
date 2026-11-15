@@ -5,12 +5,13 @@ import {
 import type { ToolContract } from "../toolContractTypes.js";
 import { toolContractMetadata } from "../toolEffects.js";
 import { analysisDetailOutputSchemaOf } from "../analysisDetail.js";
-import { goBinarySummaryViewResultSchema } from "../../domain/analysisView/analysisView.js";
+import { goBinarySummaryViewResultSchema } from "../../domain/analysisView/analysisViewResult.js";
 
 /** Static Go metadata is independent of active native-analysis providers and host toolchains. */
 export const GO_TOOL_CONTRACTS = [
   {
     name: "inspect_go_binary",
+    availability: "standalone",
     ...toolContractMetadata("inspect_go_binary"),
     kind: "artifact-provider",
     requiresActiveTarget: true,

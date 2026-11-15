@@ -176,6 +176,8 @@ class ServeDispatcher:
                 "ok": False,
                 "error": "active-document-generation-changed",
                 "execution_state": "not_started",
+                "document_generation": self.generation,
+                "output_truncated": False,
             })
             self.completed_commands[request["request_id"]] = "not_started"
         elif request.get("kind") == "command" and request.get("command") == "fixture-unknown":
@@ -194,6 +196,7 @@ class ServeDispatcher:
                 "cutter_version": self.cutter_version,
                 "identity_status": "partial",
                 "execution_state": "complete",
+                "output_truncated": False,
             })
             self.completed_commands[request["request_id"]] = "complete"
             self.fail_next_ack = True
@@ -206,6 +209,7 @@ class ServeDispatcher:
                 "cutter_version": self.cutter_version,
                 "identity_status": "partial",
                 "execution_state": "complete",
+                "output_truncated": False,
             })
             self.completed_commands[request["request_id"]] = "complete"
             self.malformed_next_ack = True
@@ -222,6 +226,7 @@ class ServeDispatcher:
                 "cutter_version": self.cutter_version,
                 "identity_status": "partial",
                 "execution_state": "complete",
+                "output_truncated": False,
             })
             if request.get("kind") == "command":
                 self.completed_commands[request["request_id"]] = "complete"
@@ -376,10 +381,13 @@ class DocumentIdentityTest(unittest.TestCase):
             stale = handle(kind="command", request_id=str(uuid.uuid4()), expected_generation=0, command="iI")
             self.assertEqual(stale["error"], "active-document-generation-changed")
             self.assertEqual(stale["execution_state"], "not_started")
+            self.assertEqual(stale["document_generation"], 1)
+            self.assertIs(stale["output_truncated"], False)
             self.assertEqual(commands, [])
             current = handle(kind="command", request_id=str(uuid.uuid4()), expected_generation=1, command="iI")
             self.assertEqual(current["output"], "observed")
             self.assertEqual(current["document_generation"], 1)
+            self.assertIs(current["output_truncated"], False)
             self.assertEqual(commands, ["iI"])
 
     def test_absent_or_unreadable_document_config_remains_unknown(self):

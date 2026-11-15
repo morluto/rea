@@ -4,21 +4,20 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { getHeapStatistics } from "node:v8";
 
 import { describe, expect, it } from "vitest";
 
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import { guestFileAnswerBytes } from "./AgentEnvComputer.js";
 import {
-  batchListedFiles,
-  controllerArgumentPieces,
   fetchHomeFolder,
   LINUX_ARGUMENT_VECTOR_BYTES,
-  LINUX_SINGLE_ARGUMENT_BYTES,
   runBuildController,
 } from "./BuildComputerController.js";
 
 const MIB = 1024 * 1024;
+const EXPECTED_LINUX_SINGLE_ARGUMENT_BYTES = 32 * 4096 - 1;
 const sha256 = (bytes: Buffer) =>
   createHash("sha256").update(bytes).digest("hex");
 
@@ -58,6 +57,38 @@ const computer = (files: ReadonlyMap<string, Buffer>, steps: string[]) => {
 };
 
 describe("fetchHomeFolder", () => {
+  it("splits tiny files before their answer envelopes exceed the live budget", async () => {
+    const workingBytes = Math.floor(getHeapStatistics().heap_size_limit / 12);
+    const count = Math.floor(workingBytes / (64 * 1024)) + 2;
+    const files = new Map(
+      Array.from({ length: count }, (_, index) => [
+        `.rea-build/b/file-${String(index)}`,
+        Buffer.from("x"),
+      ]),
+    );
+    const base = computer(files, []);
+    const batches: { count: number; bytes: number }[] = [];
+    const observed = {
+      ...base,
+      homeFiles: (paths: readonly string[], bytes: number) => {
+        if (paths[0]?.endsWith(".listing.json") !== true)
+          batches.push({ count: paths.length, bytes });
+        return base.homeFiles(paths, bytes);
+      },
+    };
+    const result = await fetchHomeFolder(observed, ".rea-build/b", {
+      file: () => Promise.resolve(),
+    });
+    expect(result).toEqual({ files: count, bytes: count });
+    expect(batches.length).toBeGreaterThan(1);
+    expect(
+      batches.every(
+        ({ count, bytes }) =>
+          guestFileAnswerBytes(bytes, count) <= workingBytes,
+      ),
+    ).toBe(true);
+  });
+
   it("hands over each checked batch before asking for the next, so one batch at a time is held", async () => {
     const files = new Map([
       [".rea-build/b/a", Buffer.alloc(5 * MIB, 1)],
@@ -103,22 +134,6 @@ describe("fetchHomeFolder", () => {
   });
 });
 
-describe("batchListedFiles", () => {
-  it("starts another batch before each file's envelope pushes the answer over the budget", () => {
-    const files = [1, 2, 3].map((index) => ({
-      path: `f${String(index)}`,
-      size: 10,
-    }));
-    const budget = guestFileAnswerBytes(20, 2);
-    expect(
-      batchListedFiles(files, {
-        rawBytes: 8 * 1024 * 1024,
-        answerBytes: budget,
-      }).map((batch) => batch.files.length),
-    ).toEqual([2, 1]);
-  });
-});
-
 describe("controller arguments", () => {
   it("splits a full start request so each argument fits Linux and the pieces join back", async () => {
     const launchArguments = Array.from({ length: 32 }, () => "a".repeat(4096));
@@ -160,10 +175,10 @@ describe("controller arguments", () => {
     ]);
     for (const argument of argv)
       expect(Buffer.byteLength(argument)).toBeLessThanOrEqual(
-        LINUX_SINGLE_ARGUMENT_BYTES,
+        EXPECTED_LINUX_SINGLE_ARGUMENT_BYTES,
       );
     expect(Buffer.byteLength(JSON.stringify(payload))).toBeGreaterThan(
-      LINUX_SINGLE_ARGUMENT_BYTES,
+      EXPECTED_LINUX_SINGLE_ARGUMENT_BYTES,
     );
     expect(JSON.parse(argv.slice(5).join(""))).toEqual(payload);
   });
@@ -204,13 +219,37 @@ describe("controller arguments", () => {
   });
 
   it("keeps a character split on a UTF-16 pair whole and joins the controller's real entry point", async () => {
-    const text = `${"a".repeat(LINUX_SINGLE_ARGUMENT_BYTES - 1)}\u{1F600}rest`;
-    const pieces = controllerArgumentPieces(text);
-    expect(pieces.join("")).toBe(text);
-    for (const piece of pieces)
+    const text = `${"a".repeat(EXPECTED_LINUX_SINGLE_ARGUMENT_BYTES - 12)}\u{1F600}rest`;
+    const input = { text };
+    let argv: readonly string[] = [];
+    await runBuildController(
+      {
+        exec: (next) => {
+          argv = next;
+          return Promise.resolve({
+            exit_code: 0,
+            stdout: "{}\n",
+            stderr: "",
+            truncated: false,
+            timed_out: false,
+          });
+        },
+        homeFiles: () => Promise.resolve(new Map()),
+        redacted: (value) => value,
+      },
+      "start",
+      input,
+      { timeoutS: 1 },
+    );
+    const pieces = argv.slice(5);
+    expect(JSON.parse(pieces.join(""))).toEqual(input);
+    expect(pieces.length).toBeGreaterThan(1);
+    for (const piece of pieces) {
       expect(Buffer.byteLength(piece)).toBeLessThanOrEqual(
-        LINUX_SINGLE_ARGUMENT_BYTES,
+        EXPECTED_LINUX_SINGLE_ARGUMENT_BYTES,
       );
+      expect(Buffer.from(piece, "utf8").toString("utf8") === piece).toBe(true);
+    }
     const root = await mkdtemp(join(tmpdir(), "rea-controller-args-"));
     try {
       const output = join(root, "listing.json");
@@ -233,27 +272,5 @@ describe("controller arguments", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
-  });
-});
-
-describe("batchListedFiles", () => {
-  it("splits many tiny files before their envelopes pass the answer budget", () => {
-    const files = Array.from({ length: 3000 }, (_, index) => ({
-      path: `home/file-${String(index)}`,
-      size: 1,
-    }));
-    const answerBytes = guestFileAnswerBytes(1, 1);
-    const batches = batchListedFiles(files, {
-      rawBytes: 8 * MIB,
-      answerBytes,
-    });
-
-    expect(batches.length).toBe(files.length);
-    expect(
-      batches.every(
-        (batch) =>
-          guestFileAnswerBytes(batch.bytes, batch.files.length) <= answerBytes,
-      ),
-    ).toBe(true);
   });
 });

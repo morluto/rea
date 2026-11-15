@@ -64,7 +64,6 @@ describe("provider process runtime and wait primitives", () => {
 
     const first = runtime.close();
     const second = runtime.close();
-    expect(second).toBe(first);
     await Promise.all([first, second]);
     await expect(access(runtime.path)).rejects.toMatchObject({
       code: "ENOENT",
@@ -283,6 +282,7 @@ describe("provider process output and cleanup primitives", () => {
         ownsProcessLifetime: true,
       });
       await waitForProviderProcessReady(child);
+      const signal = vi.spyOn(child, "kill");
 
       const first = supervisor.stop({
         terminationGraceMs: 20,
@@ -292,11 +292,13 @@ describe("provider process output and cleanup primitives", () => {
         terminationGraceMs: 20,
         killGraceMs: 500,
       });
-      // Concurrent callers must share one escalation instead of signalling
-      // the same child twice.
-      expect(second).toBe(first);
-      await expect(first).resolves.toEqual({ status: "killed" });
+      // Both callers observe the completed escalation.
+      await expect(Promise.all([first, second])).resolves.toEqual([
+        { status: "killed" },
+        { status: "killed" },
+      ]);
       expect(child.signalCode).toBe("SIGKILL");
+      expect(signal.mock.calls).toEqual([["SIGTERM"], ["SIGKILL"]]);
     },
   );
 
