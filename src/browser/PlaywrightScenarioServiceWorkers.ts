@@ -77,6 +77,13 @@ export class PlaywrightScenarioServiceWorkers {
   #stopRequested = false;
   #stopPromise: Promise<void> | undefined;
   #removeListener: (() => void) | undefined;
+  #removeProtocolFailure: (() => void) | undefined;
+  /**
+   * A protocol failure on the policy connection, including a malformed target
+   * event the listener rejected. Later targets would not be protected, so
+   * every later policy check reports it.
+   */
+  #failure: BrowserObservationError | undefined;
   #setup = new AbortController();
 
   constructor(
@@ -163,6 +170,9 @@ export class PlaywrightScenarioServiceWorkers {
       );
     }
     const connection = this.#session.connection;
+    this.#removeProtocolFailure = connection.onProtocolFailure((error) => {
+      this.#failure ??= error;
+    });
     this.#removeListener = connection.onEvent((event) => {
       const registered = event.registered;
       if (
@@ -355,7 +365,9 @@ export class PlaywrightScenarioServiceWorkers {
   }
 
   async assertBlocked(): Promise<void> {
+    if (this.#failure !== undefined) throw this.#failure;
     if (this.#session !== undefined) await this.settle();
+    if (this.#failure !== undefined) throw this.#failure;
     for (const frame of this.page.frames()) {
       let failure: unknown;
       try {
@@ -501,6 +513,7 @@ export class PlaywrightScenarioServiceWorkers {
       this.#detached = true;
     }
     this.#removeListener?.();
+    this.#removeProtocolFailure?.();
     await this.#transportOwner.finish(session.connection);
     await this.#transportOwner.close();
     this.#released = true;
