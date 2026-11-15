@@ -9,7 +9,7 @@ import type { BinarySessionPort } from "../application/binary/BinarySessionPort.
 import type { ProviderAvailability } from "../application/AnalysisProvider.js";
 import type { JebAnalysisAvailability } from "../application/jeb/JebAnalysisPort.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import {
   buildCapabilityInventory,
@@ -84,11 +84,11 @@ const probeSessionAvailability = async (
           : new ProviderAdapterError("rea", "binary_session", {
               cause: failure,
             });
-      failure = analysisErrorWithCleanupFailure(
+      failure = analysisErrorWithCleanupDependencies(
         primary,
         result.reason,
         "binary_session",
-      ).bindCleanupDependencies([primary, result.reason]);
+      );
     }
     throw failure;
   }
