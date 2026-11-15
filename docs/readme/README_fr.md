@@ -295,6 +295,11 @@ Consultez [CONTRIBUTING.md](../../CONTRIBUTING.md) pour l'environnement de déve
 
 Consultez [DISCLAIMER.md](../../DISCLAIMER.md) pour les consignes d'utilisation responsable.
 
+> [!WARNING]
+> **Avertissement relatif au bannissement de compte et utilisation autorisée :** Les fournisseurs et plateformes d'IA (tels qu'Anthropic, OpenAI, Cursor, etc.) appliquent une surveillance automatisée des abus et des filtres de sécurité. Demander à des agents d'IA de décompiler des logiciels propriétaires, d'extraire de la propriété intellectuelle protégée ou de contourner des DRM et systèmes anti-triche enfreint les politiques d'utilisation acceptable de l'IA et peut entraîner la suspension immédiate et le bannissement définitif de comptes ou de clés API.
+>
+> N'utilisez REA que sur des logiciels dont vous êtes propriétaire, placés dans le domaine public ou pour lesquels vous détenez une autorisation expresse. La rétro-ingénierie non autorisée de logiciels propriétaires ne confère aucun droit sur le code généré et peut violer les lois sur le droit d'auteur et les conditions d'utilisation.
+
 REA est destiné à la recherche, à l’éducation, à l’interopérabilité, à la préservation logicielle et à l’analyse de logiciels que vous possédez ou êtes autorisé à examiner, dans le respect de la loi.
 
 The project's position on illegal or unauthorized use covers all REA

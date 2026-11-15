@@ -354,6 +354,11 @@ npx rea-agents@latest setup
 
 Вижте [DISCLAIMER.md](../../DISCLAIMER.md) за насоки за отговорна употреба.
 
+> [!WARNING]
+> **Account Ban Notice & Authorized Use Only:** AI providers and platforms (such as Anthropic, OpenAI, Cursor, and other model hosts) employ automated safety filters and abuse monitoring. Prompting AI agents to decompile proprietary software, extract protected intellectual property, or bypass DRM and anti-cheat protections violates AI acceptable use policies and can result in immediate and permanent account suspension or API access revocation.
+>
+> REA must only be used on software you own, public-domain code, or targets for which you possess explicit authorization. Reverse engineering proprietary software without authorization does not grant rights to generated code and may violate copyright laws and terms of service.
+
 Позицията на проекта относно незаконната или неразрешената употреба обхваща
 всички версии, канали за разпространение и платформи на REA; всяко копие запазва
 приложимите за него лицензи.

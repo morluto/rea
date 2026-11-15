@@ -341,6 +341,11 @@ Consultă [CONTRIBUTING.md](../../CONTRIBUTING.md) pentru pregătirea mediului d
 
 Consultă [DISCLAIMER.md](../../DISCLAIMER.md) pentru îndrumări privind utilizarea responsabilă.
 
+> [!WARNING]
+> **Account Ban Notice & Authorized Use Only:** AI providers and platforms (such as Anthropic, OpenAI, Cursor, and other model hosts) employ automated safety filters and abuse monitoring. Prompting AI agents to decompile proprietary software, extract protected intellectual property, or bypass DRM and anti-cheat protections violates AI acceptable use policies and can result in immediate and permanent account suspension or API access revocation.
+>
+> REA must only be used on software you own, public-domain code, or targets for which you possess explicit authorization. Reverse engineering proprietary software without authorization does not grant rights to generated code and may violate copyright laws and terms of service.
+
 Poziția proiectului față de utilizarea ilegală sau neautorizată se aplică tuturor
 versiunilor REA, canalelor de distribuție și platformelor; fiecare copie își
 păstrează licențele aplicabile.

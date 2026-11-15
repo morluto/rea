@@ -344,6 +344,11 @@ verification lanes ke liye [testing](../development/testing.md) dekhein.
 
 Responsible-use guidance ke liye [DISCLAIMER.md](../../DISCLAIMER.md) dekhein.
 
+> [!WARNING]
+> **Account Ban Notice & Authorized Use Only:** AI providers and platforms (such as Anthropic, OpenAI, Cursor, and other model hosts) employ automated safety filters and abuse monitoring. Prompting AI agents to decompile proprietary software, extract protected intellectual property, or bypass DRM and anti-cheat protections violates AI acceptable use policies and can result in immediate and permanent account suspension or API access revocation.
+>
+> REA must only be used on software you own, public-domain code, or targets for which you possess explicit authorization. Reverse engineering proprietary software without authorization does not grant rights to generated code and may violate copyright laws and terms of service.
+
 Ghair qanooni ya ghair ijazati istemal ke bare mein project ki position REA ke
 tamam versions, distribution channels aur platforms par lagu hoti hai; har copy
 par uske applicable licenses barqarar rehte hain.
