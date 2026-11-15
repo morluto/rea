@@ -398,6 +398,7 @@ it("refuses pointer workspace growth before inserting the next virtual destinati
       expect.objectContaining({
         reason: "native-index-capacity",
         maximum: 4096,
+        unit: "bytes",
         message: expect.stringContaining("4096 estimated representation bytes"),
       }),
     );

@@ -94,6 +94,7 @@ export function* openImageSteps(image: Buffer): Generator<void, NativeImage> {
         "native-index-capacity",
         cause.message,
         cause.failure.limit.maximum,
+        "bytes",
       );
     if (cause instanceof BinaryFormatFailure)
       throw new Il2cppBinaryFormatFailure(
@@ -128,11 +129,12 @@ export function* openImageSteps(image: Buffer): Generator<void, NativeImage> {
     if (cause instanceof ElfPointerRelocationFailure) {
       if (cause.reason !== "native-index-capacity")
         throw new Il2cppBinaryFormatFailure(cause.reason, cause.message);
-      if (cause.maximum !== undefined)
+      if (cause.maximum !== undefined && cause.unit !== undefined)
         throw new Il2cppBinaryFormatFailure(
           cause.reason,
           cause.message,
           cause.maximum,
+          cause.unit,
         );
     }
     if (cause instanceof BinaryFormatFailure)

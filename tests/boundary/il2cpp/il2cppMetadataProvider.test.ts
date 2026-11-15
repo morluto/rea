@@ -1081,7 +1081,10 @@ it("reports the exceeded native-link maximum in the public refusal", async () =>
     expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
     expect(result.error).toMatchObject({
       resource: "capacity",
-      reportedLimits: { maximum_native_index_entries: 64 },
+      reportedLimits: {
+        boundary: "native-index-capacity",
+        maximum_entries: 64,
+      },
     });
   } finally {
     await provider.close();

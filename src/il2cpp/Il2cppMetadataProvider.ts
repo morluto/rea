@@ -1,7 +1,6 @@
 import { IL2CPP_METADATA_PROVIDER_IDENTITY } from "./Il2CppMetadataProviderIdentity.js";
 import {
   Il2cppBinaryFormatFailure,
-  type Il2cppBinaryCapacityReason,
   IL2CPP_BINARY_BYTES,
 } from "./Il2cppBinaryFormat.js";
 import { Il2cppMetadataFormatFailure } from "./Il2cppMetadataFormat.js";
@@ -74,15 +73,6 @@ const inferredReferenceForm = (architecture: string) =>
   architecture === "arm64"
     ? "an adjacent ADRP+ADD pair"
     : "RIP-relative LEA/MOV";
-/** The public name and unit of each IL2CPP native-link budget's maximum. */
-const IL2CPP_BINARY_REPORTED_LIMITS: Readonly<
-  Record<Il2cppBinaryCapacityReason, string>
-> = {
-  "native-index-capacity": "maximum_native_index_entries",
-  "type-nesting-capacity": "maximum_type_nesting_depth",
-  "native-type-text-capacity": "maximum_type_text_bytes",
-};
-
 const failureForPrimary = (
   facts: ArtifactFilePrimaryFacts,
   path: string,
@@ -101,10 +91,12 @@ const failureForPrimary = (
       OPERATION,
       cause.reason === "native-type-text-capacity" ? "memory" : "capacity",
       cause.message,
+      // The producing site states what its maximum counts.
       {
-        [IL2CPP_BINARY_REPORTED_LIMITS[
-          cause.reason as Il2cppBinaryCapacityReason
-        ]]: cause.failure.limit.maximum,
+        boundary: cause.reason,
+        ...(cause.unit === undefined
+          ? {}
+          : { [`maximum_${cause.unit}`]: cause.failure.limit.maximum }),
       },
       {
         cause,

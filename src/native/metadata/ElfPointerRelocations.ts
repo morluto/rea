@@ -16,6 +16,8 @@ import {
 export class ElfPointerRelocationFailure extends Error {
   /** The exceeded workspace bound, set only for `native-index-capacity`. */
   readonly maximum: number | undefined;
+  /** What `maximum` counts, set only for `native-index-capacity`. */
+  readonly unit: "entries" | "bytes" | undefined;
   constructor(
     reason:
       | "malformed-container"
@@ -27,6 +29,7 @@ export class ElfPointerRelocationFailure extends Error {
     reason: "native-index-capacity",
     message: string,
     maximum: number,
+    unit: "entries" | "bytes",
   );
   constructor(
     readonly reason:
@@ -36,9 +39,11 @@ export class ElfPointerRelocationFailure extends Error {
       | "native-index-capacity",
     message: string,
     maximum?: number,
+    unit?: "entries" | "bytes",
   ) {
     super(message);
     this.maximum = maximum;
+    this.unit = unit;
   }
 }
 export interface ElfPointerRelocationSource {
@@ -269,6 +274,7 @@ function* dynamicTags(
       "native-index-capacity",
       "ELF dynamic directory exceeds the 16 MiB structural allowance",
       16 * 1024 * 1024,
+      "bytes",
     );
   if (
     declaration.size % BigInt(width) !== 0n ||
@@ -677,6 +683,7 @@ class ElfVirtualWriteIndex {
           "native-index-capacity",
           `ELF virtual pointer index exceeds ${this.maximumBytes} estimated representation bytes (${ELF_POINTER_INDEX_ENTRY_BYTES} reserved per virtual address, including lookup workspace)`,
           this.maximumBytes,
+          "bytes",
         );
       this.#reservedBytes += ELF_POINTER_INDEX_ENTRY_BYTES;
     }
@@ -828,6 +835,7 @@ export function* readElfPointerRelocationsSteps(
           "native-index-capacity",
           `ELF sparse relocation index exceeds ${MAX_RELOCATION_RECORDS} retained writes`,
           MAX_RELOCATION_RECORDS,
+          "entries",
         );
       writes.push(write);
       index.add(write);
@@ -895,6 +903,7 @@ export function* readElfPointerValuesSteps(
           "native-index-capacity",
           `ELF unresolved and zero-fill overlay exceeds ${MAX_RELOCATION_RECORDS} entries`,
           MAX_RELOCATION_RECORDS,
+          "entries",
         );
     }
     next = steps.next();
