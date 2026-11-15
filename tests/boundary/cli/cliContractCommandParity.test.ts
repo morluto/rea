@@ -12,6 +12,7 @@ import {
 import {
   contractCommandDescriptions,
   contractDocumentCommandDescriptions,
+  targetRoutedCommandDescriptions,
 } from "../../../src/cli/contractCommand.js";
 import { jsonInputContentSchema } from "../../../src/cli/jsonInputArgument.js";
 import {
@@ -27,7 +28,11 @@ const registered = new Map<string, RegisteredCommand>();
 visitRegisteredCommands(cli, (command, path) => {
   registered.set(path, command);
 });
-const descriptions = contractCommandDescriptions(cli);
+// A target-routed command contributes one description per contract it runs.
+const descriptions = [
+  ...contractCommandDescriptions(cli),
+  ...targetRoutedCommandDescriptions(cli),
+];
 
 const inputJsonSchema = (field: z.ZodType): Record<string, unknown> =>
   z.toJSONSchema(field, { io: "input", unrepresentable: "any" });
@@ -160,6 +165,10 @@ const registeredField = (
 const contractShape = (description: ContractCliDescription) =>
   description.fields;
 
+/** Contract fields the handler supplies from each Evidence target. */
+const targetFields = (description: ContractCliDescription): string[] =>
+  (description.evidenceTargets?.targets ?? []).map(({ field }) => field);
+
 /** The contract schema one parameter supplies: a field, or a flattened member. */
 const suppliedField = (
   description: ContractCliDescription,
@@ -246,6 +255,8 @@ const ARGV_SATISFYING_RULES: Readonly<
   "capture-native-ui-scenario": {
     steps: '[{"kind":"wait","milliseconds":0}]',
   },
+  // The handler selects the local device when the caller selects none.
+  "list-frida-processes": { deviceId: "local" },
 };
 
 const each = descriptions.map(
@@ -309,6 +320,11 @@ const MIGRATED_COMMANDS = [
   "list-architectures",
   "inspect-plist",
   "demangle-swift",
+  "analyze",
+  "analyze-javascript-application",
+  "inspect-managed-artifact",
+  "inspect-managed-members",
+  "inspect-managed-native-boundaries",
 ];
 
 describe("CLI commands projected from tool contracts", () => {
@@ -325,6 +341,7 @@ describe("CLI commands projected from tool contracts", () => {
         [
           ...new Set(description.parameters.map(({ field }) => field)),
           ...Object.keys(description.omitted),
+          ...targetFields(description),
         ]
           .toSorted()
           .join(),
@@ -340,21 +357,31 @@ describe("CLI commands projected from tool contracts", () => {
         ...(description.sessionTarget === undefined
           ? []
           : [description.sessionTarget.key]),
+        ...(description.evidenceTargets?.targets ?? []).map(({ key }) => key),
         ...description.parameters
           .filter(({ positional }) => positional)
           .map(({ key }) => key),
       ]);
+      // A routed command takes the union of its routes' options.
+      const routes = descriptions.filter(
+        ({ command: name }) => name === description.command,
+      );
       expect(optionKeys.toSorted()).toEqual(
         [
-          ...description.parameters
-            .filter(({ positional }) => !positional)
-            .map(({ key }) => key),
-          ...(description.sessionTarget?.options ?? []).map(({ key }) => key),
-          ...description.cliOnlyOptions.map(({ key }) => key),
-          ...description.parameters.flatMap(({ selectorOption }) =>
-            [selectorOption, selectorOption?.alternative].flatMap((option) =>
-              option === undefined ? [] : [option.key],
-            ),
+          ...new Set(
+            routes.flatMap((route) => [
+              ...route.parameters
+                .filter(({ positional }) => !positional)
+                .map(({ key }) => key),
+              ...(route.sessionTarget?.options ?? []).map(({ key }) => key),
+              ...(route.evidenceTargets?.options ?? []).map(({ key }) => key),
+              ...route.cliOnlyOptions.map(({ key }) => key),
+              ...route.parameters.flatMap(({ selectorOption }) =>
+                [selectorOption, selectorOption?.alternative].flatMap(
+                  (option) => (option === undefined ? [] : [option.key]),
+                ),
+              ),
+            ]),
           ),
         ].toSorted(),
       );
@@ -431,9 +458,19 @@ describe("CLI commands projected from tool contracts", () => {
         if (runtimeJson !== undefined && typeof values[key] === "string")
           values[key] = JSON.parse(values[key]) as unknown;
       const input = description.toContractInput(values);
-      expect(description.contract.inputSchema.safeParse(input).error).toBe(
-        undefined,
-      );
+      // The handler supplies each Evidence target's field from its source.
+      const targets = new Set(targetFields(description));
+      const admitted =
+        targets.size === 0
+          ? description.contract.inputSchema
+          : z.object(
+              Object.fromEntries(
+                Object.entries(contractShape(description)).filter(
+                  ([field]) => !targets.has(field),
+                ),
+              ),
+            );
+      expect(admitted.safeParse(input).error).toBe(undefined);
       for (const parameter of description.parameters)
         if (parameter.callerPath && parameter.positional) {
           expect(input[parameter.field]).toBe(absoluteCallerPath("rel/target"));
@@ -653,14 +690,15 @@ describe("Flattened object fields of contract commands", () => {
         field in description.toContractInput(argvValues(description, {})),
       ).toBe(false);
       for (const given of members) {
+        const value = requiredValue(description, given);
         const input = description.toContractInput(
-          argvValues(description, { [given.key]: 1 }),
+          argvValues(description, { [given.key]: value }),
         );
         expect(Object.keys(input[field] as object).toSorted()).toEqual(
           members.map(({ member }) => member).toSorted(),
         );
         expect((input[field] as Record<string, unknown>)[given.member!]).toBe(
-          1,
+          value,
         );
       }
     },
