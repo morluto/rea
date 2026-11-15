@@ -92,6 +92,43 @@ describe("nullable redirect resource types", () => {
   });
 });
 
+describe("captures recorded before redirect hops", () => {
+  const legacy = (capture: WebPageInspection): WebPageInspection => {
+    for (const request of capture.network.requests) delete request.redirects;
+    return capture;
+  };
+
+  it.each([
+    ["no redirects", () => unselectedShapes(passiveNetworkCapture())],
+    ["a redirect chain", () => redirectCapture("Document")],
+  ])(
+    "reports redirects as unknown, not unchanged, against %s",
+    (_label, current) => {
+      const after = current();
+      for (const [left, right] of [
+        [legacy(structuredClone(after)), after],
+        [after, legacy(structuredClone(after))],
+      ] as const)
+        expect(compare(left, right)).toMatchObject({
+          status: "unknown",
+          total_changes: 0,
+          changes: [],
+          reason: expect.stringContaining("redirect chains") as unknown,
+        });
+    },
+  );
+
+  it("still reports proven request membership changes", () => {
+    const before = legacy(unselectedShapes(passiveNetworkCapture()));
+    const after = unselectedShapes(passiveNetworkCapture(["/a", "/b"]));
+    expect(compare(before, after)).toMatchObject({
+      status: "changed",
+      total_changes: 1,
+      changes: [{ change: "added" }],
+    });
+  });
+});
+
 describe("passive network inventory changes", () => {
   it.each(["websocket_connections", "websocket_frames"] as const)(
     "does not infer duplicate WebSocket inventory changes from dropped %s",

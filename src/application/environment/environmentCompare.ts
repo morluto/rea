@@ -306,6 +306,7 @@ const stepOf = (
     differences_total: outcome.differences.length,
     differences_omitted: omitted,
     differences_truncated: omitted > 0,
+    // optional-fact-default: with no matched call (tool null) no query was mapped.
     ignored_query: [...(call?.ignoredQuery ?? [])],
   };
 };

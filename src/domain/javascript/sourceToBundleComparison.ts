@@ -67,6 +67,7 @@ export const compareSourceToBundle = (
       ...nodeIds,
       ...candidates
         .filter((candidate) => nodeIds.includes(candidate.current_node_id))
+        // optional-fact-default: omitted without occurrence provenance, when the only represented node is the candidate's own, already in nodeIds.
         .flatMap((candidate) => candidate.representation_node_ids ?? []),
     ]),
   );
