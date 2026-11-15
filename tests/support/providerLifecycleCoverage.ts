@@ -1435,7 +1435,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       operation: covered(
         test(
           "src/browser/PlaywrightBrowserScenarioProvider.test.ts",
-          "returns an initial state and every step beyond the former action ceiling",
+          "returns an initial state and every step of a long scenario",
         ),
       ),
       cancel: covered(
