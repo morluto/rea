@@ -59,7 +59,7 @@ export const registerCoreBinaryCommands = (
   const run = runDirectOnTarget(runDirectAnalysis, logger);
   registerOverviewCommands(cli, logger, runDirectAnalysis, environment);
   registerDecompileCommand(cli, logger, run);
-  registerDecompileDirectoryCommand(cli, logger, runDirectAnalysis);
+  registerDecompileDirectoryCommand(cli, logger, run);
   registerSearchCommand(cli, logger, run);
   registerContractBinaryCommands(cli, logger, run);
 };
