@@ -161,7 +161,7 @@ class StreamingUf2Decoder implements RegionDecoder<Uf2Image> {
   readonly #groups = new Map<string, NumberingGroup>();
   readonly #families = new Set<number>();
   #arena: Uint8Array;
-  #arenaUsed = 0;
+  #arenaWriteOffset = 0;
   #blockLength = 0;
   #blockCount = 0;
   #invalid = 0;
@@ -325,7 +325,7 @@ class StreamingUf2Decoder implements RegionDecoder<Uf2Image> {
     data: Uint8Array,
   ): Result<void, RegionDecodeFailure> {
     if (data.length === 0) return ok(undefined);
-    if (this.#arenaUsed + data.length > this.#arena.length)
+    if (this.#arenaWriteOffset + data.length > this.#arena.length)
       return err({
         kind: "limit",
         boundary: "file-size",
@@ -344,14 +344,14 @@ class StreamingUf2Decoder implements RegionDecoder<Uf2Image> {
       this.#runs.push({
         familyId,
         address,
-        offset: this.#arenaUsed,
+        offset: this.#arenaWriteOffset,
         length: data.length,
         blockCount: 1,
         firstFileBlock: block,
         lastFileBlock: block,
       });
-    this.#arena.set(data, this.#arenaUsed);
-    this.#arenaUsed += data.length;
+    this.#arena.set(data, this.#arenaWriteOffset);
+    this.#arenaWriteOffset += data.length;
     return ok(undefined);
   }
 
