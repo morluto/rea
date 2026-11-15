@@ -156,54 +156,6 @@ export const fixedProjectLocation =
       ),
     };
   };
-/** MCPorter's expandHome: a leading `~` path segment names the home folder. */
-const expandHome = (value: string, home: string): string =>
-  value === "~"
-    ? home
-    : value.startsWith("~/") || value.startsWith("~\\")
-      ? join(home, value.slice(2))
-      : value;
-
-/**
- * MCPorter's home layer: `MCPORTER_CONFIG` selects one file exclusively;
- * otherwise the first existing of the XDG and legacy `~/.mcporter` candidates
- * (`mcporterConfigCandidates`), where only an absolute `XDG_CONFIG_HOME`
- * counts. A new file goes where `mcporter config add --scope home` puts it.
- */
-export const mcporterLocation = async (
-  context: McpRegistrationLocationContext,
-): Promise<McpRegistrationGlobalLocation> => {
-  const pathApi = context.platform === "win32" ? win32 : posix;
-  const legacy = join(context.home, ".mcporter");
-  const selected = context.environment.MCPORTER_CONFIG?.trim();
-  if (selected) {
-    // MCPorter applies path.resolve: `..` collapses lexically, not through links.
-    const configPath = pathApi.resolve(
-      context.cwd,
-      expandHome(selected, context.home),
-    );
-    return { configPath, markers: [configPath, legacy] };
-  }
-  const configHome = expandHome(
-    context.environment.XDG_CONFIG_HOME?.trim() ?? "",
-    context.home,
-  );
-  const base = pathApi.isAbsolute(configHome)
-    ? join(configHome, "mcporter")
-    : legacy;
-  const candidates = [base, ...(base === legacy ? [] : [legacy])].flatMap(
-    (directory) => [
-      join(directory, "mcporter.json"),
-      join(directory, "mcporter.jsonc"),
-    ],
-  );
-  const configPath = await firstExisting(
-    candidates,
-    join(base, "mcporter.json"),
-  );
-  return { configPath, markers: [...new Set([base, legacy])] };
-};
-
 /**
  * fx's profile folder: `$FX_HOME` when set, which fx admits only as an
  * absolute path other than the root and the home folder (`useFxHome`), else
