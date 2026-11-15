@@ -451,6 +451,7 @@ export const createServer = (
       registerServiceTools(
         server,
         {
+          cutterSessions: cutter,
           byteEntropy: createByteEntropyService(artifactResources),
           peResources,
           nativeExports,
@@ -614,6 +615,7 @@ export const createServer = (
         server,
         {
           webScripts: artifactResources,
+          guidance: artifactResources,
           webModuleTrace,
           webSourceLocation,
           javascriptRecovery: javascriptRecoveryService,
