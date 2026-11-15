@@ -2,6 +2,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
+import { readEffectiveClientRegistrationConfiguration } from "../../../src/application/ClientConfigurationFiles.js";
 import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
 import { registerMcpClients } from "../../../src/application/McpClientRegistration.js";
@@ -110,9 +111,14 @@ it("refuses a relative Kilo configuration path instead of guessing its folder", 
       ({ name }) => name === "kilo",
     );
     expect(row?.configPathError).toContain("is relative");
-    expect((await kiloRow(home, environment))?.configPathError).toContain(
-      "is relative",
-    );
+    const resolved = await kiloRow(home, environment);
+    expect(resolved?.configPathError).toContain("is relative");
+    if (resolved === undefined) throw new Error("Kilo row is missing");
+    // Readers such as doctor's provider settings refuse it instead of reading
+    // a file relative to REA's own folder.
+    expect(
+      await readEffectiveClientRegistrationConfiguration(resolved),
+    ).toMatchObject({ ok: false, error: { kind: "unreadable" } });
   }
 });
 
