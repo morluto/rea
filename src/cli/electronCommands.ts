@@ -152,13 +152,12 @@ const registerJavaScriptRuntimeReconciliationCommand = (
         "Inline JSON or a JSON file path matching reconcile_javascript_runtime",
       cliOptions: { evidenceBundle: evidenceBundleOption },
     },
-    async (document, { signal, operation, cliOptions }) => {
+    async (document, { signal, operation, frame, cliOptions }) => {
       const { reconcileJavaScriptRuntimeEvidence } =
         await import("../application/javascript/JavaScriptRuntimeReconciliationService.js");
       const result = await runEvidenceInputCommand(
-        operation,
-        cliOptions.evidenceBundle,
-        signal,
+        document,
+        { operation, signal, frame, cliOptions },
         async (lookup) => {
           const reconciled = reconcileJavaScriptRuntimeEvidence(
             document,

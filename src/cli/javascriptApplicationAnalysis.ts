@@ -13,7 +13,7 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { javaScriptSourcePathsSchema } from "../domain/javascript/javascriptSourceSelection.js";
-import { parseCliJsonInput } from "../cliJsonInput.js";
+import { parseCliJsonInput } from "./cliJsonInput.js";
 import { writeCliProgressLine } from "./cliProgress.js";
 import { ownCliProcessResource } from "./cliResources.js";
 

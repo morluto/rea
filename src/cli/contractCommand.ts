@@ -25,7 +25,7 @@ import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { dispatchQueuedInterrupts } from "../process/queuedInterrupts.js";
 import { finalizedResult, runOwned } from "../providers/runOwned.js";
-import { parseCliJsonInput, resolveCliJsonPaths } from "../cliJsonInput.js";
+import { parseCliJsonInput, resolveCliJsonPaths } from "./cliJsonInput.js";
 import { jsonInputArgument } from "./jsonInputArgument.js";
 import {
   describeContractCommand,
@@ -43,6 +43,9 @@ import {
   type ContractCliSessionTarget,
   type ContractField,
   type ProjectedContract,
+  type CliCheckedJsonInputs,
+  type CliJsonInputCheck,
+  withoutDefault,
 } from "./contractCliDescription.js";
 import {
   projectCliAnalysisResult,
@@ -62,6 +65,9 @@ export interface ContractCommandContext<
     Record<string, unknown>
   >,
   Parsed = unknown,
+  Checked extends Readonly<Record<string, unknown>> = Readonly<
+    Record<string, unknown>
+  >,
 > {
   readonly signal: AbortSignal;
   /** The contract name, which is the canonical operation. */
@@ -92,6 +98,8 @@ export interface ContractCommandContext<
    * run time and admission parsed the whole input; undefined otherwise.
    */
   readonly parsed: Parsed | undefined;
+  /** What each `jsonInputChecks` check admitted, by contract field. */
+  readonly checked: Checked;
   /** The projection's CLI-only options, whose effect the handler owns. */
   readonly cliOptions: CliOptions;
 }
@@ -131,30 +139,41 @@ export const callerTargetPath = ({
 };
 
 /**
- * The caller's spelling of `path`, and of each other caller-path field keyed
- * by its contract field name.
+ * The caller's spelling of the primary caller-path field (`path` unless the
+ * command names another), and of each other caller-path field keyed by its
+ * contract field name.
  */
 const callerSpellings = (
   context: ContractCommandContext,
+  primary = "path",
 ): {
   readonly path: string;
   readonly others: CallerInputPaths | undefined;
 } => {
-  const { path: _path, ...others } = context.callerInputs;
+  const { [primary]: path, ...others } = context.callerInputs;
+  if (typeof path !== "string")
+    throw new Error(
+      `${context.operation} has no caller path field named ${primary}`,
+    );
   return {
-    path: callerTargetPath(context),
+    path,
     others: Object.keys(others).length === 0 ? undefined : others,
   };
 };
 
 /**
  * Inspect through a closeable service, finish its cleanup, and record the
- * caller's spelling of each selected path in the Evidence.
+ * caller's spelling of each selected path in the Evidence; `primary` names
+ * the contract field recorded as the Evidence's caller input path.
  */
 export const inspectWithService =
-  (service: () => EvidenceInspectionService, providerId: string) =>
+  (
+    service: () => EvidenceInspectionService,
+    providerId: string,
+    primary = "path",
+  ) =>
   (input: unknown, context: ContractCommandContext) => {
-    const spellings = callerSpellings(context);
+    const spellings = callerSpellings(context, primary);
     const owned = service();
     return finishCliEvidenceCommand(
       spellings.path,
@@ -505,16 +524,22 @@ export const registerContractCommand = <
   Contract extends ProjectedContract,
   Value,
   CliOptions extends CliOptionShape = Record<never, z.ZodType>,
+  Checks extends {
+    readonly [Key in ContractField<Contract>]?: CliJsonInputCheck;
+  } = Record<never, CliJsonInputCheck>,
 >(
   cli: CliInstance,
   logger: Logger,
   contract: Contract,
-  projection: CliContractProjection<ContractField<Contract>, CliOptions>,
+  projection: CliContractProjection<ContractField<Contract>, CliOptions> & {
+    readonly jsonInputChecks?: Checks;
+  },
   run: (
     input: z.input<Contract["inputSchema"]>,
     context: ContractCommandContext<
       CliOptionValues<CliOptions>,
-      z.output<Contract["inputSchema"]>
+      z.output<Contract["inputSchema"]>,
+      CliCheckedJsonInputs<Checks>
     >,
   ) => Promise<Value>,
 ): void => {
@@ -561,13 +586,19 @@ export const registerContractCommand = <
           : (chosen.get(values[projection.operationBy.option]) ?? description);
       return withCommandCancellation((signal) =>
         logCliCommand(logger, description.command, async () => {
+          const options = selected.admitDeliveryOptions(values);
+          if (!options.ok) return projectAnalysisError(options.error);
           const read = await readJsonInputs(selected, values, signal);
           if (!read.ok) return read.error;
           const admitted = selected.admit(read.value);
-          if (!admitted.ok) return projectAnalysisError(admitted.error);
+          // Admission and handler issues alike name renamed fields by CLI key.
+          if (!admitted.ok)
+            return projectCliInputFields(
+              projectAnalysisError(admitted.error),
+              selected.inputBinding,
+            );
           const opening = admitOpening(selected, values);
           if (!opening.ok) return projectAnalysisError(opening.error);
-          // Every handler's input issues name renamed fields by their CLI key.
           return projectCliInputFields(
             await run(
               admitted.value.input as z.input<Contract["inputSchema"]>,
@@ -597,6 +628,7 @@ export const registerContractCommand = <
                 parsed: admitted.value.parsed as
                   | z.output<Contract["inputSchema"]>
                   | undefined,
+                checked: read.checked as CliCheckedJsonInputs<Checks>,
                 cliOptions: selected.cliOptionValues(
                   values,
                 ) as CliOptionValues<CliOptions>,
@@ -718,27 +750,6 @@ const commandShape = (description: ContractCliDescription) => ({
   ),
 });
 
-/**
- * An omitted option must stay omitted, since a given option routes the
- * input; the chosen route applies its own default on admission. Help and
- * `--schema` still state the default, in the description and as JSON
- * Schema `default`.
- */
-const withoutDefault = (schema: z.ZodType): z.ZodType => {
-  if (!(schema instanceof z.ZodDefault)) return schema;
-  const value: unknown = schema.parse(undefined);
-  const omittable = (schema.removeDefault() as z.ZodType).optional();
-  const shown = typeof value === "string" ? value : JSON.stringify(value);
-  return omittable.meta({
-    ...schema.meta(),
-    description:
-      schema.description === undefined
-        ? `Default: ${shown}`
-        : `${schema.description} (default: ${shown})`,
-    default: value,
-  });
-};
-
 const schemaSignature = (schema: z.ZodType): string =>
   JSON.stringify(z.toJSONSchema(schema, { unrepresentable: "any" }));
 
@@ -858,6 +869,8 @@ export const registerRoutedCommand = (
                 })),
               ),
             );
+          const options = description.admitDeliveryOptions(shared.value);
+          if (!options.ok) return projectAnalysisError(options.error);
           const read = await readJsonInputs(
             description,
             shared.value,
@@ -866,7 +879,11 @@ export const registerRoutedCommand = (
           );
           if (!read.ok) return read.error;
           const admitted = description.admit(read.value);
-          if (!admitted.ok) return projectAnalysisError(admitted.error);
+          if (!admitted.ok)
+            return projectCliInputFields(
+              projectAnalysisError(admitted.error),
+              description.inputBinding,
+            );
           const opening = admitOpening(description, values);
           if (!opening.ok) return projectAnalysisError(opening.error);
           return projectCliInputFields(
@@ -882,6 +899,7 @@ export const registerRoutedCommand = (
               opening: opening.value,
               delivery: admitted.value.delivery,
               parsed: admitted.value.parsed,
+              checked: { ...shared.checked, ...read.checked },
               cliOptions: description.cliOptionValues(
                 withCliOnlyDefaults(description, values),
               ),
@@ -1006,15 +1024,17 @@ const sharedJsonInputs = (
     [...keys[0]!].filter((key) => keys.every((own) => own.has(key))),
   );
   for (const key of shared) {
-    const refusals = new Set(
-      routes.map(
-        ({ description }) =>
-          description.parameters.find((parameter) => parameter.key === key)!
-            .runtimeJson,
-      ),
+    const parameters = routes.map(({ description }) =>
+      description.parameters.find((parameter) => parameter.key === key)!,
     );
-    if (refusals.size !== 1)
+    if (new Set(parameters.map(({ runtimeJson }) => runtimeJson)).size !== 1)
       throw new Error(`${command} routes refuse --${key} differently`);
+    // A shared input is checked before the route is chosen, so every route
+    // must check it the same way.
+    if (
+      new Set(parameters.map(({ checkJsonInput }) => checkJsonInput)).size !== 1
+    )
+      throw new Error(`${command} routes check --${key} differently`);
   }
   return shared;
 };
@@ -1038,11 +1058,21 @@ const readJsonInputs = async (
   signal: AbortSignal,
   keys: ReadonlySet<string> = jsonInputKeys(description),
 ): Promise<
-  | { readonly ok: true; readonly value: Readonly<Record<string, unknown>> }
+  | {
+      readonly ok: true;
+      readonly value: Readonly<Record<string, unknown>>;
+      readonly checked: Readonly<Record<string, unknown>>;
+    }
   | { readonly ok: false; readonly error: JsonValue }
 > => {
   const decoded: Record<string, unknown> = { ...values };
-  for (const { key, runtimeJson } of description.parameters) {
+  const checked: Record<string, unknown> = {};
+  for (const {
+    field,
+    key,
+    runtimeJson,
+    checkJsonInput,
+  } of description.parameters) {
     const text = values[key];
     if (!keys.has(key) || typeof text !== "string") continue;
     const parsed = await parseCliJsonInput(
@@ -1069,8 +1099,20 @@ const readJsonInputs = async (
             ),
       };
     decoded[key] = parsed.value;
+    if (checkJsonInput === undefined) continue;
+    // Refuse this input before the next one is read.
+    const admitted = checkJsonInput(parsed.value);
+    if (!admitted.ok)
+      return {
+        ok: false,
+        error: projectCliInputFields(
+          projectAnalysisError(admitted.error),
+          description.inputBinding,
+        ),
+      };
+    checked[field] = admitted.value;
   }
-  return { ok: true, value: decoded };
+  return { ok: true, value: decoded, checked };
 };
 
 /** A file failure names the selected path, and a cancellation is its own. */
