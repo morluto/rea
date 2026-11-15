@@ -6,7 +6,6 @@ import { deb822Paragraphs } from "../domain/desktop/aptRepositories.js";
 import {
   DEB_CONTROL_RELATIONSHIP_NAMES,
   DEB_MAINTAINER_SCRIPTS,
-  DEB_PACKAGE_LIMIT_MAXIMA,
   DEB_RELATIONSHIP_FIELDS,
   debArchiveCompressionFromName,
   debArMemberRole,
