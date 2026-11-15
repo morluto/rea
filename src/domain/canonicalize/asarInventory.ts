@@ -33,8 +33,6 @@ export interface AsarInventoryEntry {
 export interface AsarClassificationContext {
   /** Paths proven reachable from the archive's own package.json. */
   readonly reachable: ReadonlySet<string>;
-  /** Declared header bytes when beyond REA's documented admission, else null. */
-  readonly headerBytesOverDocumentedLimit: number | null;
   /** True when the owning reader stopped before the whole inventory. */
   readonly listingTruncated: boolean;
   /** Reader-supplied limitation details to surface first (e.g., a listing limit). */
@@ -89,31 +87,70 @@ export const reachableAsarPaths = (manifest: Buffer): ReadonlySet<string> => {
 
 const sizeBytes = (entry: AsarInventoryEntry): number => entry.size ?? 0;
 
-const reachableFact = (entry: AsarInventoryEntry): CanonicalizeFact => ({
-  collection: "asar-entry",
-  name: entry.path,
-  classification: "behavior-relevant",
-  bytes: sizeBytes(entry),
-  location: null,
-  sha256: null,
-  sample: null,
-  detail: `Reachable from package.json main/exports.${sizeSuffix(entry)}`,
-});
+/** Beyond this, a retained entry name is folded to a bounded, ASCII-safe sample. */
+const MAX_ENTRY_NAME_UNITS = 256;
 
-const unverifiedFact = (entry: AsarInventoryEntry): CanonicalizeFact => ({
-  collection: "asar-entry",
-  name: entry.path,
-  classification: "unverified",
-  bytes: sizeBytes(entry),
-  location: null,
-  sha256: null,
-  sample: null,
-  detail:
-    (entry.kind === "file"
-      ? "Packaged entry; reachability from entrypoints unverified."
-      : `${entry.kind} entry; reachability from entrypoints unverified.`) +
-    sizeSuffix(entry),
-});
+/**
+ * Bound a retained entry name. A reachable or packaged entry can still carry a
+ * multi-megabyte path, which must not reach the result verbatim and overflow the
+ * MCP response; an over-long name is folded to a bounded sample and the exact
+ * path is retained by digest, so identity stays separate from display.
+ */
+const boundedEntryName = (
+  path: string,
+  budget: NormalizerBudget,
+): { readonly name: string; readonly sha256: string | null } =>
+  path.length <= MAX_ENTRY_NAME_UNITS
+    ? { name: path, sha256: null }
+    : {
+        name: canonicalizeSample(Buffer.from(path, "utf8"), budget.sampleUnits),
+        sha256: canonicalizeDigest(Buffer.from(path, "utf8")),
+      };
+
+/** A note appended when an entry's path was folded, naming its exact reference. */
+const foldedNameDetail = (path: string, sha256: string | null): string =>
+  sha256 === null
+    ? ""
+    : ` Path name is ${String(path.length)} units; folded to a bounded sample, exact path retained by sha256.`;
+
+const reachableFact = (
+  entry: AsarInventoryEntry,
+  budget: NormalizerBudget,
+): CanonicalizeFact => {
+  const bounded = boundedEntryName(entry.path, budget);
+  return {
+    collection: "asar-entry",
+    name: bounded.name,
+    classification: "behavior-relevant",
+    bytes: sizeBytes(entry),
+    location: null,
+    sha256: bounded.sha256,
+    sample: null,
+    detail: `Reachable from package.json main/exports.${sizeSuffix(entry)}${foldedNameDetail(entry.path, bounded.sha256)}`,
+  };
+};
+
+const unverifiedFact = (
+  entry: AsarInventoryEntry,
+  budget: NormalizerBudget,
+): CanonicalizeFact => {
+  const bounded = boundedEntryName(entry.path, budget);
+  return {
+    collection: "asar-entry",
+    name: bounded.name,
+    classification: "unverified",
+    bytes: sizeBytes(entry),
+    location: null,
+    sha256: bounded.sha256,
+    sample: null,
+    detail:
+      (entry.kind === "file"
+        ? "Packaged entry; reachability from entrypoints unverified."
+        : `${entry.kind} entry; reachability from entrypoints unverified.`) +
+      sizeSuffix(entry) +
+      foldedNameDetail(entry.path, bounded.sha256),
+  };
+};
 
 const decoyFact = (
   entry: AsarInventoryEntry,
@@ -185,7 +222,7 @@ export const classifyAsarInventory = (
     // Proven reachability wins over every heuristic, so a real entrypoint with
     // a long path is never mislabeled an unreachable decoy.
     if (context.reachable.has(entry.path)) {
-      retainOrOverflow(state, budget, entry, reachableFact(entry));
+      retainOrOverflow(state, budget, entry, reachableFact(entry, budget));
     } else if (entry.path.length > MAX_PLAUSIBLE_ENTRY_PATH_UNITS) {
       state.decoyExamined += 1;
       state.decoyBytes += sizeBytes(entry);
@@ -199,7 +236,7 @@ export const classifyAsarInventory = (
         );
       }
     } else {
-      retainOrOverflow(state, budget, entry, unverifiedFact(entry));
+      retainOrOverflow(state, budget, entry, unverifiedFact(entry, budget));
     }
   }
 
@@ -229,10 +266,6 @@ export const classifyAsarInventory = (
     });
 
   const limitations: string[] = [...(context.extraLimitations ?? [])];
-  if (context.headerBytesOverDocumentedLimit !== null)
-    limitations.push(
-      `ASAR header is ${String(context.headerBytesOverDocumentedLimit)} bytes, beyond REA's documented asar.max_header_bytes; canonicalized within the pass's own read budget.`,
-    );
   if (context.listingTruncated)
     limitations.push(
       "The ASAR inventory was truncated by the reader's listing budget; the remaining inventory is unverified.",

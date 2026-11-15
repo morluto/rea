@@ -5,6 +5,7 @@ import type {
   CanonicalizeReduction,
 } from "../canonicalizeArtifact.js";
 import {
+  canonicalizeDigest,
   canonicalizeSample,
   type ArtifactNormalizer,
   type NormalizedArtifactFacts,
@@ -123,21 +124,33 @@ const leafFact = (
   path: string,
   value: unknown,
   sampleUnits: number,
-  sha256: string | null,
+  keySha256: string | null,
 ): CanonicalizeFact => {
   const kind = value === null ? "null" : typeof value;
+  const valueBytes = Buffer.from(scalarText(value), "utf8");
+  // The sample is intentionally ASCII-folded and bounded so an adversarial
+  // value cannot smuggle terminal control sequences or read as an instruction.
+  // That folding is lossy, so when it does not reproduce the value exactly,
+  // retain the value by digest and say so — identity stays separate from display.
+  const faithful =
+    valueBytes.length <= sampleUnits &&
+    valueBytes.every((byte) => byte >= 0x20 && byte <= 0x7e);
+  const valueSha256 = faithful ? null : canonicalizeDigest(valueBytes);
   return {
     collection: "json-value",
     name: path,
     classification: "behavior-relevant",
-    bytes: 0,
+    bytes: valueBytes.length,
     location: null,
-    sha256,
-    sample: canonicalizeSample(
-      Buffer.from(scalarText(value), "utf8"),
-      sampleUnits,
-    ),
-    detail: `Behavior-relevant ${kind} value.${truncatedKeyDetail(sha256)}`,
+    // One digest references whatever normalization could not reproduce: the
+    // folded or truncated value, otherwise the shortened key.
+    sha256: valueSha256 ?? keySha256,
+    sample: canonicalizeSample(valueBytes, sampleUnits),
+    detail:
+      `Behavior-relevant ${kind} value.` +
+      (valueSha256 === null
+        ? truncatedKeyDetail(keySha256)
+        : ` Value sample is ASCII-folded and bounded to ${String(sampleUnits)} units; sha256 is the exact digest of the ${String(valueBytes.length)}-byte value.${keySha256 === null ? "" : " Path name was also shortened to bound an inflated key."}`),
   };
 };
 

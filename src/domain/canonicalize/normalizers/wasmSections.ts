@@ -231,6 +231,7 @@ const canonicalize = (
   const core: CanonicalizeFact[] = [];
   const collapsed: CanonicalizeFact[] = [];
   const limitations: string[] = [];
+  const coreSections = newGroup();
   const padding = newGroup();
   const link = newGroup();
   let sectionsExamined = 0;
@@ -283,15 +284,23 @@ const canonicalize = (
       break;
     }
     sectionsExamined += 1;
+    const region = bytes.subarray(payloadStart, payloadEnd);
 
     if (id !== 0) {
-      core.push(coreSectionFact(id, payloadStart, size.value));
+      // A well-formed module carries at most one of each core section, but a
+      // crafted module can repeat a core id up to a million times. Bound core
+      // retention like the custom groups so the fact set cannot grow with the
+      // attacker's input; the overflow keeps a group digest, not its bytes.
+      coreSections.examined += 1;
+      if (coreSections.retained < budget.maxFacts) {
+        coreSections.retained += 1;
+        core.push(coreSectionFact(id, payloadStart, size.value));
+      } else collapseIntoGroup(coreSections, size.value, region);
       offset = payloadEnd;
       continue;
     }
 
     const parsed = readCustomName(bytes, payloadStart, payloadEnd);
-    const region = bytes.subarray(payloadStart, payloadEnd);
     if (parsed !== null && isLinkRelevant(parsed)) {
       link.examined += 1;
       if (link.retained < budget.maxFacts) {
@@ -319,6 +328,18 @@ const canonicalize = (
   }
 
   const reductions: CanonicalizeReduction[] = [];
+  if (coreSections.overflow > 0) {
+    reductions.push(
+      groupReduction(
+        "wasm-section",
+        coreSections,
+        "Core sections beyond the exemplar budget were counted with a group digest, not retained; a well-formed module carries at most one of each.",
+      ),
+    );
+    limitations.push(
+      `${String(coreSections.overflow)} further core sections were collapsed to counts; raise max_facts to retain more exemplars.`,
+    );
+  }
   if (padding.overflow > 0) {
     reductions.push(
       groupReduction(
@@ -344,7 +365,8 @@ const canonicalize = (
     );
   }
 
-  const omitted = padding.overflow > 0 || link.overflow > 0;
+  const omitted =
+    coreSections.overflow > 0 || padding.overflow > 0 || link.overflow > 0;
   return {
     detected_format: "wasm",
     normalizer: "wasm-sections",

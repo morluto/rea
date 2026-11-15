@@ -24,7 +24,6 @@ const context = (
   overrides: Partial<Parameters<typeof classifyAsarInventory>[2]> = {},
 ) => ({
   reachable: new Set<string>(),
-  headerBytesOverDocumentedLimit: null,
   listingTruncated: false,
   ...overrides,
 });
@@ -46,9 +45,15 @@ describe("classifyAsarInventory", () => {
     );
     expect(facts.detected_format).toBe("asar");
     expect(facts.normalizer).toBe("asar-listing");
-    expect(
-      facts.core.find((fact) => fact.name === longPath)?.classification,
-    ).toBe("behavior-relevant");
+    // The reachable long path stays behavior-relevant; its inflated name is
+    // folded to a bounded form with the exact path retained by digest.
+    const longFact = facts.core.find(
+      (fact) =>
+        fact.classification === "behavior-relevant" && fact.name !== "index.js",
+    );
+    expect(longFact).toBeDefined();
+    expect((longFact?.name ?? "").length).toBeLessThanOrEqual(256);
+    expect(longFact?.sha256).toMatch(/^[a-f0-9]{64}$/u);
     expect(
       facts.collapsed.some(
         (fact) => fact.classification === "decoy-unreachable",
@@ -127,7 +132,6 @@ describe("classifyAsarInventory", () => {
   it("reports a truncated listing with the reader's own guidance", () => {
     const facts = classifyAsarInventory([], budget(), {
       reachable: new Set(),
-      headerBytesOverDocumentedLimit: null,
       listingTruncated: true,
       extraLimitations: [
         "ASAR expanded listing exceeds its budget; set asar.max_listing_bytes.",
@@ -136,18 +140,6 @@ describe("classifyAsarInventory", () => {
     expect(facts.coverage.status).toBe("partial");
     expect(facts.coverage.truncated).toBe(true);
     expect(facts.limitations[0]).toMatch(/asar\.max_listing_bytes/u);
-  });
-
-  it("reports a header beyond REA's documented budget without failing", () => {
-    const facts = classifyAsarInventory(
-      [entry("index.js", 1)],
-      budget(),
-      context({
-        reachable: new Set(["index.js"]),
-        headerBytesOverDocumentedLimit: 17 * 1024 * 1024,
-      }),
-    );
-    expect(facts.limitations.join(" ")).toMatch(/asar\.max_header_bytes/u);
   });
 
   it("accepts a declared member size beyond 4 GiB in the fact schema", () => {

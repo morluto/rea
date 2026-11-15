@@ -41,3 +41,20 @@ describe("canonicalizeAsarBytes header decoding", () => {
     );
   });
 });
+
+describe("canonicalizeAsarBytes header admission", () => {
+  it("refuses to parse a header beyond asar.max_header_bytes, returning a bounded partial", async () => {
+    // Declare a header larger than REA's documented 16 MiB admission. The pass
+    // must refuse to decode and duplicate-scan it (the memory-exhaustion vector)
+    // before allocating, and report an explicit truncated result instead.
+    const headerJson = Buffer.alloc(16 * 1024 * 1024 + 64, 0x20);
+    headerJson[0] = 0x7b; // '{' so the framing is recognized as an ASAR
+    const bytes = asarArchiveRaw(headerJson);
+    expect(looksLikeAsar(bytes)).toBe(true);
+    const facts = await canonicalizeAsarBytes(bytes, budget);
+    expect(facts.core).toHaveLength(0);
+    expect(facts.coverage.status).toBe("partial");
+    expect(facts.coverage.truncated).toBe(true);
+    expect(facts.limitations[0]).toMatch(/asar\.max_header_bytes/u);
+  });
+});

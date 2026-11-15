@@ -101,11 +101,20 @@ export const canonicalizeAsarBytes = async (
     bytes.length,
   );
   if (!extents.ok) throw extents.error;
+  // Bound the header this pass will decode, parse and duplicate-scan to REA's
+  // documented admission before allocating, exactly as the owning reader refuses
+  // a larger header. Without this, a header inflated up to the whole artifact is
+  // parsed before readAsarListing's limits apply, so a deeply nested or
+  // key-dense header could exhaust memory ahead of any bound.
+  if (extents.value.headerBytes > DEFAULT_ASAR_MAX_HEADER_BYTES)
+    return classifyAsarInventory([], budget, {
+      reachable: new Set(),
+      listingTruncated: true,
+      extraLimitations: [
+        `ASAR header is ${String(extents.value.headerBytes)} bytes, beyond asar.max_header_bytes (${String(DEFAULT_ASAR_MAX_HEADER_BYTES)}); the pass does not parse a header larger than its own read budget. Raise asar.max_header_bytes to canonicalize it.`,
+      ],
+    });
   const header = parseHeader(bytes, extents.value.jsonBytes);
-  const headerBytesOverDocumentedLimit =
-    extents.value.headerBytes > DEFAULT_ASAR_MAX_HEADER_BYTES
-      ? extents.value.headerBytes
-      : null;
   let entries: readonly AsarListedEntry[];
   try {
     entries = await readAsarListing(
@@ -120,7 +129,6 @@ export const canonicalizeAsarBytes = async (
     if (cause instanceof ArtifactReaderFailure && cause.reason === "limit")
       return classifyAsarInventory([], budget, {
         reachable: new Set(),
-        headerBytesOverDocumentedLimit,
         listingTruncated: true,
         extraLimitations: [cause.message],
       });
@@ -139,7 +147,6 @@ export const canonicalizeAsarBytes = async (
   }));
   return classifyAsarInventory(inventory, budget, {
     reachable,
-    headerBytesOverDocumentedLimit,
     listingTruncated: false,
   });
 };

@@ -146,6 +146,32 @@ describe("wasm-sections normalizer", () => {
     expect(reduction?.group_sha256).toMatch(/^[a-f0-9]{64}$/u);
   });
 
+  it("caps repeated core sections at the budget with a group digest", () => {
+    // A crafted module repeats a core id beyond max_facts; the fact set must not
+    // grow with it, as the custom-section groups already cap.
+    const many = wasmModule(
+      Array.from({ length: 10 }, () => wasmSection(1, typePayload)),
+    );
+    const facts = canonicalizeArtifactFacts(
+      many,
+      "wasm",
+      budget({ maxFacts: 3 }),
+    );
+    expect(
+      facts.core.filter((fact) => fact.collection === "wasm-section"),
+    ).toHaveLength(3);
+    const reduction = facts.reductions.find(
+      (entry) => entry.collection === "wasm-section",
+    );
+    expect(reduction).toMatchObject({
+      examined: 10,
+      retained: 3,
+      collapsed: 7,
+    });
+    expect(reduction?.group_sha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(facts.coverage.status).toBe("partial");
+  });
+
   it("bounds an inflated custom-section name in the retained fact", () => {
     const longName = "a".repeat(300);
     const facts = canonicalizeArtifactFacts(
@@ -278,6 +304,28 @@ describe("json-structure normalizer", () => {
     expect((leaf?.name ?? "").length).toBeLessThanOrEqual(256);
     // The exact key is preserved by reference, not confabulated away.
     expect(leaf?.sha256).toMatch(/^[a-f0-9]{64}$/u);
+  });
+
+  it("keeps an exact value digest and omission note when a value is folded or truncated", () => {
+    const facts = canonicalizeArtifactFacts(
+      Buffer.from(
+        JSON.stringify({ main: "λ中.js", long: "a".repeat(200) }),
+        "utf8",
+      ),
+      "json",
+      budget(),
+    );
+    const unicode = facts.core.find((fact) => fact.name === "$/main");
+    // Non-ASCII text is folded in the sample, never rendered raw, but the exact
+    // value is recoverable by digest with an explicit note.
+    expect(unicode?.sample ?? "").not.toMatch(/[^\x20-\x7e]/u);
+    expect(unicode?.sha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(unicode?.detail).toMatch(/exact digest/iu);
+    const long = facts.core.find((fact) => fact.name === "$/long");
+    expect((long?.sample ?? "").length).toBeLessThanOrEqual(
+      CANONICALIZE_SAMPLE_UNITS,
+    );
+    expect(long?.sha256).toMatch(/^[a-f0-9]{64}$/u);
   });
 
   it("escapes slashes in keys so distinct members get distinct names", () => {
