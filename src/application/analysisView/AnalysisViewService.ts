@@ -28,6 +28,7 @@ import {
   createEvidence,
   evidenceFileTarget,
   evidenceSubjectDisplay,
+  evidenceSubjectInput,
   evidenceSubjectTarget,
   rebindEvidenceToTargetPath,
   type Evidence,
@@ -373,7 +374,12 @@ const createAnalysisViewEvidence = (
   parent: Evidence,
   result: AnalysisViewResult,
 ): Evidence => {
-  const target = evidenceSubjectTarget(parent.subject);
+  // A view names the target its parent observed (a file or a page URL); a
+  // parent that names no target is committed through the view's link.
+  const subject =
+    parent.subject.identity.kind === "unknown"
+      ? unknownTarget("derived-from-linked-evidence")
+      : evidenceSubjectInput(parent.subject);
   const nativeFunctionView =
     result.kind === "native" ||
     (result.kind === "summary" &&
@@ -387,7 +393,7 @@ const createAnalysisViewEvidence = (
     (result.kind === "summary" &&
       isNativeObservationOperation(result.parent_operation));
   return createEvidence(
-    target ?? unknownTarget("derived-from-linked-evidence"),
+    subject,
     ANALYSIS_VIEW_PROVIDER,
     {
       predicateType: "rea.analysis-view",

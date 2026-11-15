@@ -42,6 +42,7 @@ import {
   MAX_NATIVE_PLIST_BYTES,
   NATIVE_PLIST_INPUT_ALLOWANCE,
 } from "./parsers/plist.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /**
  * Resolved lookup identity and selection intent, independent of file readiness.
@@ -250,7 +251,7 @@ const nativePlistPrimaryFailure = (
       cause,
       diagnostics: {
         phase: "plist-scope",
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
       },
     });
   const { path } = selection;
@@ -283,7 +284,7 @@ const nativePlistPrimaryFailure = (
     diagnostics: {
       path,
       phase: "plist-file",
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     },
   });
 };

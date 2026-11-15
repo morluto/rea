@@ -33,6 +33,7 @@ import {
   type NativeDmgInfo,
 } from "./NativeDmgOwnership.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 const HDIUTIL_COMMAND_TIMEOUT_MS = 120_000;
 /** Conditional recovery guidance; a path match never grants attachment ownership. */
 const DMG_EXISTING_ATTACHMENT_RECOVERY =
@@ -285,11 +286,11 @@ export class NativeDmgArtifactReader implements ArtifactReader {
     if (detachFailure !== undefined)
       throw new ArtifactReaderFailure(
         "unavailable",
-        `DMG detach or mount-root cleanup failed for ${JSON.stringify(this.path)}: ${failureMessage(detachFailure)}`,
+        `DMG detach or mount-root cleanup failed for ${JSON.stringify(this.path)}: ${errorMessage(detachFailure)}`,
         {
           cause: detachFailure,
           cleanup: {
-            reason: failureMessage(detachFailure),
+            reason: errorMessage(detachFailure),
             resources: [
               ...this.#devices.map((device) => `DMG device ${device}`),
               ...(this.#attachMayHaveMounted
@@ -361,7 +362,7 @@ export class NativeDmgArtifactReader implements ArtifactReader {
       } catch (cause: unknown) {
         const mountRoot = this.#mountRoot ?? this.path;
         throw ArtifactReaderFailure.withCleanup(cause, {
-          reason: `DMG mounted directory remains owned: ${failureMessage(cause)}`,
+          reason: `DMG mounted directory remains owned: ${errorMessage(cause)}`,
           resources: [
             `DMG mounted directory at ${mountRoot}`,
             `DMG mount root ${mountRoot}`,
@@ -391,7 +392,7 @@ export class NativeDmgArtifactReader implements ArtifactReader {
       await this.#resolveAttachOwnership();
       return undefined;
     } catch (cause: unknown) {
-      this.#ownershipUncertainty = failureMessage(cause);
+      this.#ownershipUncertainty = errorMessage(cause);
       return cause;
     }
   }
@@ -720,9 +721,6 @@ const existingImagePathListed = async (
   }
   return false;
 };
-
-const failureMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
 
 const processNotStarted = (cause: unknown): boolean => {
   if (!(cause instanceof Error)) return false;

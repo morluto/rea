@@ -65,6 +65,7 @@ import {
   type McpOutputSchemaProfile,
   COMPACT_INPUT_SCHEMA_PRESENTATION,
 } from "../contracts/mcpSchemaPresentation.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 export interface CreateServerOptions extends CapabilityServiceOptions {
   readonly analysisSettings?: AnalysisSettings;
@@ -318,7 +319,7 @@ export const createServer = (
     void closeProviders().catch((cause: unknown) => {
       logger.error(
         {
-          error: cause instanceof Error ? cause.message : String(cause),
+          error: errorMessage(cause),
           ...retainedDebuggerDiagnostics(cause),
         },
         "Provider cleanup failed during server shutdown",

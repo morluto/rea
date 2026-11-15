@@ -38,6 +38,7 @@ import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { finalizedResult, runOwned } from "../providers/runOwned.js";
 
 import { NATIVE_MACOS_PROVIDER_IDENTITY } from "./NativeMacosProviderIdentity.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 type SignatureOwner = Extract<
   ArtifactResourceOwner,
@@ -93,7 +94,7 @@ const signatureReadFailure = (
         path: target.path,
         phase: "target-version-binding",
         system_code: typeof code === "string" ? code : null,
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
       },
     },
   );
@@ -244,7 +245,7 @@ const signatureCleanupFailure = (
     NATIVE_MACOS_PROVIDER_IDENTITY.id,
     resources,
     {
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
       phase: `signature-snapshot-${phase}`,
       path: target.path,
     },
@@ -270,7 +271,7 @@ const snapshotFailure = (
       diagnostics: {
         path: target.path,
         phase: `signature-snapshot-${phase}`,
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
       },
     },
   );

@@ -38,6 +38,7 @@ import {
   ProviderStartupDeadline,
   waitForAbortableDelay,
 } from "./ProviderDeadline.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** A short-lived command failed its lifecycle or complete-output contract. */
 export class OwnedCommandFailure extends Error {
@@ -357,7 +358,7 @@ const collectOwnedCommand = async (
       ? finishCommandInput(launched.process.stdin, (cause) => {
           inputFailure ??= {
             cause,
-            message: `stdin stream failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+            message: `stdin stream failed: ${errorMessage(cause)}`,
             processError: cause instanceof Error ? cause : undefined,
           };
           if (processFailure === undefined) {
@@ -610,7 +611,6 @@ const consumeStdout = (
   }
   return pipeline(stdout, sink, { signal }).then(
     () => undefined,
-    (cause: unknown) =>
-      `stdout stream failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+    (cause: unknown) => `stdout stream failed: ${errorMessage(cause)}`,
   );
 };

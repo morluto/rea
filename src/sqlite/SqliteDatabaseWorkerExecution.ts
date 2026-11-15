@@ -45,6 +45,7 @@ import {
   SQLITE_INSPECTION_REASONS,
   SQLITE_STRUCTURED_INSPECTION_REASONS,
 } from "./SqliteDatabaseLimits.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const operation = "inspect_sqlite_database";
 const {
@@ -304,7 +305,7 @@ const sqliteReplyReadDialect = (
   unclassified: (cause, details) =>
     new AnalysisOutputError(
       operation,
-      `Owned SQLite worker reply is missing or malformed: ${cause instanceof Error ? cause.message : String(cause)}`,
+      `Owned SQLite worker reply is missing or malformed: ${errorMessage(cause)}`,
       { ...details, cause, capturedOutput },
     ),
 });

@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import {
   parseTsharkJsonPackets,
   readTsharkJsonPackets,
-} from "./TsharkJsonPackets.js";
+} from "./tsharkJsonPackets.js";
 
 const budget = (maxBytes: number, maxDecodedBytes: number) => ({
   maxBytes,

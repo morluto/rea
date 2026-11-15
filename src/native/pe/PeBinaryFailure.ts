@@ -22,6 +22,7 @@ import {
   BinaryResourceFailure,
   binaryResourceAllowance,
 } from "../../domain/binaryContainer.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 interface PeBinaryInput {
   readonly path: string;
@@ -102,7 +103,7 @@ const peBinaryFailurePrimary = <Limit extends string>(
     cause,
     diagnostics: {
       path: input.path,
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     },
   });
 };

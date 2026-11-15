@@ -81,6 +81,7 @@ import {
   cancelledWithCallerReason,
 } from "../process/OwnedDebuggerSessionRegistry.js";
 import { utf8HeadExcerpt } from "../domain/utf8HeadExcerpt.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const STARTUP_TIMEOUT_MS = 10_000;
 
@@ -299,10 +300,6 @@ class GdbProtocolFailureError extends Error {
     super(message);
   }
 }
-
-/** Convert an unknown boundary failure without dropping non-Error values. */
-const gdbErrorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
 
 interface GdbSession {
   readonly id: string;
@@ -922,7 +919,7 @@ export class GdbSessionManager {
               ),
             ),
           );
-        const startupFailureMessage = gdbErrorMessage(cause);
+        const startupFailureMessage = errorMessage(cause);
         return err(
           retainCleanup(
             new AnalysisCapabilityUnavailableError(
@@ -984,7 +981,7 @@ export class GdbSessionManager {
                 : new AnalysisCapabilityUnavailableError(
                     "gdb",
                     "start_gdb_session",
-                    `GDB startup failed (${gdbErrorMessage(cause)}).`,
+                    `GDB startup failed (${errorMessage(cause)}).`,
                     errorDetails,
                   );
       return err(error);

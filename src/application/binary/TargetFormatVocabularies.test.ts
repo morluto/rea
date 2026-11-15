@@ -172,7 +172,10 @@ describe("target format vocabularies", () => {
         analysisSnapshotSchema.shape.target.parse(
           roundTrip(snapshotTarget(target)),
         ),
-      ).toMatchObject({ format: target.format, kind: target.kind });
+      ).toMatchObject({
+        kind: target.kind,
+        identity: { format: target.format },
+      });
       expect(binaryTargetSummary(target)).toMatchObject({
         format: target.format,
         kind: target.kind,
