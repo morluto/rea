@@ -804,6 +804,12 @@ const requestErrorDetails = (
       ...(error.issuePath === undefined
         ? {}
         : { issue_path: [...error.issuePath] }),
+      ...(error.constraint === undefined
+        ? {}
+        : { constraint: error.constraint }),
+      ...(error.remainingIssueCount === undefined
+        ? {}
+        : { remaining_issue_count: error.remainingIssueCount }),
     };
   return undefined;
 };

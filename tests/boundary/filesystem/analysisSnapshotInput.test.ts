@@ -58,12 +58,15 @@ describe.each([
         code: "evidence_integrity_mismatch",
         category: "integrity_mismatch",
         retryable: false,
-        details: { reason: expect.stringContaining(`at ${field}:`) },
+        details: {
+          reason: expect.stringContaining(`at ${field}:`),
+          issue_path: field
+            .split(".")
+            .map((key) => (/^\d+$/u.test(key) ? Number(key) : key)),
+        },
       });
       if (field === "target")
-        expect(projected.details?.reason).toMatch(
-          / at target: .+ \(2 more issues\)$/,
-        );
+        expect(projected.details?.remaining_issue_count).toBe(2);
       expect(projected).not.toHaveProperty("cause");
       expect(projected).not.toHaveProperty("stack");
       expect(await readFile(path, "utf8")).toBe(encoded);
@@ -142,6 +145,39 @@ it("refuses a snapshot holding an earlier-format bundle with the recreate guidan
     code: "evidence_integrity_mismatch",
     details: { reason: expect.stringContaining(RECREATE_EVIDENCE_GUIDANCE) },
   });
+});
+
+it("locates a bundle schema issue within the snapshot when reading and writing", async () => {
+  const root = await createTestTempDirectory("rea-snapshot-bundle-issue-");
+  const { providers: _providers, ...bundle } = createEvidenceBundle([]);
+  const snapshot = {
+    target: snapshotTarget(ANALYSIS_SNAPSHOT_TARGET),
+    binding: snapshotBinding(ANALYSIS_SNAPSHOT_PROFILE),
+    entries: [],
+    workflow_entries: [],
+    evidence_bundle: bundle,
+  };
+  const path = join(root, "snapshot.json");
+  await writeFile(path, JSON.stringify(snapshot));
+  const read = await readAnalysisSnapshot(path);
+  const written = await withArtifactResourceScope((resources) =>
+    writeAnalysisSnapshot(
+      snapshot as never,
+      join(root, "written.json"),
+      false,
+      resources,
+    ),
+  );
+  for (const result of [read, written]) {
+    if (result.ok) throw new Error("Expected invalid bundle refusal");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "evidence_integrity_mismatch",
+      details: {
+        reason: expect.stringContaining("at evidence_bundle.providers:"),
+        issue_path: ["evidence_bundle", "providers"],
+      },
+    });
+  }
 });
 
 it("retains serialization schema diagnostics without creating a snapshot file", async () => {

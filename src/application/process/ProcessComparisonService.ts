@@ -1,11 +1,9 @@
 import { processComparisonInputSchema } from "../../contracts/processComparisonContracts.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
-import {
-  describeValidationFailure,
-  firstValidationIssuePath,
-} from "../../domain/validationFailure.js";
+import { describeValidationFailure } from "../../domain/validationFailure.js";
 import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
+import { validationIssueOptions } from "../../domain/evidenceValidation.js";
 import {
   PROCESS_COMPARISON_DIMENSIONS,
   type ProcessCaptureComparison,
@@ -19,6 +17,7 @@ import type { RecordUnknownInput } from "../../domain/residualUnknown.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
   parseProcessCaptureEvidence,
+  wrongWorkflowIssueFacts,
   type ProcessCaptureEvidenceFailure,
 } from "./ProcessEvidence.js";
 import {
@@ -114,7 +113,7 @@ export const readProcessComparisonSource = (
         new EvidenceIntegrityError(`${side} Evidence failed validation`, {
           cause: failure.cause,
           side,
-          ...issuePathFact(failure.cause),
+          ...validationIssueOptions(failure.cause, []),
           userMessage: `The ${side} Evidence failed validation (${describeValidationFailure(failure.cause)}). Supply unmodified capture Evidence from capture_process_scenario.`,
         }),
       );
@@ -125,6 +124,7 @@ export const readProcessComparisonSource = (
             path: [side],
             reason: "invalid_value",
             message: `Expected process capture Evidence (operation ${failure.expected.operation}, predicate ${failure.expected.predicate}); the ${side} Evidence has operation ${failure.actual.operation} and predicate ${failure.actual.predicate}.`,
+            ...wrongWorkflowIssueFacts(failure),
           },
         ]),
       );
@@ -137,23 +137,12 @@ export const readProcessComparisonSource = (
           {
             cause: failure.cause,
             side,
-            ...issuePathFact(failure.cause, ["normalized_result"]),
+            ...validationIssueOptions(failure.cause, ["normalized_result"]),
             userMessage: `The ${side} Evidence has an invalid process capture result (${describeValidationFailure(failure.cause)}). Recreate the capture with capture_process_scenario.`,
           },
         ),
       );
   }
-};
-
-/** Issue paths are relative to the Evidence record, as for `readEvidence`. */
-const issuePathFact = (
-  cause: unknown,
-  within: readonly (string | number)[] = [],
-) => {
-  const issuePath = firstValidationIssuePath(cause);
-  return issuePath === undefined
-    ? {}
-    : { issuePath: [...within, ...issuePath] };
 };
 
 /** Report the same provider admission failure at both public adapters. */
