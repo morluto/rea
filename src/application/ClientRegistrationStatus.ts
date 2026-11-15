@@ -1,6 +1,9 @@
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { readClientPolicyBlock } from "./GeminiClientSettings.js";
-import { readEffectiveClientRegistrationConfiguration } from "./ClientConfigurationFiles.js";
+import {
+  inlineRegistrationOrigins,
+  readEffectiveClientRegistrationConfiguration,
+} from "./ClientConfigurationFiles.js";
 import {
   clientServerForcedEnabled,
   clientServerListedDisabled,
@@ -404,6 +407,7 @@ export const readClientRegistrationInspections = async (
           (parsed.dialect !== "dsh" && commandFacts.identity !== "owned"
             ? clientRegistrationOwnershipRemediation(commandFacts.identity, [
                 configPath,
+                ...inlineRegistrationOrigins(client),
               ])
             : undefined) ??
             (!nativeApplicability.ok
@@ -551,10 +555,20 @@ const registrationAligned = ({
 
 /** A client that rewrites its file from memory must be quit before setup. */
 const remediation = (client: SetupClient): string => {
+  const inline = inlineRegistrationRemediation(client);
   if (client.quitBeforeSetup !== true)
-    return "Run rea setup to refresh this registration, then restart the client.";
+    return `Run rea setup to refresh this registration, then restart the client.${inline}`;
   const name = client.displayName ?? client.name;
-  return `Quit ${name} fully, run rea setup to refresh this registration, then start ${name} again. A running ${name} can rewrite its configuration from memory and drop the registration.`;
+  return `Quit ${name} fully, run rea setup to refresh this registration, then start ${name} again. A running ${name} can rewrite its configuration from memory and drop the registration.${inline}`;
+};
+
+/** Setup cannot repair what a read-only inline layer sets for REA's entry. */
+const inlineRegistrationRemediation = (client: SetupClient): string => {
+  const origins = inlineRegistrationOrigins(client);
+  const name = PRODUCT_IDENTITY.mcpServerKey;
+  return origins.length === 0
+    ? ""
+    : ` ${origins.join(", ")} also sets the ${name} entry and overrides the client's files; REA does not edit it, so change or remove ${name} there if setup reports that it overrides the registration.`;
 };
 
 const unknownEntryPointRemediation = (): string =>

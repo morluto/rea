@@ -265,6 +265,19 @@ export const effectiveClientConfiguration = (
   return mergeClientConfigurationDocuments(documents, platform);
 };
 
+/** The client's read-only inline layers that set REA's entry. */
+export const inlineRegistrationOrigins = (
+  client: Pick<SetupClient, "inlineConfiguration">,
+): readonly ClientInlineConfiguration["origin"][] => {
+  const inline = client.inlineConfiguration;
+  const name = PRODUCT_IDENTITY.mcpServerKey;
+  return inline !== undefined &&
+    (Object.hasOwn(inline.parsed.servers, name) ||
+      Object.hasOwn(inline.parsed.legacyServers, name))
+    ? [inline.origin]
+    : [];
+};
+
 /**
  * The inline layer that would change the REA registration setup writes as
  * `desired` into the write target, which setup cannot edit around.

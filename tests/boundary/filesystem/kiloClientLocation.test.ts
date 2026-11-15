@@ -11,7 +11,10 @@ import {
   supportedClients,
 } from "../../../src/application/SupportedClients.js";
 import { detectClients } from "../../../src/application/SetupHost.js";
-import { inspectClientConfiguration } from "../../../src/application/SetupClientConfiguration.js";
+import {
+  configureClientConfiguration,
+  inspectClientConfiguration,
+} from "../../../src/application/SetupClientConfiguration.js";
 import {
   runUninstall,
   systemUninstallHost,
@@ -206,7 +209,10 @@ it("reads KILO_CONFIG_CONTENT as Kilo's top read-only layer", async () => {
       mcp: { rea: { command: ["/opt/other/rea", "mcp"] } },
     }),
   };
-  expect((await status(launcher))?.state).not.toBe("aligned");
+  // Doctor and setup name the layer the unowned launcher may come from.
+  const doctor = await status(launcher);
+  expect(doctor?.state).not.toBe("aligned");
+  expect(doctor?.remediation).toContain(", KILO_CONFIG_CONTENT has unknown");
   expect(await remediation(launcher)).toContain(
     "has unknown ownership and was not changed",
   );
@@ -215,9 +221,44 @@ it("reads KILO_CONFIG_CONTENT as Kilo's top read-only layer", async () => {
   const disabled = {
     KILO_CONFIG_CONTENT: JSON.stringify({ mcp: { rea: { enabled: false } } }),
   };
+  // Doctor's recovery names the layer setup cannot edit.
+  expect(await status(disabled)).toMatchObject({
+    state: "stale",
+    remediation: expect.stringContaining(
+      "KILO_CONFIG_CONTENT also sets the rea entry",
+    ),
+  });
   expect(await remediation(disabled)).toContain(
     "KILO_CONFIG_CONTENT overrides REA's rea registration",
   );
+  expect(await readFile(target, "utf8")).toBe(registered);
+});
+
+it("refuses a setup write that KILO_CONFIG_CONTENT would override", async () => {
+  const home = await createTestTempDirectory("rea-kilo-inline-write-");
+  const root = join(home, ".config", "kilo");
+  await mkdir(root, { recursive: true });
+  const target = join(root, "kilo.json");
+  const environment = { HOPPER_LAUNCHER_PATH: "/opt/first/hopper" };
+  const registered = JSON.stringify({
+    mcp: { rea: { type: "local", command, enabled: true, environment } },
+  });
+  await writeFile(target, registered);
+  const row = await kiloRow(home, {
+    KILO_CONFIG_CONTENT: JSON.stringify({ mcp: { rea: { environment } } }),
+  });
+  if (row === undefined) throw new Error("Kilo row is missing");
+  // Settings chosen after inspection, such as a newly installed Hopper,
+  // would be written beneath the inline value that Kilo keeps loading.
+  const result = await configureClientConfiguration(
+    row,
+    { HOPPER_LAUNCHER_PATH: "/opt/second/hopper" },
+    command,
+  );
+  expect(result).toMatchObject({
+    status: "failed",
+    reason: "read_only_override",
+  });
   expect(await readFile(target, "utf8")).toBe(registered);
 });
 
