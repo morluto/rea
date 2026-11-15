@@ -166,14 +166,7 @@ export interface UninstallHost {
 
 /** Preserve the resource owner's explicit retry capabilities through uninstall reporting. */
 const uninstallCleanupError = (cause: unknown): AnalysisError => {
-  if (
-    cause instanceof AnalysisError &&
-    (cause.cleanupIncomplete ||
-      cause.hasCleanupOwner ||
-      cause.cleanup !== undefined ||
-      cause instanceof ProviderCleanupError)
-  )
-    return cause;
+  if (cause instanceof AnalysisError && cause.carriesCleanup) return cause;
   const cleanup = ArtifactReaderFailure.cleanupObservation(cause, []);
   const error = new ProviderCleanupError(
     "uninstall",

@@ -296,9 +296,10 @@ const closeWithin = async (
           : undefined;
       if (readerLeases !== undefined)
         new AnalysisCleanupLeaseGroup(rejection, readerLeases);
-      // A rejection that reports no unreleased cleanup of its own (such as a
-      // cancellation) names no owner: the close's lease stays unreleased.
-      if (!rejection.cleanupIncomplete) return;
+      // A rejection that carries no cleanup of its own (such as a
+      // cancellation) names no owner: the close's lease stays unreleased. One
+      // whose owner already released (a retry finished first) still names it.
+      if (!rejection.carriesCleanup) return;
       late = rejection;
       if (cause instanceof AnalysisError || readerLeases !== undefined)
         failure.bindCleanupResourceOwner(rejection);

@@ -480,6 +480,33 @@ it("keeps a late close rejection without cleanup of its own from confirming rele
   expect(finalized.error.cleanupResources).toEqual([`${operation} resources`]);
 });
 
+it("follows a late close rejection whose owner already released before it arrived", async () => {
+  let rejectClose!: (cause: unknown) => void;
+  const producerCleanup = new ProviderCleanupError("fixture", ["/owned/root"], {
+    reason: "released by a retry",
+  });
+  const finalized = await runOwned(async () => ok({ count: 3 }), {
+    providerId: "fixture",
+    operation,
+    deadline: Deadline.after(1000, { finalizeMs: 10 }),
+    close: () =>
+      new Promise<void>((_resolve, reject) => {
+        rejectClose = reject;
+      }),
+    partial: project,
+  });
+  if (finalized.kind !== "completed-cleanup-retained")
+    throw new Error(`expected retained cleanup, got ${finalized.kind}`);
+  // A concurrent retry released the producer's resources before the original
+  // close rejected with that producer's error.
+  producerCleanup.resolveCleanup();
+  rejectClose(producerCleanup);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(finalized.error.cleanupIncomplete).toBe(false);
+  // Attribution follows the exact owner, not the close's fallback.
+  expect(finalized.error.cleanupResources).toEqual(["/owned/root"]);
+});
+
 it("keeps failures the work recorded when a budget cancellation is replaced", async () => {
   const recorded = new ProviderCleanupError("fixture", [], {
     reason: "recorded during work",
