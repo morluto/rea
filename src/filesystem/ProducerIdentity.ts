@@ -10,10 +10,22 @@ import { PRODUCT_IDENTITY } from "../identity.js";
  * release or script edit, so producers do not hand-maintain revision markers
  * for their own behaviour. Markers remain only for runtime-selected semantics.
  */
-export type ProducerIdentity = Readonly<{
-  rea_version: string;
-  sources_sha256: string;
-}>;
+export type ProducerIdentity = ReleaseProducerIdentity &
+  Readonly<{ sources_sha256: string }>;
+
+/**
+ * The identity of a producer implemented entirely in REA's own code (no
+ * packaged scripts handed to an engine): the REA release that ran it.
+ */
+export type ReleaseProducerIdentity = Readonly<{ rea_version: string }>;
+
+const RELEASE_PRODUCER: ReleaseProducerIdentity = Object.freeze({
+  rea_version: PRODUCT_IDENTITY.packageVersion,
+});
+
+/** The REA release, as the producer of results computed in REA's own code. */
+export const releaseProducerIdentity = (): ReleaseProducerIdentity =>
+  RELEASE_PRODUCER;
 
 /**
  * SHA-256 over the named packaged sources in `directory`, in name order, each
@@ -43,7 +55,7 @@ export const packagedProducerIdentity = (
   let identity: ProducerIdentity | undefined;
   return () =>
     (identity ??= Object.freeze({
-      rea_version: PRODUCT_IDENTITY.packageVersion,
+      ...RELEASE_PRODUCER,
       sources_sha256: packagedSourcesDigest(directory, names),
     }));
 };

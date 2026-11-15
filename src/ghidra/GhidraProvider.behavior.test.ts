@@ -949,7 +949,6 @@ describe("Ghidra PE analysis profile identity", () => {
         executable_role: target.executableRole,
         managed: target.managed,
         native_aot_metadata: {
-          contract_revision: "rtr-9.1-x64-pe-read-only-v11",
           source_bytes: 128 * 1024 * 1024,
           base_work_units: 64 * 1024 * 1024,
           work_units_per_source_byte: 8,
