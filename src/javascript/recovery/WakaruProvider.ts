@@ -16,8 +16,6 @@ import {
   AnalysisCleanupLease,
   ArtifactReaderFailure,
   artifactFileCancellationCause,
-} from "../../resources/index.js";
-import {
   SafeOutputTree,
   SafeOutputTreeCreationFailure,
 } from "../../resources/index.js";

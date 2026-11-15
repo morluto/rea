@@ -49,7 +49,8 @@ import {
   type MutableOccurrence,
 } from "./ArtifactGraphConstruction.js";
 import type { ArtifactIntegrityPolicyName } from "../../domain/artifactIntegrityPolicy.js";
-import { abortIfNeeded, hashReadable } from "../ArtifactHash.js";
+import { hashReadable } from "../ArtifactHash.js";
+import { abortIfNeeded } from "../../resources/index.js";
 
 export interface PendingIntegrityContradiction {
   readonly occurrence: MutableOccurrence;

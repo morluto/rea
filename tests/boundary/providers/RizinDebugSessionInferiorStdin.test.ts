@@ -11,7 +11,7 @@ import { expect, it, onTestFinished } from "vitest";
 
 import { registerReverseEngineeringCommands } from "../../../src/cli/reverseEngineeringCommands.js";
 import type { CliInstance } from "../../../src/cli/types.js";
-import { CLI_COMMANDS } from "../../../src/cliCommandNames.js";
+import { CLI_COMMANDS } from "../../../src/contracts/cliCommandNames.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import type { Result } from "../../../src/domain/result.js";
