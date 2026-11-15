@@ -77,7 +77,7 @@ cliTest(
       ptx = Buffer.from(ptxFixture),
       bytes = cudaFixture("lz4", [{ kind: 1, target: 80, bytes: ptx }]);
     await writeFile(path, bytes);
-    const response = await runFileCli(cli, {
+    const response = await cli.run({
       arguments: [
         "inspect-gpu-code-objects",
         path,
