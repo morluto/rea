@@ -67,6 +67,33 @@ it("honours an exemption marker that gives a reason", () => {
   ).toBe(1);
 });
 
+it("counts executable defaults only, whatever strings and regular expressions hold", () => {
+  // Text in a string is not code.
+  expect(optionalFactDefaultCount('const example = "report.count ?? 0";')).toBe(
+    0,
+  );
+  expect(optionalFactDefaultCount("const t = `${a} report.count ?? 0`;")).toBe(
+    0,
+  );
+  // A regular expression holding `/*` or `//` does not hide the code after it.
+  expect(
+    optionalFactDefaultCount(
+      "const pattern = /[/*]/; const n = report.count ?? 0;",
+    ),
+  ).toBe(1);
+  expect(
+    optionalFactDefaultCount(
+      "const p = /a\\/\\//u; const n = report.count ?? 0;",
+    ),
+  ).toBe(1);
+  // A marker inside a string does not exempt the default.
+  expect(
+    optionalFactDefaultCount(
+      'const s = "optional-fact-default: not a real reason"; const n = report.count ?? 0;',
+    ),
+  ).toBe(1);
+});
+
 it("selects comparison, coverage and count files only", () => {
   expect(isComparisonOrCountFile("src/domain/artifactComparison.ts")).toBe(
     true,
