@@ -337,7 +337,7 @@ const systemCode = (cause: unknown): string | undefined =>
 const probeFailureError = (
   failure: GhidraJavaProbeFailure,
   cause: unknown,
-): AnalysisError => {
+): ProviderAdapterError => {
   const { output, ...facts } = failure;
   return new ProviderAdapterError("ghidra", "ghidra:java", {
     cause,

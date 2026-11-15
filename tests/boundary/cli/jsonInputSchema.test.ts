@@ -9,7 +9,7 @@ import { artifactComparisonInputSchema } from "../../../src/contracts/artifactCo
 import {
   compareApplicationVersionsRequestSchema,
   compareJavaScriptExportShapesRequestSchema,
-  compareSourceToBundleCliInputSchema,
+  compareSourceToBundleRequestSchema,
   compareStaticObservedEndpointsFactsSchema,
   reconcileJavaScriptRuntimeRequestSchema,
   traceApplicationFeatureRequestSchema,
@@ -19,8 +19,8 @@ import {
   getEvidenceBundleInputSchema,
   importEvidenceBundleInputSchema,
 } from "../../../src/contracts/sessionToolSchemas.js";
-import { reconstructionCoverageRequestSchema } from "../../../src/domain/reconstructionCoverageInput.js";
-import { reconstructionObligationLedgerRequestSchema } from "../../../src/application/ReconstructionObligationLedgerRequest.js";
+import { reconstructionCoverageEvaluationInputSchema } from "../../../src/domain/reconstructionCoverageInput.js";
+import { reconstructionObligationLedgerInputSchema } from "../../../src/domain/reconstructionObligationLedgerSchemas.js";
 import { inspectAnalysisViewInputSchema } from "../../../src/domain/analysisView/analysisViewRequest.js";
 import { browserScenarioSchema } from "../../../src/domain/browserScenario.js";
 import { getEvidenceInputContract } from "../../../src/domain/evidenceInputContract.js";
@@ -36,6 +36,7 @@ import {
   jsonInputArgument,
   jsonInputContentSchema,
 } from "../../../src/cli/jsonInputArgument.js";
+import { cliJsonCallerPathSchema } from "../../../src/cliJsonInput.js";
 import { visitRegisteredCommands } from "../../../src/cli/visitRegisteredCommands.js";
 import type { CliInstance } from "../../../src/cli/types.js";
 
@@ -51,7 +52,12 @@ const inventoryDocumentSchema = frame(
 );
 
 /** Every positional JSON document and the schema its handler parses. */
-const documents = [
+const documents: readonly {
+  readonly command: string;
+  readonly schema: z.ZodType;
+  /** Fields the CLI resolves against the working directory before parsing. */
+  readonly callerPaths?: readonly (readonly string[])[];
+}[] = [
   {
     command: CLI_COMMANDS.traceApplicationFeature,
     schema: frame(traceApplicationFeatureRequestSchema),
@@ -70,7 +76,8 @@ const documents = [
   },
   {
     command: CLI_COMMANDS.compareSourceToBundle,
-    schema: frame(compareSourceToBundleCliInputSchema),
+    schema: frame(compareSourceToBundleRequestSchema.omit({ view: true })),
+    callerPaths: [["reference", "path"]],
   },
   {
     command: CLI_COMMANDS.compareJavaScriptExportShapes,
@@ -78,11 +85,11 @@ const documents = [
   },
   {
     command: CLI_COMMANDS.buildReconstructionObligationLedger,
-    schema: reconstructionObligationLedgerRequestSchema,
+    schema: reconstructionObligationLedgerInputSchema,
   },
   {
     command: CLI_COMMANDS.evaluateReconstructionCoverage,
-    schema: reconstructionCoverageRequestSchema,
+    schema: reconstructionCoverageEvaluationInputSchema,
   },
   {
     command: CLI_COMMANDS.projectAndroidApplicationGraph,
@@ -103,10 +110,16 @@ const documents = [
   {
     command: CLI_COMMANDS.inspectAnalysisView,
     schema: inspectAnalysisViewInputSchema,
+    callerPaths: [["source", "path"]],
   },
   {
     command: CLI_COMMANDS.captureElectronScenario,
     schema: electronActiveObservationInputSchema,
+    callerPaths: [
+      ["executable_path"],
+      ["application_path"],
+      ["application_root"],
+    ],
   },
   {
     command: CLI_COMMANDS.reconcileJavaScriptRuntime,
@@ -131,6 +144,10 @@ const documents = [
   {
     command: CLI_COMMANDS.compareArtifacts,
     schema: artifactComparisonInputSchema,
+    callerPaths: [
+      ["left", "path"],
+      ["right", "path"],
+    ],
   },
   {
     command: CLI_COMMANDS.compareWasmInterfaces,
@@ -210,18 +227,66 @@ const advertisedInput = (stdout: string): InputJsonSchema => {
   return inputJson as InputJsonSchema;
 };
 
+type JsonSchemaNode = Record<string, unknown>;
+
+const cliCallerPath = jsonInputContentSchema(
+  cliJsonCallerPathSchema,
+) as JsonSchemaNode;
+
+/** Expect a caller path as the CLI admits it: any nonempty local spelling. */
+const admitRelativePath = (
+  schema: JsonSchemaNode,
+  path: readonly string[],
+): JsonSchemaNode => {
+  const [head, ...tail] = path;
+  if (head === undefined) {
+    const { allOf: _patterns, pattern: _pattern, ...rest } = schema;
+    return { ...rest, ...cliCallerPath };
+  }
+  const branches = (["anyOf", "oneOf"] as const).flatMap((keyword) =>
+    Array.isArray(schema[keyword])
+      ? [
+          [
+            keyword,
+            (schema[keyword] as JsonSchemaNode[]).map((branch) =>
+              admitRelativePath(branch, path),
+            ),
+          ] as const,
+        ]
+      : [],
+  );
+  const properties = schema.properties as
+    | Record<string, JsonSchemaNode>
+    | undefined;
+  return {
+    ...schema,
+    ...Object.fromEntries(branches),
+    ...(properties?.[head] === undefined
+      ? {}
+      : {
+          properties: {
+            ...properties,
+            [head]: admitRelativePath(properties[head], tail),
+          },
+        }),
+  };
+};
+
 it("advertises the parsed document for every JSON-input command", async () => {
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   expect(jsonInputCommands(cli).sort()).toEqual(
     documents.map(({ command }) => command).sort(),
   );
-  for (const { command, schema } of documents) {
+  for (const { command, schema, callerPaths = [] } of documents) {
     const served = await serve([command, "--schema", "--json"]);
     expect(served.exitCode, served.stdout).toBe(0);
     const inputJson = advertisedInput(served.stdout);
     expect(inputJson.contentSchema, command).toBeDefined();
     expect(inputJson.contentSchema, command).toEqual(
-      jsonInputContentSchema(schema),
+      callerPaths.reduce(
+        admitRelativePath,
+        jsonInputContentSchema(schema) as JsonSchemaNode,
+      ),
     );
     expect(inputJson.contentSchema, command).not.toEqual({});
     expect(
@@ -229,6 +294,25 @@ it("advertises the parsed document for every JSON-input command", async () => {
       command,
     ).not.toThrow();
   }
+});
+
+it("advertises caller paths as local spellings the CLI resolves, not URLs", async () => {
+  const input = advertisedInput(
+    (await serve([CLI_COMMANDS.compareSourceToBundle, "--schema", "--json"]))
+      .stdout,
+  );
+  const validate = new Ajv2020({
+    strict: false,
+    validateFormats: false,
+  }).compile(input.contentSchema as AnySchema);
+  const document = (path: string) => ({
+    reference: { kind: "file", path },
+    application: {},
+  });
+  for (const path of ["ref.json", "./file:ref.json", "C:\\ref.json"])
+    expect(validate(document(path)), path).toBe(true);
+  for (const path of ["file:ref.json", "FILE:ref.json", "https://x/ref.json"])
+    expect(validate(document(path)), path).toBe(false);
 });
 
 it("validates representative parsed documents with the advertised schema", async () => {
@@ -245,20 +329,45 @@ it("validates representative parsed documents with the advertised schema", async
     strict: false,
     validateFormats: false,
   }).compile(input.contentSchema as AnySchema);
-  const accepted = { coverage: { arbitrary: true }, boundary_id: "main" };
+  const evidence_bundle = {
+    evidence_format: 1,
+    artifacts: [],
+    providers: [],
+    environments: [],
+    scenarios: [],
+    captures: [],
+    unknowns: [],
+    records: [],
+  };
+  const coverage = {
+    evidence_bundle,
+    artifacts: [],
+    surfaces: [],
+    owners: [],
+    claims: [],
+    verifier_contracts: [],
+    verifier_results: [],
+    residual_unknown_ids: [],
+    contradictions: [],
+    package_proofs: [],
+    boundaries: [],
+  };
+  const accepted = { coverage, boundary_id: "main" };
   const rejected = [
-    { coverage: {}, boundary_id: "" },
-    { coverage: {} },
-    { coverage: {}, boundary_id: "main", extra: true },
+    { coverage, boundary_id: "" },
+    { coverage },
+    { coverage, boundary_id: "main", extra: true },
+    { coverage: { arbitrary: true }, boundary_id: "main" },
+    {
+      coverage: { ...coverage, evidence_bundle: { records: [] } },
+      boundary_id: "main",
+    },
   ];
-  expect(reconstructionCoverageRequestSchema.safeParse(accepted).success).toBe(
-    true,
-  );
+  const contract = reconstructionCoverageEvaluationInputSchema;
+  expect(contract.safeParse(accepted).success).toBe(true);
   expect(validate(accepted)).toBe(true);
   for (const document of rejected) {
-    expect(
-      reconstructionCoverageRequestSchema.safeParse(document).success,
-    ).toBe(false);
+    expect(contract.safeParse(document).success).toBe(false);
     expect(validate(document)).toBe(false);
   }
 });
@@ -307,7 +416,7 @@ it("names the feature-trace, semantic-query, and browser-scenario fields", async
   );
 });
 
-it("keeps unknown envelope fields permissive and named fields constrained", async () => {
+it("advertises the reconstruction documents their readers admit", async () => {
   const coverage = advertisedInput(
     (
       await serve([
@@ -317,7 +426,12 @@ it("keeps unknown envelope fields permissive and named fields constrained", asyn
       ])
     ).stdout,
   );
-  expect(coverage.contentSchema?.properties?.coverage).toEqual({});
+  // The reader authenticates the embedded bundle, but --schema still shows
+  // the document it admits, as the MCP contract does.
+  expect(coverage.contentSchema?.properties?.coverage).toMatchObject({
+    type: "object",
+    required: expect.arrayContaining(["evidence_bundle", "boundaries"]),
+  });
   // boundary_id is a stable identifier (#9919), so its pattern is advertised.
   expect(coverage.contentSchema?.properties?.boundary_id).toMatchObject({
     type: "string",
@@ -334,7 +448,10 @@ it("keeps unknown envelope fields permissive and named fields constrained", asyn
       ])
     ).stdout,
   );
-  expect(ledger.contentSchema?.properties?.evidence_bundle).toEqual({});
+  expect(ledger.contentSchema?.properties?.evidence_bundle).toMatchObject({
+    type: "object",
+    required: expect.arrayContaining(["artifacts", "records"]),
+  });
   expect(ledger.contentSchema?.required).toEqual(
     expect.arrayContaining([
       "evidence_bundle",

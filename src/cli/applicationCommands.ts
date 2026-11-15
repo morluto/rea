@@ -1,21 +1,15 @@
 import { registerPlaywrightTraceCommand } from "./playwrightTraceCommand.js";
 import { registerApiContractCommand } from "./apiContractCommand.js";
 import { registerNtfsJournalCommand } from "./ntfsJournalCommand.js";
-import { Cli, z } from "incur";
+import { Cli } from "incur";
 
 import { CLI_COMMANDS } from "../cliCommandNames.js";
-import { parseCliJsonInput } from "../cliJsonInput.js";
-import { logCliCommand } from "../cliLogging.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "pino";
 import { registerSourceToBundleCommand } from "./sourceToBundleCommand.js";
 import { registerStaticObservedEndpointsCommand } from "./staticObservedEndpointsCommand.js";
-import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
-import { reconstructionCoverageRequestSchema } from "../domain/reconstructionCoverageInput.js";
-import { reconstructionObligationLedgerRequestSchema } from "../application/ReconstructionObligationLedgerRequest.js";
-import { jsonInputArgument } from "./jsonInputArgument.js";
 import { APPLICATION_TOOL_CONTRACTS } from "../contracts/applicationToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
 import { registerContractDocumentCommand } from "./contractCommand.js";
@@ -166,99 +160,73 @@ export const registerApplicationCommands = (
   });
 };
 
+/**
+ * Inline reconstruction workflows. Each owner authenticates its embedded
+ * Evidence bundle itself, so the handler passes the decoded document on.
+ */
+const registerReconstructionDocumentCommand = <
+  Operation extends
+    | "build_reconstruction_obligation_ledger"
+    | "evaluate_reconstruction_coverage",
+>(
+  cli: CliInstance,
+  logger: Logger,
+  operation: Operation,
+  command: string,
+  description: string,
+  workflow: (
+    input: unknown,
+  ) => Promise<
+    | { readonly ok: true; readonly value: JsonValue }
+    | { readonly ok: false; readonly error: AnalysisError }
+  >,
+): void =>
+  registerContractDocumentCommand(
+    cli,
+    logger,
+    contractNamed(APPLICATION_TOOL_CONTRACTS, operation),
+    { command, description, document: workflowJsonDescription },
+    async (input) => {
+      const result = await workflow(input);
+      return result.ok
+        ? result.value
+        : {
+            error: "Application workflow failed",
+            ...projectAnalysisError(result.error, "invocation"),
+          };
+    },
+  );
+
 const registerObligationLedgerCommand = (
   cli: CliInstance,
   logger: Logger,
 ): void =>
-  registerJsonCommand({
+  registerReconstructionDocumentCommand(
     cli,
     logger,
-    name: CLI_COMMANDS.buildReconstructionObligationLedger,
-    description:
-      "Generate a deterministic Evidence-backed reconstruction obligation ledger page",
-    inputSchema: z.unknown(),
-    documentSchema: reconstructionObligationLedgerRequestSchema,
-    workflow: async (input) => {
+    "build_reconstruction_obligation_ledger",
+    CLI_COMMANDS.buildReconstructionObligationLedger,
+    "Generate a deterministic Evidence-backed reconstruction obligation ledger page",
+    async (input) => {
       const { buildReconstructionObligationLedgerEvidence } =
         await import("../application/ReconstructionObligationLedgerService.js");
       return buildReconstructionObligationLedgerEvidence(input);
     },
-  });
+  );
 
 const registerCoverageCommand = (cli: CliInstance, logger: Logger): void =>
-  registerJsonCommand({
+  registerReconstructionDocumentCommand(
     cli,
     logger,
-    name: CLI_COMMANDS.evaluateReconstructionCoverage,
-    description: "Evaluate inline fail-closed reconstruction coverage",
-    inputSchema: z.unknown(),
-    documentSchema: reconstructionCoverageRequestSchema,
-    workflow: async (input) => {
+    "evaluate_reconstruction_coverage",
+    CLI_COMMANDS.evaluateReconstructionCoverage,
+    "Evaluate inline fail-closed reconstruction coverage",
+    async (input) => {
       const { evaluateReconstructionCoverage } =
         await import("../application/ReconstructionCoverageService.js");
       return evaluateReconstructionCoverage(input);
     },
-  });
-
-interface JsonCommandOptions<Schema extends z.ZodType> {
-  readonly cli: CliInstance;
-  readonly logger: Logger;
-  readonly name: string;
-  readonly description: string;
-  readonly inputSchema: Schema;
-  /** Contract advertised by `--schema`. Runtime parsing stays `inputSchema`. */
-  readonly documentSchema?: z.ZodType;
-  readonly workflow: (
-    input: z.output<Schema>,
-  ) => Promise<
-    | { readonly ok: true; readonly value: JsonValue }
-    | { readonly ok: false; readonly error: AnalysisError }
-  >;
-}
-
-const registerJsonCommand = <Schema extends z.ZodType>({
-  cli,
-  logger,
-  name,
-  description,
-  inputSchema,
-  documentSchema,
-  workflow,
-}: JsonCommandOptions<Schema>): void => {
-  cli.command(name, {
-    description,
-    args: z.object({
-      inputJson: jsonInputArgument(
-        workflowJsonDescription,
-        documentSchema ?? inputSchema,
-      ),
-    }),
-    run: ({ args }) =>
-      logCliCommand(logger, name, async () => {
-        const input = await parseCliJsonInput(args.inputJson, name);
-        if (!input.ok) return input.error;
-        const parsed = inputSchema.safeParse(input.value);
-        if (!parsed.success)
-          return {
-            error: "Application workflow failed",
-            ...projectAnalysisError(
-              analysisInputErrorFromIssues(
-                name,
-                parsed.error.issues,
-                input.value,
-              ),
-            ),
-          };
-        const result = await workflow(parsed.data);
-        return result.ok
-          ? result.value
-          : {
-              error: "Application workflow failed",
-              ...projectAnalysisError(result.error, "invocation"),
-            };
-      }),
-  });
-};
+  );
 
 /** Evidence consumers share one explicit portable source and cancellation lifetime. */
 const registerEvidenceJsonCommand = ({
