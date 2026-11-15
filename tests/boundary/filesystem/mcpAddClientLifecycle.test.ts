@@ -50,6 +50,7 @@ it.each([
   { agent: "amp", client: "amp" },
   { agent: "mcporter", client: "mcporter" },
   { agent: "fx", client: "fx" },
+  { agent: "junie", client: "junie" },
 ])(
   "inspects, refreshes and removes the $agent registration that mcp add wrote as $client",
   async ({ agent, client }) => {
@@ -456,3 +457,30 @@ it.skipIf(platform === "win32")(
       ).toBe(0o600);
   },
 );
+
+it("reports a Junie registration Junie would not load in doctor and setup", async () => {
+  const home = await createTestTempDirectory("rea-junie-policy-");
+  const environment = { JUNIE_MCP_DEFAULT_LOCATIONS: "false" };
+  const row = supportedClients(home, platform, environment).find(
+    ({ name }) => name === "junie",
+  );
+  if (row === undefined) throw new Error("junie has no table row");
+  await mkdir(dirname(row.configPath), { recursive: true });
+  await writeFile(
+    row.configPath,
+    `${JSON.stringify({ mcpServers: { rea: { command: command[0], args: command.slice(1) } } })}\n`,
+  );
+  const status = (
+    await readClientRegistrationStatuses(home, command[1], {
+      platform,
+      environment,
+    })
+  ).find(({ client }) => client === "junie");
+  expect(status).toMatchObject({
+    state: "stale",
+    remediation: expect.stringContaining("JUNIE_MCP_DEFAULT_LOCATIONS"),
+  });
+  await expect(
+    inspectClientConfiguration(row, {}, command),
+  ).resolves.toMatchObject({ status: "invalid" });
+});
