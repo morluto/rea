@@ -1,7 +1,10 @@
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { readClientPolicyBlock } from "./GeminiClientSettings.js";
 import {
   readClientConfigurationFiles,
+  inlineRegistrationOrigins,
+  inlineRegistrationOverride,
   clientConfigurationForWrite,
   clientWriteDialect,
   effectiveClientConfiguration,
@@ -251,6 +254,11 @@ const configureClientDocument = async (
     files.value,
     resolveProviderRequestBudget,
   );
+  // The settings written now can differ from the ones inspection admitted,
+  // for example a Hopper path set by an installation earlier in this setup.
+  const override = inlineOverrideBlocker(client, files.value, desired);
+  if (override !== undefined)
+    return { status: "failed", reason: "read_only_override", detail: override };
   if (
     registrationCurrent(parsed, desired) &&
     (await privateProfileCurrent(client, original))
@@ -484,6 +492,76 @@ const persistClientConfiguration = async ({
   });
 };
 
+/** What setup would write into a client's target file, from one read. */
+interface ClientRefresh {
+  readonly original: string | undefined;
+  readonly parsed: ClientConfigurationDocument | undefined;
+  readonly desired: unknown;
+  /** Why setup refuses this write: a client policy or an overriding inline layer. */
+  readonly refusal: string | undefined;
+}
+
+/**
+ * Read a client's layers and compute the registration setup would write,
+ * with setup's own refusal checks. `undefined` when the layers are unreadable.
+ */
+const readClientRefresh = async (
+  client: SetupClient,
+  providerEnvironment: SetupProviderEnvironment,
+  command: readonly string[],
+  resolveProviderRequestBudget?: ProviderRequestBudgetResolver,
+  resources?: ArtifactResourceScope,
+): Promise<ClientRefresh | undefined> => {
+  const files = await readClientConfigurationFiles(
+    client,
+    resources,
+    undefined,
+    providerEnvironment,
+  );
+  if (!files.ok) {
+    throwCleanupFailure(files.error);
+    return undefined;
+  }
+  let original: string | undefined;
+  try {
+    original = await readRegularFileText(
+      client.configPath,
+      resources === undefined ? {} : { resources },
+    );
+  } catch (cause: unknown) {
+    if (!isMissing(cause)) throw cause;
+  }
+  const parsed =
+    original === undefined
+      ? undefined
+      : clientConfigurationForWrite(
+          parseClientConfiguration(original, client.format),
+          files.value,
+        );
+  const desired = await clientConfigurationDesired(
+    client,
+    providerEnvironment,
+    command,
+    parsed,
+    files.value,
+    resolveProviderRequestBudget,
+  );
+  const override = inlineOverrideBlocker(client, files.value, desired);
+  if (override !== undefined)
+    return { original, parsed, desired, refusal: override };
+  const policy = await readClientPolicyBlock(
+    client,
+    parsed,
+    desired,
+    resources,
+  );
+  if (!policy.ok) {
+    throwCleanupFailure(policy.error);
+    return { original, parsed, desired, refusal: policy.error.detail };
+  }
+  return { original, parsed, desired, refusal: policy.value };
+};
+
 /** Determine whether an existing client configuration matches the desired registration. */
 export const clientConfigurationAligned = async (
   client: SetupClient,
@@ -493,44 +571,57 @@ export const clientConfigurationAligned = async (
 ): Promise<boolean> => {
   if (client.configPathError !== undefined) return false;
   try {
-    const files = await readClientConfigurationFiles(
-      client,
-      undefined,
-      undefined,
-      providerEnvironment,
-    );
-    if (!files.ok) {
-      throwCleanupFailure(files.error);
-      return false;
-    }
-    const original = await readRegularFileText(client.configPath);
-    const parsed = clientConfigurationForWrite(
-      parseClientConfiguration(original, client.format),
-      files.value,
-    );
-    const desired = await clientConfigurationDesired(
+    const refresh = await readClientRefresh(
       client,
       providerEnvironment,
       command,
-      parsed,
-      files.value,
       resolveProviderRequestBudget,
     );
-    const policy = await readClientPolicyBlock(client, parsed, desired);
-    if (!policy.ok) {
-      throwCleanupFailure(policy.error);
-      return false;
-    }
     return (
-      policy.value === undefined &&
-      registrationCurrent(parsed, desired) &&
-      (await privateProfileCurrent(client, original))
+      refresh?.original !== undefined &&
+      refresh.parsed !== undefined &&
+      refresh.refusal === undefined &&
+      registrationCurrent(refresh.parsed, refresh.desired) &&
+      (await privateProfileCurrent(client, refresh.original))
     );
   } catch (cause: unknown) {
     if (cause instanceof RegularFileCleanupFailure) throw cause;
     // Unreadable configuration is treated as not aligned so setup repairs it.
     void cause;
     return false;
+  }
+};
+
+/**
+ * Why setup would refuse to refresh this client's registration with
+ * `command`: a client policy or a read-only inline layer that would override
+ * the refreshed entry. Update maintenance asks before selecting a client,
+ * because one refused client blocks the whole setup plan. Registration
+ * ownership is not checked here; the caller has already established it.
+ * A supplied scope retains the owner of a file whose cleanup failed.
+ */
+export const clientRefreshRefusal = async (
+  client: SetupClient,
+  providerEnvironment: SetupProviderEnvironment,
+  command: readonly string[],
+  resources?: ArtifactResourceScope,
+): Promise<string | undefined> => {
+  if (client.configPathError !== undefined) return client.configPathError;
+  try {
+    return (
+      await readClientRefresh(
+        client,
+        providerEnvironment,
+        command,
+        undefined,
+        resources,
+      )
+    )?.refusal;
+  } catch (cause: unknown) {
+    if (cause instanceof RegularFileCleanupFailure) throw cause;
+    if (cause instanceof ConfigurationError)
+      return `${cause.message}: ${cause.settings.map(({ setting, constraint }) => `${setting}: ${constraint}`).join("; ")}`;
+    return `The configuration could not be read. Check its permissions before rerunning setup. ${cause instanceof Error ? cause.message : String(cause)}`;
   }
 };
 
@@ -624,19 +715,19 @@ const inspectClientDocument = async (
           : registrationOwnershipBlocker(client, inherited, "", files.value);
       if (ownershipBlocker !== undefined)
         return { status: "invalid", remediation: ownershipBlocker };
-      // This read establishes absence; do not reuse an earlier user-file policy.
-      const policy = await readClientPolicyBlock(
+      const desired = await clientConfigurationDesired(
         client,
+        providerEnvironment,
+        command,
         undefined,
-        await clientConfigurationDesired(
-          client,
-          providerEnvironment,
-          command,
-          undefined,
-          files.value,
-          resolveProviderRequestBudget,
-        ),
+        files.value,
+        resolveProviderRequestBudget,
       );
+      const override = inlineOverrideBlocker(client, files.value, desired);
+      if (override !== undefined)
+        return { status: "invalid", remediation: override };
+      // This read establishes absence; do not reuse an earlier user-file policy.
+      const policy = await readClientPolicyBlock(client, undefined, desired);
       if (!policy.ok) {
         throwCleanupFailure(policy.error);
         return {
@@ -680,6 +771,9 @@ const inspectClientDocument = async (
       files.value,
       resolveProviderRequestBudget,
     );
+    const override = inlineOverrideBlocker(client, files.value, desired);
+    if (override !== undefined)
+      return { status: "invalid", remediation: override };
     const policy = await readClientPolicyBlock(client, parsed, desired);
     if (!policy.ok) {
       throwCleanupFailure(policy.error);
@@ -737,6 +831,18 @@ const throwCleanupFailure = (error: ClientConfigurationFileError): void => {
   if (error.cleanupFailure !== undefined) throw error.cleanupFailure;
 };
 
+/** Setup cannot write around a read-only inline layer that overrides REA. */
+const inlineOverrideBlocker = (
+  client: SetupClient,
+  sources: readonly ClientConfigurationSource[],
+  desired: unknown,
+): string | undefined => {
+  const origin = inlineRegistrationOverride(client, sources, desired);
+  return origin === undefined
+    ? undefined
+    : `${origin} overrides REA's ${PRODUCT_IDENTITY.mcpServerKey} registration in ${client.configPath}, and REA does not edit it. Remove the ${PRODUCT_IDENTITY.mcpServerKey} server from ${origin} or make it match, then rerun setup.`;
+};
+
 /** Admit only absent or proven-owned rows that this setup would replace. */
 const registrationOwnershipBlocker = (
   client: SetupClient,
@@ -755,7 +861,11 @@ const registrationOwnershipBlocker = (
   if (effective !== undefined && Object.hasOwn(effective.servers, name))
     entries.push({
       value: effective.servers[name],
-      paths: client.configPaths ?? [client.configPath],
+      // An inline layer is named by its origin; it has no path.
+      paths: [
+        ...(client.configPaths ?? [client.configPath]),
+        ...inlineRegistrationOrigins(client),
+      ],
     });
   const fragment = parsed.servers[name];
   // A layered policy fragment inherits its launcher. Classify the effective

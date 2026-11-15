@@ -1,12 +1,11 @@
 import { dirname, join, relative } from "node:path";
 import { ConfigurationError } from "../domain/configurationErrors.js";
-import { parseClientConfiguration } from "./ClientConfigurationDocument.js";
 import {
   directoryFiles,
   kiloExplicitDirectory,
   kiloExplicitFile,
-  kiloGlobalLocation,
   kiloHomeDirectories,
+  kiloInlineConfiguration,
   kiloRoot,
   KILO_GLOBAL_FILES,
   observedFiles,
@@ -24,27 +23,8 @@ import {
   present,
   type McpRegistrationLocationContext,
   type McpRegistrationLocation,
-  type McpRegistrationGlobalLocation,
-  type McpRegistrationInlineConfiguration,
 } from "./McpRegistrationLocations.js";
 
-const kiloInline = (
-  context: McpRegistrationLocationContext,
-): McpRegistrationInlineConfiguration | undefined => {
-  const text = context.environment.KILO_CONFIG_CONTENT;
-  if (!text) return undefined;
-  try {
-    return {
-      origin: "KILO_CONFIG_CONTENT",
-      parsed: parseClientConfiguration(text, "kilo"),
-    };
-  } catch (cause: unknown) {
-    throw new ConfigurationError(
-      "KILO_CONFIG_CONTENT cannot be admitted as Kilo configuration. Repair that selected inline configuration; no settings were written.",
-      { cause },
-    );
-  }
-};
 /** `rea mcp add` resolves configured paths against its working directory. */
 const kiloContext = (
   context: McpRegistrationLocationContext,
@@ -52,20 +32,6 @@ const kiloContext = (
   root: rootContext(context),
   path: (path) => selectedPath(path, context),
 });
-
-export const kiloLocation = async (
-  context: McpRegistrationLocationContext,
-): Promise<McpRegistrationGlobalLocation> => {
-  const { configPath, configPaths, markerPath, discoveryPaths } =
-    await kiloGlobalLocation(kiloContext(context));
-  const inlineConfiguration = kiloInline(context);
-  return {
-    configPath,
-    configPaths,
-    ...(inlineConfiguration === undefined ? {} : { inlineConfiguration }),
-    markers: [markerPath, ...discoveryPaths],
-  };
-};
 
 const ancestorsThrough = (directory: string, root: string): string[] => {
   const directories: string[] = [];
@@ -184,7 +150,7 @@ export const kiloProjectLocation = async (
     }
     layers.push(...ordered);
   } else layers.push(...directoryLayers);
-  const inlineConfiguration = kiloInline(context);
+  const inlineConfiguration = kiloInlineConfiguration(kilo.root);
   return {
     configPath,
     configPaths: layers.map((layer) => layer.path),

@@ -4,8 +4,10 @@ import { readRegularFileText } from "./RegularFileRead.js";
 import {
   effectiveClientServer,
   parseClientConfiguration,
+  clientConfigurationValuesEqual,
   type ClientConfigurationDocument,
   type ClientConfigurationFormat,
+  type ClientInlineConfiguration,
   type ClientRegistrationDialect,
 } from "./ClientConfigurationDocument.js";
 import type { SetupClient } from "./SupportedClients.js";
@@ -16,10 +18,18 @@ import { mergeEnvironmentOverrides } from "../process/snapshotEnvironment.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { isRecord } from "../domain/isRecord.js";
 
-/** A parsed layer retains its path so rereading the write target replaces only that layer. */
-export interface ClientConfigurationSource extends ClientConfigurationDocument {
-  readonly sourcePath: string;
-}
+/**
+ * A parsed layer retains its path so rereading the write target replaces only
+ * that layer. An inline layer has no path, so nothing can select it for writing.
+ */
+export type ClientConfigurationSource = ClientConfigurationDocument &
+  (
+    | { readonly sourcePath: string; readonly inlineOrigin?: undefined }
+    | {
+        readonly sourcePath?: undefined;
+        readonly inlineOrigin: ClientInlineConfiguration["origin"];
+      }
+  );
 
 const invalidEnvironment = (
   path: string,
@@ -162,6 +172,13 @@ export const readClientConfigurationFiles = async (
       documents.push({ ...document.value, sourcePath: path });
     }
   }
+  // The inline layer is read-only and may replace a lower environment map,
+  // so like a read-only lower layer only the effective view is validated.
+  if (client.inlineConfiguration !== undefined)
+    documents.push({
+      ...client.inlineConfiguration.parsed,
+      inlineOrigin: client.inlineConfiguration.origin,
+    });
   const environment = clientRegistrationEnvironment(
     effectiveClientConfiguration(documents, undefined, platform),
     client,
@@ -241,16 +258,101 @@ export const effectiveClientConfiguration = (
   const documents =
     target === undefined
       ? sources
-      : (target.client.configPaths ?? [target.client.configPath]).flatMap(
-          (path) => {
-            const document =
-              path === target.client.configPath
-                ? target.document
-                : sources.find(({ sourcePath }) => sourcePath === path);
-            return document === undefined ? [] : [document];
-          },
-        );
+      : [
+          ...(target.client.configPaths ?? [target.client.configPath]).flatMap(
+            (path) => {
+              const document =
+                path === target.client.configPath
+                  ? target.document
+                  : sources.find(({ sourcePath }) => sourcePath === path);
+              return document === undefined ? [] : [document];
+            },
+          ),
+          ...sources.filter(({ inlineOrigin }) => inlineOrigin !== undefined),
+        ];
   return mergeClientConfigurationDocuments(documents, platform);
+};
+
+/** The client's read-only inline layers that set REA's entry. */
+export const inlineRegistrationOrigins = (
+  client: Pick<SetupClient, "inlineConfiguration">,
+): readonly ClientInlineConfiguration["origin"][] => {
+  const inline = client.inlineConfiguration;
+  const name = PRODUCT_IDENTITY.mcpServerKey;
+  return inline !== undefined &&
+    (Object.hasOwn(inline.parsed.servers, name) ||
+      Object.hasOwn(inline.parsed.legacyServers, name))
+    ? [inline.origin]
+    : [];
+};
+
+/**
+ * The inline layer that would change the REA registration setup writes as
+ * `desired` into the write target, which setup cannot edit around.
+ */
+export const inlineRegistrationOverride = (
+  client: Pick<SetupClient, "configPath" | "configPaths">,
+  sources: readonly ClientConfigurationSource[],
+  desired: unknown,
+  platform: NodeJS.Platform = process.platform,
+): ClientInlineConfiguration["origin"] | undefined => {
+  const name = PRODUCT_IDENTITY.mcpServerKey;
+  const inline = sources.filter(
+    ({ inlineOrigin }) => inlineOrigin !== undefined,
+  );
+  const declaring = inline.find(
+    (layer) =>
+      Object.hasOwn(layer.servers, name) ||
+      Object.hasOwn(layer.legacyServers, name),
+  );
+  if (declaring?.inlineOrigin === undefined) return undefined;
+  const files = sources.filter(({ sourcePath }) => sourcePath !== undefined);
+  const written = effectiveClientConfiguration(
+    files,
+    {
+      client,
+      document: {
+        ...declaring,
+        servers: { [name]: desired },
+        legacyServers: {},
+      },
+    },
+    platform,
+  );
+  const effective = mergeClientConfigurationDocuments(
+    [...(written === undefined ? [] : [written]), ...inline],
+    platform,
+  );
+  const launched = (entry: unknown): unknown =>
+    launchedRegistrationEntry(entry, declaring.environmentKey, platform);
+  return clientConfigurationValuesEqual(
+    launched(written?.servers[name]),
+    launched(effective?.servers[name]),
+  )
+    ? undefined
+    : declaring.inlineOrigin;
+};
+
+/**
+ * An entry as the client launches it: Windows environment names are one name
+ * whatever their case, so `PATH` and an equal `Path` start the same server.
+ */
+export const launchedRegistrationEntry = (
+  entry: unknown,
+  environmentKey: string,
+  platform: NodeJS.Platform,
+): unknown => {
+  if (platform !== "win32" || !isObject(entry)) return entry;
+  const environment = entry[environmentKey];
+  if (!isObject(environment)) return entry;
+  return {
+    ...entry,
+    [environmentKey]: Object.fromEntries(
+      Object.entries(mergeEnvironmentOverrides({}, environment, platform)).map(
+        ([key, value]) => [key.toUpperCase(), value],
+      ),
+    ),
+  };
 };
 
 /** Merge admitted layers without re-reading or changing their source documents. */

@@ -3,9 +3,10 @@ import { lstat } from "node:fs/promises";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import type { ClientRootContext } from "./ClientConfigRoots.js";
-import type { SetupClient, SupportedClientName } from "./SupportedClients.js";
+// Type-only: the client table imports project-location owners from here.
+import type { SetupClient } from "./SupportedClients.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import type { ClientConfigurationDocument } from "./ClientConfigurationDocument.js";
+import type { ClientInlineConfiguration } from "./ClientConfigurationDocument.js";
 
 export interface McpRegistrationLocationContext {
   readonly home: string;
@@ -17,20 +18,11 @@ export interface McpRegistrationLocationContext {
   readonly signal?: AbortSignal;
 }
 
-export interface McpRegistrationInlineConfiguration {
-  readonly origin: "KILO_CONFIG_CONTENT";
-  readonly parsed: ClientConfigurationDocument;
-}
-
 export interface McpRegistrationLocation {
   readonly configPath: string;
   /** Complete known file layers in native precedence; configPath alone grants write authority. */
   readonly configPaths?: readonly string[];
-  readonly inlineConfiguration?: McpRegistrationInlineConfiguration;
-}
-
-export interface McpRegistrationGlobalLocation extends McpRegistrationLocation {
-  readonly markers: readonly string[];
+  readonly inlineConfiguration?: ClientInlineConfiguration;
 }
 
 export const selectedPath = (
@@ -38,31 +30,6 @@ export const selectedPath = (
   context: McpRegistrationLocationContext,
 ): string =>
   absoluteCallerPath(path, { cwd: context.cwd, platform: context.platform });
-
-export const fromSetup =
-  (name: SupportedClientName) =>
-  async (
-    context: McpRegistrationLocationContext,
-  ): Promise<McpRegistrationGlobalLocation> => {
-    const client = context.setup.find((candidate) => candidate.name === name);
-    if (client === undefined)
-      throw new ConfigurationError(
-        `The registration catalog has no path owner for ${name}.`,
-      );
-    if (client.configPathError !== undefined)
-      throw new ConfigurationError(client.configPathError);
-    return {
-      configPath: selectedPath(client.configPath, context),
-      ...(client.configPaths === undefined
-        ? {}
-        : {
-            configPaths: client.configPaths.map((path) =>
-              selectedPath(path, context),
-            ),
-          }),
-      markers: [selectedPath(client.markerPath ?? client.configPath, context)],
-    };
-  };
 
 /** The client-root context of one registration selection. */
 export const rootContext = ({

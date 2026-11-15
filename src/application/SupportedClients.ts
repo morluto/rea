@@ -3,7 +3,10 @@ import type {
   ClientRegistrationProfile,
   NativeStdioIncompatibility,
 } from "./ClientRegistrationProfile.js";
-import type { ClientConfigurationFormat } from "./ClientConfigurationDocument.js";
+import type {
+  ClientConfigurationFormat,
+  ClientInlineConfiguration,
+} from "./ClientConfigurationDocument.js";
 import { dirname, isAbsolute, join, posix, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync, lstatSync, readFileSync, statSync } from "node:fs";
@@ -18,7 +21,10 @@ import {
   appendCallerPath,
 } from "../filesystem/callerPath.js";
 import {
+  absoluteClientRoot,
+  clientPathDependence,
   absoluteXdgConfigHome,
+  type ClientRootFailure,
   vscodeUserDirectory,
   xdgConfigHomeOrDefault,
 } from "./ClientConfigRoots.js";
@@ -35,6 +41,11 @@ import {
   type MsixPackageView,
   windowsAppDataRoots,
 } from "./MsixPackageStorage.js";
+import { kiloProjectLocation } from "./McpRegistrationKiloLocations.js";
+import type {
+  McpRegistrationLocation,
+  McpRegistrationLocationContext,
+} from "./McpRegistrationLocations.js";
 
 /** One supported client configuration location. */
 export interface SetupClient {
@@ -44,6 +55,8 @@ export interface SetupClient {
   readonly configPath: string;
   /** User configuration files in increasing precedence, including the write target. */
   readonly configPaths?: readonly string[];
+  /** Read-only configuration the client merges over every file layer. */
+  readonly inlineConfiguration?: ClientInlineConfiguration;
   /** Read-only Gemini scopes and trust inputs; never setup write targets. */
   readonly geminiSettings?: {
     readonly systemPath: string;
@@ -57,6 +70,8 @@ export interface SetupClient {
   readonly junieSettings?: JunieLocationSettings;
   /** Unresolved path evidence only; consumers must not perform I/O on it. */
   readonly configPathError?: string;
+  /** The access failure behind `configPathError`, when one was observed. */
+  readonly configPathFailure?: ConfigurationError;
   /** Same-scope fallback ZCode stops loading after its first native server. */
   readonly zcodeFallbackPath?: string;
   readonly markerPath?: string;
@@ -112,10 +127,10 @@ export interface SetupClient {
     | "unsupported";
 }
 
-interface ClientPathFailure {
-  readonly path: string;
-  readonly message: string;
+interface ClientPathFailure extends ClientRootFailure {
   readonly msixPackage?: MsixPackageView;
+  /** The access failure that left the path unresolved, with its cause. */
+  readonly failure?: ConfigurationError;
 }
 
 type ClientPathResult = Result<string, ClientPathFailure>;
@@ -147,6 +162,7 @@ interface ClientLayeredLocation {
   readonly configPath: string;
   /** Every file layer in load order, including `configPath`. */
   readonly configPaths: readonly string[];
+  readonly inlineConfiguration?: ClientInlineConfiguration;
 }
 
 /** One resolved configuration location and its detection evidence. */
@@ -177,14 +193,25 @@ type ClientDefinitionLocation =
  * The registration itself uses this row's location, format, profile and
  * read-scope facts, so both commands share one definition.
  */
-interface McpAddExposure {
+type McpAddExposure = {
   /** add-mcp agent aliases that select this client. */
   readonly aliases?: readonly string[];
-  /** Project documents in native precedence; absent means global-only. */
-  readonly projectPaths?: readonly [string, ...string[]];
   /** Dialect of the project document when it differs from the user one. */
   readonly projectFormat?: ClientConfigurationFormat;
-}
+} & (
+  | {
+      /** Project documents in native precedence; absent means global-only. */
+      readonly projectPaths?: readonly [string, ...string[]];
+      readonly projectLocation?: undefined;
+    }
+  | {
+      /** A project location only an asynchronous probe can decide. */
+      readonly projectLocation: (
+        context: McpRegistrationLocationContext,
+      ) => Promise<McpRegistrationLocation>;
+      readonly projectPaths?: undefined;
+    }
+);
 
 interface ClientDefinitionBase {
   readonly name: string;
@@ -204,8 +231,10 @@ interface ClientDefinitionBase {
   readonly geminiSettings?: (
     context: ClientPathContext,
   ) => NonNullable<SetupClient["geminiSettings"]>;
+  /** Junie's location inputs, from the context and its resolved home. */
   readonly junieSettings?: (
     context: ClientPathContext,
+    location: ClientLocation,
   ) => JunieLocationSettings;
   /**
    * The write target and layers once present layers are observed.
@@ -687,14 +716,15 @@ const zedLocation = ({
   if (platform === "win32")
     return ok(at(join(windowsAppDataRoots(home, env).roaming, "Zed")));
   const flatpakOverride = env.FLATPAK_XDG_CONFIG_HOME;
-  if (flatpakOverride)
-    return posix.isAbsolute(flatpakOverride)
-      ? ok(at(join(flatpakOverride, "zed")))
-      : err({
-          path: flatpakOverride,
-          message:
-            "FLATPAK_XDG_CONFIG_HOME is relative, so Zed's configuration folder depends on its working directory. Set an absolute path before configuring Zed.",
-        });
+  if (flatpakOverride) {
+    const selected = absoluteClientRoot(
+      flatpakOverride,
+      "FLATPAK_XDG_CONFIG_HOME",
+      "Zed",
+      platform,
+    );
+    return selected.ok ? ok(at(join(selected.value, "zed"))) : selected;
+  }
   const native = join(absoluteXdgConfigHome({ home, env }), "zed");
   const sandboxed = join(home, ...ZED_FLATPAK_CONFIG, "zed");
   const flatpak = directoryPresent(sandboxed);
@@ -758,16 +788,18 @@ const mcporterLocation = ({
     const path = mcporterExpandHome(selected, home);
     // MCPorter applies path.resolve: `..` collapses lexically, not through
     // links. The selected file is also the evidence that MCPorter is in use.
-    return pathApi.isAbsolute(path)
+    const absolute = absoluteClientRoot(
+      path,
+      "MCPORTER_CONFIG",
+      "MCPorter",
+      platform,
+    );
+    return absolute.ok
       ? ok({
-          configPath: pathApi.resolve(path),
-          markerPath: pathApi.resolve(path),
+          configPath: pathApi.resolve(absolute.value),
+          markerPath: pathApi.resolve(absolute.value),
         })
-      : err({
-          path,
-          message:
-            "MCPORTER_CONFIG is relative, so the file MCPorter loads depends on the directory each command runs from. Set an absolute MCPORTER_CONFIG before configuring MCPorter.",
-        });
+      : absolute;
   }
   const configHome = mcporterExpandHome(
     env.XDG_CONFIG_HOME?.trim() ?? "",
@@ -909,10 +941,24 @@ const fxLocation = ({
 
 /**
  * Junie's home: `JUNIE_HOME` for Junie CLI, else `~/.junie`. add-mcp notes the
- * JetBrains plugin always reads `~/.junie`.
+ * JetBrains plugin always reads `~/.junie`. Junie resolves a relative
+ * `JUNIE_HOME` against its own working directory, so REA refuses one.
  */
-const junieHome = ({ home, env }: ClientPathContext): string =>
-  env.JUNIE_HOME || join(home, ".junie");
+const junieLocation = ({
+  home,
+  platform,
+  env,
+}: ClientPathContext): Result<ClientLocation, ClientPathFailure> => {
+  const selected = env.JUNIE_HOME
+    ? absoluteClientRoot(env.JUNIE_HOME, "JUNIE_HOME", "Junie", platform)
+    : ok(join(home, ".junie"));
+  return selected.ok
+    ? ok({
+        configPath: join(selected.value, "mcp", "mcp.json"),
+        markerPath: selected.value,
+      })
+    : selected;
+};
 
 /**
  * Goose's user configuration (`Paths::config_dir`): an absolute
@@ -1022,22 +1068,28 @@ const kiloTableContext = (context: ClientPathContext): KiloLocationContext => ({
   root: context,
   path: (path) => {
     // Normalized as rea mcp add normalizes it, so joined layer paths compare.
-    if ((context.platform === "win32" ? win32 : posix).isAbsolute(path))
+    const dependence = clientPathDependence(path, context.platform);
+    if (dependence === undefined)
       return absoluteCallerPath(path, { platform: context.platform });
-    throw new KiloRelativePathError(path);
+    throw new KiloPathDependenceError(path, dependence);
   },
 });
 
-class KiloRelativePathError extends Error {
-  constructor(readonly path: string) {
+class KiloPathDependenceError extends Error {
+  constructor(
+    readonly path: string,
+    dependence: "relative" | "driveless",
+  ) {
     super(
-      `Kilo's configuration path ${path} is relative, so the file Kilo reads depends on its working directory. Set an absolute path before configuring Kilo.`,
+      dependence === "relative"
+        ? `Kilo's configuration path ${path} is relative, so the file Kilo reads depends on its working directory. Set an absolute path before configuring Kilo.`
+        : `Kilo's configuration path ${path} has no drive, so the file Kilo reads depends on its current drive. Set a path with a drive letter or a UNC path before configuring Kilo.`,
     );
   }
 }
 
 const kiloPathFailure = (cause: unknown): ClientPathFailure => {
-  if (cause instanceof KiloRelativePathError)
+  if (cause instanceof KiloPathDependenceError)
     return { path: cause.path, message: cause.message };
   throw cause;
 };
@@ -1060,13 +1112,19 @@ const kiloLayeredLocation = async (
 ): Promise<Result<ClientLayeredLocation, ClientPathFailure>> => {
   const kilo = kiloTableContext(context);
   try {
-    const { configPath, configPaths } = await kiloGlobalLocation(kilo);
-    return ok({ configPath, configPaths });
+    const { configPath, configPaths, inlineConfiguration } =
+      await kiloGlobalLocation(kilo);
+    return ok({
+      configPath,
+      configPaths,
+      ...(inlineConfiguration === undefined ? {} : { inlineConfiguration }),
+    });
   } catch (cause: unknown) {
     if (cause instanceof ConfigurationError)
       return err({
         path: kiloDefaultLocation(kilo).markerPath,
         message: cause.message,
+        failure: cause,
       });
     return err(kiloPathFailure(cause));
   }
@@ -1199,7 +1257,7 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
             configPath: selected.value,
             markerPath: pathApi.dirname(selected.value),
           })
-        : err({ path: "", message: selected.error.message });
+        : selected;
     },
     format: "json",
   }),
@@ -1757,11 +1815,9 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
       stdio: [{ kind: "present", field: "url" }],
     },
     displayName: "Junie",
-    configPath: (context: ClientPathContext) =>
-      join(junieHome(context), "mcp", "mcp.json"),
-    markerPath: junieHome,
-    junieSettings: (context: ClientPathContext) => ({
-      userConfigPath: join(junieHome(context), "config.json"),
+    location: junieLocation,
+    junieSettings: (context: ClientPathContext, { markerPath }) => ({
+      userConfigPath: join(markerPath, "config.json"),
       ...(context.env.JUNIE_MCP_DEFAULT_LOCATIONS === undefined
         ? {}
         : { mcpDefaultLocations: context.env.JUNIE_MCP_DEFAULT_LOCATIONS }),
@@ -1798,6 +1854,10 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
       stdio: [{ kind: "required-enum", field: "type", values: ["local"] }],
     },
     displayName: "Kilo Code",
+    mcpAdd: {
+      aliases: ["kilo", "kilocode"],
+      projectLocation: kiloProjectLocation,
+    },
     location: kiloLocation,
     configPaths: kiloCandidatePaths,
     discoveryPaths: kiloDiscoveryPaths,
@@ -1973,7 +2033,9 @@ export const supportedClients = (
           : { geminiSettings: definition.geminiSettings(context) }),
         ...(definition.junieSettings === undefined
           ? {}
-          : { junieSettings: definition.junieSettings(context) }),
+          : {
+              junieSettings: definition.junieSettings(context, location.value),
+            }),
         ...(definition.configPaths === undefined
           ? {}
           : {
@@ -2057,6 +2119,9 @@ export const resolveSupportedClients = async (
             ...row,
             configPath: location.error.path,
             configPathError: location.error.message,
+            ...(location.error.failure === undefined
+              ? {}
+              : { configPathFailure: location.error.failure }),
           };
     }),
   );
