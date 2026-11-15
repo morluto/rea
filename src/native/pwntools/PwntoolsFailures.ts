@@ -24,6 +24,7 @@ import {
   PWNTOOLS_FILE_SIZE_FAILURE_EXIT,
 } from "./PwntoolsRelease.js";
 import { PWNTOOLS_PROVIDER_IDENTITY } from "./PwntoolsProviderIdentity.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 /** Operation identity supplied by each adapter sharing the pwntools boundary. */
 export interface PwntoolsFailureContext {
@@ -199,7 +200,7 @@ export const pwntoolsFailureDialect = (
         cause,
         diagnostics: {
           ...pwntoolsPhaseDiagnostics(state),
-          reason: cause instanceof Error ? cause.message : String(cause),
+          reason: errorMessage(cause),
         },
       }),
   };
