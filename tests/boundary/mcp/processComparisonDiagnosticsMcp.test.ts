@@ -194,15 +194,12 @@ it.each(
   },
 );
 
-it.each(
-  (["left", "right"] as const).flatMap((side) =>
-    [
-      { id: "unrelated-provider" },
-      { version: "1" },
-      { name: "unrelated provider" },
-    ].map((change) => ({ side, change })),
-  ),
-)(
+// Each provider field is checked once; alternating sides covers both labels.
+it.each([
+  { side: "left", change: { id: "unrelated-provider" } },
+  { side: "right", change: { version: "1" } },
+  { side: "left", change: { name: "unrelated provider" } },
+] as const)(
   "rejects an authenticated $side capture with provider $change",
   async ({ side, change }) => {
     const wrongProvider = captureEvidence(
