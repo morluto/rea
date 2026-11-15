@@ -56,33 +56,36 @@ export type ExplicitValueSpan = Readonly<{ start: number; end: number }>;
 /**
  * Every occurrence of any declared literal in `value`, in order. Overlapping
  * occurrences (of one literal or of several) merge into one span, so no part
- * of an overlapping declaration survives between two replacements.
+ * of an overlapping declaration survives between two replacements. Spans are
+ * produced lazily with one cursor per literal, so a caller that stops at a
+ * budget does no further matching work.
  */
-export const explicitValueSpans = (
+export function* explicitValueSpans(
   value: string,
   sensitiveValues: readonly string[],
-): readonly ExplicitValueSpan[] => {
-  const found: ExplicitValueSpan[] = [];
-  for (const literal of declaredLiterals(sensitiveValues))
-    for (
-      let start = value.indexOf(literal);
-      start >= 0;
-      start = value.indexOf(literal, start + 1)
-    )
-      found.push({ start, end: start + literal.length });
-  found.sort((left, right) => left.start - right.start || right.end - left.end);
-  const merged: ExplicitValueSpan[] = [];
-  for (const span of found) {
-    const last = merged.at(-1);
-    if (last !== undefined && span.start < last.end)
-      merged[merged.length - 1] = {
-        start: last.start,
-        end: Math.max(last.end, span.end),
-      };
-    else merged.push(span);
+): Generator<ExplicitValueSpan, void, undefined> {
+  const literals = declaredLiterals(sensitiveValues);
+  const next = literals.map((literal) => value.indexOf(literal));
+  let pending: ExplicitValueSpan | undefined;
+  for (;;) {
+    // Earliest occurrence; at one start, the longest literal (listed first).
+    let selected = -1;
+    for (let index = 0; index < literals.length; index += 1)
+      if (next[index]! >= 0 && (selected < 0 || next[index]! < next[selected]!))
+        selected = index;
+    if (selected < 0) break;
+    const start = next[selected]!;
+    const end = start + literals[selected]!.length;
+    next[selected] = value.indexOf(literals[selected]!, start + 1);
+    if (pending !== undefined && start < pending.end)
+      pending = { start: pending.start, end: Math.max(pending.end, end) };
+    else {
+      if (pending !== undefined) yield pending;
+      pending = { start, end };
+    }
   }
-  return merged;
-};
+  if (pending !== undefined) yield pending;
+}
 
 /**
  * Encoded spellings a declared value can take in retained evidence:

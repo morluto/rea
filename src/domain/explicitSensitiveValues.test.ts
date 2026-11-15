@@ -112,16 +112,20 @@ it("recognizes protocol-defined credential headers in any case only", () => {
 });
 
 it("merges overlapping occurrences of one or several declarations", () => {
-  expect(explicitValueSpans("aaaa", ["aa"])).toEqual([{ start: 0, end: 4 }]);
-  expect(explicitValueSpans("abcdef xx cd", ["abcd", "cdef", "cd"])).toEqual([
+  expect([...explicitValueSpans("aaaa", ["aa"])]).toEqual([
+    { start: 0, end: 4 },
+  ]);
+  expect([
+    ...explicitValueSpans("abcdef xx cd", ["abcd", "cdef", "cd"]),
+  ]).toEqual([
     { start: 0, end: 6 },
     { start: 10, end: 12 },
   ]);
-  expect(explicitValueSpans("abab", ["ab"])).toEqual([
+  expect([...explicitValueSpans("abab", ["ab"])]).toEqual([
     { start: 0, end: 2 },
     { start: 2, end: 4 },
   ]);
-  expect(explicitValueSpans("text", [""])).toEqual([]);
+  expect([...explicitValueSpans("text", [""])]).toEqual([]);
 });
 
 it("spells a declared value in each selected encoding", () => {
@@ -161,4 +165,10 @@ it("spells a declared value in each selected encoding", () => {
     Buffer.from([0, 0x61, 0, 0x62]),
   ]);
   expect(lowercasePercentEscapes("a%2Fb%C3")).toBe("a%2fb%c3");
+});
+
+it("finds spans lazily, so a budgeted caller stops matching early", () => {
+  const spans = explicitValueSpans("token ".repeat(100_000), ["token"]);
+  expect(spans.next().value).toEqual({ start: 0, end: 5 });
+  expect(spans.next().value).toEqual({ start: 6, end: 11 });
 });
