@@ -19,6 +19,7 @@ import {
   requireSelectedNativeImage,
   type SelectedNativeImage,
   type SliceSelectionInput,
+  selectMachoSlice,
 } from "../native/metadata/MachoSliceSelection.js";
 import {
   parsePointerFixupsSteps,
@@ -145,12 +146,24 @@ export function* openImageSteps(image: Buffer): Generator<void, NativeImage> {
     );
   let machoPointerFixups: PointerFixups | undefined;
   if (container.format === "macho") {
-    try {
-      const layout = parseMachoLayout(
-        image,
+    const selected = selectMachoSlice(image, {
+      mode: "admitted",
+      architecture:
         binaryMetadataArchitecture(container.architecture) ??
-          container.architecture,
+        container.architecture,
+      slice: undefined,
+    });
+    // The image is the thin slice already selected; a refusal means the
+    // container's architecture names no CPU family this reader decodes.
+    if (!selected.ok)
+      throw new Il2cppBinaryFormatFailure(
+        selected.error.kind === "malformed"
+          ? "malformed-container"
+          : "unsupported-container",
+        selected.error.message,
       );
+    try {
+      const layout = parseMachoLayout(image, selected.value);
       machoPointerFixups = yield* parsePointerFixupsSteps(
         image,
         layout.fixups,
@@ -165,13 +178,6 @@ export function* openImageSteps(image: Buffer): Generator<void, NativeImage> {
             ? "unsupported-container"
             : "malformed-container",
           failure.message,
-        );
-      // Mach-O slice selection reports an inconsistent FAT or CPU identity as
-      // a TypeError.
-      if (cause instanceof TypeError)
-        throw new Il2cppBinaryFormatFailure(
-          "malformed-container",
-          cause.message,
         );
       throw cause;
     }

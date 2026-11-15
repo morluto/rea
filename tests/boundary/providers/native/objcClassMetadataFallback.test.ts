@@ -10,7 +10,7 @@ import type {
 } from "../../../../src/application/AnalysisProvider.js";
 import { createAnalysisExecution } from "../../../../src/application/AnalysisProvider.js";
 import { EnhancedTools } from "../../../../src/application/EnhancedTools.js";
-import { parseMachoLayout } from "../../../../src/native/AppleMachoSelection.js";
+import { layoutFor } from "../../../../src/native/AppleMachoSelection.fixture.js";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
 import { BinaryFormatFailure } from "../../../../src/native/metadata/BinaryContainer.js";
 import { NativeFixtureRunner } from "../../../fixtures/nativeCommands.js";
@@ -114,7 +114,7 @@ describe("native Objective-C class metadata capability fallback", () => {
     bytes.writeUInt32LE(2, 12);
     let failure: unknown;
     try {
-      parseMachoLayout(bytes, "x86");
+      layoutFor(bytes, "x86");
     } catch (cause: unknown) {
       failure = cause;
     }
@@ -160,7 +160,7 @@ describe("native Objective-C class metadata capability fallback", () => {
     bytes.writeUInt32BE(2, 12);
     let failure: unknown;
     try {
-      parseMachoLayout(bytes, "powerpc");
+      layoutFor(bytes, "powerpc");
     } catch (cause: unknown) {
       failure = cause;
     }
@@ -173,7 +173,7 @@ describe("native Objective-C class metadata capability fallback", () => {
     bytes.writeUInt32BE(0x01000007, 4);
     let mismatchedCpuFailure: unknown;
     try {
-      parseMachoLayout(bytes, "powerpc");
+      layoutFor(bytes, "powerpc");
     } catch (cause: unknown) {
       mismatchedCpuFailure = cause;
     }
