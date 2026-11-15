@@ -41,7 +41,7 @@
     "gpu -> native": 14,
     "il2cpp -> ghidra": 1,
     "il2cpp -> native": 7,
-    "inspector -> browser": 10,
+    "inspector -> browser": 2,
     "kuna -> artifacts": 1,
     "kuna -> native": 2,
     "model -> artifacts": 1,

@@ -10,8 +10,9 @@ graph TD
     %% imports in scripts/lib/module-layers.baseline.json.
     %% Provider boundary: a provider folder (src/ghidra/, src/native/, ...)
     %% imports inner layers, including the shared provider core (src/providers/,
-    %% which may not import a provider folder), and its own files. Importing another provider folder is a recorded exception
-    %% (for example inspector -> browser CDP helpers); shared pieces belong in
+    %% which may not import a provider folder), and its own files. Importing another provider folder is recorded debt
+    %% unless PROVIDER_DEPENDENCIES declares the file (inspector -> browser CDP
+    %% client); shared pieces belong in
     %% ports, foundation or the provider core. Application, composition and
     %% adapters reach a provider through the entry files it declares in
     %% scripts/lib/module-layers.mjs (ENTRY_FILES; no per-provider barrel).

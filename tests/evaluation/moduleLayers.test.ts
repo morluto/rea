@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   ENTRY_FILES,
+  PROVIDER_DEPENDENCIES,
   UNIT_LAYERS,
   compareLayerBaseline,
   layerGraphFacts,
@@ -155,13 +156,28 @@ describe("provider boundaries", () => {
     });
   });
 
-  it("names only existing files as entry files", () => {
-    const missing = Object.entries(ENTRY_FILES).flatMap(([unit, files]) =>
+  it("names only existing files as entry files and declared dependencies", () => {
+    const declared = [
+      ...Object.entries(ENTRY_FILES),
+      ...PROVIDER_DEPENDENCIES.map(({ to, files }) => [to, files] as const),
+    ];
+    const missing = declared.flatMap(([unit, files]) =>
       files
         .map((file) => `src/${unit}/${file}`)
         .filter((path) => !existsSync(path)),
     );
     expect(missing).toEqual([]);
+  });
+
+  it("skips only declared provider dependency files for their pair", () => {
+    expect(
+      providerBoundaryFacts([
+        edge("src/inspector/A.ts", "src/browser/CdpConnection.js"),
+        edge("src/inspector/A.ts", "src/browser/protocol/CdpEvents.js"),
+        edge("src/inspector/A.ts", "src/browser/ElectronFileScope.js"),
+        edge("src/electron/B.ts", "src/browser/CdpConnection.js"),
+      ]).crossProvider,
+    ).toEqual({ "electron -> browser": 1, "inspector -> browser": 1 });
   });
 
   it("counts every outside import of a toolkit file past src/resources/index.ts", () => {
