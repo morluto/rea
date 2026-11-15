@@ -35,6 +35,7 @@ import {
 } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { requireLaneToolchain } from "../tests/conformance/ghidra/fixture-toolchain.mjs";
 
 if (process.argv.length !== 2)
   throw new Error("Usage: node scripts/verify-real-ghidra-riscv.mjs");
@@ -60,6 +61,8 @@ assert.equal(installation.providerVersion, "12.1.4");
 const execute = promisify(execFile);
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const run = createVerifierRun();
+// Refuse a host without the fixture toolchain before allocating anything.
+await requireLaneToolchain("riscv");
 const workspaceFixture = await VerifierFixture.open({
   prefix: "rea-riscv-proof-",
   // Ghidra children use the workspace as TMPDIR; a plain root admits them on every host.
