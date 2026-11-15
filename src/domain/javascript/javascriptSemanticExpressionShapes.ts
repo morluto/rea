@@ -1,5 +1,5 @@
 import { opaqueCodeMayRebindBinding } from "./javascriptSemanticOpaqueEffects.js";
-import { opaqueCodeMayChangeGlobalRead } from "./javascriptSemanticGlobalReference.js";
+import { opaqueCodeMayChangeGlobalRead } from "./javascriptSemanticOpaqueEffects.js";
 import * as t from "@babel/types";
 
 import {

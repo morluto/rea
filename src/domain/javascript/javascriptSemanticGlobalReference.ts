@@ -3,10 +3,7 @@ import { electronMemberPath } from "./javascriptElectronMemberWrites.js";
 import { isUnshadowedGlobal } from "./javascriptSemanticMutationInitializers.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 import { isImportMetaUrl } from "./javascriptStaticAnalysisHelpers.js";
-import {
-  semanticOpaqueGlobalMayHaveChanged,
-  semanticOpaqueNameMayHaveChanged,
-} from "./javascriptSemanticOpaqueEffects.js";
+import { opaqueCodeMayChangeGlobalRead } from "./javascriptSemanticOpaqueEffects.js";
 
 export const GLOBAL_OBJECT_NAMES = ["globalThis", "global", "window", "self"];
 
@@ -51,30 +48,6 @@ export const isUnmodifiedGlobalReference = (
     (namespace === null || !state.ambientWrites.covers(["global", namespace]))
   );
 };
-
-/**
- * Non-writable, non-configurable global properties. Global code cannot replace
- * them; only a binding that shadows the name can.
- */
-const IMMUTABLE_GLOBALS = new Set(["undefined", "NaN", "Infinity"]);
-
-/**
- * Whether opaque code may have changed what an intrinsic global read observes.
- * A sloppy direct eval in an activation visible from `reference` may introduce
- * a binding for its root name; global code (`eval`, `Function`) that may run
- * before `observedAt` may replace a writable global or its prototype. Pass
- * `observedAt` when the intrinsic behavior is used later than the reference is
- * read, such as a method called on an instance constructed earlier.
- */
-export const opaqueCodeMayChangeGlobalRead = (
-  reference: t.Node,
-  state: JavaScriptSemanticAnalysisState,
-  root: string,
-  observedAt: t.Node = reference,
-): boolean =>
-  semanticOpaqueNameMayHaveChanged(reference, state) ||
-  (!IMMUTABLE_GLOBALS.has(root) &&
-    semanticOpaqueGlobalMayHaveChanged(observedAt, state));
 
 /**
  * An intrinsic global read: an unmodified global reference that no opaque code

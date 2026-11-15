@@ -115,7 +115,7 @@ export const createSemanticOpaqueGlobalObserver = (
 };
 
 /** Global code can affect globals, but cannot rebind its caller's locals. */
-export const semanticOpaqueGlobalMayHaveChanged = (
+const semanticOpaqueGlobalMayHaveChanged = (
   read: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): boolean =>
@@ -184,7 +184,7 @@ const semanticBindingMayHaveOpaqueEffect = (
 };
 
 /** Opaque eval may introduce an otherwise unbound name in a visible activation. */
-export const semanticOpaqueNameMayHaveChanged = (
+const semanticOpaqueNameMayHaveChanged = (
   read: t.Node,
   state: JavaScriptSemanticAnalysisState,
   binding?: JavaScriptSemanticBindingState,
@@ -242,6 +242,30 @@ export const semanticOpaqueNameMayHaveChanged = (
   }
   return false;
 };
+
+/**
+ * Non-writable, non-configurable global properties. Global code cannot replace
+ * them; only a binding that shadows the name can.
+ */
+const IMMUTABLE_GLOBALS = new Set(["undefined", "NaN", "Infinity"]);
+
+/**
+ * Whether opaque code may have changed what an intrinsic global read observes.
+ * A sloppy direct eval in an activation visible from `reference` may introduce
+ * a binding for its root name; global code (`eval`, `Function`) that may run
+ * before `observedAt` may replace a writable global or its prototype. Pass
+ * `observedAt` when the intrinsic behavior is used later than the reference is
+ * read, such as a method called on an instance constructed earlier.
+ */
+export const opaqueCodeMayChangeGlobalRead = (
+  reference: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  root: string,
+  observedAt: t.Node = reference,
+): boolean =>
+  semanticOpaqueNameMayHaveChanged(reference, state) ||
+  (!IMMUTABLE_GLOBALS.has(root) &&
+    semanticOpaqueGlobalMayHaveChanged(observedAt, state));
 
 /** Declaration assignability is independent of observed explicit writes. */
 const semanticBindingCanBeRebound = (
