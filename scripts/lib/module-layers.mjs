@@ -44,6 +44,7 @@ export const UNIT_LAYERS = Object.freeze(
       "browser",
       "captures",
       "cutter",
+      "deb",
       "desktop",
       "dotnet",
       "electron",

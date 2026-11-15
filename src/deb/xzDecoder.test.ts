@@ -67,7 +67,8 @@ it("refuses an xz stream whose index cannot be read before decoding it", () => {
   replaceXzBindingForTests({
     status: "ready",
     api: {
-      compressSync: compressXz,
+      compressSync: (input) =>
+        compressXz(typeof input === "string" ? Buffer.from(input) : input),
       decompressSync: () => {
         decodes += 1;
         return Buffer.alloc(0);

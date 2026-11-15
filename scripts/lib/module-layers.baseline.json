@@ -14,6 +14,7 @@
     "composition -> cliCommandNames.ts": 3,
     "config -> application": 2,
     "config -> native": 1,
+    "deb -> application": 2,
     "desktop -> application": 5,
     "domain -> contracts": 4,
     "dotnet -> application": 4,
