@@ -25,7 +25,10 @@ import {
   observeJavaScriptRuntimeInputSchema,
 } from "../../../src/domain/javascript/javascriptRuntimeObservation.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
-import { createEvidence } from "../../../src/domain/evidence.js";
+import {
+  createEvidence,
+  evidenceSubjectInput,
+} from "../../../src/domain/evidence.js";
 import { javascriptRuntimeReconciliationResultSchema } from "../../../src/domain/javascript/javascriptRuntimeReconciliationSchemas.js";
 import { parseRuntimeCapture } from "../../../src/domain/javascript/javascriptRuntimeReconciliationCaptureParsing.js";
 import { startFakeV8Inspector } from "../../fixtures/inspector/fakeV8Inspector.js";
@@ -88,16 +91,20 @@ test("reports browser origin scope mismatch at the caller parameter path", async
       { source: jsonValueSchema.parse(observed.value), facts: observed.value },
       provider.identity(),
     );
-    const invalidEvidence = createEvidence(undefined, evidence.provider, {
-      predicateType: evidence.predicate_type,
-      operation: evidence.operation,
-      parameters: { ...evidence.parameters, allowed_origins: [] },
-      result: evidence.normalized_result,
-      confidence: evidence.confidence,
-      authority: evidence.authority,
-      environment: evidence.environment,
-      limitations: evidence.limitations,
-    });
+    const invalidEvidence = createEvidence(
+      evidenceSubjectInput(evidence.subject),
+      evidence.provider,
+      {
+        predicateType: evidence.predicate_type,
+        operation: evidence.operation,
+        parameters: { ...evidence.parameters, allowed_origins: [] },
+        result: evidence.normalized_result,
+        confidence: evidence.confidence,
+        authority: evidence.authority,
+        environment: evidence.environment,
+        limitations: evidence.limitations,
+      },
+    );
     const result = reconcileJavaScriptRuntimeEvidence({
       static_layers: JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE.static_layers,
       runtime_observations: [invalidEvidence],

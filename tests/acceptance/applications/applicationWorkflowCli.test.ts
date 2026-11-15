@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { execFile } from "node:child_process";
 import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 import { createHash } from "node:crypto";
@@ -1947,10 +1948,9 @@ const runCliWithRequestFile = async (
 /** The CLI keeps complete trace JSON; the shared view owner selects from the saved file. */
 const assertTraceFileView = async (root: string, traced: unknown) => {
   const parent = parseEvidence(traced);
-  if (parent.subject === null) throw new Error("Expected trace subject");
   const artifact = {
     path: parent.subject.local_path,
-    sha256: parent.subject.digest.sha256,
+    sha256: fileIdentity(parent.subject).sha256,
   };
   const tracePath = join(root, "trace.json");
   await writeFile(tracePath, JSON.stringify(parent));

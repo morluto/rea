@@ -2,8 +2,11 @@ import { BinaryReader } from "../domain/binaryContainer.js";
 import {
   metadataRowOffset,
   type ManagedMetadataLayout,
-} from "./ManagedMetadataLayout.js";
-import { metadataRowCursor, metadataToken } from "./ManagedMetadataHeaps.js";
+} from "../domain/managed/managedMetadataLayout.js";
+import {
+  metadataRowCursor,
+  metadataToken,
+} from "../domain/managed/managedMetadataHeaps.js";
 
 /** Meaning of the MethodDef implementation bits, independent of RVA or ImplMap evidence. */
 export interface ManagedMethodImplementationFlags {

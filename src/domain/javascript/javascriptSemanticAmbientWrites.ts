@@ -10,7 +10,11 @@ import {
   electronMemberPath,
 } from "./javascriptElectronMemberWrites.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
-import { ambientEffectCovers } from "./javascriptSemanticEffectLog.js";
+import {
+  ambientEffectCovers,
+  semanticEffectMayFollow,
+  semanticEffectMayPrecede,
+} from "./javascriptSemanticEffectLog.js";
 import {
   resolveSemanticBindingState,
   semanticStableInitializer,
@@ -20,7 +24,6 @@ import {
   isUnshadowedGlobal,
   semanticBindingAtRead,
   semanticDefiniteEffectPrecedesReference,
-  semanticEffectTiming,
 } from "./javascriptSemanticMutationInitializers.js";
 import { semanticIterationSources } from "./javascriptSemanticIterationSources.js";
 import type { SemanticIterationSource } from "./javascriptSemanticIterationFacts.js";
@@ -821,8 +824,8 @@ export function* indexJavaScriptAmbientWritesSteps(
       );
       return (
         matches.length === 0 ||
-        matches.some(
-          (entry) => semanticEffectTiming(node, entry.node, state) !== "after",
+        matches.some((entry) =>
+          semanticEffectMayPrecede(state, node, entry.node),
         )
       );
     };
@@ -951,7 +954,7 @@ const createGlobalPathRead = (
         node.callee === site
       )
         return false;
-      return semanticEffectTiming(site, node, state) !== "after";
+      return semanticEffectMayPrecede(state, site, node);
     });
     if (
       (escapesCovered && effects.escapes.length === 0) ||
@@ -959,8 +962,8 @@ const createGlobalPathRead = (
       (writesCovered && effects.writes.length === 0)
     )
       return { status: "unknown" };
-    const active = effects.writes.filter(
-      (effect) => semanticEffectTiming(site, effect.node, state) !== "after",
+    const active = effects.writes.filter((effect) =>
+      semanticEffectMayPrecede(state, site, effect.node),
     );
     if (active.length === 0) return { status: "unmodified" };
     if (
@@ -1013,7 +1016,7 @@ const globalPathReplacement = (
     effects.some(
       (effect) =>
         effect.node !== confirmed &&
-        semanticEffectTiming(confirmed, effect.node, state) !== "before" &&
+        semanticEffectMayFollow(state, confirmed, effect.node) &&
         (effect.node === undefined ||
           !semanticDefiniteEffectPrecedesReference(
             effect.node,

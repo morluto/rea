@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { expect, it } from "vitest";
 import type { BinaryTarget } from "../../../src/domain/binaryTargetTypes.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
@@ -121,9 +122,9 @@ it.each(cases)(
       JSON.parse(serializeAnalysisSnapshot(snapshot)),
     );
     expect(restored.target.architecture).toBe(architecture);
-    expect(restored.evidence_bundle.records[0]?.subject?.architecture).toBe(
-      architecture,
-    );
+    expect(
+      fileIdentity(restored.evidence_bundle.records[0]?.subject).architecture,
+    ).toBe(architecture);
     expect(restored.entries[0]?.execution.subject?.architecture).toBe(
       architecture,
     );
@@ -134,7 +135,10 @@ it.each(cases)(
     expect(() =>
       parseEvidence({
         ...evidence,
-        subject: { ...evidence.subject, architecture: "x86" },
+        subject: {
+          ...evidence.subject,
+          identity: { ...evidence.subject.identity, architecture: "x86" },
+        },
       }),
     ).toThrow("semantic identifier");
     const changed = createAnalysisProfile(provider, changedFacts);

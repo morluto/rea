@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -448,7 +449,7 @@ process.stdin.on("data", (chunk) => {
 
 it("records partial GDB Evidence from an MCP command error", async () => {
   const evidence = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     {
       id: "gnu.gdb",
       name: "GNU GDB",
@@ -487,8 +488,7 @@ it("records partial GDB Evidence from an MCP command error", async () => {
         output_truncated: false,
         completion_status: "unknown",
       },
-      subjectUnavailableReason:
-        "The debugger session does not identify an inferior.",
+      limitations: ["The debugger session does not identify an inferior."],
     },
   );
   expect(
@@ -640,7 +640,7 @@ it("recovers only the owning debugger cleanup and reopens admitted analysis", as
 
 it("records partial GDB startup Evidence from an MCP start error", async () => {
   const evidence = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     {
       id: "gnu.gdb",
       name: "GNU GDB",
@@ -676,8 +676,7 @@ it("records partial GDB startup Evidence from an MCP start error", async () => {
         output_truncated: false,
         completion_status: "unknown",
       },
-      subjectUnavailableReason:
-        "No debugger session became ready before GDB exited.",
+      limitations: ["No debugger session became ready before GDB exited."],
     },
   );
   const manager = {

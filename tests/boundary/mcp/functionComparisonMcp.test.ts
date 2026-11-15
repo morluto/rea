@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema } from "ajv";
@@ -251,7 +252,7 @@ it.each([
 
 const wrongKindFunctionEvidence = (mismatch: "operation" | "predicate") =>
   createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     {
       operation:
@@ -476,17 +477,25 @@ it.each([
       authority: "analyst-inference" as const,
       evidenceLinks: [left.evidence_id, right.evidence_id],
     };
-    const consistent = createEvidence(undefined, provider, {
-      ...observation,
-      result: result,
-    });
+    const consistent = createEvidence(
+      unknownTarget("derived-from-linked-evidence"),
+      provider,
+      {
+        ...observation,
+        result: result,
+      },
+    );
     const inconsistent =
       status === "unchanged"
         ? null
-        : createEvidence(undefined, provider, {
-            ...observation,
-            result: { ...result, status: "unchanged" },
-          });
+        : createEvidence(
+            unknownTarget("derived-from-linked-evidence"),
+            provider,
+            {
+              ...observation,
+              result: { ...result, status: "unchanged" },
+            },
+          );
     const directory = await createTestTempDirectory("rea-function-status-");
     const path = join(directory, "bundle.json");
     await writeFile(

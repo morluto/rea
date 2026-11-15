@@ -1,5 +1,5 @@
 import type { ManagedConstant } from "../domain/managed/managedConstant.js";
-import { managedFailure } from "./ManagedReaderFailure.js";
+import { managedFailure } from "../domain/managed/managedReaderFailure.js";
 
 type Scalar = ManagedConstant["value"];
 type ScalarReader = (bytes: Buffer, scope: string, offset: number) => Scalar;

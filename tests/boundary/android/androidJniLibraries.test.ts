@@ -9,7 +9,6 @@ import {
 } from "../../../src/android/AndroidJniLibraries.js";
 import { JadxInterruption } from "../../../src/android/JadxInterruption.js";
 import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
-import { ZipArtifactReader } from "../../../src/artifacts/ZipArtifactReader.js";
 import {
   AnalysisCancelledError,
   AnalysisTimeoutError,
@@ -25,6 +24,7 @@ import {
 import { androidPartialObservationSchema } from "../../../src/domain/android/androidPartialObservation.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { jniElfFixture } from "../../fixtures/android/jniElf.js";
+import { ZipArtifactReader } from "../../../src/resources/index.js";
 
 const OPERATION = "inspect_android_jni_bindings";
 const LIBRARY = "lib/arm64-v8a/libfixture.so";

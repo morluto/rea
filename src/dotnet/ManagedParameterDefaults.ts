@@ -4,24 +4,27 @@ import type {
 } from "../domain/managed/managedArtifact.js";
 import { BinaryReader } from "../domain/binaryContainer.js";
 import type { ManagedConstantReader } from "./ManagedConstants.js";
-import { managedDecodeBudget } from "./ManagedDecodeBudget.js";
+import { managedDecodeBudget } from "../domain/managed/managedDecodeBudget.js";
 import {
   metadataRowOffset,
   type ManagedMetadataLayout,
-} from "./ManagedMetadataLayout.js";
-import { metadataToken, readMetadataString } from "./ManagedMetadataHeaps.js";
+} from "../domain/managed/managedMetadataLayout.js";
+import {
+  metadataToken,
+  readMetadataString,
+} from "../domain/managed/managedMetadataHeaps.js";
 import {
   memberListDefinitionRow,
   memberListListsDefinition,
   memberListTable,
   validatedMemberListStart,
-} from "./ManagedMemberPointers.js";
+} from "../domain/managed/managedMemberPointers.js";
 import { readMethodParamList } from "./ManagedMethodDefinitionRows.js";
 import {
   managedFailure,
   ManagedReaderFailure,
   readManagedValue,
-} from "./ManagedReaderFailure.js";
+} from "../domain/managed/managedReaderFailure.js";
 
 type ParameterDefault = NonNullable<
   ManagedMemberInspection["methods"][number]["parameter_defaults"]

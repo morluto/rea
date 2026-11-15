@@ -1,3 +1,5 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
+import { displayedEvidenceSubject } from "../../../tests/fixtures/evidenceSubject.js";
 import { describe, expect, it } from "vitest";
 
 import { createAnalysisProfile } from "../../domain/analysisProfile.js";
@@ -231,10 +233,9 @@ it.each(["provider", "workflow"] as const)(
     if (!before.ok) throw before.error;
     const nameOnly = {
       ...evidence,
-      subject:
-        evidence.subject === null
-          ? null
-          : { ...evidence.subject, name: "display-only-name" },
+      subject: displayedEvidenceSubject(evidence.subject, {
+        name: "display-only-name",
+      }),
     };
     const nameImport = ledger.import(createEvidenceBundle([nameOnly]));
     if (!nameImport.ok) throw nameImport.error;
@@ -251,14 +252,14 @@ it.each(["provider", "workflow"] as const)(
     });
     expect(ledger.record(alternative).ok).toBe(true);
     const relocate = (record: typeof evidence) => {
-      if (record.subject === null) throw new Error("Expected fixture subject");
+      if (record.subject.identity.kind !== "file")
+        throw new Error("Expected fixture subject");
       return {
         ...record,
-        subject: {
-          ...record.subject,
+        subject: displayedEvidenceSubject(record.subject, {
           local_path: "/relocated/fixture",
           name: "renamed",
-        },
+        }),
       };
     };
     const foreign = ledger.import(
@@ -329,7 +330,7 @@ it.each(["provider", "workflow"] as const)(
       else cache.recordWorkflow(input);
       expect(
         ledger.record(
-          createEvidence(subject ?? undefined, provider, {
+          createEvidence(subject ?? unknownTarget("not-observed"), provider, {
             operation,
             parameters,
             result,
@@ -1506,17 +1507,17 @@ it("replays source-bearing entries only when their complete retained closure exi
       .lookup(target, profile, "procedure_info", parameters)
       ?.sourceEvidence?.map((record) => record.evidence_id),
   ).toEqual([source.evidence_id, parent.evidence_id]);
-  if (source.subject === null) throw new Error("Expected source subject");
+  if (source.subject.identity.kind !== "file")
+    throw new Error("Expected source subject");
   const ledger = new EvidenceLedger();
   for (const record of [parent, source, leaf])
     expect(ledger.record(record).ok).toBe(true);
   const movedSource = {
     ...source,
-    subject: {
-      ...source.subject,
+    subject: displayedEvidenceSubject(source.subject, {
       local_path: "/relocated/source",
       name: "source",
-    },
+    }),
   };
   const replacement = ledger.import(createEvidenceBundle([movedSource]));
   if (!replacement.ok) throw replacement.error;

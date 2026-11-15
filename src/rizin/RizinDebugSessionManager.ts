@@ -1,3 +1,4 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
 import { readRuntimeSetting } from "../config/runtimeAnalysisSettings.js";
 import { RIZIN_DEBUGGER_PROVIDER_IDENTITY } from "./RizinDebuggerProviderIdentity.js";
 import { persistentDebuggerHostSupported } from "../process/PersistentDebuggerHost.js";
@@ -112,34 +113,37 @@ const createRizinCommandEvidence = ({
   launchProvenance,
   limitations,
 }: RizinCommandEvidenceInput): Evidence =>
-  createEvidence(undefined, RIZIN_DEBUGGER_PROVIDER_IDENTITY, {
-    predicateType: "rea.debugger.command-observation",
-    operation: "rizin_debug_command",
-    parameters: {
-      session_id: sessionId,
-      command,
-      inferior_tty: inferiorTty,
-      launch_provenance: { ...launchProvenance },
+  createEvidence(
+    unknownTarget("not-observed"),
+    RIZIN_DEBUGGER_PROVIDER_IDENTITY,
+    {
+      predicateType: "rea.debugger.command-observation",
+      operation: "rizin_debug_command",
+      parameters: {
+        session_id: sessionId,
+        command,
+        inferior_tty: inferiorTty,
+        launch_provenance: { ...launchProvenance },
+      },
+      result: { ...result },
+      rawResult: { ...result },
+      limitations: [
+        "The current debugger target identity is not established by the Rizin session identifier.",
+        ...limitations,
+        ...(result.completion_status === "unknown"
+          ? [
+              "Interrupted output may include an incomplete completion-marker prefix; it is retained because it cannot be distinguished from command diagnostics.",
+            ]
+          : []),
+        ...(result.output_invalid_utf8
+          ? [
+              "Collected command frames contained invalid UTF-8 bytes; decoded text may contain replacement characters.",
+            ]
+          : []),
+        RIZIN_LAUNCH_PROVENANCE_LIMITATION,
+      ],
     },
-    result: { ...result },
-    rawResult: { ...result },
-    subjectUnavailableReason:
-      "The current debugger target identity is not established by the Rizin session identifier.",
-    limitations: [
-      ...limitations,
-      ...(result.completion_status === "unknown"
-        ? [
-            "Interrupted output may include an incomplete completion-marker prefix; it is retained because it cannot be distinguished from command diagnostics.",
-          ]
-        : []),
-      ...(result.output_invalid_utf8
-        ? [
-            "Collected command frames contained invalid UTF-8 bytes; decoded text may contain replacement characters.",
-          ]
-        : []),
-      RIZIN_LAUNCH_PROVENANCE_LIMITATION,
-    ],
-  });
+  );
 
 type RizinOutputLimit =
   | "command_output_bytes"

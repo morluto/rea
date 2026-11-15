@@ -96,7 +96,7 @@ it.each([
         partial_observation: {
           provider: { id: BYTE_ENTROPY_PROVIDER.id },
           subject: {
-            digest: {
+            identity: {
               sha256: createHash("sha256").update(content).digest("hex"),
             },
           },

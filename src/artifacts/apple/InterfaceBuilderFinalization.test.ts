@@ -7,7 +7,7 @@ import { analyzeInterfaceBuilderBundle } from "./InterfaceBuilderAnalysis.js";
 import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
-import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
+import { translateArtifactFailure } from "../../resources/index.js";
 
 const bundle = async () => {
   const path = await createTestTempDirectory("rea-ib-finalization-");

@@ -3,21 +3,21 @@ import type { ManagedConstant } from "../domain/managed/managedConstant.js";
 import {
   admitManagedProjection,
   managedDecodeBudget,
-} from "./ManagedDecodeBudget.js";
+} from "../domain/managed/managedDecodeBudget.js";
 import {
   MANAGED_CODED_INDEXES,
   type ManagedMetadataLayout,
-} from "./ManagedMetadataLayout.js";
+} from "../domain/managed/managedMetadataLayout.js";
 import {
   metadataRowCursor,
   metadataToken,
   readMetadataBlob,
   decodeMetadataCodedIndex,
-} from "./ManagedMetadataHeaps.js";
+} from "../domain/managed/managedMetadataHeaps.js";
 import {
   managedFailure,
   ManagedReaderFailure,
-} from "./ManagedReaderFailure.js";
+} from "../domain/managed/managedReaderFailure.js";
 import {
   decodeManagedConstantValue,
   managedConstantType,
