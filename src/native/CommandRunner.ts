@@ -245,7 +245,7 @@ export class XcrunCommandRunner implements NativeCommandRunner {
         if (stopped.status === "not-owned") {
           reason = "native command ownership remains unresolved";
         } else if (stopped.status !== "incomplete") {
-          marker.resolveCleanup();
+          // The marker reads the supervisor's release of this stop.
           this.#cleanupMarkers.delete(owner);
           continue;
         } else
@@ -283,6 +283,7 @@ export class XcrunCommandRunner implements NativeCommandRunner {
         { operation: "native_command", cause: failure },
       );
     }
+    marker.bindCleanupReleaseClaim(owner.cleanupRelease);
     this.#cleanupMarkers.set(owner, marker);
     if (failure.cleanupMarker === marker) return failure;
     return new NativeCommandFailure(
