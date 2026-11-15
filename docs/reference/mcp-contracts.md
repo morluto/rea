@@ -2108,10 +2108,11 @@ never refused by the advertisement:
 - `$schema`, `format`, `default`, `examples`, `title`, `propertyNames`,
   `additionalProperties` schemas, property-count bounds, conditionals and
   length bounds of 1,999 or more are dropped.
-- Nullable values remain `anyOf` a typed branch and `{"type": "null"}`. The
-  dialect has no null type, and advertising only the non-null type would
-  refuse a valid call such as `limit: null`; this is the one construct the
-  dialect checker still counts for the compact profile.
+- A nullable value is advertised in the dialect's one nullable form: `anyOf`
+  a typed branch and `{"type": "null"}`, below the root. Type lists such as
+  `["integer", "null"]` are outside the dialect (Gemini's legacy schema
+  rejects them, and clients rewrite them differently), and advertising only
+  the non-null type would refuse a valid call such as `limit: null`.
 
 Guidance never stays inside the compact schema. The root description (input
 groups, Evidence-source guidance, the reduced-form notice) and sentences for
