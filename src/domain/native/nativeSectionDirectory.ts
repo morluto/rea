@@ -1,29 +1,29 @@
 import {
   observeElfStringTableEntry,
   elfStringTableText,
-} from "../../domain/elfStringTable.js";
+} from "../elfStringTable.js";
 import {
   mzWindowsHeaderLayoutLimitation,
   parseMzHeaderEvidence,
   withMzWindowsHeaderSignature,
-} from "../../domain/dosMz.js";
-import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
-import { readElfProgramHeader } from "../../domain/elfProgramHeader.js";
-import { readPeCoffHeader } from "../../domain/peCoffHeader.js";
-import { readPeSectionHeader } from "../../domain/peSectionHeader.js";
+} from "../dosMz.js";
+import { readElfSectionHeader } from "../elfSectionHeader.js";
+import { readElfProgramHeader } from "../elfProgramHeader.js";
+import { readPeCoffHeader } from "../peCoffHeader.js";
+import { readPeSectionHeader } from "../peSectionHeader.js";
 import {
   readElfTableDeclarations,
   validateElfDeclaredRanges,
-} from "../../domain/elfDeclaredRanges.js";
-import { readPeOptionalHeaderStructure } from "../../domain/peOptionalHeader.js";
+} from "../elfDeclaredRanges.js";
+import { readPeOptionalHeaderStructure } from "../peOptionalHeader.js";
 import {
   BinaryFormatFailure,
   BinaryReader,
   BinaryResourceFailure,
   declaredFileRange,
   type ElfDynamicSegment,
-} from "../../domain/binaryContainer.js";
-import { decodeElfSectionNameTable } from "./ElfSectionNameTable.js";
+} from "../binaryContainer.js";
+import { decodeElfSectionNameTable } from "./elfSectionNameTable.js";
 
 /** A borrowed positional source. Drivers own admission, cancellation and file identity. */
 export interface NativeReadRequest {
