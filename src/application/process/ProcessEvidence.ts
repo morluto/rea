@@ -14,7 +14,10 @@ import {
   safeParseProcessCapture,
   type ProcessCapture,
 } from "../../domain/process/processCaptureParsing.js";
-import { safeParseEvidence } from "../../domain/evidenceValidation.js";
+import {
+  safeParseEvidence,
+  type EvidenceReadFailure,
+} from "../../domain/evidenceValidation.js";
 import {
   processScenarioPlanProjection,
   processScenarioPlanSchema,
@@ -35,7 +38,7 @@ const PROCESS_SCENARIO_PLAN_EVIDENCE = {
 
 /** Semantic rejection facts; CLI and MCP retain their own error projections. */
 export type ProcessCaptureEvidenceFailure =
-  | { readonly kind: "invalid-evidence"; readonly cause: z.ZodError }
+  | { readonly kind: "invalid-evidence"; readonly cause: EvidenceReadFailure }
   | {
       readonly kind: "wrong-workflow";
       readonly expected: typeof PROCESS_CAPTURE_EVIDENCE;

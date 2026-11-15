@@ -11,6 +11,8 @@ import {
   RECREATE_EVIDENCE_GUIDANCE,
 } from "./evidenceFormat.js";
 import { ParseFailureError } from "./parseFailure.js";
+import { EvidenceIntegrityError } from "./evidenceErrors.js";
+import { readEvidence, readImmutableEvidence } from "./evidenceValidation.js";
 
 const record = createEvidence(
   undefined,
@@ -75,6 +77,12 @@ it.each([
         ? unmarked
         : { ...unmarked, evidence_format: format };
     expect(() => parseEvidence(earlier)).toThrow(RECREATE_EVIDENCE_GUIDANCE);
+    for (const read of [readEvidence, readImmutableEvidence]) {
+      const refused = read(earlier);
+      if (refused.ok) throw new Error("Expected the earlier record refused");
+      expect(refused.error).toBeInstanceOf(EvidenceIntegrityError);
+      expect(refused.error.userMessage).toContain(RECREATE_EVIDENCE_GUIDANCE);
+    }
     const parsed = safeParseEvidenceBundle({
       ...createEvidenceBundle([record]),
       records: [earlier],

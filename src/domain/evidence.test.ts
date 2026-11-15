@@ -115,6 +115,13 @@ describe("subject target identity", () => {
         }),
       ),
     ).toThrow(/esp-flash selection does not apply to format raw-binary/u);
+    expect(() =>
+      parseEvidence(
+        forged({
+          selection: { kind: "entry-point", entry_point: "not-an-address" },
+        }),
+      ),
+    ).toThrow(/hexadecimal address/u);
   });
 });
 

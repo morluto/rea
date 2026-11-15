@@ -36,6 +36,7 @@ import {
   parseImmutableEvidenceBundle,
 } from "./evidenceBundle.js";
 import {
+  evidenceFileTarget,
   evidenceLocationSchema,
   rebindEvidenceToTargetPath,
   type Evidence,
@@ -953,6 +954,21 @@ const hasCanonicalQueryOrder = (
   return true;
 };
 
+/**
+ * Whether Evidence is about the snapshot target's bytes. A subject in the
+ * target's own format is the target, so its whole identity, including the
+ * selection that the query IDs commit to, must agree with the header.
+ */
+const subjectNamesSnapshotTarget = (
+  evidence: Evidence,
+  target: AnalysisSnapshotTarget,
+): boolean => {
+  const file = evidenceFileTarget(evidence);
+  if (file === undefined || file.sha256 !== target.sha256) return false;
+  const expected = snapshotTargetIdentity(target);
+  return file.format !== expected.format || sameTargetIdentity(file, expected);
+};
+
 const isCorrespondingEvidence = (
   evidence: Evidence,
   snapshot: Pick<AnalysisSnapshot, "target" | "binding">,
@@ -960,7 +976,7 @@ const isCorrespondingEvidence = (
   evidence.predicate_type === "rea.analysis" &&
   evidence.confidence === "observed" &&
   evidence.authority === "shipped-artifact" &&
-  evidence.subject?.digest.sha256 === snapshot.target.sha256 &&
+  subjectNamesSnapshotTarget(evidence, snapshot.target) &&
   evidence.analysis_profile !== null &&
   analysisProfilesEqual(
     evidence.analysis_profile,
@@ -1036,7 +1052,7 @@ const isWorkflowEvidence = (
   evidence.predicate_type === "rea.analysis" &&
   evidence.confidence === "derived" &&
   evidence.authority === "shipped-artifact" &&
-  evidence.subject?.digest.sha256 === snapshot.target.sha256 &&
+  subjectNamesSnapshotTarget(evidence, snapshot.target) &&
   evidence.analysis_profile !== null &&
   analysisProfilesEqual(
     evidence.analysis_profile,

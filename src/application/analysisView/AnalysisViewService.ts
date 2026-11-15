@@ -18,7 +18,11 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { validateAnalysisViewSubject } from "../../domain/analysisView/analysisViewParent.js";
-import { safeParseEvidence } from "../../domain/evidenceValidation.js";
+import {
+  safeParseEvidence,
+  unsupportedEvidenceFormatError,
+} from "../../domain/evidenceValidation.js";
+import { isUnsupportedEvidenceFormat } from "../../domain/evidenceFormat.js";
 import {
   createEvidence,
   evidenceSubjectTarget,
@@ -352,6 +356,8 @@ const authenticateEvidence = (
   const parsed = safeParseEvidence(value);
   if (parsed.ok) return parsed;
   const cause = parsed.error;
+  if (isUnsupportedEvidenceFormat(cause))
+    return err(unsupportedEvidenceFormatError(cause));
   return err(
     analysisInputErrorFromIssues(
       INSPECT_ANALYSIS_VIEW_OPERATION,

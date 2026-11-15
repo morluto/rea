@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import type { BinaryTarget } from "./binaryTargetTypes.js";
 import { digestSchema } from "./digests.js";
+import { rawBinaryEntryPointSchema } from "./rawBinary.js";
 
 const flashOffsetSchema = z.number().int().min(0).max(0xffff_ffff).nullable();
 
@@ -12,7 +13,7 @@ const flashOffsetSchema = z.number().int().min(0).max(0xffff_ffff).nullable();
 export const fileTargetSelectionSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     kind: z.literal("entry-point"),
-    entry_point: z.string().min(1),
+    entry_point: rawBinaryEntryPointSchema,
   }),
   z.strictObject({
     kind: z.literal("esp-flash"),

@@ -226,8 +226,16 @@ export const bindExecutionTarget = (
         `${operation}:subject`,
       ),
     );
-  return result.value.subject === undefined
-    ? ok({ ...result.value, subject })
+  const provided = result.value.subject;
+  if (provided === undefined) return ok({ ...result.value, subject });
+  // A provider subject naming the target's own bytes and format is the
+  // target, so it makes the target's selection.
+  return provided !== null &&
+    provided.selection === undefined &&
+    selection !== null &&
+    provided.sha256 === target.sha256 &&
+    provided.format === target.format
+    ? ok({ ...result.value, subject: { ...provided, selection } })
     : result;
 };
 

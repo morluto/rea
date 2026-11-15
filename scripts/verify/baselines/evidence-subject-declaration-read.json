@@ -9,7 +9,7 @@
   "src/application/native/NativeFunctionMatchingService.ts": 5,
   "src/application/releaseExposure/ReleaseExposureService.ts": 1,
   "src/application/wasm/WasmInterfaceComparisonService.ts": 2,
-  "src/domain/analysisSnapshot.ts": 10,
+  "src/domain/analysisSnapshot.ts": 8,
   "src/domain/callPath.ts": 6,
   "src/domain/evidenceBundle.ts": 2,
   "src/domain/evidenceRecordSummary.ts": 1,

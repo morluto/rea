@@ -26,6 +26,7 @@ import type { Evidence } from "./evidence.js";
 import { z } from "zod";
 import { EvidenceIntegrityError } from "./evidenceErrors.js";
 import { readEvidence, safeParseEvidence } from "./evidenceValidation.js";
+import { isUnsupportedEvidenceFormat } from "./evidenceFormat.js";
 import {
   artifactInspectionResultSchema,
   type ArtifactInspectionResult,
@@ -193,7 +194,9 @@ const parseInspectionInventoryPayload = (
     const sourceEvidence =
       immutableJsonSnapshotMember(sealedStep, "evidence") ?? step.evidence;
     const parsedEvidence = safeParseEvidence(sourceEvidence);
-    if (!parsedEvidence.ok)
+    if (!parsedEvidence.ok) {
+      if (isUnsupportedEvidenceFormat(parsedEvidence.error))
+        throw parsedEvidence.error;
       throw Object.assign(
         new z.ZodError(
           parsedEvidence.error.issues.map((issue) => ({
@@ -203,6 +206,7 @@ const parseInspectionInventoryPayload = (
         ),
         { cause: parsedEvidence.error },
       );
+    }
     const evidence = canBorrowParsedJsonSnapshot(
       sourceEvidence,
       parsedEvidence.value,

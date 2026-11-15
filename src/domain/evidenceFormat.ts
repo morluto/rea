@@ -69,13 +69,28 @@ const admitFormat = (
   );
 };
 
+/** Members every Evidence record has carried, in every release and revision. */
+const RECORD_MEMBERS = [
+  "evidence_id",
+  "provider",
+  "predicate_type",
+  "operation",
+  "normalized_result",
+] as const;
+
 /**
  * Refuse a standalone Evidence record from another format before reading its
- * shape, with the same single decision as a bundle. Input without an
- * `evidence_id` member is not a record and is left to the record schema.
+ * shape, with the same single decision as a bundle. A record declares its
+ * revision; an unmarked object is an earlier record only when it has every
+ * member records have always carried. Anything else is left to the record
+ * schema, so a malformed record reports its schema issues.
  */
 export const admitEvidenceRecordFormat = (input: unknown): void => {
-  if (isRecord(input) && Object.hasOwn(input, "evidence_id"))
+  if (!isRecord(input) || !Object.hasOwn(input, "evidence_id")) return;
+  if (
+    Object.hasOwn(input, "evidence_format") ||
+    RECORD_MEMBERS.every((member) => Object.hasOwn(input, member))
+  )
     admitFormat(input, EVIDENCE_RECORD_FORMAT, "Evidence record");
 };
 
