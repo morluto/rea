@@ -11,7 +11,7 @@ import type {
   NativeCommandOptions,
   NativeCommandRunner,
   ResolvedTool,
-} from "../../src/native/CommandRunner.js";
+} from "../../src/providers/NativeCommandRunner.js";
 
 /** Resolver seam for fixtures with identical invocation and physical paths. */
 export const nativeResolvedToolFixture = (

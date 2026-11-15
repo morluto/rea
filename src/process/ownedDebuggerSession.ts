@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 
 import {
   DEBUGGER_COMMAND_DEADLINE_SETTING,
@@ -11,6 +12,7 @@ import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisResourceConstraintError,
+  type AnalysisTimeoutRecovery,
 } from "../domain/analysisErrorCore.js";
 import type {
   AnalysisError,
@@ -19,6 +21,7 @@ import type {
 import type { JsonValue } from "../domain/jsonValue.js";
 import { parseLinuxProcessStat } from "./LinuxProcessStat.js";
 import { OwnedDebuggerCleanupError } from "./ownedDebuggerCleanupError.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Result of terminating one debugger process owned by this application. */
 export type OwnedDebuggerStopResult =
@@ -88,7 +91,7 @@ export const debuggerAdmissionRecovery = (
 export const fixedDeadlineGuidance = (
   what: string,
   timeoutMs: number,
-): { readonly userMessage: string; readonly remediationAction: string } => ({
+): AnalysisTimeoutRecovery => ({
   userMessage: `${what} reached its ${String(timeoutMs)} ms deadline (deadlineExpired). This release has no runtime override.`,
   remediationAction: `This ${String(timeoutMs)} ms deadline has no runtime override. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
 });
@@ -97,11 +100,7 @@ export const fixedDeadlineGuidance = (
 export const configurableDeadlineGuidance = (
   what: string,
   admission: DebuggerAdmissionLimit,
-): {
-  readonly userMessage: string;
-  readonly remediationAction: string;
-  readonly diagnostics: ReturnType<typeof debuggerAdmissionDiagnostics>;
-} => {
+): AnalysisTimeoutRecovery => {
   const recovery = debuggerAdmissionRecovery(admission);
   const limit = debuggerAnalysisLimit(admission);
   return {
@@ -185,7 +184,7 @@ export type ProcessStartTimeReader = (pid: string) => Promise<string | null>;
 export const readLinuxProcessStartTime: ProcessStartTimeReader = async (
   pid,
 ) => {
-  if (process.platform !== "linux")
+  if (HOST_PLATFORM.platform !== "linux")
     throw new Error(
       "Inferior process identity verification requires Linux /proc.",
     );
@@ -327,8 +326,8 @@ const finishExitedDebuggerSession = async (
       status: "incomplete",
       reason:
         platform === "win32"
-          ? `Owned ${debuggerName} Windows Job Object settlement could not be verified: ${cause instanceof Error ? cause.message : String(cause)}`
-          : `Owned ${debuggerName} inherited output stream settlement could not be verified: ${cause instanceof Error ? cause.message : String(cause)}`,
+          ? `Owned ${debuggerName} Windows Job Object settlement could not be verified: ${errorMessage(cause)}`
+          : `Owned ${debuggerName} inherited output stream settlement could not be verified: ${errorMessage(cause)}`,
     };
   }
   if (platform !== "win32") session.supervisor.unrefOutputStreams();
@@ -346,7 +345,7 @@ export const stopOwnedDebuggerProcess = async (
   debuggerName: string,
   options: { readonly platform?: NodeJS.Platform } = {},
 ): Promise<OwnedDebuggerStopResult> => {
-  const platform = options.platform ?? process.platform;
+  const platform = options.platform ?? HOST_PLATFORM.platform;
   if (session.exited) {
     if (detachAttempts.has(session))
       return {
@@ -368,7 +367,7 @@ export const stopOwnedDebuggerProcess = async (
       } catch (cause: unknown) {
         return {
           status: "incomplete",
-          reason: `Owned ${debuggerName} inferior process identity could not be verified after debugger exit: ${cause instanceof Error ? cause.message : String(cause)}`,
+          reason: `Owned ${debuggerName} inferior process identity could not be verified after debugger exit: ${errorMessage(cause)}`,
         };
       }
     }
@@ -417,7 +416,7 @@ export const stopOwnedDebuggerProcess = async (
     } catch (cause: unknown) {
       return {
         status: "incomplete",
-        reason: `Owned ${debuggerName} inferior detach could not be verified: ${cause instanceof Error ? cause.message : String(cause)}`,
+        reason: `Owned ${debuggerName} inferior detach could not be verified: ${errorMessage(cause)}`,
       };
     }
   }

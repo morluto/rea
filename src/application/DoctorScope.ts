@@ -10,12 +10,11 @@ import {
   DESKTOP_BUILD_PROVIDER_ID,
   isDesktopBuildCheck,
 } from "../domain/doctorProviderIds.js";
+import type { DoctorScope, DoctorSkillState } from "./Doctor.js";
 import type {
   DoctorCheck,
   DoctorProviderInspection,
-  DoctorScope,
-  DoctorSkillState,
-} from "./Doctor.js";
+} from "../ports/DoctorProviderInspection.js";
 
 /** Normalized readiness boundary included in every doctor response. */
 export interface DoctorScopeReport {

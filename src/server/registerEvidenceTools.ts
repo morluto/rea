@@ -10,7 +10,7 @@ import {
 import type {
   AnalysisOperation,
   AnalysisOperationPort,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import type { ToolContract } from "../contracts/toolContractTypes.js";
 import { ok } from "../domain/result.js";
 import { admitCompletedAnalysis } from "../application/investigation/admitCompletedAnalysis.js";

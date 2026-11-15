@@ -1,16 +1,24 @@
+import {
+  capturedProviderOutput,
+  providerResultDiagnostics,
+} from "../../process/capturedProviderOutput.js";
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import {
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
-} from "../../artifacts/ArtifactFileOperation.js";
+  completedStableArtifact,
+  readStableArtifact,
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+} from "../../resources/index.js";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import { access, mkdir, stat, writeFile } from "node:fs/promises";
-import { constants } from "node:fs";
+import { constants, type Stats } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { AnalysisCapturedOutput } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
@@ -24,19 +32,12 @@ import {
   recordedCrashDebuggerSchema,
   type RecordedCrash,
 } from "../../domain/native/recordedCrash.js";
-import {
-  completedStableArtifact,
-  readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import {
-  capturedPwntoolsOutput,
   pwntoolsFailureDialect,
-  pwntoolsBudgetRecovery,
+  pwntoolsReplyOutputLimit,
 } from "../pwntools/PwntoolsFailures.js";
 import {
   resolvePwntoolsLimits,
@@ -44,6 +45,7 @@ import {
 } from "../../domain/native/pwntoolsResourceLimits.js";
 import { readPwntoolsFailureEvidence } from "../pwntools/PwntoolsResourceLimits.js";
 import type { PwntoolsCommand } from "../pwntools/PwntoolsDecoder.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_recorded_crash";
 const replySchema = z.discriminatedUnion("ok", [
@@ -66,6 +68,47 @@ export interface PwndbgCoreInspection {
   readonly context: Extract<RecordedCrash["debugger"], { status: "available" }>;
   readonly finalization: AnalysisError | undefined;
 }
+
+/** Why a configured debugger path cannot be used; a host error is its cause. */
+interface ConfiguredPathRefusal {
+  readonly reason: string;
+  readonly cause?: unknown;
+}
+
+const hostPathRefusal = (cause: unknown): ConfiguredPathRefusal => ({
+  reason: errorMessage(cause),
+  cause,
+});
+
+/**
+ * Check one caller-supplied path, or return why it cannot be used.
+ * Cancellation between host checks propagates instead of becoming a refusal.
+ */
+const configuredPathRefusal = async (
+  path: string,
+  kind: "file" | "directory",
+  mode: number,
+  checkCancelled: () => void,
+): Promise<ConfiguredPathRefusal | undefined> => {
+  if (!isAbsolute(path))
+    return { reason: "Expected an absolute caller-supplied path." };
+  try {
+    await access(path, mode);
+  } catch (cause: unknown) {
+    return hostPathRefusal(cause);
+  }
+  checkCancelled();
+  let information: Stats;
+  try {
+    information = await stat(path);
+  } catch (cause: unknown) {
+    return hostPathRefusal(cause);
+  }
+  checkCancelled();
+  return (kind === "file" ? information.isFile() : information.isDirectory())
+    ? undefined
+    : { reason: `Expected a ${kind}.` };
+};
 
 /** Add mapping candidates from an owned core-only debugger, using the existing snapshot. */
 export const inspectPwndbgCore = async ({
@@ -111,25 +154,18 @@ export const inspectPwndbgCore = async ({
     ["REA_PWNDBG_GDBINIT", entry, "file"],
     ["REA_PWNDBG_VENV_PATH", venv, "directory"],
   ] as const) {
-    try {
-      checkCancelled();
-      if (!isAbsolute(path))
-        throw new Error("Expected an absolute caller-supplied path.");
-      const mode = key === "REA_PWNDBG_GDB" ? constants.X_OK : constants.R_OK;
-      await access(path, mode);
-      checkCancelled();
-      const information = await stat(path);
-      checkCancelled();
-      if (kind === "file" ? !information.isFile() : !information.isDirectory())
-        throw new Error(`Expected a ${kind}.`);
-      checkCancelled();
-    } catch (cause: unknown) {
-      if (cause instanceof AnalysisCancelledError) throw cause;
+    checkCancelled();
+    const refusal = await configuredPathRefusal(
+      path,
+      kind,
+      key === "REA_PWNDBG_GDB" ? constants.X_OK : constants.R_OK,
+      checkCancelled,
+    );
+    if (refusal !== undefined)
       throw unavailable(
-        `${key} is unavailable at ${path}: ${cause instanceof Error ? cause.message : String(cause)}. Configure the requested core-only context, or omit include_debugger_context for basic recorded evidence.`,
-        cause,
+        `${key} is unavailable at ${path}: ${refusal.reason}. Configure the requested core-only context, or omit include_debugger_context for basic recorded evidence.`,
+        refusal.cause,
       );
-    }
   }
   checkCancelled();
   const stage = join(rootPath, "debugger");
@@ -199,7 +235,7 @@ export const inspectPwndbgCore = async ({
       },
       failure,
     );
-    output = capturedPwntoolsOutput(execution);
+    output = capturedProviderOutput(execution);
     let reply: z.output<typeof replySchema>;
     let finalization: AnalysisError | undefined;
     try {
@@ -249,11 +285,11 @@ export const inspectPwndbgCore = async ({
       }
       const error = new AnalysisOutputError(
         OPERATION,
-        `Core-only debugger reply failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+        `Core-only debugger reply failed: ${errorMessage(cause)}`,
         {
           cause,
           ...(cause instanceof ArtifactReaderFailure && cause.reason === "limit"
-            ? { remediationAction: pwntoolsBudgetRecovery(producerLimits) }
+            ? pwntoolsReplyOutputLimit(producerLimits)
             : {}),
           ...(cause instanceof ArtifactReaderFailure
             ? { cleanup: cause.cleanup }
@@ -283,7 +319,7 @@ export const inspectPwndbgCore = async ({
           new AnalysisOutputError(OPERATION, reply.message, {
             capturedOutput: recordedCrashStageOutput(diagnostics, output),
             ...(reply.reason === "output-limit"
-              ? { remediationAction: pwntoolsBudgetRecovery(producerLimits) }
+              ? pwntoolsReplyOutputLimit(producerLimits)
               : {}),
           }),
           finalization,
@@ -310,7 +346,13 @@ export const inspectPwndbgCore = async ({
         ),
         finalization,
       );
-    return { context: { ...reply.value, diagnostics: output }, finalization };
+    return {
+      context: {
+        ...reply.value,
+        diagnostics: providerResultDiagnostics(output),
+      },
+      finalization,
+    };
   } catch (cause: unknown) {
     if (cause instanceof AnalysisError && cause.cleanupIncomplete) throw cause;
     const primary = classifyProviderFailure(
@@ -371,11 +413,7 @@ export const pwndbgContextFinalizationFailure = (
   finalization === undefined
     ? primary
     : finalization.cleanupIncomplete
-      ? analysisErrorWithCleanupFailure(
-          primary,
-          finalization,
-          OPERATION,
-        ).bindCleanupDependencies([primary, finalization])
+      ? analysisErrorWithCleanupDependencies(primary, finalization, OPERATION)
       : primary.retainSecondaryFailure(finalization);
 
 /** Preserve both stages' exact text and their independently observed truncation state. */

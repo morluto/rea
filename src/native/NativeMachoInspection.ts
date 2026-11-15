@@ -15,29 +15,26 @@ import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { machoRuntimeSymbolName } from "../domain/native/machoSymbolName.js";
 import { keyedBy, uniqueKeyed } from "../domain/keyedCollection.js";
 import { err, ok, type Result } from "../domain/result.js";
-import type { MachoSliceSelectionRefusal } from "./metadata/MachoSliceSelection.js";
-import {
-  NATIVE_COMMAND_OUTPUT_BUDGET_BYTES,
-  type NativeCommandCapture,
-} from "./CommandRunner.js";
-import { chainedImportNames } from "./AppleMachoFixups.js";
+import type { MachoSliceSelectionRefusal } from "../domain/apple/machoSliceSelection.js";
+import type { NativeCommandCapture } from "../providers/NativeCommandRunner.js";
+import { chainedImportNames } from "../domain/apple/appleMachoFixups.js";
 import {
   architectureBaseName,
   selectLipoArchitecture,
   type SelectedLipoArchitecture,
-} from "./MachoArchitectureSelection.js";
+} from "../domain/apple/machoArchitectureSelection.js";
 import {
   parseDyldExportAddressRow,
   parseDyldExports,
   parseDyldImports,
 } from "./parsers/dyldInfo.js";
-import { parseLipoCapture, type LipoArchitecture } from "./parsers/lipo.js";
+import { parseLipoCapture } from "./parsers/lipo.js";
 import { withoutEchoedPathHeader } from "./parsers/echoedPath.js";
 import {
   projectMachoBinary,
   type BinaryMachoProjection,
 } from "./MachoBinaryProjection.js";
-import type { MachoCommandNames } from "./MachoCommandNames.js";
+import type { MachoCommandNames } from "../domain/apple/machoCommandNames.js";
 import type { ResolvedMachoSlice } from "./NativeMachoSelectedSlice.js";
 import { reconcileMachoUuid } from "./parsers/machoUuid.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
@@ -58,6 +55,9 @@ import {
   parseDyldFileTypeRefusal,
   unusableNativeCommandOutput,
 } from "./NativeMachoCommandDiagnostics.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
+import { NATIVE_COMMAND_OUTPUT_BUDGET_BYTES } from "../domain/native/nativeCommandOutput.js";
+import type { LipoArchitecture } from "../domain/apple/lipo.js";
 
 interface NativeMachoObservation {
   readonly result: JsonValue;
@@ -184,7 +184,7 @@ export const inspectNativeMacho = async (
     captures.push(captured.value);
   }
   const lipo = captures.find(({ tool }) => tool === "lipo");
-  if (lipo === undefined) throw new TypeError("Missing lipo capture");
+  if (lipo === undefined) throw invariantViolation("Missing lipo capture");
   const parsedLipo = parseLipoCapture(
     lipo,
     "inspect_macho",
@@ -261,7 +261,7 @@ export const inspectNativeMacho = async (
   const nmIndex = captures.findIndex(({ tool }) => tool === "nm");
   const dyldExports = captures.filter(({ tool }) => tool === "dyld_info")[1];
   if (nmIndex < 0 || dyldExports === undefined)
-    throw new TypeError("Missing nm or dyld_info export capture");
+    throw invariantViolation("Missing nm or dyld_info export capture");
   const selected =
     selection !== null
       ? selection.architecture
@@ -352,7 +352,7 @@ export const inspectNativeMacho = async (
       tool === "dyld_info" && arguments_[0] === "-imports",
   );
   if (dyldImports === undefined)
-    throw new TypeError("Missing dyld_info import capture");
+    throw invariantViolation("Missing dyld_info import capture");
   const hasChainedFixups = load.commands.some(
     ({ kind }) => kind === "LC_DYLD_CHAINED_FIXUPS",
   );
@@ -710,7 +710,8 @@ const captureLookup =
   (captures: readonly NativeCommandCapture[]) =>
   (tool: string, occurrence = 0): NativeCommandCapture => {
     const capture = captures.filter((item) => item.tool === tool)[occurrence];
-    if (capture === undefined) throw new TypeError(`Missing ${tool} capture`);
+    if (capture === undefined)
+      throw invariantViolation(`Missing ${tool} capture`);
     return capture;
   };
 

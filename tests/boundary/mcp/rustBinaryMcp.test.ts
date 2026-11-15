@@ -120,6 +120,10 @@ mcpTest(
         status: "partial",
         reason: "max_rustc_hashes",
         effective_limit: 64,
+        limit: expect.objectContaining({
+          control_kind: "parameter",
+          parameter: "max_rustc_hashes",
+        }),
       });
     } finally {
       await session.close();

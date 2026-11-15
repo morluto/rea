@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import {
   AnalysisError,
   type AnalysisCapturedOutput,
@@ -12,21 +13,24 @@ import {
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import { createHash } from "node:crypto";
 import { lstat } from "node:fs/promises";
-import { streamChunkToBuffer } from "../StreamBytes.js";
-import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
-import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
-import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import {
-  ArtifactTraversalObservation,
-  declaredArtifactEntries,
-} from "../ArtifactTraversalObservation.js";
-import {
+  streamChunkToBuffer,
+  ArtifactResourceScope,
   ArtifactReaderFailure,
   sameArtifactSourceIdentity,
   type ArtifactEntry,
   type ArtifactReaderTraversal,
-} from "../ArtifactReader.js";
+  translateArtifactFailure,
+} from "../../resources/index.js";
+import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
+import { InternalInvariantError } from "../../domain/internalInvariant.js";
+import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
+import { ARTIFACT_GRAPH_PROVIDER } from "../../domain/investigationProviders.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
+import {
+  ArtifactTraversalObservation,
+  declaredArtifactEntries,
+} from "../ArtifactTraversalObservation.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { analyzeInterfaceBuilderBundle } from "./InterfaceBuilderAnalysis.js";
 import {
@@ -61,8 +65,13 @@ export const analyzeAppleAssetCatalogs = async (input: {
     signal?: AbortSignal,
   ) => Promise<string>;
   readonly analyzeInterfaceBuilder?: typeof analyzeInterfaceBuilderBundle;
+  /** The host whose assetutil runs; tests select macOS on another host. */
+  readonly platform?: NodeJS.Platform;
 }) => {
-  if (process.platform !== "darwin" && input.runAssetUtil === undefined)
+  if (
+    (input.platform ?? HOST_PLATFORM.platform) !== "darwin" &&
+    input.runAssetUtil === undefined
+  )
     throw new ArtifactReaderFailure(
       "unavailable",
       "Apple asset catalog inspection requires macOS assetutil",
@@ -113,16 +122,25 @@ export const analyzeAppleAssetCatalogs = async (input: {
         (joined.error instanceof AnalysisError &&
           joined.error.cleanupIncomplete))
     ) {
-      const primary = translateArtifactFailure("inspect_asset_catalog", cause);
+      // A defect still owns the outcome; it becomes the adapter failure the
+      // provider boundary would report, so the reader's cleanup can join it.
+      const primary =
+        cause instanceof InternalInvariantError
+          ? new ProviderAdapterError(
+              ARTIFACT_GRAPH_PROVIDER.id,
+              "inspect_asset_catalog",
+              { cause },
+            )
+          : translateArtifactFailure("inspect_asset_catalog", cause);
       const cleanup = translateArtifactFailure(
         "inspect_asset_catalog",
         joined.error,
       );
-      throw analysisErrorWithCleanupFailure(
+      throw analysisErrorWithCleanupDependencies(
         primary,
         cleanup,
         "inspect_asset_catalog",
-      ).bindCleanupDependencies([primary, cleanup]);
+      );
     }
     throw cause;
   }
@@ -263,11 +281,11 @@ const collectAssetCatalogs = async (input: {
         "inspect_asset_catalog",
         input.resources.cleanupFailure({ kind: "completed" }, [released]),
       );
-      throw analysisErrorWithCleanupFailure(
+      throw analysisErrorWithCleanupDependencies(
         outcome.cause,
         cleanup,
         "inspect_asset_catalog",
-      ).bindCleanupDependencies([outcome.cause, cleanup]);
+      );
     }
     throw input.resources.cleanupFailure(outcome, [released]);
   }
@@ -319,6 +337,7 @@ const inspectAssetCatalogEntry = async (input: {
     throw new ArtifactReaderFailure(
       "integrity",
       `Asset catalog changed before inspection: ${entry.path}`,
+      { integrityCheck: "member-identity" },
     );
   let output: string;
   try {
@@ -335,6 +354,7 @@ const inspectAssetCatalogEntry = async (input: {
     throw new ArtifactReaderFailure(
       "integrity",
       `Asset catalog changed during inspection: ${entry.path}`,
+      { integrityCheck: "member-identity" },
     );
   const capturedOutput: AnalysisCapturedOutput = {
     stdout: output,
@@ -506,7 +526,7 @@ const assetUtilFailure = (cause: unknown, entry: ArtifactEntry): unknown => {
 
 const digestBounded = async (
   reader: DirectoryArtifactReader,
-  entry: import("../ArtifactReader.js").ArtifactEntry,
+  entry: import("../../resources/index.js").ArtifactEntry,
   signal?: AbortSignal,
 ): Promise<string> => {
   if (entry.declaredSize === null || entry.declaredSize > MAX_CATALOG_BYTES)

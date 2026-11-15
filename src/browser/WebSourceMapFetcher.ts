@@ -1,6 +1,7 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import * as t from "@babel/types";
 import { createHash } from "node:crypto";
-import { decodeValidatedSourceMapLeaves } from "../javascript/sourceMaps/DecodedSourceMap.js";
+import { decodeValidatedSourceMapLeaves } from "../domain/decodedSourceMap.js";
 
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
 import {
@@ -47,7 +48,7 @@ import {
   isSourceMapSectionOverlap,
   sourceMapLimitFailure,
   type SourceMapLeaf,
-} from "../javascript/sourceMaps/SourceMapFormat.js";
+} from "../domain/sourceMapFormat.js";
 import {
   malformedInput,
   type ParseFailureError,
@@ -55,11 +56,13 @@ import {
 import { selectedBrowserDeadlineMs } from "../domain/browserDeadline.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import {
   selectedSourceMapLimits,
   sourceMapLimitRecovery,
   type SourceMapLimits,
 } from "../domain/sourceMapLimits.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 export interface WebSourceMapRequest {
   readonly scriptKey: string;
@@ -340,6 +343,8 @@ class SourceMapResponseCleanup extends Error {
   readonly failure: AnalysisError;
   readonly completion: Promise<void>;
   #resource: { url: string; body: ReadableStream<Uint8Array> } | undefined;
+  /** Confirmed once the reader's cancellation completes and its lock is released. */
+  readonly #released = new AnalysisCleanupRelease();
 
   get cleanupResources(): readonly string[] {
     return this.#resource === undefined ? [] : [this.#resource.url];
@@ -371,11 +376,11 @@ class SourceMapResponseCleanup extends Error {
         : new ProviderAdapterError("rea-cdp-browser", "analyze_web_bundle", {
             cause,
             cleanup,
-            userMessage: cause instanceof Error ? cause.message : String(cause),
+            userMessage: errorMessage(cause),
           });
-    this.failure.bindCleanupResourceOwner(this);
+    this.#released.bind(this.failure.bindCleanupResourceOwner(this));
     const failed = (cause: unknown): void => {
-      reason = `Source-map response cancellation failed: ${cause instanceof Error ? cause.message : String(cause)}`;
+      reason = `Source-map response cancellation failed: ${errorMessage(cause)}`;
       this.failure.retainSecondaryFailure(
         new ProviderCleanupError(
           "rea-cdp-browser",
@@ -409,7 +414,7 @@ class SourceMapResponseCleanup extends Error {
           reader.releaseLock();
           reason = "Source-map response cancellation completed.";
           this.#resource = undefined;
-          this.failure.resolveCleanup();
+          this.#released.confirm();
         } catch (cause: unknown) {
           failed(cause);
         }
@@ -431,6 +436,8 @@ class SourceMapPendingFetch extends Error {
   readonly failure: AnalysisError;
   readonly settled: Promise<void>;
   #resource: { url: string; response?: Response } | undefined;
+  /** Confirmed once the late response and any body it carries are released. */
+  readonly #released = new AnalysisCleanupRelease();
 
   get cleanupResources(): readonly string[] {
     return this.#resource === undefined ? [] : [this.#resource.url];
@@ -459,10 +466,10 @@ class SourceMapPendingFetch extends Error {
             carriedReason(sourceMapCallerReason(reason)),
             { cleanup },
           );
-    this.failure.bindCleanupResourceOwner(this);
+    this.#released.bind(this.failure.bindCleanupResourceOwner(this));
     const finished = (): void => {
       this.#resource = undefined;
-      this.failure.resolveCleanup();
+      this.#released.confirm();
     };
     this.settled = promise.then(
       async (response) => {
@@ -666,9 +673,8 @@ const fetchOne = async (
     );
     completedResponseIdentity = body.responseIdentity;
     if (!body.text.ok)
-      return emptySourceMapItem(
+      return invalidSourceMapItem(
         request,
-        "invalid",
         body.text.error.message,
         effectiveUrl,
         body.responseIdentity,
@@ -911,11 +917,7 @@ const readBoundedText = async (
   };
   try {
     return {
-      text: ok(
-        new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-          joined,
-        ),
-      ),
+      text: ok(decodeStrictUtf8(joined, "preserve")),
       responseIdentity,
     };
   } catch (cause: unknown) {
@@ -1040,9 +1042,8 @@ const normalizeSourceMap = (
     );
   const parsedJson = safeParseJson(sourceMapJsonText(text));
   if (!parsedJson.ok)
-    return emptySourceMapItem(
+    return invalidSourceMapItem(
       request,
-      "invalid",
       "Source-map JSON is not a version 3 map.",
       fetchedUrl,
       responseIdentity,
@@ -1211,9 +1212,8 @@ const normalizeSourceMap = (
       cause instanceof SourceMapDeadlineError
     )
       throw cause;
-    return emptySourceMapItem(
+    return invalidSourceMapItem(
       request,
-      "invalid",
       isSourceMapSectionOverlap(cause)
         ? cause.message
         : "Source-map JSON mappings could not be decoded safely.",
@@ -1359,24 +1359,37 @@ const sourceMapContext = (
   effective_url: effectiveUrl,
 });
 
+const failedSourceMapBase = (
+  request: WebSourceMapRequest,
+  limitation: string,
+  effectiveUrl: string | null,
+  responseIdentity: ResponseIdentity | undefined,
+) => ({
+  ...sourceMapContext(request, effectiveUrl),
+  artifact: null,
+  original_sources: [],
+  original_module_edges: [],
+  mappings: [],
+  limitation:
+    responseIdentity === undefined
+      ? limitation
+      : `${limitation} Response text was not retained; completed response body identity is available.`,
+});
+
+/** A map that was filtered or whose complete body may not have been read. */
 const emptySourceMapItem = (
   request: WebSourceMapRequest,
-  status: FailedSourceMapStatus,
+  status: Exclude<FailedSourceMapStatus, "invalid">,
   limitation: string,
   effectiveUrl: string | null = null,
   responseIdentity?: ResponseIdentity,
 ): WebSourceMapItem => {
-  const base = {
-    ...sourceMapContext(request, effectiveUrl),
-    artifact: null,
-    original_sources: [],
-    original_module_edges: [],
-    mappings: [],
-    limitation:
-      responseIdentity === undefined
-        ? limitation
-        : `${limitation} Response text was not retained; completed response body identity is available.`,
-  };
+  const base = failedSourceMapBase(
+    request,
+    limitation,
+    effectiveUrl,
+    responseIdentity,
+  );
   return status === "policy_filtered"
     ? { ...base, status }
     : {
@@ -1387,6 +1400,18 @@ const emptySourceMapItem = (
           : { response_identity: responseIdentity }),
       };
 };
+
+/** A completely read body that is not a usable map keeps its identity. */
+const invalidSourceMapItem = (
+  request: WebSourceMapRequest,
+  limitation: string,
+  effectiveUrl: string | null,
+  responseIdentity: ResponseIdentity,
+): WebSourceMapItem => ({
+  ...failedSourceMapBase(request, limitation, effectiveUrl, responseIdentity),
+  status: "invalid",
+  response_identity: responseIdentity,
+});
 
 const sourceMapTextArtifact = (
   text: string,

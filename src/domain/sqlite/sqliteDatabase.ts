@@ -1,5 +1,6 @@
 import { timerDurationMsSchema } from "../analysisResourceLimits.js";
 import { z } from "zod";
+import { requirePresence } from "../schemaConstraints.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 import type { JsonValue } from "../jsonValue.js";
 
@@ -33,8 +34,8 @@ export const SQLITE_TABLE_REQUIRED_SELECTION_FIELDS = [
 ] as const;
 
 /** Shared row/schema selection constraints, independent of path transport. */
-export const sqliteTableSelectionSchema = z
-  .strictObject({
+export const sqliteTableSelectionSchema = requirePresence(
+  z.strictObject({
     table: z
       .string()
       .optional()
@@ -68,43 +69,21 @@ export const sqliteTableSelectionSchema = z
       .describe(
         "Rows to skip before the retained window; default 0; requires table",
       ),
-  })
-  .superRefine((input, context) => {
-    if (input.row_limit !== undefined && input.table === undefined)
-      context.addIssue({
-        code: "custom",
-        path: ["row_limit"],
-        message: "row_limit requires an explicit table selection",
-      });
-    if (input.row_offset !== undefined && input.table === undefined)
-      context.addIssue({
-        code: "custom",
-        path: ["row_offset"],
-        message: "row_offset requires an explicit table selection",
-      });
-    if (input.columns !== undefined && input.table === undefined)
-      context.addIssue({
-        code: "custom",
-        path: ["columns"],
-        message: "columns requires an explicit table selection",
-      });
-    if (input.schema_scope === "selected_table" && input.table === undefined)
-      context.addIssue({
-        code: "custom",
-        path: ["schema_scope"],
-        message: "selected_table schema scope requires table",
-      });
-  })
-  .meta({
-    dependentRequired: Object.fromEntries(
-      SQLITE_TABLE_REQUIRED_SELECTION_FIELDS.map((field) => [field, ["table"]]),
-    ),
-    if: {
-      properties: { schema_scope: { const: "selected_table" } },
-      required: ["schema_scope"],
+  }),
+  [
+    ...SQLITE_TABLE_REQUIRED_SELECTION_FIELDS.map((field) => ({
+      when: field,
+      requires: "table" as const,
+      message: `${field} requires an explicit table selection`,
+    })),
+    {
+      when: "schema_scope",
+      equals: "selected_table",
+      requires: "table",
+      message: "selected_table schema scope requires table",
     },
-    then: { required: ["table"] },
-  });
+  ],
+);
 
 /** Inspect one frozen database and its sibling WAL, with optional ordinary-table rows. */
 export const inspectSqliteDatabaseInputSchema = sqliteTableSelectionSchema

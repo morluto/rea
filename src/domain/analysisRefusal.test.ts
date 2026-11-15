@@ -11,7 +11,7 @@ import {
   analysisRefusalRemediation,
   type AnalysisRefusal,
 } from "./analysisRefusal.js";
-import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "./analysisErrorProjectionSchema.js";
 
 const budgetError = (
   setting: Parameters<typeof analysisSettingLimit>[0],
@@ -240,5 +240,44 @@ describe("typed selector refusals", () => {
       expect(action.length).toBeGreaterThan(0);
       expect(action).not.toMatch(/doctor|worker memory/u);
     }
+  });
+});
+
+describe("adjustable budget minimum", () => {
+  it("names the measured minimum that admits the request", () => {
+    const limit = analysisSettingLimit(
+      "asar.max_listing_bytes",
+      1024,
+      "runtime",
+    );
+    const projected = projectAnalysisError(
+      new AnalysisResourceConstraintError(
+        "inspect_artifact",
+        "memory",
+        "Budget hit.",
+        null,
+        { limit: { ...limit, required_value: 4096 } },
+      ),
+    );
+
+    expect(projected.remediation.action).toContain(
+      "Raise asar.max_listing_bytes with update_analysis_settings (at least 4096 bytes; range",
+    );
+    expect(projected.details?.refusal).toMatchObject({
+      kind: "adjustable_budget",
+      required_value: 4096,
+    });
+
+    const unreachable = projectAnalysisError(
+      new AnalysisResourceConstraintError(
+        "inspect_artifact",
+        "memory",
+        "Budget hit.",
+        null,
+        { limit: { ...limit, required_value: limit.maximum + 1 } },
+      ),
+    ).remediation.action;
+    expect(unreachable).toContain("above the asar.max_listing_bytes maximum");
+    expect(unreachable).not.toContain("update_analysis_settings");
   });
 });

@@ -38,7 +38,6 @@ import {
 import {
   adapterError,
   ENDS,
-  errorText,
   readOutput,
   refused,
   reportedFailure,
@@ -51,6 +50,7 @@ import {
   desktopOutputFailure,
   type DesktopOutputCompletion,
 } from "./DesktopOutputTree.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const EXPORT = "export_build_environment";
 const exportResultSchema = z.looseObject({
@@ -372,6 +372,13 @@ export const exportBuild = async (
       }
     | undefined;
   try {
+    // Admit the host folder by the rule the bundle is written under before
+    // running anything in the computer, so an unusable folder is refused
+    // before the in-computer export runs rather than when its bundle returns.
+    await planOutputTree(request.directory, {
+      operation: EXPORT,
+      field: "directory",
+    });
     const argv = [
       "export-desktop-application",
       `${folder}/capture`,
@@ -478,7 +485,7 @@ export const exportBuild = async (
           ? cancelledBy(EXPORT, carriedReason(cause))
           : adapterError(
               EXPORT,
-              redactSecrets(errorText(cause), capture.secrets),
+              redactSecrets(errorMessage(cause), capture.secrets),
               cause,
             );
     if (published !== undefined)

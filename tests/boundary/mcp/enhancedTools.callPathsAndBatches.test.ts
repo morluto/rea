@@ -1,7 +1,8 @@
+import { canonicalInputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../../../src/ports/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisCancelledError,
@@ -125,7 +126,6 @@ describe("enhanced MCP graph caveats", () => {
     });
     expect(graph.structuredContent).toMatchObject({
       limitations: [
-        expect.stringMatching(/artifact identity.*unavailable/iu),
         "Derived by an REA composed workflow.",
         `Fixture analysis provider (fixture 1) procedure_callees: ${caveat}`,
         `Fixture analysis provider (fixture 1) procedure_callees: ${leafCaveat}`,
@@ -473,9 +473,10 @@ describe("enhanced MCP batches", () => {
       },
     );
     const { tools } = await client.listTools();
-    expect(
-      tools.find(({ name }) => name === "batch_decompile")?.inputSchema,
-    ).toMatchObject({
+    expect(tools.some(({ name }) => name === "batch_decompile")).toBe(true);
+    // The budget is a canonical input constraint; the server enforces it
+    // whatever the compact advertisement retains.
+    expect(canonicalInputSchema("batch_decompile")).toMatchObject({
       properties: { addresses: { maxItems: MAX_ENHANCED_RECORDS } },
     });
 

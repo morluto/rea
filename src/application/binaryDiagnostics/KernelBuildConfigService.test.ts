@@ -145,6 +145,26 @@ it.each([
     },
   ],
   [
+    "a malformed config reported as a partial gap",
+    async (): Promise<KernelBuildConfig> => {
+      const malformed = await reportOf(nonConfigGzipFixture());
+      return {
+        ...malformed,
+        coverage: { ...malformed.coverage, status: "partial" },
+      };
+    },
+  ],
+  [
+    "a truncated config reported with unknown coverage",
+    async (): Promise<KernelBuildConfig> => {
+      const truncated = await reportOf(truncatedKernelConfigFixture());
+      return {
+        ...truncated,
+        coverage: { ...truncated.coverage, status: "unknown" },
+      };
+    },
+  ],
+  [
     "an incomplete config carrying a malformed reason",
     async (): Promise<KernelBuildConfig> => {
       const truncated = await reportOf(truncatedKernelConfigFixture());

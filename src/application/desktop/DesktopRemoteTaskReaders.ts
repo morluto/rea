@@ -17,6 +17,7 @@ import {
   type ReaderLease,
 } from "../../domain/desktop/appTaskReaders.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
+import { AnalysisCleanupRelease } from "../../domain/analysisCleanupRelease.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import {
   AGENTENV_PROVIDER,
@@ -26,6 +27,7 @@ import {
   AbortedWait,
   waitForAbortable,
 } from "../../process/AbortablePromise.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 type Exec = (
   argv: readonly string[],
@@ -52,7 +54,10 @@ interface PendingReader {
 /** Owns remote reader folders and joins interrupted commands before removing them. */
 export class DesktopRemoteTaskReaders {
   readonly #pending = new Set<PendingReader>();
+  /** Failures reported for the current pending readers, kept to retain late reader facts. */
   readonly #failures = new Set<WeakRef<ProviderCleanupError>>();
+  /** Confirmed once the readers pending when it was taken are all removed. */
+  #release = new AnalysisCleanupRelease();
 
   constructor(private readonly exec: Exec) {}
 
@@ -147,7 +152,7 @@ export class DesktopRemoteTaskReaders {
       if (failure !== undefined)
         throw new ProviderAdapterError(AGENTENV_PROVIDER, "check_build_task", {
           cause: failure,
-          userMessage: `The task reader could not complete: ${failure instanceof Error ? failure.message : String(failure)}`,
+          userMessage: `The task reader could not complete: ${errorMessage(failure)}`,
           diagnostics: this.#facts(views, absent),
         });
     }
@@ -185,8 +190,7 @@ export class DesktopRemoteTaskReaders {
               } catch (cause: unknown) {
                 for (const reference of this.#failures)
                   reference.deref()?.retainDiagnostics({
-                    late_reader_failure:
-                      cause instanceof Error ? cause.message : String(cause),
+                    late_reader_failure: errorMessage(cause),
                   });
               }
             } else {
@@ -234,7 +238,7 @@ export class DesktopRemoteTaskReaders {
         }
         this.#pending.delete(pending);
       } catch (cause: unknown) {
-        errors.push(cause instanceof Error ? cause.message : String(cause));
+        errors.push(errorMessage(cause));
       }
     }
     if (errors.length > 0)
@@ -243,7 +247,8 @@ export class DesktopRemoteTaskReaders {
         reason: errors.join("; "),
         resources: this.cleanupResources,
       };
-    for (const failure of this.#failures) failure.deref()?.resolveCleanup();
+    this.#release.confirm();
+    this.#release = new AnalysisCleanupRelease();
     this.#failures.clear();
     return { verified: true, teardown: "agentenv" };
   }
@@ -305,7 +310,7 @@ export class DesktopRemoteTaskReaders {
           "Retry the check or close the build computer to retry cleanup. If the command outcome is unknown, inspect the reported computer and confirm the reader has stopped before removing its folder.",
       },
     );
-    failure.bindCleanupResourceOwner(this);
+    this.#release.bind(failure.bindCleanupResourceOwner(this));
     this.#failures.add(new WeakRef(failure));
     return failure;
   }

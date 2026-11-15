@@ -17,14 +17,16 @@ import {
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { resolveGhidraProject } from "./GhidraProjectSnapshot.js";
 import { DeferredAnalysisClient } from "../providers/DeferredAnalysisClient.js";
-import type { ProviderInspectionScope } from "../application/ProviderInspectionScope.js";
+import type { ProviderInspectionScope } from "../ports/ProviderInspectionScope.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { finalizedResult, runOwned } from "../providers/runOwned.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import {
+  AnalysisCleanupLease,
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+  bindArtifactFileCleanup,
+} from "../resources/index.js";
 import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import type {
   AnalysisClient,
@@ -39,7 +41,7 @@ import type {
   ProviderAvailability,
   ProviderIdentity,
   ProviderTargetSupport,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import type { AppConfig } from "../config/types.js";
 import {
   createAnalysisProfile,
@@ -95,6 +97,7 @@ import {
   admitGhidraInstallation,
   type GhidraAdmission,
 } from "./GhidraAdmission.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const SUPPORTED_ARCHITECTURES = new Set<BinaryArchitecture>([
   "x86",
@@ -107,6 +110,7 @@ const SUPPORTED_ARCHITECTURES = new Set<BinaryArchitecture>([
   "powerpc",
   "m68k",
   "hexagon",
+  "xtensa",
 ]);
 
 /** Names every admitted family, so the refusal cannot drift from the set. */
@@ -164,7 +168,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
   }
 
   capabilities(): readonly CapabilityDescriptor[] {
-    const platform = this.installationHost?.platform ?? process.platform;
+    const platform = this.installationHost?.platform ?? HOST_PLATFORM.platform;
     return this.config.ghidraExistingProject !== undefined
       ? existingProjectCapabilities(platform)
       : platform === "win32"
@@ -270,7 +274,8 @@ export class GhidraProvider implements AnalysisProviderCandidate {
   }
 
   inspectTargetSupport(target: BinaryTarget): ProviderTargetSupport {
-    const hostPlatform = this.installationHost?.platform ?? process.platform;
+    const hostPlatform =
+      this.installationHost?.platform ?? HOST_PLATFORM.platform;
     const diagnostics = {
       host_platform: hostPlatform,
       target_kind: target.kind,
@@ -295,7 +300,8 @@ export class GhidraProvider implements AnalysisProviderCandidate {
     const mipsReason =
       isGhidraPspTarget(target) &&
       (hostPlatform !== "linux" ||
-        (this.installationHost?.architecture ?? process.arch) !== "x64")
+        (this.installationHost?.architecture ?? HOST_PLATFORM.architecture) !==
+          "x64")
         ? "The initial PSP Allegrex profile is verified on Linux x64 only."
         : ghidraProcessorUnsupportedReason(target);
     if (mipsReason !== null)
@@ -369,7 +375,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
         cause instanceof ArtifactReaderFailure
           ? (cause.cleanup?.resources ?? [])
           : [],
-        { reason: providerFailureText(cause) },
+        { reason: errorMessage(cause) },
         { cause },
       );
       bindArtifactFileCleanup(cause, error);
@@ -593,7 +599,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       const admitted = admitGhidraClient(
         target,
         profile,
-        this.installationHost?.platform ?? process.platform,
+        this.installationHost?.platform ?? HOST_PLATFORM.platform,
       );
       if (!admitted.ok) throw admitted.error;
       const installation = await this.#observeInstallation(
@@ -748,9 +754,6 @@ const existingProjectUnsupported = (): ConfigurationError => {
     settings: [{ setting: "REA_GHIDRA_PROJECT_PATH", constraint }],
   });
 };
-
-const providerFailureText = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
 
 const inspectWindowsP0TargetSupport = (
   target: BinaryTarget,

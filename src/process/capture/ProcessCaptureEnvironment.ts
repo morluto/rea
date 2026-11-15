@@ -1,4 +1,5 @@
 import type { ProcessScenario } from "../../domain/process/processScenario.js";
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import {
   mergeEnvironmentOverrides,
   snapshotEnvironment,
@@ -15,7 +16,7 @@ interface ProcessCaptureEnvironmentOptions {
 export const makeProcessCaptureEnvironment = (
   options: ProcessCaptureEnvironmentOptions,
 ): Record<string, string> => {
-  const platform = options.platform ?? process.platform;
+  const platform = options.platform ?? HOST_PLATFORM.platform;
   const environment = snapshotEnvironment(
     mergeEnvironmentOverrides(
       options.hostEnvironment,

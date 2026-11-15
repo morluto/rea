@@ -1,4 +1,4 @@
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import {
   ProcessOwnershipInspectionCancelled,
@@ -13,6 +13,7 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  type AnalysisTimeoutRecovery,
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
@@ -24,18 +25,15 @@ import {
   nativeDeadlineRecovery,
 } from "../domain/native/nativeDeadlines.js";
 import {
-  NATIVE_COMMAND_OUTPUT_BUDGET_BYTES,
   NATIVE_FAILURE_DIAGNOSTIC_BYTES,
   type NativeCommandFailure,
-} from "./CommandRunner.js";
+} from "../providers/NativeCommandRunner.js";
+import { NATIVE_COMMAND_OUTPUT_BUDGET_BYTES } from "../domain/native/nativeCommandOutput.js";
 
 /** Operation-owned text for a command deadline or unavailable requirement. */
 export interface NativeCommandFailurePresentation {
   readonly unavailableMessage?: string;
-  readonly timeoutRecovery?: {
-    readonly userMessage: string;
-    readonly remediationAction: string;
-  };
+  readonly timeoutRecovery?: AnalysisTimeoutRecovery;
 }
 
 /** Translate the command owner's facts once, preserving capture and cleanup authority. */
@@ -116,8 +114,7 @@ export const translateNativeCommandFailure = (
             ...(presentation.timeoutRecovery ??
               nativeDeadlineRecovery({
                 timeoutMs,
-                setting: "native_command_timeout_ms",
-                cliFlag: "--native-command-timeout-ms",
+                parameter: "native_command_timeout_ms",
                 defaultMs: DEFAULT_NATIVE_COMMAND_TIMEOUT_MS,
                 phase: "macOS native command deadline",
                 unchanged: `The ${String(NATIVE_COMMAND_OUTPUT_BUDGET_BYTES)}-byte command output allowance and the ${String(NATIVE_FAILURE_DIAGNOSTIC_BYTES)}-byte failure-diagnostic excerpt have no runtime override.`,
@@ -135,6 +132,7 @@ export const translateNativeCommandFailure = (
                   ...options,
                   userMessage: darwin.compileTimeout.userMessage,
                   remediationAction: darwin.compileTimeout.remediationAction,
+                  limit: darwin.compileTimeout.limit,
                 },
               )
             : new ProviderAdapterError(IDENTITY.id, operation, options);
@@ -201,8 +199,7 @@ export const translateNativeCommandFailure = (
         ...(presentation.timeoutRecovery ??
           nativeDeadlineRecovery({
             timeoutMs,
-            setting: "native_command_timeout_ms",
-            cliFlag: "--native-command-timeout-ms",
+            parameter: "native_command_timeout_ms",
             defaultMs: DEFAULT_NATIVE_COMMAND_TIMEOUT_MS,
             phase: "macOS native command deadline",
             unchanged: `The ${String(NATIVE_COMMAND_OUTPUT_BUDGET_BYTES)}-byte command output allowance and the ${String(NATIVE_FAILURE_DIAGNOSTIC_BYTES)}-byte failure-diagnostic excerpt have no runtime override.`,

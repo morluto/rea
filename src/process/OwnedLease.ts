@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { chmod, mkdir, open, rm, rmdir } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import {
@@ -12,11 +12,12 @@ import { join } from "node:path";
 import {
   ArtifactFileCleanupFailure,
   withArtifactFileHandle,
-} from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 
 import { safeParseJson } from "../domain/safeJson.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 /** The process that holds a lease, as that process reports itself. */
 export interface LeaseOwner {
@@ -93,13 +94,10 @@ export const acquireOwnedLease = async (input: {
     if (cause instanceof ArtifactReaderFailure) cleanupCauses.set(error, cause);
     return error;
   };
-  const key = createHash("sha256")
-    .update(JSON.stringify(input.identity))
-    .digest("hex")
-    .slice(0, 32);
+  const key = sha256Hex(JSON.stringify(input.identity)).slice(0, 32);
   const resources = input.resources ?? new ArtifactResourceScope();
   const owner = { runId: input.runId, processId: process.pid };
-  if (process.platform === "win32") {
+  if (HOST_PLATFORM.platform === "win32") {
     // A named pipe disappears with its last handle, so no stale pipe needs
     // recovery. A pipe that vanished between bind and owner lookup is retried.
     const pipePath = `\\\\.\\pipe\\rea-lease-${key}`;

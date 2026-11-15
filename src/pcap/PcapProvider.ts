@@ -10,7 +10,7 @@ import {
   type ProviderAvailability,
   createAnalysisExecution,
   type AnalysisExecution,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import {
   pcapResultSchemas,
   PCAP_CAPTURE_HOST_REMEDIATION,
@@ -65,9 +65,12 @@ import { jsonValueSchema } from "../domain/jsonValue.js";
 import { createPcapEvidence } from "../domain/pcap/pcapEvidence.js";
 import { preparePcapNativeBound } from "./PcapNativeBound.js";
 import { PcapSnapshot } from "./PcapSnapshot.js";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  readStableArtifact,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import { ArtifactAnalysisResources } from "../process/ArtifactAnalysisResources.js";
+import { createArtifactAnalysisResources } from "../providers/artifactResourceFailure.js";
 import { readLinuxResourceLimits } from "../process/LinuxResourceLimits.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import {
@@ -75,6 +78,7 @@ import {
   selectArtifactCommandPath,
   type ArtifactCommandPath,
 } from "../process/ArtifactCommandPath.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const FIELDS = [
   "frame.number",
@@ -200,6 +204,8 @@ export interface PcapProviderOptions {
   readonly environment?: Readonly<Record<string, string | undefined>>;
   readonly launcher?: PcapCommandLauncher;
   readonly artifactReader?: typeof readStableArtifact;
+  /** The host the packet tools run on; defaults to the running host. */
+  readonly platform?: NodeJS.Platform;
 }
 
 /**
@@ -268,6 +274,7 @@ export class PcapProvider {
     string,
     ArtifactCommandPath & { readonly identity: WiresharkExecutableIdentity }
   >();
+  private readonly platform: NodeJS.Platform;
   private readonly snapshots = new Set<PcapSnapshot>();
   private readonly snapshotFailures = new Map<
     PcapSnapshot,
@@ -279,12 +286,13 @@ export class PcapProvider {
   >();
 
   constructor(options: PcapProviderOptions = {}) {
+    this.platform = options.platform ?? HOST_PLATFORM.platform;
     this.environment = snapshotEnvironment(
       options.environment ?? process.env,
-      HOST_PLATFORM.platform,
+      this.platform,
     );
     this.launcher = options.launcher;
-    this.#resources = new ArtifactAnalysisResources(
+    this.#resources = createArtifactAnalysisResources(
       "pcap",
       "inspect_pcap_capture",
       options.artifactReader ?? readStableArtifact,
@@ -317,7 +325,7 @@ export class PcapProvider {
         unclassified: (failure) =>
           pcapToolUnavailable(
             operation,
-            `Cannot read selected Wireshark tool ${path}: ${failure instanceof Error ? failure.message : String(failure)}`,
+            `Cannot read selected Wireshark tool ${path}: ${errorMessage(failure)}`,
             { cause: failure },
           ),
       });
@@ -356,6 +364,7 @@ export class PcapProvider {
       }
       output = await runPcapCommand({
         operation,
+        platform: this.platform,
         redactHttpTransportCredentials:
           stage === "tshark" && operation === "inspect_pcap_capture",
         command: selected?.invocationPath ?? command,
@@ -465,6 +474,7 @@ export class PcapProvider {
     signal?: AbortSignal,
   ): Promise<void> {
     const prepared = await preparePcapNativeBound(
+      this.platform,
       this.environment,
       this.#resources,
       async (selected, arguments_) => {
@@ -488,7 +498,7 @@ export class PcapProvider {
   }
 
   private async client(operation: PcapOperation, signal?: AbortSignal) {
-    const selection = resolvePcapTools(this.environment);
+    const selection = resolvePcapTools(this.environment, this.platform);
     this.wiresharkIdentities.clear();
     for (const [name, selected] of [
       ["tshark", selection.tshark],
@@ -599,7 +609,7 @@ export class PcapProvider {
   ): Promise<ProviderAvailability> {
     try {
       const { client } = await this.client("inspect_pcap_client", signal);
-      if (!pcapCaptureHostSupported(process.platform))
+      if (!pcapCaptureHostSupported(this.platform))
         return {
           status: "unavailable",
           code: "unsupported_host",
@@ -629,7 +639,7 @@ export class PcapProvider {
           cause instanceof AnalysisCapabilityUnavailableError
             ? "executable_missing"
             : "version_unresolved",
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
         // Keep the failing owner's repair, such as the limiter's; only an
         // unattributed tool failure falls back to the Wireshark guidance.
         remediation:
@@ -816,7 +826,7 @@ export class PcapProvider {
         this.#resources.readCleanupFailure(read, primary, undefined, operation),
       unclassified: (cause) =>
         new AnalysisProtocolError(
-          `Packet-capture analysis failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+          `Packet-capture analysis failed: ${errorMessage(cause)}`,
           { cause },
         ),
     };

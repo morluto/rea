@@ -3,6 +3,7 @@ import {
   sameRegularFileState,
   type RegularFileState,
 } from "../filesystem/RegularFile.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import type { Stats } from "node:fs";
 import {
   assertKunaProjectState,
@@ -27,10 +28,12 @@ import writeFileAtomic from "write-file-atomic";
 import { z } from "zod";
 import { utcDateTimeSchema } from "../domain/offsetDateTime.js";
 
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import {
+  ArtifactResourceScope,
+  bindArtifactFileCleanup,
+  AnalysisCleanupLease,
+} from "../resources/index.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisResourceConstraintError,
@@ -57,7 +60,7 @@ import {
   kunaExportFileNames,
   exportKunaProject,
   KUNA_EXPORT_OPERATION,
-  kunaExportFailure,
+  kunaExportFailureDialect,
   readKunaExport,
   type KunaExport,
   type KunaExportStatus,
@@ -69,9 +72,8 @@ import type {
   KunaProjectFunction,
 } from "./KunaProjectFiles.js";
 import { KUNA_PROVIDER_ID } from "./KunaRelease.js";
-
-/** Bumped whenever the entry layout or manifest meaning changes. */
-const CACHE_LAYOUT = 3;
+import { releaseProducerIdentity } from "../filesystem/ProducerIdentity.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** A manifest names five files and their digests; anything larger is not ours. */
 const MANIFEST_MAX_BYTES = 64 * 1024;
@@ -100,7 +102,9 @@ export const kunaProjectKey = (inputs: KunaProjectKeyInputs): string =>
   createHash("sha256")
     .update(
       canonicalize({
-        layout: CACHE_LAYOUT,
+        // The entry layout and manifest meaning are REA's code: a new release
+        // keys new entries, and older ones are retired as foreign manifests.
+        producer: releaseProducerIdentity(),
         target_sha256: inputs.targetSha256,
         target_basename: inputs.targetBasename,
         kuna_sha256: inputs.kunaSha256,
@@ -120,7 +124,7 @@ const fileSchema = z.strictObject({
 
 const manifestSchema = z
   .strictObject({
-    layout: z.literal(CACHE_LAYOUT),
+    producer: z.strictObject({ rea_version: z.string().min(1) }),
     key: z.string().regex(KEY_PATTERN),
     inputs: z.strictObject({
       target_sha256: z.string().regex(SHA256_PATTERN),
@@ -144,7 +148,13 @@ const manifestSchema = z
     }),
     created_at: utcDateTimeSchema,
   })
-  .superRefine(({ files, inputs, key }, context) => {
+  .superRefine(({ files, inputs, key, producer }, context) => {
+    if (producer.rea_version !== releaseProducerIdentity().rea_version)
+      context.addIssue({
+        code: "custom",
+        path: ["producer"],
+        message: "Export cache entry was produced by another REA release",
+      });
     if (
       key !==
       kunaProjectKey({
@@ -240,8 +250,8 @@ export interface KunaProjectRequest {
   readonly targetSha256: string;
   readonly signal?: AbortSignal;
   readonly onStatus?: (status: KunaExportStatus) => void;
-  /** Deadline accepted by the session that started this export. */
-  readonly deadline?: KunaDeadline;
+  /** Deadline accepted by the operation that started this export. */
+  readonly deadline: KunaDeadline;
 }
 
 /** One build whose process tree REA could not prove stopped. */
@@ -266,9 +276,25 @@ interface RetainedHashFile {
   lastCloseFailure?: ProviderCleanupError;
 }
 
-interface CleanupErrorReport {
-  readonly error: WeakRef<AnalysisError>;
-  readonly pendingOwners: Set<object>;
+/**
+ * Release of one retained resource owner. When retirement moves the owner's
+ * resources to another owner, it reads that successor's release instead.
+ */
+class KunaOwnerRelease {
+  #released = false;
+  #successor: KunaOwnerRelease | undefined;
+
+  get released(): boolean {
+    return this.#released || (this.#successor?.released ?? false);
+  }
+
+  confirm(): void {
+    this.#released = true;
+  }
+
+  transferTo(successor: KunaOwnerRelease): void {
+    this.#successor = successor;
+  }
 }
 
 interface CleanupFailureOwner {
@@ -389,8 +415,13 @@ export class KunaProjectCache {
   readonly #hashRecords = new WeakMap<OwnedFileHandle, RetainedHashFile>();
   /** Serialize owner release and staging retirement across concurrent lookups. */
   #hashRetry: Promise<void> = Promise.resolve();
-  /** Weakly track caller errors against every resource owner they report. */
-  readonly #cleanupErrorReports: CleanupErrorReport[] = [];
+  /** Each resource owner's release, read by the errors reporting it. */
+  readonly #ownerReleases = new WeakMap<object, KunaOwnerRelease>();
+  /** Owner releases each reported error reads; it completes once all confirm. */
+  readonly #errorOwnerReleases = new WeakMap<
+    AnalysisError,
+    KunaOwnerRelease[]
+  >();
   readonly #stagingCleanupOwners = new Map<string, object>();
 
   constructor(
@@ -524,7 +555,7 @@ export class KunaProjectCache {
           throw this.#replaceHashCloseError(
             key,
             null,
-            kunaExportFailure(cause, signal),
+            classifyProviderFailure(cause, kunaExportFailureDialect(signal)),
             cause,
           );
         if (regularFileCancellation(cause) !== undefined) throw cause;
@@ -659,7 +690,7 @@ export class KunaProjectCache {
   async #retryProcess(retained: RetainedProcess): Promise<void> {
     const stopped = await retained.owner?.stop();
     if (stopped === undefined || stopped.status === "incomplete") return;
-    this.#resolveCleanupOwner(retained);
+    this.#confirmOwnerRelease(retained);
     await this.#retireStaging(retained.staging, retained.key);
     this.#retainedProcesses.delete(retained);
   }
@@ -694,7 +725,7 @@ export class KunaProjectCache {
         try {
           await retained.lease.release();
           this.#retainedHashFiles.delete(owner);
-          this.#resolveCleanupOwner(owner);
+          this.#confirmOwnerRelease(owner);
           if (retained.staging !== null)
             staging.set(retained.staging, retained.key);
         } catch (cause: unknown) {
@@ -702,7 +733,7 @@ export class KunaProjectCache {
           const closeFailure = new ProviderCleanupError(
             KUNA_PROVIDER_ID,
             [retained.resource],
-            { reason: cause instanceof Error ? cause.message : String(cause) },
+            { reason: errorMessage(cause) },
             {
               operation: KUNA_EXPORT_OPERATION,
               cause:
@@ -796,18 +827,33 @@ export class KunaProjectCache {
     return result;
   }
 
+  /** Let `error` read the release of every owner it reports. */
   #bindCleanupError(error: AnalysisError, owners: readonly object[]): void {
-    this.#pruneCleanupErrorReports();
-    const report = this.#cleanupErrorReports.find(
-      (candidate) => candidate.error.deref() === error,
-    );
-    const pending = report?.pendingOwners ?? new Set<object>();
-    for (const owner of owners) pending.add(owner);
-    if (report === undefined && pending.size > 0)
-      this.#cleanupErrorReports.push({
-        error: new WeakRef(error),
-        pendingOwners: pending,
+    if (owners.length === 0) return;
+    let releases = this.#errorOwnerReleases.get(error);
+    if (releases === undefined) {
+      const bound: KunaOwnerRelease[] = [];
+      releases = bound;
+      this.#errorOwnerReleases.set(error, bound);
+      error.bindCleanupReleaseClaim({
+        get cleanupReleased() {
+          return bound.every((release) => release.released);
+        },
       });
+    }
+    for (const owner of owners) {
+      const release = this.#ownerRelease(owner);
+      if (!releases.includes(release)) releases.push(release);
+    }
+  }
+
+  #ownerRelease(owner: object): KunaOwnerRelease {
+    let release = this.#ownerReleases.get(owner);
+    if (release === undefined) {
+      release = new KunaOwnerRelease();
+      this.#ownerReleases.set(owner, release);
+    }
+    return release;
   }
 
   #fileCleanupOwner(path: string): object {
@@ -823,41 +869,12 @@ export class KunaProjectCache {
     return owner;
   }
 
-  #resolveCleanupOwner(owner: object): void {
-    for (const report of [...this.#cleanupErrorReports]) {
-      const error = report.error.deref();
-      if (error === undefined) {
-        this.#cleanupErrorReports.splice(
-          this.#cleanupErrorReports.indexOf(report),
-          1,
-        );
-        continue;
-      }
-      report.pendingOwners.delete(owner);
-      if (report.pendingOwners.size === 0) {
-        error.resolveCleanup();
-        this.#cleanupErrorReports.splice(
-          this.#cleanupErrorReports.indexOf(report),
-          1,
-        );
-      }
-    }
+  #confirmOwnerRelease(owner: object): void {
+    this.#ownerRelease(owner).confirm();
   }
 
   #transferCleanupOwner(from: object, to: object): void {
-    this.#pruneCleanupErrorReports();
-    for (const report of this.#cleanupErrorReports)
-      if (report.pendingOwners.delete(from)) report.pendingOwners.add(to);
-  }
-
-  #pruneCleanupErrorReports(): void {
-    for (
-      let index = this.#cleanupErrorReports.length - 1;
-      index >= 0;
-      index -= 1
-    )
-      if (this.#cleanupErrorReports[index]?.error.deref() === undefined)
-        this.#cleanupErrorReports.splice(index, 1);
+    this.#ownerRelease(from).transferTo(this.#ownerRelease(to));
   }
 
   /**
@@ -889,7 +906,7 @@ export class KunaProjectCache {
         const failure = new ProviderCleanupError(
           KUNA_PROVIDER_ID,
           copying.resources.cleanupResources,
-          { reason: cause instanceof Error ? cause.message : String(cause) },
+          { reason: errorMessage(cause) },
           { cause, operation: KUNA_EXPORT_OPERATION },
         );
         bindArtifactFileCleanup(cause, failure);
@@ -909,7 +926,7 @@ export class KunaProjectCache {
       await rename(staging, retired);
       cleanupPath = retired;
       await this.#removeRetired(retired, key);
-      if (stagingOwner !== undefined) this.#resolveCleanupOwner(stagingOwner);
+      if (stagingOwner !== undefined) this.#confirmOwnerRelease(stagingOwner);
       return undefined;
     } catch (cause: unknown) {
       const failure =
@@ -997,7 +1014,9 @@ export class KunaProjectCache {
       await this.#sweep(signal);
       staging = await mkdtemp(join(root, "staging", "build-"));
     } catch (cause: unknown) {
-      return err(kunaExportFailure(cause, signal));
+      return err(
+        classifyProviderFailure(cause, kunaExportFailureDialect(signal)),
+      );
     }
     const built = await this.#exportAndPublish(
       key,
@@ -1006,7 +1025,9 @@ export class KunaProjectCache {
       signal,
       onStatus,
     ).catch((cause: unknown): StagedResult => ({
-      result: err(kunaExportFailure(cause, signal)),
+      result: err(
+        classifyProviderFailure(cause, kunaExportFailureDialect(signal)),
+      ),
       retainStaging: false,
       ...(cause instanceof RegularFileCleanupFailure
         ? { fileCleanupFailure: cause }
@@ -1037,11 +1058,11 @@ export class KunaProjectCache {
       return err(
         built.result.ok
           ? new KunaPublishedProjectCleanupError(built.result.value, retired)
-          : analysisErrorWithCleanupFailure(
+          : analysisErrorWithCleanupDependencies(
               built.result.error,
               retired,
               KUNA_EXPORT_OPERATION,
-            ).bindCleanupDependencies([built.result.error, retired]),
+            ),
       );
     if (built.result.ok)
       // The entry is published either way; a failed eviction retries on the next publish.
@@ -1070,7 +1091,7 @@ export class KunaProjectCache {
       copyResources,
       retainFailedFileClose: (owner, resource) =>
         this.#retainHashFile(owner, key, staging, resource),
-      ...(request.deadline === undefined ? {} : { deadline: request.deadline }),
+      deadline: request.deadline,
     });
     if (outcome.kind === "retained") {
       const retained: RetainedProcess = {
@@ -1113,7 +1134,7 @@ export class KunaProjectCache {
     signal: AbortSignal,
   ): Promise<Result<KunaProject, AnalysisError>> {
     const manifest: KunaProjectManifest = {
-      layout: CACHE_LAYOUT,
+      producer: releaseProducerIdentity(),
       key,
       inputs: {
         target_sha256: request.targetSha256,
@@ -1289,7 +1310,7 @@ export class KunaProjectCache {
       const retained = this.#retainedFiles.get(path);
       this.#retainedFiles.delete(path);
       if (retained !== undefined)
-        this.#resolveCleanupOwner(retained.cleanupOwner);
+        this.#confirmOwnerRelease(retained.cleanupOwner);
     } catch (cause: unknown) {
       throw this.#retainFileCleanup(path, cause, key);
     }
@@ -1364,7 +1385,7 @@ export class KunaProjectCache {
     const error = new ProviderCleanupError(
       KUNA_PROVIDER_ID,
       [path],
-      { reason: cause instanceof Error ? cause.message : String(cause) },
+      { reason: errorMessage(cause) },
       { operation: KUNA_EXPORT_OPERATION, cause },
     );
     const retained = {

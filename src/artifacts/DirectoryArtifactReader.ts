@@ -17,24 +17,24 @@ import {
   type ArtifactReaderFailureOptions,
   type ArtifactTraversalOmission,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
+  ArtifactFileCancelled,
+  ArtifactFileCleanupFailure,
+  AnalysisCleanupLease,
+  readArtifactFileChunks,
+} from "../resources/index.js";
 import { hostExecutableMarking } from "./hostExecutableMarking.js";
 import { OwnedDirectoryHandle } from "../filesystem/OwnedDirectoryHandle.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import { readArtifactFileChunks } from "./readArtifactFileChunks.js";
 import {
   withOwnedFileHandle,
   RegularFileCleanupFailure,
   RegularFileCancelled,
 } from "../filesystem/OwnedRegularFile.js";
 import { RegularFileOperationCancelled } from "../filesystem/RegularFile.js";
-import {
-  ArtifactFileCancelled,
-  ArtifactFileCleanupFailure,
-} from "./ArtifactFileOperation.js";
-import { AnalysisCleanupLease } from "./AnalysisCleanupLease.js";
 import { decodeDirectoryEntryName } from "../filesystem/decodeDirectoryEntryName.js";
 import { resolveArtifactSourcePath } from "./ArtifactSelectedSource.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 export type DirectoryArtifactEntry = ArtifactEntry & {
   readonly kind: "file" | "directory" | "symlink";
@@ -116,7 +116,7 @@ export class DirectoryArtifactReader implements ArtifactReader {
       maximum !== undefined &&
       (!Number.isSafeInteger(maximum) || maximum < 0)
     )
-      throw new RangeError(
+      throw invariantViolation(
         "Directory traversal maximumEntries must be a nonnegative safe integer",
       );
     let examined = 0;
@@ -327,16 +327,27 @@ export class DirectoryArtifactReader implements ArtifactReader {
     }
   }
 
+  /** Open an entry only against the file state captured when it was enumerated. */
   async #openFile(
     entry: ArtifactEntry,
     signal?: AbortSignal,
-  ): Promise<OwnedFileHandle<FileHandle>> {
+  ): Promise<{
+    readonly owner: OwnedFileHandle<FileHandle>;
+    readonly identity: CapturedSourceIdentity;
+  }> {
     abortIfNeeded(signal);
     await this.#validateRoot();
     if (entry.kind !== "file")
       throw new ArtifactReaderFailure(
         "format",
         "Only regular files can be opened",
+      );
+    const identity = entry.sourceIdentity;
+    if (identity === undefined)
+      throw new ArtifactReaderFailure(
+        "integrity",
+        `Directory entry has no captured file state: ${entry.path}`,
+        { integrityCheck: "entry-metadata" },
       );
     const fileHandle = await open(
       entry.adapterKey,
@@ -358,15 +369,16 @@ export class DirectoryArtifactReader implements ArtifactReader {
         });
       if (
         !observed.isFile() ||
-        !sameArtifactSourceIdentity(entry.sourceIdentity, observed)
+        !sameArtifactSourceIdentity(identity, observed)
       ) {
         throw new ArtifactReaderFailure(
           "integrity",
           `Directory entry changed before open: ${entry.path}`,
+          { integrityCheck: "member-identity" },
         );
       }
       abortIfNeeded(signal);
-      return owner;
+      return { owner, identity };
     } catch (cause: unknown) {
       try {
         await this.#closeFile(owner);
@@ -408,7 +420,7 @@ export class DirectoryArtifactReader implements ArtifactReader {
     inspect: (file: FileHandle) => Promise<Value>,
     signal?: AbortSignal,
   ): Promise<Value> {
-    const owner = await this.#openFile(entry, signal);
+    const { owner, identity } = await this.#openFile(entry, signal);
     try {
       const value = await withOwnedFileHandle(
         entry.adapterKey,
@@ -431,7 +443,7 @@ export class DirectoryArtifactReader implements ArtifactReader {
             if (outcome.kind !== "failed") throw validationCause;
             throw new ArtifactReaderFailure(
               "io",
-              `Directory inspection failed: ${failureMessage(outcome.cause)}; final source identity could not be validated: ${failureMessage(validationCause)}`,
+              `Directory inspection failed: ${errorMessage(outcome.cause)}; final source identity could not be validated: ${errorMessage(validationCause)}`,
               {
                 cause: new AggregateError(
                   [outcome.cause, validationCause],
@@ -443,13 +455,16 @@ export class DirectoryArtifactReader implements ArtifactReader {
           if (
             !opened.isFile() ||
             !named.isFile() ||
-            !sameArtifactSourceIdentity(entry.sourceIdentity, opened) ||
-            !sameArtifactSourceIdentity(entry.sourceIdentity, named)
+            !sameArtifactSourceIdentity(identity, opened) ||
+            !sameArtifactSourceIdentity(identity, named)
           )
             throw new ArtifactReaderFailure(
               "integrity",
-              `Directory entry changed during inspection: ${entry.path}${outcome.kind === "failed" ? `; inspection failed: ${failureMessage(outcome.cause)}` : ""}`,
-              outcome.kind === "failed" ? { cause: outcome.cause } : {},
+              `Directory entry changed during inspection: ${entry.path}${outcome.kind === "failed" ? `; inspection failed: ${errorMessage(outcome.cause)}` : ""}`,
+              {
+                integrityCheck: "member-identity",
+                ...(outcome.kind === "failed" ? { cause: outcome.cause } : {}),
+              },
             );
           if (outcome.kind === "failed") throw outcome.cause;
           abortIfNeeded(signal);
@@ -481,11 +496,12 @@ export class DirectoryArtifactReader implements ArtifactReader {
   }
 
   async open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {
-    const owner = await this.#openFile(entry, signal);
+    const { owner, identity } = await this.#openFile(entry, signal);
     const source = Readable.from(
       mapStableFileRead(
         owner.handle,
         entry,
+        identity,
         () => this.#validateRoot(),
         signal,
       ),
@@ -519,7 +535,7 @@ export class DirectoryArtifactReader implements ArtifactReader {
       }
     }
     if (failures.length > 0) {
-      const reason = failures.map(failureMessage).join("; ");
+      const reason = failures.map(errorMessage).join("; ");
       throw new ArtifactReaderFailure(
         "io",
         `Directory artifact cleanup failed: ${reason}`,
@@ -618,7 +634,7 @@ const directoryIoFailure = (
   if (cause instanceof ArtifactReaderFailure) return cause;
   const code = hostErrorCode(cause);
   const suffix = code === undefined ? "" : ` (${code})`;
-  const detail = failureMessage(cause);
+  const detail = errorMessage(cause);
   return new Failure(
     "io",
     `Could not ${operation} at ${path}${suffix}: ${detail}`,
@@ -657,23 +673,18 @@ const entryOpenFailure = (
     : failure;
 };
 
-const failureMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
+type CapturedSourceIdentity = NonNullable<ArtifactEntry["sourceIdentity"]>;
 
 const mapStableFileRead = async function* (
   handle: FileHandle,
   entry: ArtifactEntry,
+  identity: CapturedSourceIdentity,
   validateRoot: () => Promise<void>,
   signal?: AbortSignal,
 ): AsyncGenerator<Buffer> {
   let bytes = 0n;
+  const expectedBytes = identity.size;
   try {
-    const expectedBytes = entry.sourceIdentity?.size;
-    if (expectedBytes === undefined)
-      throw new ArtifactReaderFailure(
-        "integrity",
-        `Directory entry has no captured file state: ${entry.path}`,
-      );
     for await (const chunk of readArtifactFileChunks(handle, {
       // Include one extra byte so a growing file cannot make this read unbounded.
       end: expectedBytes,
@@ -693,13 +704,14 @@ const mapStableFileRead = async function* (
     if (
       !opened.isFile() ||
       !current.isFile() ||
-      !sameArtifactSourceIdentity(entry.sourceIdentity, opened) ||
-      !sameArtifactSourceIdentity(entry.sourceIdentity, current) ||
+      !sameArtifactSourceIdentity(identity, opened) ||
+      !sameArtifactSourceIdentity(identity, current) ||
       bytes !== expectedBytes
     )
       throw new ArtifactReaderFailure(
         "integrity",
         `Directory entry changed during read: ${entry.path}`,
+        { integrityCheck: "member-identity" },
       );
   } catch (cause: unknown) {
     if (
@@ -710,7 +722,7 @@ const mapStableFileRead = async function* (
       throw new ArtifactReaderFailure(
         "integrity",
         `Directory entry changed during read: ${entry.path}`,
-        { cause },
+        { cause, integrityCheck: "member-identity" },
       );
     if (!(cause instanceof ArtifactReaderFailure))
       throw directoryIoFailure("validate read entry", entry.adapterKey, cause);
@@ -762,5 +774,8 @@ const assertContainedDirectory = async (
     throw new ArtifactReaderFailure(
       failureReason,
       "Directory traversal escaped or changed its artifact root",
+      failureReason === "integrity"
+        ? { integrityCheck: "container-identity" }
+        : undefined,
     );
 };

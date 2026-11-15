@@ -2,15 +2,13 @@ import { projectPeBinaryFailure } from "./PeBinaryFailure.js";
 import {
   projectArtifactCloseFailure,
   imageFileSizeRemediation,
-} from "../../artifacts/StableArtifactFailure.js";
-import {
   type StableArtifactSnapshot,
   readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import type { PeImportsPort } from "../../application/binaryDiagnostics/PeImportsPort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+  assertArtifactReadActive,
+  ArtifactResourceScope,
+} from "../../resources/index.js";
+import type { PeImportsPort } from "../../ports/binaryDiagnostics/PeImportsPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { ResourceConstraintRecovery } from "../../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
@@ -25,7 +23,7 @@ import { err, ok } from "../../domain/result.js";
 import { PE_IMPORTS_PROVIDER } from "../../domain/investigationProviders.js";
 import {
   parsePeImports,
-  PeImportLimitFailure,
+  PE_IMPORT_LIMITS,
   type PeImportLimit,
 } from "./PeImportParser.js";
 
@@ -131,8 +129,7 @@ const peImportsFailure = (
           input.max_file_bytes,
           MAX_INSPECT_PE_IMPORT_FILE_BYTES,
         ),
-      limit: (failure) =>
-        failure instanceof PeImportLimitFailure ? failure.limit : null,
+      limits: PE_IMPORT_LIMITS,
       limitRecovery: (limit) => limitRecovery(limit, input),
     },
     snapshot,

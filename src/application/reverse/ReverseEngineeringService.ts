@@ -1,6 +1,11 @@
-import { MAX_NODE_TIMER_DELAY_MS } from "../../domain/analysisResourceLimits.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
+import { unknownTarget } from "../../domain/targetIdentity.js";
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
+import { nativeDeadlineRecovery } from "../../domain/native/nativeDeadlines.js";
+import { Budget } from "../../domain/budget.js";
+import {
+  ArtifactResourceScope,
+  bindArtifactFileCleanup,
+} from "../../resources/index.js";
 import {
   ProcessOwnershipInspectionCancelled,
   ProcessOwnershipIdentityBatchFailure,
@@ -36,6 +41,7 @@ import {
   AnalysisError,
   type AnalysisCleanupObservation,
 } from "../../domain/analysisErrorBase.js";
+import { AnalysisCleanupRelease } from "../../domain/analysisCleanupRelease.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
@@ -44,19 +50,19 @@ import { err, ok, type Result } from "../../domain/result.js";
 import {
   DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
   DEFAULT_REVERSE_COMMAND_OUTPUT_BYTES,
-  MAX_REVERSE_COMMAND_OUTPUT_BYTES,
+  reverseCommandOutputLimit,
   objdumpInputSchema,
   rizinInputSchema,
   type RizinInput,
 } from "../../domain/reverseEngineering.js";
 import type {
   ReverseEngineeringCommandPort,
+  ReverseEngineeringCommandRepair,
   ReverseEngineeringCommandSelection,
   ReverseEngineeringCommandUnavailable,
   ReverseEngineeringProviderCommand,
 } from "./ReverseEngineeringCommandPort.js";
 import {
-  execFileOutput,
   execFileOutputFailure,
   HOST_SPAWN_CAPACITY_CODES,
 } from "../../process/ExecFileOutput.js";
@@ -73,7 +79,7 @@ import {
 } from "../../process/ProcessOwnershipObservation.js";
 import { ProcessAdmissionError } from "../../process/ProcessAdmissionError.js";
 import type { ProviderProcessSupervisor } from "../../process/ProviderProcess.js";
-import { RuntimeControlUnavailableError } from "../../process/RuntimeControlUnavailableError.js";
+import { RuntimeControlUnavailableError } from "../../domain/runtimeControlUnavailableError.js";
 import { WindowsNativeAuthorityUnavailableError } from "../../windows/WindowsNativeLoader.js";
 import {
   WindowsNativeSpawnControlError,
@@ -82,6 +88,7 @@ import {
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 export type ReverseEngineeringOperation =
   | "inspect_with_objdump"
@@ -111,7 +118,7 @@ const reverseCommandOutputLimitation = (
   bytes: number,
   source: "default" | "request",
 ): string =>
-  `REA stopped collecting output at max_output_bytes=${String(bytes)} bytes (source ${source}, default ${String(DEFAULT_REVERSE_COMMAND_OUTPUT_BYTES)}, range 1..${String(MAX_REVERSE_COMMAND_OUTPUT_BYTES)}) and requested termination of the provider process; captured stdout and stderr are a prefix and command completion is unknown. Narrow or page the provider command, or increase max_output_bytes (--max-output-bytes on the CLI) for the next call; no restart is required. Confirm command effects and cleanup before deciding whether it is safe to repeat. Client receive limits are separate.`;
+  `REA stopped collecting output at max_output_bytes=${String(bytes)} bytes (source ${source}) and requested termination of the provider process; captured stdout and stderr are a prefix and command completion is unknown. Narrow or page the provider command, or raise the output_limit control for the next call; no restart is required. Confirm command effects and cleanup before deciding whether it is safe to repeat. Client receive limits are separate.`;
 // Bound simultaneous provider process families independently of output admission.
 const MAX_CONCURRENT_REVERSE_ENGINEERING_OPERATIONS = 8;
 const MAX_ACTIVE_CAPTURE_BYTES =
@@ -121,7 +128,6 @@ const MAX_ACTIVE_CAPTURE_BYTES =
 export interface ReverseEngineeringServiceOptions {
   readonly environment?: Readonly<NodeJS.ProcessEnv>;
   readonly commands: ReverseEngineeringCommandPort;
-  readonly run?: ReverseEngineeringCommandRunner;
   readonly runOwned?: typeof runOwnedCommand;
   readonly digest?: typeof digestFile;
   readonly stat?: (path: string) => Promise<Stats>;
@@ -131,7 +137,12 @@ interface ReverseEngineeringCommandRunner {
   (
     command: string,
     arguments_: readonly string[],
-    options?: Parameters<typeof execFileOutput>[2],
+    options: {
+      readonly env: NodeJS.ProcessEnv;
+      readonly signal: AbortSignal | undefined;
+      readonly timeout: number;
+      readonly maxBuffer: number;
+    },
   ): Promise<{
     readonly stdout: string;
     readonly stderr: string;
@@ -176,24 +187,13 @@ interface ReverseCommandObservation {
   readonly outputBudgetBytes: number;
 }
 
-/** The provider a reverse command runs and how a caller repairs its command. */
-const reverseCommandRepair = (
-  operation: ReverseEngineeringOperation,
-): { readonly provider: string; readonly remediationAction: string } => {
-  const objdump = operation === "inspect_with_objdump";
-  return {
-    provider: objdump ? "objdump" : "rizin",
-    remediationAction: `Set ${objdump ? "REA_OBJDUMP_COMMAND" : "REA_RIZIN_COMMAND"} to an installed executable ${objdump ? "GNU objdump" : "Rizin"} command, or make that command available on PATH. Check execute permission on the command and search permission on its parent directories before retrying.`,
-  };
-};
-
 /** A configured command the host search did not find; nothing was launched. */
 const reverseCommandUnavailable = (
   operation: ReverseEngineeringOperation,
   unavailable: ReverseEngineeringCommandUnavailable,
 ): AnalysisCapabilityUnavailableError => {
-  const { provider, remediationAction } = reverseCommandRepair(operation);
-  const { command, reason } = unavailable;
+  const { command, reason, repair } = unavailable;
+  const { provider, remediationAction } = repair;
   return new AnalysisCapabilityUnavailableError(
     unavailable.identity.id,
     operation,
@@ -233,7 +233,8 @@ export class ReverseEngineeringService {
     ProviderProcessSupervisor,
     {
       readonly observation: AnalysisCleanupObservation;
-      readonly failures: Set<AnalysisError>;
+      /** Confirmed by a later verified stop; retry failures read it. */
+      readonly release: AnalysisCleanupRelease;
       readonly retryFailure?: AnalysisError;
     }
   >();
@@ -241,7 +242,8 @@ export class ReverseEngineeringService {
     AbortController,
     Promise<Result<Evidence, AnalysisError>>
   >();
-  #reservedOutputBytes = 0;
+  /** Output capture admitted across active operations. */
+  readonly #reservedOutput = new Budget(MAX_ACTIVE_CAPTURE_BYTES);
   #closing = false;
   #closePromise: Promise<void> | undefined;
   #dispatched = 0;
@@ -253,16 +255,16 @@ export class ReverseEngineeringService {
   constructor(options: ReverseEngineeringServiceOptions) {
     this.#environment = { ...(options.environment ?? process.env) };
     this.#commands = options.commands;
-    this.#run =
-      options.run ??
-      runOwnedCommandOutput(
-        options.runOwned ?? runOwnedCommand,
-        (owner, cleanup) =>
-          this.#pendingCleanup.set(owner, {
-            observation: cleanup,
-            failures: this.#pendingCleanup.get(owner)?.failures ?? new Set(),
-          }),
-      );
+    this.#run = runOwnedCommandOutput(
+      options.runOwned ?? runOwnedCommand,
+      (owner, cleanup) =>
+        this.#pendingCleanup.set(owner, {
+          observation: cleanup,
+          release:
+            this.#pendingCleanup.get(owner)?.release ??
+            new AnalysisCleanupRelease(),
+        }),
+    );
     this.#digest = options.digest ?? digestFile;
     this.#stat = options.stat ?? statPath;
   }
@@ -295,7 +297,7 @@ export class ReverseEngineeringService {
       } catch (cause) {
         stopped = {
           status: "incomplete",
-          reason: cause instanceof Error ? cause.message : String(cause),
+          reason: errorMessage(cause),
         };
       }
       if (stopped.status === "incomplete") {
@@ -305,21 +307,22 @@ export class ReverseEngineeringService {
         };
         let retryFailure = retained.retryFailure;
         if (retryFailure === undefined) {
-          retryFailure = new AnalysisOutputError(
-            operation,
-            "A previous provider process still requires cleanup.",
-            { cleanup: observation },
+          retryFailure = retained.release.bind(
+            new AnalysisOutputError(
+              operation,
+              "A previous provider process still requires cleanup.",
+              { cleanup: observation },
+            ),
           );
-          retained.failures.add(retryFailure);
         }
         this.#pendingCleanup.set(owner, {
           observation,
-          failures: retained.failures,
+          release: retained.release,
           retryFailure,
         });
         if (failure === undefined) failure = retryFailure;
       } else {
-        for (const previous of retained.failures) previous.resolveCleanup();
+        retained.release.confirm();
         this.#pendingCleanup.delete(owner);
       }
     }
@@ -343,6 +346,7 @@ export class ReverseEngineeringService {
     operation: ReverseEngineeringOperation,
     dispatch: number,
     failure: AnalysisCapabilityUnavailableError,
+    repair: ReverseEngineeringCommandRepair,
   ): void {
     const outcome = this.#outcome(operation);
     if (
@@ -352,9 +356,7 @@ export class ReverseEngineeringService {
       outcome.failure = {
         dispatch,
         reason: failure.userMessage ?? failure.message,
-        remediation:
-          failure.remediationAction ??
-          reverseCommandRepair(operation).remediationAction,
+        remediation: failure.remediationAction ?? repair.remediationAction,
       };
   }
 
@@ -507,13 +509,18 @@ export class ReverseEngineeringService {
     // discovery reports it like a launch failure until a later success.
     if (!selection.ok) {
       const refusal = reverseCommandUnavailable(operation, selection.error);
-      this.#recordUnavailable(operation, ++this.#dispatched, refusal);
+      this.#recordUnavailable(
+        operation,
+        ++this.#dispatched,
+        refusal,
+        selection.error.repair,
+      );
       return Promise.resolve(err(refusal));
     }
     if (
       this.#activeOperations.size >=
         MAX_CONCURRENT_REVERSE_ENGINEERING_OPERATIONS ||
-      this.#reservedOutputBytes + outputBudgetBytes > MAX_ACTIVE_CAPTURE_BYTES
+      !this.#reservedOutput.tryCharge(outputBudgetBytes)
     )
       return Promise.resolve(
         err(
@@ -526,7 +533,7 @@ export class ReverseEngineeringService {
                 MAX_CONCURRENT_REVERSE_ENGINEERING_OPERATIONS,
               active_operations: this.#activeOperations.size,
               max_active_capture_bytes: MAX_ACTIVE_CAPTURE_BYTES,
-              reserved_output_bytes: this.#reservedOutputBytes,
+              reserved_output_bytes: this.#reservedOutput.used,
               requested_output_bytes: outputBudgetBytes,
             },
             {
@@ -546,7 +553,6 @@ export class ReverseEngineeringService {
       signal === undefined || signal instanceof AbortSignal
         ? controller.signal
         : signal;
-    this.#reservedOutputBytes += outputBudgetBytes;
     const running = this.#observeProvider({
       ...request,
       profile: selection.value,
@@ -566,7 +572,7 @@ export class ReverseEngineeringService {
       .finally(() => {
         signal?.removeEventListener("abort", relayAbort);
         this.#activeOperations.delete(controller);
-        this.#reservedOutputBytes -= outputBudgetBytes;
+        this.#reservedOutput.refund(outputBudgetBytes);
       });
     this.#activeOperations.set(controller, tracked);
     return tracked;
@@ -585,6 +591,7 @@ export class ReverseEngineeringService {
       outputBudgetBytes,
     } = request;
     const { executable: command, arguments: args } = profile;
+    const { provider, setting } = profile.repair;
     if (signal?.aborted) return err(cancelledBy(operation, signal));
     const cleanup = await this.retryCleanup(operation);
     if (!cleanup.ok) return cleanup;
@@ -620,7 +627,7 @@ export class ReverseEngineeringService {
         return err(
           new AnalysisTimeoutError(operation, timeoutMs, {
             cause,
-            ...reverseCommandTimeoutGuidance(timeoutMs),
+            ...reverseCommandTimeoutGuidance(provider, timeoutMs),
           }),
         );
       if (
@@ -691,7 +698,6 @@ export class ReverseEngineeringService {
         },
         signal,
         timeout: timeoutMs,
-        stopSignal: "SIGTERM",
         maxBuffer: outputBudgetBytes,
       });
       stdout = output.stdout;
@@ -718,7 +724,7 @@ export class ReverseEngineeringService {
           ownedCause.reason === "timeout"
             ? new AnalysisTimeoutError(operation, timeoutMs, {
                 cause: ownedCause,
-                ...reverseCommandTimeoutGuidance(timeoutMs),
+                ...reverseCommandTimeoutGuidance(provider, timeoutMs),
               })
             : inspection instanceof ProcessOwnershipInspectionCancelled ||
                 (inspection instanceof ProcessOwnershipIdentityBatchFailure &&
@@ -788,12 +794,6 @@ export class ReverseEngineeringService {
         typeof code === "string" &&
         HOST_SPAWN_CAPACITY_CODES.has(code)
       ) {
-        const provider =
-          operation === "inspect_with_objdump" ? "objdump" : "rizin";
-        const setting =
-          operation === "inspect_with_objdump"
-            ? "REA_OBJDUMP_COMMAND"
-            : "REA_RIZIN_COMMAND";
         earlyFailure = new AnalysisResourceConstraintError(
           operation,
           "capacity",
@@ -826,12 +826,6 @@ export class ReverseEngineeringService {
             ? cause.cause
             : undefined;
       if (earlyFailure === undefined && admissionFailure !== undefined) {
-        const provider =
-          operation === "inspect_with_objdump" ? "objdump" : "rizin";
-        const setting =
-          operation === "inspect_with_objdump"
-            ? "REA_OBJDUMP_COMMAND"
-            : "REA_RIZIN_COMMAND";
         const rawSystemCode =
           admissionFailure.detail?.system_code ??
           (typeof admissionFailure.cause === "object" &&
@@ -843,7 +837,7 @@ export class ReverseEngineeringService {
           typeof rawSystemCode === "string" ? rawSystemCode : undefined;
         const recovery = processOwnershipAdmissionRecovery(
           admissionFailure.code,
-          systemProcessOwnershipHost.platform ?? process.platform,
+          systemProcessOwnershipHost.platform ?? HOST_PLATFORM.platform,
           admissionSystemCode,
         );
         earlyFailure = new AnalysisCapabilityUnavailableError(
@@ -873,7 +867,7 @@ export class ReverseEngineeringService {
         if (code === "ETIMEDOUT") {
           earlyFailure = new AnalysisTimeoutError(operation, timeoutMs, {
             cause,
-            ...reverseCommandTimeoutGuidance(timeoutMs),
+            ...reverseCommandTimeoutGuidance(provider, timeoutMs),
           });
         } else if (darwinFailure.cancellation !== undefined) {
           earlyFailure = cancelledBy(
@@ -881,10 +875,6 @@ export class ReverseEngineeringService {
             carriedReason(darwinFailure.cancellation?.reason),
           );
         } else {
-          const setting =
-            operation === "inspect_with_objdump"
-              ? "REA_OBJDUMP_COMMAND"
-              : "REA_RIZIN_COMMAND";
           earlyFailure = new AnalysisCapabilityUnavailableError(
             "process-ownership",
             "prepare_owned_process",
@@ -925,10 +915,6 @@ export class ReverseEngineeringService {
         code !== "ETIMEDOUT" &&
         !commandCancelled(signal, cause, code)
       ) {
-        const setting =
-          operation === "inspect_with_objdump"
-            ? "REA_OBJDUMP_COMMAND"
-            : "REA_RIZIN_COMMAND";
         const remediation =
           controlFailure.remediationAction === undefined
             ? `${setting} does not need to change.`
@@ -977,11 +963,10 @@ export class ReverseEngineeringService {
           earlyFailure = new AnalysisTimeoutError(operation, timeoutMs, {
             cause,
             ...ownedCleanupOptions(cause),
-            ...reverseCommandTimeoutGuidance(timeoutMs),
+            ...reverseCommandTimeoutGuidance(provider, timeoutMs),
           });
         else {
-          const { provider, remediationAction } =
-            reverseCommandRepair(operation);
+          const { provider, remediationAction } = profile.repair;
           earlyFailure = new AnalysisCapabilityUnavailableError(
             profile.identity.id,
             operation,
@@ -1035,7 +1020,7 @@ export class ReverseEngineeringService {
             cause,
             capturedOutput,
             ...ownedCleanupOptions(cause),
-            ...reverseCommandTimeoutGuidance(timeoutMs),
+            ...reverseCommandTimeoutGuidance(provider, timeoutMs),
           });
         if (
           cause instanceof OwnedOutputFailure &&
@@ -1092,7 +1077,12 @@ export class ReverseEngineeringService {
         earlyFailure.diagnostics?.boundary === "provider-launch" &&
         earlyFailure.providerId === profile.identity.id
       ) {
-        this.#recordUnavailable(operation, dispatch, earlyFailure);
+        this.#recordUnavailable(
+          operation,
+          dispatch,
+          earlyFailure,
+          profile.repair,
+        );
       }
       return err(this.#registerCleanupFailure(earlyFailure, cleanupOwner));
     }
@@ -1155,38 +1145,23 @@ export class ReverseEngineeringService {
       output_budget_bytes: outputBudgetBytes,
       output_budget_source: outputBudgetSource,
       output_truncated: outputTruncated,
+      ...(outputLimitReached
+        ? { output_limit: reverseCommandOutputLimit(outputBudgetBytes) }
+        : {}),
       completion_status: completionStatus,
       artifact_sha256_after: absolutePath === undefined ? null : digestAfter,
       artifact_changed: absolutePath === undefined ? null : artifactChanged,
     };
     const limitations = [
+      // A pathless command reports no artifact; its provider says what the
+      // response does not establish.
       ...(absolutePath === undefined
-        ? [
-            "The objdump implementation and version are unknown. The captured output is the selected command's response and does not establish support for an artifact.",
-          ]
+        ? []
         : [
             "The executable implementation, version and supported formats are unknown because no reliable identity probe was performed.",
           ]),
-      "A non-zero process exit is preserved as an observed command result.",
-      ...(operation === "inspect_with_objdump" &&
-      typeof parameters.symbol === "string"
-        ? [
-            "Disassembly is scoped to the caller-selected symbol using the provider's matching and symbol-boundary semantics; an empty match does not establish artifact-wide absence.",
-          ]
-        : []),
-      ...(operation === "inspect_with_objdump" &&
-      parameters.operation === "dwarf" &&
-      parameters.follow_debug_links === true
-        ? [
-            "DWARF output may include local debug-link files whose identities are not bound to Evidence.",
-          ]
-        : []),
-      ...(operation === "execute_rizin_command"
-        ? [
-            "Rizin commands and retained plugins may read files or access network resources outside the selected artifact; those external inputs are not bound to Evidence.",
-          ]
-        : []),
       ...(profile.limitations ?? []),
+      "A non-zero process exit is preserved as an observed command result.",
       ...(rejection === undefined ? [] : [rejection]),
       ...(stdoutInvalidUtf8 || stderrInvalidUtf8
         ? [
@@ -1243,7 +1218,7 @@ export class ReverseEngineeringService {
     ];
     const evidence = createEvidence(
       absolutePath === undefined || digest === undefined
-        ? undefined
+        ? unknownTarget("not-observed")
         : { path: absolutePath, sha256: digest, format: "unknown" },
       profile.identity,
       {
@@ -1293,7 +1268,7 @@ export class ReverseEngineeringService {
     cleanupOwner: ProviderProcessSupervisor | undefined,
   ): AnalysisError {
     if (cleanupOwner !== undefined && failure.cleanupIncomplete)
-      this.#pendingCleanup.get(cleanupOwner)?.failures.add(failure);
+      this.#pendingCleanup.get(cleanupOwner)?.release.bind(failure);
     return failure;
   }
 }
@@ -1361,7 +1336,7 @@ const runOwnedCommandOutput =
       cleanup: AnalysisCleanupObservation,
     ) => void,
   ): ReverseEngineeringCommandRunner =>
-  async (command, args, options = {}) => {
+  async (command, args, options) => {
     const spawnEnv = { ...options.env };
     try {
       const snapshot = await runOwned(
@@ -1375,9 +1350,8 @@ const runOwnedCommandOutput =
           sweepTokenOwnedProcesses: true,
         },
         {
-          timeoutMs: options.timeout ?? DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
-          diagnosticBytes:
-            options.maxBuffer ?? DEFAULT_REVERSE_COMMAND_OUTPUT_BYTES,
+          timeoutMs: options.timeout,
+          diagnosticBytes: options.maxBuffer,
           acceptNonZeroExit: true,
         },
         { signal: options.signal },
@@ -1490,16 +1464,20 @@ const runtimeControlPreparationError = (
   return windowsNativeSpawnControlError(cause);
 };
 
-const reverseCommandTimeoutGuidance = (
-  timeoutMs: number,
-): { readonly userMessage: string; readonly remediationAction: string } => ({
-  userMessage: `This objdump or rizin command reached its ${String(timeoutMs)} ms server/provider deadline (command_timeout_ms) during target preflight or the one-shot command (deadlineExpired). This is not a Ghidra or Hopper startup deadline and not a debugger session deadline.`,
-  remediationAction: `${
-    timeoutMs < MAX_NODE_TIMER_DELAY_MS
-      ? `Increase command_timeout_ms above ${String(timeoutMs)} (integer milliseconds from 1 to ${String(MAX_NODE_TIMER_DELAY_MS)}; omitted means ${String(DEFAULT_REVERSE_COMMAND_TIMEOUT_MS)}), or use --command-timeout-ms on the CLI.`
-      : `command_timeout_ms is already at the maximum ${String(MAX_NODE_TIMER_DELAY_MS)} ms; no higher deadline is supported.`
-  } The new value applies on the next call; no restart is required. The combined output allowance is separately selected by max_output_bytes (default ${String(DEFAULT_REVERSE_COMMAND_OUTPUT_BYTES)} bytes). Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
-});
+/**
+ * The deadline failure names `command_timeout_ms` and binds it as the
+ * per-call control; each adapter names the option that sets it.
+ */
+const reverseCommandTimeoutGuidance = (provider: string, timeoutMs: number) =>
+  nativeDeadlineRecovery({
+    timeoutMs,
+    parameter: "command_timeout_ms",
+    defaultMs: DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
+    phase: `${provider} command deadline`,
+    unchanged: `No restart is required. The combined output allowance is separately selected by max_output_bytes (default ${String(DEFAULT_REVERSE_COMMAND_OUTPUT_BYTES)} bytes).`,
+    detail:
+      " It covers target preflight and the one-shot command (deadlineExpired); it is not a Ghidra or Hopper startup deadline or a debugger session deadline.",
+  });
 
 export const digestFile = async (
   path: string,

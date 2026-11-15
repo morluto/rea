@@ -14,8 +14,8 @@ import type { Logger } from "pino";
 import {
   CLI_COMMANDS,
   DEFAULT_INFO_LOGGING_COMMANDS,
-} from "../cliCommandNames.js";
-import { parseCliJsonInput } from "../cliJsonInput.js";
+} from "../contracts/cliCommandNames.js";
+import { parseCliJsonInput } from "./cliJsonInput.js";
 import { logCliCommand } from "../cliLogging.js";
 import { parseEnvironmentName } from "../config/environmentName.js";
 import {
@@ -25,7 +25,7 @@ import {
   type McpHttpEndpoint,
 } from "../config/mcpHttpEndpoint.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import type { StreamableHttpListenError } from "../server/http/streamableHttpListenError.js";
 import {
   AnalysisInputError,
@@ -39,7 +39,7 @@ import { createLogger } from "../logger.js";
 import { TEMPLATE_RULES } from "../domain/analysisView/environmentManifestRules.js";
 import { inspectWebNetworkCaptureInputSchema } from "../domain/webNetworkCapture.js";
 import { withCommandCancellation } from "./commandCancellation.js";
-import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
 import type { CliInstance } from "./types.js";
 import { cliDecimalField, publishArgvInput } from "./options.js";
 
@@ -241,11 +241,11 @@ const serveEnvironmentCommand = async (
     if (!(cause instanceof AnalysisError)) throw cause;
     if (listenerError !== undefined)
       return cliError(
-        analysisErrorWithCleanupFailure(
+        analysisErrorWithCleanupDependencies(
           listenerError,
           cause,
           CLI_COMMANDS.environmentServe,
-        ).bindCleanupDependencies([cause]),
+        ),
       );
     cause.retainDiagnostics({
       shutdown_observation: { status: "shutdown_requested", ...observation },
@@ -352,7 +352,8 @@ const inspectBuildHar = async (
   const { ENVIRONMENT_BUILD_OPERATION } =
     await import("../application/environment/environmentBuild.js");
   const service = createWebNetworkCaptureService(environment);
-  const inspected = await finishAnalysisCommand(
+  const inspected = await finishCliEvidenceCommand(
+    callerInputPath,
     () =>
       service.inspect(
         {
@@ -363,7 +364,6 @@ const inspectBuildHar = async (
             : { capture_timeout_ms: captureTimeoutMs }),
         },
         { signal },
-        { capture: callerInputPath },
       ),
     service,
     "web-network-capture",

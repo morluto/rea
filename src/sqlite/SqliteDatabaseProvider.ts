@@ -2,15 +2,19 @@ import {
   createAnalysisExecution,
   type AnalysisExecution,
   type ExecutionOptions,
-} from "../application/AnalysisProvider.js";
-import type { SqliteDatabasePort } from "../application/sqlite/SqliteDatabasePort.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+} from "../ports/AnalysisProvider.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
+import type { SqliteDatabasePort } from "../ports/sqlite/SqliteDatabasePort.js";
+import {
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+  bindArtifactFileCleanup,
+} from "../resources/index.js";
 import type {
   AnalysisCapturedOutput,
   AnalysisError,
 } from "../domain/analysisErrorBase.js";
+import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import {
   AnalysisOutputError,
   AnalysisResourceConstraintError,
@@ -42,7 +46,7 @@ import type {
 } from "../process/ProviderProcess.js";
 import {
   createSqliteCleanupError,
-  sqliteDatabaseFailure,
+  sqliteDatabaseDialect,
 } from "./SqliteDatabaseFailures.js";
 import { captureSqliteDatabaseSnapshot } from "./SqliteDatabaseSnapshot.js";
 import { SQLITE_DATABASE_LIMITS } from "./SqliteDatabaseLimits.js";
@@ -52,6 +56,7 @@ import {
   sqliteReplyFinalizationFailure,
   type SqliteWorkerLauncher,
 } from "./SqliteDatabaseWorkerExecution.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const operation = "inspect_sqlite_database";
 type SqliteOutcome = Result<AnalysisExecution, AnalysisError>;
@@ -60,10 +65,23 @@ interface PendingSnapshotCleanup {
   readonly input: InspectSqliteDatabaseInput;
   readonly result: SqliteOutcome;
   readonly output: AnalysisCapturedOutput | undefined;
+  /** Reports the runtime root until its removal confirms `rootRelease`. */
   readonly rootFailure: AnalysisError;
+  readonly rootRelease: AnalysisCleanupRelease;
+  /** Reports the worker until a verified stop confirms `processRelease`. */
   readonly processFailure: AnalysisError | undefined;
+  readonly processRelease: AnalysisCleanupRelease;
   process: ProviderProcessSupervisor | undefined;
 }
+/** The runtime root a retained cleanup still owns. */
+const sqliteRootFailure = (root: SqliteRuntimeRoot): ProviderCleanupError =>
+  new ProviderCleanupError(
+    SQLITE_PROVIDER_IDENTITY.id,
+    [root.path],
+    { reason: "SQLite runtime root cleanup remains unresolved." },
+    { operation },
+  );
+
 /** Inspect a provider-owned copy through a cancellable SQLite child, without source writes. */
 export class SqliteDatabaseProvider implements SqliteDatabasePort {
   readonly #active = new Set<Promise<SqliteOutcome>>();
@@ -113,11 +131,9 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
       .run(() => this.#inspect(input, options))
       .catch((cause: unknown) =>
         err(
-          sqliteDatabaseFailure(
+          classifyProviderFailure(
             cause,
-            input.path,
-            "artifact-read",
-            options?.signal,
+            sqliteDatabaseDialect(input.path, "artifact-read", options?.signal),
           ),
         ),
       );
@@ -216,7 +232,7 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
           continue;
         }
         pending.process = undefined;
-        pending.processFailure?.resolveCleanup();
+        pending.processRelease.confirm();
       }
       const cleaned = await cleanupSqliteRoot(
         root,
@@ -225,7 +241,7 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
         pending.output,
       );
       if (cleaned.ok) {
-        pending.rootFailure.resolveCleanup();
+        pending.rootRelease.confirm();
         this.#pendingCleanup.delete(root);
       } else {
         cleaned.error.bindCleanupDependencies([pending.rootFailure]);
@@ -334,12 +350,14 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
         cause.cleanupOwner !== undefined
       )
         processOwner = cause.cleanupOwner;
-      const failure = sqliteDatabaseFailure(
+      const failure = classifyProviderFailure(
         cause,
-        input.path,
-        phase,
-        options?.signal,
-        workerTimeoutMs,
+        sqliteDatabaseDialect(
+          input.path,
+          phase,
+          options?.signal,
+          workerTimeoutMs,
+        ),
       );
       retainedOutput ??= failure.capturedOutput;
       result = err(failure);
@@ -347,28 +365,29 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
     if (root !== undefined) {
       if (processOwner !== undefined) {
         const ownership = processOwner.launch.ownership;
-        const rootFailure = new ProviderCleanupError(
-          SQLITE_PROVIDER_IDENTITY.id,
-          [root.path],
-          { reason: "SQLite runtime root cleanup remains unresolved." },
-          { operation },
-        );
+        const rootRelease = new AnalysisCleanupRelease();
+        const rootFailure = rootRelease.bind(sqliteRootFailure(root));
         const processReason =
           processCleanup?.reason ?? "SQLite worker cleanup remains unresolved.";
-        const processFailure = new ProviderCleanupError(
-          SQLITE_PROVIDER_IDENTITY.id,
-          ownership === undefined
-            ? ["owned-sqlite-worker"]
-            : ownedCommandResources(ownership),
-          { reason: processReason },
-          { operation },
+        const processRelease = new AnalysisCleanupRelease();
+        const processFailure = processRelease.bind(
+          new ProviderCleanupError(
+            SQLITE_PROVIDER_IDENTITY.id,
+            ownership === undefined
+              ? ["owned-sqlite-worker"]
+              : ownedCommandResources(ownership),
+            { reason: processReason },
+            { operation },
+          ),
         );
         this.#pendingCleanup.set(root, {
           input,
           result,
           output: retainedOutput,
           rootFailure,
+          rootRelease,
           processFailure,
+          processRelease,
           process: processOwner,
         });
         if (processCleanup !== undefined) {
@@ -428,19 +447,17 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
         retainedOutput,
       );
       if (!cleaned.ok) {
-        const rootFailure = new ProviderCleanupError(
-          SQLITE_PROVIDER_IDENTITY.id,
-          [root.path],
-          { reason: "SQLite runtime root cleanup remains unresolved." },
-          { operation },
-        );
+        const rootRelease = new AnalysisCleanupRelease();
+        const rootFailure = rootRelease.bind(sqliteRootFailure(root));
         cleaned.error.bindCleanupDependencies([rootFailure]);
         this.#pendingCleanup.set(root, {
           input,
           result,
           output: retainedOutput,
           rootFailure,
+          rootRelease,
           processFailure: undefined,
+          processRelease: new AnalysisCleanupRelease(),
           process: undefined,
         });
         return cleaned;
@@ -489,7 +506,7 @@ const cleanupSqliteRoot = async (
     return err(
       sqliteCleanupFailure(
         [root.path],
-        cause instanceof Error ? cause.message : String(cause),
+        errorMessage(cause),
         result,
         input,
         output,

@@ -1,3 +1,5 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { createHash } from "node:crypto";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -73,9 +75,8 @@ it("advertises semantic output invariants and keeps producers aligned with Zod",
     );
     const outputResultSchema = (name: (typeof contracts)[number]["name"]) => {
       const tool = advertised.get(name);
-      if (tool?.outputSchema === undefined)
-        throw new Error(`${name} output schema missing`);
-      const outputSchema = record(tool.outputSchema);
+      if (tool === undefined) throw new Error(`${name} output schema missing`);
+      const outputSchema = record(canonicalOutputSchema(tool.name));
       const result = record(record(outputSchema.properties).normalized_result);
       const standaloneResultSchema = z.record(z.string(), z.unknown()).parse({
         ...result,
@@ -218,7 +219,7 @@ mcpTest(
     };
     const evidence = (result: JsonValue) =>
       createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         { id: "ghidra", name: "Controlled bridge result", version: "12.1.4" },
         { operation: contract.name, parameters: {}, result },
       );
@@ -235,12 +236,10 @@ mcpTest(
     const advertised = (await client.listTools()).tools.find(
       ({ name }) => name === contract.name,
     );
-    if (advertised?.outputSchema === undefined)
+    if (advertised === undefined)
       throw new Error("Load-image output schema missing");
     const ajv = new Ajv2020({ strict: false, validateFormats: false });
-    const outputSchema = z
-      .record(z.string(), z.unknown())
-      .parse(advertised.outputSchema);
+    const outputSchema = canonicalOutputSchema(advertised.name);
     expect(ajv.validateSchema(outputSchema)).toBe(true);
     const validate = ajv.compile(outputSchema);
     expect(nativeLoadImageSchema.parse(image)).toEqual(image);

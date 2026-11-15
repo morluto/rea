@@ -1,6 +1,8 @@
 import { realpath, stat } from "node:fs/promises";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
-import { artifactSelectedPathErrno } from "./ArtifactFileOperation.js";
+import {
+  ArtifactReaderFailure,
+  artifactSelectedPathErrno,
+} from "../resources/index.js";
 
 /** Canonicalize only a path that native filesystem lookup actually accepts. */
 export const resolveArtifactSourcePath = async (
@@ -26,6 +28,7 @@ export const assertArtifactSelectedSource = async (
       {
         userMessage:
           "The selected artifact path no longer names the opened file. Reopen the selected artifact, then retry.",
+        integrityCheck: "container-identity",
         ...(cause === undefined ? {} : { cause }),
       },
     );

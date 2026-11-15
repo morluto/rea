@@ -1,11 +1,16 @@
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import {
+  bindArtifactFileCleanup,
+  ArtifactResourceScope,
+  AnalysisCleanupLease,
+} from "../resources/index.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
 import { translateNativeCommandFailure } from "./NativeCommandAnalysisError.js";
 import { DEFAULT_NATIVE_COMMAND_TIMEOUT_MS } from "../domain/native/nativeDeadlines.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { randomUUID } from "node:crypto";
-import { writeFile } from "node:fs/promises";
+import { rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -21,6 +26,7 @@ import {
   AnalysisTimeoutError,
   cancelledBy,
   carriedReason,
+  type AnalysisTimeoutRecovery,
 } from "../domain/analysisErrorCore.js";
 import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import type {
@@ -46,6 +52,7 @@ import {
 import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import {
   observeProcessStartIdentity,
+  observeProcessStartIdentityExit,
   signalProcessWithStartIdentity,
 } from "../process/ProcessOwnershipObservation.js";
 import type { ProcessIdentityObservation } from "../process/ProcessOwnership.js";
@@ -59,11 +66,10 @@ import {
   NativeCommandFailure,
   resolveXcrunTool,
   type ResolvedTool,
-} from "./CommandRunner.js";
+} from "../providers/NativeCommandRunner.js";
 import { projectPartialNativeCalls } from "./NativeCallObservation.js";
 import { LldbReadbackFiles } from "./LldbReadbackFiles.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { resolvedAnalysisError } from "../domain/analysisErrorBase.js";
 import { runOwned } from "../providers/runOwned.js";
 import {
@@ -72,6 +78,7 @@ import {
   readPartialCapture,
   projectLldbPartialObservation,
 } from "./LldbRetainedObservations.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "observe_native_calls";
 const PROVIDER = "native-macos";
@@ -84,9 +91,7 @@ const LLDB_REQUIREMENT =
 const DEADLINE_GRACE_MS = 60_000;
 const DIAGNOSTIC_BYTES = 16 * 1024;
 
-const lldbGraceRecovery = (
-  durationMs: number,
-): { readonly userMessage: string; readonly remediationAction: string } => {
+const lldbGraceRecovery = (durationMs: number): AnalysisTimeoutRecovery => {
   const total = durationMs + DEADLINE_GRACE_MS;
   return {
     userMessage: `observe_native_calls reached its ${String(total)} ms server/provider deadline: duration_ms ${String(durationMs)} plus a fixed ${String(DEADLINE_GRACE_MS)} ms LLDB startup, symbol loading, and teardown grace. This is not the MCP client deadline.`,
@@ -141,6 +146,8 @@ const tracedSchema = z.strictObject({
   ),
   events: z.array(nativeCallEventSchema),
   other_stops: z.array(z.string()),
+  /** Breakpoint traps and stops on a requested location that were not recorded as hits; each may be a lost hit. */
+  unattributed_breakpoint_stops: z.int().nonnegative(),
 });
 
 const tracerOutputSchema = z.discriminatedUnion("status", [
@@ -297,7 +304,7 @@ export class LldbCallTracer implements NativeCallTracer {
             this.#pendingCleanup = owner;
           const failure = new ProviderAdapterError(PROVIDER, OPERATION, {
             cause,
-            diagnostics: { reason: errorReason(cause) },
+            diagnostics: { reason: errorMessage(cause) },
             partialObservation: partial.observation,
             ...(this.#pendingCleanup === owner
               ? {
@@ -350,7 +357,7 @@ export class LldbCallTracer implements NativeCallTracer {
             this.#pendingCleanup = owner;
             if (primaryFailure?.cleanupIncomplete === true)
               bindLldbCleanup(primaryFailure, owner);
-            throw lldbCleanupFailure(owner, errorReason(cause), cause);
+            throw lldbCleanupFailure(owner, errorMessage(cause), cause);
           }
         },
         // A cancellation keeps the trace as cancelled; a retained cleanup
@@ -384,11 +391,11 @@ export class LldbCallTracer implements NativeCallTracer {
     const failure = await this.#retryPendingCleanup();
     if (resolverCleanup !== undefined && failure !== undefined)
       return err(
-        analysisErrorWithCleanupFailure(
+        analysisErrorWithCleanupDependencies(
           resolverCleanup,
           failure,
           OPERATION,
-        ).bindCleanupDependencies([resolverCleanup, failure]),
+        ),
       );
     if (resolverCleanup !== undefined) return err(resolverCleanup);
     return failure === undefined ? ok(null) : err(failure);
@@ -470,7 +477,7 @@ export class LldbCallTracer implements NativeCallTracer {
     }
     return lldbCleanupFailure(
       owner,
-      failures.map(errorReason).join("; "),
+      failures.map(errorMessage).join("; "),
       new AggregateError(failures, "LLDB cleanup remains incomplete"),
     );
   }
@@ -512,6 +519,7 @@ export class LldbCallTracer implements NativeCallTracer {
           { reason: entry.reason },
           { operation: OPERATION, cause: failure },
         );
+      marker.bindCleanupReleaseClaim(entry.owner.cleanupRelease);
       this.#resolverCleanup.set(entry.owner, marker);
     }
   }
@@ -578,7 +586,7 @@ export class LldbCallTracer implements NativeCallTracer {
         unresolved.push(marker);
         continue;
       }
-      marker.resolveCleanup();
+      // The marker reads the supervisor's release of this stop.
       this.#resolverCleanup.delete(owner);
     }
     if (unresolved.length === 0) return undefined;
@@ -815,7 +823,12 @@ export class LldbCallTracer implements NativeCallTracer {
       );
     if (output !== undefined && output.status !== "traced")
       return failureWithPartial((partialObservation) =>
-        tracerFailure(output, lifecycleCleanup, partialObservation),
+        tracerFailure(
+          output,
+          lifecycleCleanup,
+          partialObservation,
+          exited.targetIdentityFailure,
+        ),
       );
     const processCleanupFailure = exited.cleanupFailure;
     if (processCleanupFailure !== undefined)
@@ -879,9 +892,7 @@ export class LldbCallTracer implements NativeCallTracer {
                     result_failure:
                       readback.error instanceof z.ZodError
                         ? `Tracer result failed schema validation (${readback.error.issues.length} issues)`
-                        : readback.error instanceof Error
-                          ? readback.error.message
-                          : String(readback.error),
+                        : errorMessage(readback.error),
                   }
                 : {}),
               exit_code: exited.exitCode,
@@ -927,10 +938,10 @@ export class LldbCallTracer implements NativeCallTracer {
             reason: "LLDB target output capture could not be read",
             ...(stdout.ok
               ? {}
-              : { stdout_capture_error: errorReason(stdout.error) }),
+              : { stdout_capture_error: errorMessage(stdout.error) }),
             ...(stderr.ok
               ? {}
-              : { stderr_capture_error: errorReason(stderr.error) }),
+              : { stderr_capture_error: errorMessage(stderr.error) }),
             ...(lifecycleCleanup === undefined
               ? {}
               : { target_cleanup: lifecycleCleanup }),
@@ -948,7 +959,7 @@ export class LldbCallTracer implements NativeCallTracer {
       stderr: stderr.value,
       terminated,
     };
-    if (exited.lateTimeout === true)
+    if (exited.overran === true)
       return err(
         new AnalysisTimeoutError(
           OPERATION,
@@ -984,6 +995,7 @@ const tracerFailure = (
   },
   cleanup?: AnalysisCleanupObservation,
   partialObservation?: NativeCallPartialObservation,
+  targetIdentityFailure?: string,
 ): AnalysisError => {
   const options = {
     ...(cleanup === undefined ? {} : { cleanup }),
@@ -1001,6 +1013,9 @@ const tracerFailure = (
       diagnostics: {
         reason: message,
         constraint: "target process start identity could not be verified",
+        ...(targetIdentityFailure === undefined
+          ? {}
+          : { identity_observation: targetIdentityFailure }),
       },
     });
   if (output.status === "tracer-error")
@@ -1048,7 +1063,7 @@ const retainPartialReadFailures = <Failure extends AnalysisError>(
         : new AggregateError(readFailures, "LLDB partial readback failed"),
     diagnostics: {
       reason: "LLDB could not read all available partial observation data",
-      read_failures: readFailures.map(errorReason),
+      read_failures: readFailures.map(errorMessage),
     },
   });
   return failure.retainSecondaryFailure(readbackFailure, {
@@ -1107,18 +1122,18 @@ const partialNativeObservation = async (options: {
     journalLimitations: journal.ok
       ? journal.value.limitations
       : [
-          `The observation journal could not be read: ${errorReason(journal.error)}`,
+          `The observation journal could not be read: ${errorMessage(journal.error)}`,
         ],
     limitations: [
       ...(stdout.ok
         ? stdout.value.limitations
         : [
-            `The target stdout capture could not be read: ${errorReason(stdout.error)}`,
+            `The target stdout capture could not be read: ${errorMessage(stdout.error)}`,
           ]),
       ...(stderr.ok
         ? stderr.value.limitations
         : [
-            `The target stderr capture could not be read: ${errorReason(stderr.error)}`,
+            `The target stderr capture could not be read: ${errorMessage(stderr.error)}`,
           ]),
     ],
     reason: options.reason,
@@ -1197,9 +1212,7 @@ const readTracerOutput = async (
   if (!bytes.value.ok) return bytes.value;
   let text: string;
   try {
-    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-      bytes.value.value,
-    );
+    text = decodeStrictUtf8(bytes.value.value, "preserve");
   } catch (cause: unknown) {
     return err(cause);
   }
@@ -1278,9 +1291,6 @@ interface RetainedLldbResources {
   targetStopped: boolean;
 }
 
-const errorReason = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
-
 /** Preserve compiler facts and a foreign helper marker without inventing an LLDB exit. */
 const lldbPreparationFailure = (
   cause: DarwinProcessOwnershipInspectionError,
@@ -1334,7 +1344,9 @@ const releaseLldbRuntime = async (
   owner: RetainedLldbResources,
 ): Promise<void> => {
   if (!owner.processStopped || !owner.targetStopped || owner.files.hasPending)
-    throw new Error("LLDB runtime still owns unresolved child resources");
+    throw invariantViolation(
+      "LLDB runtime still owns unresolved child resources",
+    );
   await owner.rootLease.release();
 };
 
@@ -1383,9 +1395,11 @@ type LldbExit =
       /** False proves LLDB never started and could not have created a target. */
       readonly targetLaunched: boolean;
       readonly targetIdentity: string | undefined;
+      /** Why the host acknowledged the launched target's identity as unavailable. */
+      readonly targetIdentityFailure?: string;
       readonly cleanupFailure: string | undefined;
-      /** Internal deadline elapsed during cleanup after a physical LLDB exit. */
-      readonly lateTimeout?: true;
+      /** The work budget elapsed before this physical LLDB exit was selected. */
+      readonly overran?: true;
       readonly cleanupOwner?: ProviderProcessSupervisor;
     })
   | {
@@ -1430,6 +1444,7 @@ const runLldb = async (
     options.signal,
   );
   let targetIdentity: string | undefined;
+  let targetIdentityFailure: string | undefined;
   let supervisor: ProviderProcessSupervisor | undefined;
   let retained = false;
   let processFailureBeforeInterruption:
@@ -1447,19 +1462,24 @@ const runLldb = async (
       processFailureBeforeInterruption !== undefined
         ? { kind: "exited" as const, ...processFailureBeforeInterruption }
         : outcome;
-    const stopped = await supervisor?.stop();
-    retained = stopped?.status === "incomplete";
-    const lateTimeout =
+    // The work budget is read when the exit is selected, before cleanup: an
+    // exit selected after it elapsed overran the budget, while a budget that
+    // elapses during cleanup keeps the exit. Unconfirmed cleanup is reported
+    // by `cleanupFailure`, never as a timeout.
+    const overran =
       selectedOutcome.kind === "exited" && deadline.interruption === "timeout"
         ? true
         : undefined;
+    const stopped = await supervisor?.stop();
+    retained = stopped?.status === "incomplete";
     return {
       ...selectedOutcome,
       targetLaunched: supervisor !== undefined,
       targetIdentity,
+      ...(targetIdentityFailure === undefined ? {} : { targetIdentityFailure }),
       cleanupFailure:
         stopped?.status === "incomplete" ? stopped.reason : undefined,
-      ...(lateTimeout === undefined ? {} : { lateTimeout }),
+      ...(overran === undefined ? {} : { overran }),
       ...(retained && supervisor !== undefined
         ? { cleanupOwner: supervisor }
         : {}),
@@ -1508,16 +1528,25 @@ const runLldb = async (
         let observation: ProcessIdentityObservation | undefined;
         try {
           observation = await observeProcessStartIdentity(pid);
-        } catch {
+          if (observation === undefined)
+            targetIdentityFailure = `PID ${String(pid)} had exited or was absent from the process table`;
+          else if (observation.state !== "readable")
+            targetIdentityFailure = observation.reason;
+        } catch (cause: unknown) {
           observation = undefined;
+          targetIdentityFailure = errorMessage(cause);
         }
         if (observation?.state === "readable")
           targetIdentity = observation.identity;
+        // The bridge polls for the acknowledgement's name, so publish it
+        // complete: a reader must never see the created but unwritten file.
+        const stagedAck = `${options.identityAckPath}.partial`;
         await writeFile(
-          options.identityAckPath,
+          stagedAck,
           observation?.state === "readable" ? "readable" : "unavailable",
           { mode: 0o600 },
         );
+        await rename(stagedAck, options.identityAckPath);
         identityAckWritten = true;
       }
       const interruption = deadline.interruption;
@@ -1560,7 +1589,7 @@ const runLldb = async (
         ? {
             kind: "exited",
             exitCode: null,
-            output: cause instanceof Error ? cause.message : String(cause),
+            output: errorMessage(cause),
           }
         : { kind: interruption },
     );
@@ -1582,9 +1611,17 @@ const ensureTerminated = async (
   identity: string | undefined,
 ): Promise<TargetTermination> => {
   if (pid === undefined) return "identity-unavailable";
+  // The target's parent (debugserver) reaps it, so a killed target can stay
+  // in the process table as a zombie. A PID that answers kill(pid, 0) is
+  // therefore not proof the target still runs: with its start identity, an
+  // exited (zombie or replaced) PID counts as terminated.
+  const exited = async (): Promise<boolean> =>
+    !alive(pid) ||
+    (identity !== undefined &&
+      (await observeProcessStartIdentityExit(pid, identity)) === "exited");
   let signalDisposition: Exclude<TargetTermination, "terminated"> | undefined;
   for (let attempt = 0; attempt < 20; attempt++) {
-    if (!alive(pid)) return "terminated";
+    if (await exited()) return "terminated";
     if (attempt === 10) {
       if (identity === undefined) signalDisposition = "identity-unavailable";
       else {
@@ -1604,7 +1641,7 @@ const ensureTerminated = async (
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  return !alive(pid)
+  return (await exited())
     ? "terminated"
     : (signalDisposition ?? "identity-unavailable");
 };

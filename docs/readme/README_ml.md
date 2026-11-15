@@ -84,11 +84,11 @@ npx rea-agents setup
 
 Claude Code, Codex, Cursor, Gemini CLI, Grok Build, കൂടാതെ [മറ്റ് agents](../getting-started/installation.md#supported-agents) എന്നിവയെ setup പിന്തുണയ്ക്കുന്നു. provider configuration-നും manual MCP registration-നും [installation and setup](../getting-started/installation.md) കാണുക.
 
-MCP സാധാരണയായി compact input schemas ഉപയോഗിക്കുന്നു. പൂർണ്ണ field guidance-ഉം nested validation details-ഉം വേണമെങ്കിൽ MCP registration-ൽ `REA_MCP_INPUT_SCHEMA_PROFILE=full` സജ്ജമാക്കുക. രണ്ടു profiles-ലും എല്ലാ tools-ഉം ഒരേ canonical server validation-ഉം നിലനിൽക്കും; MCP contracts guide കാണുക.
+MCP സാധാരണയായി compact input schemas ഉപയോഗിക്കുന്നു. Compact schema ഒഴിവാക്കുന്ന guidance tool description-ന് ശേഷം വരും. എല്ലാ tools-ഉം canonical server validation-ഉം മാറ്റമില്ലാതെ നിലനിൽക്കും; MCP contracts guide കാണുക.
 
 തിരഞ്ഞെടുത്ത runtime-ഉം REA entry script-ഉം setup നേരിട്ട് രജിസ്റ്റർ ചെയ്യുന്നു. Package runner ഉപയോഗിക്കുമ്പോൾ അതിന്റെ cache entry-യും runtime-ഉം നിലനിർത്തുക; target project-ന് പുറത്തുള്ള വിശ്വസനീയമായ ഡയറക്ടറിയിൽ നിന്ന് package നേടുക. ഇൻസ്റ്റലേഷൻ ഗൈഡ് കാണുക.
 
-സ്ഥിരസ്ഥിതിയായി output schema-കൾ `tools/list`-ൽ നിന്ന് ഒഴിവാക്കുന്നു: ഒരു model API-യും അവ വായിക്കുന്നില്ല, ഓരോ result-ഉം REA തന്നെ validate ചെയ്യുന്നു. ഓരോ output schema-യും 4096 byte പരിധിക്കുള്ളിൽ പരസ്യപ്പെടുത്താൻ MCP registration-ൽ `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact`, പൂർണ്ണ output schema-കൾക്ക് `full` (result-കൾ validate ചെയ്യുന്ന MCP client-കൾക്ക്) സജ്ജമാക്കുക. എല്ലാ ക്രമീകരണങ്ങളിലും Server validation-ഉം structured result-കളും പൂർണ്ണമായി നിലനിൽക്കും. MCP കരാർ ഗൈഡിലെ «Output schemas» കാണുക.
+സ്ഥിരസ്ഥിതിയായി output schema-കൾ `tools/list`-ൽ നിന്ന് ഒഴിവാക്കുന്നു: ഒരു model API-യും അവ വായിക്കുന്നില്ല, ഓരോ result-ഉം REA തന്നെ validate ചെയ്യുന്നു. ഓരോ output schema-യും 4096 byte പരിധിക്കുള്ളിൽ പരസ്യപ്പെടുത്താൻ MCP registration-ൽ `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` സജ്ജമാക്കുക. എല്ലാ ക്രമീകരണങ്ങളിലും Server validation-ഉം structured result-കളും പൂർണ്ണമായി നിലനിൽക്കും. MCP കരാർ ഗൈഡിലെ «Output schemas» കാണുക.
 
 ### നിങ്ങളുടെ agent-നോട് ആവശ്യപ്പെടുക
 

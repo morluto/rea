@@ -37,6 +37,29 @@ const listFiles = async (dir) => {
 export const NUMERIC_LIMIT_DECLARATION = "src/domain/numericLimitRegistry.ts";
 
 /**
+ * Where the removed restart-field names cannot return: these roots, files with
+ * these extensions. The cached `lint` task's inputs in turbo.json must cover
+ * every such file, or a cached pass would hide a reintroduced name.
+ */
+export const FORBIDDEN_FIELD_SCAN_ROOTS = [
+  "src",
+  "tests",
+  ".agents",
+  "scripts",
+];
+export const FORBIDDEN_FIELD_SCAN_EXTENSIONS = [
+  "ts",
+  "tsx",
+  "mjs",
+  "js",
+  "md",
+  "json",
+  "py",
+  "yml",
+  "yaml",
+];
+
+/**
  * These limits are moving onto runtime analysis settings on their own PRs.
  * A producer or a registry entry cannot satisfy that requirement.
  */
@@ -1019,7 +1042,7 @@ if (direct) {
   }
 
   const parameterOwners = [
-    "src/artifacts/ArtifactReaderLimits.ts",
+    "src/resources/ArtifactReaderLimits.ts",
     "src/domain/artifactReaderLimits.ts",
     "src/domain/webNetworkCapture.ts",
   ];
@@ -1037,9 +1060,8 @@ if (direct) {
     /(?<![A-Za-z0-9_])(?:rea_restart_required|restartRequired|restart_required)(?![A-Za-z0-9_])|effect:\s*"(?:immediate|next_process)"|SettingChangeEffect/gu;
   // Docs and verification receipts keep the field names they recorded.
   // Source, tests, skills, and scripts cannot reintroduce those names.
-  const scanRoots = ["src", "tests", ".agents", "scripts"].map((dir) =>
-    join(root, dir),
-  );
+  const scanRoots = FORBIDDEN_FIELD_SCAN_ROOTS.map((dir) => join(root, dir));
+  const scanned = new Set(FORBIDDEN_FIELD_SCAN_EXTENSIONS);
   const skipDir = new Set([
     "node_modules",
     "dist",
@@ -1054,7 +1076,7 @@ if (direct) {
       if (skipDir.has(entry.name)) continue;
       const path = join(dir, entry.name);
       if (entry.isDirectory()) output.push(...(await listText(path)));
-      else if (/\.(?:ts|tsx|mjs|js|md|json|py|yml|yaml)$/u.test(entry.name))
+      else if (scanned.has(entry.name.slice(entry.name.lastIndexOf(".") + 1)))
         output.push(path);
     }
     return output;

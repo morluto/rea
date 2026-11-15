@@ -2,7 +2,7 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import {
@@ -45,11 +45,13 @@ it.each(["normal", "copied", "parameters", "forged", "source"] as const)(
       () => ({
         execute: async () =>
           ok({
-            ...createAnalysisExecution(["0x100"], provider, {
-              ...(mode === "source" && source !== undefined
+            ...createAnalysisExecution(
+              ["0x100"],
+              provider,
+              mode === "source" && source !== undefined
                 ? { sourceEvidence: [source] }
-                : {}),
-            }),
+                : {},
+            ),
             ...(mode === "forged" && forged !== undefined
               ? { evidenceId: forged.evidence_id }
               : {}),

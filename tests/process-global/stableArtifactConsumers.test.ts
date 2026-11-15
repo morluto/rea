@@ -1,4 +1,6 @@
+import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { PeLoadConfigProvider } from "../../src/native/pe/PeLoadConfigProvider.js";
+import { createArtifactAnalysisResources } from "../../src/providers/artifactResourceFailure.js";
 import { ReleaseExposureReader } from "../../src/artifacts/ReleaseExposureReader.js";
 import { BinaryHardeningProvider } from "../../src/native/hardening/BinaryHardeningProvider.js";
 import { inspectPeLoadConfigInputSchema } from "../../src/domain/native/peLoadConfig.js";
@@ -85,9 +87,9 @@ import {
   mapArtifactFileFailure,
   artifactFilePrimaryFacts,
   withArtifactRegularFile,
-} from "../../src/artifacts/ArtifactFileOperation.js";
-import { AnalysisCleanupLease } from "../../src/artifacts/AnalysisCleanupLease.js";
-import { translateArtifactFailure } from "../../src/artifacts/ArtifactOperationFailure.js";
+} from "../../src/resources/ArtifactFileOperation.js";
+import { AnalysisCleanupLease } from "../../src/resources/AnalysisCleanupLease.js";
+import { translateArtifactFailure } from "../../src/resources/index.js";
 import { OwnedFileHandle } from "../../src/filesystem/OwnedFileHandle.js";
 import {
   OwnedRegularFileOperationFailure,
@@ -95,8 +97,8 @@ import {
   regularFileCancellation,
 } from "../../src/filesystem/OwnedRegularFile.js";
 import { RegularFileOperationCancelled } from "../../src/filesystem/RegularFile.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
-import { readStableArtifact } from "../../src/artifacts/readStableArtifact.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
+import { readStableArtifact } from "../../src/resources/readStableArtifact.js";
 import { ArtifactAnalysisResources } from "../../src/process/ArtifactAnalysisResources.js";
 import { readLinuxResourceLimits } from "../../src/process/LinuxResourceLimits.js";
 import { LocalWebSourceLocationArtifacts } from "../../src/browser/assets/WebSourceLocationArtifacts.js";
@@ -105,7 +107,7 @@ import {
   webSourceLocationArgs,
   webSourceLocationFixture,
 } from "../fixtures/webSourceLocation.js";
-import { ArtifactReaderFailure } from "../../src/artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../src/resources/ArtifactReader.js";
 import { GoBinaryProvider } from "../../src/go/GoBinaryProvider.js";
 import { PythonPycProvider } from "../../src/python/PythonPycProvider.js";
 import { inspectPythonPycInputSchema } from "../../src/domain/python/pythonPyc.js";
@@ -136,7 +138,7 @@ import { inspectErlangBeamInputSchema } from "../../src/domain/erlang/beam.js";
 import { ModelArtifactProvider } from "../../src/model/ModelArtifactProvider.js";
 import { ggufFixture } from "../fixtures/model/model.js";
 import { inspectPeResourcesInputSchema } from "../../src/domain/native/peResources.js";
-import { peResourceFixture } from "../../src/native/pe/PeResources.fixture.js";
+import { peResourceFixture } from "../../src/domain/pe/peResources.fixture.js";
 import { createServer } from "../../src/server/createServer.js";
 import { createTestBinarySession } from "../fixtures/binarySession.js";
 import { createRustImage } from "../fixtures/rust/image.js";
@@ -188,7 +190,7 @@ it.each(
     const web = new LocalWebSourceLocationArtifacts({
       load: () => Promise.resolve(ok(script)),
     });
-    const resources = new ArtifactAnalysisResources(
+    const resources = createArtifactAnalysisResources(
       "selected-test",
       "inspect_signal_recording",
       readStableArtifact,
@@ -295,7 +297,7 @@ const expectIl2cppSource = (
   expect(source.operation).toBe("observe_il2cpp_metadata_source");
   expect(source.subject).toMatchObject({
     local_path: path,
-    digest: { sha256 },
+    identity: { sha256 },
   });
   expect(source.normalized_result).toEqual({
     artifact: { path, sha256, bytes: bytes.length },
@@ -532,7 +534,7 @@ it.each([
       if (result.ok) throw new Error("Expected finalization failure");
       const evidence = parseEvidence(result.error.partialObservation);
       expect(evidence.operation).toBe("inspect_model_artifact");
-      expect(evidence.subject).toBeNull();
+      expect(evidence.subject.identity.kind).toBe("unknown");
       expect(evidence.normalized_result).toMatchObject({
         artifact: { path, sha256: null, read_scope: "header" },
         tensors: [{ name: "weight" }, { name: "quant" }],
@@ -878,7 +880,7 @@ it.each([
       foreignPath,
     );
     const foreignPartial = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "foreign", name: "foreign owner", version: null },
       {
         operation: "inspect_artifact",

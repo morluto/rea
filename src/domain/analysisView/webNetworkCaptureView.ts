@@ -3,7 +3,6 @@ import {
   protobufViewRequestSchema,
 } from "./protobufCaptureView.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
-import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { parseAnalysisViewResult } from "./analysisViewParent.js";
@@ -36,6 +35,8 @@ import {
   summarizeQlogCapture,
   projectQlogCapturePage,
 } from "./qlogCaptureView.js";
+import { evidenceFileTarget } from "../evidence.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 /** Offsets page the parent's retained record order, preserving producer ordinals. */
 export const captureViewRequestSchema = z.strictObject({
@@ -174,7 +175,7 @@ const describesText = (descriptor: BinaryField, text: string): boolean => {
     utf8.toString("utf8") === text &&
     descriptor.bytes === utf8.length &&
     descriptor.content_base64 === utf8.toString("base64") &&
-    descriptor.sha256 === createHash("sha256").update(utf8).digest("hex")
+    descriptor.sha256 === sha256Hex(utf8)
   );
 };
 /**
@@ -467,10 +468,10 @@ const parseCaptureParent = (
   const parsed = parseAnalysisViewResult(captureParser, parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
-  const subject = parent.subject;
+  const subject = evidenceFileTarget(parent);
   if (
     report.artifact.sha256 !== null &&
-    (subject == null || subject.digest.sha256 !== report.artifact.sha256)
+    (subject == null || subject.sha256 !== report.artifact.sha256)
   )
     return err(
       analysisViewInputError([
@@ -564,10 +565,7 @@ export const projectWebNetworkCaptureView = (
           ? { qlog: summarizeQlogCapture(report.qlog) }
           : {}),
       },
-      coverage: completeWithinViewCoverage(
-        report.records.length,
-        report.records.length,
-      ),
+      coverage: completeWithinViewCoverage(report.records.length),
     });
   if (view.kind === "qlog") {
     if (report.format !== "qlog")

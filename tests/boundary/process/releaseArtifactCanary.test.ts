@@ -1,3 +1,4 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import {
   copyFile,
   cp,
@@ -73,7 +74,7 @@ processTest.skipIf(process.platform === "win32")(
         tools,
         reply: await harness.client.callTool(
           { name: "binary_session", arguments: {} },
-          { toolDefinition: sessionDefinition },
+          { toolDefinition: withCanonicalOutputSchema(sessionDefinition) },
         ),
       };
     } finally {
@@ -140,7 +141,9 @@ if (process.argv[2] === "mcp") {
     const missing = await invoke();
     expect(missing.exitCode).toBe(1);
     expect(missing.stderr).toContain("ERR_MODULE_NOT_FOUND");
-    expect(missing.stderr).toMatch(/dist[/\\]catalogIdentity\.js/u);
+    expect(missing.stderr).toMatch(
+      /dist[/\\]contracts[/\\]catalog[/\\]catalogIdentity\.js/u,
+    );
     await symlink(
       resolve("dist"),
       join(controller, "dist"),

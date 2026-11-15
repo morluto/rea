@@ -1,7 +1,12 @@
 import { z } from "zod";
 
 import { webBundleAnalysisSchema } from "./webBundleAnalysis.js";
+import { analysisResultLimitSchema } from "./analysisSettingDefinitions.js";
 import { javaScriptRouteSourceFactsSchema } from "./javascript/javascriptRouteFacts.js";
+import { javaScriptRefusedPhaseSchema } from "./javascript/javascriptSemanticWorkAllowance.js";
+import type { AnalysisError } from "./analysisErrorBase.js";
+import { AnalysisResourceConstraintError } from "./analysisErrorCore.js";
+import { analysisErrorRemediationAction } from "./analysisErrorPresentation.js";
 
 const observationsSchema = z.strictObject({
   edges: webBundleAnalysisSchema.shape.observations.shape.chunks.shape.edges,
@@ -9,6 +14,16 @@ const observationsSchema = z.strictObject({
   endpoints: webBundleAnalysisSchema.shape.observations.shape.endpoints,
   webmcp_declarations:
     webBundleAnalysisSchema.shape.observations.shape.webmcp_declarations,
+});
+
+/**
+ * Syntax-level facts for a parsed script whose named phase was refused.
+ * Findings that read that phase's facts were not examined.
+ */
+const refusedScriptFactsSchema = z.strictObject({
+  refused_phase: javaScriptRefusedPhaseSchema,
+  parse_status: z.enum(["parsed", "recovered"]),
+  inferences: webBundleAnalysisSchema.shape.inferences,
 });
 
 /** Serializable result for one captured script, suitable for worker transport. */
@@ -35,11 +50,14 @@ export const webBundleScriptAnalysisSchema = z
         "not_started",
       ]),
       detail: z.string().optional(),
+      /** The setting or request parameter that bounded this script. */
+      limit: analysisResultLimitSchema.exactOptional(),
+      remediation: z.string().exactOptional(),
+      /** Facts gathered before a work allowance refused a later phase. */
+      partial: refusedScriptFactsSchema.exactOptional(),
     }),
   ])
   .superRefine((result, context) => {
-    if (result.status !== "analyzed") return;
-
     const checkScriptKey = (
       scriptKey: string,
       path: (string | number)[],
@@ -51,6 +69,33 @@ export const webBundleScriptAnalysisSchema = z
           message: "Per-script analysis evidence must name its owning script",
         });
     };
+    const checkInferences = (
+      inferences: z.output<typeof refusedScriptFactsSchema>["inferences"],
+      path: (string | number)[],
+    ): void =>
+      inferences.forEach((inference, inferenceIndex) =>
+        inference.basis.forEach((basis, basisIndex) =>
+          checkScriptKey(basis.script_key, [
+            ...path,
+            inferenceIndex,
+            "basis",
+            basisIndex,
+            "script_key",
+          ]),
+        ),
+      );
+
+    if (result.status === "unavailable") {
+      if (result.partial === undefined) return;
+      if (result.reason !== "resource_constraint")
+        context.addIssue({
+          code: "custom",
+          path: ["partial"],
+          message: "Only a refused script carries partial facts",
+        });
+      checkInferences(result.partial.inferences, ["partial", "inferences"]);
+      return;
+    }
 
     result.observations.edges.forEach((edge, index) => {
       checkScriptKey(edge.from_script_key, [
@@ -86,17 +131,7 @@ export const webBundleScriptAnalysisSchema = z
         "script_key",
       ]),
     );
-    result.inferences.forEach((inference, inferenceIndex) =>
-      inference.basis.forEach((basis, basisIndex) =>
-        checkScriptKey(basis.script_key, [
-          "inferences",
-          inferenceIndex,
-          "basis",
-          basisIndex,
-          "script_key",
-        ]),
-      ),
-    );
+    checkInferences(result.inferences, ["inferences"]);
 
     if (result.parse_status === "failed") {
       const hasFindings =
@@ -122,3 +157,48 @@ export const webBundleScriptAnalysisSchema = z
 export type WebBundleScriptAnalysis = z.infer<
   typeof webBundleScriptAnalysisSchema
 >;
+
+type UnavailableWebScriptAnalysis = Extract<
+  WebBundleScriptAnalysis,
+  { readonly status: "unavailable" }
+>;
+
+/**
+ * The control a script result can record: a registered setting, or a request
+ * parameter named by its contract field. An environment control is not a
+ * result-side reference, so its error keeps only the detail.
+ */
+const recordedLimit = (
+  limit: AnalysisError["limit"],
+): UnavailableWebScriptAnalysis["limit"] =>
+  limit === undefined
+    ? undefined
+    : "setting" in limit
+      ? limit
+      : limit.control_kind === "parameter"
+        ? limit
+        : undefined;
+
+/**
+ * The detail and structured recovery an unavailable script states for the
+ * error that stopped its analysis, such as a resource refusal or a per-script
+ * deadline.
+ */
+export const unavailableWebScriptRecovery = (
+  error: AnalysisError,
+): Pick<UnavailableWebScriptAnalysis, "detail" | "limit" | "remediation"> => {
+  const limit = recordedLimit(error.limit);
+  return {
+    detail:
+      error instanceof AnalysisResourceConstraintError &&
+      error.reportedLimits !== null
+        ? `${error.userMessage ?? error.reason} Reported limits: ${JSON.stringify(error.reportedLimits)}`
+        : (error.userMessage ?? error.message),
+    ...(limit === undefined
+      ? {}
+      : {
+          limit,
+          remediation: analysisErrorRemediationAction(error),
+        }),
+  };
+};

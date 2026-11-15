@@ -98,7 +98,7 @@ approve replacing it. A different existing installation path is foreign to the
 current entrypoint; a path that cannot be resolved remains unknown. Cordis uses
 its stable REA entry ID instead of launcher identity.
 Setup also retains valid environment overrides in REA's existing server entry,
-such as `REA_MCP_INPUT_SCHEMA_PROFILE`, `REA_MCP_OUTPUT_SCHEMA_PROFILE`, and
+such as `REA_MCP_OUTPUT_SCHEMA_PROFILE`,
 `REA_MCP_MAX_RESPONSE_BYTES`, and `REA_MCP_TOOL_FAMILIES`.
 Detected provider settings replace only matching environment keys.
 Setup manages REA's launcher, selected provider settings, and recommended timeout
@@ -352,7 +352,7 @@ remove it with `claude mcp remove --scope local rea` from the same directory.
 `rea update` doesn't refresh it either, so it continues using the selected installation.
 To move it to a newer release, first back up the project entry in
 `~/.claude.json` and record its environment and other metadata. In particular,
-preserve caller-selected overrides such as `REA_MCP_INPUT_SCHEMA_PROFILE` and
+preserve caller-selected overrides such as `REA_MCP_OUTPUT_SCHEMA_PROFILE` and
 `REA_MCP_MAX_RESPONSE_BYTES`, and `REA_MCP_TOOL_FAMILIES`. Run `claude mcp remove --scope local rea` from the
 same directory, then recreate it with the platform-appropriate command above
 and the new version. Reapply every recorded environment value with Claude
@@ -724,6 +724,10 @@ hosted connector; see [its configuration](client-configuration.md#other-client-s
 | Zed                       | `zed`                   |
 | Amp                       | `amp`                   |
 | MCPorter                  | `mcporter`              |
+| fx                        | `fx`                    |
+| Junie                     | `junie`                 |
+| Goose                     | `goose`                 |
+| Kilo Code                 | `kilo`                  |
 
 `droid`, `dsh`, `kimi`, `qoder`, `trae`, `workbuddy`, and `zcode` require
 `rea-agents@6.5.0` or later. The 6.4.0 registry check above does not cover them.
@@ -741,7 +745,7 @@ not see those registrations. Current releases inspect, refresh and remove them
 like any other setup client. `mcporter` also requires a release after 6.9.0;
 setup never selects it from detection, because MCPorter already imports the
 registrations setup writes for other clients. Select it with
-`--client mcporter`.
+`--client mcporter`. `fx`, `junie`, `goose` and `kilo` also require a release after 6.9.0.
 
 See [client configuration and troubleshooting](client-configuration.md) for
 configuration paths, profiles, trust policies, and schema-limit workarounds.
@@ -1304,10 +1308,15 @@ status while retaining successful client outcomes and recovery paths.
 
 User-level registration for a client that `rea setup` also supports uses that
 client's setup definition, so the same native read rules apply, and doctor,
-update and uninstall inspect, refresh and remove what it wrote. Goose, Junie,
-fx and Kilo Code are registered only by `rea mcp add` until their
-native layers and path overrides are modeled; doctor, update and uninstall do
-not yet see those registrations. Gemini CLI
+update and uninstall inspect, refresh and remove what it wrote. For Kilo Code
+that is the last user-scope file Kilo loads (its config root, `KILO_CONFIG`,
+`~/.kilocode`, `~/.kilo`, then `KILO_CONFIG_DIR`); a relative Kilo path is
+reported as unresolved because Kilo's working directory is unknown.
+`KILO_CONFIG_CONTENT` is read as Kilo's highest layer and never edited: setup
+reports Kilo as needing manual repair when that value changes the `rea` entry,
+and doctor reports the registration Kilo actually loads. Uninstall changes no
+Kilo file when another layer or that value would keep a `rea` entry in effect,
+or expose a different one, after removal. Gemini CLI
 registration fails without writing when Gemini's system, defaults or trusted
 workspace settings exclude `rea`, leave it off a nonempty allowlist, or define
 a different `rea` entry with higher precedence. On Windows, registration refuses
@@ -1434,8 +1443,8 @@ empty, invalid or out-of-range supplied values fail configuration validation.
 When the deadline elapses, the `provider_timeout` error names
 `REA_GHIDRA_STARTUP_TIMEOUT_MS` with the deadline that was applied. In
 fresh-import mode it also suggests `REA_GHIDRA_DISABLED_ANALYZERS` for analyzers
-that dominate the time and `REA_GHIDRA_PROJECT_PATH` for reusing a completed
-analysis; in existing-project mode it omits that import and analyzer advice.
+that dominate the time and the Program reuse choices below; in existing-project
+mode it omits that import and analyzer advice.
 REA parses the supplied configuration environment and
 passes the deadline to each provider client; a startup failure is returned by the query that triggered it,
 without exposing partial analysis. This deadline is separate from MCP transport
@@ -1462,11 +1471,33 @@ the settings update does not clear cleanup blockers. To change the launch
 environment instead, export useful Evidence, close the binary and resolve any
 cleanup failure, update the client's REA server launch configuration, then
 restart REA and reconnect. Allow startup plus the query in the client's own
-tool-call deadline; runtime updates do not change that deadline. Each new startup attempt uses
-a fresh ephemeral import; smaller result requests do not reduce the prerequisite
-auto-analysis. A larger time allowance does not raise the JVM heap limit or
+tool-call deadline; runtime updates do not change that deadline. In the default
+fresh-import mode, each new startup attempt repeats import and analysis; smaller
+result requests do not reduce that prerequisite. A larger time allowance does not raise the JVM heap limit or
 guarantee completion. Keep [heap and host CPU controls](#ghidra-heap-and-cpu-controls)
 appropriate for the machine.
+
+For repeated CLI commands on a large binary, explicitly choose where the analyzed
+Program is retained:
+
+- [Owned Program checkpoints](#automatically-checkpoint-an-owned-ghidra-program)
+  (`REA_GHIDRA_CHECKPOINT_DIR`) save completed analysis automatically for supported
+  stock native ELF, PE and Mach-O imports on Linux/macOS. Initial analysis must
+  finish once; later invocations restore the saved Program without auto-analysis.
+  This mode excludes analysis overrides. For customized analysis, reuse a project
+  already analyzed with the desired settings rather than discarding those choices
+  to enable checkpoints.
+- [An existing Ghidra project](#reuse-an-existing-ghidra-project)
+  (`REA_GHIDRA_PROJECT_PATH`, with `REA_GHIDRA_PROGRAM_NAME` when needed) reuses a
+  Program already analyzed and saved in Ghidra. REA opens a private copy without
+  auto-analysis and leaves the caller's project unchanged.
+
+Configure the selection in each CLI invocation's environment or in the MCP server
+registration, then restart that server. A running MCP session already reuses its
+Program across queries. `--snapshot` caches REA query results, not the analyzed
+Ghidra Program: a query absent from that snapshot still needs provider startup.
+Neither reuse mode resumes unfinished initial auto-analysis or removes its
+first-run time and memory requirements.
 
 One session contains exactly one imported Program; use `provider_id: "ghidra"`, `--provider ghidra`, or
 `REA_ANALYSIS_PROVIDER=ghidra` when both Hopper and Ghidra support the target.

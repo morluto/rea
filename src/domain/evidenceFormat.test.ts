@@ -1,6 +1,7 @@
+import { unknownTarget } from "./targetIdentity.js";
 import { expect, it } from "vitest";
 
-import { createEvidence } from "./evidence.js";
+import { createEvidence, parseEvidence } from "./evidence.js";
 import {
   createEvidenceBundle,
   readEvidenceBundle,
@@ -10,9 +11,12 @@ import {
   EVIDENCE_FORMAT_REVISION,
   RECREATE_EVIDENCE_GUIDANCE,
 } from "./evidenceFormat.js";
+import { ParseFailureError } from "./parseFailure.js";
+import { EvidenceIntegrityError } from "./evidenceErrors.js";
+import { readEvidence, readImmutableEvidence } from "./evidenceValidation.js";
 
 const record = createEvidence(
-  undefined,
+  unknownTarget("not-observed"),
   { id: "fixture", name: "Fixture", version: "1" },
   { operation: "observe", parameters: {}, result: { observed: true } },
 );
@@ -40,6 +44,15 @@ it.each([
   if (parsed.ok) throw new Error("Expected the earlier format to be refused");
   expect(parsed.error.kind).toBe("unsupported-format");
   expect(parsed.error.message).toContain(RECREATE_EVIDENCE_GUIDANCE);
+  expect(parsed.error.cause).toBeInstanceOf(ParseFailureError);
+  expect(parsed.error.cause).toMatchObject({
+    failure: {
+      kind: "unsupported",
+      format: "evidence-bundle",
+      field: "evidence_format",
+      undecodedContent: true,
+    },
+  });
   const read = readEvidenceBundle(earlier, {
     operation: "import_evidence_bundle",
     path: ["evidence_bundle"],
@@ -52,6 +65,36 @@ it.each([
     },
   });
 });
+
+it.each([
+  ["an unmarked record", undefined],
+  ["a revision 1 record", 1],
+])(
+  "refuses %s alone or inside a current bundle, with the recreate guidance",
+  (_name, format) => {
+    const { evidence_format: _current, ...unmarked } = record;
+    const earlier =
+      format === undefined
+        ? unmarked
+        : { ...unmarked, evidence_format: format };
+    expect(() => parseEvidence(earlier)).toThrow(RECREATE_EVIDENCE_GUIDANCE);
+    for (const read of [readEvidence, readImmutableEvidence]) {
+      const refused = read(earlier);
+      if (refused.ok) throw new Error("Expected the earlier record refused");
+      expect(refused.error).toBeInstanceOf(EvidenceIntegrityError);
+      expect(refused.error.userMessage).toContain(RECREATE_EVIDENCE_GUIDANCE);
+    }
+    const parsed = safeParseEvidenceBundle({
+      ...createEvidenceBundle([record]),
+      records: [earlier],
+    });
+    if (parsed.ok) throw new Error("Expected the earlier record to be refused");
+    expect(parsed.error.kind).toBe("unsupported-format");
+    expect(parsed.error.cause).toMatchObject({
+      failure: { format: "evidence-record", field: "evidence_format" },
+    });
+  },
+);
 
 it("still names a standalone Evidence record as the wrong input kind", () => {
   const parsed = safeParseEvidenceBundle(record);

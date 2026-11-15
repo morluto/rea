@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../../../src/contracts/artifactComparisonExample.js";
 import { artifactInventoryResultSchema } from "../../../src/domain/artifactGraph.js";
 import { digestCanonicalValue } from "../../../src/domain/canonicalDigest.js";
@@ -108,7 +109,7 @@ it("requires candidate capabilities in CLI provider output", async () => {
 const retainedBundle = (value = 7) =>
   createEvidenceBundle([
     createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "observe",
@@ -538,7 +539,7 @@ it("preserves raw extraction manifest extensions for separate Evidence authentic
     limitations: [],
   };
   const evidenceFor = (result: unknown) =>
-    createEvidence(undefined, inventoryEvidence.provider, {
+    createEvidence(unknownTarget("not-observed"), inventoryEvidence.provider, {
       operation: "extract_artifact",
       parameters: {},
       result,

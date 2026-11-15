@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
 import { mkdtemp, realpath, rm, type FileHandle } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -10,7 +11,7 @@ import {
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
+} from "../resources/index.js";
 import { DirectoryArtifactReader } from "./DirectoryArtifactReader.js";
 import { declaredArtifactEntries } from "./ArtifactTraversalObservation.js";
 import {
@@ -31,6 +32,8 @@ import {
   type NativeDmgAttachOutput,
   type NativeDmgInfo,
 } from "./NativeDmgOwnership.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 const HDIUTIL_COMMAND_TIMEOUT_MS = 120_000;
 /** Conditional recovery guidance; a path match never grants attachment ownership. */
 const DMG_EXISTING_ATTACHMENT_RECOVERY =
@@ -89,18 +92,16 @@ class NativeDmgCommandFailure extends ArtifactReaderFailure {
       readonly exitCode?: number;
     },
   ) {
-    super(
-      failure.reason,
-      message,
-      options === undefined
-        ? undefined
-        : {
-            ...(options.cause === undefined ? {} : { cause: options.cause }),
-            ...(options.cancellation === undefined
-              ? {}
-              : { cancellation: options.cancellation }),
-          },
-    );
+    super(failure.reason, message, {
+      ...(options?.cause === undefined ? {} : { cause: options.cause }),
+      ...(options?.cancellation === undefined
+        ? {}
+        : { cancellation: options.cancellation }),
+      // Only hdiutil verify classifies a DMG failure as integrity.
+      ...(failure.reason === "integrity"
+        ? { integrityCheck: "image-checksum" as const }
+        : {}),
+    });
     this.processNotStarted = options?.processNotStarted ?? false;
     this.verifyDiagnostic = failure.verifyDiagnostic;
     this.unrecognizedImage = failure.unrecognizedImage ?? false;
@@ -180,7 +181,8 @@ export class NativeDmgArtifactReader implements ArtifactReader {
     environment: Readonly<NodeJS.ProcessEnv>,
     host?: NativeDmgHost,
   ) {
-    if (process.platform !== "darwin" && host === undefined)
+    // The system host mounts through this host's hdiutil.
+    if (HOST_PLATFORM.platform !== "darwin" && host === undefined)
       throw new ArtifactReaderFailure(
         "unavailable",
         "Native DMG traversal is available only on macOS",
@@ -284,11 +286,11 @@ export class NativeDmgArtifactReader implements ArtifactReader {
     if (detachFailure !== undefined)
       throw new ArtifactReaderFailure(
         "unavailable",
-        `DMG detach or mount-root cleanup failed for ${JSON.stringify(this.path)}: ${failureMessage(detachFailure)}`,
+        `DMG detach or mount-root cleanup failed for ${JSON.stringify(this.path)}: ${errorMessage(detachFailure)}`,
         {
           cause: detachFailure,
           cleanup: {
-            reason: failureMessage(detachFailure),
+            reason: errorMessage(detachFailure),
             resources: [
               ...this.#devices.map((device) => `DMG device ${device}`),
               ...(this.#attachMayHaveMounted
@@ -360,7 +362,7 @@ export class NativeDmgArtifactReader implements ArtifactReader {
       } catch (cause: unknown) {
         const mountRoot = this.#mountRoot ?? this.path;
         throw ArtifactReaderFailure.withCleanup(cause, {
-          reason: `DMG mounted directory remains owned: ${failureMessage(cause)}`,
+          reason: `DMG mounted directory remains owned: ${errorMessage(cause)}`,
           resources: [
             `DMG mounted directory at ${mountRoot}`,
             `DMG mount root ${mountRoot}`,
@@ -390,7 +392,7 @@ export class NativeDmgArtifactReader implements ArtifactReader {
       await this.#resolveAttachOwnership();
       return undefined;
     } catch (cause: unknown) {
-      this.#ownershipUncertainty = failureMessage(cause);
+      this.#ownershipUncertainty = errorMessage(cause);
       return cause;
     }
   }
@@ -594,7 +596,9 @@ export class NativeDmgArtifactReader implements ArtifactReader {
   async #resolveAttachOwnership(): Promise<"owned" | "none" | "unknown"> {
     const mountRoot = this.#mountRoot;
     if (mountRoot === undefined)
-      throw new Error("DMG mount root is unavailable for ownership discovery");
+      throw invariantViolation(
+        "DMG mount root is unavailable for ownership discovery",
+      );
     const ownership = resolveNativeDmgOwnership({
       info: await this.#readInfo(),
       ...(this.#attachOutput === undefined
@@ -717,9 +721,6 @@ const existingImagePathListed = async (
   }
   return false;
 };
-
-const failureMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
 
 const processNotStarted = (cause: unknown): boolean => {
   if (!(cause instanceof Error)) return false;

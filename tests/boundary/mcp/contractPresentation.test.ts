@@ -1,3 +1,4 @@
+import { advertiseTool } from "../../../src/contracts/advertisedTool.js";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { isCallToolResult } from "@modelcontextprotocol/server";
@@ -15,6 +16,7 @@ import {
   runOwnedCommand,
 } from "../../../src/process/OwnedCommand.js";
 import { resolveSwiftcCompileTimeoutMs } from "../../../src/process/DarwinProcessRunTokenReader.js";
+import { advertisedToolPresentation } from "../../../src/contracts/mcpSchemaPresentation.js";
 
 beforeAll(
   () => prepareOwnedCommand(),
@@ -53,7 +55,7 @@ const resultSchema = z.object({
     z.object({
       name: z.string(),
       inputSchema: z.record(z.string(), z.unknown()),
-      outputSchema: z.record(z.string(), z.unknown()),
+      outputSchema: z.record(z.string(), z.unknown()).optional(),
     }),
   ),
   responses: z.array(
@@ -61,7 +63,7 @@ const resultSchema = z.object({
   ),
 });
 
-it("preserves full advertised schemas and handler meaning when presentation order changes", async () => {
+it("preserves advertised schemas and handler meaning when presentation order changes", async () => {
   const cancellation = new AbortController();
   const command = runOwnedCommand(
     {
@@ -70,13 +72,11 @@ it("preserves full advertised schemas and handler meaning when presentation orde
       runId: randomUUID(),
       env: {
         ...process.env,
-        REA_MCP_INPUT_SCHEMA_PROFILE: "full",
-        REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
       },
       sweepTokenOwnedProcesses: true,
     },
     {
-      // A prepared full/full catalog run needs about 32s on two CPU cores.
+      // A prepared catalog run needed about 32s on two CPU cores.
       timeoutMs: 60_000,
       diagnosticBytes: 16 * 1024 * 1024,
     },
@@ -97,8 +97,15 @@ it("preserves full advertised schemas and handler meaning when presentation orde
     const canonical = GENERATED_MCP_TOOL_CATALOG.find(
       ({ name }) => name === advertised.name,
     );
-    expect(advertised.inputSchema).toEqual(canonical?.inputSchema);
-    expect(advertised.outputSchema).toEqual(canonical?.outputSchema);
+    if (canonical === undefined) throw new Error(`Missing ${advertised.name}`);
+    expect(advertised.inputSchema).toEqual(
+      advertiseTool(
+        { inputSchema: canonical.inputSchema },
+        advertisedToolPresentation("off"),
+      ).inputSchema,
+    );
+    // The default output profile omits output schemas.
+    expect(advertised.outputSchema).toBeUndefined();
   }
   expect(result.responses.map(({ name }) => name).sort()).toEqual(
     [

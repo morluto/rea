@@ -25,16 +25,14 @@ import {
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
-import { closeAsarHandle, readValidatedAsarEntry } from "./AsarEntryStream.js";
-import {
+  readArtifactFileChunks,
   admitAsarHeader,
   readAsarHeader,
   type AsarHeaderExtents,
-} from "./AsarHeader.js";
+} from "../resources/index.js";
+import { closeAsarHandle, readValidatedAsarEntry } from "./AsarEntryStream.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import type { FileHandleChunkStream } from "../filesystem/readFileHandleChunks.js";
-import { readArtifactFileChunks } from "./readArtifactFileChunks.js";
 import {
   assertAsarReadActive,
   asarCancellationFailure,
@@ -215,11 +213,13 @@ export class AsarArtifactReader implements ArtifactReader {
       throw new ArtifactReaderFailure(
         "integrity",
         `ASAR entry was not produced by this reader: ${entry.path}`,
+        { integrityCheck: "foreign-entry" },
       );
     if (!sameArtifactEntry(entry, state.entry))
       throw new ArtifactReaderFailure(
         "integrity",
         `ASAR entry metadata changed since inventory: ${state.entry.path}`,
+        { integrityCheck: "entry-metadata" },
       );
     if (state.entry.unpacked)
       return this.#openUnpackedStream(state.entry, signal);
@@ -275,6 +275,7 @@ export class AsarArtifactReader implements ArtifactReader {
         throw new ArtifactReaderFailure(
           "integrity",
           `ASAR container changed before read: ${producedEntry.path}`,
+          { integrityCheck: "container-identity" },
         );
       if (facts.size === 0) {
         handle = undefined;
@@ -340,6 +341,7 @@ export class AsarArtifactReader implements ArtifactReader {
         throw new ArtifactReaderFailure(
           "integrity",
           `ASAR container changed before interpretation: ${this.path}`,
+          { integrityCheck: "container-identity" },
         );
     }, signal);
   }
@@ -467,10 +469,12 @@ export class AsarArtifactReader implements ArtifactReader {
   }
 
   #snapshotPath(): string {
+    // Preparation captured a snapshot; only a close queued between preparation
+    // and this operation removes it, as `#assertInventoryActive` reports.
     if (this.#snapshot === undefined)
       throw new ArtifactReaderFailure(
-        "integrity",
-        "ASAR snapshot is not available",
+        "unavailable",
+        "ASAR snapshot was closed",
       );
     return this.#snapshot.path;
   }
@@ -537,7 +541,7 @@ export class AsarArtifactReader implements ArtifactReader {
         throw new ArtifactReaderFailure(
           "integrity",
           `ASAR unpacked entry changed before read: ${entry.path}`,
-          {},
+          { integrityCheck: "unpacked-entry-identity" },
           artifactIntegrityDetails(
             entry.path,
             entry.declaredIntegrity,
@@ -634,7 +638,9 @@ export class AsarArtifactReader implements ArtifactReader {
     const source = readArtifactFileChunks(handle, readOptions);
     const owned = this.#ownedHandles.get(handle);
     if (owned === undefined)
-      throw new ArtifactReaderFailure("integrity", "ASAR handle has no owner");
+      throw new ArtifactReaderFailure("integrity", "ASAR handle has no owner", {
+        integrityCheck: "reader-ownership",
+      });
     owned.source = source;
     owned.output = source;
     if (releaseOnClose !== false)

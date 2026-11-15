@@ -1,18 +1,18 @@
 import { parseAnalysisInput } from "../AnalysisInput.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import type {
   Il2cppSeedOutput,
   Il2cppSeedWriterPort,
   Il2cppSeedReceipt,
-} from "./Il2cppSeedWriterPort.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+} from "../../ports/il2cpp/Il2cppSeedWriterPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import {
   requireAnalysisViewRetention,
   summarizeRetainedAnalysis,
   type AnalysisViewRetention,
 } from "../analysisView/AnalysisViewService.js";
-import type { Il2cppMetadataPort } from "./Il2cppMetadataPort.js";
+import type { Il2cppMetadataPort } from "../../ports/il2cpp/Il2cppMetadataPort.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisInputError,
@@ -28,6 +28,7 @@ import {
   type Il2cppMetadataProviderInput,
 } from "../../domain/il2cpp/il2cppMetadata.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_il2cpp_metadata";
 const NO_RETENTION: AnalysisViewRetention = {
@@ -58,19 +59,14 @@ export class Il2cppMetadataService {
                 this.provider.identity.id,
                 [],
                 {
-                  reason:
-                    cause instanceof Error ? cause.message : String(cause),
+                  reason: errorMessage(cause),
                 },
                 { cause, operation: OPERATION },
               );
         failure =
           failure === undefined
             ? next
-            : analysisErrorWithCleanupFailure(
-                failure,
-                next,
-                OPERATION,
-              ).bindCleanupDependencies([failure, next]);
+            : analysisErrorWithCleanupDependencies(failure, next, OPERATION);
       }
     }
     if (failure !== undefined) throw failure;
@@ -115,7 +111,7 @@ export class Il2cppMetadataService {
               path: ["ghidra_seeds"],
               reason: "invalid_value",
               message:
-                "--ghidra-seeds needs --binary to link method addresses.",
+                "Ghidra seed output links method addresses in binary_path.",
             },
           ]),
         );

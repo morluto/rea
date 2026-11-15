@@ -5,7 +5,6 @@ import {
   captureDom,
   captureFrames,
   captureResources,
-  cdpFrameUrl,
   classifyCdpFrameUrl,
   observeCdpFrameUrl,
 } from "./CdpCaptureDocuments.js";
@@ -19,16 +18,25 @@ import { inspectWebPageInputSchema } from "../domain/browserObservation.js";
 const origin = "https://app.example.test";
 
 it.each([
-  [{ url: `${origin}/page?x=1#old` }, `${origin}/page?x=1#old`],
+  [
+    { url: `${origin}/page?x=1#old` },
+    { kind: "observed", url: `${origin}/page?x=1#old` },
+  ],
   [
     { url: `${origin}/page?x=1#old`, urlFragment: "#new" },
-    `${origin}/page?x=1#new`,
+    { kind: "observed", url: `${origin}/page?x=1#new` },
   ],
-  [{ url: `${origin}/page?x=1#old`, urlFragment: "" }, `${origin}/page?x=1`],
-  [{ url: `${origin}/page`, urlFragment: null }, undefined],
-  [{ url: `${origin}/page`, urlFragment: "missing-hash" }, undefined],
+  [
+    { url: `${origin}/page?x=1#old`, urlFragment: "" },
+    { kind: "observed", url: `${origin}/page?x=1` },
+  ],
+  [{ url: `${origin}/page`, urlFragment: null }, { kind: "invalid_fragment" }],
+  [
+    { url: `${origin}/page`, urlFragment: "missing-hash" },
+    { kind: "invalid_fragment" },
+  ],
 ])("preserves frame URL fragment semantics: %j", (frame, expected) => {
-  expect(cdpFrameUrl(frame)).toBe(expected);
+  expect(observeCdpFrameUrl(frame)).toMatchObject(expected);
 });
 
 it("keeps source identity and scope independent while redacting transport credentials", () => {

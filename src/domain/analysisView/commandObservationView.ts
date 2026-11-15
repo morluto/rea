@@ -4,7 +4,7 @@ import {
   gdbCommandResultSchema,
 } from "../commandObservation.js";
 import { digestSchema } from "../digests.js";
-import { providerSchema } from "../evidence.js";
+import { providerSchema, evidenceSubjectTarget } from "../evidence.js";
 import { analysisInputErrorFromIssues } from "../inputIssueProjection.js";
 import { jsonValueSchema } from "../jsonValue.js";
 import { err, ok } from "../result.js";
@@ -81,15 +81,16 @@ export const projectCommandObservationView = (
         { cause: parameters.error },
       ),
     );
+  const subject =
+    parent.subject === undefined
+      ? undefined
+      : evidenceSubjectTarget(parent.subject);
   const artifact =
-    parent.subject === null
-      ? null
-      : parent.subject === undefined
-        ? (parent.artifact ?? null)
-        : {
-            path: parent.subject.local_path,
-            sha256: parent.subject.digest.sha256,
-          };
+    parent.subject === undefined
+      ? (parent.artifact ?? null)
+      : subject === undefined
+        ? null
+        : { path: subject.path, sha256: subject.sha256 };
   const shared = {
     kind: "summary" as const,
     view,
@@ -99,7 +100,7 @@ export const projectCommandObservationView = (
     source_provider: parent.provider ?? null,
     source_analysis_profile_digest: parent.analysisProfile?.digest ?? null,
     source_parameters: parameters.data,
-    coverage: completeWithinViewCoverage(1, 1),
+    coverage: completeWithinViewCoverage(1),
     limitations: boundedViewMessages(
       parent.limitations,
       parent.evidenceId,

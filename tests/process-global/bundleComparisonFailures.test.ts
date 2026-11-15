@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { readdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -12,10 +13,10 @@ import {
   readImmutableEvidenceBundle,
   writeEvidenceBundle,
 } from "../../src/application/EvidenceBundleFiles.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { OwnedStagedOutput } from "../../src/filesystem/OwnedStagedOutput.js";
 import { OwnedFileHandle } from "../../src/filesystem/OwnedFileHandle.js";
-import { RetainedRegularFileCleanupFailure } from "../../src/application/RegularFileRead.js";
+import { RetainedRegularFileCleanupFailure } from "../../src/process/RegularFileRead.js";
 import * as bundleComparison from "../../src/domain/bundleComparison.js";
 import * as bundleSummary from "../../src/domain/evidenceRecordSummary.js";
 import { bundleComparisonResultSchema } from "../../src/domain/bundleComparison.js";
@@ -222,7 +223,7 @@ it.each(unexpectedBundleFailures)(
     );
     const { bundle } = await validBundleFile(directory);
     const existing = evidenceDomain.createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "observe",

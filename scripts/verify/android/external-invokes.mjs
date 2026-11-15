@@ -5,10 +5,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../../../dist/domain/evidence.js";
 import { artifactMcpCall } from "../../lib/artifact-e2e.mjs";
 import { withVerifierCleanup } from "../../lib/verifier-cleanup.mjs";
-import {
-  INLINE_EVIDENCE_MCP_ENVIRONMENT,
-  schemaVerifierEnvironment,
-} from "../../lib/mcp-verification-environment.mjs";
+import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../lib/mcp-verification-environment.mjs";
 import {
   requireMcpOutput,
   requireMcpToolError,
@@ -31,7 +28,7 @@ const input = (path, index) => ({
 const check = (value, digest, index, dexEntry) => {
   const evidence = parseEvidence(value);
   assert.equal(evidence.operation, operation);
-  assert.equal(evidence.subject.digest.sha256, digest);
+  assert.equal(evidence.subject.identity.sha256, digest);
   const result = evidence.normalized_result;
   assert.equal(result.target_definition, "external");
   assert.equal(result.reference_scope, "direct_dex_invokes");
@@ -107,10 +104,10 @@ const verifyApk = async (options, path, dexEntry) => {
     command: process.execPath,
     args: [options.entrypoint, "mcp"],
     cwd: options.repository,
-    env: schemaVerifierEnvironment({
+    env: {
       ...options.environment,
       ...INLINE_EVIDENCE_MCP_ENVIRONMENT,
-    }),
+    },
     stderr: "pipe",
   });
   const client = new Client({
@@ -209,7 +206,7 @@ const verifyLimit = async (
 
 const checkSiteBudget = (value, digest) => {
   const evidence = parseEvidence(value);
-  assert.equal(evidence.subject.digest.sha256, digest);
+  assert.equal(evidence.subject.identity.sha256, digest);
   const result = evidence.normalized_result;
   assert.equal(result.total, 11);
   const partial = result.references.filter(
@@ -256,10 +253,10 @@ const verifySiteBudget = async (options, path, control) => {
     command: process.execPath,
     args: [options.entrypoint, "mcp"],
     cwd: options.repository,
-    env: schemaVerifierEnvironment({
+    env: {
       ...options.environment,
       ...INLINE_EVIDENCE_MCP_ENVIRONMENT,
-    }),
+    },
     stderr: "pipe",
   });
   const client = new Client({ name: "rea-external-site-budget", version: "1" });

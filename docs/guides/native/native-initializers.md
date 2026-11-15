@@ -172,8 +172,17 @@ visible.
 `offset` and `limit` page the ordered list (default limit 64, maximum 4096).
 `coverage.examined_entries` counts every slot read, including omitted
 sentinels, and `total_entries` (the listed entries) is set when the inventory
-is complete. At most 65536 slots are examined; beyond that, or when relocation
-coverage is unknown, `status` and `coverage.status` are `incomplete`.
+is complete. At most 65536 slots are examined. Any gap makes `status`
+`incomplete`, and `coverage.status` says which kind it is:
+
+- `partial`: declared slots or names were examined but not reported. Examples
+  are the 65536-slot budget, an array that is compressed, not file-backed,
+  has no size tag or has trailing bytes, and a name over the 1024-byte budget.
+- `unknown`: whether the listed facts are complete cannot be determined.
+  Examples are unknown relocation, fixup, symbol or mapping coverage, a
+  duplicate dynamic tag and a `PT_DYNAMIC` without `DT_NULL`.
+
+When both kinds occur, `coverage.status` is `unknown`.
 
 ELF symbol names come from at most 65536 symbols across all `SHT_SYMTAB` and
 `SHT_DYNSYM` tables together, and section `REL` / `RELA` relocations from at

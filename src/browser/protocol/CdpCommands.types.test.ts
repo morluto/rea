@@ -7,6 +7,7 @@ import type {
   CdpCommandResult,
   CdpDomainWith,
 } from "./CdpCommands.js";
+import type { CdpEventName, CdpProtocolEvent } from "./CdpEvents.js";
 
 // `npm run typecheck` compiles this file. A `@ts-expect-error` whose line
 // starts to compile fails the typecheck, so these are negative compile tests.
@@ -48,4 +49,20 @@ it("resolves a send to the command's parsed result", () => {
   expectTypeOf<CdpCommandResult<"Target.getTargets">>().toEqualTypeOf<{
     targetInfos: unknown[];
   }>();
+});
+
+// A protocol event REA has not registered a payload schema for.
+type UnregisteredEvent = "Network.dataReceived";
+
+it("parses only events with a registered payload schema", () => {
+  expectTypeOf<"Page.frameNavigated">().toExtend<CdpEventName>();
+  expectTypeOf<UnregisteredEvent>().not.toExtend<CdpEventName>();
+  expectTypeOf<UnregisteredEvent>().toExtend<CdpProtocolEvent>();
+  expectTypeOf<"Page.notAnEvent">().not.toExtend<CdpProtocolEvent>();
+
+  // Playwright subscriptions name an event from the protocol table.
+  const subscribe = (session: PlaywrightCdpSession) =>
+    // @ts-expect-error An event name outside the protocol table does not compile.
+    session.on("Page.notAnEvent", () => undefined);
+  expectTypeOf(subscribe).toBeFunction();
 });

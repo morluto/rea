@@ -4,10 +4,12 @@ import {
   withArtifactRegularFile,
   assertArtifactReadActive,
   artifactSelectedPathErrno,
-} from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { hashStableRootArtifactHandle } from "../artifacts/inventory/hashStableRootArtifact.js";
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+  hashStableRootArtifactHandle,
+  targetDigestChangedFailure,
+} from "../resources/index.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** A positional reader for one slice of the descriptor bound to the target. */
 export interface NativeMachoSource {
@@ -32,14 +34,16 @@ export class NativeMachoSourceVerificationFailure extends ArtifactReaderFailure 
       verificationCause instanceof ArtifactReaderFailure
         ? verificationCause.reason
         : "io",
-      verificationCause instanceof Error
-        ? verificationCause.message
-        : String(verificationCause),
+      errorMessage(verificationCause),
       {
         cause: verificationCause,
-        ...(verificationCause instanceof ArtifactReaderFailure &&
-        verificationCause.cancellation !== undefined
-          ? { cancellation: verificationCause.cancellation }
+        ...(verificationCause instanceof ArtifactReaderFailure
+          ? {
+              ...verificationCause.primaryFacts(),
+              ...(verificationCause.cancellation === undefined
+                ? {}
+                : { cancellation: verificationCause.cancellation }),
+            }
           : {}),
       },
       verificationCause instanceof ArtifactReaderFailure
@@ -82,14 +86,15 @@ export const withNativeMachoSource = <T>(
             throw new ArtifactReaderFailure(
               "integrity",
               `Active Mach-O target changed: ${target.path}`,
-              { cause },
+              { cause, integrityCheck: "container-identity" },
             );
           throw cause;
         });
         if (digest.sha256 !== target.sha256)
-          throw new ArtifactReaderFailure(
-            "integrity",
-            `Active Mach-O target digest changed: expected ${target.sha256}, observed ${digest.sha256}`,
+          throw targetDigestChangedFailure(
+            "Mach-O target",
+            target.sha256,
+            digest.sha256,
           );
       };
       await verify();
@@ -122,6 +127,7 @@ export const withNativeMachoSource = <T>(
             throw new ArtifactReaderFailure(
               "integrity",
               "Mach-O source changed during slice read.",
+              { integrityCheck: "read-coverage" },
             );
           return bytes;
         },

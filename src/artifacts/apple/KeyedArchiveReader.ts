@@ -1,3 +1,17 @@
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
+import {
+  targetDigestChangedFailure,
+  readStableArtifact,
+  projectStableArtifactFailure,
+  ArtifactReaderFailure,
+  type ArtifactEntry,
+  artifactSelectedPathErrno,
+  artifactFilePrimaryFacts,
+  assertArtifactReadActive,
+  bindArtifactFileCleanup,
+  ArtifactResourceScope,
+  translateArtifactFailure,
+} from "../../resources/index.js";
 import { createHash } from "node:crypto";
 import {
   decodeLimit,
@@ -6,12 +20,11 @@ import {
 } from "../../domain/parseFailure.js";
 import { basename, join } from "node:path";
 import { realpath } from "node:fs/promises";
-import { readStableArtifact } from "../readStableArtifact.js";
-import { projectStableArtifactFailure } from "../StableArtifactFailure.js";
+import { InternalInvariantError } from "../../domain/internalInvariant.js";
 import { ARTIFACT_GRAPH_PROVIDER } from "../../domain/investigationProviders.js";
 import { z } from "zod";
 
-import { decodeBinaryPropertyList } from "./BinaryPlistMaterializer.js";
+import { decodeBinaryPropertyList } from "../../domain/apple/binaryPlistMaterializer.js";
 import { plistDuplicateKeyLimitations } from "../../domain/apple/plistDuplicateKeys.js";
 import {
   AnalysisAccessDeniedError,
@@ -30,7 +43,7 @@ import { createPlistNumberProjection } from "../../domain/apple/plistNumbers.js"
 import {
   scanBinaryPlistScalars,
   UnsupportedBinaryPlistUidError,
-} from "./PlistScalars.js";
+} from "../../domain/apple/plistScalars.js";
 import { parseXmlPropertyList } from "../../domain/propertyListKeys.js";
 import {
   KeyedArchiveKindError,
@@ -42,18 +55,8 @@ import {
   DirectoryArtifactReader,
   DirectoryArtifactEntryAccessDenied,
 } from "../DirectoryArtifactReader.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
-import type { ArtifactEntry } from "../ArtifactReader.js";
-import {
-  artifactSelectedPathErrno,
-  artifactFilePrimaryFacts,
-  assertArtifactReadActive,
-  bindArtifactFileCleanup,
-} from "../ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 
 import { decodeXmlPlistText } from "../../domain/propertyListXmlText.js";
@@ -61,7 +64,8 @@ import {
   hasBinaryPlistSignature,
   hasNibArchiveSignature,
 } from "../../domain/apple/appleArchiveFormat.js";
-import { estimateBinaryPlistExpansion } from "./PropertyListDecodeBudget.js";
+import { estimateBinaryPlistExpansion } from "../../domain/apple/propertyListDecodeBudget.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const MAX_BYTES = 64 * 1024 * 1024;
 /** Decoded representation budget, the same 8:1 ratio Interface Builder uses. */
@@ -224,11 +228,11 @@ export const inspectBundleKeyedArchive = (input: BundleKeyedArchiveInput) => {
           "inspect_keyed_archive",
           resources.cleanupFailure({ kind: "completed" }, [released]),
         );
-        throw analysisErrorWithCleanupFailure(
+        throw analysisErrorWithCleanupDependencies(
           outcome.cause,
           cleanup,
           "inspect_keyed_archive",
-        ).bindCleanupDependencies([outcome.cause, cleanup]);
+        );
       }
       throw resources.cleanupFailure(outcome, [released]);
     }
@@ -300,9 +304,10 @@ export const inspectStandaloneKeyedArchive = (input: {
       input.signal,
     );
     if (snapshot.sha256 !== input.targetSha256)
-      throw new ArtifactReaderFailure(
-        "integrity",
-        `Active archive digest changed: expected ${input.targetSha256}, observed ${snapshot.sha256}`,
+      throw targetDigestChangedFailure(
+        "archive",
+        input.targetSha256,
+        snapshot.sha256,
       );
     return decodeSelectedArchive(snapshot.bytes, {
       targetSha256: input.targetSha256,
@@ -454,7 +459,12 @@ const decodeSelectedArchive = (
       ...decodeKeyedArchiveBytes(bytes, input.parameters),
     });
   } catch (cause) {
-    if (cause instanceof AnalysisInputError) throw cause;
+    // A broken internal assumption is a REA defect, not a damaged archive.
+    if (
+      cause instanceof AnalysisInputError ||
+      cause instanceof InternalInvariantError
+    )
+      throw cause;
     if (cause instanceof UnsupportedBinaryPlistUidError)
       throw new AnalysisUnsupportedTargetError(
         "inspect_keyed_archive",
@@ -472,7 +482,7 @@ const decodeSelectedArchive = (
           cause,
           remediationAction: keyedArchiveKindRemediation(
             cause.fileKind,
-            input.platform ?? process.platform,
+            input.platform ?? HOST_PLATFORM.platform,
           ),
         },
       );
@@ -481,7 +491,7 @@ const decodeSelectedArchive = (
         isHostLimitFailure(cause)
         ? "limit"
         : "format",
-      `Cannot decode selected Foundation keyed archive: ${cause instanceof Error ? cause.message : String(cause)}`,
+      `Cannot decode selected Foundation keyed archive: ${errorMessage(cause)}`,
       { cause },
     );
   }

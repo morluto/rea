@@ -1,25 +1,24 @@
-import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
+import {
+  deadlineParameterLimit,
+  MAX_NODE_TIMER_DELAY_MS,
+} from "../domain/analysisResourceLimits.js";
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { processInspectionCancellationError } from "../providers/OwnedCommandCleanup.js";
 import { APKTOOL_PROVIDER_IDENTITY } from "./ApktoolProviderIdentity.js";
 import { countDecodedFiles } from "./ApktoolDecodedInventory.js";
 import { ApktoolWorkspace } from "./ApktoolWorkspace.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
+  ArtifactResourceScope,
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import {
+  ArtifactReaderFailure,
   ArtifactFileCleanupFailure,
   artifactFilePrimaryFacts,
   artifactFileCancellationCause,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
-import {
-  capturedApktoolCommandOutput,
-  capturedApktoolFailureOutput,
-} from "./ApktoolCommandOutput.js";
+import { capturedApktoolFailureOutput } from "./ApktoolCommandOutput.js";
 import { providerOutcomeOf } from "../process/ProviderOutcome.js";
 import { classifyProviderOutcome } from "../process/classifyProviderOutcome.js";
 import { ApktoolCommandCleanup } from "./ApktoolCommandCleanup.js";
@@ -37,7 +36,7 @@ import {
   type ProviderAvailability,
   createAnalysisExecution,
   type AnalysisExecution,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { providerConfigurationRefusal } from "../domain/providerConfigurationRefusal.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import {
@@ -56,7 +55,7 @@ import {
   OwnerCancellation,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { finalizedResult, runOwned } from "../providers/runOwned.js";
@@ -69,7 +68,7 @@ import {
 import type { RuntimeExhaustionArea } from "../process/RuntimeExhaustion.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { WindowsBatchCommandError } from "../process/WindowsBatchCommand.js";
-import { ownedProcessPrerequisiteAvailability } from "../application/ownedProcessAvailability.js";
+import { ownedProcessPrerequisiteAvailability } from "../providers/ownedProcessAvailability.js";
 import {
   ApktoolConfigurationFailure,
   apktoolConfigurationAvailability,
@@ -110,13 +109,16 @@ const APKTOOL_EXHAUSTION_REMEDIATION: Readonly<
 
 const STDERR_EXCERPT_BYTES = 512;
 
-const apktoolDecodeTimeoutGuidance = (
-  timeoutMs: number,
-): { readonly userMessage: string; readonly remediationAction: string } => ({
+const apktoolDecodeTimeoutGuidance = (timeoutMs: number) => ({
   userMessage: `apktool decode reached its ${String(timeoutMs)} ms wall-clock deadline (deadlineExpired).`,
+  limit: deadlineParameterLimit(
+    "decode_timeout_ms",
+    timeoutMs,
+    DEFAULT_APKTOOL_DECODE_TIMEOUT_MS,
+  ),
   remediationAction: `${
     timeoutMs < MAX_NODE_TIMER_DELAY_MS
-      ? `Increase decode_timeout_ms above ${String(timeoutMs)} (integer milliseconds from 1 to ${String(MAX_NODE_TIMER_DELAY_MS)}; omitted means ${String(DEFAULT_APKTOOL_DECODE_TIMEOUT_MS)}), or use rea decode-android-resources <path> --decode-timeout-ms <milliseconds> on the CLI.`
+      ? `Increase decode_timeout_ms above ${String(timeoutMs)} (integer milliseconds from 1 to ${String(MAX_NODE_TIMER_DELAY_MS)}; omitted means ${String(DEFAULT_APKTOOL_DECODE_TIMEOUT_MS)}).`
       : `decode_timeout_ms is already at the maximum ${String(MAX_NODE_TIMER_DELAY_MS)} ms; do not increase it further.`
   } A change applies on the next decode. It does not raise the ${String(DECODE_MAX_OUTPUT_BYTES)}-byte output capture allowance or the version probe; both have no runtime override. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
 });
@@ -143,11 +145,17 @@ const runApktool = async (
   environment: Readonly<Record<string, string | undefined>>,
   commands: ApktoolCommandCleanup,
   root: string,
+  platform: NodeJS.Platform,
 ): Promise<Result<{ stdout: string; stderr: string }, AnalysisError>> => {
   if (signal?.aborted === true) return err(cancelledBy(operation, signal));
   let invocation: ReturnType<typeof apktoolInvocation>;
   try {
-    invocation = apktoolInvocation(selection, arguments_, environment);
+    invocation = apktoolInvocation(
+      selection,
+      arguments_,
+      environment,
+      platform,
+    );
   } catch (cause) {
     if (!(cause instanceof WindowsBatchCommandError)) throw cause;
     const reason = `The apktool batch launcher cannot receive REA's decode paths through cmd.exe: ${cause.message}`;
@@ -227,7 +235,7 @@ const apktoolCommandFailure = (
     });
   return classifyProviderOutcome(providerOutcomeOf(failure), {
     operation,
-    capturedOutput: capturedApktoolCommandOutput,
+    capturedOutput: capturedProviderOutput,
     // Ownership preparation can retain output before any process exists.
     details: capturedOutput === undefined ? {} : { capturedOutput },
     timeout: {
@@ -277,6 +285,8 @@ const apktoolCommandFailure = (
 export interface ApktoolProviderOptions {
   readonly environment?: Readonly<Record<string, string | undefined>>;
   readonly removeWorkspace?: (path: string) => Promise<void>;
+  /** The host apktool runs on; defaults to the running host. */
+  readonly platform?: NodeJS.Platform;
 }
 
 type DecodeFacts = Pick<ApktoolDecodeResult, "client" | "target" | "locale"> &
@@ -294,6 +304,7 @@ type DecodeFacts = Pick<ApktoolDecodeResult, "client" | "target" | "locale"> &
  * (`--no-src`) because Java-source recovery belongs to the JADX family.
  */
 export class ApktoolProvider {
+  private readonly platform: NodeJS.Platform;
   private readonly selectedEnvironment:
     | Readonly<Record<string, string | undefined>>
     | undefined;
@@ -309,17 +320,18 @@ export class ApktoolProvider {
   #closePromise: Promise<void> | undefined;
 
   constructor(options: ApktoolProviderOptions = {}) {
+    this.platform = options.platform ?? HOST_PLATFORM.platform;
     this.selectedEnvironment =
       options.environment === undefined
         ? undefined
-        : snapshotEnvironment(options.environment, HOST_PLATFORM.platform);
+        : snapshotEnvironment(options.environment, this.platform);
     this.removeWorkspace = options.removeWorkspace;
   }
 
   private operationEnvironment(): Readonly<NodeJS.ProcessEnv> {
     return (
       this.selectedEnvironment ??
-      snapshotEnvironment(process.env, HOST_PLATFORM.platform)
+      snapshotEnvironment(process.env, this.platform)
     );
   }
 
@@ -359,12 +371,13 @@ export class ApktoolProvider {
     try {
       const selection = await resolveApktoolCommand(
         environment,
-        process.platform,
+        this.platform,
         signal,
       );
       await inspectApktoolClient(selection, this.#commands, {
         signal,
         environment,
+        platform: this.platform,
       });
       throwIfCancelled("inspect_apktool_client", signal);
       return {
@@ -439,12 +452,13 @@ export class ApktoolProvider {
     try {
       selection = await resolveApktoolCommand(
         environment,
-        process.platform,
+        this.platform,
         signal,
       );
       identity = await inspectApktoolClient(selection, this.#commands, {
         signal,
         environment,
+        platform: this.platform,
       });
     } catch (cause) {
       if (cause instanceof AnalysisError)
@@ -528,11 +542,7 @@ export class ApktoolProvider {
     if (first === undefined) return;
     throw failures.reduce(
       (primary, cleanup) =>
-        analysisErrorWithCleanupFailure(
-          primary,
-          cleanup,
-          "close",
-        ).bindCleanupDependencies([primary, cleanup]),
+        analysisErrorWithCleanupDependencies(primary, cleanup, "close"),
       first,
     );
   }
@@ -602,6 +612,7 @@ export class ApktoolProvider {
         environment,
         this.#commands,
         root,
+        this.platform,
       );
       if (!decoded.ok) {
         throw decoded.error;
@@ -740,11 +751,7 @@ export class ApktoolProvider {
         physical === cause && cause instanceof AnalysisError
           ? cause
           : failure.cleanupIncomplete
-            ? analysisErrorWithCleanupFailure(
-                primary,
-                failure,
-                operation,
-              ).bindCleanupDependencies([primary, failure])
+            ? analysisErrorWithCleanupDependencies(primary, failure, operation)
             : primary;
       if (
         completedDecode !== undefined &&

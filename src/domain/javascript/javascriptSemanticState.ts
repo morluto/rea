@@ -1,4 +1,5 @@
 import type { JavaScriptSemanticPrecision } from "./javascriptSemanticPrecision.js";
+import type { JavaScriptMemberMutationAllowance } from "./javascriptSemanticWorkAllowance.js";
 import type { SemanticPropertyReadSource } from "./javascriptSemanticIterationSources.js";
 import * as t from "@babel/types";
 import {
@@ -151,6 +152,8 @@ export type SemanticPrototypeOwner = (typeof semanticPrototypeOwners)[number];
 /** Shared state for semantic collection and evaluation. */
 export interface JavaScriptSemanticAnalysisState {
   readonly precision: JavaScriptSemanticPrecision;
+  /** Alias states the member-mutation phase may schedule for this source. */
+  readonly memberMutationAllowance: JavaScriptMemberMutationAllowance;
   arrayIterationUnknown: boolean;
   /** Receiver isolation requires the completed member-effect inventory. */
   memberMutationFactsComplete: boolean;
@@ -255,11 +258,16 @@ export interface JavaScriptBindingIndex {
     referenceNode: t.Node,
     propertyPath?: JavaScriptSemanticPropertyPath,
   ): JavaScriptSemanticReferenceEffectsAtSite;
-  /** Stop at the first relevant prior/uncertain effect without retaining a report. */
-  referenceMayHaveChangedAt(
-    site: t.Node,
-    referenceNode: t.Node,
-    propertyPath?: JavaScriptSemanticPropertyPath,
+  /**
+   * The effect log's read query: whether reading `target` (at `path`, or the
+   * member path `target` spells) at `read` may observe a recorded effect. It
+   * stops at the first such effect, and answers true until member-mutation
+   * facts are complete.
+   */
+  mayObserve(
+    read: t.Node,
+    target: t.Node,
+    path?: JavaScriptSemanticPropertyPath,
   ): boolean;
   referencesSteps(): Generator<void, readonly JavaScriptSemanticReference[]>;
 }

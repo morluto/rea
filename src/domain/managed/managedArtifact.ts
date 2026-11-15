@@ -1,10 +1,34 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
+import type { CoverageStatus } from "../coverage.js";
 import { digestSchema } from "../digests.js";
+import { analysisParameterLimitSchema } from "../analysisSettingDefinitions.js";
 import { managedFieldConstantSchema } from "./managedFieldConstant.js";
 
 /** Build-local ECMA-335 metadata token emitted as an eight-digit lowercase hex value. */
 export const managedMetadataTokenSchema = z.string().regex(/^0x[0-9a-f]{8}$/u);
 const offsetSchema = z.int().min(0);
+
+/**
+ * Parser coverage of one managed inspection. `unavailable` means the parser
+ * examined nothing of that kind, unlike `partial`, which records a known gap.
+ */
+export const managedInspectionStateSchema = z.enum([
+  ...knownCoverageStatusSchema.options,
+  "unavailable",
+]);
+export type ManagedInspectionState = z.infer<
+  typeof managedInspectionStateSchema
+>;
+
+/**
+ * What a result derived from one managed inspection can claim about its
+ * coverage: an unavailable inspection examined nothing, so what it would cover
+ * is unknown rather than partially known.
+ */
+export const managedInspectionCoverage = (
+  state: ManagedInspectionState,
+): CoverageStatus => (state === "unavailable" ? "unknown" : state);
 
 /** A 16-byte CLI metadata GUID without RFC 4122 version/variant restrictions. */
 export const cliMetadataGuidSchema = z
@@ -42,6 +66,16 @@ const moduleIdentitySchema = z.object({
   row_offset: offsetSchema,
 });
 
+/**
+ * What a managed inspection established about the CLI metadata: none present,
+ * read in full or in part, or present but unreadable.
+ */
+export const managedMetadataStatusSchema = z.enum([
+  "absent",
+  ...knownCoverageStatusSchema.options,
+  "malformed",
+]);
+
 const managedArtifactReferenceSchema = z.object({
   path: z.string().min(1),
   sha256: digestSchema,
@@ -50,7 +84,7 @@ const managedArtifactReferenceSchema = z.object({
 });
 
 const managedMetadataSummarySchema = z.object({
-  status: z.enum(["absent", "complete", "partial", "malformed"]),
+  status: managedMetadataStatusSchema,
   version: z.string().nullable(),
   table_row_counts: z.record(z.string(), z.int().min(0).max(0xffff_ffff)),
 });
@@ -359,7 +393,14 @@ const managedNativeImplementationSchema = z.object({
   ]),
 });
 
+const targetRowResolvedSchema = z
+  .boolean()
+  .describe(
+    "True when the producer resolved the operand to a matching member row with a decoded signature and owner; false means unresolved. Does not establish runtime binding.",
+  );
+
 const managedCallEdgeSchema = z.object({
+  target_row_resolved: targetRowResolvedSchema,
   caller_token: managedMetadataTokenSchema,
   il_offset: offsetSchema.nullable(),
   target_identity_sha256: digestSchema
@@ -381,6 +422,7 @@ const managedCallEdgeSchema = z.object({
 });
 
 const managedFieldAccessSchema = z.object({
+  target_row_resolved: targetRowResolvedSchema,
   method_token: managedMetadataTokenSchema,
   il_offset: offsetSchema.nullable(),
   target_identity_sha256: digestSchema
@@ -418,6 +460,8 @@ const managedParseIssueSchema = z.object({
   scope: z.string().min(1),
   offset: offsetSchema.nullable(),
   detail: z.string().min(1),
+  /** The request parameter that bounded a resource-limit issue. */
+  limit: analysisParameterLimitSchema.exactOptional(),
 });
 
 /** Provider-neutral, execution-free PE/CLI triage and identity result. */
@@ -489,7 +533,7 @@ export const managedArtifactInspectionSchema = z.object({
     ),
   }),
   metadata: z.object({
-    status: z.enum(["absent", "complete", "partial", "malformed"]),
+    status: managedMetadataStatusSchema,
     version: z.string().nullable(),
     stream_names: z.array(z.string()),
     table_row_counts: z.record(z.string(), z.int().min(0).max(0xffff_ffff)),
@@ -501,74 +545,96 @@ export const managedArtifactInspectionSchema = z.object({
   resources: z.array(managedResourceSchema),
   attributes: z.array(customAttributeSchema),
   coverage: z.object({
-    state: z.enum(["complete", "partial", "unavailable"]),
+    state: managedInspectionStateSchema,
     issues: z.array(managedParseIssueSchema),
   }),
   limitations: z.array(z.string()),
 });
 
+const UNEXAMINED_MEMBER_COLLECTIONS = [
+  "fields",
+  "methods",
+  "member_refs",
+  "call_edges",
+  "field_accesses",
+] as const;
+
 /** Provider-neutral, execution-free metadata/signature/IL member inspection. */
-export const managedMemberInspectionSchema = z.object({
-  signature_resolution: z
-    .enum(["type-names-v2"])
-    .nullable()
-    .describe(
-      "Signature type-name resolution was examined, including unresolved operands, and readable operand names are rendered; null means member decoding exceeded capacity and no members were examined.",
-    ),
-  artifact: managedArtifactReferenceSchema,
-  module: moduleIdentitySchema.nullable(),
-  assembly: assemblyIdentitySchema.nullable(),
-  metadata: managedMetadataSummarySchema,
-  identity_scope: managedTokenIdentityScopeSchema,
-  types: z.array(managedTypeSchema),
-  // False means a NestedClass row was unreadable or invalid, not that no
-  // nested types exist.
-  nesting_read: z
-    .boolean()
-    .describe(
-      "Whether all NestedClass rows were read and valid; false means nesting is incomplete. Individual name digests can remain unresolved for missing, cyclic or over-deep enclosing chains.",
-    ),
-  // Null means the table was not examined (member decoding exceeded capacity),
-  // not that it was empty.
-  exported_types: z.array(managedExportedTypeSchema).nullable(),
-  fields: z.array(managedFieldSchema),
-  methods: z.array(managedMethodSchema),
-  member_refs: z.array(managedMemberReferenceSchema),
-  call_edges: z.array(managedCallEdgeSchema),
-  field_accesses: z.array(managedFieldAccessSchema),
-  // Distinct #US literals loaded by ldstr in the inspected method bodies, in
-  // token order, with their own coverage: #US issues never enter the member
-  // coverage. null means they were not examined, not that there were none.
-  user_strings: z
-    .object({
-      state: z.enum(["complete", "partial"]),
-      literals: z.array(managedUserStringSchema),
+export const managedMemberInspectionSchema = z
+  .object({
+    signature_resolution: z
+      .enum(["type-names-v2"])
+      .nullable()
+      .describe(
+        "Signature type-name resolution was examined, including unresolved operands, and readable operand names are rendered; null means member decoding exceeded capacity and no members were examined.",
+      ),
+    artifact: managedArtifactReferenceSchema,
+    module: moduleIdentitySchema.nullable(),
+    assembly: assemblyIdentitySchema.nullable(),
+    metadata: managedMetadataSummarySchema,
+    identity_scope: managedTokenIdentityScopeSchema,
+    types: z.array(managedTypeSchema),
+    // False means a NestedClass row was unreadable or invalid, not that no
+    // nested types exist.
+    nesting_read: z
+      .boolean()
+      .describe(
+        "Whether all NestedClass rows were read and valid; false means nesting is incomplete. Individual name digests can remain unresolved for missing, cyclic or over-deep enclosing chains.",
+      ),
+    // Null means the table was not examined (member decoding exceeded capacity),
+    // not that it was empty.
+    exported_types: z.array(managedExportedTypeSchema).nullable(),
+    fields: z.array(managedFieldSchema),
+    methods: z.array(managedMethodSchema),
+    member_refs: z.array(managedMemberReferenceSchema),
+    call_edges: z.array(managedCallEdgeSchema),
+    field_accesses: z.array(managedFieldAccessSchema),
+    // Distinct #US literals loaded by ldstr in the inspected method bodies, in
+    // token order, with their own coverage: #US issues never enter the member
+    // coverage. null means they were not examined, not that there were none.
+    user_strings: z
+      .object({
+        state: knownCoverageStatusSchema,
+        literals: z.array(managedUserStringSchema),
+        issues: z.array(managedParseIssueSchema),
+      })
+      .nullable(),
+    /** Caller-selected declaring types; null when every type was inspected. */
+    selection: z
+      .object({
+        type_names: z.array(z.string().min(1)).min(1),
+        unmatched_type_names: z.array(z.string().min(1)),
+      })
+      .nullable(),
+    method_rows: z
+      .object({
+        offset: z.int().nonnegative(),
+        count: z.int().nonnegative(),
+        total: z.int().nonnegative(),
+      })
+      .nullable()
+      .describe(
+        "Examined zero-based MethodDef row interval before declaring-type selection; null means the row scope was not recorded. Row coordinates are build-local and cannot prove cross-build member absence for a page.",
+      ),
+    coverage: z.object({
+      state: managedInspectionStateSchema,
       issues: z.array(managedParseIssueSchema),
-    })
-    .nullable(),
-  /** Caller-selected declaring types; null when every type was inspected. */
-  selection: z
-    .object({
-      type_names: z.array(z.string().min(1)).min(1),
-      unmatched_type_names: z.array(z.string().min(1)),
-    })
-    .nullable(),
-  method_rows: z
-    .object({
-      offset: z.int().nonnegative(),
-      count: z.int().nonnegative(),
-      total: z.int().nonnegative(),
-    })
-    .nullable()
-    .describe(
-      "Examined zero-based MethodDef row interval before declaring-type selection; null means the row scope was not recorded. Row coordinates are build-local and cannot prove cross-build member absence for a page.",
-    ),
-  coverage: z.object({
-    state: z.enum(["complete", "partial", "unavailable"]),
-    issues: z.array(managedParseIssueSchema),
-  }),
-  limitations: z.array(z.string()),
-});
+    }),
+    limitations: z.array(z.string()),
+  })
+  .superRefine((result, context) => {
+    if (result.signature_resolution !== null) return;
+    // Null resolution means member decoding exceeded capacity, so no member was
+    // examined; a member beside it would carry an unattested signature digest.
+    for (const key of UNEXAMINED_MEMBER_COLLECTIONS)
+      if (result[key].length > 0)
+        context.addIssue({
+          code: "custom",
+          path: [key],
+          message:
+            "Members require signature_resolution; null resolution means no members were examined.",
+        });
+  });
 
 /** Provider-neutral managed/native boundary observations from PE/CLI metadata. */
 export const managedNativeBoundaryInspectionSchema = z.object({
@@ -598,7 +664,7 @@ export const managedNativeBoundaryInspectionSchema = z.object({
     mixed_mode_or_native_header: z.boolean().nullable(),
   }),
   coverage: z.object({
-    state: z.enum(["complete", "partial", "unavailable"]),
+    state: managedInspectionStateSchema,
     issues: z.array(managedParseIssueSchema),
   }),
   limitations: z.array(z.string()),

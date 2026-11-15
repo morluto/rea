@@ -3,10 +3,11 @@ import {
   ArtifactFileCancelled,
   ArtifactFileCleanupFailure,
   withArtifactRegularFile,
-} from "../../artifacts/ArtifactFileOperation.js";
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+  normalizeArtifactPath,
+} from "../../resources/index.js";
 import { fileSnapshotPartialObservationSchema } from "../../domain/fileSnapshotObservation.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { OwnedDirectoryHandle } from "../../filesystem/OwnedDirectoryHandle.js";
 import { createHash } from "node:crypto";
 import {
@@ -18,8 +19,6 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
-import { TextDecoder } from "node:util";
-import { normalizeArtifactPath } from "../../artifacts/ArtifactPaths.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
@@ -36,6 +35,8 @@ import {
   sameRegularFileState,
 } from "../../filesystem/RegularFile.js";
 import { RECOVERY_LIMITS, wakaruFixedLimitRecovery } from "./WakaruRelease.js";
+import { isStrictUtf8 } from "../../domain/strictUtf8.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "recover_javascript_sources";
 
@@ -218,14 +219,12 @@ const snapshotRecoveryInput = async (
       );
     throw recoveryInputFailure(
       "path",
-      `Cannot snapshot UTF-8 JavaScript input ${path}: ${recoveryFailureMessage(cause)}`,
+      `Cannot snapshot UTF-8 JavaScript input ${path}: ${errorMessage(cause)}`,
       cause,
     );
   }
-  try {
-    new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  } catch (cause: unknown) {
-    throw new AnalysisInputError(OPERATION, { cause }, [
+  if (!isStrictUtf8(bytes))
+    throw new AnalysisInputError(OPERATION, {}, [
       {
         path: ["path"],
         reason: "invalid_format",
@@ -233,7 +232,6 @@ const snapshotRecoveryInput = async (
         message: `JavaScript input is not valid UTF-8: ${path}`,
       },
     ]);
-  }
   try {
     await mkdir(dirname(snapshotPath), { recursive: true, mode: 0o700 });
     await writeFile(snapshotPath, bytes, { flag: "wx", mode: 0o600 });
@@ -289,7 +287,7 @@ const recoveryInputLayoutPath = async (
       });
     throw recoveryInputFailure(
       "path",
-      `Cannot resolve selected JavaScript input parent ${path}: ${recoveryFailureMessage(cause)}`,
+      `Cannot resolve selected JavaScript input parent ${path}: ${errorMessage(cause)}`,
       cause,
     );
   }
@@ -355,7 +353,7 @@ export const snapshotRecoveryInputs = async (
     } catch (cause: unknown) {
       throw recoveryInputFailure(
         "path",
-        `Cannot preserve selected input path in published artifacts: ${path}: ${recoveryFailureMessage(cause)}`,
+        `Cannot preserve selected input path in published artifacts: ${path}: ${errorMessage(cause)}`,
         cause,
       );
     }
@@ -481,10 +479,6 @@ export const recoveryInputFailure = (
   new AnalysisInputError(OPERATION, { cause }, [
     { path: [field], reason: "invalid_value", message },
   ]);
-
-/** Convert one caught boundary cause into diagnostic text without masking its type. */
-export const recoveryFailureMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
 
 /** Cancellation remains distinct from malformed source or provider output. */
 export const checkRecoveryCancellation = (signal?: AbortSignal): void => {

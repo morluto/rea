@@ -6,13 +6,13 @@ import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-import { translateArtifactFailure } from "../../../src/artifacts/ArtifactOperationFailure.js";
+import { translateArtifactFailure } from "../../../src/resources/index.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactReader,
-} from "../../../src/artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+} from "../../../src/resources/ArtifactReader.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { AsarArtifactReader } from "../../../src/artifacts/AsarArtifactReader.js";
 import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
 import { scanCanonicalArtifactInventoryInScope } from "../../../src/artifacts/inventory/scanCanonical.js";

@@ -63,12 +63,65 @@ cliTest(
       code: "provider_timeout",
       message: expect.stringContaining("analysis_timeout_ms"),
       remediation: {
-        action: expect.stringContaining(
-          "rea analyze-javascript-application <input_path> --analysis-timeout-ms",
-        ),
+        action: expect.stringContaining("Increase analysis_timeout_ms"),
       },
       recovery: { kind: "inspect_timeout_state", timeout_ms: 1 },
+      // The worker names the setting's request parameter; the CLI adds the
+      // option that sets it.
+      details: {
+        limit: {
+          setting: "javascript.analysis_timeout_ms",
+          parameter: "analysis_timeout_ms",
+          cli_flag: "--analysis-timeout-ms",
+        },
+      },
     });
+    expect(
+      JSON.stringify((response.json as { remediation: unknown }).remediation),
+    ).not.toContain("--analysis-timeout-ms");
+  },
+);
+
+cliTest(
+  "records the evaluator budget that limited a source and names its CLI option outside the result",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-js-cli-precision-control-");
+    await writeFile(
+      join(root, "main.js"),
+      'export const selected = flag ? "left" : "right";\n',
+    );
+    const response = await cli.run({
+      arguments: [
+        "analyze-javascript-application",
+        root,
+        "--semantic-precision",
+        '{"primitive_candidates":1}',
+        "--format",
+        "json",
+        "--full-output",
+      ],
+    });
+    expect(response.exitCode).toBe(0);
+    const envelope = response.json as {
+      readonly data: Evidence;
+      readonly meta: { readonly cli_controls?: Record<string, string> };
+    };
+    const result = javascriptApplicationAnalysisResultSchema.parse(
+      envelope.data.normalized_result,
+    );
+    expect(result.semantic_graph.coverage.controls).toContainEqual(
+      expect.objectContaining({
+        control_kind: "parameter",
+        parameter: "semantic_precision.primitive_candidates",
+        effective_value: 1,
+        default_value: 256,
+      }),
+    );
+    expect(envelope.meta.cli_controls).toMatchObject({
+      "semantic_precision.primitive_candidates": "--semantic-precision",
+    });
+    // The result names the contract field; only the envelope names the flag.
+    expect(JSON.stringify(envelope.data)).not.toContain("--semantic-precision");
   },
 );
 

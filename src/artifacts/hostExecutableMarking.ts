@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import type { BigIntStats, Stats } from "node:fs";
 import { extname } from "node:path";
 
@@ -16,7 +17,7 @@ const windowsLaunchableExtensions = new Set([".bat", ".cmd", ".com", ".exe"]);
 export const hostExecutableMarking = (
   path: string,
   metadata: Pick<Stats | BigIntStats, "mode" | "isFile" | "isSymbolicLink">,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
 ): boolean =>
   metadata.isSymbolicLink()
     ? false

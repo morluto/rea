@@ -11,7 +11,7 @@ import {
   type ResourceConstraintRecovery,
 } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import type { AnalysisSettingLimit } from "../domain/analysisSettings.js";
+import type { AnalysisLimit } from "../domain/analysisSettings.js";
 import type { ProviderOutcome } from "./ProviderOutcome.js";
 import type { ProviderProcessSnapshot } from "./ProviderProcess.js";
 import {
@@ -55,14 +55,16 @@ export interface ProviderOutcomeContext {
     readonly userMessage?: string;
     /** The setting or action that changes that deadline. */
     readonly remediationAction?: string;
-    /** The analysis setting that selected the deadline, when one did. */
-    readonly limit?: AnalysisSettingLimit;
+    /** The setting, parameter or environment control that selected the deadline. */
+    readonly limit?: AnalysisLimit;
   };
   readonly outputLimit: {
     /** The budget that was exceeded, when the generic report is not enough. */
     readonly reason?: string;
     readonly limits: ReportedLimits;
     readonly recovery: ResourceConstraintRecovery;
+    /** The per-call control that raises this allowance, when the caller selects it. */
+    readonly limit?: AnalysisLimit;
   };
   /** The enforced process-tree memory limit, when one was requested. */
   readonly memoryLimitBytes?: number | undefined;
@@ -70,6 +72,8 @@ export interface ProviderOutcomeContext {
   readonly resourceSignal?: (signal: "SIGXCPU" | "SIGXFSZ") => {
     readonly limits: ReportedLimits;
     readonly recovery: ResourceConstraintRecovery;
+    /** The per-call control that raises this allowance, when the caller selects it. */
+    readonly limit?: AnalysisLimit;
     /** Provider facts appended to the shared report, such as the selected allowance. */
     readonly detail?: string;
   };
@@ -135,7 +139,13 @@ export const classifyProviderOutcome = (
         "memory",
         context.outputLimit.reason ?? outcome.message,
         context.outputLimit.limits,
-        { ...details, ...context.outputLimit.recovery },
+        {
+          ...details,
+          ...context.outputLimit.recovery,
+          ...(context.outputLimit.limit === undefined
+            ? {}
+            : { limit: context.outputLimit.limit }),
+        },
       );
     case "memory-limit":
       return new AnalysisResourceConstraintError(
@@ -152,7 +162,11 @@ export const classifyProviderOutcome = (
         outcome.signal === "SIGXFSZ" ? "file-size" : "cpu",
         `Producer terminated with ${outcome.signal}; the signal's exact cause is not independently established.${reported?.detail === undefined ? "" : ` ${reported.detail}`}`,
         reported?.limits ?? null,
-        { ...details, ...reported?.recovery },
+        {
+          ...details,
+          ...reported?.recovery,
+          ...(reported?.limit === undefined ? {} : { limit: reported.limit }),
+        },
       );
     }
     case "runtime-exhausted": {

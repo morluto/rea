@@ -1,4 +1,5 @@
 import { constants } from "node:fs";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { access, stat } from "node:fs/promises";
 
 import {
@@ -7,6 +8,7 @@ import {
 } from "../process/PrivateRuntimeRoot.js";
 import type { IdaConfiguration } from "./IdaConfiguration.js";
 import { resolveIdaWorkspaceParent } from "./IdaWorkspace.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** The repair for a workspaceRoot REA cannot create entries in. */
 export const IDA_WORKSPACE_ROOT_REMEDIATION =
@@ -50,7 +52,7 @@ export const admitIdaConfiguration = async (
 ): Promise<IdaAdmission> => {
   if (configuration.mode !== "headless") return { admitted: true };
   const root = configuration.workspaceRoot;
-  const privacy = privateRuntimeRootCapability();
+  const privacy = privateRuntimeRootCapability(HOST_PLATFORM.platform);
   if (!privacy.available)
     return {
       admitted: false,
@@ -78,6 +80,6 @@ const workspaceParentUnusable = async (
     await access(parent, constants.W_OK | constants.X_OK);
     return undefined;
   } catch (cause: unknown) {
-    return `IDA workspaceRoot ${root ?? "the system temporary directory"} is not a usable directory: ${cause instanceof Error ? cause.message : String(cause)}`;
+    return `IDA workspaceRoot ${root ?? "the system temporary directory"} is not a usable directory: ${errorMessage(cause)}`;
   }
 };
