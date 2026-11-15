@@ -7,6 +7,7 @@ import {
   compareCountedBaseline,
   recordLoweredBaseline,
 } from "./counted-baseline.mjs";
+import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
 
 // Architecture guards for the strict-identity / best-effort-inference split.
 // - Composite dedup keys must not NUL-join variable-length or free-form
@@ -189,7 +190,10 @@ const checkCounted = (label, key, selected, pattern, owners) => {
   const counts = new Map();
   for (const file of selected) {
     if (owners.includes(file.path)) continue;
-    const count = file.content.match(pattern)?.length ?? 0;
+    const count =
+      typeof pattern === "function"
+        ? pattern(file.content)
+        : (file.content.match(pattern)?.length ?? 0);
     if (count > 0) counts.set(file.path, count);
   }
   const compared = compareCountedBaseline(
@@ -349,6 +353,17 @@ checkCounted(
   files,
   /\b(?:sections|programs|commands)\.find(?:Last)?\(/gu,
   ["src/application/GuidanceAccess.ts"],
+);
+
+// The same first-match choice, recognized by its shape rather than the
+// table's variable name (see keyed-first-match.mjs). Select through
+// src/domain/keyedCollection instead.
+checkCounted(
+  "first-match lookup by key field in a parser (select through src/domain/keyedCollection)",
+  "keyed-first-match",
+  parserFiles,
+  countKeyedFirstMatches,
+  [],
 );
 
 if (baselinesShrunk) {
