@@ -339,15 +339,35 @@ cliTest(
       expect.objectContaining({
         code: "resource-limit",
         scope: "metadata.representation",
-        offset: null,
+        // The fixture sits within a few hundred bytes of the 64 MiB budget, so
+        // whether a decoding row or the final projection is refused (and so
+        // the offset) follows the recovery envelope's size, not this workflow.
+        limit: expect.objectContaining({
+          parameter: "max_metadata_representation_bytes",
+        }),
       }),
     ]);
 
     const whole = await cli.run({
-      arguments: ["compare-managed-members", left, right, "--json"],
+      arguments: [
+        "compare-managed-members",
+        left,
+        right,
+        "--full-output",
+        "--json",
+      ],
     });
     expect(whole.exitCode, whole.stderr).toBe(0);
-    const wholeEvidence = parseEvidence(whole.json);
+    const envelope = whole.json as { data: unknown; meta: unknown };
+    // The source inspection option that raises the recorded budget is named
+    // by the comparison command, outside the record.
+    expect(envelope.meta).toMatchObject({
+      cli_controls: {
+        max_metadata_representation_bytes:
+          "--max-metadata-representation-bytes",
+      },
+    });
+    const wholeEvidence = parseEvidence(envelope.data);
     const wholeReport = managedMemberComparisonResultSchema.parse(
       wholeEvidence.normalized_result,
     );

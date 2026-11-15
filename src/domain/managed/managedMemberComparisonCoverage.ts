@@ -131,8 +131,18 @@ export type ManagedComparisonScope = ReturnType<typeof managedComparisonScope>;
 const resourceLimits = (
   result: ManagedMemberInspection,
 ): NonNullable<ManagedMemberComparisonResult["left"]["resource_limits"]> =>
-  result.coverage.issues.flatMap(({ code, scope, detail, offset }) =>
-    code === "resource-limit" ? [{ code, scope, detail, offset }] : [],
+  result.coverage.issues.flatMap(({ code, scope, detail, offset, limit }) =>
+    code === "resource-limit"
+      ? [
+          {
+            code,
+            scope,
+            detail,
+            offset,
+            ...(limit === undefined ? {} : { limit }),
+          },
+        ]
+      : [],
   );
 
 export const sideManifest = (
