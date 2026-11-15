@@ -25,7 +25,7 @@ import {
   ArtifactFileCleanupFailure,
   type ArtifactFilePrimaryFacts,
 } from "../artifacts/ArtifactFileOperation.js";
-import { readMachoEncryption } from "../artifacts/apple/MachoEncryptionReader.js";
+import { readMachoEncryption } from "../domain/apple/machoEncryptionReader.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import {
   APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE,
@@ -171,7 +171,7 @@ import {
 } from "./NativeUiHelperRuntime.js";
 import { NativeUiInterruptionControl } from "./NativeUiInterruptionControl.js";
 import type { ResolvedAppBundleResourceRoot } from "../application/AppBundleExecutable.js";
-import { UnsupportedBinaryPlistUidError } from "../artifacts/apple/PlistScalars.js";
+import { UnsupportedBinaryPlistUidError } from "../domain/apple/plistScalars.js";
 
 type SignatureRuntimeRootFactory = () => Promise<
   Pick<PrivateRuntimeRoot, "path" | "close">

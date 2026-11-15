@@ -10,7 +10,7 @@ import {
   decodeBinaryPlistScalars,
   scanBinaryPlistScalars,
   UnsupportedBinaryPlistUidError,
-} from "../../artifacts/apple/PlistScalars.js";
+} from "../../domain/apple/plistScalars.js";
 
 import { plistDuplicateKeyLimitations } from "../../domain/apple/plistDuplicateKeys.js";
 import {
@@ -19,7 +19,7 @@ import {
   parsePlistXml,
   parsePlistXmlSource,
 } from "./plist.js";
-import { estimateBinaryPlistExpansion } from "../../artifacts/apple/PropertyListDecodeBudget.js";
+import { estimateBinaryPlistExpansion } from "../../domain/apple/propertyListDecodeBudget.js";
 import {
   binaryPlistObjectTable,
   binaryPlistWithOverlappingDateAndData,

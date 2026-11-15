@@ -1,4 +1,4 @@
-import { err, ok, type Result } from "../../domain/result.js";
+import { err, ok, type Result } from "../result.js";
 
 /**
  * Preserve REA's source integer interpretation, including uint64

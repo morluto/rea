@@ -18,7 +18,10 @@ import {
   machoCpuSubtypeBase,
   machoKnownArm32Subtype,
 } from "../domain/apple/machoCpuIdentity.js";
-import { readMachoImage, type ReadAt } from "./apple/MachoLoadCommandReader.js";
+import {
+  readMachoImage,
+  type ReadAt,
+} from "../domain/apple/machoLoadCommandReader.js";
 import {
   ArtifactReaderFailure,
   copyArtifactEntry,

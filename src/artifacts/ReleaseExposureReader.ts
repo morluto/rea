@@ -33,7 +33,7 @@ import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
 } from "./ArtifactFileOperation.js";
-import { decodeBinaryPlistText } from "./apple/BinaryPlistMaterializer.js";
+import { decodeBinaryPlistText } from "../domain/apple/binaryPlistMaterializer.js";
 import {
   InternalInvariantError,
   invariantViolation,
