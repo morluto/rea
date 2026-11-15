@@ -14,7 +14,10 @@ import {
   electronMemberPath,
 } from "./javascriptElectronMemberWrites.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
-import { ambientEffectCovers } from "./javascriptSemanticEffectLog.js";
+import {
+  ambientEffectCovers,
+  ambientPathMayObserveAt,
+} from "./javascriptSemanticEffectLog.js";
 import {
   resolveSemanticBindingState,
   semanticStableInitializer,
@@ -612,6 +615,12 @@ export function* indexJavaScriptAmbientWritesSteps(
     browserReceiver: boolean;
     projection?: AmbientProjection;
   }[] = [];
+  // Object/Reflect static calls, settled once every ambient write is known.
+  const staticReceivers: {
+    node: t.Node;
+    target: t.Node;
+    method: readonly string[];
+  }[] = [];
   const stores = new WeakMap<
     t.Node,
     Map<SemanticIterationSource, AmbientProjection>
@@ -703,16 +712,21 @@ export function* indexJavaScriptAmbientWritesSteps(
           : undefined;
       if (
         !t.isNewExpression(node) &&
-        (t.isMemberExpression(callee) ||
-          t.isOptionalMemberExpression(callee)) &&
-        !(
-          invocation?.kind === "known" &&
-          ["Object", "Reflect"].includes(invocation.path[1] ?? "")
-        )
+        (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee))
       ) {
-        if (browserMethod !== undefined)
-          browserReceiverMethods.add(browserMethod);
-        retainEscape(callee.object, browserMethod !== undefined);
+        const method =
+          invocation?.kind === "known" &&
+          invocation.path.length === 3 &&
+          ["Object", "Reflect"].includes(invocation.path[1] ?? "")
+            ? invocation.path.slice(1)
+            : undefined;
+        if (method !== undefined)
+          staticReceivers.push({ node, target: callee.object, method });
+        else {
+          if (browserMethod !== undefined)
+            browserReceiverMethods.add(browserMethod);
+          retainEscape(callee.object, browserMethod !== undefined);
+        }
       }
     },
   );
@@ -858,6 +872,13 @@ export function* indexJavaScriptAmbientWritesSteps(
       continue;
     retainEscapeEffect(effect);
   }
+  // A native static method ignores its receiver. A source write or escape
+  // that may replace the method before this call makes it user code, which
+  // receives the constructor.
+  for (const { node, target, method } of staticReceivers)
+    if (ambientPathMayObserveAt(state, node, ["global", ...method], "contents"))
+      retainEscapeEffect({ node, target, browserReceiver: false });
+    else state.retainedGlobalCallReceivers.add(target);
   function retainEscapeEffect({
     node,
     target,

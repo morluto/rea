@@ -216,7 +216,12 @@ export interface JavaScriptSemanticAnalysisState {
   readonly ambientBindingWrites: Map<string, t.Node[]>;
   /** Source-local writes, tagged by global, import.meta or CJS module identity. */
   readonly ambientWrites: SemanticPropertyPathCoverage;
-  /** Browser receivers proven to be only the ambient global identity. */
+  /**
+   * Call receivers that ambient indexing proved the call does not expose:
+   * browser receivers that are only the ambient global identity, and the
+   * constructor of an unchanged native `Object`/`Reflect` static method.
+   * Member mutation indexing skips their receiver escape.
+   */
   readonly retainedGlobalCallReceivers: WeakSet<t.Node>;
   /**
    * Throw statements whose value leaves the enclosing function or class
