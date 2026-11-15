@@ -1,6 +1,9 @@
 import {
   createGdbFixtureOwner,
+  expectNoUnmodeledGdbCommands,
+  FAKE_GDB_SESSION_REPLIES,
   FAKE_GDB_VERSION,
+  fakeGdbModeledReplies,
   fakeGdbStartupPreamble,
   fakeGdbVersionStream,
 } from "./gdbTestHelpers.js";
@@ -16,8 +19,15 @@ import { GdbSessionManager } from "../../../src/gdb/GdbSessionManager.js";
 import { gdbReportedVersion } from "../../../src/gdb/GdbProviderIdentity.js";
 import { AnalysisSettings } from "../../../src/application/AnalysisSettings.js";
 
-const gdbSettingsFixture = `#!${process.execPath}
+const SHOW_VERSION_REPLIES = {
+  ...FAKE_GDB_SESSION_REPLIES,
+  '-interpreter-exec console "show version"': "^done",
+};
+
+/** A fake GDB that models a session running `show version`. */
+const gdbSettingsFixture = (directory: string) => `#!${process.execPath}
 ${fakeGdbStartupPreamble}
+${fakeGdbModeledReplies(join(directory, "unmodeled"), SHOW_VERSION_REPLIES)}
 process.stdout.write("(gdb)\\n");
 let input = "";
 process.stdin.setEncoding("utf8");
@@ -27,14 +37,17 @@ process.stdin.on("data", chunk => {
   const end = input.indexOf("\\n"); if (end < 0) break;
   const line = input.slice(0,end); input = input.slice(end+1);
   const match = /^(\\d+)/.exec(line);
-  if (match && line.includes("list-thread-groups")) process.stdout.write(match[1] + "^done,groups=[]\\n");
-  else if (match) process.stdout.write(match[1] + "^done\\n");
+  if (match) answerModeled(match[1], line.slice(match[1].length));
  }
 });`;
 
-/** A fake GDB that answers the auto-load setting with `reply` and others with ^done. */
-const autoLoadReplyFixture = (reply: string) => `#!${process.execPath}
+/** A fake GDB that answers the auto-load setting with `reply`. */
+const autoLoadReplyFixture = (
+  directory: string,
+  reply: string,
+) => `#!${process.execPath}
 ${fakeGdbStartupPreamble}
+${fakeGdbModeledReplies(join(directory, "unmodeled"))}
 process.stdout.write("(gdb)\\n");
 let input = "";
 process.stdin.setEncoding("utf8");
@@ -46,7 +59,8 @@ process.stdin.on("data", (chunk) => {
     const line = input.slice(0, boundary);
     input = input.slice(boundary + 1);
     const match = /^(\\d+)(.*)/.exec(line);
-    if (match) process.stdout.write(match[1] + (match[2].includes("-gdb-set auto-load off") ? "${reply}\\n" : "^done\\n"));
+    if (match?.[2] === "-gdb-set auto-load off") process.stdout.write(match[1] + "${reply}\\n");
+    else if (match) answerModeled(match[1], line.slice(match[1].length));
   }
 });
 `;
@@ -64,9 +78,13 @@ describe("persistent debugger session managers", () => {
 
   afterEach(async () => {
     await fixtureOwner.cleanup(managers, async () => {
-      if (directory !== undefined)
+      if (directory === undefined) return;
+      try {
+        await expectNoUnmodeledGdbCommands(join(directory, "unmodeled"));
+      } finally {
         await rm(directory, { recursive: true, force: true });
-      directory = undefined;
+        directory = undefined;
+      }
     });
   });
 
@@ -77,6 +95,7 @@ describe("persistent debugger session managers", () => {
       provider,
       `#!${process.execPath}
 ${fakeGdbStartupPreamble}
+${fakeGdbModeledReplies(join(directory, "unmodeled"), SHOW_VERSION_REPLIES)}
 process.stdout.write("(gdb)\\n");
 let input = "";
 process.stdin.setEncoding("utf8");
@@ -88,9 +107,7 @@ process.stdin.on("data", (chunk) => {
     const line = input.slice(0, boundary);
     input = input.slice(boundary + 1);
     const match = /^(\\d+)/.exec(line);
-    if (match && line.includes("list-thread-groups"))
-      process.stdout.write(match[1] + "^done,groups=[]\\n");
-    else if (match) process.stdout.write(match[1] + "^done\\n");
+    if (match) answerModeled(match[1], line.slice(match[1].length));
   }
 });
 `,
@@ -139,7 +156,7 @@ process.stdin.on("data", (chunk) => {
     async (setting, environmentName, value) => {
       directory = await mkdtemp(join(tmpdir(), "rea-gdb-setting-"));
       const provider = join(directory, "fake-gdb.mjs");
-      await writeFile(provider, gdbSettingsFixture);
+      await writeFile(provider, gdbSettingsFixture(directory));
       await chmod(provider, 0o700);
       const environment = {
         REA_GDB_COMMAND: provider,
@@ -195,7 +212,7 @@ process.stdin.on("data", (chunk) => {
     async (_label, reply) => {
       directory = await mkdtemp(join(tmpdir(), "rea-gdb-autoload-"));
       const provider = join(directory, "fake-gdb-reject.mjs");
-      await writeFile(provider, autoLoadReplyFixture(reply));
+      await writeFile(provider, autoLoadReplyFixture(directory, reply));
       await chmod(provider, 0o700);
       const manager = new GdbSessionManager({
         spawnProcess: fixtureOwner.spawnProcess,
@@ -219,7 +236,7 @@ it("starts GDB without applying an invalid console output limit", async () => {
   const owner = createGdbFixtureOwner();
   const directory = await mkdtemp(join(tmpdir(), "rea-gdb-start-output-"));
   const provider = join(directory, "fake-gdb.mjs");
-  await writeFile(provider, gdbSettingsFixture);
+  await writeFile(provider, gdbSettingsFixture(directory));
   await chmod(provider, 0o700);
   const environment = {
     REA_GDB_COMMAND: provider,
@@ -240,6 +257,7 @@ it("starts GDB without applying an invalid console output limit", async () => {
       ok: true,
       value: { target_state: "none_observed" },
     });
+    await expectNoUnmodeledGdbCommands(join(directory, "unmodeled"));
   } finally {
     await owner.cleanup([manager], () =>
       rm(directory, { recursive: true, force: true }),
