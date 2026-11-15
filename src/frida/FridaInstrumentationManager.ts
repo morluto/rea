@@ -42,10 +42,7 @@ import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
 import { err, ok, type Result } from "../domain/result.js";
-import {
-  unknownFridaScript,
-  unknownFridaSession,
-} from "../application/frida/fridaInputErrors.js";
+import { unknownFridaScript, unknownFridaSession } from "./fridaInputErrors.js";
 import {
   MAX_MESSAGE_METADATA_BYTES,
   type FridaOwnedCaptureLimit,
