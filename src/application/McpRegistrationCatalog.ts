@@ -3,7 +3,6 @@ import {
   kiloProjectLocation,
 } from "./McpRegistrationKiloLocations.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
-import { dirname, join, win32 } from "node:path";
 
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
@@ -21,21 +20,14 @@ import { redirectedWriteBlocker } from "./MsixPackageStorage.js";
 import type {
   ClientRegistrationConnectionProfile,
   ClientRegistrationProfile,
-  NativeStdioIncompatibility,
 } from "./ClientRegistrationProfile.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import {
-  bindRegularFileCleanup,
-  readRegularFileText,
-} from "./RegularFileRead.js";
-import { clientConfigurationRecordSchema } from "./ClientConfigurationDocument.js";
 import {
   selectedPath,
   fromSetup,
   present,
   fixedProjectLocation,
   gooseLocation,
-  junieLocation,
   type McpRegistrationLocationContext,
   type McpRegistrationGlobalLocation,
   type McpRegistrationLocation,
@@ -119,18 +111,7 @@ export const MCP_REGISTRATION_CLIENTS = {
   "github-copilot-cli": tableClient("copilot_cli"),
   "grok-build": tableClient("grok_build"),
   hermes: tableClient("hermes"),
-  junie: {
-    kind: "registration-only",
-    displayName: "Junie",
-    format: "json",
-    globalLocation: junieLocation,
-    projectLocation: fixedProjectLocation([".junie/mcp/mcp.json"]),
-    registrationConnection: {
-      kind: "flat",
-      fields: ["url"],
-      stdio: [{ kind: "present", field: "url" }],
-    },
-  },
+  junie: tableClient("junie"),
   "kilo-code": {
     kind: "registration-only",
     displayName: "Kilo Code",
@@ -339,80 +320,11 @@ const msixWriteBlocker = (
   );
 };
 
-const validateJunieGlobal = async (
-  client: McpRegistrationClient,
-  context: McpRegistrationLocationContext,
-): Promise<void> => {
-  const env = context.environment;
-  if (env.JUNIE_MCP_DEFAULT_LOCATIONS?.toLowerCase() === "false")
-    throw new ConfigurationError(
-      "Junie's default MCP locations are disabled by JUNIE_MCP_DEFAULT_LOCATIONS.",
-    );
-  if (env.JUNIE_CONFIG_LOCATION)
-    throw new ConfigurationError(
-      "Cannot determine Junie's MCP location selection while JUNIE_CONFIG_LOCATION is set. Inspect the additional Junie configuration before registering.",
-    );
-  if (env.JUNIE_CONFIG_DEFAULT_LOCATIONS?.toLowerCase() !== "false") {
-    const paths = context.platform === "win32" ? win32 : { dirname, join };
-    const configPath = selectedPath(
-      paths.join(
-        paths.dirname(paths.dirname(client.configPath)),
-        "config.json",
-      ),
-      context,
-    );
-    let content: string | undefined;
-    try {
-      content = await readRegularFileText(configPath, {
-        resources: context.resources,
-        signal: context.signal,
-      });
-    } catch (cause: unknown) {
-      if (
-        !(cause instanceof Error && "code" in cause && cause.code === "ENOENT")
-      ) {
-        const failure = new ConfigurationError(
-          "Cannot inspect Junie's user configuration to determine its MCP locations.",
-          { cause },
-        );
-        bindRegularFileCleanup(cause, failure);
-        throw failure;
-      }
-    }
-    if (content !== undefined) {
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(content);
-      } catch (cause: unknown) {
-        throw new ConfigurationError(
-          "Cannot parse Junie's user configuration to determine its MCP locations.",
-          { cause },
-        );
-      }
-      const record = clientConfigurationRecordSchema.safeParse(parsed);
-      if (
-        !record.success ||
-        (record.data["mcp-default-locations"] !== undefined &&
-          typeof record.data["mcp-default-locations"] !== "boolean")
-      )
-        throw new ConfigurationError(
-          "Junie's user configuration does not establish whether default MCP locations are enabled.",
-        );
-      if (record.data["mcp-default-locations"] === false)
-        throw new ConfigurationError(
-          "Junie's user configuration disables its default MCP locations.",
-        );
-    }
-  }
-};
-
 /** User-scope read-scope rules that must hold before any target is written. */
 const admitGlobalTargets = async (
   clients: readonly McpRegistrationClient[],
   context: McpRegistrationLocationContext,
 ): Promise<void> => {
-  const junie = clients.find((client) => client.id === "junie");
-  if (junie) await validateJunieGlobal(junie, context);
   const blocker = msixWriteBlocker(clients, context);
   if (blocker !== undefined)
     throw new ConfigurationError(`${blocker} No settings were written.`);

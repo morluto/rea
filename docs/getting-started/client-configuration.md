@@ -888,6 +888,19 @@ Windows ACLs cannot be verified through mode bits. fx reloads its MCP servers
 with `/mcp reload`; its project `.mcp.json` files need fx's own approval and are
 not written by REA.
 
+## Junie
+
+Setup and `rea mcp add` write `mcpServers.rea` into `~/.junie/mcp/mcp.json`, or
+`$JUNIE_HOME/mcp/mcp.json` when `JUNIE_HOME` is set (Junie CLI honors it; the
+JetBrains plugin reads `~/.junie`). Junie loads that file only while its default
+MCP locations are enabled. Setup, `rea mcp add` and doctor all refuse or report
+a registration Junie would not load: `JUNIE_MCP_DEFAULT_LOCATIONS=false`, or
+`mcp-default-locations: false` in `~/.junie/config.json` unless
+`JUNIE_CONFIG_DEFAULT_LOCATIONS=false` skips that file. While
+`JUNIE_CONFIG_LOCATION` names extra configuration, REA cannot tell and refuses.
+A `--mcp-default-locations=false` command-line option is not visible to REA.
+Project registration writes `.junie/mcp/mcp.json`.
+
 ## WorkBuddy
 
 For [WorkBuddy](https://www.workbuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/MCP-Guide), setup writes `mcpServers.rea` into the
