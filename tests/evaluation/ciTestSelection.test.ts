@@ -84,6 +84,9 @@ it("selects tests that start the built runtime beside a changed presentation own
       'import "../../fixtures/client.js"; import "../../../src/domain/Value.js";',
     "tests/boundary/mcp/inProcess.test.ts":
       'import "../../../src/server/recovery.js";',
+    // A package's own dist/ subpath is not the built runtime.
+    "tests/boundary/mcp/ajv.test.ts":
+      'import { Ajv2020 } from "ajv/dist/2020.js"; import "../../../src/server/recovery.js";',
   };
   expect(selectedFiles(plan(["src/server/Core.ts"], sources))).toEqual([
     "tests/boundary/mcp/direct.test.ts",

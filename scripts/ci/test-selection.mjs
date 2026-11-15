@@ -44,8 +44,11 @@ const isTest = (path) => path.endsWith(".test.ts");
 const isPresentationOwner = (path) =>
   !isTest(path) &&
   /^src\/(?:server|contracts|main|cli)\/|^src\/(?:main|cli)\.ts$/u.test(path);
-// A test that starts the built CLI or MCP server instead of importing it.
-const LAUNCHES_BUILT_RUNTIME = /scripts\/rea\.mjs|["'`/]dist\//u;
+// A test that starts the built CLI or MCP server instead of importing it:
+// the CLI launcher or this repository's built entry points. Other `dist/`
+// paths (package subpaths such as `ajv/dist/2020.js`, fixture apps) are not.
+const LAUNCHES_BUILT_RUNTIME =
+  /scripts\/rea\.mjs|\bdist\/(?:main|cli)\.js|["'`]dist["'`]\s*,\s*["'`](?:main|cli)\.js/u;
 // Inputs that only a non-test check reads: declarations (typecheck), guard
 // baselines (architecture guards, static job) and the advertised-schema
 // summaries (build job). They select no tests.
