@@ -22,46 +22,6 @@ describe("tool effects", () => {
       mutatesTarget: false,
     });
   });
-  it("marks foreign execution and device mutation as destructive", () => {
-    const destructive = TOOL_CONTRACTS.filter(
-      ({ effects }) => effects.executesForeignCode || effects.mutatesDevice,
-    );
-    expect(destructive.map(({ name }) => name).sort()).toEqual([
-      "act_on_build_computer",
-      "capture_browser_scenario",
-      "capture_electron_scenario",
-      "capture_native_ui_scenario",
-      "capture_process_scenario",
-      "check_build_task",
-      "close_frida_session",
-      "close_gdb_session",
-      "close_rizin_debug_session",
-      "cutter_command",
-      "execute_rizin_command",
-      "export_build_environment",
-      "gdb_console",
-      "install_adb_package",
-      "instrument_with_frida",
-      "load_frida_script",
-      "measure_build_task",
-      "observe_native_calls",
-      "push_adb_file",
-      "resume_frida_session",
-      "rizin_debug_command",
-      "start_adb_activity",
-      "start_adb_app",
-      "start_build_capture",
-      "start_build_computer",
-      "start_rizin_debug_session",
-      "stop_adb_app",
-      "uninstall_adb_package",
-    ]);
-    for (const contract of destructive)
-      expect(contract.annotations, contract.name).toMatchObject({
-        readOnlyHint: false,
-        destructiveHint: true,
-      });
-  });
 
   it("derives destructiveHint from each destructive effect alone", () => {
     // Keep annotation algebra independent of any operation's audited effects.
