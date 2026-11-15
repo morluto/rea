@@ -318,6 +318,14 @@ export const readManagedGraphProjection = (
     boundaries: boundaries.value,
   };
   const identity = chooseArtifact(sources);
+  if (identity === undefined) {
+    const missing = "Provide at least one managed inspection result.";
+    return err(
+      new AnalysisInputError(OPERATION, { userMessage: missing }, [
+        { path: [], reason: "invalid_value", message: missing },
+      ]),
+    );
+  }
   const mismatch =
     artifactMismatch(sources, identity.sha256) ??
     moduleIdentityMismatch(sources);
@@ -332,26 +340,17 @@ export const readManagedGraphProjection = (
 
 const OPERATION = "project_managed_application_graph";
 
-/** Validated graph input still had no artifact source. */
-class ManagedGraphSourceError extends Error {
-  readonly _tag = "ManagedGraphSourceError";
-  readonly code = "missing_source" as const;
-
-  constructor() {
-    super("missing_source");
-    this.name = "ManagedGraphSourceError";
-  }
-}
-
+/** The first supplied source's artifact, or `undefined` when none was supplied. */
 const chooseArtifact = (
   parsed: ParsedManagedGraphInput,
-): { readonly sha256: string; readonly path: string } => {
+): { readonly sha256: string; readonly path: string } | undefined => {
   const result =
     parsed.artifact?.result ??
     parsed.members?.result ??
     parsed.boundaries?.result;
-  if (result === undefined) throw new ManagedGraphSourceError();
-  return { sha256: result.artifact.sha256, path: result.artifact.path };
+  return result === undefined
+    ? undefined
+    : { sha256: result.artifact.sha256, path: result.artifact.path };
 };
 
 const artifactMismatch = (

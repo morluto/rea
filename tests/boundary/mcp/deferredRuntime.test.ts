@@ -110,8 +110,26 @@ it.each([
           true,
         );
     }
+    // Discovery is not recorded; it follows the default compact input profile.
+    expect(
+      initial.tools.find(({ name }) => name === "discover_tools")?.inputSchema
+        .properties,
+    ).toMatchObject({
+      offset: { type: "integer", minimum: 0, maximum: 9007199254740991 },
+      limit: { type: "integer", minimum: 1, maximum: 20 },
+    });
+    expect(
+      JSON.stringify(
+        initial.tools.find(({ name }) => name === "discover_tools")
+          ?.inputSchema,
+      ),
+    ).not.toContain('"default"');
     const call = async (name: string, args: Record<string, unknown>) => {
-      if (environment.REA_MCP_OUTPUT_SCHEMA_PROFILE === "off") {
+      // Without a listed output schema, call with the listed definition.
+      if (
+        !("REA_MCP_OUTPUT_SCHEMA_PROFILE" in environment) ||
+        environment.REA_MCP_OUTPUT_SCHEMA_PROFILE === "off"
+      ) {
         const definition = (await client.listTools()).tools.find(
           (tool) => tool.name === name,
         );
@@ -196,8 +214,13 @@ it.each([
     eager: false,
   },
   {
-    name: "output-off eager",
-    environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: "off" },
+    name: "output-full deferred",
+    environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: "full" },
+    eager: false,
+  },
+  {
+    name: "output-compact eager",
+    environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: "compact" },
     eager: true,
   },
 ])(
@@ -285,6 +308,7 @@ it.each([
     );
     const { client, stderr } = await connect(mode, {
       REA_MCP_INPUT_SCHEMA_PROFILE: profile,
+      REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
     });
     const before = await client.listTools();
     // Compare independently composed canonical SDK registrations as well as
@@ -292,6 +316,7 @@ it.each([
     // with the same inventory, without target analysis or provider acquisition.
     const eager = await connect(mode, {
       REA_MCP_INPUT_SCHEMA_PROFILE: profile,
+      REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
       REA_MCP_TOOL_FAMILIES: TOOL_FAMILY_DEFINITIONS.map(({ id }) => id).join(
         ",",
       ),
@@ -431,6 +456,7 @@ it.each(["legacy", "auto"] as const)(
 it("composes a scoped registration instead of serving the recorded catalog", async () => {
   const { client, stderr } = await connect("legacy", {
     REA_MCP_TOOL_FAMILIES: "session",
+    REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
   });
   const advertised = (await client.listTools()).tools
     .map(({ name }) => name)
@@ -465,7 +491,11 @@ globalThis.Date = class extends NativeDate {
   }
 };
 `)}`;
-  const { client } = await connect("legacy", {}, [`--import=${hook}`]);
+  const { client } = await connect(
+    "legacy",
+    { REA_MCP_OUTPUT_SCHEMA_PROFILE: "full" },
+    [`--import=${hook}`],
+  );
   await client.listTools();
   await writeFile(clock, "2021-01-01T00:00:00.000Z");
   const first = await artifactMcpCall(client, {
@@ -786,38 +816,39 @@ console.log("LATE_PUBLICATION_REFUSED");
   expect(child.stderr).toBe("");
 });
 
-it.each([{}, { REA_MCP_OUTPUT_SCHEMA_PROFILE: "off" }])(
-  "preserves the configured catalog profile %j",
-  async (environment) => {
-    const { client } = await connect("legacy", environment);
-    const before = await client.listTools();
-    const catalog = JSON.parse(await readFile("dist/mcp-catalog.json", "utf8"));
-    expect(before.tools).toHaveLength(catalog.tools.length);
-    const expected =
-      environment.REA_MCP_OUTPUT_SCHEMA_PROFILE === "off"
-        ? catalog.tools.map(
-            ({ outputSchema: _output, ...tool }: Record<string, unknown>) =>
-              tool,
-          )
-        : catalog.tools.map((tool: { name: string }) => ({
-            ...tool,
-            outputSchema: GENERATED_MCP_TOOL_CATALOG.find(
-              ({ name }) => name === tool.name,
-            )?.outputSchema,
-          }));
-    expect(before.tools).toEqual(expected);
-    const toolDefinition = before.tools.find(
-      ({ name }) => name === "list_unknowns",
-    );
-    if (toolDefinition === undefined) throw new Error("Missing list_unknowns");
-    const result = await client.callTool(
-      { name: "list_unknowns", arguments: {} },
-      { toolDefinition },
-    );
-    expect(result.isError).not.toBe(true);
-    expect(await client.listTools()).toEqual(before);
-  },
-);
+it.each([
+  {},
+  { REA_MCP_OUTPUT_SCHEMA_PROFILE: "off" },
+  { REA_MCP_OUTPUT_SCHEMA_PROFILE: "full" },
+])("preserves the configured catalog profile %j", async (environment) => {
+  const { client } = await connect("legacy", environment);
+  const before = await client.listTools();
+  const catalog = JSON.parse(await readFile("dist/mcp-catalog.json", "utf8"));
+  expect(before.tools).toHaveLength(catalog.tools.length);
+  // Output schemas are omitted unless `full` is selected.
+  const expected =
+    environment.REA_MCP_OUTPUT_SCHEMA_PROFILE !== "full"
+      ? catalog.tools.map(
+          ({ outputSchema: _output, ...tool }: Record<string, unknown>) => tool,
+        )
+      : catalog.tools.map((tool: { name: string }) => ({
+          ...tool,
+          outputSchema: GENERATED_MCP_TOOL_CATALOG.find(
+            ({ name }) => name === tool.name,
+          )?.outputSchema,
+        }));
+  expect(before.tools).toEqual(expected);
+  const toolDefinition = before.tools.find(
+    ({ name }) => name === "list_unknowns",
+  );
+  if (toolDefinition === undefined) throw new Error("Missing list_unknowns");
+  const result = await client.callTool(
+    { name: "list_unknowns", arguments: {} },
+    { toolDefinition },
+  );
+  expect(result.isError).not.toBe(true);
+  expect(await client.listTools()).toEqual(before);
+});
 
 it("runs the real static artifact workflow after deferred initialization", async () => {
   const { client } = await connect("legacy");
@@ -1167,7 +1198,10 @@ try {
 it("distinguishes an exhausted production discovery page from an unmatched query", async () => {
   const { client } = await connect(
     "auto",
-    { REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold" },
+    {
+      REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold",
+      REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
+    },
     ["--max-old-space-size=1024"],
   );
   const discover = (arguments_: Record<string, unknown>) =>

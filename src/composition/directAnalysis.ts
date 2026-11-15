@@ -1,4 +1,5 @@
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { parseConfig } from "../config/parseConfig.js";
 import type { DirectAnalysisDependencies } from "../application/DirectAnalysisDependencies.js";
 
@@ -20,7 +21,10 @@ type BoundOperation<Operation> = Operation extends (
 export const createDirectAnalysis = (
   selectedEnvironment: Readonly<Record<string, string | undefined>>,
 ) => {
-  const environment = snapshotEnvironment(selectedEnvironment);
+  const environment = snapshotEnvironment(
+    selectedEnvironment,
+    HOST_PLATFORM.platform,
+  );
   const dependencies: DirectAnalysisDependencies = {
     readConfiguration: () => parseConfig(environment),
     createBinarySession: async (config, logger) => {

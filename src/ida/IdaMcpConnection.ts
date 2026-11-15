@@ -2,6 +2,7 @@ import {
   ArtifactResourceScope,
   type ArtifactResourceOwner,
 } from "../artifacts/ArtifactResourceScope.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { ResponseBodyCleanup } from "../providers/ResponseBodyCleanup.js";
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -576,12 +577,14 @@ export const createIdaMcpConnection = (
               DEFAULT_INHERITED_ENV_VARS.map((key) => [key, ""]),
             ),
             ...Object.fromEntries(
-              Object.entries(snapshotEnvironment(environment)).filter(
+              Object.entries(
+                snapshotEnvironment(environment, HOST_PLATFORM.platform),
+              ).filter(
                 (entry): entry is [string, string] => entry[1] !== undefined,
               ),
             ),
             IDA_MCP_MAX_WORKERS: "1",
-            ...snapshotEnvironment(config.env),
+            ...snapshotEnvironment(config.env, HOST_PLATFORM.platform),
           },
           stderr: "pipe",
           maxBufferSize: IDA_STDIO_MAX_MESSAGE_BYTES,

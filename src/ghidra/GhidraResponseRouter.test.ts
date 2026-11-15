@@ -41,7 +41,7 @@ it("routes later Ghidra response lines after an unknown response id", async () =
       '{"id":2,"ok":true,"result":null}\n{"id":1,"ok":true,"result":"settled"}\n',
     ),
   ))
-    router.route(line);
+    if (line.ok) router.route(line.value);
 
   expect(protocolFailure).toHaveBeenCalledOnce();
   expect(protocolFailure).toHaveBeenCalledWith(

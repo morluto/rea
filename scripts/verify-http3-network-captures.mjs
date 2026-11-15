@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { schemaVerifierEnvironment } from "./lib/mcp-verification-environment.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
@@ -64,7 +65,7 @@ const client = new Client({
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
-  env: environment,
+  env: schemaVerifierEnvironment(environment),
   stderr: "pipe",
 });
 const contract = toolContract("inspect_web_network_capture");

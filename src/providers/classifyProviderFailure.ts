@@ -1,4 +1,7 @@
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  type CleanupFailedRead,
+} from "../artifacts/ArtifactReader.js";
 import {
   ArtifactFileCleanupFailure,
   artifactFileCancellationCause,
@@ -15,7 +18,6 @@ import { completedStableArtifactObservation } from "../artifacts/StableArtifactO
 import {
   AnalysisError,
   type AnalysisCapturedOutput,
-  type AnalysisCleanupObservation,
   type AnalysisErrorOptions,
 } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -115,11 +117,6 @@ type CleanupFailedCommand = OwnedCommandFailure & {
   readonly cleanupFailure: string;
 };
 
-/** A selected-file read whose own cleanup failed. */
-export type CleanupFailedRead = ArtifactReaderFailure & {
-  readonly cleanup: AnalysisCleanupObservation;
-};
-
 const cleanupFailedRead = (cause: unknown): cause is CleanupFailedRead =>
   cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined;
 
@@ -137,16 +134,20 @@ const readPrimary = (
   read: CleanupFailedRead,
   dialect: ProviderFailureDialect,
 ): AnalysisError | undefined => {
+  const observed =
+    dialect.observedOutput === undefined
+      ? {}
+      : { capturedOutput: dialect.observedOutput };
   if (read instanceof ArtifactFileCleanupFailure) {
     const outcome = read.fileCleanupFailure.outcome;
     if (outcome.kind === "failed")
       return classifyProviderFailure(outcome.cause, dialect);
     const cancellation = artifactFileCompletion(read)?.cancellation;
     if (cancellation !== undefined)
-      return readCancellation(cancellation.reason, dialect, {});
+      return readCancellation(cancellation.reason, dialect, observed);
   }
   return read.reason === "cancelled"
-    ? readCancellation(artifactFileCancellationCause(read), dialect, {})
+    ? readCancellation(artifactFileCancellationCause(read), dialect, observed)
     : undefined;
 };
 

@@ -1,4 +1,5 @@
 import { resolveGhidraCheckpoint } from "./GhidraCheckpoint.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   checkpointCapabilities,
   CAPABILITIES,
@@ -154,7 +155,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
   ) {
     this.environment = snapshotEnvironment(
       environment,
-      installationHost?.platform,
+      installationHost?.platform ?? HOST_PLATFORM.platform,
     );
   }
 
@@ -197,7 +198,9 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       "binary_session",
       scope,
     );
-    const admission = admitGhidraInstallation(installation);
+    const admission = admitGhidraInstallation(installation, {
+      existingProject: this.config.ghidraExistingProject !== undefined,
+    });
     const readiness = admission.windowsNative;
     const availability = this.#availability(installation, admission);
     if (availability.status === "available" && signal.aborted)
@@ -222,22 +225,18 @@ export class GhidraProvider implements AnalysisProviderCandidate {
     admission: GhidraAdmission,
   ): ProviderAvailability {
     const diagnostics = ghidraInstallationDiagnostics(installation);
-    // Runtime configuration doctor does not inspect.
-    if (
-      this.config.ghidraExistingProject !== undefined &&
-      installation.platform === "win32"
-    )
-      return {
-        status: "unavailable",
-        code: "unsupported_host",
-        reason: EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
-        remediation: EXISTING_PROJECT_WINDOWS_REMEDIATION,
-        diagnostics,
-      };
     if (admission.admitted)
       return { status: "available", code: null, reason: null, diagnostics };
     const { refusal } = admission;
     switch (refusal.kind) {
+      case "existing_project_unsupported_host":
+        return {
+          status: "unavailable",
+          code: "unsupported_host",
+          reason: EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
+          remediation: EXISTING_PROJECT_WINDOWS_REMEDIATION,
+          diagnostics,
+        };
       case "installation_rejected":
         return {
           status: "unavailable",

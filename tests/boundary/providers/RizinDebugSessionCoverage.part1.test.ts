@@ -287,9 +287,16 @@ it
         return launched;
       });
     try {
+      // The real stop's detach command gets no reply from this fixture and
+      // returns incomplete after its 1 s detach deadline without signalling
+      // the child. Report the same uncertainty at once; the child stays alive
+      // for the harness to reap either way.
       const stopProcess: typeof incompleteStop =
         stopMode === "is uncertain"
-          ? incompleteStop
+          ? async () => ({
+              status: "incomplete",
+              reason: "injected stop uncertainty",
+            })
           : async () => ({ status: "stopped" });
       const manager = createManager(
         { REA_RIZIN_COMMAND: provider },
@@ -475,7 +482,17 @@ it.skipIf(process.platform === "win32")(
     const sessionId = started.value.session_id;
     injected.control.exitLeader();
 
-    const firstClose = await manager.close(sessionId);
+    // The output-settlement grace is a fixed timer; advance it instead of
+    // waiting it out. The open output keeps the close incomplete regardless.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let firstClose: Awaited<ReturnType<typeof manager.close>>;
+    try {
+      const closing = manager.close(sessionId);
+      await vi.advanceTimersByTimeAsync(10_000);
+      firstClose = await closing;
+    } finally {
+      vi.useRealTimers();
+    }
     expect(firstClose.ok).toBe(false);
     if (!firstClose.ok) {
       expect(firstClose.error.cleanupIncomplete).toBe(true);
@@ -495,10 +512,11 @@ it.skipIf(process.platform === "win32")(
   "closes a session after unsolicited frames make command correlation unsafe",
   async () => {
     const provider = await makeProvider(
-      'process.stdout.write("\\0"); setTimeout(() => process.stdout.write("unexpected\\0"), 20); process.stdin.resume();',
+      // One pipe write delivers the handshake and the unsolicited frame in a
+      // single chunk, so the frame is queued before start() resolves.
+      'process.stdout.write("\\0unexpected\\0"); process.stdin.resume();',
     );
     const { manager, sessionId } = await start(provider);
-    await new Promise((resolve) => setTimeout(resolve, 50));
     const result = await manager.execute(sessionId, "dr");
     expect(result.ok).toBe(false);
     expect(manager.status(sessionId)?.state).toBe("closed");

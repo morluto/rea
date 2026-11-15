@@ -1,4 +1,5 @@
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { translateNativeCommandFailure } from "./NativeCommandAnalysisError.js";
 import { DEFAULT_NATIVE_COMMAND_TIMEOUT_MS } from "../domain/native/nativeDeadlines.js";
@@ -15,10 +16,11 @@ import {
 } from "../domain/native/nativeCallCaptureLimits.js";
 
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import type {
@@ -237,7 +239,7 @@ export class LldbCallTracer implements NativeCallTracer {
     ) => ReturnType<typeof resolveXcrunTool> = (tool, signal) =>
       resolveXcrunTool(tool, this.environment, signal),
   ) {
-    this.environment = snapshotEnvironment(environment);
+    this.environment = snapshotEnvironment(environment, HOST_PLATFORM.platform);
   }
 
   async trace(
@@ -788,15 +790,13 @@ export class LldbCallTracer implements NativeCallTracer {
       );
     };
     if (exited.kind === "cancelled")
-      return failureWithPartial(
-        (partialObservation) =>
-          new AnalysisCancelledError(OPERATION, {
-            cause: signal?.reason,
-            ...(lifecycleCleanup === undefined
-              ? {}
-              : { cleanup: lifecycleCleanup }),
-            partialObservation,
-          }),
+      return failureWithPartial((partialObservation) =>
+        cancelledBy(OPERATION, carriedReason(signal?.reason), {
+          ...(lifecycleCleanup === undefined
+            ? {}
+            : { cleanup: lifecycleCleanup }),
+          partialObservation,
+        }),
       );
     if (exited.kind === "timeout")
       return failureWithPartial(
@@ -1287,8 +1287,7 @@ const lldbPreparationFailure = (
 ): AnalysisError => {
   const marker = cause.cleanupFailure;
   const compiler = cause.compilerOutcome;
-  const options = {
-    cause,
+  const optionsWithoutCause = {
     ...(cause.capturedOutput === undefined
       ? {}
       : { capturedOutput: cause.capturedOutput }),
@@ -1318,13 +1317,15 @@ const lldbPreparationFailure = (
           }),
     },
   };
+  const options = { cause, ...optionsWithoutCause };
   const error =
     cause.cancellation === undefined
       ? new ProviderAdapterError(PROVIDER, OPERATION, options)
-      : new AnalysisCancelledError(OPERATION, {
-          ...options,
-          cause: cause.cancellation.reason,
-        });
+      : cancelledBy(
+          OPERATION,
+          carriedReason(cause.cancellation.reason),
+          optionsWithoutCause,
+        );
   return marker === undefined ? error : error.bindCleanupDependencies([marker]);
 };
 

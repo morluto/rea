@@ -29,6 +29,7 @@ import {
   type EnvironmentToolDefinition,
 } from "../../application/environment/environmentTools.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import { AnalysisCleanupRelease } from "../../domain/analysisCleanupRelease.js";
 import { safeParseJson } from "../../domain/safeJson.js";
 import {
   AnalysisOutputError,
@@ -519,7 +520,8 @@ export const serveEnvironment = async (
   let responseClosePending = false;
   let settledSuccessful = false;
   let closing: Promise<void> | undefined;
-  const shutdownFailures = new Set<AnalysisError>();
+  // Every shutdown failure reports this release until a close succeeds.
+  let shutdownRelease: AnalysisCleanupRelease | undefined;
   const owner: EnvironmentShutdownOwner = {
     get cleanupResources() {
       const stateResources = stateFiles.cleanupResources;
@@ -598,12 +600,13 @@ export const serveEnvironment = async (
                 "Keep this REA process available for cleanup. Confirm the reported resources are released before starting a replacement environment server.",
             },
           ).bindCleanupResourceOwner(owner);
-          shutdownFailures.add(failure);
-          throw failure;
+          throw (shutdownRelease ??= new AnalysisCleanupRelease()).bind(
+            failure,
+          );
         }
         retainedEnvironmentShutdowns.delete(owner);
-        for (const failure of shutdownFailures) failure.resolveCleanup();
-        shutdownFailures.clear();
+        shutdownRelease?.confirm();
+        shutdownRelease = undefined;
         settledSuccessful = true;
       })();
       closing = attempt;
@@ -625,7 +628,7 @@ export const serveEnvironment = async (
         closing = undefined;
       }
     } else if (
-      shutdownFailures.size === 0 &&
+      shutdownRelease === undefined &&
       !httpClosePending &&
       !stateClosePending
     ) {

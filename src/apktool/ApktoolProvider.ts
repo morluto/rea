@@ -1,4 +1,5 @@
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { processInspectionCancellationError } from "../providers/OwnedCommandCleanup.js";
 import { APKTOOL_PROVIDER_IDENTITY } from "./ApktoolProviderIdentity.js";
 import { countDecodedFiles } from "./ApktoolDecodedInventory.js";
@@ -311,12 +312,15 @@ export class ApktoolProvider {
     this.selectedEnvironment =
       options.environment === undefined
         ? undefined
-        : snapshotEnvironment(options.environment);
+        : snapshotEnvironment(options.environment, HOST_PLATFORM.platform);
     this.removeWorkspace = options.removeWorkspace;
   }
 
   private operationEnvironment(): Readonly<NodeJS.ProcessEnv> {
-    return this.selectedEnvironment ?? snapshotEnvironment(process.env);
+    return (
+      this.selectedEnvironment ??
+      snapshotEnvironment(process.env, HOST_PLATFORM.platform)
+    );
   }
 
   /** Probe the selected apktool launcher; decodes nothing. */

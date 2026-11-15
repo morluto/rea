@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { posix } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -155,7 +155,7 @@ describe("selected skill admission", () => {
       ).toEqual([
         {
           id: "install_skill",
-          target: join(
+          target: posix.join(
             "/fixture/home",
             ".agents",
             "skills",
@@ -232,7 +232,12 @@ describe("skill plan destinations", () => {
         .filter(({ kind }) => kind === "install_skill")
         .map(({ target }) => target),
     ).toEqual([
-      join("/fixture/home", ".claude", "skills", "reverse-engineer-anything"),
+      posix.join(
+        "/fixture/home",
+        ".claude",
+        "skills",
+        "reverse-engineer-anything",
+      ),
     ]);
   });
 
@@ -262,8 +267,18 @@ describe("skill plan destinations", () => {
         .filter(({ kind }) => kind === "install_skill")
         .map(({ target }) => target),
     ).toEqual([
-      join("/fixture/home", ".agents", "skills", "reverse-engineer-anything"),
-      join("/fixture/home", ".claude", "skills", "reverse-engineer-anything"),
+      posix.join(
+        "/fixture/home",
+        ".agents",
+        "skills",
+        "reverse-engineer-anything",
+      ),
+      posix.join(
+        "/fixture/home",
+        ".claude",
+        "skills",
+        "reverse-engineer-anything",
+      ),
     ]);
   });
 });
