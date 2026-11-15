@@ -99,7 +99,8 @@ it("collects each recorded control's flag without changing the result", () => {
   expect(result).toEqual(before);
 });
 
-it("records the controls of a contract command's result and returns the result unchanged", async () => {
+/** Run the fixture command once, returning its output and recorded controls. */
+const runFixtureCommand = async (produce: () => unknown) => {
   const contract = {
     name: "inspect_control_fixture",
     inputSchema: z.strictObject({
@@ -118,13 +119,13 @@ it("records the controls of a contract command's result and returns the result u
       description: "Control fixture",
       positionals: ["path"],
     },
-    async () => partialResult(),
+    async () => produce() as never,
   );
   const command = Cli.toCommands.get(cli)?.get("inspect-control-fixture");
   if (command === undefined) throw new Error("command is not registered");
   const parse = (key: "args" | "options", value: unknown) =>
     (Reflect.get(command, key) as { parse(v: unknown): unknown }).parse(value);
-  const { output, controls } = await withCliResultControls(async () => {
+  return withCliResultControls(async () => {
     const value: unknown = await (
       Reflect.get(command, "run") as (value: unknown) => Promise<unknown>
     )({
@@ -133,9 +134,31 @@ it("records the controls of a contract command's result and returns the result u
     });
     return { output: value, controls: cliResultControls() };
   });
+};
+
+it("records the controls of a contract command's result and returns the result unchanged", async () => {
+  const { output, controls } = await runFixtureCommand(partialResult);
   expect(output).toEqual(partialResult());
   // Only controls this command takes as options are rendered.
   expect(controls).toEqual({ worker_timeout_ms: "--worker-timeout-ms" });
+});
+
+it("reads a failure's partial Evidence of the same operation at the declared positions only", async () => {
+  const failure = (operation: string) => ({
+    code: "timeout",
+    message: "Fixture stopped",
+    details: {
+      partial_observation: { ...partialResult(), operation },
+    },
+  });
+  const same = await runFixtureCommand(() =>
+    failure("inspect_control_fixture"),
+  );
+  expect(same.output).toEqual(failure("inspect_control_fixture"));
+  expect(same.controls).toEqual({ worker_timeout_ms: "--worker-timeout-ms" });
+  // Evidence of another operation is not described by this output schema.
+  const other = await runFixtureCommand(() => failure("inspect_source_step"));
+  expect(other.controls).toBeUndefined();
 });
 
 const written = async (

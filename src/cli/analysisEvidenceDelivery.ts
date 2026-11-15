@@ -381,6 +381,10 @@ const publishFailurePartialEvidence = async (
   } catch {
     return withUndeliveredSourceClosure(failure, input);
   }
+  // Publication replaces the inline partial with its delivery; controls
+  // are read from the partial Evidence of this operation.
+  if (partial.operation === input.operation)
+    recordCliDeliveredEvidence(partial);
   const published = await publishDeliveredEvidence(
     partial,
     evidenceOutput,
