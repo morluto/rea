@@ -122,10 +122,16 @@ retrying. No automatic recursive cleanup can erase unrelated files.
 A synthetic demo and focused test commands are also available:
 
 ```sh
-npm run test:local -- src/domain/rawRaster.test.ts
-node --import tsx --test scripts/experiments/raw-raster-preview.test.mjs scripts/experiments/raw-raster-file.test.mjs
+npm run test:raw-raster
 node --import tsx scripts/experiments/raw-raster-preview.mjs /tmp/rea-raster-preview-new
 ```
+
+The `Experimental raw raster` workflow runs `npm run test:raw-raster` on Linux
+and Windows for relevant pushes and pull requests, and supports manual dispatch.
+This explicitly includes the Node `.test.mjs` harness, which is not discovered by
+Vitest. It uses synthetic temporary files only; it does not upload outputs. The
+Linux descriptor-count check and selected leaf-symlink fixture are platform-scoped
+and are skipped on Windows. A green Windows job does not claim those checks ran.
 
 The synthetic demo uses red/green/blue/white pixels only. Neither script is a
 registered REA product command or supported public API. File-workflow verification

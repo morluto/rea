@@ -4,7 +4,7 @@ The checklist describes planned verification, not executed results. Update it
 only from checks against the final implementation. See [spec](spec.md) and
 [plan](plan.md).
 
-- [x] R1: Add pure typed decoding with exact pixel fixtures for all five formats.
+- [x] R1: Add pure typed decoding with exact pixel fixtures for all six formats.
 - [x] R2: Cover row directions, nonzero offsets, inter-row padding and omitted
       final-row padding; retain the full caller-selected range.
 - [x] R3: Exercise malformed dimensions/ranges, arithmetic overflow, short input,

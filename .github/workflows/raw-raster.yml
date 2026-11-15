@@ -1,0 +1,62 @@
+name: Experimental raw raster
+
+on:
+  push:
+    paths:
+      - "src/**"
+      - "scripts/**"
+      - "tests/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".nvmrc"
+      - ".npmrc"
+      - "tsconfig*.json"
+      - "vitest.config.ts"
+      - "docs/specs/artifacts/raw-raster-preview/**"
+      - ".github/workflows/raw-raster.yml"
+  pull_request:
+    paths:
+      - "src/**"
+      - "scripts/**"
+      - "tests/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".nvmrc"
+      - ".npmrc"
+      - "tsconfig*.json"
+      - "vitest.config.ts"
+      - "docs/specs/artifacts/raw-raster-preview/**"
+      - ".github/workflows/raw-raster.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: raw-raster-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  HUSKY: "0"
+
+jobs:
+  raw-raster:
+    name: Raw raster (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      # Node's .test.mjs harness is deliberately invoked explicitly: Vitest's
+      # canonical .test.ts discovery does not own these experiment tests.
+      # All inputs are synthetic temporary files, never private firmware.
+      - name: Verify decoder and file-to-PNG workflow
+        run: npm run test:raw-raster
