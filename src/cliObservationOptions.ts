@@ -46,12 +46,3 @@ export const selectedCommandTimeout = (
   commandTimeoutMs === undefined
     ? {}
     : { command_timeout_ms: commandTimeoutMs };
-
-export const electronPageInspectionOptions = z.object({
-  observationMs: observationDuration(100),
-  includeScriptSources: z
-    .boolean()
-    .default(false)
-    .describe("Include JavaScript source text"),
-  commandTimeoutMs: cliDecimalField(webRuntimeCommandTimeoutSchema),
-});
