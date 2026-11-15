@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import {
   BinaryFormatFailure,
-  BinaryStringReadLimitFailure,
+  isBinaryStringReadLimit,
 } from "./BinaryContainer.js";
 import { readElfStringBytes } from "./ElfStringTable.js";
 
@@ -36,9 +36,11 @@ it.each([65_536, 70_000])(
     } catch (cause) {
       failure = cause;
     }
-    expect(failure).toBeInstanceOf(BinaryStringReadLimitFailure);
+    expect(isBinaryStringReadLimit(failure)).toBe(true);
     expect(failure).not.toBeInstanceOf(BinaryFormatFailure);
-    expect(failure).toMatchObject({ maximumBytes: 65_536 });
+    expect(failure).toMatchObject({
+      failure: { kind: "limit", limit: { maximum: 65_536 } },
+    });
   },
 );
 
@@ -47,17 +49,11 @@ it.each([3, 65_536])(
   (size) => {
     const table = Buffer.alloc(size, 0x61);
     expect(() => readElfStringBytes(table, 0)).toThrow(BinaryFormatFailure);
-    expect(() => readElfStringBytes(table, 0)).not.toThrow(
-      BinaryStringReadLimitFailure,
-    );
   },
 );
 
 it.each([-1, 1])("keeps an out-of-table offset %i malformed", (offset) => {
   expect(() => readElfStringBytes(Buffer.from([0]), offset)).toThrow(
     BinaryFormatFailure,
-  );
-  expect(() => readElfStringBytes(Buffer.from([0]), offset)).not.toThrow(
-    BinaryStringReadLimitFailure,
   );
 });

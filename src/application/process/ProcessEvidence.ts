@@ -129,7 +129,7 @@ export const createProcessCaptureEvidence = (
 /** Create one canonical planned-scenario Evidence record without observing a process. */
 export const createProcessScenarioPlanEvidence = (
   scenario: Omit<ProcessScenario, "dry_run">,
-  platform: ProcessCapture["manifest"]["platform"] = process.platform,
+  platform: ProcessCapture["manifest"]["platform"],
 ) => {
   const plan = processScenarioPlanSchema.parse({
     status: "planned",

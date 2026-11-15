@@ -4,7 +4,7 @@ import {
   type ZeroFillMapping,
 } from "../../domain/virtualFileMapping.js";
 import type { PeDataDirectory } from "../../domain/peOptionalHeader.js";
-import { ParseFailureError } from "../../domain/parseFailure.js";
+import { decodeLimit, ParseFailureError } from "../../domain/parseFailure.js";
 
 /** Native container facts a format failure can name. */
 interface BinaryFormatFailureFacts {
@@ -67,22 +67,35 @@ export class BinaryResourceFailure extends ParseFailureError<"limit"> {
   }
 }
 
-/** A bounded read could not establish termination; it does not prove invalid text. */
-export class BinaryStringReadLimitFailure extends Error {
-  constructor(readonly maximumBytes: number) {
-    super(
-      `String termination was not established within its ${String(maximumBytes)}-byte read allowance`,
-    );
-    this.name = "BinaryStringReadLimitFailure";
-  }
-}
+/** Limit name of the fixed per-string NUL-termination read allowance. */
+const STRING_READ_LIMIT = "string-read-bytes";
+
+/** A string read stopped at its allowance; this does not prove invalid text. */
+export type BinaryStringReadLimit = ParseFailureError<"limit">;
+
+/** A bounded read could not establish termination within `maximumBytes`. */
+export const binaryStringReadLimit = (
+  maximumBytes: number,
+): BinaryStringReadLimit =>
+  decodeLimit(
+    "native-binary",
+    `String termination was not established within its ${String(maximumBytes)}-byte read allowance`,
+    { name: STRING_READ_LIMIT, maximum: maximumBytes },
+  );
+
+/** Whether a cause is a string read that stopped at its allowance. */
+export const isBinaryStringReadLimit = (
+  cause: unknown,
+): cause is BinaryStringReadLimit =>
+  cause instanceof ParseFailureError &&
+  cause.failure.kind === "limit" &&
+  cause.failure.limit.name === STRING_READ_LIMIT;
 
 /** Recognized format failures and bounded string-read failures. */
 export const isBinaryFormatOrStringLimitFailure = (
   cause: unknown,
-): cause is BinaryFormatFailure | BinaryStringReadLimitFailure =>
-  cause instanceof BinaryFormatFailure ||
-  cause instanceof BinaryStringReadLimitFailure;
+): cause is BinaryFormatFailure | BinaryStringReadLimit =>
+  cause instanceof BinaryFormatFailure || isBinaryStringReadLimit(cause);
 
 /** Native loader region facts; language-specific fallback selection belongs to consumers. */
 export interface LoadRegion {
@@ -591,7 +604,7 @@ const readMappedString = (
     chunks.push(chunk);
     length += size;
   }
-  throw new BinaryStringReadLimitFailure(maximumBytes);
+  throw binaryStringReadLimit(maximumBytes);
 };
 
 /** Recognize a wholly zero-filled span while refusing even partial file aliases. */
