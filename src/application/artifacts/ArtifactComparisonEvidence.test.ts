@@ -1,3 +1,7 @@
+import {
+  fileSubjectTarget,
+  displayedEvidenceSubject,
+} from "../../../tests/fixtures/evidenceSubject.js";
 import { RECREATE_EVIDENCE_GUIDANCE } from "../../domain/evidenceFormat.js";
 import { expect, it } from "vitest";
 
@@ -8,8 +12,10 @@ import { artifactInventorySummaryViewResultSchema } from "../../domain/analysisV
 import {
   createEvidence,
   parseEvidence,
+  evidenceSubjectTarget,
   rebindEvidenceToTargetPath,
   type Evidence,
+  type EvidenceSubjectTarget,
 } from "../../domain/evidence.js";
 import {
   EvidenceIntegrityError,
@@ -40,38 +46,25 @@ const recreateSummary = (
   normalizedResult: Evidence["normalized_result"],
   parameters: Evidence["parameters"] = summary.parameters,
 ): Evidence => {
-  if (summary.subject === null)
-    throw new Error("artifact summary fixture must identify its subject");
-  return createEvidence(
-    {
-      path: summary.subject.local_path,
-      sha256: summary.subject.digest.sha256,
-      format: summary.subject.format,
-      ...(summary.subject.architecture === null
-        ? {}
-        : { architecture: summary.subject.architecture }),
-    },
-    summary.provider,
-    {
-      predicateType: summary.predicate_type,
-      operation: summary.operation,
-      parameters,
-      result: normalizedResult,
-      ...(summary.analysis_profile === null
-        ? {}
-        : { analysisProfile: summary.analysis_profile }),
-      rawResult: summary.raw_result,
-      confidence: summary.confidence,
-      authority: summary.authority,
-      environment: summary.environment,
-      limitations: summary.limitations,
-      ...(summary.relationship_coverage === null
-        ? {}
-        : { relationshipCoverage: summary.relationship_coverage }),
-      locations: summary.locations,
-      evidenceLinks: summary.evidence_links,
-    },
-  );
+  return createEvidence(fileSubjectTarget(summary.subject), summary.provider, {
+    predicateType: summary.predicate_type,
+    operation: summary.operation,
+    parameters,
+    result: normalizedResult,
+    ...(summary.analysis_profile === null
+      ? {}
+      : { analysisProfile: summary.analysis_profile }),
+    rawResult: summary.raw_result,
+    confidence: summary.confidence,
+    authority: summary.authority,
+    environment: summary.environment,
+    limitations: summary.limitations,
+    ...(summary.relationship_coverage === null
+      ? {}
+      : { relationshipCoverage: summary.relationship_coverage }),
+    locations: summary.locations,
+    evidenceLinks: summary.evidence_links,
+  });
 };
 
 it("reports a missing retained parent instead of treating summary facts as inventory", async () => {
@@ -156,15 +149,14 @@ it("rejects summary facts that do not reproject from the complete parent", async
 
 it("accepts display-only subject changes excluded from Evidence identity", async () => {
   const { parent, summary } = await artifactSummary();
-  if (summary.subject === null)
+  if (summary.subject.identity.kind !== "file")
     throw new Error("artifact summary fixture must identify its subject");
   const displayOnly = parseEvidence({
     ...summary,
-    subject: {
-      ...summary.subject,
+    subject: displayedEvidenceSubject(summary.subject, {
       name: "renamed.app",
       local_path: "/display-only/renamed.app",
-    },
+    }),
   });
   const resolved = resolveArtifactComparisonEvidence(
     displayOnly,
@@ -181,13 +173,19 @@ const hashesUnknown =
 type SummaryEra = "pre-ce1f4b1bb" | "pre-b395190e4" | "current";
 
 /** Recommit an inventory whose two independent unknowns exercise both migrations. */
-const unknownInventory = () => {
+const unknownInventory = (target: Partial<EvidenceSubjectTarget> = {}) => {
   const original = ARTIFACT_COMPARISON_EXAMPLE.left;
   const inventory = artifactInventoryResultSchema.parse(
     original.normalized_result,
   );
   inventory.coverage.status = "unknown";
   inventory.occurrences[0]!.hash_status = "unavailable";
+  if (target.format === "esp-flash-image") {
+    inventory.manifest.root_format = target.format;
+    for (const occurrence of inventory.occurrences)
+      if (occurrence.logical_path === ".")
+        occurrence.artifact_format = target.format;
+  }
   const graphSha256 = artifactGraphDigest({
     nodes: inventory.nodes,
     occurrences: inventory.occurrences,
@@ -204,6 +202,7 @@ const unknownInventory = () => {
       path: "historical-inventory",
       sha256: inventory.manifest.root_sha256,
       format: "file",
+      ...target,
     },
     original.provider,
     {
@@ -236,9 +235,8 @@ const summaryAtEra = async (era: SummaryEra, aliasPath?: string) => {
     aliasPath === undefined
       ? parent
       : rebindEvidenceToTargetPath(parent, {
+          ...fileSubjectTarget(parent.subject),
           path: aliasPath,
-          sha256: parent.subject!.digest.sha256,
-          format: parent.subject!.format,
         });
   const projected = await inspectAnalysisView({
     source: { kind: "inline", evidence: selectedParent },
@@ -316,9 +314,8 @@ it.each<SummaryEra>(["current"])(
   async (era) => {
     const { parent, summary } = await summaryAtEra(era);
     const rebound = rebindEvidenceToTargetPath(parent, {
+      ...fileSubjectTarget(parent.subject),
       path: "/selected/alias.bin",
-      sha256: parent.subject!.digest.sha256,
-      format: parent.subject!.format,
     });
     expect(rebound.evidence_id).toBe(parent.evidence_id);
     expect(resolveArtifactComparisonEvidence(summary, () => rebound)).toEqual({
@@ -463,3 +460,30 @@ it.each<SummaryEra>(["current"])(
     expect(parseEvidence(summary).evidence_id).toBe(before.summaryId);
   },
 );
+
+it("authenticates an alias summary of a selected flash image against its retained inventory", async () => {
+  const parent = unknownInventory({
+    format: "esp-flash-image",
+    selection: {
+      kind: "esp-flash",
+      flash_offset: 0x1_0000,
+      partition_table_offset: 0x8000,
+    },
+  });
+  const { name: _name, ...target } = evidenceSubjectTarget(parent.subject)!;
+  const alias = rebindEvidenceToTargetPath(parent, {
+    ...target,
+    path: "/selected/alias.bin",
+  });
+  expect(alias.subject?.local_path).toBe("/selected/alias.bin");
+  const summary = await inspectAnalysisView({
+    source: { kind: "inline", evidence: alias },
+    view: { kind: "summary" },
+  });
+  if (!summary.ok) throw summary.error;
+  // The owner rebinds its retained parent to the alias with the selection, so
+  // the reprojected summary names the same path and Evidence ID.
+  expect(
+    resolveArtifactComparisonEvidence(summary.value, () => parent),
+  ).toEqual({ ok: true, value: parent });
+});

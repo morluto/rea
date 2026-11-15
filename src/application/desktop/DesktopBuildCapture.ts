@@ -39,13 +39,7 @@ import {
   notAnswered,
   type CaptureStep,
 } from "./DesktopBuildCaptureFailure.js";
-import {
-  adapterError,
-  errorText,
-  refused,
-  runRea,
-  WORK,
-} from "./DesktopBuildCommands.js";
+import { adapterError, refused, runRea, WORK } from "./DesktopBuildCommands.js";
 import {
   exportBuild,
   type BuildExportRequest,
@@ -56,6 +50,7 @@ import {
   secretDraftRefusal,
   type StoppedCapture,
 } from "./DesktopBuildSummary.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const START = "start_build_capture";
 const MARK = "mark_build_checkpoint";
@@ -215,7 +210,7 @@ const checkExportRuntime = async (
     return ok(undefined);
   } catch (cause: unknown) {
     if (signal.aborted) return err(cancelledBy(START, signal));
-    const message = errorText(cause);
+    const message = errorMessage(cause);
     const redacted = computer.redacted(message);
     return err(
       adapterError(
@@ -426,7 +421,7 @@ export class DesktopBuildCapture {
         failure:
           cause instanceof AnalysisError
             ? cause
-            : adapterError(START, errorText(cause), cause),
+            : adapterError(START, errorMessage(cause), cause),
       });
     }
     if (answer.refused !== undefined)
@@ -534,7 +529,7 @@ export class DesktopBuildCapture {
       return err(
         cause instanceof AnalysisError
           ? cause
-          : adapterError(MARK, errorText(cause), cause),
+          : adapterError(MARK, errorMessage(cause), cause),
       );
     }
   }
@@ -594,7 +589,7 @@ export class DesktopBuildCapture {
       return err(
         cause instanceof AnalysisError
           ? cause
-          : adapterError(STOP, errorText(cause), cause),
+          : adapterError(STOP, errorMessage(cause), cause),
       );
     }
   }
@@ -679,7 +674,7 @@ export class DesktopBuildCapture {
           ? cause
           : signal.aborted
             ? cancelledBy(EXPORT, signal)
-            : adapterError(EXPORT, errorText(cause), cause),
+            : adapterError(EXPORT, errorMessage(cause), cause),
       );
     }
     return exportBuild(

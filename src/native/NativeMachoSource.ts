@@ -6,11 +6,10 @@ import {
   artifactSelectedPathErrno,
   ArtifactReaderFailure,
   type ArtifactResourceScope,
-} from "../resources/index.js";
-import {
   hashStableRootArtifactHandle,
   targetDigestChangedFailure,
 } from "../resources/index.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** A positional reader for one slice of the descriptor bound to the target. */
 export interface NativeMachoSource {
@@ -35,9 +34,7 @@ export class NativeMachoSourceVerificationFailure extends ArtifactReaderFailure 
       verificationCause instanceof ArtifactReaderFailure
         ? verificationCause.reason
         : "io",
-      verificationCause instanceof Error
-        ? verificationCause.message
-        : String(verificationCause),
+      errorMessage(verificationCause),
       {
         cause: verificationCause,
         ...(verificationCause instanceof ArtifactReaderFailure

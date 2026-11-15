@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../../src/domain/targetIdentity.js";
 import { chmod, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -449,8 +450,8 @@ describe("managed nested type names", () => {
     const warned = comparison.methods.map(({ left, right, limitations }) => [
       left?.token ?? null,
       right?.token ?? null,
-      limitations.some((limitation) =>
-        limitation.startsWith("counterpart-signature-not-decoded"),
+      limitations.some(
+        ({ code }) => code === "counterpart-signature-not-decoded",
       ),
     ]);
 
@@ -499,7 +500,7 @@ describe("managed member comparison subject identity", () => {
       },
     );
     const unavailableSubject = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       {
         id: "partial-fixture",
         name: "Partial fixture",
@@ -600,7 +601,9 @@ describe("managed call-target comparison", () => {
     expect(report.methods[0]).toMatchObject({
       status: "changed",
       dimensions: expect.arrayContaining(["call-target", "availability"]),
-      limitations: [expect.stringContaining("call targets are unavailable")],
+      limitations: [
+        expect.objectContaining({ code: "call-target-unavailable" }),
+      ],
     });
 
     const unavailableEdges = observe(
@@ -825,7 +828,7 @@ describe("compare-managed-members source failures", () => {
                   operation: "inspect_managed_members",
                   subject: {
                     local_path: leftPath,
-                    digest: {
+                    identity: {
                       sha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
                     },
                   },

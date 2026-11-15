@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { getHeapStatistics } from "node:v8";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { createServer } from "../../src/server/createServer.js";
@@ -9,6 +10,7 @@ import {
   createEvidence,
   isImmutableEvidence,
   parseEvidence,
+  evidenceSubjectInput,
 } from "../../src/domain/evidence.js";
 import { createTestBinarySession } from "../fixtures/binarySession.js";
 import { writeFile } from "node:fs/promises";
@@ -121,7 +123,7 @@ it("keeps the owning operation when native matching reloads a needed earlier bun
   const path = join(root, "parent.json"),
     empty = join(root, "empty.json");
   const parent = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     { operation: "list_procedures", parameters: {}, result: {} },
   );
@@ -289,13 +291,17 @@ it("authenticates escaped payloads without serializing either complete bundle", 
   const path = join(root, "parent.json");
   const escaped = '\u0000\u0001\\"😀\ud800'.repeat(20000);
   const example = SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE.application;
-  const parent = createEvidence(undefined, example.provider, {
-    predicateType: example.predicate_type,
-    operation: example.operation,
-    parameters: example.parameters,
-    result: example.normalized_result,
-    rawResult: { escaped },
-  });
+  const parent = createEvidence(
+    evidenceSubjectInput(example.subject),
+    example.provider,
+    {
+      predicateType: example.predicate_type,
+      operation: example.operation,
+      parameters: example.parameters,
+      result: example.normalized_result,
+      rawResult: { escaped },
+    },
+  );
   await writeFile(
     path,
     JSON.stringify(createImmutableEvidenceBundle([parent])),
@@ -341,7 +347,11 @@ it("seals a fresh object-heavy Evidence tree without retaining a set of complete
     parameters: {},
     result,
   };
-  const complete = createEvidence(undefined, provider, observation);
+  const complete = createEvidence(
+    unknownTarget("not-observed"),
+    provider,
+    observation,
+  );
   const add = Set.prototype.add;
   const guarded = vi.spyOn(Set.prototype, "add").mockImplementation(function (
     this: Set<unknown>,
@@ -360,9 +370,14 @@ it("seals a fresh object-heavy Evidence tree without retaining a set of complete
   });
   let sealed;
   try {
-    sealed = createEvidence(undefined, provider, observation, {
-      immutable: true,
-    });
+    sealed = createEvidence(
+      unknownTarget("not-observed"),
+      provider,
+      observation,
+      {
+        immutable: true,
+      },
+    );
   } finally {
     guarded.mockRestore();
   }

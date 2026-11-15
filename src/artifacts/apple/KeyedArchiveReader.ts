@@ -1,15 +1,6 @@
 import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
-import { targetDigestChangedFailure } from "../../resources/index.js";
-import { createHash } from "node:crypto";
 import {
-  decodeLimit,
-  isHostLimitFailure,
-  ParseFailureError,
-} from "../../domain/parseFailure.js";
-import { basename, join } from "node:path";
-import { realpath } from "node:fs/promises";
-import { InternalInvariantError } from "../../domain/internalInvariant.js";
-import {
+  targetDigestChangedFailure,
   readStableArtifact,
   projectStableArtifactFailure,
   ArtifactReaderFailure,
@@ -19,7 +10,17 @@ import {
   assertArtifactReadActive,
   bindArtifactFileCleanup,
   ArtifactResourceScope,
+  translateArtifactFailure,
 } from "../../resources/index.js";
+import { createHash } from "node:crypto";
+import {
+  decodeLimit,
+  isHostLimitFailure,
+  ParseFailureError,
+} from "../../domain/parseFailure.js";
+import { basename, join } from "node:path";
+import { realpath } from "node:fs/promises";
+import { InternalInvariantError } from "../../domain/internalInvariant.js";
 import { ARTIFACT_GRAPH_PROVIDER } from "../../domain/investigationProviders.js";
 import { z } from "zod";
 
@@ -55,8 +56,7 @@ import {
   DirectoryArtifactEntryAccessDenied,
 } from "../DirectoryArtifactReader.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 
 import { decodeXmlPlistText } from "../../domain/propertyListXmlText.js";
@@ -65,6 +65,7 @@ import {
   hasNibArchiveSignature,
 } from "../../domain/apple/appleArchiveFormat.js";
 import { estimateBinaryPlistExpansion } from "../../domain/apple/propertyListDecodeBudget.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const MAX_BYTES = 64 * 1024 * 1024;
 /** Decoded representation budget, the same 8:1 ratio Interface Builder uses. */
@@ -227,11 +228,11 @@ export const inspectBundleKeyedArchive = (input: BundleKeyedArchiveInput) => {
           "inspect_keyed_archive",
           resources.cleanupFailure({ kind: "completed" }, [released]),
         );
-        throw analysisErrorWithCleanupFailure(
+        throw analysisErrorWithCleanupDependencies(
           outcome.cause,
           cleanup,
           "inspect_keyed_archive",
-        ).bindCleanupDependencies([outcome.cause, cleanup]);
+        );
       }
       throw resources.cleanupFailure(outcome, [released]);
     }
@@ -490,7 +491,7 @@ const decodeSelectedArchive = (
         isHostLimitFailure(cause)
         ? "limit"
         : "format",
-      `Cannot decode selected Foundation keyed archive: ${cause instanceof Error ? cause.message : String(cause)}`,
+      `Cannot decode selected Foundation keyed archive: ${errorMessage(cause)}`,
       { cause },
     );
   }

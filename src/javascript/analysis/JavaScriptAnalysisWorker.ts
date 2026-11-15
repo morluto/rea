@@ -10,7 +10,7 @@ import {
   ArtifactReaderFailure,
   bindArtifactFileCleanup,
 } from "../../resources/index.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import {
   retainProcessInspectionCleanup,
   processInspectionCancellationError,
@@ -99,6 +99,7 @@ import {
   javaScriptWorkerAdmissionSchema,
   type JavaScriptWorkerMessage,
 } from "./JavaScriptAnalysisWorkerProtocol.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "analyze_javascript_application";
 const PROVIDER = "javascript-static-analysis";
@@ -199,7 +200,7 @@ export class JavaScriptAnalysisWorker {
           "JavaScript worker control frame is unterminated or oversized",
         );
     } catch (cause: unknown) {
-      this.#latchOutputFailure(message(cause));
+      this.#latchOutputFailure(errorMessage(cause));
     }
   };
 
@@ -636,7 +637,7 @@ export class JavaScriptAnalysisWorker {
               }),
             )
           : previous;
-        const error = this.#cleanupError(message(cause), primary);
+        const error = this.#cleanupError(errorMessage(cause), primary);
         this.#runtime.bindCleanupFailure(error);
         result = err({
           javascript,
@@ -706,11 +707,11 @@ export class JavaScriptAnalysisWorker {
           ? runtime.reason
           : this.#failure(runtime.reason, "worker close", undefined);
       if (inspectionError !== undefined)
-        throw analysisErrorWithCleanupFailure(
+        throw analysisErrorWithCleanupDependencies(
           runtimeError,
           inspectionError,
           OPERATION,
-        ).bindCleanupDependencies([runtimeError, inspectionError]);
+        );
       throw runtimeError;
     }
     if (inspectionError !== undefined) throw inspectionError;
@@ -1454,7 +1455,7 @@ export class JavaScriptAnalysisWorker {
     )
       return new AnalysisOutputError(
         OPERATION,
-        `${path} during ${this.#phase}: ${message(cause)}`,
+        `${path} during ${this.#phase}: ${errorMessage(cause)}`,
         { cause, capturedOutput: this.#captured() },
       );
     return cause instanceof RuntimeControlUnavailableError
@@ -1465,7 +1466,7 @@ export class JavaScriptAnalysisWorker {
           diagnostics: {
             source_path: path,
             phase: this.#phase,
-            message: message(cause),
+            message: errorMessage(cause),
           },
         });
   }
@@ -1536,6 +1537,3 @@ export class JavaScriptAnalysisWorker {
     this.#terminalResponseId = undefined;
   }
 }
-
-const message = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);

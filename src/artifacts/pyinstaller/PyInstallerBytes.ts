@@ -1,11 +1,10 @@
 import type { FileHandle } from "node:fs/promises";
 import { err, ok, type Result } from "../../domain/result.js";
-import { ArtifactReaderFailure } from "../../resources/index.js";
+import { ArtifactReaderFailure, abortIfNeeded } from "../../resources/index.js";
 import {
   pyInstallerFailure,
   type PyInstallerFailure,
 } from "./PyInstallerFailure.js";
-import { abortIfNeeded } from "../../resources/index.js";
 
 /** Fill one already-budgeted format range; only zero bytes establish EOF. */
 export const readPyInstallerBytes = async (

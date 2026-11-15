@@ -127,7 +127,7 @@ import {
   type NativeCommandCleanupFailure,
   type NativeCommandCapture,
   type NativeCommandRunner,
-} from "./CommandRunner.js";
+} from "../providers/NativeCommandRunner.js";
 import {
   withSignatureTarget,
   verifySignatureTarget,
@@ -149,7 +149,10 @@ import {
   architectureLocations,
   inspectNativeMacho,
 } from "./NativeMachoInspection.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  analysisErrorWithCleanupFailure,
+} from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
@@ -173,6 +176,7 @@ import { NativeUiInterruptionControl } from "./NativeUiInterruptionControl.js";
 import type { ResolvedAppBundleResourceRoot } from "../domain/apple/bundleResourceRoot.js";
 import { UnsupportedBinaryPlistUidError } from "../domain/apple/plistScalars.js";
 import { NATIVE_COMMAND_OUTPUT_BUDGET_BYTES } from "../domain/native/nativeCommandOutput.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 type SignatureRuntimeRootFactory = () => Promise<
   Pick<PrivateRuntimeRoot, "path" | "close">
@@ -461,12 +465,7 @@ class NativeMacOSClient implements AnalysisClient {
     for (const cleanupError of cleanupErrors)
       result = result.ok
         ? err(cleanupError)
-        : err(
-            analysisErrorWithCleanupFailure(
-              result.error,
-              cleanupError,
-            ).bindCleanupDependencies([result.error, cleanupError]),
-          );
+        : err(analysisErrorWithCleanupDependencies(result.error, cleanupError));
     return result;
   }
 
@@ -543,11 +542,11 @@ class NativeMacOSClient implements AnalysisClient {
           return err(
             result.ok
               ? cleanup
-              : analysisErrorWithCleanupFailure(
+              : analysisErrorWithCleanupDependencies(
                   result.error,
                   cleanup,
                   operation,
-                ).bindCleanupDependencies([result.error, cleanup]),
+                ),
           );
         }
         result = finishNativeUiObservation(result, operation, interruption);
@@ -1057,7 +1056,7 @@ class NativeMacOSClient implements AnalysisClient {
           diagnostics: {
             phase: "codesign-capture",
             path: this.target.path,
-            reason: cause instanceof Error ? cause.message : String(cause),
+            reason: errorMessage(cause),
           },
         }),
       );
@@ -1566,11 +1565,11 @@ class NativeMacOSClient implements AnalysisClient {
           return err(
             primary === undefined
               ? cleanup
-              : analysisErrorWithCleanupFailure(
+              : analysisErrorWithCleanupDependencies(
                   primary,
                   cleanup,
                   "inspect_macho",
-                ).bindCleanupDependencies([primary, cleanup]),
+                ),
           );
         }
         if (signal?.aborted && result.ok)

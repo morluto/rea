@@ -1,3 +1,4 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
 import { readRuntimeSetting } from "../config/runtimeAnalysisSettings.js";
 import { RIZIN_DEBUGGER_PROVIDER_IDENTITY } from "./RizinDebuggerProviderIdentity.js";
 import { persistentDebuggerHostSupported } from "../process/PersistentDebuggerHost.js";
@@ -41,7 +42,10 @@ import type {
   AnalysisError,
   AnalysisErrorOptions,
 } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  analysisErrorWithCleanupFailure,
+} from "../domain/analysisErrorCleanup.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { currentAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -73,6 +77,7 @@ import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
 import { utf8HeadExcerpt } from "../domain/utf8HeadExcerpt.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const CLEANUP_COMMAND_TIMEOUT_MS = 1_000;
 const STARTUP_TIMEOUT_MS = 30_000;
@@ -109,34 +114,37 @@ const createRizinCommandEvidence = ({
   launchProvenance,
   limitations,
 }: RizinCommandEvidenceInput): Evidence =>
-  createEvidence(undefined, RIZIN_DEBUGGER_PROVIDER_IDENTITY, {
-    predicateType: "rea.debugger.command-observation",
-    operation: "rizin_debug_command",
-    parameters: {
-      session_id: sessionId,
-      command,
-      inferior_tty: inferiorTty,
-      launch_provenance: { ...launchProvenance },
+  createEvidence(
+    unknownTarget("not-observed"),
+    RIZIN_DEBUGGER_PROVIDER_IDENTITY,
+    {
+      predicateType: "rea.debugger.command-observation",
+      operation: "rizin_debug_command",
+      parameters: {
+        session_id: sessionId,
+        command,
+        inferior_tty: inferiorTty,
+        launch_provenance: { ...launchProvenance },
+      },
+      result: { ...result },
+      rawResult: { ...result },
+      limitations: [
+        "The current debugger target identity is not established by the Rizin session identifier.",
+        ...limitations,
+        ...(result.completion_status === "unknown"
+          ? [
+              "Interrupted output may include an incomplete completion-marker prefix; it is retained because it cannot be distinguished from command diagnostics.",
+            ]
+          : []),
+        ...(result.output_invalid_utf8
+          ? [
+              "Collected command frames contained invalid UTF-8 bytes; decoded text may contain replacement characters.",
+            ]
+          : []),
+        RIZIN_LAUNCH_PROVENANCE_LIMITATION,
+      ],
     },
-    result: { ...result },
-    rawResult: { ...result },
-    subjectUnavailableReason:
-      "The current debugger target identity is not established by the Rizin session identifier.",
-    limitations: [
-      ...limitations,
-      ...(result.completion_status === "unknown"
-        ? [
-            "Interrupted output may include an incomplete completion-marker prefix; it is retained because it cannot be distinguished from command diagnostics.",
-          ]
-        : []),
-      ...(result.output_invalid_utf8
-        ? [
-            "Collected command frames contained invalid UTF-8 bytes; decoded text may contain replacement characters.",
-          ]
-        : []),
-      RIZIN_LAUNCH_PROVENANCE_LIMITATION,
-    ],
-  });
+  );
 
 type RizinOutputLimit =
   | "command_output_bytes"
@@ -514,7 +522,7 @@ export class RizinDebugSessionManager {
                 {
                   path: ["inferior_tty"],
                   reason: "invalid_value",
-                  message: `Cannot use selected terminal ${input.inferior_tty}: ${primaryCause instanceof Error ? primaryCause.message : String(primaryCause)}`,
+                  message: `Cannot use selected terminal ${input.inferior_tty}: ${errorMessage(primaryCause)}`,
                 },
               ],
             )
@@ -1728,11 +1736,11 @@ export class RizinDebugSessionManager {
       operation,
       stopped.reason,
     );
-    const composed = analysisErrorWithCleanupFailure(
+    const composed = analysisErrorWithCleanupDependencies(
       primary,
       cleanup,
       operation,
-    ).bindCleanupDependencies([cleanup]);
+    );
     return this.#sessions.retain(session, composed);
   }
 

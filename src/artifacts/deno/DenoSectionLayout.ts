@@ -1,9 +1,8 @@
 import { fixedAllowanceRemediation } from "../../domain/fixedAllowanceRemediation.js";
 import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
-import { ArtifactReaderFailure } from "../../resources/index.js";
+import { ArtifactReaderFailure, abortIfNeeded } from "../../resources/index.js";
 import { walkDenoVirtualFs, type DenoVfsWalk } from "./DenoVirtualFs.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
-import { abortIfNeeded } from "../../resources/index.js";
 
 /** Opening and closing marker of a Deno compile data section. */
 export const DENO_SECTION_MAGIC = Buffer.from("d3n0l4nd", "latin1");

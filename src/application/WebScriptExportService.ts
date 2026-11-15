@@ -49,6 +49,7 @@ import {
   RegularFileCleanupFailure,
   regularFileCancellation,
 } from "../filesystem/OwnedRegularFile.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "export_web_scripts";
 
@@ -364,7 +365,7 @@ const captureReadFailure = (
     diagnostics: {
       capture_path: path,
       error_name: cause instanceof Error ? cause.name : "UnknownError",
-      error_message: cause instanceof Error ? cause.message : String(cause),
+      error_message: errorMessage(cause),
     },
   });
 };
@@ -388,9 +389,6 @@ const incompleteCaptureCleanup = (
     new AnalysisCleanupLeaseGroup(error, [cleanup.lease]);
   return error;
 };
-
-const errorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
 
 const parseCapture = (
   bytes: Buffer,

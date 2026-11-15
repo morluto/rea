@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import {
   advertisedMcpToolSchemas,
@@ -658,7 +659,7 @@ it("checks WASM semantic identity while preserving rebound display paths", async
     { kind: "wasm", facet: "exports", offset: 0, limit: 1 },
   ] as const;
   for (const target of [
-    undefined,
+    unknownTarget("not-observed"),
     {
       path: value.artifact.path,
       sha256: "f".repeat(64),

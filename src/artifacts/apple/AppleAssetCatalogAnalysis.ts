@@ -13,20 +13,20 @@ import {
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import { createHash } from "node:crypto";
 import { lstat } from "node:fs/promises";
-import { streamChunkToBuffer } from "../../resources/index.js";
-import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import {
+  streamChunkToBuffer,
   ArtifactResourceScope,
   ArtifactReaderFailure,
   sameArtifactSourceIdentity,
   type ArtifactEntry,
   type ArtifactReaderTraversal,
+  translateArtifactFailure,
 } from "../../resources/index.js";
-import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
+import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import { InternalInvariantError } from "../../domain/internalInvariant.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ARTIFACT_GRAPH_PROVIDER } from "../../domain/investigationProviders.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import {
   ArtifactTraversalObservation,
   declaredArtifactEntries,
@@ -136,11 +136,11 @@ export const analyzeAppleAssetCatalogs = async (input: {
         "inspect_asset_catalog",
         joined.error,
       );
-      throw analysisErrorWithCleanupFailure(
+      throw analysisErrorWithCleanupDependencies(
         primary,
         cleanup,
         "inspect_asset_catalog",
-      ).bindCleanupDependencies([primary, cleanup]);
+      );
     }
     throw cause;
   }
@@ -281,11 +281,11 @@ const collectAssetCatalogs = async (input: {
         "inspect_asset_catalog",
         input.resources.cleanupFailure({ kind: "completed" }, [released]),
       );
-      throw analysisErrorWithCleanupFailure(
+      throw analysisErrorWithCleanupDependencies(
         outcome.cause,
         cleanup,
         "inspect_asset_catalog",
-      ).bindCleanupDependencies([outcome.cause, cleanup]);
+      );
     }
     throw input.resources.cleanupFailure(outcome, [released]);
   }

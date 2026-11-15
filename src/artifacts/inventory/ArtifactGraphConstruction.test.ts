@@ -14,9 +14,11 @@ import {
   resolveOccurrenceParents,
 } from "./ArtifactGraphConstruction.js";
 import { createArtifactClassificationProbe } from "../ArtifactClassificationProbe.js";
-import { createAsarHeaderSignatureProbe } from "../AsarHeader.js";
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
-import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
+import {
+  translateArtifactFailure,
+  createAsarHeaderSignatureProbe,
+} from "../../resources/index.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { artifactIdForContent } from "../../domain/artifactIdentity.js";
 import { pe } from "../../domain/binaryTarget.fixture.js";

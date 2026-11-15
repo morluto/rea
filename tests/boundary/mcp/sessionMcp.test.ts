@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { ProcessCaptureResourceScope } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
@@ -450,7 +451,7 @@ describe("snapshot receipt after MCP cleanup", () => {
         "rea-mcp-snapshot-process-cleanup-",
       );
       const cleanupObservation = createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         { id: "fixture", name: "Fixture", version: "1" },
         { operation: "health", parameters: {}, result: "cleanup facts" },
       );

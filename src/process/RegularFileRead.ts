@@ -28,6 +28,7 @@ import type {
   AnalysisCleanupObservation,
   AnalysisError,
 } from "../domain/analysisErrorBase.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** A scope handoff preserves the same descriptor outcome and exact retry capability. */
 export class RetainedRegularFileCleanupFailure<
@@ -130,7 +131,7 @@ export const retryRegularFileCleanup = async <Value>(
     cleanupLease: released.lease,
     failure: retained,
     cleanup: {
-      reason: `${failureMessage(failure.cleanupCause)}; retry: ${failureMessage(released.cause)}`,
+      reason: `${errorMessage(failure.cleanupCause)}; retry: ${errorMessage(released.cause)}`,
       resources: [failure.path],
     },
   };
@@ -183,9 +184,6 @@ export const retryRegularFileCleanupFailures = async (
         }),
   };
 };
-
-const failureMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
 
 /** Completed stable read facts survive cancellation during descriptor finalization. */
 export interface RegularFileCompletion<Value> {

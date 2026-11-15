@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
 import type { ProviderIdentity } from "../../ports/AnalysisProvider.js";
 import type { Evidence, EvidenceObservation } from "../../domain/evidence.js";
@@ -16,7 +17,7 @@ export const createElectronActiveEvidence = (
   provider: ProviderIdentity,
   resolvedInput: CanonicalElectronActiveObservationInput,
 ): Evidence =>
-  createEvidence(undefined, provider, {
+  createEvidence(unknownTarget("not-observed"), provider, {
     predicateType: "rea.electron-active-scenario",
     operation: "capture_electron_scenario",
     parameters: parameters(input, resolvedInput),

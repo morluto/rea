@@ -56,7 +56,7 @@ import {
   silentProgressReporter,
   type ProgressReporter,
 } from "../../ports/ProgressReporter.js";
-import { errorText } from "./DesktopBuildCommands.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const MEASURE = "measure_build_task";
 /** The file at the bundle's root that records each measured task. */
@@ -416,7 +416,7 @@ export const measureBuildTask = async (
         : signal.aborted
           ? cancelledBy(MEASURE, signal)
           : new ProviderAdapterError(AGENTENV_PROVIDER, MEASURE, {
-              userMessage: `Measuring ${task} failed after ${String(solves.length)} solve(s): ${errorText(cause)}`,
+              userMessage: `Measuring ${task} failed after ${String(solves.length)} solve(s): ${errorMessage(cause)}`,
               remediationAction:
                 "Check the bundle files and host I/O error, then retry or retain the completed solve results.",
               cause,

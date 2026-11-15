@@ -29,13 +29,8 @@ import { err, ok, type Result } from "../domain/result.js";
 import type { Logger } from "pino";
 import type { ProviderAvailability } from "../ports/AnalysisProvider.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
-import { registerArtifactComparisonTool } from "./registerArtifactComparisonTool.js";
-import { registerBundleComparisonTool } from "./registerBundleComparisonTool.js";
 import { registerCloseLifecycleTool } from "./registerCloseLifecycleTool.js";
 import { registerResetInvestigationTool } from "./registerResetInvestigationTool.js";
-import { registerFunctionComparisonTool } from "./registerFunctionComparisonTool.js";
-import { registerInvestigationTools } from "./registerInvestigationTools.js";
-import { registerProcessComparisonTool } from "./registerProcessComparisonTool.js";
 import {
   registerEvidenceTools,
   registerUnknownTools,
@@ -47,6 +42,7 @@ import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import { withAdmittedAnalysis } from "./analysisAdmission.js";
 import { runAdmittedToolOperation } from "./admittedToolOperation.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const recordProcessResidualUnknowns = (
   session: BinarySessionPort,
@@ -347,10 +343,6 @@ export const registerSessionTools = (
   const exportContract = toolContract("export_evidence_bundle");
   const importContract = toolContract("import_evidence_bundle");
   const captureContract = toolContract("capture_process_scenario");
-  const compareContract = toolContract("compare_process_captures");
-  const compareArtifactsContract = toolContract("compare_artifacts");
-  const compareFunctionsContract = toolContract("compare_functions");
-  const compareBundlesContract = toolContract("compare_bundles");
   const snapshotContract = toolContract("get_evidence_bundle");
   const processResources = new ProcessCaptureResourceScope();
   server.registerTool(
@@ -463,33 +455,25 @@ export const registerSessionTools = (
     } finally {
       void processResources.close().catch((cause: unknown) => {
         logger.error(
-          { error: cause instanceof Error ? cause.message : String(cause) },
+          { error: errorMessage(cause) },
           "Process capture cleanup failed during server shutdown",
         );
       });
     }
   };
-  registerProcessComparisonTool(server, session, compareContract);
-  registerArtifactComparisonTool(
+  registerServiceTools(
     server,
-    session,
-    compareArtifactsContract,
-    options.artifactResources,
+    {
+      sessionDerived: { session, resources: options.artifactResources },
+    },
+    { logger },
   );
-  registerFunctionComparisonTool(server, session, compareFunctionsContract);
   registerNativeFunctionMatchingTool(
     server,
     session,
     logger,
     options.environment,
   );
-  registerBundleComparisonTool(
-    server,
-    session,
-    compareBundlesContract,
-    options.artifactResources,
-  );
-  registerInvestigationTools(server, session);
   registerUnknownTools({ server, session });
   registerContextTools(server, session);
 };

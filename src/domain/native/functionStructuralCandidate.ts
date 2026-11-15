@@ -1,4 +1,4 @@
-import type { Evidence } from "../evidence.js";
+import { evidenceFileTarget, type Evidence } from "../evidence.js";
 import type { FunctionDossier } from "../native/functionDossier.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { normalizeCfg } from "../functionComparisonNormalization.js";
@@ -11,8 +11,9 @@ export const functionStructuralCandidate = (
   evidence: Evidence,
   dossier: FunctionDossier,
 ): string | null => {
+  const architecture = evidenceFileTarget(evidence)?.architecture;
   if (
-    evidence.subject?.architecture == null ||
+    architecture == null ||
     dossier.facet_availability?.cfg?.available !== true ||
     dossier.facet_availability?.callees?.available !== true ||
     dossier.facet_availability?.strings_names?.available !== true ||
@@ -44,7 +45,7 @@ export const functionStructuralCandidate = (
   return digestCanonicalValue({
     algorithm: "observed-cfg-calls-strings-v1",
     profile: evidence.analysis_profile.digest,
-    architecture: evidence.subject.architecture,
+    architecture,
     cfg,
     calls,
     strings,

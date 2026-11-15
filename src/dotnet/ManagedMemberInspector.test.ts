@@ -5,16 +5,19 @@ import { InternalInvariantError } from "../domain/internalInvariant.js";
 import {
   ManagedDecodeBudget,
   managedDecodeBudget,
-} from "./ManagedDecodeBudget.js";
-import { metadataRowCursor, readMetadataBlob } from "./ManagedMetadataHeaps.js";
+} from "../domain/managed/managedDecodeBudget.js";
+import {
+  metadataRowCursor,
+  readMetadataBlob,
+} from "../domain/managed/managedMetadataHeaps.js";
 import {
   metadataRowOffset,
   readManagedMetadataLayout,
   type ManagedMetadataLayout,
-} from "./ManagedMetadataLayout.js";
-import { readManagedPeLayout } from "./ManagedPeReader.js";
+} from "../domain/managed/managedMetadataLayout.js";
+import { readManagedPeLayout } from "../domain/managed/managedPeReader.js";
 import { managedMemberListStartsFixture } from "../../tests/fixtures/managedMemberListStarts.js";
-import { memberListIndexSize } from "./ManagedMemberPointers.js";
+import { memberListIndexSize } from "../domain/managed/managedMemberPointers.js";
 import { edges } from "./ManagedMemberRows.js";
 import { parseUserStrings } from "./ManagedUserStrings.js";
 import {
@@ -22,11 +25,11 @@ import {
   isParsedTokenInstruction,
   type DecodedMethod,
   type ManagedMethod,
-} from "./ManagedMemberInspectorCore.js";
+} from "../domain/managed/managedMemberInspectorCore.js";
 import { signature } from "../../tests/fixtures/managedSignature.js";
 import { decodeInstructions } from "./ManagedMemberInstructionDecoder.js";
-import { ManagedReaderFailure } from "./ManagedReaderFailure.js";
-import { managedTypeReferences } from "./ManagedTypeReferences.js";
+import { ManagedReaderFailure } from "../domain/managed/managedReaderFailure.js";
+import { managedTypeReferences } from "../domain/managed/managedTypeReferences.js";
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
 import { managedMemberInspectionSchema } from "../domain/managed/managedArtifact.js";
 import { comparisonLimitations } from "../domain/managed/managedMemberComparisonCoverage.js";

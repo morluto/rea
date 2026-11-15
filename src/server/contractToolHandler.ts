@@ -29,6 +29,11 @@ import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import { logToolExecution } from "./toolLogging.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 import { runAdmittedToolOperation } from "./admittedToolOperation.js";
+import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
+import type { InvestigationWorkflowExecution } from "../application/investigation/InvestigationWorkflows.js";
+import { withAdmittedAnalysis as sessionAdmission } from "./analysisAdmission.js";
+import { deliverInvestigationWorkflow } from "./deliverInvestigationWorkflow.js";
+import { runDerivedOperation } from "./runDerivedOperation.js";
 
 /** Application service executing one named contract operation. */
 export interface ContractToolService<TOperation extends string> {
@@ -150,11 +155,12 @@ export const createEvidenceToolHandler =
     logger: Logger,
     recordEvidence?: EvidenceWriter["recordEvidence"],
     withAdmittedAnalysis?: WithAdmittedAnalysis,
+    viewSource?: (input: unknown) => JsonValue | undefined,
   ) =>
   <TOperation extends string>(contract: ToolContract<TOperation>) =>
   (input: unknown, context: ServerContext) =>
     runEvidenceToolOperation(
-      { server, logger, recordEvidence, withAdmittedAnalysis },
+      { server, logger, recordEvidence, withAdmittedAnalysis, viewSource },
       contract,
       undefined,
       { input, context },
@@ -194,6 +200,84 @@ export const createValueToolHandler =
       ),
       contract,
     );
+
+/** What a derivation may read before it runs. */
+export interface DerivedSources {
+  readonly evidenceForAnalysis: BinarySessionPort["evidenceForAnalysis"];
+  readonly signal: AbortSignal;
+}
+
+/**
+ * Read a derivation's inputs, then return the synchronous derivation over
+ * them. A derivation from session-held Evidence alone acquires nothing.
+ */
+export type DerivedAcquisition = (
+  input: unknown,
+  sources: DerivedSources,
+) => Promise<
+  Result<
+    () => Result<InvestigationWorkflowExecution, AnalysisError>,
+    AnalysisError
+  >
+>;
+
+/**
+ * Derive Evidence from Evidence the session holds and the inputs the binding
+ * acquires. The session owner admits the call, resolves its session-held
+ * inputs, retains the sources the derivation read and records the derived
+ * Evidence with its unknowns, so provenance is the same whichever tool
+ * derives it. An acquisition failure is delivered as is.
+ */
+export const createDerivedToolHandler =
+  (
+    server: EvidenceMcpServer,
+    session: BinarySessionPort,
+    acquire: DerivedAcquisition,
+    logger: Logger,
+  ) =>
+  (contract: ToolContract) => {
+    const admission = sessionAdmission({ kind: "session", session });
+    const evidenceForAnalysis = session.evidenceForAnalysis.bind(session);
+    return async (
+      input: unknown,
+      context: ServerContext,
+    ): Promise<CallToolResult> =>
+      runAdmittedToolOperation(
+        server,
+        admission,
+        contract.name,
+        context.mcpReq.signal,
+        async () => {
+          const outcome = await logToolExecution(
+            logger,
+            contract.name,
+            async () => {
+              const acquired = await acquire(input, {
+                evidenceForAnalysis,
+                signal: context.mcpReq.signal,
+              });
+              if (!acquired.ok)
+                return { ...acquired, stage: "acquire" as const };
+              const derive = acquired.value;
+              const derived = await runDerivedOperation(
+                context,
+                contract.name,
+                () => {
+                  const result = derive();
+                  if (!result.ok) throw result.error;
+                  return result.value;
+                },
+                (value) => value,
+              );
+              return { ...derived, stage: "derive" as const };
+            },
+          );
+          return outcome.stage === "acquire"
+            ? server.delivery.toCallToolResult(outcome, contract)
+            : deliverInvestigationWorkflow(server, session, contract, outcome);
+        },
+      );
+  };
 
 /** One owner for optional-provider admission, execution, recording and delivery. */
 export const runEvidenceToolOperation = async <Input>(

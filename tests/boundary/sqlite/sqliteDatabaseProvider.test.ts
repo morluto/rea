@@ -515,7 +515,7 @@ it.each(["late-cancellation", "cleanup-failure", "cancelled cleanup-failure"])(
             confidence: "observed",
             subject: {
               local_path: database.path,
-              digest: { sha256: digestForTest(original) },
+              identity: { sha256: digestForTest(original) },
             },
             parameters: {
               path: database.path,
@@ -553,7 +553,7 @@ it.each(["late-cancellation", "cleanup-failure", "cancelled cleanup-failure"])(
             confidence: "observed",
             subject: {
               local_path: database.path,
-              digest: { sha256: digestForTest(original) },
+              identity: { sha256: digestForTest(original) },
             },
             parameters: {
               path: database.path,

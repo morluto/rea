@@ -35,7 +35,8 @@ import {
   NATIVE_EXPORT_LIMITS,
   type NativeExportLimit,
   parseNativeExports,
-} from "./NativeExportParser.js";
+} from "../../domain/native/nativeExportParser.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_native_exports";
 
@@ -168,7 +169,7 @@ const nativeExportsFailurePrimary = (
     cause,
     diagnostics: {
       path: input.path,
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     },
   });
 };

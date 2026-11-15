@@ -9,7 +9,7 @@ import {
   requiredSelectorGuidance,
 } from "./analysisSelector.js";
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
+import { CLI_COMMANDS } from "../contracts/cliCommandNames.js";
 import type { Logger } from "pino";
 import { nativeTarget } from "./options.js";
 import type { CliInstance } from "./types.js";

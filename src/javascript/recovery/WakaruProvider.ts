@@ -16,8 +16,6 @@ import {
   AnalysisCleanupLease,
   ArtifactReaderFailure,
   artifactFileCancellationCause,
-} from "../../resources/index.js";
-import {
   SafeOutputTree,
   SafeOutputTreeCreationFailure,
 } from "../../resources/index.js";
@@ -39,7 +37,6 @@ import { err, ok, type Result } from "../../domain/result.js";
 import {
   checkRecoveryCancellation,
   checkRecoveryDeadline,
-  recoveryFailureMessage,
   recoveryInputFailure,
   snapshotRecoveryInputs,
 } from "./RecoveryFiles.js";
@@ -52,6 +49,7 @@ import type { ProviderProcessSupervisor } from "../../process/ProviderProcess.js
 import { prepareWakaruExecution } from "./WakaruExecution.js";
 import { RECOVERY_LIMITS } from "./WakaruRelease.js";
 import { WakaruReportReadFailure } from "./WakaruReport.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "recover_javascript_sources";
 
@@ -148,7 +146,7 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
         if (cause instanceof SafeOutputTreeCreationFailure) tree = cause.tree;
         throw recoveryInputFailure(
           "output_directory",
-          `Cannot create new recovery directory ${input.output_directory}: ${recoveryFailureMessage(cause)}`,
+          `Cannot create new recovery directory ${input.output_directory}: ${errorMessage(cause)}`,
           cause,
         );
       }
@@ -210,7 +208,7 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
           residuals.push(tree.outputRoot);
           cleanupFailures.push({
             resource: tree.outputRoot,
-            reason: recoveryFailureMessage(cause),
+            reason: errorMessage(cause),
           });
         }
       }
@@ -227,7 +225,7 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
           residuals.push(failedRoot);
           cleanupFailures.push({
             resource: failedRoot,
-            reason: recoveryFailureMessage(cause),
+            reason: errorMessage(cause),
           });
         }
       }
@@ -276,7 +274,7 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
             ? failure
             : new ProviderAdapterError("wakaru", OPERATION, {
                 cause: failure,
-                diagnostics: { reason: recoveryFailureMessage(failure) },
+                diagnostics: { reason: errorMessage(failure) },
                 ...(failure instanceof ArtifactReaderFailure &&
                 failure.partialObservation !== undefined
                   ? { partialObservation: failure.partialObservation }
@@ -301,7 +299,7 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
             previous_error:
               failure instanceof WakaruCleanupFailure
                 ? (failure.diagnostics?.previous_error ?? null)
-                : recoveryFailureMessage(failure),
+                : errorMessage(failure),
             cleanup_failures: cleanupFailures,
           },
           {
@@ -348,7 +346,7 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
           ? failure
           : new ProviderAdapterError("wakaru", OPERATION, {
               cause: failure,
-              diagnostics: { reason: recoveryFailureMessage(failure) },
+              diagnostics: { reason: errorMessage(failure) },
               ...(reportFailure === undefined
                 ? {}
                 : { capturedOutput: reportFailure.capturedOutput }),
@@ -387,7 +385,7 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
       const error = new ProviderCleanupError(
         "wakaru",
         pending.lease.cleanupResources ?? [],
-        { reason: recoveryFailureMessage(cause) },
+        { reason: errorMessage(cause) },
         { operation: OPERATION, cause },
       ).bindCleanupResourceOwner(pending.lease);
       pending.lease.bindCleanupError(error);
