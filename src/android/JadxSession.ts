@@ -45,7 +45,7 @@ import {
   parseJadxJson,
 } from "./JadxProtocol.js";
 import {
-  jadxBridgeIdentity,
+  type JadxBridgeIdentity,
   JADX_RELEASE,
   JADX_PROVIDER_IDENTITY,
   JADX_LIMITATIONS,
@@ -78,6 +78,7 @@ export class JadxSession {
         readonly target: BinaryTarget;
         readonly jarHash: string;
         readonly bridgeHash: string;
+        readonly bridgeIdentity: JadxBridgeIdentity;
       }
     | undefined;
   #observedCalls: JadxCallObservation[] = [];
@@ -104,6 +105,8 @@ export class JadxSession {
     readonly snapshot: string;
     readonly jarHash: string;
     readonly bridgeHash: string;
+    /** Identity read from the packaged bridge before the child was launched. */
+    readonly bridgeIdentity: JadxBridgeIdentity;
     readonly signal: AbortSignal;
     /** Selected whole-operation deadline; also bounds each upstream call. */
     readonly timeoutMs: number;
@@ -120,6 +123,7 @@ export class JadxSession {
       target,
       jarHash,
       bridgeHash: context.bridgeHash,
+      bridgeIdentity: context.bridgeIdentity,
     };
     this.#observedCalls = [];
     this.#jniObservation = undefined;
@@ -163,7 +167,7 @@ export class JadxSession {
       const server = this.#client.getServerVersion();
       this.#serverName = server?.name ?? null;
       this.#serverVersion = server?.version ?? null;
-      const expected = jadxBridgeIdentity();
+      const expected = context.bridgeIdentity;
       if (server?.name !== expected.name || server.version !== expected.version)
         throw new AnalysisCapabilityUnavailableError(
           "jadx",
@@ -331,8 +335,8 @@ export class JadxSession {
       provider_facts: {
         jar_sha256: context.jarHash,
         bridge_sha256: context.bridgeHash,
-        bridge_name: jadxBridgeIdentity().name,
-        bridge_version: jadxBridgeIdentity().version,
+        bridge_name: context.bridgeIdentity.name,
+        bridge_version: context.bridgeIdentity.version,
         server_name: this.#serverName,
         server_version: this.#serverVersion,
         engine_version: this.#engineVersion,
