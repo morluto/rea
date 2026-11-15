@@ -395,7 +395,7 @@ checkCounted(
 // src/domain/coverage.ts. A local enum that contains "complete" either copies
 // it or drops `unknown`, which forces an unknown producer to pick a side.
 checkCounted(
-  "local completeness enum (use coverageStatusSchema from src/domain/coverage)",
+  "local completeness enum (use coverageStatusSchema from src/domain/coverage, or mark a detail level, lifecycle state or domain vocabulary with `// detail-level:`, `// lifecycle-state:` or `// domain-vocabulary:` and its reason)",
   "local-completeness-enum",
   files,
   localCompletenessEnumCount,
@@ -430,9 +430,11 @@ checkCounted(
 // src/domain/budget, which refuses malformed or oversized charges without
 // changing the remainder. Hand-written `remaining -=` / `retained +=`
 // arithmetic repeats that admission and drifts (charge-then-check, no
-// safe-integer check).
+// safe-integer check). A cursor, tally or retained length that is compared
+// with a limit without being charged against it carries
+// `// not-an-allowance: <reason>` on its field declaration (#11408).
 checkCounted(
-  "hand-written budget arithmetic (use Budget from src/domain/budget)",
+  "hand-written budget arithmetic (use Budget from src/domain/budget, or mark a cursor or tally field with `// not-an-allowance: <reason>`)",
   "budget-arithmetic",
   files,
   budgetArithmeticCount,
