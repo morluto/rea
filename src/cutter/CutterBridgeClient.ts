@@ -403,6 +403,12 @@ export class CutterBridgeClient {
             mismatches.push(advertised);
           return undefined;
         }
+        // Classify outside the per-peer catch: an unreadable packaged plugin
+        // is REA's own failure and must not read as an absent session.
+        const bridgeSource = cutterBridgeSource(
+          descriptor.bridge_source_sha256,
+          "list_cutter_sessions",
+        );
         try {
           const status = responseSchema.safeParse(
             await this.#request(
@@ -434,7 +440,7 @@ export class CutterBridgeClient {
             cutter_version:
               status.data.cutter_version ?? descriptor.cutter_version,
             identity_status: "partial" as const,
-            bridge_source: cutterBridgeSource(descriptor.bridge_source_sha256),
+            bridge_source: bridgeSource,
           };
         } catch (cause) {
           if (cause instanceof AnalysisResourceConstraintError) throw cause;
@@ -489,7 +495,12 @@ export class CutterBridgeClient {
       this.#requestLimit();
       const descriptor = await this.#find(input.sessionId, input.signal);
       assertBridgeActive(input.signal, "cutter_command");
-      if (cutterBridgeSource(descriptor.bridge_source_sha256) === "modified")
+      if (
+        cutterBridgeSource(
+          descriptor.bridge_source_sha256,
+          "cutter_command",
+        ) === "modified"
+      )
         throw modifiedPluginRefusal();
       const advertised =
         descriptor.max_request_bytes ?? DEFAULT_BRIDGE_MAX_REQUEST_BYTES;
