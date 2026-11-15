@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import { nativeAotReasonSchema } from "./nativeAotReason.js";
 
 const address = z.string().regex(/^0x[0-9a-f]+$/u);
@@ -9,7 +10,7 @@ export const nativeMetadataRecoverySchema = z.strictObject({
   format: z.literal("dotnet-nativeaot"),
   /** Identifies parser-only facts without claiming Ghidra defined a DataType. */
   source: z.enum(["analysis-database", "read-only-derived-overlay"]).optional(),
-  status: z.enum(["complete", "partial"]),
+  status: knownCoverageStatusSchema,
   header_address: address,
   format_major: z.int().nonnegative(),
   format_minor: z.int().nonnegative(),

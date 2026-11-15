@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { localPathStringSchema } from "../localPath.js";
 import { digestSchema } from "../digests.js";
-import { coverageStatusSchema } from "../coverage.js";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import { jsonValueSchema } from "../jsonValue.js";
 
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
@@ -11,7 +11,6 @@ const decimal = z.string().regex(/^(?:0|[1-9][0-9]*)$/u);
  * the range and storage checks are derived from what was read, so they never
  * report `unknown`.
  */
-const modelCoverageSchema = coverageStatusSchema.exclude(["unknown"]);
 
 export const modelSourceSchema = z.strictObject({
   path: localPathStringSchema,
@@ -82,8 +81,8 @@ export const modelArtifactObjectSchema = z.strictObject({
     header: z.literal("complete"),
     tensor_data: z.literal("not-interpreted"),
     array_values: z.enum(["complete", "preview"]),
-    tensor_ranges: modelCoverageSchema,
-    storage_sizes: modelCoverageSchema,
+    tensor_ranges: knownCoverageStatusSchema,
+    storage_sizes: knownCoverageStatusSchema,
   }),
   limitations: z.array(z.string()),
 });
@@ -123,9 +122,9 @@ export const modelArtifactPartialSchema = z.strictObject({
   tensor_declarations: z.array(modelArtifactPartialTensorSchema),
   tensors: z.array(modelTensorSchema),
   coverage: z.strictObject({
-    header: modelCoverageSchema,
-    metadata: z.enum(["not-started", ...modelCoverageSchema.options]),
-    tensors: z.enum(["not-started", ...modelCoverageSchema.options]),
+    header: knownCoverageStatusSchema,
+    metadata: z.enum(["not-started", ...knownCoverageStatusSchema.options]),
+    tensors: z.enum(["not-started", ...knownCoverageStatusSchema.options]),
   }),
   limitations: z.array(z.string()),
 });
