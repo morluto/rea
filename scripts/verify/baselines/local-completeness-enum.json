@@ -2,7 +2,6 @@
   "src/contracts/cutterToolContracts.ts": 1,
   "src/contracts/rizinDebugToolContracts.ts": 1,
   "src/cutter/CutterBridgeClient.ts": 2,
-  "src/domain/adb/adbDeviceAnalysis.ts": 10,
   "src/domain/analysisView/analysisViewResult.ts": 1,
   "src/domain/analysisView/browserScenarioViewSchemas.ts": 1,
   "src/domain/analysisView/goBinaryView.ts": 1,

@@ -4,7 +4,7 @@ import type { GpuObject } from "../domain/gpu/gpuCodeObjects.js";
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
-} from "../native/metadata/BinaryContainer.js";
+} from "../domain/binaryContainer.js";
 import { assertArtifactReadActive } from "../resources/index.js";
 import {
   gpuCount,

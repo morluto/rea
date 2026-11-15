@@ -10,7 +10,7 @@ import {
   BinaryResourceFailure,
   createFileMappingIndex,
   imageFileMappings,
-} from "../metadata/BinaryContainer.js";
+} from "../../domain/binaryContainer.js";
 import { readPeImage, type PeImage } from "../metadata/PeImage.js";
 import {
   guardFlagRecord,

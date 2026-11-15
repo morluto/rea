@@ -1,4 +1,4 @@
-import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
+import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
 import {
   projectSelectedArtifactFileFailure,
   projectOwnedArtifactIdentityFailure,

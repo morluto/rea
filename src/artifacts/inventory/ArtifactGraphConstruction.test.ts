@@ -41,7 +41,7 @@ import {
   esp8266Image,
   espImage,
 } from "../../../tests/fixtures/espImage.js";
-import { devicetreeFixture } from "../../firmware/devicetree/Devicetree.fixture.js";
+import { devicetreeFixture } from "../../domain/firmware/devicetree.fixture.js";
 import { fitFixture } from "../fit/FitImage.fixture.js";
 
 it("joins only observed PE signature bytes across stream chunks", () => {

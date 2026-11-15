@@ -48,7 +48,7 @@ import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import { pushDispatchCoverage } from "./AppleDispatchCoverage.js";
 import { parsePointerFixupsSteps } from "./AppleMachoFixups.js";
-import { BinaryFormatFailure } from "./metadata/BinaryContainer.js";
+import { BinaryFormatFailure } from "../domain/binaryContainer.js";
 import { parseMachoLayout } from "./AppleMachoSelection.js";
 import {
   selectMachoSlice,

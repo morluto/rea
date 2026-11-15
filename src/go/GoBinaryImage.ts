@@ -12,7 +12,7 @@ import {
   imageFileMappings,
   isZeroFilledSpan,
   type BinaryContainer,
-} from "../native/metadata/BinaryContainer.js";
+} from "../domain/binaryContainer.js";
 import { readBinaryContainer } from "../native/metadata/readBinaryContainer.js";
 import {
   goAnalysisBudgets,

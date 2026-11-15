@@ -7,7 +7,7 @@ import {
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
-} from "../native/metadata/BinaryContainer.js";
+} from "../domain/binaryContainer.js";
 import type {
   NativeReadRequest,
   NativeSectionDirectory,

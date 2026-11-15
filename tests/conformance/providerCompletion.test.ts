@@ -16,8 +16,8 @@ import {
 import { PeResourcesService } from "../../src/application/binaryDiagnostics/PeResourcesService.js";
 import { PE_RESOURCES_PROVIDER } from "../../src/domain/investigationProviders.js";
 import { inspectPeResourcesInputSchema } from "../../src/domain/native/peResources.js";
-import { parsePeResources } from "../../src/native/pe/PeResourceParser.js";
-import { peResourceFixture } from "../../src/native/pe/PeResources.fixture.js";
+import { parsePeResources } from "../../src/artifacts/pe/PeResourceParser.js";
+import { peResourceFixture } from "../../src/artifacts/pe/PeResources.fixture.js";
 import { createHash } from "node:crypto";
 import { RecordedCrashService } from "../../src/application/binaryDiagnostics/RecordedCrashService.js";
 import {

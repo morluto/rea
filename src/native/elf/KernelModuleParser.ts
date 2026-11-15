@@ -19,7 +19,7 @@ import {
 import type {
   ImageSection,
   BinaryContainer,
-} from "../metadata/BinaryContainer.js";
+} from "../../domain/binaryContainer.js";
 import { readElfImage } from "../metadata/ElfImage.js";
 import { kernelCompressionCodecAt } from "./KernelCompressionCodec.js";
 

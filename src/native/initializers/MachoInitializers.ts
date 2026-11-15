@@ -26,7 +26,7 @@ import {
   BinaryMappingFailure,
   createFileMappingIndex,
   type ImageSection,
-} from "../metadata/BinaryContainer.js";
+} from "../../domain/binaryContainer.js";
 import { readMachoImage } from "../metadata/MachoImage.js";
 import {
   finishInitializerReport,

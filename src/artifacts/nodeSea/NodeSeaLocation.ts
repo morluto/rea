@@ -10,11 +10,11 @@ import { readElfProgramHeader } from "../../domain/elfProgramHeader.js";
 import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
 import { createHash } from "node:crypto";
 import { constants as bufferConstants } from "node:buffer";
-import { parsePeResources } from "../../native/pe/PeResourceParser.js";
+import { parsePeResources } from "../pe/PeResourceParser.js";
 import {
   hasPeResourceName,
   readPeResourceLayout,
-} from "../../native/pe/PeResourceLayout.js";
+} from "../pe/PeResourceLayout.js";
 import {
   MAX_INSPECT_PE_FILE_BYTES,
   MAX_INSPECT_PE_DIRECTORY_ENTRIES,

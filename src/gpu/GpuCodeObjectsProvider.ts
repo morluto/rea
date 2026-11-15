@@ -36,7 +36,7 @@ import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.j
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { BinaryResourceFailure } from "../native/metadata/BinaryContainer.js";
+import { BinaryResourceFailure } from "../domain/binaryContainer.js";
 import {
   GpuFileSource,
   gpuCount,

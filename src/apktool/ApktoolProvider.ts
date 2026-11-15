@@ -1,3 +1,4 @@
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { processInspectionCancellationError } from "../providers/OwnedCommandCleanup.js";
@@ -14,10 +15,7 @@ import {
   artifactFileCancellationCause,
 } from "../resources/index.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
-import {
-  capturedApktoolCommandOutput,
-  capturedApktoolFailureOutput,
-} from "./ApktoolCommandOutput.js";
+import { capturedApktoolFailureOutput } from "./ApktoolCommandOutput.js";
 import { providerOutcomeOf } from "../process/ProviderOutcome.js";
 import { classifyProviderOutcome } from "../process/classifyProviderOutcome.js";
 import { ApktoolCommandCleanup } from "./ApktoolCommandCleanup.js";
@@ -225,7 +223,7 @@ const apktoolCommandFailure = (
     });
   return classifyProviderOutcome(providerOutcomeOf(failure), {
     operation,
-    capturedOutput: capturedApktoolCommandOutput,
+    capturedOutput: capturedProviderOutput,
     // Ownership preparation can retain output before any process exists.
     details: capturedOutput === undefined ? {} : { capturedOutput },
     timeout: {

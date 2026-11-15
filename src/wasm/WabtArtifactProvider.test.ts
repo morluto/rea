@@ -367,6 +367,8 @@ it("preserves physical validation rejection when its diagnostics contain malform
     expect(result.error.capturedOutput).toEqual({
       stdout: "",
       stderr: "invalid \ufffd",
+      stdout_bytes: 0,
+      stderr_bytes: 9,
       exit_code: 7,
       signal: null,
       truncated: false,

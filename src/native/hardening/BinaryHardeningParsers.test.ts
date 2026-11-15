@@ -6,7 +6,7 @@ import {
   PE_HARDENING_PROPERTIES,
   type BinaryHardeningRow,
 } from "../../domain/native/binaryHardening.js";
-import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
+import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
 import { readElfImage } from "../metadata/ElfImage.js";
 import { readMachoImage } from "../metadata/MachoImage.js";
 import {

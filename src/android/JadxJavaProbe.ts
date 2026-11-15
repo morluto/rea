@@ -1,3 +1,4 @@
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import type { ProcessInspectionFailure } from "../process/ProcessInspectionCleanup.js";
 import { classifyLaunchFailureCode } from "../process/launchFailure.js";
 import { randomUUID } from "node:crypto";
@@ -78,18 +79,6 @@ const refusal = (
 ): Result<never, JadxJavaProbeRefusal> =>
   err({ code, message, diagnostics, kind });
 
-const capturedOutput = (
-  snapshot: ProviderProcessSnapshot,
-): AnalysisCapturedOutput => ({
-  stdout: snapshot.stdout.text,
-  stderr: snapshot.stderr.text,
-  stdout_bytes: snapshot.stdout.observedBytes,
-  stderr_bytes: snapshot.stderr.observedBytes,
-  truncated:
-    snapshot.diagnosticTruncated === true || snapshot.outputIncomplete === true,
-  exit_code: snapshot.exitCode ?? null,
-  signal: snapshot.signal ?? null,
-});
 const projectRefusal = (
   failure: JadxJavaProbeRefusal,
   operation: string,
@@ -164,7 +153,7 @@ export const inspectJadxJava = async (
             ? preparation instanceof DarwinProcessOwnershipInspectionError
               ? preparation.capturedOutput
               : undefined
-            : capturedOutput(command.snapshot);
+            : capturedProviderOutput(command.snapshot);
         const inspectionCancellation =
           command === undefined || command.preparationFailure !== undefined
             ? processInspectionCancellationError(cause, operation)
@@ -293,7 +282,9 @@ const commandProbeRefusal = (
   timeoutMs: number,
 ): JadxJavaProbeRefusal => {
   const output =
-    command?.snapshot == null ? undefined : capturedOutput(command.snapshot);
+    command?.snapshot == null
+      ? undefined
+      : capturedProviderOutput(command.snapshot);
   const processError =
     command?.processError ?? (cause instanceof Error ? cause : undefined);
   const systemCode =
