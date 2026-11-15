@@ -7,7 +7,7 @@ import { CDP_CAPTURE_SCRIPT_METADATA_LIMITS } from "../../../src/browser/CdpCapt
 describe("CDP script metadata admission", () => {
   it("retains an invalid source-map declaration as unknown", () => {
     const events = captureEvents();
-    events.beginAuthorizedFrame("frame-1");
+    events.beginAuthorizedFrame({ frameId: "frame-1" });
     for (const [scriptId, sourceMapURL] of [
       ["bad", null],
       ["absent", undefined],
@@ -33,7 +33,7 @@ describe("CDP script metadata admission", () => {
   it("releases a replaced script ID's prior bytes and resets admission on a new document", () => {
     const events = captureEvents();
     const origin = "https://app.example";
-    events.beginAuthorizedFrame("frame-1");
+    events.beginAuthorizedFrame({ frameId: "frame-1" });
     const emit = (scriptId: string, bytes: number): void => {
       events.ingest({
         method: "Debugger.scriptParsed",
@@ -71,7 +71,7 @@ describe("CDP script metadata admission", () => {
       `${origin}/map.js.map`,
     );
 
-    events.beginAuthorizedFrame("frame-2");
+    events.beginAuthorizedFrame({ frameId: "frame-2" });
     emit("new-document", 5 * 1024 * 1024);
     emit("new-document", 1024 * 1024);
     events.recordScriptMetadataBudgetExclusions();
@@ -84,7 +84,7 @@ describe("CDP script metadata admission", () => {
         ),
     ).toBeUndefined();
 
-    events.beginAuthorizedFrame("frame-3");
+    events.beginAuthorizedFrame({ frameId: "frame-3" });
     emit("new-document", 3 * 1024 * 1024);
     expect(events.scripts.get("new-document")?.sourceMapUrl).toContain(
       "x".repeat(3 * 1024 * 1024),
@@ -94,7 +94,7 @@ describe("CDP script metadata admission", () => {
   it("does not retain IDs for scripts rejected by byte or record limits", () => {
     const events = captureEvents();
     const origin = "https://app.example";
-    events.beginAuthorizedFrame("frame-1");
+    events.beginAuthorizedFrame({ frameId: "frame-1" });
     const emit = (scriptId: string): void => {
       events.ingest({
         method: "Debugger.scriptParsed",
@@ -185,7 +185,7 @@ it.each([
   "keeps script ownership uncertain for $name",
   ({ auxiliary, frame, invalid }) => {
     const events = captureEvents();
-    events.beginAuthorizedFrame("frame-1");
+    events.beginAuthorizedFrame({ frameId: "frame-1" });
     events.ingest({
       method: "Runtime.executionContextCreated",
       params: { context: { id: 7, auxData: { frameId: "frame-1" } } },
@@ -220,7 +220,7 @@ it.each([
 
 it("rejects an empty script ID before retaining its metadata", () => {
   const events = captureEvents();
-  events.beginAuthorizedFrame("frame-1");
+  events.beginAuthorizedFrame({ frameId: "frame-1" });
   events.ingest({
     method: "Debugger.scriptParsed",
     params: { scriptId: "", url: "https://app.example/app.js" },

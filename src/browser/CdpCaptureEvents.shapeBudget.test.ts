@@ -212,7 +212,7 @@ it("refunds replaced and removed request records while ignoring stale response o
   expect(events.retainedEventBytes).toBe(0);
   request(events, "fresh", deep(600));
   expect(events.network.get("fresh")?.body_shapes.status).toBe("included");
-  events.beginAuthorizedFrame("frame");
+  events.beginAuthorizedFrame({ frameId: "frame" });
   expect(events.retainedEventBytes).toBe(0);
   request(events, "after-reset", deep(600));
   expect(events.network.get("after-reset")?.body_shapes.status).toBe(
