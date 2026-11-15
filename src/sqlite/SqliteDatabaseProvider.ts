@@ -3,6 +3,7 @@ import {
   type AnalysisExecution,
   type ExecutionOptions,
 } from "../application/AnalysisProvider.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import type { SqliteDatabasePort } from "../application/sqlite/SqliteDatabasePort.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
@@ -43,7 +44,7 @@ import type {
 } from "../process/ProviderProcess.js";
 import {
   createSqliteCleanupError,
-  sqliteDatabaseFailure,
+  sqliteDatabaseDialect,
 } from "./SqliteDatabaseFailures.js";
 import { captureSqliteDatabaseSnapshot } from "./SqliteDatabaseSnapshot.js";
 import { SQLITE_DATABASE_LIMITS } from "./SqliteDatabaseLimits.js";
@@ -127,11 +128,9 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
       .run(() => this.#inspect(input, options))
       .catch((cause: unknown) =>
         err(
-          sqliteDatabaseFailure(
+          classifyProviderFailure(
             cause,
-            input.path,
-            "artifact-read",
-            options?.signal,
+            sqliteDatabaseDialect(input.path, "artifact-read", options?.signal),
           ),
         ),
       );
@@ -348,12 +347,14 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
         cause.cleanupOwner !== undefined
       )
         processOwner = cause.cleanupOwner;
-      const failure = sqliteDatabaseFailure(
+      const failure = classifyProviderFailure(
         cause,
-        input.path,
-        phase,
-        options?.signal,
-        workerTimeoutMs,
+        sqliteDatabaseDialect(
+          input.path,
+          phase,
+          options?.signal,
+          workerTimeoutMs,
+        ),
       );
       retainedOutput ??= failure.capturedOutput;
       result = err(failure);
