@@ -38,10 +38,15 @@ registration, and every command reads that row:
 - **Lower layers can be read-only.** A row with `readOnlyLowerLayers` has
   layers before `configPath` that belong to the system or an administrator. REA
   reads them to compute the effective registration and writes only
-  `configPath`.
+  `configPath`. An inline layer that a client reads from its environment
+  (Kilo's `KILO_CONFIG_CONTENT`) is `inlineConfiguration`: the
+  highest-precedence layer, read for the effective registration and never
+  written.
 - **Uninstall refuses rather than misreport.** When a read-only layer would keep
   REA's enabled registration in effect, or removing the user entry would expose
   one, uninstall makes no change and names the layer's owner as the recovery.
+  When only an inline layer sets REA's enabled entry, uninstall reports that
+  client as failed and names the variable to edit, as doctor does.
   An unreadable layer leaves the outcome unknown and also stops uninstall.
 
 ## Consequences
