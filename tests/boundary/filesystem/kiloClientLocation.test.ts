@@ -444,3 +444,24 @@ it("refuses to uninstall while KILO_CONFIG_CONTENT keeps REA's entry in effect",
   expect(details).toContain("KILO_CONFIG_CONTENT, which REA does not edit");
   expect(await readFile(target, "utf8")).toBe(owned);
 });
+
+it("reports REA's Kilo entry that only KILO_CONFIG_CONTENT sets instead of calling uninstall complete", async () => {
+  const home = await createTestTempDirectory("rea-kilo-uninstall-inline-only-");
+  // Kilo is installed, and both files exist without REA's entry.
+  const root = join(home, ".config", "kilo");
+  await mkdir(root, { recursive: true });
+  const other = JSON.stringify({ mcp: { other: { command: ["x"] } } });
+  await writeFile(join(root, "kilo.json"), other);
+  await mkdir(join(home, ".kilo"));
+  await writeFile(join(home, ".kilo", "kilo.json"), other);
+  const { kilo, details } = await uninstallKilo(home, {
+    KILO_CONFIG_CONTENT: JSON.stringify({
+      mcp: { rea: { type: "local", command, enabled: true } },
+    }),
+  });
+  expect(kilo?.status).toBe("failed");
+  expect(details).toContain("Remove the rea entry from KILO_CONFIG_CONTENT");
+  // One report although uninstall visits each Kilo file.
+  expect(details.match(/KILO_CONFIG_CONTENT sets/g)).toHaveLength(1);
+  expect(await readFile(join(root, "kilo.json"), "utf8")).toBe(other);
+});

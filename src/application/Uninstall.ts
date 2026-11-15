@@ -520,9 +520,11 @@ export const systemUninstallHost = (
   const configurationOperations = new ArtifactResourceScope();
   const fileSystem = selectedFileSystem ?? systemFileSystem(resources);
   const preflightOwnedClients = new WeakSet<UninstallClient>();
-  // REA's registration that only read-only lower layers define: uninstall
+  // REA's registration that only layers REA does not edit define: uninstall
   // cannot remove it, so it is reported instead of being treated as absent.
   const retainedLowerOnly = new WeakMap<UninstallClient, UninstallItem>();
+  // One report per client although uninstall visits each of its files.
+  const inlineReported = new Set<string>();
   /**
    * The effective REA entry across the read-only lower layers, and the user
    * layer above them when given.
@@ -571,6 +573,35 @@ export const systemUninstallHost = (
     ownershipEstablished: boolean,
     upper?: ClientConfigurationSource,
   ): Promise<UninstallItem | undefined> => {
+    // An inline layer (KILO_CONFIG_CONTENT) that alone sets REA's enabled
+    // entry keeps it in effect whatever uninstall removes from the files, as
+    // doctor reports; any file entry is refused by the layered check instead.
+    const inline = client.inlineConfiguration;
+    const inlineEntry =
+      inline === undefined
+        ? undefined
+        : effectiveClientConfiguration([
+            { ...inline.parsed, inlineOrigin: inline.origin },
+          ])?.servers[PRODUCT_IDENTITY.mcpServerKey];
+    if (
+      inline !== undefined &&
+      enabledRegistration(inlineEntry) &&
+      clientRegistrationOwnership(inlineEntry, client) === "owned"
+    ) {
+      if (!inlineReported.has(client.name)) {
+        inlineReported.add(client.name);
+        const name = client.displayName ?? client.name;
+        retainedLowerOnly.set(
+          client,
+          item(
+            client.name,
+            "failed",
+            `${inline.origin} sets REA's enabled ${name} registration, and REA does not edit it, so the registration stays in effect after uninstall. Remove the ${PRODUCT_IDENTITY.mcpServerKey} entry from ${inline.origin}, then restart ${name}.`,
+          ),
+        );
+      }
+      return undefined;
+    }
     if (client.readOnlyLowerLayers !== true) return undefined;
     const lower = await lowerLayerRegistration(
       client,
