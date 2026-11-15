@@ -120,6 +120,14 @@ export interface CliContractProjection<
 > {
   readonly command: string;
   readonly description: string;
+  /**
+   * The input branches of a union contract this command takes, by the text
+   * values of the field that tells them apart, such as the `operation`s a
+   * sibling command runs instead. Each selected branch must be taken whole.
+   * When one value is selected, the command fixes that field: argv does not
+   * take it, and the contract input receives the value.
+   */
+  readonly inputBranches?: CliInputBranches<Field>;
   /** Fields taken as positional arguments, in argv order. */
   readonly positionals?: readonly Field[];
   /**
@@ -251,6 +259,12 @@ export interface CliContractProjection<
    * contract.
    */
   readonly operationBy?: CliOperationChoice<keyof CliOptions & string>;
+}
+
+/** The input branches one command takes, by their discriminating values. */
+export interface CliInputBranches<Field extends string = string> {
+  readonly field: Field;
+  readonly values: readonly [string, ...string[]];
 }
 
 /** Contracts a CLI-only option selects in place of the registered one. */
@@ -563,6 +577,8 @@ export interface ContractCliDescription {
   readonly omitted: Readonly<Record<string, string>>;
   /** Contract fields the handler fills from CLI-only values. */
   readonly handlerFields: readonly string[];
+  /** Contract fields the selected input branch fixes, with their values. */
+  readonly fixedFields: Readonly<Record<string, string>>;
   /** Object-level JSON Schema constraints, renamed to CLI keys. */
   readonly optionConstraints: Readonly<Record<string, unknown>> | undefined;
   /**
@@ -840,15 +856,16 @@ const renameConstraint = (
 };
 
 /**
- * The union keyword naming a root discriminator, checked with the delivery,
- * or left to the contract when the projection omits the discriminator.
+ * The union keyword naming a root discriminator: checked with the delivery,
+ * left to the contract when the projection omits the discriminator, or the
+ * option that selects the input branch.
  */
 const ROOT_DISCRIMINATOR = "x-rea-root-discriminator";
 
 const projectObjectConstraints = (
   contract: ProjectedContract,
   rename: (field: string) => string,
-  unprojectedFields: ReadonlySet<string>,
+  discriminatorFields: ReadonlySet<string>,
   cliOptionDependencies: Readonly<Record<string, readonly string[]>>,
   nullFlagLimits: readonly (readonly [flag: string, limit: string])[],
 ): Record<string, unknown> | undefined => {
@@ -859,7 +876,7 @@ const projectObjectConstraints = (
       !(OBJECT_CONSTRAINTS as readonly string[]).includes(keyword) &&
       !(
         keyword === ROOT_DISCRIMINATOR &&
-        unprojectedFields.has(String(metadata[keyword]))
+        discriminatorFields.has(String(metadata[keyword]))
       )
     )
       throw new Error(
@@ -927,30 +944,49 @@ const branchSelectingFlag = (
     : flag.default(omissions[0]!.parse(undefined) as boolean);
 };
 
+/** The text values a literal or enum field admits, or undefined for other fields. */
+const textValues = (
+  field: z.ZodType | undefined,
+): readonly string[] | undefined => {
+  const value = field === undefined ? undefined : core(field);
+  const values =
+    value instanceof z.ZodLiteral
+      ? [...value.values]
+      : value instanceof z.ZodEnum
+        ? value.options
+        : undefined;
+  return values?.every((entry) => typeof entry === "string")
+    ? values
+    : undefined;
+};
+
 /**
- * A field every input branch declares as a distinct text literal, such as
- * `action` or `operation`: the option names the branch it selects.
+ * A field every input branch declares as distinct text values, a literal in
+ * one branch or an enum in another, such as `action` or `operation`: the
+ * option names the branch it selects. Omission takes the default of the one
+ * branch that admits it.
  */
 const branchSelectingChoice = (
   branches: readonly (z.ZodType | undefined)[],
 ): z.ZodType | undefined => {
-  const values = branches.map((branch) => {
-    const value = branch === undefined ? undefined : core(branch);
-    return value instanceof z.ZodLiteral && value.values.size === 1
-      ? [...value.values][0]
-      : undefined;
-  });
-  if (
-    values.some((value) => typeof value !== "string") ||
-    new Set(values).size !== values.length ||
-    branches.some((branch) => admitsOmission(branch!))
-  )
+  const valueSets = branches.map(textValues);
+  if (valueSets.some((values) => values === undefined)) return undefined;
+  const values = valueSets.flatMap((values) => values!);
+  const omissions = branches.filter((branch) => admitsOmission(branch!));
+  if (new Set(values).size !== values.length || omissions.length > 1)
     return undefined;
   const choice = z.enum(values as [string, ...string[]]);
+  const omitted = omissions[0]?.parse(undefined) as string | undefined;
+  const chosen =
+    omissions.length === 0
+      ? choice
+      : omitted === undefined
+        ? choice.optional()
+        : choice.default(omitted);
   const described = branches.find((branch) => branch!.description);
   return described === undefined
-    ? choice
-    : choice.describe(described.description!);
+    ? chosen
+    : chosen.describe(described.description!);
 };
 
 /**
@@ -1000,27 +1036,75 @@ export const withoutDefault = (schema: z.ZodType): z.ZodType => {
   });
 };
 
+/**
+ * The union branches a projection takes, and the field it fixes when it
+ * selects one value.
+ */
+const selectInputBranches = (
+  contract: ProjectedContract,
+  selection: CliInputBranches | undefined,
+): {
+  readonly inputSchema: ProjectedContract["inputSchema"];
+  readonly fixed: readonly [field: string, value: string] | undefined;
+} => {
+  const schema = contract.inputSchema;
+  if (selection === undefined) return { inputSchema: schema, fixed: undefined };
+  const { field, values } = selection;
+  if (schema instanceof z.ZodObject)
+    throw new Error(`${contract.name} has one input branch`);
+  const covered = new Set<string>();
+  const selected = schema.options.filter((branch) => {
+    const admitted = textValues(
+      (branch.shape as Record<string, z.ZodType>)[field],
+    );
+    if (admitted === undefined)
+      throw new Error(`${contract.name}.${field} does not tell branches apart`);
+    const chosen = admitted.filter((value) => values.includes(value));
+    if (chosen.length > 0 && chosen.length !== admitted.length)
+      throw new Error(`${contract.name}.${field} would narrow an input branch`);
+    for (const value of chosen) covered.add(value);
+    return chosen.length > 0;
+  });
+  if (covered.size !== new Set(values).size)
+    throw new Error(`${contract.name}.${field} selects no branch for a value`);
+  return {
+    inputSchema: selected.length === 1 ? selected[0]! : z.union(selected),
+    fixed: values.length === 1 ? [field, values[0]] : undefined,
+  };
+};
+
 const inputFields = (
   contract: ProjectedContract,
   unprojectedFields: ReadonlySet<string>,
-): Record<string, z.ZodType> => {
+): {
+  readonly shape: Record<string, z.ZodType>;
+  /** Fields whose value selects an input branch. */
+  readonly selectors: ReadonlySet<string>;
+} => {
   const schema = contract.inputSchema;
   if (schema instanceof z.ZodObject)
-    return schema.shape as Record<string, z.ZodType>;
+    return {
+      shape: schema.shape as Record<string, z.ZodType>,
+      selectors: new Set(),
+    };
   const shapes = schema.options.map(
     (option) => option.shape as Record<string, z.ZodType>,
   );
   const names = new Set(shapes.flatMap((shape) => Object.keys(shape)));
-  return Object.fromEntries(
+  const selectors = new Set<string>();
+  const shape = Object.fromEntries(
     [...names].map((field) => {
       const branches = shapes.map((shape) => shape[field]);
       const [first] = branches;
       if (branches.every((branch) => branch === first)) return [field, first!];
       const selector =
-        branchSelectingFlag(branches) ??
-        branchSelectingChoice(branches) ??
-        branchOnlyField(branches);
-      if (selector !== undefined) return [field, selector];
+        branchSelectingFlag(branches) ?? branchSelectingChoice(branches);
+      if (selector !== undefined) {
+        selectors.add(field);
+        return [field, selector];
+      }
+      const branchOnly = branchOnlyField(branches);
+      if (branchOnly !== undefined) return [field, branchOnly];
       if (
         !unprojectedFields.has(field) ||
         branches.some((branch) => branch === undefined)
@@ -1031,6 +1115,7 @@ const inputFields = (
       return [field, z.union(branches as z.ZodType[])];
     }),
   );
+  return { shape, selectors };
 };
 
 /**
@@ -1587,16 +1672,24 @@ export const describeContractCommand = <
     Object.keys(projection.evidenceTargets?.fields ?? {}),
   );
   const handlerFields: readonly string[] = projection.handlerFields ?? [];
+  const branches = selectInputBranches(contract, projection.inputBranches);
+  const fixedFields: ReadonlyMap<string, string> = new Map(
+    branches.fixed === undefined ? [] : [branches.fixed],
+  );
   // Fields argv never supplies: the delivery's, the omitted ones, those the
-  // handler supplies with each target's source Evidence, and those it fills
-  // from CLI-only values.
+  // handler supplies with each target's source Evidence, those it fills
+  // from CLI-only values, and the one the selected branch fixes.
   const unprojectedFields: ReadonlySet<string> = new Set([
     ...deliveryFields,
     ...Object.keys(projection.omit ?? {}),
     ...targetFields,
     ...handlerFields,
+    ...fixedFields.keys(),
   ]);
-  const shape = inputFields(contract, unprojectedFields);
+  const { shape, selectors } = inputFields(
+    { name: contract.name, inputSchema: branches.inputSchema },
+    unprojectedFields,
+  );
   if (viewDelivery !== undefined && !admitsOmission(shape.view ?? z.never()))
     throw new Error(`${contract.name} has no optional input field view`);
   const positionals: readonly string[] = projection.positionals ?? [];
@@ -1655,6 +1748,8 @@ export const describeContractCommand = <
       throw new Error(`${contract.name}.${field} is an Evidence target`);
     if (handlerFields.includes(field))
       throw new Error(`${contract.name}.${field} is filled by the handler`);
+    if (fixedFields.has(field))
+      throw new Error(`${contract.name}.${field} is fixed by its input branch`);
   }
   for (const field of handlerFields) {
     if (!Object.hasOwn(shape, field))
@@ -1870,7 +1965,8 @@ export const describeContractCommand = <
         !positionals.includes(field) &&
         !Object.hasOwn(omitted, field) &&
         !targetFields.has(field) &&
-        !handlerFields.includes(field),
+        !handlerFields.includes(field) &&
+        !fixedFields.has(field),
     ),
   ].flatMap((field) =>
     flattened[field] === undefined
@@ -1988,7 +2084,7 @@ export const describeContractCommand = <
   const toContractInput = (
     values: Readonly<Record<string, unknown>>,
   ): Record<string, unknown> => {
-    const input: Record<string, unknown> = {};
+    const input: Record<string, unknown> = Object.fromEntries(fixedFields);
     for (const {
       field,
       key,
@@ -2093,11 +2189,12 @@ export const describeContractCommand = <
     cliPositionals,
     omitted,
     handlerFields,
+    fixedFields: Object.fromEntries(fixedFields),
     fields: shape,
     optionConstraints: projectObjectConstraints(
       contract,
       rename,
-      unprojectedFields,
+      new Set([...unprojectedFields, ...selectors]),
       cliOptionDependencies,
       nullFlagLimits,
     ),

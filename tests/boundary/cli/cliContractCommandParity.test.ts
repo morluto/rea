@@ -385,8 +385,6 @@ const contractBuilt: ReadonlySet<string> = new Set(
  */
 const HAND_REGISTERED_CONTRACT_COMMANDS = [
   "inspect-android-jni-bindings",
-  "inspect-api-contract",
-  "inspect-with-objdump",
   "trace-web-source-location",
 ];
 
@@ -397,6 +395,7 @@ const RENAMED_CONTRACT_COMMANDS = [
   "function",
   "inspect",
   "instructions",
+  "list-objdump-architectures",
   "search",
   "trace",
   "validate-browser-scenario",
@@ -450,6 +449,7 @@ describe("CLI commands projected from tool contracts", () => {
         [
           ...new Set(description.parameters.map(({ field }) => field)),
           ...Object.keys(description.omitted),
+          ...Object.keys(description.fixedFields),
           ...handlerSuppliedFields(description),
         ]
           .toSorted()
@@ -1223,7 +1223,75 @@ describe("Evidence delivery of contract commands", () => {
         { name: "probe", inputSchema },
         { command: "probe", description: "Probe" },
       ),
-    ).toThrow("probe.detail differs between input branches");
+    ).toThrow("probe.limit differs between input branches");
+  });
+
+  it("selects an input branch with a literal in one branch and an enum in another", () => {
+    const inputSchema = z.union([
+      z.strictObject({ format: z.literal("json").default("json") }),
+      z.strictObject({ format: z.enum(["sdl", "graphql"]) }),
+    ]);
+    const [format] = describeContractCommand(
+      { name: "probe", inputSchema },
+      { command: "probe", description: "Probe" },
+    ).parameters;
+    expect(format!.schema.parse(undefined)).toBe("json");
+    expect(format!.schema.safeParse("graphql").success).toBe(true);
+    expect(format!.schema.safeParse("xml").success).toBe(false);
+  });
+
+  it("takes the input branches a command selects and fixes a single selected value", () => {
+    const path = z.string();
+    const inputSchema = z.discriminatedUnion("operation", [
+      z.strictObject({ operation: z.enum(["a", "b"]), path }),
+      z.strictObject({
+        operation: z.literal("c"),
+        path,
+        symbol: z.string().optional(),
+      }),
+      z.strictObject({ operation: z.literal("d") }),
+    ]);
+    const describe = (values: readonly [string, ...string[]]) =>
+      describeContractCommand(
+        { name: "probe", inputSchema },
+        {
+          command: "probe",
+          description: "Probe",
+          inputBranches: { field: "operation", values },
+        },
+      );
+    const artifact = describe(["a", "b", "c"]);
+    expect(artifact.parameters.map(({ key }) => key)).toEqual([
+      "operation",
+      "path",
+      "symbol",
+    ]);
+    const operation = artifact.parameters[0]!.schema;
+    expect(operation.safeParse("c").success).toBe(true);
+    expect(operation.safeParse("d").success).toBe(false);
+    expect(artifact.parameters[1]!.schema.safeParse(undefined).success).toBe(
+      false,
+    );
+    const fixed = describe(["d"]);
+    expect(fixed.parameters).toEqual([]);
+    expect(fixed.toContractInput({})).toEqual({ operation: "d" });
+    expect(inputSchema.safeParse(fixed.toContractInput({})).success).toBe(true);
+    expect(() => describe(["a"])).toThrow(
+      "probe.operation would narrow an input branch",
+    );
+    expect(() => describe(["e"])).toThrow(
+      "probe.operation selects no branch for a value",
+    );
+    expect(() =>
+      describeContractCommand(
+        { name: "probe", inputSchema: z.object({ operation: z.string() }) },
+        {
+          command: "probe",
+          description: "Probe",
+          inputBranches: { field: "operation", values: ["a"] },
+        },
+      ),
+    ).toThrow("probe has one input branch");
   });
 });
 
