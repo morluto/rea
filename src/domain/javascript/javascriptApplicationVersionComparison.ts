@@ -1,8 +1,8 @@
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import type { Evidence } from "../evidence.js";
-import { joinCoverageStatus, type CoverageStatus } from "../coverage.js";
-import type { ApplicationCoverage } from "./javascriptApplicationEvidenceSchemas.js";
+import { joinCoverageStatus } from "../coverage.js";
+import { applicationCoverageKnowledge } from "./javascriptApplicationEvidenceSchemas.js";
 import { buildJavaScriptApplicationChangeGraph } from "./javascriptApplicationChangeGraph.js";
 import {
   ownedApplicationVersionComparisonResultSchema,
@@ -131,12 +131,9 @@ const comparisonCoverage = (
     left_graph_status: input.left.graph.coverage.status,
     right_graph_status: input.right.graph.coverage.status,
   };
-  // A graph whose producer could not run says nothing about its coverage.
-  const known = (status: ApplicationCoverage["status"]): CoverageStatus =>
-    status === "unavailable" ? "unknown" : status;
   const joined = joinCoverageStatus([
-    known(input.left.graph.coverage.status),
-    known(input.right.graph.coverage.status),
+    applicationCoverageKnowledge(input.left.graph.coverage.status),
+    applicationCoverageKnowledge(input.right.graph.coverage.status),
   ]);
   const sourceGraphsTruncated =
     input.left.graph.coverage.truncated || input.right.graph.coverage.truncated;
