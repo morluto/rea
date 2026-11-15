@@ -1,5 +1,5 @@
 import { createServer } from "node:net";
-import { fakeHopperReply } from "./fakeHopperReplies.mjs";
+import { FAKE_HOPPER_REPLIES, fakeHopperReply } from "./fakeHopperReplies.mjs";
 
 const [
   socketPath,
@@ -258,25 +258,10 @@ const server = createServer((socket) => {
         });
       } else if (request.method === "current_document") {
         send({ id: request.id, result: "fixture" });
-      } else if (fakeHopperReply(request.method) !== undefined) {
-        send({ id: request.id, result: fakeHopperReply(request.method) });
-      } else if (request.method === "resolve_containing_procedure") {
+      } else if (Object.hasOwn(FAKE_HOPPER_REPLIES, request.method)) {
         send({
           id: request.id,
-          result: {
-            query_address: request.params.address,
-            found: true,
-            procedure: { address: "0x1000", name: "fixture" },
-          },
-        });
-      } else if (request.method === "procedure_references") {
-        send({
-          id: request.id,
-          result: {
-            procedure: { address: "0x1000", name: "fixture" },
-            direction: request.params.direction ?? "outgoing",
-            references: [],
-          },
+          result: fakeHopperReply(request.method, request.params ?? {}),
         });
       } else {
         sendEchoWithProgress(send, request);

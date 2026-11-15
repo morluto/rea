@@ -3,9 +3,24 @@
  * reply contract REA applies to the real bridge
  * (src/hopper/HopperReplyContracts.ts).
  */
+
+/** The one procedure the fake reports, in the bridge's identity shape. */
+const FIXTURE_PROCEDURE = Object.freeze({
+  address: "0x1000",
+  name: "fixture",
+  symbol: null,
+  classification: null,
+  body: Object.freeze({
+    available: false,
+    reason: "The fixture has no function body-extent observation.",
+  }),
+});
+
 /**
  * Reply factories keyed by bridge method. The keys are the single list of
- * methods the fake answers, so the contract test covers every reply.
+ * methods the fake answers, so the contract test covers every reply. A
+ * factory may read the request's params; without them it answers the
+ * default request.
  */
 export const FAKE_HOPPER_REPLIES = Object.freeze({
   list_segments: () => [
@@ -31,30 +46,12 @@ export const FAKE_HOPPER_REPLIES = Object.freeze({
   list_strings: () => [{ address: "0x1000", value: "fixture" }],
   procedure_pseudo_code: () => "return 0;",
   rea_caller_scan_target: () => ({
-    target: {
-      address: "0x1000",
-      name: "fixture",
-      symbol: null,
-      classification: null,
-      body: {
-        available: false,
-        reason: "The fixture has no function body-extent observation.",
-      },
-    },
+    target: FIXTURE_PROCEDURE,
     instructions: ["0x1000"],
     instructions_complete: true,
   }),
   rea_caller_base: () => ({
-    target: {
-      address: "0x1000",
-      name: "fixture",
-      symbol: null,
-      classification: null,
-      body: {
-        available: false,
-        reason: "The fixture has no function body-extent observation.",
-      },
-    },
+    target: FIXTURE_PROCEDURE,
     instructions: ["0x1000"],
     instructions_complete: true,
     callers: [],
@@ -96,11 +93,24 @@ export const FAKE_HOPPER_REPLIES = Object.freeze({
   search_strings: () => [],
   search_procedures: () => [],
   xrefs: () => ["0x1000"],
+  resolve_containing_procedure: (params = {}) => ({
+    query_address:
+      typeof params.address === "string" ? params.address : "0x1000",
+    found: true,
+    procedure: FIXTURE_PROCEDURE,
+  }),
+  procedure_references: (params = {}) => ({
+    procedure: FIXTURE_PROCEDURE,
+    direction: params.direction === "incoming" ? "incoming" : "outgoing",
+    reference_kinds_available: false,
+    unresolved_calls: [],
+    references: [],
+  }),
 });
 
-export const fakeHopperReply = (method) =>
+export const fakeHopperReply = (method, params = {}) =>
   Object.hasOwn(FAKE_HOPPER_REPLIES, method)
-    ? FAKE_HOPPER_REPLIES[method]()
+    ? FAKE_HOPPER_REPLIES[method](params)
     : undefined;
 
 /** Every method fakeHopperReply answers, derived from the factories. */

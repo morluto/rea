@@ -24,3 +24,18 @@ it.each(FAKE_HOPPER_REPLY_METHODS)(
     expect(parsed.ok, parsed.ok ? "" : parsed.error.message).toBe(true);
   },
 );
+
+it.each([
+  ["resolve_containing_procedure", { address: "0x1004" }],
+  ["procedure_references", { direction: "incoming" }],
+] as const)("answers %s from the request's params", (method, params) => {
+  const reply = fakeHopperReply(method, params);
+  expect(reply).toMatchObject(
+    method === "procedure_references"
+      ? { direction: "incoming" }
+      : { query_address: "0x1004" },
+  );
+  if (reply === undefined) return;
+  const parsed = parseHopperReply(method, reply);
+  expect(parsed.ok, parsed.ok ? "" : parsed.error.message).toBe(true);
+});
