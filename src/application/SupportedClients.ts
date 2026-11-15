@@ -537,12 +537,6 @@ const devinDirectory = ({ home, platform, env }: ClientPathContext): string =>
     ? join(windowsAppDataRoots(home, env).roaming, "devin")
     : join(xdgConfigHomeOrDefault({ home, env }), "devin");
 
-/**
- * FreeBuff's own profile directory (its `state.json` root, fixed under
- * `.config` on every platform). The shared `~/.agents` folder is not
- * FreeBuff-specific: REA's own skill installs create it, so it cannot
- * prove FreeBuff is installed.
- */
 /** The Cline VS Code extension's settings in VS Code's global storage. */
 const clineVscodeSettingsDirectory = (context: ClientPathContext): string =>
   join(
@@ -564,6 +558,12 @@ const zedConfigDirectory = ({ home, platform, env }: ClientPathContext) =>
       ? join(windowsAppDataRoots(home, env).roaming, "Zed")
       : join(absoluteXdgConfigHome({ home, env }), "zed");
 
+/**
+ * FreeBuff's own profile directory (its `state.json` root, fixed under
+ * `.config` on every platform). The shared `~/.agents` folder is not
+ * FreeBuff-specific: REA's own skill installs create it, so it cannot
+ * prove FreeBuff is installed.
+ */
 const freebuffProfileDirectory = ({ home }: ClientPathContext): string =>
   join(home, ".config", "freebuff-desktop");
 
