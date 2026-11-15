@@ -34,6 +34,10 @@ import { join } from "node:path";
 import { z } from "zod";
 
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import type {
+  AnalysisLimit,
+  AnalysisSettingsReader,
+} from "../domain/analysisSettings.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
@@ -62,7 +66,6 @@ import {
 import { DEFAULT_BRIDGE_MAX_REQUEST_BYTES } from "../domain/analysisResourceLimits.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { currentAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
-import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 
 const descriptorSchema = z.object({
   ...cutterSessionSchema.omit({ bridge_source: true }).shape,
@@ -261,6 +264,8 @@ export interface CutterBridgeExecution {
   readonly message: string | null;
   /** Whether output was omitted; null when the bridge did not declare it. */
   readonly outputTruncated: boolean | null;
+  /** The transport limit whose ceiling omitted the response, when one did. */
+  readonly outputLimit?: AnalysisLimit;
   readonly completionToken?: string;
 }
 
@@ -567,6 +572,9 @@ export class CutterBridgeClient {
           // sent and its discarded response is omitted output. Any other
           // missing reply leaves truncation unknown.
           outputTruncated: cause.limit === undefined ? null : true,
+          ...(cause.limit?.limit === undefined
+            ? {}
+            : { outputLimit: cause.limit.limit }),
           ...(completionToken === undefined ? {} : { completionToken }),
         };
       }
