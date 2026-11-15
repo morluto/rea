@@ -14,6 +14,7 @@ import {
   desktopViewByteDisplay,
   type DesktopViewPolicy,
 } from "./desktopViewPolicy.js";
+import { isRecord } from "../isRecord.js";
 
 /** Why an archive has no view; the exported reader words it the same. */
 export const UNREADABLE_ZIP = "not a readable zip archive";
@@ -110,11 +111,6 @@ export const zipView = (
   entry_count: count,
   truncated: count > entries.length,
 });
-
-const isRecord = (
-  value: JsonValue | null | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** Whether an entry's view is missing or holds only part of it. */
 const entryLeavesOut = (entry: JsonValue): boolean =>

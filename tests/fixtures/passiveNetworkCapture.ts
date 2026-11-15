@@ -67,7 +67,11 @@ export const passiveNetworkCapture = (paths: readonly string[] = ["/a"]) => {
       prior_activity_available: false,
     },
     frames: [],
-    dom: { total_nodes: 0, nodes: [] },
+    dom: {
+      total_nodes: 0,
+      node_value_length_unit: "utf16-code-units",
+      nodes: [],
+    },
     accessibility: {
       total_nodes: 0,
       nodes: [],

@@ -4,10 +4,13 @@ import {
 } from "./jsonSchemaReferences.js";
 import { isDeepStrictEqual } from "node:util";
 
+import { advertisedSchemaPatterns } from "./advertisedDialect.js";
+import { projectPortablePattern } from "./portablePattern.js";
 import {
   schemaArrays,
   schemaChildren,
   schemaMaps,
+  schemaPointerSteps,
   schemaSubschemas,
 } from "./jsonSchemaKeywords.js";
 
@@ -170,8 +173,17 @@ type SchemaNormalization = {
   readonly changed: boolean;
 };
 
+// A branch that also references another schema is not judged by its own
+// keywords: draft-07 ignores a reference's siblings, and the target may admit
+// more than a boolean. Such unions keep the `anyOf` fallback.
+const hasReference = (schema: Readonly<Record<string, unknown>>): boolean =>
+  ["$ref", "$dynamicRef", "$recursiveRef"].some(
+    (keyword) => typeof schema[keyword] === "string",
+  );
+
 const isBooleanLiteralSchema = (schema: unknown): boolean =>
   isObject(schema) &&
+  !hasReference(schema) &&
   (typeof schema.const === "boolean" ||
     (Array.isArray(schema.enum) &&
       schema.enum.length > 0 &&
@@ -179,7 +191,17 @@ const isBooleanLiteralSchema = (schema: unknown): boolean =>
 
 const isBooleanSchema = (schema: unknown): boolean =>
   isObject(schema) &&
-  (schema.type === "boolean" || isBooleanLiteralSchema(schema));
+  ((schema.type === "boolean" && !hasReference(schema)) ||
+    isBooleanLiteralSchema(schema));
+
+/**
+ * Whether a union collapses to `type: "boolean"` once a branch changes. The
+ * decision reads the canonical branches, so a branch that becomes boolean only
+ * because presentation relaxed its reference keeps the union, and pointers into
+ * the union stay resolvable (see `throughRemovableLocation`).
+ */
+const collapsesToBoolean = (branches: readonly unknown[]): boolean =>
+  branches.length > 0 && branches.every(isBooleanSchema);
 
 const isObjectKeyword = (key: string) => schemaMaps.has(key);
 const isArrayKeyword = (key: string) => schemaArrays.has(key);
@@ -247,9 +269,10 @@ const referencedDefaultPaths = (
   const kept = new Set<string>();
   for (const { target } of new JsonSchemaReferences(schema).references()) {
     if (target.kind !== "target") continue;
-    const defaultAt = target.path.indexOf("default");
-    if (defaultAt < 0) continue;
-    kept.add(JSON.stringify(target.path.slice(0, defaultAt + 1)));
+    const steps = schemaPointerSteps(target.path);
+    const last = steps.at(-1);
+    if (last?.kind !== "value" || last.keyword !== "default") continue;
+    kept.add(JSON.stringify(target.path.slice(0, steps.length)));
   }
   return kept;
 };
@@ -278,8 +301,93 @@ const hasNormalizedLiteral = (schema: Readonly<Record<string, unknown>>) =>
       schema.enum.every((item) => typeof item === "boolean")) ||
       schema.enum.includes("")));
 
+/**
+ * A pattern the portable projection cannot reproduce exactly widens its site.
+ * Exact re-emission keeps the site's meaning, so its dependents stay intact.
+ */
+const hasWidenedPattern = (schema: Readonly<Record<string, unknown>>) =>
+  typeof schema.pattern === "string" &&
+  projectPortablePattern(schema.pattern).kind !== "exact";
+
+interface NormalizationOptions {
+  /** Rewrite boolean and empty-string literals some gateways refuse. */
+  readonly literals: boolean;
+}
+const INPUT_NORMALIZATION: NormalizationOptions = { literals: true };
+const OUTPUT_NORMALIZATION: NormalizationOptions = { literals: false };
+
 /** One projection owns actual rewrite sites and their scoped validation dependencies. */
-const normalizationContext = (root: Readonly<Record<string, unknown>>) => {
+/**
+ * Keywords normalization may remove or rename: a widened `not` or `if` is
+ * dropped with its branches, a widened `oneOf` becomes `anyOf`, and lost
+ * evaluation drops `unevaluatedProperties` and `unevaluatedItems`.
+ */
+const REMOVABLE_KEYWORDS = new Set([
+  "oneOf",
+  "not",
+  "if",
+  "then",
+  "else",
+  "unevaluatedProperties",
+  "unevaluatedItems",
+]);
+
+/**
+ * Whether a pointer from `root` passes through a keyword normalization may
+ * remove. An `anyOf` is removed only when it collapses: every branch boolean.
+ */
+/** Keywords a relaxed draft-07 reference keeps; its other siblings go. */
+const DRAFT07_REDUCED_REFERENCE_KEYS = new Set([
+  "$id",
+  "$schema",
+  "$anchor",
+  "$defs",
+  "definitions",
+  "description",
+  "title",
+  "default",
+  "examples",
+  "$comment",
+]);
+
+const throughRemovableLocation = (
+  root: unknown,
+  path: readonly string[],
+  draft07: boolean,
+): boolean => {
+  let value = root;
+  for (const [index, step] of schemaPointerSteps(path).entries()) {
+    // Relaxing a draft-07 reference removes its ignored siblings, including
+    // literal-valued ones such as `const`.
+    if (
+      draft07 &&
+      step.kind !== "entry" &&
+      isObject(value) &&
+      hasReference(value) &&
+      !DRAFT07_REDUCED_REFERENCE_KEYS.has(step.keyword)
+    )
+      return true;
+    if (
+      step.kind === "keyword" &&
+      (REMOVABLE_KEYWORDS.has(step.keyword) ||
+        (step.keyword === "anyOf" &&
+          isObject(value) &&
+          Array.isArray(value.anyOf) &&
+          collapsesToBoolean(value.anyOf)))
+    )
+      return true;
+    value =
+      typeof value === "object" && value !== null
+        ? Reflect.get(value, path[index]!)
+        : undefined;
+  }
+  return false;
+};
+
+const normalizationContext = (
+  root: Readonly<Record<string, unknown>>,
+  options: NormalizationOptions,
+) => {
   const references = new JsonSchemaReferences(root);
   type Fact = {
     changed: boolean;
@@ -318,6 +426,7 @@ const normalizationContext = (root: Readonly<Record<string, unknown>>) => {
     fact: Fact;
   }[] = [];
   const changed: Fact[] = [];
+  const untracked: Fact[] = [];
   const factAt = (
     schema: unknown,
     inherited: JsonSchemaScope | undefined,
@@ -343,17 +452,34 @@ const normalizationContext = (root: Readonly<Record<string, unknown>>) => {
     const { schema, scope, fact } = work[index]!;
     const ignoresSiblings =
       scope?.dialect === "draft-07" && typeof schema.$ref === "string";
+    const projection =
+      typeof schema.pattern === "string"
+        ? projectPortablePattern(schema.pattern)
+        : undefined;
+    const opaquePatternChanged =
+      !sites.get(scope)?.has(schema) &&
+      projection !== undefined &&
+      (projection.kind !== "exact" || projection.pattern !== schema.pattern);
     if (
       !ignoresSiblings &&
-      sites.get(scope)?.has(schema) &&
-      hasNormalizedLiteral(schema)
+      (opaquePatternChanged ||
+        (sites.get(scope)?.has(schema) &&
+          ((options.literals && hasNormalizedLiteral(schema)) ||
+            hasWidenedPattern(schema))))
     ) {
       fact.changed = true;
       changed.push(fact);
     }
     if (typeof schema.$ref === "string") {
       const target = references.resolve(scope, schema.$ref);
-      if (target.kind === "target") {
+      if (
+        target.kind === "target" &&
+        !throughRemovableLocation(
+          scope?.root,
+          target.path,
+          scope?.dialect === "draft-07",
+        )
+      ) {
         const dependency = factAt(target.value, scope);
         dependency?.dependents.add(fact);
         dependency?.evaluationDependents.add(fact);
@@ -363,8 +489,24 @@ const normalizationContext = (root: Readonly<Record<string, unknown>>) => {
           !sites.get(references.enter(target.value, scope))?.has(target.value)
         )
           fact.opaqueReference = dependency;
-      }
+      } else if (target.kind !== "unresolved") {
+        // Named anchors and pointers into removable locations are not
+        // followed by this owner. Relax them when normalizing so a widened or
+        // moved target cannot make a negation stricter or leave a dangling
+        // reference.
+        fact.opaqueReference = fact;
+        if (!fact.changed) {
+          fact.changed = true;
+          changed.push(fact);
+        }
+      } else untracked.push(fact);
     }
+    if (
+      scope?.dialect !== "draft-07" &&
+      (typeof schema.$dynamicRef === "string" ||
+        typeof schema.$recursiveRef === "string")
+    )
+      untracked.push(fact);
     if (!ignoresSiblings)
       for (const child of schemaSubschemas(schema, {
         includeDefinitions: false,
@@ -391,6 +533,17 @@ const normalizationContext = (root: Readonly<Record<string, unknown>>) => {
           factAt(child, scope)?.evaluationDependents.add(fact);
       }
   }
+  // Dynamic targets depend on the evaluation path, and an unresolved target
+  // may be an embedded resource this owner rewrote. Neither is followed, so
+  // once anything widens, relax them like named anchors.
+  if (changed.length > 0)
+    for (const fact of untracked) {
+      fact.opaqueReference = fact;
+      if (!fact.changed) {
+        fact.changed = true;
+        changed.push(fact);
+      }
+    }
   for (let index = 0; index < changed.length; index++)
     for (const dependent of changed[index]!.dependents)
       if (!dependent.changed) {
@@ -416,6 +569,7 @@ const normalizationContext = (root: Readonly<Record<string, unknown>>) => {
       }
   return {
     references,
+    options,
     changed: (schema: object, scope: JsonSchemaScope | undefined) =>
       indexed.get(scope)?.get(schema)?.changed === true,
     lostEvaluation: (schema: object, scope: JsonSchemaScope | undefined) =>
@@ -425,19 +579,51 @@ const normalizationContext = (root: Readonly<Record<string, unknown>>) => {
   };
 };
 
+/** Drop boolean and empty-string literals, keeping the node's type. */
+const widenGatewayLiterals = (node: Record<string, unknown>): void => {
+  if (typeof node.const === "boolean") {
+    delete node.const;
+    if (node.type === undefined) node.type = "boolean";
+  }
+  if (node.const === "") {
+    delete node.const;
+    if (node.type === undefined) node.type = "string";
+  }
+  if (
+    Array.isArray(node.enum) &&
+    node.enum.length > 0 &&
+    node.enum.every((item) => typeof item === "boolean")
+  ) {
+    delete node.enum;
+    if (node.type === undefined) node.type = "boolean";
+  }
+  if (Array.isArray(node.enum) && node.enum.includes("")) {
+    // Removing only the empty member would reject a canonical-valid input.
+    // Gemini transports turn const into enum and refuse empty enum members.
+    const values = node.enum;
+    delete node.enum;
+    if (
+      node.type === undefined &&
+      values.every((item) => typeof item === "string")
+    )
+      node.type = "string";
+  }
+};
+
 const normalizeAdvertisedSchema = (
   value: unknown,
+  options: NormalizationOptions,
   context?: ReturnType<typeof normalizationContext>,
   inherited?: JsonSchemaScope,
 ): SchemaNormalization => {
   if (!isObject(value)) return { schema: value, changed: false };
-  const owner = context ?? normalizationContext(value);
+  const owner = context ?? normalizationContext(value, options);
   const scope = owner.references.enter(
     value,
     context === undefined ? owner.references.rootScope : inherited,
   );
   const normalize = (child: unknown) =>
-    normalizeAdvertisedSchema(child, owner, scope);
+    normalizeAdvertisedSchema(child, options, owner, scope);
   const node: Record<string, unknown> = { ...value };
   const changed = owner.changed(value, scope);
   const normalizeMap = (map: Readonly<Record<string, unknown>>) =>
@@ -484,33 +670,15 @@ const normalizeAdvertisedSchema = (
     }
   }
 
-  if (typeof node.const === "boolean") {
-    delete node.const;
-    if (node.type === undefined) node.type = "boolean";
+  if (typeof node.pattern === "string") {
+    // Clients refuse the complete tools request over one pattern their regex
+    // engine cannot compile. A widened or omitted pattern marks this site
+    // changed, so enclosing `not`, `if` and `oneOf` keep only widening.
+    const projected = projectPortablePattern(node.pattern);
+    if (projected.kind === "unexpressible") delete node.pattern;
+    else node.pattern = projected.pattern;
   }
-  if (node.const === "") {
-    delete node.const;
-    if (node.type === undefined) node.type = "string";
-  }
-  if (
-    Array.isArray(node.enum) &&
-    node.enum.length > 0 &&
-    node.enum.every((item) => typeof item === "boolean")
-  ) {
-    delete node.enum;
-    if (node.type === undefined) node.type = "boolean";
-  }
-  if (Array.isArray(node.enum) && node.enum.includes("")) {
-    // Removing only the empty member would reject a canonical-valid input.
-    // Gemini transports turn const into enum and refuse empty enum members.
-    const values = node.enum;
-    delete node.enum;
-    if (
-      node.type === undefined &&
-      values.every((item) => typeof item === "string")
-    )
-      node.type = "string";
-  }
+  if (options.literals) widenGatewayLiterals(node);
 
   const negated = Object.hasOwn(value, "not")
     ? normalize(value.not)
@@ -571,11 +739,7 @@ const normalizeAdvertisedSchema = (
       }
       continue;
     }
-    if (
-      branchesChanged &&
-      schemas.length > 0 &&
-      schemas.every(isBooleanSchema)
-    ) {
+    if (branchesChanged && collapsesToBoolean(branches)) {
       node.type = "boolean";
       preserveSharedDefault(node, schemas);
       delete node[combinator];
@@ -593,22 +757,12 @@ const normalizeAdvertisedSchema = (
     // this affected reference rather than copy or mutate its executable view.
     if (scope?.dialect === "draft-07") {
       for (const key of Object.keys(node))
-        if (
-          ![
-            "$id",
-            "$schema",
-            "$anchor",
-            "$defs",
-            "definitions",
-            "description",
-            "title",
-            "default",
-            "examples",
-            "$comment",
-          ].includes(key)
-        )
-          delete node[key];
-    } else delete node.$ref;
+        if (!DRAFT07_REDUCED_REFERENCE_KEYS.has(key)) delete node[key];
+    } else {
+      delete node.$ref;
+      delete node.$dynamicRef;
+      delete node.$recursiveRef;
+    }
     node.description = [
       node.description,
       "This referenced input schema is advertised in reduced form; the server validates the complete canonical input.",
@@ -855,10 +1009,8 @@ export const presentInputJsonSchema = (
     describeProperty,
   );
   if (!isObject(described))
-    return normalizeAdvertisedSchema(flattened).schema as Record<
-      string,
-      unknown
-    >;
+    return normalizeAdvertisedSchema(flattened, INPUT_NORMALIZATION)
+      .schema as Record<string, unknown>;
   const {
     dependencies: _dependencies,
     dependentRequired: _dependentRequired,
@@ -881,18 +1033,99 @@ export const presentInputJsonSchema = (
             : [],
         );
   if (dependencyGuidance.length === 0)
-    return normalizeAdvertisedSchema(presentation).schema as Record<
-      string,
-      unknown
-    >;
+    return normalizeAdvertisedSchema(presentation, INPUT_NORMALIZATION)
+      .schema as Record<string, unknown>;
   const description = [
     typeof presentation.description === "string"
       ? presentation.description
       : undefined,
     ...dependencyGuidance,
   ].filter((text) => text !== undefined);
-  return normalizeAdvertisedSchema({
-    ...presentation,
-    description: description.join(" "),
-  }).schema as Record<string, unknown>;
+  return normalizeAdvertisedSchema(
+    { ...presentation, description: description.join(" ") },
+    INPUT_NORMALIZATION,
+  ).schema as Record<string, unknown>;
+};
+
+/**
+ * Present an output schema with portable patterns. SDK clients compile every
+ * listed output schema; literals stay, since no model reads them.
+ */
+export const presentOutputJsonSchema = (
+  root: Record<string, unknown>,
+): Record<string, unknown> => {
+  const patterns = advertisedSchemaPatterns(root).map(({ pattern }) => ({
+    pattern,
+    projection: projectPortablePattern(pattern),
+  }));
+  if (hasLiteralReference(root))
+    return normalizeAdvertisedSchema(root, OUTPUT_NORMALIZATION)
+      .schema as Record<string, unknown>;
+  // Output schemas reach several megabytes. Exact re-emission changes no
+  // dependent, so only a widened pattern needs the dependency analysis.
+  if (patterns.some(({ projection }) => projection.kind !== "exact"))
+    return normalizeAdvertisedSchema(root, OUTPUT_NORMALIZATION)
+      .schema as Record<string, unknown>;
+  if (
+    patterns.every(
+      ({ pattern, projection }) =>
+        projection.kind === "exact" && projection.pattern === pattern,
+    )
+  )
+    return root;
+  return replaceExactPatterns(root) as Record<string, unknown>;
+};
+
+/** A reference into literal data needs dependency analysis, not in-place rewriting. */
+const hasLiteralReference = (root: Record<string, unknown>): boolean => {
+  const pending: unknown[] = [root];
+  const visited = new WeakSet<object>();
+  while (pending.length > 0) {
+    const value = pending.pop();
+    if (!isObject(value) || visited.has(value)) continue;
+    visited.add(value);
+    if (typeof value.$ref === "string") {
+      try {
+        const reference = decodeURIComponent(value.$ref);
+        if (
+          /(?:^#\/|\/)(?:default|const|enum|examples)(?:\/|$)/u.test(reference)
+        )
+          return true;
+      } catch {
+        // An invalid fragment cannot name one of these locations.
+      }
+    }
+    pending.push(...schemaSubschemas(value, { includeDefinitions: true }));
+  }
+  return false;
+};
+
+/** Copy schema positions, replacing each pattern with its exact portable form. */
+const replaceExactPatterns = (schema: unknown): unknown => {
+  if (!isObject(schema)) return schema;
+  return Object.fromEntries(
+    Object.entries(schema).map(([key, value]) => {
+      if (key === "pattern" && typeof value === "string") {
+        const projection = projectPortablePattern(value);
+        return [key, projection.kind === "exact" ? projection.pattern : value];
+      }
+      if (schemaMaps.has(key) && isObject(value))
+        return [
+          key,
+          Object.fromEntries(
+            Object.entries(value).map(([name, child]) => [
+              name,
+              replaceExactPatterns(child),
+            ]),
+          ),
+        ];
+      if (
+        (schemaArrays.has(key) || schemaChildren.has(key)) &&
+        Array.isArray(value)
+      )
+        return [key, value.map(replaceExactPatterns)];
+      if (schemaChildren.has(key)) return [key, replaceExactPatterns(value)];
+      return [key, value];
+    }),
+  );
 };

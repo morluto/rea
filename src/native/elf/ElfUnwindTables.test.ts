@@ -806,6 +806,68 @@ it.each([
   },
 );
 
+const GOT_UNKNOWN =
+  "A DW_EH_PE_datarel .eh_frame value needs a GOT base that could not be determined; that value is unresolved.";
+
+it.each([
+  ["elf64 little-endian", 64, true],
+  ["elf32 big-endian", 32, false],
+] as const)(
+  "reads DT_PLTGOT through the single PT_DYNAMIC header (%s)",
+  (_label, bits, little) => {
+    const report = parse(
+      elfUnwindFixture({
+        bits,
+        little,
+        header: "match",
+        datarel: "dynamic",
+        dynamicPrograms: 1,
+        dynamicSection: false,
+      }),
+    );
+    expect(report.ranges.map((range) => range.start)).toEqual([
+      address(UNWIND_FN_A),
+      address(UNWIND_FN_B),
+    ]);
+    expect(report.coverage.status).toBe("complete");
+    expect(report.limitations).toContain(
+      "DW_EH_PE_datarel .eh_frame values were resolved against the GOT base from DT_PLTGOT.",
+    );
+  },
+);
+
+it.each([
+  ["repeated PT_DYNAMIC headers", { dynamicPrograms: 2 }],
+  ["repeated SHT_DYNAMIC sections", { duplicate: ".dynamic" }],
+] as const)(
+  "keeps the GOT unknown when %s leave the dynamic table ambiguous",
+  (_label, options) => {
+    const report = parse(
+      elfUnwindFixture({ header: "match", datarel: "dynamic", ...options }),
+    );
+    expect(report.ranges.map((range) => range.start)).not.toContain(
+      address(UNWIND_FN_A),
+    );
+    expect(report.coverage.status).toBe("incomplete");
+    expect(report.limitations).toContain(GOT_UNKNOWN);
+  },
+);
+
+it("keeps the GOT unknown when repeated allocated .got.plt sections disagree", () => {
+  const report = parse(
+    elfUnwindFixture({
+      header: "match",
+      datarel: "got",
+      duplicate: ".got.plt",
+    }),
+  );
+  expect(report.ranges.map((range) => range.start)).not.toContain(
+    address(UNWIND_FN_A),
+  );
+  expect(report.coverage.status).toBe("incomplete");
+  expect(report.limitations).toContain(GOT_UNKNOWN);
+});
+
 it("keeps the GOT unknown when compressed dynamic storage resembles decoded entries", () => {
   const bytes = elfUnwindFixture({ header: "match", datarel: "dynamic" });
   const section = findSection(bytes, ".dynamic");

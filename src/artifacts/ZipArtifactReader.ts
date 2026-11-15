@@ -1,3 +1,4 @@
+import { OwnerCancellation } from "../domain/analysisErrorCore.js";
 import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import type { FileHandle } from "node:fs/promises";
 import { Duplex, PassThrough, type Readable } from "node:stream";
@@ -555,7 +556,7 @@ const extractStream = (
   // settlement before releasing the source descriptor.
   output.once("close", () => {
     signal?.removeEventListener("abort", onAbort);
-    controller.abort();
+    controller.abort(OwnerCancellation.noLongerNeeded);
   });
   const writable = new WritableStream<Uint8Array>({
     write: async (chunk) => {

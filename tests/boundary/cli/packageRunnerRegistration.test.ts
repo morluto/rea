@@ -115,9 +115,15 @@ for (const { runner, userAgent } of [
       expect(registered.clients).toMatchObject([
         { client: "amp", status: "configured" },
       ]);
+      // Doctor also reports Amp, whose table row mcp add registered through.
       const doctor = await run(["doctor", "--client", "omp", "--json"]);
       expect(doctor.json).toMatchObject({
-        identity: { registrations: [{ client: "omp", state: "aligned" }] },
+        identity: {
+          registrations: [
+            { client: "amp", state: "aligned" },
+            { client: "omp", state: "aligned" },
+          ],
+        },
       });
       const repeat = await run([
         "setup",
