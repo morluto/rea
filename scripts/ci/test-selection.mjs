@@ -15,25 +15,27 @@ const FILES_PER_GROUP = 40;
 const MAX_GROUPS = 4;
 
 // Leaf adapters whose tests also reach their sources through the built CLI,
-// MCP server or a fake provider process rather than an import.
-const OWNERS = {
-  adb: ["src/adb/**", "tests/boundary/providers/adb/**"],
-  apktool: ["src/apktool/**"],
-  dotnet: ["src/dotnet/**"],
-  evm: ["src/evm/**", "tests/boundary/evm/**"],
-  firmware: ["src/firmware/**", "tests/boundary/firmware/**"],
-  flutter: ["src/flutter/**"],
-  ghidra: ["src/ghidra/**", "tests/boundary/providers/ghidra/**"],
-  hopper: ["src/hopper/**", "tests/boundary/providers/hopper/**"],
-  ida: ["src/ida/**", "tests/boundary/providers/ida/**"],
-  jeb: ["src/jeb/**"],
-  pcap: ["src/pcap/**", "tests/boundary/pcap/**"],
-  sqlite: ["src/sqlite/**", "tests/boundary/sqlite/**"],
-  wasm: ["src/wasm/**"],
-};
-const ownersOf = (path) =>
-  Object.values(OWNERS).filter((patterns) =>
-    patterns.some((glob) => matchesGlob(path, glob)),
+// MCP server or a fake provider process rather than an import. An adapter
+// owns `src/<name>/` and every test named for it (`<name>*.test.ts`) or
+// filed under a `<name>/` directory anywhere in `tests/`.
+const OWNERS = [
+  "adb",
+  "apktool",
+  "dotnet",
+  "evm",
+  "firmware",
+  "flutter",
+  "ghidra",
+  "hopper",
+  "ida",
+  "jeb",
+  "pcap",
+  "sqlite",
+  "wasm",
+];
+const ownedTests = (path) =>
+  OWNERS.filter((owner) => path.startsWith(`src/${owner}/`)).flatMap(
+    (owner) => [`tests/**/${owner}/**/*.test.ts`, `tests/**/${owner}*.test.ts`],
   );
 
 const isTest = (path) => path.endsWith(".test.ts");
@@ -139,10 +141,10 @@ export function planTestSelection({ files, event, tier, code, snapshot }) {
       )
         select(test, "beside");
     // Leaf adapters' boundary tests.
-    for (const patterns of ownersOf(path))
-      for (const test of tests)
-        if (patterns.some((glob) => matchesGlob(test, glob)))
-          select(test, "owner");
+    const patterns = ownedTests(path);
+    for (const test of tests)
+      if (patterns.some((glob) => matchesGlob(test, glob)))
+        select(test, "owner");
   }
   // Tests that name a changed path read it directly.
   for (const path of files)

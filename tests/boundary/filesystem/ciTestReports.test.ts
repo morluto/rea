@@ -691,6 +691,8 @@ it("verifies exactly the selected subset and never publishes it as timing histor
   };
   const passed = await run(["src/a.test.ts", "tests/b.test.ts"]);
   expect(passed.summary).toContain("Portable tests: 2 selected files.");
+  expect(passed.summary).toContain("is not a successful timing baseline");
+  expect(passed.summary).not.toContain("Successful timing history");
   // A subset is not a complete-suite timing baseline.
   await expect(
     readFile(join(root, ".cache/ci-test-history/test-results.json")),

@@ -48,6 +48,25 @@ it("follows test and verifier imports and directory scans, not production import
   ]);
 });
 
+it("selects a leaf adapter's tests by its name and directory across test projects", () => {
+  const sources = {
+    "src/jeb/JebMcpDeadline.ts": "",
+    "tests/boundary/providers/jebMcpTimeout.test.ts": "",
+    "tests/boundary/mcp/jebMcp.test.ts": "",
+    "tests/acceptance/providers/jebConfigurationIsolation.test.ts": "",
+    "tests/boundary/providers/adb/adbBugreport.test.ts": "",
+    "tests/boundary/providers/ghidraJava.test.ts": "",
+  };
+  expect(selectedFiles(plan(["src/jeb/JebMcpDeadline.ts"], sources))).toEqual([
+    "tests/acceptance/providers/jebConfigurationIsolation.test.ts",
+    "tests/boundary/mcp/jebMcp.test.ts",
+    "tests/boundary/providers/jebMcpTimeout.test.ts",
+  ]);
+  expect(selectedFiles(plan(["src/adb/AdbProvider.ts"], sources))).toEqual([
+    "tests/boundary/providers/adb/adbBugreport.test.ts",
+  ]);
+});
+
 it("lets checker-only inputs and prose select nothing by themselves", () => {
   const sources = {
     "src/domain/Value.test.ts": "",

@@ -85,6 +85,8 @@ if (passed && verifyInventory) {
   if (files.every(({ state }) => state === "skipped"))
     throw new Error("Every portable test module was skipped");
 }
+// A selected subset is not a timing baseline for the complete suite.
+const publishesHistory = passed && !selected;
 const skippedFiles = files.filter(({ state }) => state === "skipped");
 const summary = [
   groupsCompleted
@@ -105,7 +107,7 @@ const summary = [
   ...(skippedFiles.length ? [""] : []),
   ...skippedFiles.map(({ name }) => `- ${name.replaceAll("|", "\\|")}`),
   "",
-  passed
+  publishesHistory
     ? "Successful timing history is available."
     : "This report is diagnostic only and is not a successful timing baseline.",
   "",
@@ -126,8 +128,7 @@ if (process.env.GITHUB_STEP_SUMMARY)
   await appendFile(process.env.GITHUB_STEP_SUMMARY, summary);
 else console.log(summary);
 
-// A selected subset is not a timing baseline for the complete suite.
-if (passed && !selected) {
+if (publishesHistory) {
   await mkdir(historyDirectory, { recursive: true });
   await writeFile(
     historyPath,
