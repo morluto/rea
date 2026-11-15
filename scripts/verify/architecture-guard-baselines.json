@@ -437,7 +437,6 @@
     "src/application/EvidenceBundleCommands.ts": 1,
     "src/application/EvidenceBundleFiles.ts": 1,
     "src/application/JsonFiles.ts": 1,
-    "src/application/McpRegistrationGit.ts": 1,
     "src/application/Setup.ts": 2,
     "src/application/SetupCleanupOwner.ts": 2,
     "src/application/Uninstall.ts": 1,
