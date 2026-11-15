@@ -26,12 +26,19 @@ cliTest(
       environment: { HOME: root, XDG_CONFIG_HOME: root, XDG_CACHE_HOME: root },
     });
     expect(result.exitCode).toBe(1);
+    // open_binary's pairing rule refuses before the target is opened.
     expect(result.json).toMatchObject({
       code: "invalid_request",
       details: {
-        reason: expect.stringMatching(
-          /gamecube-dol.*architecture.*DOL header/iu,
-        ),
+        operation: "binary_overview",
+        issues: [
+          expect.objectContaining({
+            path: ["architecture"],
+            message: expect.stringMatching(
+              /gamecube-dol.*architecture.*DOL header/iu,
+            ),
+          }),
+        ],
       },
     });
     const invalid = await cli.run({
@@ -78,7 +85,14 @@ cliTest(
     expect(missing.exitCode).toBe(1);
     expect(missing.json).toMatchObject({
       code: "invalid_request",
-      details: { reason: expect.stringContaining("architecture") },
+      details: {
+        issues: [
+          expect.objectContaining({
+            path: ["architecture"],
+            message: expect.stringContaining("architecture"),
+          }),
+        ],
+      },
     });
   },
 );
