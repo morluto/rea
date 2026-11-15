@@ -8,9 +8,15 @@ import {
   scriptImportClosure,
 } from "../../support/scriptImportClosure.js";
 
-const repository = async (files: Record<string, string>) => {
+const repository = async (
+  files: Record<string, string>,
+  imports: Record<string, string> = {},
+) => {
   const root = await createTestTempDirectory("rea-import-closure-");
-  await writeFile(join(root, "package.json"), '{"type":"module"}\n');
+  await writeFile(
+    join(root, "package.json"),
+    JSON.stringify({ type: "module", imports }),
+  );
   for (const [path, source] of Object.entries(files)) {
     await mkdir(dirname(join(root, path)), { recursive: true });
     await writeFile(join(root, path), source);
@@ -61,6 +67,24 @@ it("follows runtime imports and verifier source loads, not type-only edges or pa
   expect(await readFile(join(destination, "src/result.ts"), "utf8")).toBe(
     "export const result = 1;\n",
   );
+});
+
+it("follows package imports to the file Node loads and leaves build output to the copy", async () => {
+  const root = await repository(
+    {
+      "scripts/entry.mjs": [
+        'import "#helper";',
+        'const worker = await import("#worker");',
+      ].join("\n"),
+      "scripts/lib/helper.mjs": "export const helper = 1;\n",
+      "src/worker.ts": "export const worker = 1;\n",
+    },
+    { "#helper": "./scripts/lib/helper.mjs", "#worker": "./dist/worker.js" },
+  );
+  expect(await scriptImportClosure(["scripts/entry.mjs"], root)).toEqual([
+    "scripts/entry.mjs",
+    "scripts/lib/helper.mjs",
+  ]);
 });
 
 it("refuses a missing import or one outside the repository", async () => {

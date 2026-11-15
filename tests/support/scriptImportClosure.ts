@@ -3,8 +3,11 @@ import { copyFile, mkdir, readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { readVerifierSourceSpecifiers } from "../../scripts/lib/import-specifiers.mjs";
-import { resolveModuleImports } from "../../scripts/lib/module-boundaries.mjs";
+import {
+  readImportSpecifiers,
+  readVerifierSourceSpecifiers,
+} from "../../scripts/lib/import-specifiers.mjs";
+import { packageImportTarget } from "../../scripts/lib/module-boundaries.mjs";
 import { typeScriptSourcePath } from "../../scripts/lib/verifier-source-loader.mjs";
 
 const REPOSITORY = fileURLToPath(new URL("../../", import.meta.url));
@@ -24,6 +27,20 @@ const repositoryFile = (root: string, path: string): string => {
   )
     throw new Error(`Import target ${path} is outside ${root}`);
   return selected.split(sep).join("/");
+};
+
+/** The path one specifier names as Node loads it; `undefined` for a bare package. */
+const loadTarget = (
+  root: string,
+  importer: URL,
+  specifier: string,
+): string | undefined => {
+  if (specifier.startsWith("#")) return packageImportTarget(root, specifier);
+  if (specifier.startsWith("file:")) return fileURLToPath(specifier);
+  if (isAbsolute(specifier)) return resolve(specifier);
+  if (specifier.startsWith("./") || specifier.startsWith("../"))
+    return fileURLToPath(new URL(specifier, importer));
+  return undefined;
 };
 
 /** The file Node, or the verifier source loader, loads for one import target. */
@@ -56,17 +73,17 @@ export const scriptImportClosure = async (
     visited.add(file);
     if (!PARSED.test(file)) continue;
     const source = await readFile(join(root, file), "utf8");
+    const importer = pathToFileURL(join(root, file));
     const targets = [
-      ...resolveModuleImports(file, source, root)
+      ...readImportSpecifiers(source)
         .filter(({ typeOnly }) => !typeOnly)
-        .map(({ target }) => target),
+        .map(({ specifier }) => loadTarget(root, importer, specifier)),
       ...readVerifierSourceSpecifiers(source).map(({ specifier }) =>
-        repositoryFile(
-          root,
-          fileURLToPath(new URL(specifier, pathToFileURL(join(root, file)))),
-        ),
+        fileURLToPath(new URL(specifier, importer)),
       ),
-    ];
+    ]
+      .filter((target): target is string => target !== undefined)
+      .map((target) => repositoryFile(root, target));
     for (const target of targets)
       if (!NOT_SOURCE.test(target))
         pending.push(loadedFile(root, target, file));
