@@ -10,6 +10,7 @@ for (const { command, limit, recovery, cliFlag } of [
     command: "inspect-go-binary",
     limit: 256 * 1024 * 1024,
     recovery: "max_input_bytes",
+    cliFlag: "--max-input-bytes",
   },
   {
     command: "inspect-rust-binary",
