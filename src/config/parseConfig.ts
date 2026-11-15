@@ -22,7 +22,7 @@ import { DEFAULT_BRIDGE_MAX_REQUEST } from "./bridgeMaxRequestBytes.js";
 import { hopperCallerScanBudgetFromEnvironment } from "./hopperCallerScanBudget.js";
 import { DEFAULT_REGEX_MATCHING_DEADLINE } from "./regexMatchingDeadline.js";
 import { DEFAULT_REGEX_WORKER_HEAP_REQUEST } from "./regexWorkerHeapRequest.js";
-import { resolveMcpToolsListPageBudget } from "./mcpToolsListPageBudget.js";
+import { DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET } from "./mcpToolsListPageBudget.js";
 import type { AppConfig } from "./types.js";
 import { hopperLauncherDiscovery } from "../application/HopperLauncherDiscovery.js";
 import { localMacHopperRenamedLauncherCandidates } from "../application/MacHopperPaths.js";
@@ -153,7 +153,13 @@ export const parseConfig = (
       : { mcpMaxInputElements: env.REA_MCP_MAX_INPUT_ELEMENTS }),
     ...(env.REA_MCP_TOOLS_LIST_PAGE_BYTES === undefined
       ? {}
-      : { mcpToolsListPageBudget: resolveMcpToolsListPageBudget(environment) }),
+      : {
+          mcpToolsListPageBudget: {
+            ...DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET,
+            bytes: env.REA_MCP_TOOLS_LIST_PAGE_BYTES,
+            source: "setting",
+          },
+        }),
     ...(env.REA_MCP_INPUT_SCHEMA_PROFILE === undefined
       ? {}
       : { mcpInputSchemaProfile: env.REA_MCP_INPUT_SCHEMA_PROFILE }),

@@ -159,12 +159,22 @@ const verifiedPage = (
       encodeToolListCursor({ v: 1, offset: pageEnd, digest }),
     );
   }
-  if (!measureMcpResultWithinBudget(paged, budget.bytes).ok)
+  if (!measureMcpResultWithinBudget(paged, budget.bytes).ok) {
+    // A resumed listing's remaining tools may still fit as one final page
+    // without a cursor even when the first tool plus a cursor does not.
+    const finalPage = pageToolsListMessage(
+      message,
+      tools.slice(offset),
+      undefined,
+    );
+    if (measureMcpResultWithinBudget(finalPage, budget.bytes).ok)
+      return finalPage;
     return toolsListPageBudgetError(
       message,
       budget,
       advertisedToolName(tools[offset]),
     );
+  }
   return paged;
 };
 

@@ -63,17 +63,6 @@ export const parseMcpToolsListPageBudget = (
       );
 };
 
-/** Resolve the budget from a composition root's selected environment. */
-export const resolveMcpToolsListPageBudget = (
-  environment: Readonly<Record<string, string | undefined>>,
-): McpToolsListPageBudget => {
-  const parsed = parseMcpToolsListPageBudget(
-    environment[MCP_TOOLS_LIST_PAGE_BUDGET_SETTING],
-  );
-  if (!parsed.ok) throw parsed.error;
-  return parsed.value;
-};
-
 /** How to read and change the tools/list page budget. */
 export const mcpToolsListPageBudgetRecovery = (
   budget: McpToolsListPageBudget,

@@ -303,4 +303,31 @@ describe("tools/list cursor identity", () => {
       },
     });
   });
+
+  it("returns a fitting final page without a cursor on a resumed listing", () => {
+    const first = listedTool("a", "a".repeat(10));
+    const second = listedTool("b", "b".repeat(16));
+    const third = listedTool("c", "c".repeat(5));
+    const whole = toolsListMessage([first, second, third]);
+    // The resumed page holds the last two tools exactly: the second tool
+    // plus a cursor exceeds the budget, but both tools without a cursor fit.
+    const finalPage = toolsListMessage([second, third]);
+    const budget = pageBudget(
+      Buffer.byteLength(JSON.stringify(finalPage), "utf8"),
+    );
+    const firstPage = paginateToolsList(whole, undefined, budget);
+    expect(isToolsListReply(firstPage)).toBe(true);
+    if (!isToolsListReply(firstPage)) return;
+    expect(firstPage.result.tools.map((tool) => tool.name)).toEqual(["a"]);
+    const cursor = firstPage.result.nextCursor;
+    expect(typeof cursor).toBe("string");
+    const resumed = paginateToolsList(whole, cursor, budget);
+    expect(isToolsListReply(resumed)).toBe(true);
+    if (!isToolsListReply(resumed)) return;
+    expect(resumed.result.tools.map((tool) => tool.name)).toEqual([
+      "b",
+      "c",
+    ]);
+    expect(resumed.result.nextCursor).toBeUndefined();
+  });
 });
