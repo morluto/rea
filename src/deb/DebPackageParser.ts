@@ -317,26 +317,39 @@ type TarParse = {
   readonly undecodableNames: number;
 };
 
-const parsePax = (bytes: Uint8Array): Readonly<Record<string, string>> => {
-  const text = decodeUtf8(bytes);
-  if (text === null) return {};
+type PaxFields = {
+  readonly fields: Readonly<Record<string, string>>;
+  /** Keys whose value is not UTF-8 and carries U+FFFD replacements. */
+  readonly undecodable: ReadonlySet<string>;
+};
+
+const parsePax = (bytes: Uint8Array): PaxFields => {
+  // Each record is "<length> <key>=<value>\n", where <length> counts bytes,
+  // so walk the bytes and decode each record on its own.
   const fields: Record<string, string> = {};
+  const undecodable = new Set<string>();
   let index = 0;
-  while (index < text.length) {
-    const space = text.indexOf(" ", index);
+  while (index < bytes.length) {
+    const space = bytes.indexOf(0x20, index);
     if (space === -1) break;
-    const length = Number(text.slice(index, space));
-    if (!Number.isInteger(length) || length <= 0) break;
-    const record = text.slice(index, index + length);
-    const eq = record.indexOf("=", space - index);
+    const lengthText = Buffer.from(bytes.subarray(index, space)).toString(
+      "latin1",
+    );
+    if (!/^[0-9]+$/u.test(lengthText)) break;
+    const length = Number(lengthText);
+    if (!Number.isSafeInteger(length) || length <= space - index + 1) break;
+    if (index + length > bytes.length) break;
+    const record = tarText(bytes.subarray(space + 1, index + length));
+    const eq = record.text.indexOf("=");
     if (eq !== -1) {
-      const key = record.slice(space - index + 1, eq);
-      const value = record.slice(eq + 1).replace(/\n$/u, "");
-      fields[key] = value;
+      const key = record.text.slice(0, eq);
+      fields[key] = record.text.slice(eq + 1).replace(/\n$/u, "");
+      if (record.undecodable) undecodable.add(key);
+      else undecodable.delete(key);
     }
     index += length;
   }
-  return fields;
+  return { fields, undecodable };
 };
 
 const parseTar = (
@@ -353,6 +366,7 @@ const parseTar = (
   let undecodableNames = 0;
   let longlink: string | null = null;
   let pax: Readonly<Record<string, string>> = {};
+  const paxUndecodable = new Set<string>();
   while (offset + TAR_BLOCK <= bytes.length) {
     const header = bytes.subarray(offset, offset + TAR_BLOCK);
     if (isZeroBlock(header)) break;
@@ -411,7 +425,11 @@ const parseTar = (
       continue;
     }
     if (typeFlag === 120 || typeFlag === 103) {
-      pax = { ...pax, ...parsePax(payload) };
+      const parsed = parsePax(payload);
+      pax = { ...pax, ...parsed.fields };
+      for (const key of Object.keys(parsed.fields))
+        if (parsed.undecodable.has(key)) paxUndecodable.add(key);
+        else paxUndecodable.delete(key);
       offset = dataStart + pad512(size);
       continue;
     }
@@ -433,13 +451,17 @@ const parseTar = (
     const linkText = pax.linkpath ?? longlink ?? headerLink.text;
     const link = linkText.length === 0 ? null : linkText;
     const nameUndecodable =
-      pax.path === undefined &&
-      (longname === null
-        ? rawName.undecodable || prefix.undecodable
-        : longnameUndecodable);
+      pax.path !== undefined
+        ? paxUndecodable.has("path")
+        : longname === null
+          ? rawName.undecodable || prefix.undecodable
+          : longnameUndecodable;
     const linkUndecodable =
-      pax.linkpath === undefined &&
-      (longlink === null ? headerLink.undecodable : longlinkUndecodable);
+      pax.linkpath !== undefined
+        ? paxUndecodable.has("linkpath")
+        : longlink === null
+          ? headerLink.undecodable
+          : longlinkUndecodable;
     if (nameUndecodable || linkUndecodable) undecodableNames += 1;
     const mode = parseOctal(ascii(header.subarray(100, 108)));
     const uid = parseTarNumber(header.subarray(108, 116));
@@ -464,6 +486,7 @@ const parseTar = (
     longnameUndecodable = false;
     longlinkUndecodable = false;
     pax = {};
+    paxUndecodable.clear();
     offset = dataStart + pad512(size);
   }
   return { entries, files, undecodableNames };

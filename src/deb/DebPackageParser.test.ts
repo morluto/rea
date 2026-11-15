@@ -367,6 +367,62 @@ it("counts a hardlinked md5sums path as present in the inventory", () => {
   });
 });
 
+const paxRecord = (key: string, value: string | Uint8Array): Buffer => {
+  const body = Buffer.concat([
+    Buffer.from(` ${key}=`, "utf8"),
+    typeof value === "string" ? Buffer.from(value, "utf8") : value,
+    Buffer.from("\n", "utf8"),
+  ]);
+  let length = body.length + 1;
+  while (String(length).length + body.length !== length) length += 1;
+  return Buffer.concat([Buffer.from(String(length), "utf8"), body]);
+};
+
+it("reads PAX records by byte length, so a UTF-8 path keeps the next field", () => {
+  const report = parse(
+    debPackageFixture({
+      dataEntries: [
+        { name: "./", type: "5", mode: 0o755, content: "" },
+        {
+          name: "./PaxHeaders/cafe",
+          type: "x",
+          content: Buffer.concat([
+            paxRecord("path", "./usr/share/café"),
+            paxRecord("linkpath", "target"),
+          ]),
+        },
+        { name: "./usr/share/cafe", type: "2", linkname: "ignored" },
+      ],
+    }),
+  );
+  const entry = report.data_entries.find(
+    (candidate) => candidate.path === "usr/share/café",
+  );
+  expect(entry?.link_target).toBe("target");
+});
+
+it("reports a PAX path that is not UTF-8 as a limitation", () => {
+  const report = parse(
+    debPackageFixture({
+      dataEntries: [
+        { name: "./", type: "5", mode: 0o755, content: "" },
+        {
+          name: "./PaxHeaders/h",
+          type: "x",
+          content: paxRecord(
+            "path",
+            Buffer.concat([Buffer.from("./usr/bin/h"), Buffer.from([0xff])]),
+          ),
+        },
+        { name: "./usr/bin/h", content: "" },
+      ],
+    }),
+  );
+  expect(report.limitations).toContain(
+    "1 tar entry names or link targets are not UTF-8; they are shown with U+FFFD replacements and may not match md5sums.",
+  );
+});
+
 it("reads control files from the control.tar root, not nested paths", () => {
   const report = parse(
     debPackageFixture({
