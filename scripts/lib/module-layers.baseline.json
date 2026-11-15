@@ -21,7 +21,6 @@
     "android -> native": 1,
     "apktool -> artifacts": 2,
     "artifacts -> dotnet": 3,
-    "artifacts -> javascript": 1,
     "artifacts -> native": 1,
     "browser -> artifacts": 6,
     "captures -> pcap": 2,
@@ -35,7 +34,7 @@
     "native -> artifacts": 5
   },
   "entry": {
-    "application -> artifacts": 9,
+    "application -> artifacts": 7,
     "application -> browser": 2,
     "application -> desktop": 41,
     "application -> frida": 2,
