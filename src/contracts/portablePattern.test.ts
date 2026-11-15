@@ -440,6 +440,31 @@ it.each(PRESENTERS)(
   },
 );
 
+it.each(PRESENTERS)(
+  "keeps %s chained pointers valid into removed draft-07 literal siblings",
+  (_kind, present) => {
+    const schema = {
+      $schema: "http://json-schema.org/draft-07/schema#",
+      definitions: { word: { type: "object" } },
+      type: "object",
+      properties: {
+        a: {
+          $ref: "#/definitions/word",
+          properties: { kept: { type: "string" } },
+        },
+        b: {
+          $ref: "#/properties/a/properties/kept",
+          const: { type: "string" },
+        },
+        c: { $ref: "#/properties/b/const" },
+        name: { type: "string", pattern: "^(?!con$)[a-z]+$" },
+      },
+    };
+    const validate = new Ajv({ strict: false }).compile(present(schema));
+    expect(validate({ a: {}, b: "x", c: "y", name: "con" })).toBe(true);
+  },
+);
+
 describe("advertised pattern presentation through collapsing unions", () => {
   const lookAround = "^(?!con$)[a-z]+$";
 
