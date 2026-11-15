@@ -14,7 +14,6 @@ const XML_FORMAT = "xml";
 
 /** How XML failed: ill-formed syntax, or a DOCTYPE the policy refuses. */
 export type XmlParseFailure =
-  | ParseFailureError
   | ParseFailureError<"malformed">
   | ParseFailureError<"unsupported">;
 
@@ -37,9 +36,15 @@ const unsupportedDoctype = (
     { field },
   );
 
+/** A failure the syntax check threw itself. */
+const isXmlFailure = (cause: unknown): cause is XmlParseFailure =>
+  cause instanceof ParseFailureError &&
+  cause.failure.format === XML_FORMAT &&
+  (cause.kind === "malformed" || cause.kind === "unsupported");
+
 /** The failure the syntax check established; any other throw is ill-formed XML. */
 const xmlFailure = (cause: unknown): XmlParseFailure =>
-  cause instanceof ParseFailureError ? cause : notWellFormed(cause);
+  isXmlFailure(cause) ? cause : notWellFormed(cause);
 
 /** Whether a DOCTYPE's text, as saxes reports it, opens an internal subset: a `[` outside its quoted literals. */
 const declaresInternalSubset = (declaration: string): boolean =>
