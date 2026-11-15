@@ -17,8 +17,8 @@ import {
   type AnalysisCapturedOutput,
 } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
@@ -26,9 +26,11 @@ import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
   AgentEnvComputer,
+  COMPUTER_START_TIMING,
   AppDataRefusal,
   ComputerStartFailure,
   computerFailedOnReadiness,
+  type ComputerStartTiming,
   type DriverResult,
 } from "../../desktop/AgentEnvComputer.js";
 import {
@@ -144,8 +146,7 @@ const failure = (
   signal: AbortSignal,
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
-  if (signal.aborted)
-    return new AnalysisCancelledError(operation, { cause: signal.reason });
+  if (signal.aborted) return cancelledBy(operation, signal);
   return new ProviderAdapterError(AGENTENV_PROVIDER, operation, {
     userMessage: cause instanceof Error ? cause.message : String(cause),
     cause,
@@ -367,7 +368,6 @@ const startFailure = (
 ): AnalysisError => {
   if (cause instanceof AnalysisError && kept.release.verified) return cause;
   const options = {
-    cause,
     ...(output === undefined ? {} : { capturedOutput: output }),
     ...(kept.release.verified
       ? {}
@@ -380,11 +380,7 @@ const startFailure = (
           remediationAction: `REA keeps this computer's teardown as ${kept.id}; once the reported problem is fixed, call close_build_computer with that computer_id.`,
         }),
   };
-  if (signal.aborted)
-    return new AnalysisCancelledError(START, {
-      ...options,
-      cause: signal.reason,
-    });
+  if (signal.aborted) return cancelledBy(START, signal, options);
   return new ProviderAdapterError(AGENTENV_PROVIDER, START, {
     ...(cause instanceof ComputerStartFailure &&
     cause.remediation !== undefined &&
@@ -393,6 +389,7 @@ const startFailure = (
       : {}),
     userMessage: cause instanceof Error ? cause.message : String(cause),
     ...options,
+    cause,
   });
 };
 
@@ -413,9 +410,15 @@ export class DesktopBuildComputers {
     private readonly environment: Readonly<NodeJS.ProcessEnv>,
     settle: BuildSettle = SETTLE_TIMING,
     private readonly defaults: BuildComputerDefaults = {},
+    private readonly startTiming: ComputerStartTiming = COMPUTER_START_TIMING,
   ) {
     this.#secrets = new DesktopBuildSecrets(buildSecretsDirectory(environment));
     this.#shared = { settle, secrets: this.#secrets };
+  }
+
+  /** How often a computer's start, and a tool call waiting on one, reports progress. */
+  get progressMs(): number {
+    return this.startTiming.progressMs;
   }
 
   /** How results show the secrets typed on this server's computers. */
@@ -510,6 +513,7 @@ export class DesktopBuildComputers {
                 .report({ phase: START, completed: 0, total: null, message })
                 .catch(() => undefined);
             },
+        this.startTiming,
       );
       computer = connected.computer;
       const shot = driverCall("screenshot", input.screenshot ?? {});

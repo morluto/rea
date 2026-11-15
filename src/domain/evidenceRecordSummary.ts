@@ -31,9 +31,9 @@ const nativeSummarySchema = z.discriminatedUnion("available", [
       z.strictObject({
         status: z.literal("observed"),
         truncated: z.boolean(),
-        omitted_operations_lower_bound: countSchema.nullable(),
-        known_omitted_inputs: countSchema.nullable(),
-        known_omitted_edges: countSchema.nullable(),
+        omitted_operations_lower_bound: countSchema,
+        known_omitted_inputs: countSchema,
+        known_omitted_edges: countSchema,
       }),
       z.strictObject({ status: z.literal("unavailable"), reason: z.string() }),
       z.strictObject({ status: z.literal("not-recorded") }),
@@ -106,9 +106,9 @@ const nativeSummary = (
                 status: "observed",
                 truncated: flow.data.truncated,
                 omitted_operations_lower_bound:
-                  flow.data.omitted_operations_lower_bound ?? null,
-                known_omitted_inputs: flow.data.known_omitted_inputs ?? null,
-                known_omitted_edges: flow.data.known_omitted_edges ?? null,
+                  flow.data.omitted_operations_lower_bound,
+                known_omitted_inputs: flow.data.known_omitted_inputs,
+                known_omitted_edges: flow.data.known_omitted_edges,
               }
             : { status: "unavailable", reason: flow.data.reason },
   };

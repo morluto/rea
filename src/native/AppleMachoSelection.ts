@@ -1,4 +1,8 @@
-import { malformedInput, truncatedInput } from "../domain/parseFailure.js";
+import {
+  malformedInput,
+  truncatedInput,
+  unsupportedInput,
+} from "../domain/parseFailure.js";
 import { LC } from "../domain/apple/machoLoadCommandCodes.js";
 import type {
   FileMapping,
@@ -17,7 +21,6 @@ import {
   MachoLoadCommandCursor,
   readMachoLoadCommandDeclarations,
 } from "../domain/apple/machoLoadCommands.js";
-import { createHash } from "node:crypto";
 import {
   BinaryFormatFailure,
   createFileMappingIndex,
@@ -25,14 +28,7 @@ import {
 
 import type { FixupCommands } from "./AppleMachoFixups.js";
 import { decodeMachoFixedName, decodeMachoName } from "./AppleMachoNames.js";
-import { MACHO_ARCHITECTURE_POLICIES } from "./MachoArchitectureSelection.js";
-import {
-  readFatSliceDeclarations,
-  readFatHeaderPrefix,
-  validateFatSlice,
-  validateFatSliceIdentity,
-  type FatSliceDeclaration,
-} from "../domain/apple/machoContainer.js";
+import type { SelectedNativeImage } from "./metadata/MachoSliceSelection.js";
 
 /** One mapped Mach-O segment with file-backed VA range. */
 export interface Segment {
@@ -47,14 +43,6 @@ export interface Section {
   name: string;
   address: bigint;
   size: number;
-}
-
-/** Selected thin slice bounds inside a Mach-O or FAT container. */
-export interface MachoSlice {
-  slice: number;
-  sliceEnd: number;
-  /** FAT table identity, absent for a thin image. */
-  fatDeclaration?: FatSliceDeclaration & { readonly tableEnd: number };
 }
 
 /** Parsed little-endian 64-bit Mach-O layout for the selected architecture slice. */
@@ -80,90 +68,18 @@ export interface MachoLayout {
 
 const hex = (value: bigint) => `0x${value.toString(16)}`;
 
-/** File range admission already chose. Metadata must not rank slices again. */
-export interface AdmittedMachoSlice {
-  readonly offset: number;
-  readonly size: number;
-}
-
 /**
- * Locate the thin Mach-O image to read. A thin image is read whole; a
- * universal image only at the slice target admission selected, whose
- * declaration and CPU family this reader validates.
+ * Parse segments/sections of the little-endian 64-bit image `selectMachoSlice`
+ * selected from `bytes`; the selection owns slice choice and CPU admission.
  */
-export const selectMachoSlice = (
-  bytes: Buffer,
-  architecture: string,
-  admitted?: AdmittedMachoSlice,
-): MachoSlice => {
-  const header = readFatHeaderPrefix(bytes);
-  if (header.state === "unknown")
-    throw truncatedInput("macho", "Truncated Mach-O header");
-  if (header.state === "not-fat") return { slice: 0, sliceEnd: bytes.length };
-  const { littleEndian, wide } = header;
-  const byteOrder = littleEndian ? "little-endian" : "big-endian";
-  const malformed = (reason: string) =>
-    malformedInput("macho", `${reason} (FAT header byte order: ${byteOrder})`);
-  const invalid = (reason: string) =>
-    new TypeError(`${reason} (FAT header byte order: ${byteOrder})`);
-  if (header.state === "incomplete")
-    throw malformed("Malformed FAT architecture table");
-  const { count, tableEnd: headerEnd } = header;
-  if (count > 128 || headerEnd > bytes.length)
-    throw malformed("Malformed FAT architecture table");
-  const policy = MACHO_ARCHITECTURE_POLICIES[architecture];
-  if (policy === undefined)
-    throw invalid("Requested FAT architecture is absent");
-  const declarations = readFatSliceDeclarations(bytes.subarray(8, headerEnd), {
-    count,
-    wide,
-    littleEndian,
-  });
-  if (declarations.status !== "parsed") throw malformed(declarations.reason);
-  // Target admission owns slice choice; ranking here again could read a
-  // different slice than the one the session's Evidence names.
-  if (admitted === undefined)
-    throw invalid("Universal Mach-O metadata needs the admitted slice");
-  const matches = declarations.slices.filter(
-    (declaration) =>
-      declaration.offset === admitted.offset &&
-      declaration.size === admitted.size,
-  );
-  const [match] = matches;
-  if (match === undefined) throw invalid("Admitted FAT slice is not declared");
-  if (matches.length > 1)
-    throw malformed("Admitted FAT slice is declared more than once");
-  if (match.cpuType !== policy.cpuType)
-    throw invalid(
-      "Admitted FAT slice does not match the requested architecture",
-    );
-  const issue = validateFatSlice(match, bytes.length, headerEnd);
-  if (issue !== null) throw malformed(issue);
-  return {
-    slice: match.offset,
-    sliceEnd: match.offset + match.size,
-    fatDeclaration: { ...match, tableEnd: headerEnd },
-  };
-};
-
-/** A recognized Mach-O class outside this metadata reader's supported formats. */
-export class UnsupportedMachoMetadataFormatError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "UnsupportedMachoMetadataFormatError";
-  }
-}
-
-/** Parse segments/sections for a little-endian 64-bit Mach-O architecture slice. */
 export const parseMachoLayout = (
   bytes: Buffer,
-  architecture: string,
-  admitted?: AdmittedMachoSlice,
+  selected: SelectedNativeImage,
 ): MachoLayout => {
   if (bytes.length < 4)
     throw truncatedInput("macho", "Truncated Mach-O header");
-  const selection = selectMachoSlice(bytes, architecture, admitted);
-  const { slice, sliceEnd } = selection;
+  const slice = selected.fileOffset;
+  const sliceEnd = slice + selected.bytes.length;
   if (slice + 4 > sliceEnd)
     throw truncatedInput("macho", "Truncated Mach-O header");
   const selectedBytes = bytes.subarray(slice, sliceEnd);
@@ -176,39 +92,39 @@ export const parseMachoLayout = (
   if (declarations.value === null) {
     if (selectedBytes.length < 32)
       throw truncatedInput("macho", "Truncated Mach-O header");
-    throw new TypeError(
+    // No Mach-O magic this reader knows: an unsupported header, and not a
+    // recognized class with a metadata capability limit.
+    throw unsupportedInput(
+      "macho",
       "Only little-endian 64-bit Mach-O metadata is supported",
     );
   }
   const table = declarations.value;
   const { cpuType, cpuSubtype } = table.identity;
-  const fat = selection.fatDeclaration;
-  if (fat !== undefined) {
-    const issue = validateFatSliceIdentity(fat, {
-      cpuType,
-      cpuSubtype,
-    });
-    if (issue !== null) throw new TypeError(issue);
-  }
+  const fat = selected.selection;
   if (table.wide && !table.littleEndian) {
     if (cpuType !== 0x01000012)
       throw new BinaryFormatFailure(
         "unsupported",
         "Unsupported big-endian Mach-O CPU type",
       );
-    throw new UnsupportedMachoMetadataFormatError(
+    throw new BinaryFormatFailure(
+      "unsupported",
       "Unsupported big-endian 64-bit PowerPC Mach-O metadata",
+      {
+        format: "macho",
+        undecodedContent: true,
+      },
     );
   }
-  // A thin image has no FAT declaration to bind the requested CPU family.
-  // Admit its parsed header before consumers attach the caller's architecture.
-  if (MACHO_ARCHITECTURE_POLICIES[architecture]?.cpuType !== cpuType)
-    throw new TypeError(
-      `Mach-O CPU type does not match requested architecture ${architecture}`,
-    );
   if (!table.wide)
-    throw new UnsupportedMachoMetadataFormatError(
-      `Unsupported 32-bit Mach-O metadata for requested CPU type ${architecture}`,
+    throw new BinaryFormatFailure(
+      "unsupported",
+      "Unsupported 32-bit Mach-O metadata",
+      {
+        format: "macho",
+        undecodedContent: true,
+      },
     );
   const commandEnd = slice + table.headerSize + table.commandBytes;
   if (commandEnd > sliceEnd)
@@ -224,6 +140,7 @@ export const parseMachoLayout = (
     binds: [],
     rebases: [],
     chained: null,
+    dyldInfo: false,
     baseAddress: undefined,
   };
   const framing = new MachoLoadCommandCursor(table);
@@ -236,12 +153,12 @@ export const parseMachoLayout = (
       kind: frame.value.command,
       size: frame.value.size,
     };
-    if (command.kind === 1)
+    if (command.kind === LC.SEGMENT)
       throw malformedInput(
         "macho",
         "Mach-O segment command does not match the header width",
       );
-    if (command.kind === 0x19) collectSegment(bytes, command, state);
+    if (command.kind === LC.SEGMENT_64) collectSegment(bytes, command, state);
     else collectFixupCommand(bytes, command, state);
   }
   const complete = framing.finish();
@@ -267,17 +184,12 @@ export const parseMachoLayout = (
     segments,
     sections,
     selectedImage: {
-      container: fat === undefined ? "thin" : "fat",
+      container: fat === null ? "thin" : "fat",
       offset: slice,
       byteLength: sliceEnd - slice,
       cpuType,
       cpuSubtype,
-      containerTableSha256:
-        fat === undefined
-          ? null
-          : createHash("sha256")
-              .update(bytes.subarray(0, fat.tableEnd))
-              .digest("hex"),
+      containerTableSha256: fat?.container_table_sha256 ?? null,
     },
     offset,
     fixups: { chained, binds, rebases, dylibs },
@@ -297,6 +209,8 @@ interface LayoutState {
   readonly binds: FixupCommands["binds"][number][];
   readonly rebases: FixupCommands["rebases"][number][];
   chained: FixupCommands["chained"];
+  /** Whether an LC_DYLD_INFO or LC_DYLD_INFO_ONLY command was read. */
+  dyldInfo: boolean;
   baseAddress: bigint | undefined;
 }
 
@@ -393,12 +307,25 @@ const collectFixupCommand = (
       throw malformedInput("macho", "Fixup data exceeds the Mach-O slice");
     return { offset, size: length };
   };
+  // An image has one fixup table of each kind; with a repeat, neither table
+  // is the image's, so the slice is refused rather than read by position.
   if (kind === LC.DYLD_CHAINED_FIXUPS) {
     if (size < 16)
       throw truncatedInput("macho", "Truncated chained-fixups command");
+    if (state.chained !== null)
+      throw malformedInput(
+        "macho",
+        "Mach-O slice declares more than one LC_DYLD_CHAINED_FIXUPS command",
+      );
     state.chained = range(cursor + 8);
   } else if (kind === LC.DYLD_INFO || kind === LC.DYLD_INFO_ONLY) {
     if (size < 48) throw truncatedInput("macho", "Truncated dyld-info command");
+    if (state.dyldInfo)
+      throw malformedInput(
+        "macho",
+        "Mach-O slice declares more than one LC_DYLD_INFO or LC_DYLD_INFO_ONLY command",
+      );
+    state.dyldInfo = true;
     const rebase = range(cursor + 8);
     if (rebase.size > 0) state.rebases.push(rebase);
     for (const [at, stream] of [

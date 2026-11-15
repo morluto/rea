@@ -50,11 +50,10 @@ export const nativeInstructionSchema = z.strictObject({
       "not-instruction-boundary",
       "data",
       "not-in-listing",
-      "undecodable",
       "outside-memory",
     ])
     .describe(
-      "decoded is an instruction at the address; not-instruction-boundary is inside a listed instruction; data is defined data; outside-memory is outside the program's memory. Ghidra's not-in-listing means the address is in memory with no listed instruction or defined data; no decode was attempted, and memory may be uninitialized. The legacy undecodable value in older Evidence has the same ambiguous meaning and does not prove decoding failed.",
+      "decoded is an instruction at the address; not-instruction-boundary is inside a listed instruction; data is defined data; outside-memory is outside the program's memory. Ghidra's not-in-listing means the address is in memory with no listed instruction or defined data; no decode was attempted, and memory may be uninitialized.",
     ),
   procedure: z.string().nullable(),
   containing_instruction: z
@@ -67,7 +66,7 @@ export const nativeInstructionSchema = z.strictObject({
     })
     .optional()
     .describe(
-      "Provider-observed listed instruction containing the exact requested interior address. Its address and length describe the containing instruction; the query address remains unchanged. Omission means not recorded or not applicable, including older Evidence. This does not imply a function, alternate decode, reachability, or runtime execution.",
+      "Provider-observed listed instruction containing the exact requested interior address. Its address and length describe the containing instruction; the query address remains unchanged. Present when status is not-instruction-boundary. This does not imply a function, alternate decode, reachability, or runtime execution.",
     ),
   containing_data: z
     .strictObject({
@@ -83,7 +82,7 @@ export const nativeInstructionSchema = z.strictObject({
     })
     .optional()
     .describe(
-      "Provider-observed containing defined data object, including its start and type identity; the selected address remains unchanged. Inspect its start with inspect_native_data_type for its layout. This does not choose a field or union member or prove runtime use. Omission means not recorded or not applicable, including older Evidence.",
+      "Provider-observed containing defined data object, including its start and type identity; the selected address remains unchanged. Inspect its start with inspect_native_data_type for its layout. This does not choose a field or union member or prove runtime use. Present when status is data.",
     ),
   architecture: z.string(),
   mode: z
@@ -101,7 +100,7 @@ export const nativeInstructionSchema = z.strictObject({
     )
     .optional()
     .describe(
-      "Observed per-address decoder context. Null means no value was available; omission means the provider or older capture does not expose this facet. The separate mode field retains the program language variant.",
+      "Observed per-address decoder context. Null means no value was available; omission means the provider does not expose this facet for the program architecture. The separate mode field retains the program language variant.",
     ),
   bytes: z.string().nullable(),
   length: z.int().positive().nullable(),
@@ -144,7 +143,7 @@ export const nativeInstructionSchema = z.strictObject({
       )
       .optional()
       .describe(
-        "Observed provider facts used to classify flow; older captures or other providers may omit them.",
+        "Observed provider facts used to classify flow; a provider that does not expose them omits the field.",
       ),
   }),
   references: z.array(reference),

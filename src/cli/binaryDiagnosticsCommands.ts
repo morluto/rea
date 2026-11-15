@@ -26,10 +26,12 @@ import { BYTE_ENTROPY_PROVIDER } from "../domain/investigationProviders.js";
 import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../contracts/native/binaryDiagnosticsToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
 import {
+  callerTargetPath,
   deliverWithService,
   inspectWithService,
   registerContractCommand,
 } from "./contractCommand.js";
+import { PRODUCER_LIMITS_HELP } from "./producerLimitsOption.js";
 
 type BinaryDiagnosticsOperation =
   (typeof BINARY_DIAGNOSTICS_TOOL_CONTRACTS)[number]["name"];
@@ -309,8 +311,6 @@ export const registerBinaryDiagnosticsCommands = (
     },
     deliverWithService(createNativeExportsService, "rea-native-exports"),
   );
-  const producerLimitsHelp =
-    "JSON producer budget overrides. Keys and units follow this operation's producer_limits contract; changes apply on this call without restart and preserve tighter inherited OS limits.";
   const layout = createBinaryLayoutService(environment);
   registerContractCommand(
     cli,
@@ -325,17 +325,19 @@ export const registerBinaryDiagnosticsCommands = (
       jsonText: ["producer_limits"],
       fields: {
         path: { description: "Local ELF binary or relocatable object" },
-        producer_limits: { description: producerLimitsHelp },
+        producer_limits: { description: PRODUCER_LIMITS_HELP },
       },
       omit: {
         detail:
           "One-shot output is complete Evidence; this command has no summary delivery",
       },
     },
-    async (input, { signal, callerInputs }) => {
-      const result = await layout.inspectAndClose(input, { signal });
+    async (input, context) => {
+      const result = await layout.inspectAndClose(input, {
+        signal: context.signal,
+      });
       return result.ok
-        ? withEvidenceCallerInputPath(result.value, callerInputs.path)
+        ? withEvidenceCallerInputPath(result.value, callerTargetPath(context))
         : projectAnalysisError(result.error);
     },
   );
@@ -355,17 +357,19 @@ export const registerBinaryDiagnosticsCommands = (
         path: {
           description: "Local Linux ELF64 amd64 or AArch64 little-endian core",
         },
-        producer_limits: { description: producerLimitsHelp },
+        producer_limits: { description: PRODUCER_LIMITS_HELP },
         include_debugger_context: {
           name: "debuggerContext",
           description: "Add BYO core-only GDB/pwndbg mapping candidates",
         },
       },
     },
-    async (input, { signal, callerInputs }) => {
-      const result = await recorded.inspectAndClose(input, { signal });
+    async (input, context) => {
+      const result = await recorded.inspectAndClose(input, {
+        signal: context.signal,
+      });
       return result.ok
-        ? withEvidenceCallerInputPath(result.value, callerInputs.path)
+        ? withEvidenceCallerInputPath(result.value, callerTargetPath(context))
         : projectAnalysisError(result.error);
     },
   );

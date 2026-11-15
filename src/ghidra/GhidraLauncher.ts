@@ -3,6 +3,7 @@ import {
   processInspectionFailure,
   retainProcessInspectionCleanup,
 } from "../providers/OwnedCommandCleanup.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { copyExistingGhidraProject } from "./GhidraProjectSnapshot.js";
 import { hashGhidraPackedProgram } from "./GhidraCheckpoint.js";
@@ -276,7 +277,10 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
   constructor(options: GhidraHeadlessLauncherOptions) {
     this.options = {
       ...options,
-      environment: snapshotEnvironment(options.environment, options.platform),
+      environment: snapshotEnvironment(
+        options.environment,
+        options.platform ?? HOST_PLATFORM.platform,
+      ),
     };
   }
 

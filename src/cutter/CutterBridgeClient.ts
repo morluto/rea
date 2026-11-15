@@ -44,7 +44,7 @@ import { err, ok, type Result } from "../domain/result.js";
 import { cutterBridgeMac } from "./cutterBridgeMac.js";
 import {
   cutterBridgeSource,
-  packagedCutterPluginPath,
+  cutterBridgeSourceRecovery,
 } from "./CutterBridgeSource.js";
 import { CutterBridgeResponseFrames } from "./cutterAuthenticatedResponse.js";
 import { requireWindowsNativeAuthority } from "../windows/WindowsNativeLoader.js";
@@ -106,7 +106,7 @@ const responseSchema = z.object({
 });
 /** A session runs a plugin whose bytes differ from the packaged copy. */
 const modifiedPluginRefusal = (): AnalysisCapabilityUnavailableError => {
-  const remediation = `Copy ${packagedCutterPluginPath()} into Cutter's plugins/python directory, restart Cutter, and list sessions again. No command was sent.`;
+  const remediation = `${cutterBridgeSourceRecovery("modified")} No command was sent.`;
   return new AnalysisCapabilityUnavailableError(
     "cutter",
     "cutter_command",
@@ -411,6 +411,7 @@ export class CutterBridgeClient {
           descriptor.bridge_source_sha256,
           "list_cutter_sessions",
         );
+        const bridgeSourceRecovery = cutterBridgeSourceRecovery(bridgeSource);
         try {
           const status = responseSchema.safeParse(
             await this.#request(
@@ -443,6 +444,9 @@ export class CutterBridgeClient {
               status.data.cutter_version ?? descriptor.cutter_version,
             identity_status: "partial" as const,
             bridge_source: bridgeSource,
+            ...(bridgeSourceRecovery === undefined
+              ? {}
+              : { bridge_source_recovery: bridgeSourceRecovery }),
           };
         } catch (cause) {
           if (cause instanceof AnalysisResourceConstraintError) throw cause;

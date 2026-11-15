@@ -1,3 +1,4 @@
+import { EVIDENCE_FORMAT_REVISION } from "../../../src/domain/evidenceFormat.js";
 import { readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -40,6 +41,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 const emptyBundle = JSON.stringify({
+  evidence_format: EVIDENCE_FORMAT_REVISION,
   artifacts: [],
   providers: [],
   environments: [],

@@ -70,22 +70,27 @@ const pollPolicy = (deadlineMs: number) => {
 };
 
 const TEST_PROJECTS = [...SOURCE_TEST_PROJECTS, ...BUILT_TEST_PROJECTS];
+// Source projects that share a module graph still run in forked workers.
+// Thread workers share one process, so the source lane's workers once grew
+// one 3.8 GiB process; Linux CI then refused to fork test subprocesses from it
+// (`spawnSync ... ENOMEM`). A forked worker keeps its own heap and main-thread
+// stack, so the largest process stays near one worker's size.
 const PROJECT_POLICIES = {
   domain: {
-    pool: "threads" as const,
+    pool: "forks" as const,
     maxWorkers: MAX_TEST_WORKERS,
     // Domain and contract modules are pure and own no process-global state, so
     // per-file module isolation adds startup cost without protecting a seam.
   },
   services: {
-    pool: "threads" as const,
+    pool: "forks" as const,
     maxWorkers: MAX_TEST_WORKERS,
     // Service tests use recording ports and own no process-global state. Share
     // their module graph so file startup does not dominate the lane.
   },
   adapters: { pool: "forks" as const, maxWorkers: MAX_TEST_WORKERS },
   composition: {
-    pool: "threads" as const,
+    pool: "forks" as const,
     maxWorkers: MAX_TEST_WORKERS,
     // Composition tests use provider-neutral sessions and test-scoped cleanup;
     // sharing their immutable module graph avoids per-file startup work.
@@ -118,12 +123,12 @@ const PROJECT_POLICIES = {
   acceptance: { pool: "forks" as const, maxWorkers: MAX_TEST_WORKERS },
   "process-global": { pool: "forks" as const, maxWorkers: MAX_TEST_WORKERS },
   conformance: {
-    pool: "threads" as const,
+    pool: "forks" as const,
     maxWorkers: MAX_TEST_WORKERS,
     // Contract cases use recording providers and own no process-global state.
   },
   evaluation: {
-    pool: "threads" as const,
+    pool: "forks" as const,
     maxWorkers: MAX_TEST_WORKERS,
     // Evaluator tests inspect deterministic inputs without mutating shared state.
   },
@@ -170,7 +175,13 @@ const projects = TEST_PROJECTS.map((project) => {
 
 export default defineConfig({
   test: {
-    env: { TMPDIR: CANONICAL_TEMPORARY_DIRECTORY },
+    env: {
+      TMPDIR: CANONICAL_TEMPORARY_DIRECTORY,
+      // In-process servers advertise complete output schemas so SDK clients
+      // validate every structured result. Tests of the default (`off`) set
+      // the profile, or pass an environment without it, explicitly.
+      REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
+    },
     maxWorkers: MAX_TEST_WORKERS,
     projects,
     ...(process.env.REA_CI_TEST_HISTORY

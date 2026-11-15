@@ -213,10 +213,6 @@ const nestedInspection = (
   };
 };
 // Historical Evidence has neither nesting facts nor declared-name digests.
-const recordedBefore = ({ nesting_read, types, ...rest }: Inspection) => ({
-  ...rest,
-  types: types.map(({ enclosing_type_token, name_sha256, ...type }) => type),
-});
 const compare = (
   left: ReturnType<typeof nestedInspection>,
   right: ReturnType<typeof nestedInspection>,
@@ -315,17 +311,15 @@ const pairs = (comparison: ReturnType<typeof compare>) => {
 const original = nestedInspection();
 const swapped = nestedInspection({ swapEnclosing: true });
 
-it("preserves unrecorded resource-limit facts in historical comparison manifests", () => {
+it("refuses comparison manifests without resource-limit facts", () => {
   const current = compare(original, swapped);
   expect(current.left.resource_limits).toEqual([]);
   expect(current.right.resource_limits).toEqual([]);
-  const historical = structuredClone(current);
-  delete historical.left.resource_limits;
-  delete historical.right.resource_limits;
-  const parsed = managedMemberComparisonResultSchema.parse(historical);
-  expect(parsed.left).not.toHaveProperty("resource_limits");
-  expect(parsed.right).not.toHaveProperty("resource_limits");
-  expect(parsed.summary).toEqual(current.summary);
+  const { resource_limits: _limits, ...left } = current.left;
+  expect(
+    managedMemberComparisonResultSchema.safeParse({ ...current, left }).error
+      ?.issues[0]?.path,
+  ).toEqual(["left", "resource_limits"]);
 });
 
 it("does not equate missing nested parents with genuinely top-level types", () => {
@@ -339,30 +333,6 @@ it("does not equate missing nested parents with genuinely top-level types", () =
     ),
   ).toBe(true);
 });
-
-it.each(["left", "right"] as const)(
-  "preserves a current enclosing-cycle gap beside %s historical Evidence",
-  (historicalSide) => {
-    const cyclic = nestedInspection({
-      nestedClassRows: [
-        [4, 5],
-        [5, 4],
-        [6, 4],
-      ],
-    });
-    expect(cyclic.inspection.nesting_read).toBe(true);
-    const result =
-      historicalSide === "left"
-        ? compare(original, cyclic, { left: recordedBefore })
-        : compare(cyclic, original, { right: recordedBefore });
-    expect(result.summary.unchanged).toBe(0);
-    expect(
-      [...result.methods, ...result.fields].every(
-        ({ status }) => status === "unknown",
-      ),
-    ).toBe(true);
-  },
-);
 
 describe("managed member comparison of nested types", () => {
   it("uses owned type identity while preserving omitted display labels", () => {
@@ -476,26 +446,6 @@ describe("managed member comparison of nested types", () => {
       ["field-target", "cil", "availability"],
     ]);
     expect(comparison.summary).toMatchObject({ changed: 3 });
-  });
-
-  it("retains explicitly limited bare names for historical observations", () => {
-    const bare = pairs(
-      compare(original, swapped, {
-        left: recordedBefore,
-        right: recordedBefore,
-      }),
-    );
-
-    expect(bare).not.toEqual(pairs(compare(original, swapped)));
-    expect(pairs(compare(original, swapped, { left: recordedBefore }))).toEqual(
-      bare,
-    );
-    expect(
-      pairs(compare(original, swapped, { right: recordedBefore })),
-    ).toEqual(bare);
-    expect(
-      compare(original, swapped, { left: recordedBefore }).limitations,
-    ).toContainEqual(expect.stringContaining("legacy bare-name comparison"));
   });
 
   it("does not pair a nested type with a top-level type of the same name", () => {

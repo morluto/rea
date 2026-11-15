@@ -140,16 +140,33 @@ describe("maintenance activation and layered configuration", () => {
       }),
     );
     const before = await readFile(cursor, "utf8");
+    const commands: (readonly string[])[] = [];
     const result = await planIntegrationMaintenance(
       home,
       entryPoint,
       process.env,
-      () => {
-        throw new Error("An unresolved maintenance scope must not be executed");
+      async (command) => {
+        commands.push(command);
+        return ok(
+          JSON.stringify({
+            status: "planned",
+            // An action for the unresolved client is outside the scope.
+            plannedActions: [{ ...action, id: "configure_client:cursor" }],
+          }),
+        );
       },
     );
-    expect(result).toMatchObject({
-      status: "unavailable",
+    expect(result).toMatchObject({ status: "unavailable" });
+    expect(commands[0]).not.toContain("cursor");
+    const planned = await planIntegrationMaintenance(
+      home,
+      entryPoint,
+      process.env,
+      async () =>
+        ok(JSON.stringify({ status: "planned", plannedActions: [action] })),
+    );
+    expect(planned).toMatchObject({
+      status: "planned",
       scope: {
         clients: ["codex"],
         unresolved: [
@@ -160,7 +177,6 @@ describe("maintenance activation and layered configuration", () => {
           }),
         ],
       },
-      remediation: expect.stringContaining("cursor"),
     });
     expect(await readFile(cursor, "utf8")).toBe(before);
   });
@@ -236,6 +252,54 @@ describe("maintenance activation and layered configuration", () => {
     await expect(
       existingMaintenanceScope(home, entryPoint, process.env),
     ).resolves.toMatchObject({ clients: ["opencode"] });
+  });
+});
+
+describe("unknown client locations in maintenance", () => {
+  it("maintains other clients while an unresolved MCPorter location stays unknown", async () => {
+    vi.stubEnv("MCPORTER_CONFIG", "config/mcporter.json");
+    await writeClient("codex", staleCodex);
+    const scope = await existingMaintenanceScope(home, entryPoint, process.env);
+    expect(scope).toMatchObject({
+      clients: ["codex"],
+      unresolved: [
+        {
+          client: "mcporter",
+          state: "unknown",
+          command: [],
+          remediation: expect.stringContaining("MCPORTER_CONFIG is relative"),
+        },
+      ],
+    });
+    const current = await planIntegrationMaintenance(
+      home,
+      entryPoint,
+      process.env,
+      async () => ok(JSON.stringify({ status: "planned", plannedActions: [] })),
+    );
+    // Nothing else needs maintenance, yet the unknown client is not hidden.
+    expect(current).toMatchObject({
+      status: "current",
+      unresolved: [{ client: "mcporter", state: "unknown" }],
+    });
+  });
+
+  it("names an unknown MCPorter client when planning the known clients fails", async () => {
+    vi.stubEnv("MCPORTER_CONFIG", "config/mcporter.json");
+    await writeClient("codex", staleCodex);
+    const failed = await planIntegrationMaintenance(
+      home,
+      entryPoint,
+      process.env,
+      async () => err("EACCES codex backup"),
+    );
+    expect(failed).toMatchObject({
+      status: "unavailable",
+      remediation: expect.stringMatching(
+        /^EACCES codex backup REA did not maintain one client .*MCPORTER_CONFIG is relative/u,
+      ),
+      scope: { unresolved: [{ client: "mcporter", state: "unknown" }] },
+    });
   });
 });
 
@@ -427,9 +491,10 @@ describe("existing REA integration maintenance", () => {
         process.env,
         async () => err("EACCES /test/.codex/config.toml"),
       ),
-    ).toEqual({
+    ).toMatchObject({
       status: "unavailable",
       remediation: "EACCES /test/.codex/config.toml",
+      scope: { clients: ["codex"] },
     });
   });
 });

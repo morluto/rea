@@ -19,6 +19,7 @@ import {
   type PointerFixups,
 } from "../AppleMachoFixups.js";
 import { parseMachoLayout } from "../AppleMachoSelection.js";
+import { selectMachoSlice } from "../metadata/MachoSliceSelection.js";
 import { decodeMachoName } from "../AppleMachoNames.js";
 import {
   BinaryFormatFailure,
@@ -102,8 +103,19 @@ const layoutFixups = async (
     cpu === 0x0100000c ? "arm64" : cpu === 0x01000007 ? "x86_64" : null;
   if (bits !== 64 || !little || architecture === null)
     return { fixups: null, base: null };
+  // The architecture is the scanned header's own, so the thin image is
+  // selected whole; a refusal is noted like any other undecoded fixup.
+  const selected = selectMachoSlice(scan.bytes, {
+    mode: "admitted",
+    architecture,
+    slice: undefined,
+  });
+  if (!selected.ok) {
+    note(scan, selected.error.message);
+    return { fixups: null, base: null };
+  }
   try {
-    const layout = parseMachoLayout(scan.bytes, architecture);
+    const layout = parseMachoLayout(scan.bytes, selected.value);
     const steps = parsePointerFixupsSteps(
       scan.bytes,
       layout.fixups,
