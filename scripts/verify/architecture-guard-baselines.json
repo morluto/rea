@@ -404,7 +404,6 @@
     "src/application/desktop/DesktopTaskReaderCleanup.ts": 1,
     "src/application/reverse/ReverseEngineeringService.ts": 1,
     "src/browser/WebSourceMapFetcher.ts": 2,
-    "src/cutter/CutterBridgeService.ts": 1,
     "src/desktop/AgentEnvSolveHelper.ts": 2,
     "src/desktop/BuildComputerLongRuns.ts": 1,
     "src/kuna/KunaProjectCache.ts": 1,
