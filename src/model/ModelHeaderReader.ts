@@ -3,7 +3,7 @@ import type { FileHandle } from "node:fs/promises";
 import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
-  ModelFormatFailure,
+  modelCapacityFailure,
   MODEL_HEADER_BYTES,
   rejectModel,
 } from "./ModelFormat.js";
@@ -58,10 +58,9 @@ export class ModelHeaderReader {
     if (!Number.isSafeInteger(end) || end < 0 || end > this.size)
       rejectModel("Declared header extent is outside the file");
     if (end - this.#headerPrefixBytes > MODEL_HEADER_BYTES)
-      throw new ModelFormatFailure(
-        "capacity",
-        "Model header exceeds 100,000,000 bytes. This release has no runtime override.",
+      throw modelCapacityFailure(
         "header-bytes",
+        "Model header exceeds 100,000,000 bytes. This release has no runtime override.",
       );
   }
 

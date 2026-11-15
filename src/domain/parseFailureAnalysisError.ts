@@ -7,14 +7,17 @@ import { ParseFailureError } from "./parseFailure.js";
 /**
  * The public refusal for a parser's format failure on the selected artifact.
  *
- * Malformed and truncated bytes are an invalid `path`, carrying any facts the
- * parser observed first; unsupported bytes are an unsupported target. A `limit` and any other cause return `undefined`:
+ * Malformed and truncated bytes are an invalid `field` (the input that
+ * selected the artifact, `path` by default), carrying any facts the parser
+ * observed first; unsupported bytes are an unsupported target. A `limit` and
+ * any other cause return `undefined`:
  * a limit's recovery names a budget only its producer knows.
  */
 export const parseFailureAnalysisError = (
   operation: string,
   path: string,
   cause: unknown,
+  field = "path",
 ): AnalysisInputError | AnalysisUnsupportedTargetError | undefined => {
   if (!(cause instanceof ParseFailureError)) return undefined;
   const { failure } = cause;
@@ -32,7 +35,7 @@ export const parseFailureAnalysisError = (
     case "truncated":
       return new AnalysisInputError(operation, { cause }, [
         {
-          path: ["path"],
+          path: [field],
           reason: "invalid_format",
           message: `Selected artifact ${path}: ${failure.detail}`,
           ...(failure.observed === undefined

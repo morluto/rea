@@ -128,6 +128,9 @@ describe("CLI commands projected from tool contracts", () => {
         "inspect-sqlite-database",
         "inspect-elf-notes",
         "inspect-pe-resources",
+        "inspect-devicetree",
+        "inspect-go-binary",
+        "inspect-v8-code-cache",
         "inspect-rpm-package",
       ]),
     );
@@ -161,7 +164,7 @@ describe("CLI commands projected from tool contracts", () => {
           ...description.parameters
             .filter(({ positional }) => !positional)
             .map(({ key }) => key),
-          ...description.deliveryOptions,
+          ...description.cliOnlyOptions.map(({ key }) => key),
         ].toSorted(),
       );
     },

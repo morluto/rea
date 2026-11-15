@@ -542,9 +542,10 @@ export class CutterBridgeClient {
           ...(completionToken === undefined ? {} : { completionToken }),
         };
       const response = parsed.data;
+      // Completion is a declaration, never inferred from `ok` alone: a reply
+      // that omits `execution_state` leaves the command's completion unknown.
       const executionState: CutterBridgeExecutionState = response.ok
-        ? response.execution_state === undefined ||
-          response.execution_state === "complete"
+        ? response.execution_state === "complete"
           ? "complete"
           : response.execution_state === "not_started"
             ? "not_started"

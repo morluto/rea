@@ -5,15 +5,13 @@ import { logCliCommand } from "../cliLogging.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { Result } from "../domain/result.js";
-import {
-  analysisEvidenceDeliveryOptions,
-  deliverCliAnalysisEvidence,
-} from "./analysisEvidenceDelivery.js";
+import { deliverCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
 import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import {
   describeContractCommand,
   type CliContractProjection,
+  type CliEvidenceDeliveryChoice,
   type ContractCliDescription,
   type ContractField,
   type ProjectedContract,
@@ -34,11 +32,8 @@ export interface ContractCommandContext {
   readonly operation: string;
   /** Each caller-path field as the caller spelled it, before resolution. */
   readonly callerInputs: Readonly<Record<string, string>>;
-  /** How to deliver the Evidence, for a projection with `evidenceDelivery`. */
-  readonly delivery: {
-    readonly detail: "complete" | "summary";
-    readonly evidenceOutput: string | undefined;
-  };
+  /** The selected delivery, for a projection with `evidenceDelivery`. */
+  readonly delivery: CliEvidenceDeliveryChoice;
 }
 
 /** A closeable one-shot service that inspects one contract input. */
@@ -80,15 +75,16 @@ export const inspectWithService =
   };
 
 /**
- * Inspect through a closeable service and deliver its Evidence complete, or
- * as a summary saved to `--evidence_output`, as the caller chose.
+ * Inspect through a closeable service, then deliver complete Evidence or a
+ * summary with its bundle, recording the caller's spelling of `path`.
  */
 export const deliverWithService =
   (service: () => EvidenceInspectionService, providerId: string) =>
   (input: unknown, context: ContractCommandContext) => {
+    const callerInputPath = primaryCallerPath(context);
     const owned = service();
     return deliverCliAnalysisEvidence({
-      callerInputPath: primaryCallerPath(context),
+      callerInputPath,
       run: () => owned.inspect(input, { signal: context.signal }),
       service: owned,
       providerId,
@@ -107,16 +103,16 @@ export const contractCommandDescriptions = (
 ): readonly ContractCliDescription[] => descriptions.get(cli) ?? [];
 
 const incurOptions = (description: ContractCliDescription): z.ZodType => {
-  const object = z.object({
-    ...Object.fromEntries(
-      description.parameters
+  const object = z.object(
+    Object.fromEntries([
+      ...description.parameters
         .filter(({ positional }) => !positional)
-        .map(({ key, schema }) => [key, schema]),
-    ),
-    ...(description.deliveryOptions.length === 0
-      ? {}
-      : analysisEvidenceDeliveryOptions),
-  });
+        .map(({ key, schema }) => [key, schema] as const),
+      ...description.cliOnlyOptions.map(
+        ({ key, schema }) => [key, schema] as const,
+      ),
+    ]),
+  );
   const constrained =
     description.optionConstraints === undefined
       ? object
@@ -187,13 +183,7 @@ export const registerContractCommand = <
               signal,
               operation: contract.name,
               callerInputs: description.callerInputs(values),
-              delivery: {
-                detail: values.detail === "summary" ? "summary" : "complete",
-                evidenceOutput:
-                  typeof values.evidence_output === "string"
-                    ? values.evidence_output
-                    : undefined,
-              },
+              delivery: description.delivery(values),
             },
           ),
         ),

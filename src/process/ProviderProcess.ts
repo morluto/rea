@@ -6,6 +6,7 @@ import {
 } from "./ProcessInspectionCleanup.js";
 import { assertProcessOwnershipInspectionActive } from "./ProcessInspectionCancellation.js";
 import { ProcessAdmissionError } from "./ProcessAdmissionError.js";
+import { nameSpawnedExecutable } from "./launchFailure.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import type { EventEmitter } from "node:events";
 import type { Readable, Writable } from "node:stream";
@@ -331,15 +332,20 @@ export const spawnOwnedProviderProcess = async (
   }
   if (options.memoryLimitBytes !== undefined)
     throw new ProcessAdmissionError("memory_limit_unsupported");
-  const child = spawn(options.command, [...options.arguments], {
-    shell: false,
-    windowsHide: true,
-    stdio: [options.stdin ?? "ignore", "pipe", "pipe"],
-    detached: platform !== "win32",
-    windowsVerbatimArguments: options.windowsVerbatimArguments ?? false,
-    env: environment,
-    ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
-  });
+  let child: ChildProcess;
+  try {
+    child = spawn(options.command, [...options.arguments], {
+      shell: false,
+      windowsHide: true,
+      stdio: [options.stdin ?? "ignore", "pipe", "pipe"],
+      detached: platform !== "win32",
+      windowsVerbatimArguments: options.windowsVerbatimArguments ?? false,
+      env: environment,
+      ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+    });
+  } catch (cause: unknown) {
+    throw nameSpawnedExecutable(cause, options.command);
+  }
   await waitForSpawn(child);
   const pid = child.pid;
   if (pid === undefined)

@@ -12,7 +12,9 @@ const root = fileURLToPath(new URL("../../../", import.meta.url));
  * Literal names of CDP commands that have no result schema yet, per source
  * file. A command registered in CdpCommands.ts no longer counts. This list may
  * only shrink: migrate a file's commands, then lower or delete its entry.
- * Dynamic names such as `${domain}.enable` are not counted.
+ * Names built at run time such as `${domain}.enable` are not matched here;
+ * their domains are typed `CdpDomainWith<verb>`, so an unregistered name fails
+ * to compile instead.
  */
 const UNTYPED_CDP_COMMAND_BASELINE = JSON.parse(
   readFileSync(
@@ -66,9 +68,9 @@ const untypedCommands = (
 };
 
 it("distinguishes replacement untyped commands even when the total is unchanged", () => {
-  const commands = protocolCommands();
-  expect(untypedCommands('send("Runtime.enable")', commands)).not.toEqual(
-    untypedCommands('send("Debugger.enable")', commands),
+  const commands = new Set(["Fixture.first", "Fixture.second"]);
+  expect(untypedCommands('send("Fixture.first")', commands)).not.toEqual(
+    untypedCommands('send("Fixture.second")', commands),
   );
 });
 
