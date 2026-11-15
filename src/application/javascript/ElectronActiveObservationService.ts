@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { dirname } from "node:path";
 import { constants, type Stats } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
@@ -118,7 +119,7 @@ const resolveExecutablePath = async (
   }
   if (!metadata.isFile())
     return err(notExecutable(selected, new Error("not a regular file")));
-  if (process.platform !== "win32")
+  if (HOST_PLATFORM.platform !== "win32")
     try {
       await access(resolved.value, constants.X_OK);
     } catch (cause: unknown) {

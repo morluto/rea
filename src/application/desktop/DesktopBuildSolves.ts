@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import {
   parsePortableBundleName,
   PORTABLE_BUNDLE_NAME_CONSTRAINT,
@@ -440,7 +441,7 @@ export const measureInFreshComputers = async (
   if (!taskName.ok) return taskName;
   const environment = await resolveBuildComputerEnvironment(
     host.environment,
-    process.platform,
+    HOST_PLATFORM.platform,
     host.defaults,
   );
   return measureBuildTask(
