@@ -7,6 +7,9 @@ import { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
 import { constants as bufferConstants } from "node:buffer";
 import { imageFileSizeRemediation } from "./StableArtifactFailure.js";
 import { artifactIntegrityDetails } from "../domain/artifactIntegrity.js";
+import { ArtifactFileCleanupFailure } from "./ArtifactFileOperation.js";
+import { AnalysisCleanupLease } from "./AnalysisCleanupLease.js";
+import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 
 // The provider ceiling test uses a sparse file and is skipped on Windows.
 it.skipIf(process.platform !== "win32")(
@@ -193,5 +196,31 @@ it("names the failed integrity check through cleanup wrapping and public project
       unpacked: true,
       integrity_check: "unpacked-entry-identity",
     },
+  });
+});
+
+it("keeps the named integrity check when a descriptor close failure rebuilds the reader failure", () => {
+  const failure = new ArtifactFileCleanupFailure(
+    new RegularFileCleanupFailure({
+      path: "/artifact.asar",
+      owner: { close: async () => undefined } as never,
+      outcome: {
+        kind: "failed",
+        cause: new ArtifactReaderFailure(
+          "integrity",
+          "ASAR read coverage was short: main.js",
+          { integrityCheck: "read-coverage" },
+        ),
+      },
+      cleanupCause: new Error("close failed"),
+    }),
+    new AnalysisCleanupLease(async () => undefined),
+  );
+  expect(failure.integrityCheck).toBe("read-coverage");
+  expect(
+    projectAnalysisError(translateArtifactFailure("extract_artifact", failure)),
+  ).toMatchObject({
+    code: "cleanup_incomplete",
+    details: { integrity_check: "read-coverage", cleanup: "incomplete" },
   });
 });
