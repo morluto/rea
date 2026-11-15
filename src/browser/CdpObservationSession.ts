@@ -23,6 +23,7 @@ import type { CdpCommandResult } from "./protocol/CdpCommands.js";
 import { observedFrameUrl, reportedFrameUrl } from "./protocol/CdpFrameTree.js";
 import {
   cdpFrameEvent,
+  type CdpEventName,
   type CdpEventPayload,
   type CdpFrameEvent,
 } from "./protocol/CdpEvents.js";
@@ -228,7 +229,7 @@ class TimelineCapture {
 
   ingest(event: CdpTransportEvent): void {
     if (this.stopped) return;
-    if (!isTimelineEvent(event.method)) return;
+    if (!isTimelineEvent(event.registered?.method)) return;
     if (this.#armTimestamp === undefined) {
       this.#bufferBeforeArm(event);
       return;
@@ -239,7 +240,8 @@ class TimelineCapture {
   #ingestArmed(event: CdpTransportEvent, bufferedBeforeArm = false): void {
     if (this.stopped) return;
     const contextOnly =
-      bufferedBeforeArm && hasNoComparableProducerTimestamp(event.method);
+      bufferedBeforeArm &&
+      hasNoComparableProducerTimestamp(event.registered?.method);
     if (contextOnly) this.#hasUnknownEventTime = true;
     const frame = cdpFrameEvent(event);
     if (frame?.facts.kind === "requested")
@@ -268,8 +270,10 @@ class TimelineCapture {
       case "Target.detachedFromTarget":
         this.sessionDetached();
         return;
+      case "Inspector.targetCrashed":
+        this.targetTerminated();
+        return;
     }
-    if (event.method === "Inspector.targetCrashed") this.targetTerminated();
   }
 
   arm(timestamp: number): void {
@@ -784,14 +788,16 @@ const captureFinalUrl = async (
   return "window_elapsed";
 };
 
-const hasNoComparableProducerTimestamp = (method: string): boolean =>
+const hasNoComparableProducerTimestamp = (
+  method: CdpEventName | undefined,
+): boolean =>
   method === "Page.frameRequestedNavigation" ||
   method === "Page.frameNavigated" ||
   method === "Page.navigatedWithinDocument" ||
   method === "Inspector.targetCrashed" ||
   method === "Target.detachedFromTarget";
 
-const isTimelineEvent = (method: string): boolean =>
+const isTimelineEvent = (method: CdpEventName | undefined): boolean =>
   hasNoComparableProducerTimestamp(method) ||
   method === "Network.requestWillBeSent" ||
   method === "Network.loadingFailed" ||

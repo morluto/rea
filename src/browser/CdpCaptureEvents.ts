@@ -138,10 +138,8 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
 
   ingest(event: CdpReceivedEvent): void {
     if (this.document !== undefined) {
-      if (event.method.startsWith("Network."))
-        this.markDomainEnabled("Network");
-      if (event.method.startsWith("Runtime."))
-        this.markDomainEnabled("Runtime");
+      if (event.domain === "Network" || event.domain === "Runtime")
+        this.markDomainEnabled(event.domain);
     }
     const registered = event.registered;
     switch (registered?.method) {
@@ -188,9 +186,10 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
       case "Network.webSocketFrameReceived":
         handlers.handleWebSocketFrame(this, registered.payload, "received");
         return;
+      case "Runtime.executionContextsCleared":
+        this.executionContextFrames.clear();
+        return;
     }
-    if (event.method === "Runtime.executionContextsCleared")
-      this.executionContextFrames.clear();
   }
 
   /** Resolve a transient execution context to one already authorized frame. */

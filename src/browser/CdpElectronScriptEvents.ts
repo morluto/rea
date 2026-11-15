@@ -39,11 +39,11 @@ export const ingestElectronScriptEvent = (input: {
   readonly completeness: CdpCaptureCompleteness;
   readonly retention: ElectronScriptMetadataRetention;
 }): void => {
-  if (input.event.method === "Runtime.executionContextsCleared") {
+  const registered = input.event.registered;
+  if (registered?.method === "Runtime.executionContextsCleared") {
     input.executionContextFrames.clear();
     return;
   }
-  const registered = input.event.registered;
   if (registered?.method === "Runtime.executionContextDestroyed") {
     const key = registered.payload.contextKey;
     if (key !== null) input.executionContextFrames.delete(key);
