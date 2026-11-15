@@ -5,8 +5,10 @@ import { appendCallerPath } from "../filesystem/callerPath.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { parseSkillManifestMetadata } from "../domain/skillManifest.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  type ArtifactResourceScope,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
 import {
@@ -14,7 +16,7 @@ import {
   RegularFileChangedError,
 } from "../filesystem/RegularFile.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
-import { withRegularFile } from "./RegularFileRead.js";
+import { withRegularFile } from "../process/RegularFileRead.js";
 import { clientSkillDirectories } from "./SupportedClients.js";
 import { preserveCurrentRecoveryBackup } from "./SetupRecoveryBackup.js";
 import {

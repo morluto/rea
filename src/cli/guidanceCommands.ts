@@ -1,5 +1,5 @@
 import { z } from "incur";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/index.js";
 import {
   readGuidanceSection,
   searchGuidance,

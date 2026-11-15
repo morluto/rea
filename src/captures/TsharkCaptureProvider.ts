@@ -1,4 +1,9 @@
-import { readerIntegrityFailure } from "../artifacts/StableArtifactFailure.js";
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
+import {
+  ArtifactReaderFailure,
+  readerIntegrityFailure,
+  readStableArtifact,
+} from "../resources/index.js";
 import {
   classifyProviderFailure,
   type ProviderFailureDialect,
@@ -36,20 +41,17 @@ import {
   createAnalysisExecution,
   type AnalysisExecution,
   type ExecutionOptions,
-} from "../application/AnalysisProvider.js";
-import type { PacketCapturePort } from "../application/captures/PacketCaptureService.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+} from "../ports/AnalysisProvider.js";
+import type { PacketCapturePort } from "../ports/captures/PacketCapturePort.js";
 import {
   ARTIFACT_PRODUCER_LIMITATION,
   ArtifactAnalysisResources,
-  artifactCommandOutput,
   type ArtifactAnalysisRuntime,
 } from "../process/ArtifactAnalysisResources.js";
 import {
   artifactResourceDialect,
   createArtifactAnalysisResources,
 } from "../providers/artifactResourceFailure.js";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
 import {
   assertArtifactCommandPath,
   selectArtifactCommandPath,
@@ -245,7 +247,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
             ...(this.launcher === undefined ? {} : { launcher: this.launcher }),
           },
         );
-        capturedOutput = artifactCommandOutput(output);
+        capturedOutput = capturedProviderOutput(output);
         await assertArtifactCommandPath(selectedCommand, operation, {
           capturedOutput,
         });

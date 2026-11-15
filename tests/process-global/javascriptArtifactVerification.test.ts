@@ -3,7 +3,7 @@ import { open, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { analyzeJavaScriptApplication } from "../../src/application/javascript/JavaScriptApplicationService.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../src/filesystem/OwnedFileHandle.js";
 import { DirectoryArtifactReader } from "../../src/artifacts/DirectoryArtifactReader.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";

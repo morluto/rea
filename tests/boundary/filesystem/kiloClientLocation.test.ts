@@ -23,7 +23,7 @@ import {
   systemUninstallHost,
 } from "../../../src/application/Uninstall.js";
 import { existingMaintenanceScope } from "../../../src/application/UpdateMaintenance.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";

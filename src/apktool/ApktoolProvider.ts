@@ -1,25 +1,21 @@
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { processInspectionCancellationError } from "../providers/OwnedCommandCleanup.js";
 import { APKTOOL_PROVIDER_IDENTITY } from "./ApktoolProviderIdentity.js";
 import { countDecodedFiles } from "./ApktoolDecodedInventory.js";
 import { ApktoolWorkspace } from "./ApktoolWorkspace.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
+  ArtifactResourceScope,
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import {
+  ArtifactReaderFailure,
   ArtifactFileCleanupFailure,
   artifactFilePrimaryFacts,
   artifactFileCancellationCause,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
-import {
-  capturedApktoolCommandOutput,
-  capturedApktoolFailureOutput,
-} from "./ApktoolCommandOutput.js";
+import { capturedApktoolFailureOutput } from "./ApktoolCommandOutput.js";
 import { providerOutcomeOf } from "../process/ProviderOutcome.js";
 import { classifyProviderOutcome } from "../process/classifyProviderOutcome.js";
 import { ApktoolCommandCleanup } from "./ApktoolCommandCleanup.js";
@@ -37,7 +33,7 @@ import {
   type ProviderAvailability,
   createAnalysisExecution,
   type AnalysisExecution,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { providerConfigurationRefusal } from "../domain/providerConfigurationRefusal.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import {
@@ -69,7 +65,7 @@ import {
 import type { RuntimeExhaustionArea } from "../process/RuntimeExhaustion.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { WindowsBatchCommandError } from "../process/WindowsBatchCommand.js";
-import { ownedProcessPrerequisiteAvailability } from "../application/ownedProcessAvailability.js";
+import { ownedProcessPrerequisiteAvailability } from "../providers/ownedProcessAvailability.js";
 import {
   ApktoolConfigurationFailure,
   apktoolConfigurationAvailability,
@@ -227,7 +223,7 @@ const apktoolCommandFailure = (
     });
   return classifyProviderOutcome(providerOutcomeOf(failure), {
     operation,
-    capturedOutput: capturedApktoolCommandOutput,
+    capturedOutput: capturedProviderOutput,
     // Ownership preparation can retain output before any process exists.
     details: capturedOutput === undefined ? {} : { capturedOutput },
     timeout: {

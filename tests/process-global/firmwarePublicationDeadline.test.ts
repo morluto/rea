@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
 import * as firmwareFiles from "../../src/firmware/FirmwareFiles.js";
-import { SafeOutputTree } from "../../src/artifacts/SafeOutputTree.js";
+import { SafeOutputTree } from "../../src/resources/SafeOutputTree.js";
 import { PrivateRuntimeRoot } from "../../src/process/PrivateRuntimeRoot.js";
 import { DEFAULT_FIRMWARE_ANALYSIS_TIMEOUT_MS } from "../../src/domain/firmware/firmwareAnalysis.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";

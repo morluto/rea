@@ -45,7 +45,7 @@ import { htmlArtifactReferences } from "../../domain/javascript/htmlArtifactRefe
 import type { JavaScriptSourceAnalysisPort } from "../../domain/javascript/javascriptSourceAnalysis.js";
 import type { JavaScriptSemanticGraphProjection } from "./JavaScriptSemanticGraphBuilder.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/index.js";
 import { translateArtifactFailure } from "../../artifacts/ArtifactOperationFailure.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import {

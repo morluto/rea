@@ -4,7 +4,7 @@ import {
   RegularFileChangedError,
   RegularFileOperationCancelled,
 } from "../filesystem/RegularFile.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/index.js";
 
 /** Project physical admission failures without taking the caller's descriptor ownership. */
 export const artifactFileAdmissionFailure = (

@@ -35,7 +35,8 @@ export type AdvertisedDialectRule =
   | "tool-name"
   // Claude Code truncates a tool description at 4,096 characters.
   | "tool-description-length"
-  // Moonshot rejects a parameters schema above its literal size cap (#1484).
+  // Moonshot rejects a parameters schema above its literal size cap (#1484),
+  // measured after clients such as Kimi expand its references.
   | "input-bytes"
   // OpenCode and Muse Spark reject nesting deeper than ten levels (#2813, #919).
   | "input-depth"

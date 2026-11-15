@@ -7,7 +7,7 @@ import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import {
   createAnalysisExecution,
   type AnalysisOperationPort,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComparisonExample.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { err, ok } from "../../../src/domain/result.js";

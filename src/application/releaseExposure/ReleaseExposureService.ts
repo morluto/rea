@@ -1,8 +1,8 @@
 import { basename, dirname, posix, win32 } from "node:path";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/index.js";
 import { appendCallerPath } from "../../filesystem/callerPath.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { DesktopApplicationService } from "../artifacts/DesktopApplicationService.js";
 import type { ElectronFuseService } from "../electron/ElectronFuseService.js";
 import type { GoBinaryService } from "../go/GoBinaryService.js";
@@ -54,7 +54,7 @@ import {
 import { err, ok, type Result } from "../../domain/result.js";
 import { goBuildPaths } from "../../domain/releaseExposureGoPaths.js";
 import { rustBinarySchema } from "../../domain/rust/rustBinary.js";
-import type { ReleaseExposurePort } from "./ReleaseExposurePort.js";
+import type { ReleaseExposurePort } from "../../ports/releaseExposure/ReleaseExposurePort.js";
 
 export interface ReleaseExposureOwners {
   readonly reader: ReleaseExposurePort;

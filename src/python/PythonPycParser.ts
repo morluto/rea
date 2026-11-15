@@ -27,7 +27,7 @@ import {
 } from "../domain/python/pythonPyc.js";
 import { Budget } from "../domain/budget.js";
 import { malformedInput, unsupportedInput } from "../domain/parseFailure.js";
-import { BinaryReader } from "../native/metadata/BinaryContainer.js";
+import { BinaryReader } from "../domain/binaryContainer.js";
 import {
   PYTHON_PYC_FORMAT,
   PythonPycResourceFailure,

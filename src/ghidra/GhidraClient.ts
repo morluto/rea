@@ -11,7 +11,7 @@ import { z } from "zod";
 import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import type { Socket } from "node:net";
-import type { ProgressReporter } from "../application/ProgressReporter.js";
+import type { ProgressReporter } from "../ports/ProgressReporter.js";
 
 import {
   AnalysisCancelledError,
@@ -89,15 +89,15 @@ import {
   type NativeLoadImageObservation,
   type NativeLoadImagePartialObservation,
 } from "../domain/native/nativeLoadImage.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
   bindArtifactFileCleanup,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
-import { readArtifactFileChunks } from "../artifacts/readArtifactFileChunks.js";
+  readArtifactFileChunks,
+} from "../resources/index.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import {
   assertRegularFileActive,

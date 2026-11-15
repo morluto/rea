@@ -1,4 +1,4 @@
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { readClientPolicyBlock } from "./GeminiClientSettings.js";
 import {
@@ -69,7 +69,7 @@ import {
   readRegularFileText,
   readRegularFileTextSnapshot,
   InvalidUtf8FileError,
-} from "./RegularFileRead.js";
+} from "../process/RegularFileRead.js";
 import {
   preserveCurrentRecoveryBackup,
   selectCurrentRecoveryBackup,

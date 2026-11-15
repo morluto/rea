@@ -2,15 +2,17 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import {
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+} from "../../resources/index.js";
 import {
   DestinationCaseCollisionFailure,
   DestinationPathUnrepresentableFailure,
-} from "../../artifacts/ArtifactPaths.js";
-import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
-import { outputDirectoryAdmissionRefusal } from "../../artifacts/SafeOutputTreeAdmission.js";
-import { SafeOutputTreeCreationFailure } from "../../artifacts/SafeOutputTreeCreationFailure.js";
+  SafeOutputTree,
+  outputDirectoryAdmissionRefusal,
+  SafeOutputTreeCreationFailure,
+} from "../../resources/index.js";
 import { PLAYWRIGHT_RESPONSE_BODY_PROVENANCE_LIMITATION } from "../../domain/browserNetworkEvidence.js";
 import {
   AnalysisCancelledError,

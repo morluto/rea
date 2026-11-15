@@ -14,8 +14,8 @@ import { projectAnalysisError } from "../../../src/domain/analysisErrorProjectio
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
-import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
-import { SafeOutputTreeCreationFailure } from "../../../src/artifacts/SafeOutputTreeCreationFailure.js";
+import { SafeOutputTree } from "../../../src/resources/SafeOutputTree.js";
+import { SafeOutputTreeCreationFailure } from "../../../src/resources/SafeOutputTreeCreationFailure.js";
 
 // Extraction-stage assertions use producer-reported gaps. Unclassified byte
 // coverage has its own oracle in the selected-interval workflow below.

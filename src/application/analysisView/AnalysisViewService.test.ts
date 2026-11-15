@@ -45,7 +45,7 @@ import {
 } from "../../../tests/fixtures/browserScenarioCapture.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import * as queuedInterrupts from "../../process/queuedInterrupts.js";
 import { createEvidenceBundle } from "../../domain/evidenceBundle.js";
 import * as evidenceFileSource from "./evidenceFileSource.js";

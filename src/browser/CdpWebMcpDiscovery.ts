@@ -2,7 +2,7 @@ import type { CdpFrameFacts } from "./CdpFrameIdentity.js";
 import { cdpFrameEvent } from "./protocol/CdpEvents.js";
 import { createHash } from "node:crypto";
 
-import type { ProgressReporter } from "../application/ProgressReporter.js";
+import type { ProgressReporter } from "../ports/ProgressReporter.js";
 import type {
   DiscoverWebMcpToolsInput,
   WebMcpDiscovery,

@@ -1,5 +1,15 @@
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
-import { readerIntegrityFailure } from "../artifacts/StableArtifactFailure.js";
+import {
+  readerIntegrityFailure,
+  ArtifactFileCleanupFailure,
+  artifactFileCancellationCause,
+  artifactFilePrimaryFacts,
+  type ArtifactFilePrimaryFacts,
+  bindArtifactFileCleanup,
+  withArtifactRegularFile,
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+} from "../resources/index.js";
 import {
   malformedInput,
   parseFailureFromCause,
@@ -28,16 +38,6 @@ import {
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
-import {
-  ArtifactFileCleanupFailure,
-  artifactFileCancellationCause,
-  artifactFilePrimaryFacts,
-  type ArtifactFilePrimaryFacts,
-  bindArtifactFileCleanup,
-  withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -48,7 +48,7 @@ import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import { pushDispatchCoverage } from "./AppleDispatchCoverage.js";
 import { parsePointerFixupsSteps } from "./AppleMachoFixups.js";
-import { BinaryFormatFailure } from "./metadata/BinaryContainer.js";
+import { BinaryFormatFailure } from "../domain/binaryContainer.js";
 import { parseMachoLayout } from "./AppleMachoSelection.js";
 import {
   selectMachoSlice,

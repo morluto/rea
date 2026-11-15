@@ -1,3 +1,4 @@
+import { ellipsisExcerpt } from "../../domain/excerpt.js";
 import { escapeJsonPointerToken } from "../../domain/jsonPointer.js";
 import type { JsonObject } from "../../domain/analysisView/environmentStateRules.js";
 import type { FieldRule } from "../../domain/analysisView/environmentStateWriteRules.js";
@@ -70,7 +71,7 @@ const ID_LIST_FIELD = /^(ids|uuids|guids)$/u;
 
 const shown = (value: JsonValue | undefined): string => {
   const text = value === undefined ? "<absent>" : JSON.stringify(value);
-  return text.length > VALUE_CHARS ? `${text.slice(0, VALUE_CHARS)}…` : text;
+  return ellipsisExcerpt(text, VALUE_CHARS);
 };
 
 const formatKey = (format: ClockFormat): string =>

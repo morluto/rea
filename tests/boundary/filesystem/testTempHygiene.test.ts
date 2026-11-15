@@ -35,6 +35,9 @@ it.each(["clean", "file", "directory", "cache", "symlink", "failed-test"])(
       "scripts/verify-test-temp-hygiene.mjs",
       "scripts/lib/test-temporary-ownership.mjs",
       "scripts/lib/verifier-cleanup.mjs",
+      "scripts/lib/verifier-fixture.mjs",
+      "scripts/lib/canonical-temporary-directory.mjs",
+      "scripts/lib/verifier-source-loader.mjs",
     ])
       await copyFile(join(process.cwd(), path), join(root, path));
     await mkdir(join(root, "external"));

@@ -10,7 +10,12 @@ import type { ToolContract } from "../toolContractTypes.js";
 import { nativeOutputSchemas } from "../toolOutputSchemaGroups.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { localPathStringSchema } from "../../domain/localPath.js";
-import { toolContractMetadata } from "../toolEffects.js";
+import type { EffectAudit } from "../toolEffects.js";
+import {
+  toolContractMetadata,
+  nativeEvidenceEffects,
+  toolEffects,
+} from "../toolEffects.js";
 import { analysisDetailSchema } from "../analysisDetail.js";
 import { nativeCommandTimeoutField } from "../../domain/native/nativeDeadlines.js";
 
@@ -46,6 +51,7 @@ const native = <
   Schema extends z.ZodObject,
 >(
   name: Name,
+  audit: EffectAudit,
   description: string,
   inputSchema: Schema,
   retainedSummary?: ToolContract["retainedSummary"],
@@ -54,7 +60,7 @@ const native = <
   const strictInputSchema = inputSchema.strict();
   return {
     name,
-    ...toolContractMetadata(name),
+    ...toolContractMetadata(name, audit),
     description,
     kind: "native-provider",
     cli: true,
@@ -86,21 +92,48 @@ export const swiftSymbolsSchema = z.array(
 export const NATIVE_TOOL_CONTRACTS = [
   native(
     "observe_native_ui",
+    toolEffects({
+      mutatesSession: true,
+      launchesProcess: true,
+      writesFilesystem: true,
+    }),
     "Observe one already-running native app window by PID/window ID, bound to the active Mach-O target. Returns a bounded accessibility tree and window screenshot; screenshot or accessibility must be enabled. Permission denial does not broaden capture or launch the target. native_ui_deadline_ms sets this call's deadline independently of output and wait-step limits. Use capture_native_ui_scenario to interact.",
     nativeUiObservationInputSchema,
   ),
   native(
     "capture_native_ui_scenario",
+    toolEffects({
+      writesFilesystem: true,
+      mutatesTarget: true,
+      mutatesSession: true,
+      launchesProcess: true,
+      accessesNetwork: true,
+      changesUiState: true,
+      mayDiscardData: true,
+      executesForeignCode: true,
+      idempotent: false,
+    }),
     "Interact with one exact native app window through selected-element press, scroll, AXValue text entry and bounded waits. Returns ordered before/after captures and per-step failures; screenshot or accessibility must be enabled. Actions may change app data, network activity and persistent state; REA leaves that state in place. native_ui_deadline_ms controls the scenario deadline, independently of output allowance and wait-step caps. Use observe_native_ui for observation only.",
     nativeUiScenarioInputSchema,
   ),
   native(
     "observe_native_calls",
+    // The owned process can change files, show UI and use the network.
+    toolEffects({
+      mutatesSession: true,
+      writesFilesystem: true,
+      launchesProcess: true,
+      accessesNetwork: true,
+      changesUiState: true,
+      executesForeignCode: true,
+      idempotent: false,
+    }),
     "Launch the active Mach-O under LLDB and record selected function/Objective-C method entries; the owned process is killed at max_events or duration_ms. Target execution uses the caller's permissions and may write files, show UI or use network. Hits auto-continue; REA evaluates no expressions and attaches to no other process. Returns addresses, thread/module/symbol, raw argument registers, selector/receiver facts, optional frames, stdout/stderr and limitations. Hardened-runtime targets need get-task-allow. Set capture_limits before launch; later changes cannot recover omitted observations.",
     nativeCallObservationInputSchema,
   ),
   native(
     "inspect_macho",
+    { ...nativeEvidenceEffects, writesFilesystem: true },
     "Inspect Mach-O slices, load commands, linkage, build metadata, segments/sections and permissions without launching Hopper. Returns command provenance and explicit coverage; segment and section file offsets are slice-relative, so add selected_architecture.container_file_offset for an input-file offset. detail summary retains complete Evidence for inspect_analysis_view kind macho rather than delivering large symbol lists inline. native_command_timeout_ms bounds each Xcode command, independently of output admission.",
     z.object({
       detail: analysisDetailSchema
@@ -115,6 +148,7 @@ export const NATIVE_TOOL_CONTRACTS = [
   ),
   native(
     "inspect_signature",
+    { ...nativeEvidenceEffects, writesFilesystem: true },
     "Inspect the selected Mach-O slice's signing identity, hashes, authorities, requirement, entitlements and hardened-runtime state from a digest-verified snapshot. Other slices are checked for unsigned state with separate metadata coverage. Returns command provenance; native_command_timeout_ms bounds each codesign command independently of output admission.",
     z.object({
       native_command_timeout_ms: nativeCommandTimeoutField,
@@ -122,6 +156,7 @@ export const NATIVE_TOOL_CONTRACTS = [
   ),
   native(
     "inspect_plist",
+    nativeEvidenceEffects,
     "Parse Info.plist from an open binary or bundle-resource session, or select path within that session. Use open_binary or open_bundle_resources first; path alone does not open one. Returns normalized JSON. native_command_timeout_ms bounds each file/plutil command, not fixed input/decode/nesting allowances. XML also requires plutil validation and may be refused at a shallower depth; errors name the applicable limit.",
     z.object({
       path: localPathStringSchema
@@ -134,6 +169,7 @@ export const NATIVE_TOOL_CONTRACTS = [
   ),
   native(
     "list_architectures",
+    nativeEvidenceEffects,
     "List thin/universal Mach-O slices with file offsets, sizes, alignment, coverage and native-tool provenance. native_command_timeout_ms bounds lipo, independently of output admission.",
     z.object({
       native_command_timeout_ms: nativeCommandTimeoutField,
@@ -141,6 +177,7 @@ export const NATIVE_TOOL_CONTRACTS = [
   ),
   native(
     "demangle_swift",
+    nativeEvidenceEffects,
     "Demangle an ordered list of single-line Swift symbols without Hopper. Returns demangled, unchanged or invalid for every input; invalid entries do not discard valid companions. native_command_timeout_ms bounds swift-demangle, independently of output admission.",
     z.object({
       symbols: swiftSymbolsSchema,

@@ -43,7 +43,7 @@ import {
   analysisErrorUserMessage,
 } from "./analysisErrorPresentation.js";
 import { ProviderSelectionError } from "./providerSelectionError.js";
-import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "./analysisErrorProjectionSchema.js";
 import { nativeCallPartialObservationSchema } from "./native/nativeCallPartialObservation.js";
 import { analysisSettingLimit } from "./analysisSettingDefinitions.js";
 import { redactExplicitFailure } from "./explicitSensitiveFailure.js";

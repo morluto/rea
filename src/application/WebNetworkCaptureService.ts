@@ -1,7 +1,7 @@
 import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
 import { excludeCaptureCoordinates } from "../domain/webNetworkCaptureCoordinates.js";
 import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
-import type { ExecutionOptions } from "./AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type { WebNetworkCapturePort } from "./WebNetworkCapturePort.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
@@ -10,11 +10,7 @@ import {
   cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
-import {
-  createEvidence,
-  withEvidenceCallerInputPath,
-  type Evidence,
-} from "../domain/evidence.js";
+import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { jsonObjectSchema } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -43,7 +39,6 @@ export class WebNetworkCaptureService {
   async inspect(
     rawInput: unknown,
     options?: ExecutionOptions,
-    callerPaths?: { readonly capture: string; readonly descriptor?: string },
   ): Promise<Result<Evidence, AnalysisError>> {
     if (options?.signal?.aborted)
       return err(cancelledBy(OPERATION, options.signal));
@@ -88,11 +83,7 @@ export class WebNetworkCaptureService {
       );
       let partialFailure: AnalysisError | undefined;
       if (partial.success) {
-        const projected = this.#projectCapture(
-          input,
-          partial.data,
-          callerPaths,
-        );
+        const projected = this.#projectCapture(input, partial.data);
         if (projected.ok) loaded.error.partialObservation = projected.value;
         else partialFailure = projected.error;
       } else if (isCapturePartialCandidate(loaded.error.partialObservation)) {
@@ -133,7 +124,7 @@ export class WebNetworkCaptureService {
           "Capture adapter returned malformed historical evidence.",
         ),
       );
-    const projected = this.#projectCapture(input, report.data, callerPaths);
+    const projected = this.#projectCapture(input, report.data);
     if (!projected.ok) return failure(projected.error);
     return completeProviderEvidence(projected.value, options?.signal);
   }
@@ -141,7 +132,6 @@ export class WebNetworkCaptureService {
   #projectCapture(
     input: InspectWebNetworkCaptureInput,
     value: WebNetworkCapture,
-    callerPaths?: { readonly capture: string; readonly descriptor?: string },
   ): Result<Evidence, AnalysisError> {
     const artifactSha256 = value.artifact.sha256;
     if (artifactSha256 === null)
@@ -294,20 +284,7 @@ export class WebNetworkCaptureService {
           safePath === "" ? [] : [{ kind: "artifact-path", path: safePath }],
       },
     );
-    if (callerPaths === undefined) return ok(evidence);
-    const safeCallerPath = (path: string | undefined) =>
-      path === undefined || isSensitive(path) ? undefined : path;
-    const callerPath = safeCallerPath(callerPaths.capture);
-    const descriptor = safeCallerPath(callerPaths.descriptor);
-    return ok(
-      withEvidenceCallerInputPath(
-        evidence,
-        callerPath,
-        descriptor === undefined
-          ? undefined
-          : { descriptor_set_path: descriptor },
-      ),
-    );
+    return ok(evidence);
   }
 }
 

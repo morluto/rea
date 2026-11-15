@@ -1,4 +1,15 @@
-import { readerIntegrityFailure } from "../artifacts/StableArtifactFailure.js";
+import {
+  readerIntegrityFailure,
+  ArtifactReaderFailure,
+  ArtifactFileCleanupFailure,
+  artifactFilePrimaryFacts,
+  type ArtifactFilePrimaryFacts,
+  artifactFileCancellationCause,
+  bindArtifactFileCleanup,
+  assertArtifactReadActive,
+  withArtifactRegularFile,
+  type ArtifactResourceScope,
+} from "../resources/index.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import { stat } from "node:fs/promises";
@@ -7,7 +18,7 @@ import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { FileHandle } from "node:fs/promises";
 import type { z } from "zod";
 import type { inspectPlistSchema } from "../domain/native/nativeInspection.js";
-import type { ResolvedAppBundleResourceRoot } from "../application/AppBundleExecutable.js";
+import type { ResolvedAppBundleResourceRoot } from "../domain/apple/bundleResourceRoot.js";
 import type {
   AnalysisError,
   AnalysisErrorOptions,
@@ -26,17 +37,6 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { sameRegularFileState } from "../filesystem/RegularFile.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import {
-  ArtifactFileCleanupFailure,
-  artifactFilePrimaryFacts,
-  type ArtifactFilePrimaryFacts,
-  artifactFileCancellationCause,
-  bindArtifactFileCleanup,
-  assertArtifactReadActive,
-  withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { NATIVE_MACOS_PROVIDER_IDENTITY as IDENTITY } from "./NativeMacosProviderIdentity.js";
 import {
   MAX_NATIVE_PLIST_BYTES,

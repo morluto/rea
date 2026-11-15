@@ -8,7 +8,7 @@ import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { JavaScriptAnalysisWorker } from "../../../src/javascript/analysis/JavaScriptAnalysisWorker.js";
 import { createJavaScriptSourceAnalysis } from "../../../src/artifacts/javascript/JavaScriptSourceAnalysis.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import { ProcessOwnershipEvidenceOwner } from "../../../src/process/ProcessOwnershipEvidence.js";
 import type { OwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";

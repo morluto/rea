@@ -8,7 +8,7 @@ import {
 import type { Segment, Section } from "./AppleMachoSelection.js";
 import { boundClassName, decodeObjcCategories } from "./AppleObjcCategories.js";
 import { readObjcPropertiesOf } from "./AppleObjcProperties.js";
-import { BinaryFormatFailure } from "./metadata/BinaryContainer.js";
+import { BinaryFormatFailure } from "../domain/binaryContainer.js";
 import type { DecodeIssue } from "./AppleDispatchDecodeFacts.js";
 import { createObjcProtocolReader } from "./AppleObjcProtocols.js";
 import type {

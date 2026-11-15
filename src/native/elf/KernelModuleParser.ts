@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/index.js";
 import { allKeyed, firstKeyed, keyedBy } from "../../domain/keyedCollection.js";
 import { elfObjectTypeName } from "../../domain/native/elfNotes.js";
 import {
@@ -19,7 +19,7 @@ import {
 import type {
   ImageSection,
   BinaryContainer,
-} from "../metadata/BinaryContainer.js";
+} from "../../domain/binaryContainer.js";
 import { readElfImage } from "../metadata/ElfImage.js";
 import { kernelCompressionCodecAt } from "./KernelCompressionCodec.js";
 

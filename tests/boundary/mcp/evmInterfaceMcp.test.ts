@@ -1,4 +1,7 @@
-import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import {
   advertisedMcpToolSchemas,
@@ -382,7 +385,7 @@ it("returns the exact inferred interface summary while preserving complete defau
         name: "inspect_evm_interface",
         arguments: { ...input, ...(detail ? { detail } : {}) },
       },
-      { toolDefinition: definition },
+      { toolDefinition: withCanonicalOutputSchema(definition) },
     );
     expect(response.isError).not.toBe(true);
     const evidence = parseEvidence(response.structuredContent);
@@ -396,7 +399,7 @@ it("returns the exact inferred interface summary while preserving complete defau
       name: "inspect_evm_interface",
       arguments: { ...input, detail: "summary" },
     },
-    { toolDefinition: definition },
+    { toolDefinition: withCanonicalOutputSchema(definition) },
   );
   expect(response.isError).not.toBe(true);
   const derived = parseEvidence(response.structuredContent);

@@ -43,7 +43,7 @@ import {
 } from "../../../src/application/Uninstall.js";
 import { ClientConfigurationPublication } from "../../../src/application/ClientConfigurationPublication.js";
 import { existingMaintenanceScope } from "../../../src/application/UpdateMaintenance.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";

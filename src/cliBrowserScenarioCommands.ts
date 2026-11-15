@@ -1,7 +1,7 @@
 import type { Logger } from "pino";
 
 import { captureBrowserScenario } from "./application/BrowserScenarioCaptureService.js";
-import type { BrowserScenarioCapturePort } from "./application/BrowserScenarioCapturePort.js";
+import type { BrowserScenarioCapturePort } from "./ports/BrowserScenarioCapturePort.js";
 import { publishCliAnalysisEvidence } from "./cli/analysisEvidenceDelivery.js";
 import { contractNamed } from "./cli/contractCliDescription.js";
 import { registerContractDocumentCommand } from "./cli/contractCommand.js";

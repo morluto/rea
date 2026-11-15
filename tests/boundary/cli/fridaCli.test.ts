@@ -7,7 +7,7 @@ import type { DeviceManager } from "frida";
 
 import { createCli } from "../../../src/cli.js";
 import { FRIDA_TOOL_CONTRACTS } from "../../../src/contracts/fridaToolContracts.js";
-import type { FridaInstrumentationPort } from "../../../src/application/frida/FridaInstrumentationPort.js";
+import type { FridaInstrumentationPort } from "../../../src/ports/frida/FridaInstrumentationPort.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
 import { FridaInstrumentationManager } from "../../../src/frida/FridaInstrumentationManager.js";
 

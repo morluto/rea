@@ -6,7 +6,7 @@ import {
   type AnalysisClient,
   type AnalysisOperation,
   type ExecutionOptions,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
@@ -58,8 +58,10 @@ import {
 } from "./IdaWorkspace.js";
 import { parseIdaInput } from "./IdaInput.js";
 import { createEvidence } from "../domain/evidence.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import {
+  ArtifactReaderFailure,
+  bindArtifactFileCleanup,
+} from "../resources/index.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";

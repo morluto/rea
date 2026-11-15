@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { byteEntropySchema } from "../../../src/domain/native/byteEntropy.js";
 import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
-import { TOOL_EFFECTS } from "../../../src/contracts/toolEffects.js";
 import {
   advertisedMcpToolSchemas,
   assertRecordedMcpEvidence,
@@ -405,7 +404,7 @@ it("profiles real bytes with exact offsets, valid advertised schemas and read-on
     { offset: 12288, length: 1504 },
   ]);
   expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
-  expect(TOOL_EFFECTS.inspect_byte_entropy).toMatchObject({
+  expect(toolContract("inspect_byte_entropy").effects).toMatchObject({
     launchesProcess: false,
     writesFilesystem: false,
     accessesNetwork: false,

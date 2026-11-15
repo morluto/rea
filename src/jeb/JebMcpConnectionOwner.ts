@@ -4,7 +4,7 @@ import {
   SdkErrorCode,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/index.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
 import type { Result } from "../domain/result.js";

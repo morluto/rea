@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, expect, it, vi } from "vitest";
 
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { createInspectionResources } from "../../tests/fixtures/inspectionResources.js";
 import { hopperImageCopyFileSystem } from "../../tests/fixtures/hopperImageCopyFileSystem.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";

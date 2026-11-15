@@ -12,7 +12,7 @@ import { AnalysisOutputError } from "../../../../src/domain/analysisErrorCore.js
 import { resolvedAnalysisError } from "../../../../src/domain/analysisErrorBase.js";
 import { err, ok } from "../../../../src/domain/result.js";
 import { ProviderCleanupError } from "../../../../src/domain/providerCleanupError.js";
-import { ArtifactFileCleanupFailure } from "../../../../src/artifacts/ArtifactFileOperation.js";
+import { ArtifactFileCleanupFailure } from "../../../../src/resources/ArtifactFileOperation.js";
 
 const parameters = { breakpoints: [{ kind: "function", name: "main" }] };
 const fixture = async () => {
