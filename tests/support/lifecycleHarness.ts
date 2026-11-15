@@ -3,10 +3,44 @@ import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
 /**
  * Controls for the scenarios in
  * docs/development/testing.md#lifecycle-regressions that a fixed delay cannot
- * establish: a late handshake or work still in flight at close (`phaseGate`),
+ * establish: a late handshake or work still in flight at close (`phaseGate`,
+ * or `phaseArrival` when the work waits on something other than a release),
  * cancellation during final cleanup (`cancelDuringCleanup`), and mixed child
  * cleanup outcomes with retry (`controlledCleanup`).
  */
+
+/**
+ * A phase boundary the code under test only announces: it calls `arrive` and
+ * keeps going (or waits on something the test triggers, such as an abort),
+ * and the test waits until the boundary is `reached`.
+ */
+export interface PhaseArrival<T = void> {
+  /** Called by the code under test: records arrival with `value`. */
+  arrive(value: T): void;
+  /**
+   * Resolve with the arrival value once the boundary is reached. Fails if
+   * `operation` settles first or the test wait deadline passes.
+   */
+  reached(operation: Promise<unknown>, boundary: string): Promise<T>;
+}
+
+export const phaseArrival = <T = void>(): PhaseArrival<T> => {
+  let arrive!: (value: T) => void;
+  const arrived = new Promise<T>((resolve) => {
+    arrive = resolve;
+  });
+  return {
+    arrive,
+    reached: async (operation, boundary) => {
+      await awaitAcknowledgement(
+        arrived.then(() => {}),
+        operation,
+        boundary,
+      );
+      return arrived;
+    },
+  };
+};
 
 /**
  * A phase boundary the test holds open. The code under test calls `hold` at
@@ -33,10 +67,7 @@ export interface PhaseGate<T = void, R = void> {
 }
 
 export const phaseGate = <T = void, R = void>(): PhaseGate<T, R> => {
-  let arrive!: (value: T) => void;
-  const arrived = new Promise<T>((resolve) => {
-    arrive = resolve;
-  });
+  const arrival = phaseArrival<T>();
   let release!: (value: R) => void;
   let reject!: (error: unknown) => void;
   const released = new Promise<R>((resolve, refuse) => {
@@ -47,17 +78,10 @@ export const phaseGate = <T = void, R = void>(): PhaseGate<T, R> => {
   released.catch(() => {});
   return {
     hold: (value) => {
-      arrive(value);
+      arrival.arrive(value);
       return released;
     },
-    reached: async (operation, boundary) => {
-      await awaitAcknowledgement(
-        arrived.then(() => {}),
-        operation,
-        boundary,
-      );
-      return arrived;
-    },
+    reached: arrival.reached,
     release,
     reject,
   };
