@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { join } from "node:path";
 import { writeFile } from "node:fs/promises";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -36,6 +37,7 @@ it.skipIf(process.platform !== "darwin")(
       throw new Error("Cancelled preparation must not launch the tool");
     });
     const failure = await runPcapCommand({
+      platform: HOST_PLATFORM.platform,
       operation: "inspect_pcap_client",
       command: process.execPath,
       arguments: ["--version"],
@@ -61,6 +63,7 @@ it("preserves a failed producer when cancellation arrives during its final clean
   const controller = new AbortController();
   const reason = { request: "cancel during cleanup" };
   const failure = await runPcapCommand({
+    platform: HOST_PLATFORM.platform,
     operation: "inspect_pcap_capture",
     command: process.execPath,
     arguments: [
@@ -112,6 +115,7 @@ it.each([
   async (reason) => {
     const controller = new AbortController();
     const failure = await runPcapCommand({
+      platform: HOST_PLATFORM.platform,
       operation: "inspect_pcap_client",
       command: process.execPath,
       arguments: [
@@ -176,6 +180,7 @@ it.skipIf(process.platform !== "darwin")(
       release();
     });
     const pending = runPcapCommand({
+      platform: HOST_PLATFORM.platform,
       operation: "inspect_pcap_client",
       command: process.execPath,
       arguments: ["--version"],
@@ -215,6 +220,7 @@ it("returns complete stdout while retaining unresolved process cleanup", async (
     | undefined;
   let mayClean = false;
   const output = await runPcapCommand({
+    platform: HOST_PLATFORM.platform,
     operation: "inspect_pcap_capture",
     command: process.execPath,
     arguments: ["-e", 'process.stdout.write("complete producer output")'],
@@ -265,6 +271,7 @@ it.each([
   "reports a %s launch refusal while reading a capture as an unavailable tool",
   async (code, wording) => {
     const failure = await runPcapCommand({
+      platform: HOST_PLATFORM.platform,
       operation: "inspect_pcap_capture",
       command: "/selected/tshark",
       arguments: ["-r", "/authored-capture.pcap"],
@@ -302,6 +309,7 @@ posixIt(
     await writeFile(file, "");
     const command = join(file, "tshark");
     const failure = await runPcapCommand({
+      platform: HOST_PLATFORM.platform,
       operation: "inspect_pcap_client",
       command,
       arguments: ["--version"],
@@ -323,6 +331,7 @@ posixIt(
 it("reports the Windows native launcher's refusal of the selected tool as an unavailable tool", async () => {
   const command = "C:\\Wireshark\\tshark.exe";
   const failure = await runPcapCommand({
+    platform: HOST_PLATFORM.platform,
     operation: "inspect_pcap_capture",
     command,
     arguments: ["-r", "/authored-capture.pcap"],
@@ -353,6 +362,7 @@ it("reports the Windows native launcher's refusal of the selected tool as an una
 it("attributes a refused limiter spawn to the limiter, not Wireshark", async () => {
   const limiter = await selectArtifactCommandPath(process.execPath);
   const failure = await runPcapCommand({
+    platform: HOST_PLATFORM.platform,
     operation: "inspect_pcap_capture",
     command: "/selected/tshark",
     arguments: [],
@@ -425,6 +435,7 @@ const runLimited = async (
   limiterArguments: string[] = ["--as=1073741824"],
 ) =>
   runPcapCommand({
+    platform: HOST_PLATFORM.platform,
     operation: "inspect_pcap_capture",
     command,
     arguments: [],
@@ -482,6 +493,7 @@ posixIt("attributes prlimit's own refusal to the limiter", async () => {
 
 it("does not attribute an errno without spawn identity to the selected tool", async () => {
   const failure = await runPcapCommand({
+    platform: HOST_PLATFORM.platform,
     operation: "inspect_pcap_client",
     command: "/selected/tshark",
     arguments: ["--version"],
