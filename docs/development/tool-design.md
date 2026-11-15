@@ -482,7 +482,7 @@ failed request's physical, cancellation and cleanup facts.
   confirmed release. CLI adapters should reuse
   [`finishAnalysisCommand`](https://github.com/morluto/rea/blob/main/src/cli/finishAnalysisCommand.ts) where its contract
   applies rather than duplicate close/finally handling. It projects
-  [`runOwned`](https://github.com/morluto/rea/blob/main/src/application/runOwned.ts),
+  [`runOwned`](https://github.com/morluto/rea/blob/main/src/providers/runOwned.ts),
   which owns this precedence for owned work: a recorded failure stays primary,
   cancellation before commit keeps the completed value as a partial
   observation, cancellation after commit keeps the value, and unconfirmed

@@ -18,6 +18,7 @@ import { resolveGhidraProject } from "./GhidraProjectSnapshot.js";
 import { DeferredAnalysisClient } from "../providers/DeferredAnalysisClient.js";
 import type { ProviderInspectionScope } from "../application/ProviderInspectionScope.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
+import { finalizedResult, runOwned } from "../providers/runOwned.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
@@ -383,27 +384,31 @@ export class GhidraProvider implements AnalysisProviderCandidate {
   ): Promise<Result<AnalysisProfileResolution, AnalysisError>> {
     try {
       return await this.#runInspectionWork(async (signal) => {
-        const result = await this.#resolveProfile(target, {
+        const resolved = await this.#resolveProfile(target, {
           ...options,
           signal,
         });
-        if (!result.ok && result.error instanceof AnalysisCancelledError)
+        if (!resolved.ok && resolved.error instanceof AnalysisCancelledError)
           return err(
             analysisClientFailureForOperation(
-              result.error,
+              resolved.error,
               "ghidra",
               "open_binary",
             ),
           );
-        if (result.ok && signal.aborted)
-          return err(
-            cancelledBy("open_binary", signal, {
-              diagnostics: {
-                completed_profile_digest: result.value.profile?.digest ?? null,
-              },
+        // Resolution owns no resource of its own; runOwned still decides
+        // whether a completed profile survives a cancellation.
+        return finalizedResult(
+          await runOwned(async () => resolved, {
+            providerId: "ghidra",
+            operation: "open_binary",
+            signal,
+            close: async () => undefined,
+            diagnostics: (resolution) => ({
+              completed_profile_digest: resolution.profile?.digest ?? null,
             }),
-          );
-        return result;
+          }),
+        );
       }, options?.signal);
     } catch (cause: unknown) {
       return err(

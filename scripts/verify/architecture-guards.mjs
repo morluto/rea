@@ -330,6 +330,16 @@ checkCounted(
   ["src/pcap/TsharkJsonPackets.ts"],
 );
 
+// Turning a completed result into a cancellation after cleanup is the
+// finalization precedence that runOwned owns (src/providers/runOwned.ts).
+checkCounted(
+  "completed result reclassified by a hand-read abort signal (finalize through runOwned in src/providers/runOwned)",
+  "completed-abort-reclassification",
+  files,
+  /\.ok\s*&&\s*(?:isAborted\(|[\w.?]*signal\??\.aborted)/gu,
+  ["src/providers/runOwned.ts"],
+);
+
 // An abort reason names who ended the work: a typed `CallerAbort` at the CLI,
 // MCP and HTTP adapters, or an `OwnerCancellation` when REA closes an owner.
 // A bare `.abort()` leaves an anonymous platform AbortError as the cause.
