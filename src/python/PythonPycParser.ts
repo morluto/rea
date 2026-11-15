@@ -26,6 +26,7 @@ import {
   type PythonPycConst,
 } from "../domain/python/pythonPyc.js";
 import { malformedInput, unsupportedInput } from "../domain/parseFailure.js";
+import { BinaryReader } from "../native/metadata/BinaryContainer.js";
 import {
   PYTHON_PYC_FORMAT,
   PythonPycResourceFailure,
@@ -220,11 +221,14 @@ export const parsePythonPyc = (
     malformed(
       "Selected file is shorter than a 16-byte CPython 3.7+ pyc header.",
     );
+  // Every CPython 3.7+ header packs flags at 4, then the source hash (8..16)
+  // or the source mtime (8) and size (12).
+  const header = new BinaryReader(bytes, true, PYTHON_PYC_FORMAT);
   if (mapped === null || identity === null) {
     // A known identity without a pinned code layout is a different outcome from an
     // unrecognized magic: the header below is still qualified from the same packed
     // fields every 3.7+ pyc uses, so report it instead of a bare rejection.
-    const flags = bytes.readUInt32LE(4);
+    const flags = header.u32(4);
     const hashBased = (flags & PYTHON_PYC_HASH_BASED) !== 0;
     const headerFacts = `16-byte header, flags 0x${flags.toString(16)}, ${
       hashBased ? "hash-based" : "timestamp-based"
@@ -235,9 +239,9 @@ export const parsePythonPyc = (
         : `CPython ${identity.pythonVersion} header is recognized (magic ${magic}, ${headerFacts}), but no marshal code layout is pinned for that version, so its code objects cannot be decoded. Standalone marshal decoding is pinned for CPython 3.7–3.13 and the 3.14 and 3.15 magics 3627 and 3666.`,
     );
   }
-  const flags = bytes.readUInt32LE(4);
+  const flags = header.u32(4);
   const hashBased = (flags & PYTHON_PYC_HASH_BASED) !== 0;
-  const header = {
+  const headerFields = {
     magic,
     python_version: identity.pythonVersion,
     code_layout: mapped.code_layout,
@@ -245,8 +249,8 @@ export const parsePythonPyc = (
     hash_based: hashBased,
     check_source: (flags & PYTHON_PYC_CHECK_SOURCE) !== 0,
     source_hash_hex: hashBased ? bytes.subarray(8, 16).toString("hex") : null,
-    source_mtime: hashBased ? null : bytes.readUInt32LE(8),
-    source_size: hashBased ? null : bytes.readUInt32LE(12),
+    source_mtime: hashBased ? null : header.u32(8),
+    source_size: hashBased ? null : header.u32(12),
   };
   const marshal = bytes.subarray(PYTHON_PYC_HEADER_BYTES);
   const reader = new PycMarshalReader(
@@ -272,7 +276,7 @@ export const parsePythonPyc = (
       sha256: artifact.sha256,
       bytes: artifact.bytes,
     },
-    header,
+    header: headerFields,
     code_objects: codeObjects,
     coverage: {
       status: "complete",
@@ -1489,22 +1493,6 @@ class PycMarshalReader extends MarshalReader<MarshalValue> {
       parseMarshalFloat(bytes.toString("latin1")) ??
       malformed("Marshal float text is not a CPython float.")
     );
-  }
-
-  i64(): bigint {
-    if (this.offset > this.bytes.length - 8)
-      malformed("Marshal stream ended inside a 64-bit integer.");
-    const value = this.bytes.readBigInt64LE(this.offset);
-    this.offset += 8;
-    return value;
-  }
-
-  f64(): number {
-    if (this.offset > this.bytes.length - 8)
-      malformed("Marshal stream ended inside a float.");
-    const value = this.bytes.readDoubleLE(this.offset);
-    this.offset += 8;
-    return value;
   }
 }
 
