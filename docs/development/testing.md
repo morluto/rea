@@ -1298,6 +1298,34 @@ and workspace rather than reporting successful removal. The controlled
 `packageUpdateRegistryFailure` regression needs built process modules, uses no
 public registry, and checks both the primary failure and live descendant absence.
 
+## Merge queue
+
+Pull requests land on `main` through GitHub's merge queue. Once a PR's own
+checks pass and review is complete, add it to the queue instead of merging it
+directly. The queue builds a temporary group commit that squashes the PR, with
+any PRs queued ahead of it, onto the current `main`, then runs CI on that exact
+commit. The group lands only when every required check passes on it; otherwise
+the PR leaves the queue and the groups behind it are rebuilt without it.
+
+Each required check reports on the group (`merge_group` event):
+
+- `Conventional PR title` reads the squash commits between the group base and
+  head and validates each subject, which is the PR title that Release Please
+  will read on `main`. An incomplete or unexpected comparison fails.
+- `Static checks` and `Portable tests` run on the group head with the fast-tier
+  lanes that the group's combined diff from its base selects, as for a `main`
+  push.
+- `CI required` checks classification and every selected lane. A merge group
+  whose base is not an ancestor of its head fails classification. The gate
+  also runs when the group's run is cancelled, so a cancelled group fails
+  instead of reporting a skipped (passing) check.
+
+Group runs use concurrency groups keyed by the exact group head, and pushes to
+PRs or `main` never cancel them. When a group fails, read the failing job
+in the group's run; fix the cause on the PR branch and queue it again. Use
+`ci:full` on the PR when a change needs full qualification before it is
+queued.
+
 ## Real-toolchain verification lanes
 
 See [Real-toolchain verification lanes](../testing-lanes.md#real-toolchain-verification-lanes).

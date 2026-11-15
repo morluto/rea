@@ -172,7 +172,13 @@ export function planChanges(request, repository) {
 
   const { event } = request;
   if (
-    !["pull_request", "push", "schedule", "workflow_dispatch"].includes(event)
+    ![
+      "pull_request",
+      "push",
+      "merge_group",
+      "schedule",
+      "workflow_dispatch",
+    ].includes(event)
   )
     throw new Error(`Unsupported CI event: ${event}`);
   const requestedFull =
@@ -297,11 +303,23 @@ export function planChanges(request, repository) {
     );
   } else if (tier === "full") {
     full("Full baseline requested by event or ci:full label");
-  } else if (event === "pull_request" || event === "push") {
+  } else {
+    // Fast pull_request, push and merge_group plans diff an exact base.
     const { head } = request;
     let base;
     if (event === "pull_request") {
       base = repository.mergeBase(request.base, head);
+    } else if (event === "merge_group") {
+      // The queue builds a group on its base, so every queued change lies
+      // between that base and the group head. Anything else fails planning
+      // rather than narrowing the lanes a queued batch must pass.
+      const candidate = request.base ?? "";
+      if (
+        !/^[0-9a-f]{40}$/i.test(candidate) ||
+        !repository.isAncestor(candidate, head)
+      )
+        throw new Error("Merge group base must be an ancestor of its head");
+      base = candidate;
     } else {
       const candidate = request.base;
       const { baselineReason } = request;

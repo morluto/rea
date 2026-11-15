@@ -531,6 +531,9 @@ it("keeps fast feedback separate from complete qualification and release proof",
       on: z.object({
         push: z.unknown(),
         pull_request: z.unknown(),
+        merge_group: z.object({
+          types: z.tuple([z.literal("checks_requested")]),
+        }),
         schedule: z.array(z.object({ cron: z.string() })),
         workflow_call: z.object({
           inputs: z.object({
@@ -560,8 +563,10 @@ it("keeps fast feedback separate from complete qualification and release proof",
           steps: z
             .array(
               z.object({
+                name: z.string().optional(),
                 run: z.string().optional(),
                 if: z.string().optional(),
+                env: z.record(z.string(), z.string()).optional(),
                 with: z.record(z.string(), z.unknown()).optional(),
               }),
             )
@@ -584,12 +589,37 @@ it("keeps fast feedback separate from complete qualification and release proof",
   expect(ci.concurrency.group).toContain("'qualification' || 'feedback'");
   expect(ci.concurrency.group).toContain("inputs.source_sha ||");
   expect(ci.concurrency.group).toContain("github.ref");
+  // A queued group owns an exact-revision group that pushes cannot cancel.
+  expect(ci.concurrency.group).toContain(
+    "github.event_name == 'merge_group' && 'merge-queue' ||",
+  );
+  expect(ci.concurrency.group).toContain(
+    "${{ github.event.merge_group.head_sha || inputs.source_sha ||",
+  );
   expect(ci.concurrency["cancel-in-progress"]).toBe(
     "${{ github.event_name == 'pull_request' && inputs.source_sha == '' && !contains(github.event.pull_request.labels.*.name, 'ci:full') }}",
   );
   // Failed dependencies still reach the gate, but superseded PR runs must
-  // release their concurrency slot without waiting for another runner.
-  expect(ci.jobs.required?.if).toBe("${{ !cancelled() }}");
+  // release their concurrency slot without waiting for another runner. A
+  // cancelled merge group must fail the gate: a skipped required check passes.
+  expect(ci.jobs.required?.if).toBe(
+    "${{ github.event_name == 'merge_group' || !cancelled() }}",
+  );
+  // Classification diffs the queued group's base and exact head.
+  const classification = ci.jobs.changes?.steps ?? [];
+  const bind = classification.find(
+    (step) =>
+      step.name === "Bind classification to the queued merge-group head",
+  );
+  expect(bind?.if).toBe("github.event_name == 'merge_group'");
+  expect(bind?.run).toContain(
+    'test "${MERGE_GROUP_HEAD_SHA}" = "${GITHUB_SHA}"',
+  );
+  const plan = classification.find(
+    (step) => step.run === "node scripts/ci/plan.mjs",
+  );
+  expect(plan?.env?.BASE_SHA).toContain("github.event.merge_group.base_sha");
+  expect(plan?.env?.HEAD_SHA).toContain("github.event.merge_group.head_sha");
   const shards = ci.jobs["test-shard"]?.steps ?? [];
   const fast = shards.find((step) => step.run?.includes("npm run test:built"));
   const full = shards.find((step) => step.run?.includes("test:ci:shard:run"));
@@ -734,11 +764,11 @@ it("rejects incomplete or malformed classification even when available jobs succ
   }
 });
 
-it("fails fast only for ordinary PR matrices and rejects partial portable feedback", async () => {
+it("fails fast only for PR and merge-queue matrices and rejects partial portable feedback", async () => {
   const { jobs } = await workflow();
   expect(jobs["test-shard"]?.strategy).toMatchObject({
     "fail-fast":
-      "${{ github.event_name == 'pull_request' && needs.changes.outputs.tier == 'fast' }}",
+      "${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.tier == 'fast' }}",
   });
   expect(jobs["package-e2e"]?.strategy).toMatchObject({ "fail-fast": false });
   const flags = await scopeFlags();

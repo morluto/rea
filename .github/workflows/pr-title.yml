@@ -4,26 +4,74 @@ on:
   pull_request:
     branches: [main, "release/*"]
     types: [opened, synchronize, reopened, edited]
+  # A queued group lands its squash commits on main. Their subjects are the
+  # queued PR titles, so the queue revalidates exactly what Release Please reads.
+  merge_group:
+    types: [checks_requested]
 
 permissions: {}
 
 concurrency:
-  group: pr-title-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: pr-title-${{ github.event.pull_request.number || github.event.merge_group.head_sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   pr-title:
     name: Conventional PR title
     runs-on: ubuntu-24.04
     timeout-minutes: 2
+    permissions:
+      contents: read
     steps:
       - name: Validate title for Release Please
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
-        run: >-
-          node -e 'const title = process.env.PR_TITLE ?? "";
+          GH_TOKEN: ${{ github.token }}
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          MERGE_GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+        run: |
+          set -euo pipefail
+          # The comparison includes file patches and can exceed the size of one
+          # environment string or argument, so it travels through a file.
+          comparison_file=""
+          if [ "${GITHUB_EVENT_NAME}" = "merge_group" ]; then
+            comparison_file="$(mktemp)"
+            trap 'rm -f "${comparison_file}"' EXIT
+            gh api "repos/${GITHUB_REPOSITORY}/compare/${MERGE_GROUP_BASE_SHA}...${MERGE_GROUP_HEAD_SHA}" > "${comparison_file}"
+          fi
+          MERGE_GROUP_COMPARISON_FILE="${comparison_file}" node --input-type=module <<'EOF'
+          import { readFileSync } from "node:fs";
           const conventional = /^(?:feat|fix|docs|refactor|perf|test|build|ci|chore|revert)(?:\([a-z0-9._/-]+\))?!?: .+/u;
-          if (!conventional.test(title)) {
-            console.error("PR title must use Conventional Commits, for example: feat: add historical source import");
+          const event = process.env.GITHUB_EVENT_NAME;
+          let titles;
+          if (event === "pull_request") {
+            titles = [process.env.PR_TITLE ?? ""];
+          } else if (event === "merge_group") {
+            // Every queued squash commit between the group base and head lands on
+            // main. An incomplete or unexpected comparison fails closed.
+            const comparison = JSON.parse(
+              readFileSync(process.env.MERGE_GROUP_COMPARISON_FILE ?? "", "utf8") || "null",
+            );
+            const commits = Array.isArray(comparison?.commits) ? comparison.commits : [];
+            if (
+              comparison?.status !== "ahead" ||
+              comparison.behind_by !== 0 ||
+              commits.length === 0 ||
+              comparison.total_commits !== commits.length ||
+              commits.at(-1)?.sha !== process.env.MERGE_GROUP_HEAD_SHA
+            ) {
+              console.error("Merge group commits between its base and head could not be identified");
+              process.exit(1);
+            }
+            titles = commits.map((entry) => String(entry?.commit?.message ?? "").split("\n")[0]);
+          } else {
+            console.error(`Unsupported title validation event: ${event}`);
             process.exit(1);
-          }'
+          }
+          const invalid = titles.filter((title) => !conventional.test(title));
+          if (invalid.length) {
+            console.error("PR title must use Conventional Commits, for example: feat: add historical source import");
+            if (event === "merge_group") for (const title of invalid) console.error(`Queued commit subject: ${title}`);
+            process.exit(1);
+          }
+          EOF
