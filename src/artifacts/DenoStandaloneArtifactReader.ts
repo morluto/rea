@@ -23,6 +23,7 @@ import {
   ArtifactResourceScope,
   ArtifactPathRegistry,
   normalizeArtifactPath,
+  ArtifactFileSource,
 } from "../resources/index.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { ownArtifactStream } from "./OwnedArtifactStream.js";

@@ -1,4 +1,4 @@
-import { lstat } from "node:fs/promises";
+import { lstat, type FileHandle } from "node:fs/promises";
 import { artifactIntegrityDetails } from "../domain/artifactIntegrity.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
@@ -12,11 +12,11 @@ import {
   artifactSelectedPathErrno,
   artifactReadCancelledBy,
   assertArtifactReadActive,
-  ArtifactReaderFailure,
-  ArtifactResourceScope,
-} from "../resources/index.js";
+} from "./ArtifactFileOperation.js";
+import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+import { digestReadableToCompletion } from "./StreamDigest.js";
 import { artifactFileAdmissionFailure } from "./ArtifactFileAdmission.js";
-import { hashReadable } from "./ArtifactHash.js";
 
 /** Verify an admitted descriptor against the regular file still named by its path. */
 export const assertArtifactFileSelectedSource = async (
@@ -118,6 +118,30 @@ export class ArtifactFileSource {
     return this.#scope.close();
   }
 
+  /**
+   * Digest the bound descriptor's bytes; only the SHA-256 identity is used.
+   * A fully delivered digest is returned even when cancellation arrives
+   * after its last chunk, so the caller validates the source first.
+   */
+  async #sha256(
+    handle: FileHandle,
+    signal: AbortSignal | undefined,
+  ): Promise<string> {
+    const { sha256 } = await digestReadableToCompletion(
+      readFileHandleChunks(handle, {
+        signal,
+        cancellationFailure: (reason) =>
+          new ArtifactReaderFailure(
+            "cancelled",
+            `${this.diagnosticLabel} verification cancelled`,
+            { cause: reason },
+          ),
+      }),
+      signal,
+    );
+    return sha256;
+  }
+
   async #bind(
     expectedSha256: string,
     signal: AbortSignal | undefined,
@@ -125,22 +149,7 @@ export class ArtifactFileSource {
     verifyCompletion: () => Promise<StableRegularFileDescriptor>,
   ): Promise<void> {
     const { handle } = await verify();
-    const observed =
-      this.#boundSha256 ??
-      (
-        await hashReadable(
-          readFileHandleChunks(handle, {
-            signal,
-            cancellationFailure: (reason) =>
-              new ArtifactReaderFailure(
-                "cancelled",
-                `${this.diagnosticLabel} verification cancelled`,
-                { cause: reason },
-              ),
-          }),
-          signal,
-        )
-      ).sha256;
+    const observed = this.#boundSha256 ?? (await this.#sha256(handle, signal));
     // A completed digest needs source validation before late cancellation can
     // decide the outcome; unverified bytes must not establish a contradiction.
     await verifyCompletion();

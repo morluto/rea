@@ -9,6 +9,7 @@ import {
   type ArtifactTraversalOptions,
   streamChunkToBuffer,
   readArtifactFileChunks,
+  ArtifactFileSource,
 } from "../resources/index.js";
 import type { FileHandle } from "node:fs/promises";
 import { Readable } from "node:stream";
@@ -29,7 +30,6 @@ import {
   type ReadAt,
 } from "../domain/apple/machoLoadCommandReader.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import type { ArtifactIntegrityPolicyName } from "../domain/artifactIntegrityPolicy.js";
 import {

@@ -400,7 +400,7 @@ export class ModelArtifactProvider implements ModelArtifactPort {
         tensor_data: "not-interpreted" as const,
         array_values: parsed.metadata.every((row) => row.preview_complete)
           ? ("complete" as const)
-          : ("preview" as const),
+          : ("partial" as const),
         storage_sizes: parsed.tensors.every(
           (row) => row.storage_validation === "consistent",
         )

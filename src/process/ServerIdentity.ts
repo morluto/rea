@@ -1,17 +1,17 @@
 import { statSync } from "node:fs";
 import { dirname, basename, resolve } from "node:path";
 
-import { HOST_PLATFORM } from "./platform/HostPlatform.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { fileURLToPath } from "node:url";
 
 import {
   javaScriptRuntime,
   type JavaScriptRuntime,
-} from "./domain/runtimeVersion.js";
-import { normalizeEntrypointPath } from "./process/CurrentEntrypointPath.js";
+} from "../domain/runtimeVersion.js";
+import { normalizeEntrypointPath } from "./CurrentEntrypointPath.js";
 
-import type { createCatalogIdentity } from "./catalogIdentity.js";
-import { PRODUCT_IDENTITY, SDK_IDENTITY } from "./identity.js";
+import type { createCatalogIdentity } from "../contracts/catalog/catalogIdentity.js";
+import { PRODUCT_IDENTITY, SDK_IDENTITY } from "../identity.js";
 
 /** Optional observations supplied by a client comparing its expected server. */
 export interface ExpectedServerIdentity {
@@ -25,12 +25,13 @@ export interface ConnectedClientIdentity {
   readonly version: string;
 }
 
+/** The package root above `src/`, `dist/` or `dist/src/`, found from this module's `config/` folder. */
 const packageRoot = (): string => {
-  const moduleDirectory = dirname(fileURLToPath(import.meta.url));
-  return basename(moduleDirectory) === "src" &&
-    basename(dirname(moduleDirectory)) === "dist"
-    ? resolve(moduleDirectory, "../..")
-    : resolve(moduleDirectory, "..");
+  const sourceRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+  return basename(sourceRoot) === "src" &&
+    basename(dirname(sourceRoot)) === "dist"
+    ? resolve(sourceRoot, "../..")
+    : resolve(sourceRoot, "..");
 };
 
 const compareServerPaths = (

@@ -80,6 +80,7 @@ import {
   MIN_WEB_BUNDLE_HEAP_MB,
   webBundleFixedByteBudget,
   webBundleHeapExhaustedReason,
+  webBundleHeapLimit,
   webBundleHeapExhaustedRemediation,
   webBundleMemoryExhaustion,
   webBundleResultAdmissionFailure,
@@ -900,6 +901,7 @@ export class WebBundleAnalysisWorker {
             },
             {
               capturedOutput,
+              limit: webBundleHeapLimit(exhaustion),
               remediationAction: webBundleHeapExhaustedRemediation(exhaustion),
             },
           );

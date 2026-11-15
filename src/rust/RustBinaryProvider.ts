@@ -36,7 +36,7 @@ import {
   readRustBinaryImage,
   type RustBinaryImage,
 } from "./RustBinaryImage.js";
-import { requireSelectedNativeImage } from "../native/metadata/MachoSliceSelection.js";
+import { requireSelectedNativeImage } from "../domain/apple/machoSliceSelection.js";
 import { RustAuditableResourceFailure } from "./RustAuditableReader.js";
 import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
 

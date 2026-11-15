@@ -11,7 +11,7 @@ import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { cliCommandFor } from "../../../src/cliCommandNames.js";
+import { cliCommandFor } from "../../../src/contracts/cliCommandNames.js";
 
 const reference = (evidence: Evidence) => ({
   kind: "retained-evidence" as const,

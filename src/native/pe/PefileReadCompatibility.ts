@@ -1,4 +1,4 @@
-import type { PeImage } from "../metadata/PeImage.js";
+import type { PeImage } from "../../domain/native/peImage.js";
 
 /**
  * Prove that a successful native read sees the same bytes as pefile 2024.8.26.

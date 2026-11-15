@@ -5,7 +5,6 @@ import {
   artifactInventoryResultSchema,
   type ArtifactInventoryResult,
 } from "../../domain/artifactGraph.js";
-import { abortIfNeeded } from "../ArtifactHash.js";
 import {
   scanCanonicalArtifactInventoryInScope,
   scanCanonicalArtifactInventoryForExtractionInScope,
@@ -14,6 +13,7 @@ import {
 import type { ArtifactInventoryOptions } from "./types.js";
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
 import type { ArtifactEmbeddedFormatProbeFacts } from "../ArtifactEmbeddedFormatProbes.js";
+import { abortIfNeeded } from "../../resources/index.js";
 
 /** Inventory one local artifact and return every graph collection inline. */
 export const inventoryArtifact = async (

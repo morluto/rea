@@ -19,7 +19,7 @@ import {
   readMachoSegmentHeader,
 } from "../../domain/apple/machoSegmentHeader.js";
 import { machoBinaryArchitecture } from "../../domain/binaryTarget.js";
-import { decodeMachoFixedName } from "../AppleMachoNames.js";
+import { decodeMachoFixedName } from "../../domain/apple/appleMachoNames.js";
 import {
   elfStringTableText,
   observeElfStringTableEntry,

@@ -1,10 +1,6 @@
 {
   "upward": {
-    "application -> catalogDiscovery.ts": 1,
-    "application -> catalogIdentity.ts": 2,
-    "application -> serverIdentity.ts": 1,
     "artifacts -> application": 1,
-    "composition -> cliCommandNames.ts": 3,
     "dotnet -> application": 1
   },
   "cycles": [
@@ -21,26 +17,20 @@
     "android -> native": 1,
     "apktool -> artifacts": 2,
     "artifacts -> dotnet": 3,
-    "artifacts -> javascript": 1,
     "artifacts -> native": 1,
-    "browser -> artifacts": 6,
-    "browser -> javascript": 1,
+    "browser -> artifacts": 4,
     "captures -> pcap": 2,
     "desktop -> browser": 1,
     "desktop -> electron": 1,
     "flutter -> artifacts": 1,
-    "go -> native": 2,
     "gpu -> artifacts": 2,
     "il2cpp -> ghidra": 1,
-    "il2cpp -> native": 5,
     "inspector -> browser": 2,
-    "kuna -> native": 2,
     "model -> artifacts": 1,
-    "native -> artifacts": 5,
-    "rust -> native": 2
+    "native -> artifacts": 2
   },
   "entry": {
-    "application -> artifacts": 9,
+    "application -> artifacts": 7,
     "application -> browser": 2,
     "application -> desktop": 41,
     "application -> frida": 2,

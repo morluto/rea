@@ -19,7 +19,7 @@ import { OBJDUMP_ARTIFACT_OPERATIONS } from "../domain/reverseEngineering.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
+import { CLI_COMMANDS } from "../contracts/cliCommandNames.js";
 import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../contracts/reverseEngineeringToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
 import {

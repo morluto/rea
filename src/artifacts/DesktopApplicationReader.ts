@@ -12,7 +12,6 @@ import {
   ArtifactResourceScope,
   type ArtifactResourceOwner,
 } from "../resources/index.js";
-import { abortIfNeeded } from "./ArtifactHash.js";
 import { declaredArtifactEntries } from "./ArtifactTraversalObservation.js";
 import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
 import {
@@ -45,6 +44,7 @@ import type {
   AnalysisPartialObservation,
 } from "../domain/analysisErrorBase.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
+import { abortIfNeeded } from "../resources/index.js";
 
 const RETAINED_METADATA_BYTES = 32 * 1024 * 1024;
 /**

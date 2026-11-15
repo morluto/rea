@@ -3,7 +3,6 @@ import {
   DEFAULT_DOTNET_BUNDLE_READER_LIMITS,
   type DotnetBundleReaderLimits,
 } from "../../domain/artifactReaderLimits.js";
-import { artifactReaderLimitFailure } from "../ArtifactReaderLimits.js";
 
 import {
   readArtifactFileChunks,
@@ -11,6 +10,8 @@ import {
   normalizeArtifactPath,
   ArtifactReaderFailure,
   artifactFixedLimitFailure,
+  artifactReaderLimitFailure,
+  abortIfNeeded,
 } from "../../resources/index.js";
 import { abortIfNeeded } from "../ArtifactHash.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";

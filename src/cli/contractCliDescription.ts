@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { cliCommandFor } from "../cliCommandNames.js";
+import { cliCommandFor } from "../contracts/cliCommandNames.js";
 
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";

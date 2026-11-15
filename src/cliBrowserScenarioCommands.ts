@@ -7,7 +7,7 @@ import { contractNamed } from "./cli/contractCliDescription.js";
 import { registerContractDocumentCommand } from "./cli/contractCommand.js";
 import { finishAnalysisCommand } from "./cli/finishAnalysisCommand.js";
 import type { CliInstance } from "./cli/types.js";
-import { CLI_COMMANDS } from "./cliCommandNames.js";
+import { CLI_COMMANDS } from "./contracts/cliCommandNames.js";
 import { BROWSER_SCENARIO_TOOL_CONTRACTS } from "./contracts/browserScenarioToolContracts.js";
 import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 import {

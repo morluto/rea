@@ -44,7 +44,7 @@ import {
   isSkippedJavaScriptAnalysis,
   javascriptArtifactAnalysisScopes,
 } from "./JavaScriptArtifactAnalysisTypes.js";
-import { createJavaScriptSourceAnalysis } from "../../artifacts/javascript/JavaScriptSourceAnalysis.js";
+import type { JavaScriptSourceAnalysisFactory } from "../../ports/javascript/JavaScriptSourceAnalysisFactory.js";
 import { JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS } from "../../domain/javascript/javascriptAnalysisResourceControls.js";
 import { createOwnedJavaScriptApplicationEvidenceCooperatively } from "./JavaScriptApplicationEvidence.js";
 import { readJavaScriptArtifactFiles } from "../../artifacts/javascript/JavaScriptArtifactFiles.js";
@@ -90,6 +90,7 @@ export interface JavaScriptArtifactReconstructionResult {
 export const reconstructJavaScriptArtifact = async (
   input: AnalyzeJavaScriptApplicationInput,
   scope: ArtifactResourceScope,
+  sourceAnalysis: JavaScriptSourceAnalysisFactory,
   signal?: AbortSignal,
   progress?: ProgressReporter,
   asarHeaderAdmission: AsarHeaderAdmission = DEFAULT_ASAR_HEADER_ADMISSION,
@@ -212,9 +213,10 @@ export const reconstructJavaScriptArtifact = async (
         files,
         sourceLimits,
         scope,
+        sourceAnalysis,
         signal,
       );
-      const worker = await createJavaScriptSourceAnalysis(
+      const worker = await sourceAnalysis(
         sourceLimits,
         files.files.filter(
           (file) => file.kind === "javascript" && file.text.included,

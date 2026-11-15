@@ -23,7 +23,7 @@ import {
   type UninstallHost,
 } from "../../src/application/Uninstall.js";
 import { isUninstallFailure } from "../../src/application/UninstallFailure.js";
-import { CLI_COMMANDS } from "../../src/cliCommandNames.js";
+import { CLI_COMMANDS } from "../../src/contracts/cliCommandNames.js";
 
 const originalExitCode = process.exitCode;
 
