@@ -21,6 +21,7 @@ import {
   analysisTextPage,
   analysisTextPageItemSchema,
 } from "./analysisViewText.js";
+import { evidenceSubjectTarget } from "../evidence.js";
 
 /** Source forms and text from completed WASM Evidence; this never executes a VM. */
 export const wasmViewRequestSchema = z.strictObject({
@@ -95,12 +96,7 @@ export const projectWasmArtifactView = (
   if (
     !wasmArtifactMatchesSubject(
       report.artifact,
-      parent.subject == null
-        ? null
-        : {
-            sha256: parent.subject.digest.sha256,
-            format: parent.subject.format,
-          },
+      evidenceSubjectTarget(parent.subject),
     )
   )
     return err(

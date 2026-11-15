@@ -141,7 +141,9 @@ it("keeps unbound observations out of persisted target snapshots", async () => {
   expect(session.exportEvidenceBundle().records).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
-        subject: null,
+        subject: expect.objectContaining({
+          identity: { kind: "unknown", reason: "not-observed" },
+        }),
         normalized_result: "unbound observation",
       }),
     ]),

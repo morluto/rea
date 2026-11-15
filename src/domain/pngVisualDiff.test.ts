@@ -2,17 +2,17 @@ import { crc32, deflateSync } from "node:zlib";
 
 import { describe, expect, it } from "vitest";
 
-import { readPngHeaderDimensions } from "../domain/pngHeader.js";
-import { comparePngScreenshots, isOneColourPng } from "./PngVisualDiff.js";
+import { readPngHeaderDimensions } from "./pngHeader.js";
+import { comparePngScreenshots, isOneColourPng } from "./pngVisualDiff.js";
 import {
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
-} from "../domain/analysisErrorCore.js";
+} from "./analysisErrorCore.js";
 import {
   compareWebScreenshotsInputSchema,
   createWebScreenshotArtifact,
   webScreenshotDiffSchema,
-} from "../domain/webScreenshot.js";
+} from "./webScreenshot.js";
 
 describe("PNG header admission", () => {
   it.each([16, 20])(

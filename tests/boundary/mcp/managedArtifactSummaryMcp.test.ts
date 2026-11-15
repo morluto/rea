@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import {
   canonicalOutputSchema,
   withCanonicalOutputSchema,
@@ -166,13 +167,17 @@ it("keeps malformed metadata, empty returned rows and historical null subjects e
     parent.normalized_result,
   );
   expect(report.metadata.status).toBe("malformed");
-  const historical = createEvidence(undefined, parent.provider, {
-    operation: parent.operation,
-    parameters: parent.parameters,
-    result: parent.normalized_result,
-    limitations: parent.limitations,
-    authority: parent.authority,
-  });
+  const historical = createEvidence(
+    unknownTarget("not-observed"),
+    parent.provider,
+    {
+      operation: parent.operation,
+      parameters: parent.parameters,
+      result: parent.normalized_result,
+      limitations: parent.limitations,
+      authority: parent.authority,
+    },
+  );
   const original = JSON.stringify(historical);
   for (const view of [
     { kind: "summary" },
@@ -183,7 +188,7 @@ it("keeps malformed metadata, empty returned rows and historical null subjects e
       view,
     });
     if (!result.ok) throw result.error;
-    expect(result.value.subject).toBeNull();
+    expect(result.value.subject.identity.kind).toBe("unknown");
     const projected = analysisViewResultSchema.parse(
       result.value.normalized_result,
     );

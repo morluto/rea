@@ -21,12 +21,18 @@ import {
 } from "../../domain/evidenceErrors.js";
 import {
   createEvidence,
+  evidenceSubjectTarget,
+  evidenceTargetIdentity,
   rebindEvidenceToTargetPath,
   type Evidence,
 } from "../../domain/evidence.js";
 import { readEvidence } from "../../domain/evidenceValidation.js";
 import { RECREATE_EVIDENCE_GUIDANCE } from "../../domain/evidenceFormat.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import {
+  sameTargetIdentity,
+  unknownTarget,
+} from "../../domain/targetIdentity.js";
 
 const OPERATION = "compare_artifacts";
 
@@ -92,19 +98,23 @@ export const compareArtifactEvidence = ({
   const rightEvidenceIds = [right.evidence_id];
   return ok({
     comparison,
-    evidence: createEvidence(undefined, ARTIFACT_COMPARISON_PROVIDER, {
-      predicateType: "rea.artifact-comparison",
-      operation: OPERATION,
-      parameters: {
-        left_evidence_ids: leftEvidenceIds,
-        right_evidence_ids: rightEvidenceIds,
+    evidence: createEvidence(
+      unknownTarget("derived-from-linked-evidence"),
+      ARTIFACT_COMPARISON_PROVIDER,
+      {
+        predicateType: "rea.artifact-comparison",
+        operation: OPERATION,
+        parameters: {
+          left_evidence_ids: leftEvidenceIds,
+          right_evidence_ids: rightEvidenceIds,
+        },
+        result: comparison,
+        confidence: "derived",
+        authority: "analyst-inference",
+        limitations: comparison.limitations,
+        evidenceLinks: [...leftEvidenceIds, ...rightEvidenceIds],
       },
-      result: comparison,
-      confidence: "derived",
-      authority: "analyst-inference",
-      limitations: comparison.limitations,
-      evidenceLinks: [...leftEvidenceIds, ...rightEvidenceIds],
-    }),
+    ),
   });
 };
 
@@ -151,24 +161,23 @@ export const resolveArtifactComparisonEvidence = (
   const authenticated = readEvidence(selected.value);
   if (!authenticated.ok) return authenticated;
   const owner = authenticated.value;
-  const subject = evidence.subject;
+  const identity = evidenceTargetIdentity(evidence);
+  const ownerIdentity = evidenceTargetIdentity(owner);
+  const target = evidenceSubjectTarget(evidence.subject);
   if (
-    subject === null ||
-    owner.subject === null ||
-    subject.digest.sha256 !== owner.subject.digest.sha256 ||
-    subject.format !== owner.subject.format ||
-    subject.architecture !== owner.subject.architecture
+    identity === null ||
+    ownerIdentity === null ||
+    target === undefined ||
+    !sameTargetIdentity(identity, ownerIdentity)
   )
     return mismatch();
   // The ledger preserves its original display path; summary delivery may use a
   // later caller-selected alias for this same authenticated owner identity.
+  // The alias names the whole target, selection included.
+  const { name: _name, ...aliasTarget } = target;
   const presentation = rebindEvidenceToTargetPath(owner, {
+    ...aliasTarget,
     path: summary.data.artifact.path,
-    sha256: subject.digest.sha256,
-    format: subject.format,
-    ...(subject.architecture === null
-      ? {}
-      : { architecture: subject.architecture }),
   });
   const reprojected = inspectAnalysisViewValidated(
     {

@@ -14,7 +14,7 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../../dist/domain/evidence.js";
 import { webScreenshotSchema } from "../../dist/domain/webScreenshot.js";
-import { comparePngScreenshots } from "../../dist/browser/PngVisualDiff.js";
+import { comparePngScreenshots } from "../../dist/domain/pngVisualDiff.js";
 
 /** Verify a real, large PNG through production CLI and stdio MCP boundaries. */
 export async function verifyLargeScreenshotE2e(endpoint, origin) {

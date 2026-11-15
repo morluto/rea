@@ -788,7 +788,8 @@ it("rejects static application Evidence whose subject path disagrees with its re
   const analyzed = await analyzeJavaScriptApplication({ input_path: root });
   if (!analyzed.ok) throw analyzed.error;
   const subject = analyzed.value.subject;
-  if (subject === null) throw new Error("Analysis Evidence subject missing");
+  if (subject.identity.kind !== "file")
+    throw new Error("Analysis Evidence subject missing");
   const inconsistent = {
     ...analyzed.value,
     subject: {

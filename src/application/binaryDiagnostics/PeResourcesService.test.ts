@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../../tests/fixtures/evidenceSubject.js";
 import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
 import { PeResourcesService } from "./PeResourcesService.js";
@@ -95,7 +96,9 @@ it.each([
     });
     const result = await service.inspect({ path: report.artifact.path });
     if (!result.ok) throw result.error;
-    expect(result.value.subject?.architecture ?? null).toBe(architecture);
+    expect(fileIdentity(result.value.subject).architecture ?? null).toBe(
+      architecture,
+    );
   },
 );
 
@@ -122,7 +125,7 @@ it("retains a completed observation on late cancellation and keeps output errors
     expect(late.error.cause).toBe(reason);
     expect(parseEvidence(late.error.partialObservation)).toMatchObject({
       operation: "inspect_pe_resources",
-      subject: { architecture: "x86" },
+      subject: { identity: { architecture: "x86" } },
       normalized_result: report,
     });
   }

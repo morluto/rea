@@ -1,3 +1,4 @@
+import { evidenceSubjectDisplay } from "../evidence.js";
 import { z } from "zod";
 import { AnalysisInputError } from "../analysisErrorCore.js";
 
@@ -114,7 +115,7 @@ export const projectAppleInventory = (
     projectedInventoryEntries(inventory);
   const inventoried = projectedFileComponents(entries);
   const { roots, bundles } = projectAppleBundleAnatomy(entries, {
-    name: evidence[0]?.subject?.name ?? "",
+    name: evidenceSubjectDisplay(evidence[0] ?? {})?.name ?? "",
     format: rootFormat,
   });
   const { all, unattributed } = attributeComponents(

@@ -19,7 +19,7 @@ import {
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
 import { findDotnetBundleHeader } from "./dotnet/DotnetBundle.js";
-import { ArtifactReaderFailure } from "../resources/index.js";
+import { ArtifactReaderFailure, abortIfNeeded } from "../resources/index.js";
 import { locateGodotPck, type GodotPckLocation } from "./GodotPckLocation.js";
 import {
   locateNodeSea,
@@ -30,7 +30,6 @@ import {
   type PyInstallerCookie,
   type PyInstallerCookieObservation,
 } from "./pyinstaller/CArchiveLayout.js";
-import { abortIfNeeded } from "../resources/index.js";
 
 /** Completed observations and explicit recognition limits; null alone is examined absence. */
 export interface ArtifactEmbeddedFormatProbeFacts {
