@@ -23,7 +23,6 @@
     "flutter -> artifacts": 1,
     "gpu -> artifacts": 2,
     "il2cpp -> ghidra": 1,
-    "inspector -> browser": 2,
     "model -> artifacts": 1,
     "native -> artifacts": 2
   },
