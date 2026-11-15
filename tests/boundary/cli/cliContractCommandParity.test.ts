@@ -307,6 +307,7 @@ const MIGRATED_COMMANDS = [
   "inspect-macho",
   "inspect-signature",
   "list-architectures",
+  "inspect-plist",
   "demangle-swift",
 ];
 
