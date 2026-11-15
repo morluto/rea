@@ -133,9 +133,11 @@ export interface ClientRegistrationInspection {
   readonly status: ClientRegistrationStatus;
   readonly activation: "enabled" | "disabled" | "unknown";
   /**
-   * The client policy reason setup refuses to write this registration (for
-   * example Junie's disabled default locations). Maintenance must leave such a
-   * client to the user instead of asking setup for a write it will reject.
+   * Why setup may refuse to refresh this registration when it is stale: a
+   * client policy (for example Junie's disabled default locations) or a
+   * read-only inline layer that sets REA's entry (KILO_CONFIG_CONTENT).
+   * Maintenance leaves such a client to the user instead of asking setup for
+   * a write it can reject.
    */
   readonly setupBlocker?: string;
 }
@@ -464,7 +466,7 @@ export const readClientRegistrationInspections = async (
               ),
         ),
         activation,
-        policyBlock,
+        policyBlock ?? inlineRefreshBlocker(client),
       );
     } catch (cause: unknown) {
       if (
@@ -572,6 +574,17 @@ const remediation = (client: SetupClient): string => {
     return `Run rea setup to refresh this registration, then restart the client.${inline}`;
   const name = client.displayName ?? client.name;
   return `Quit ${name} fully, run rea setup to refresh this registration, then start ${name} again. A running ${name} can rewrite its configuration from memory and drop the registration.${inline}`;
+};
+
+/**
+ * A read-only inline layer that sets REA's entry decides the fields it sets,
+ * so setup refuses a refresh those fields would override.
+ */
+const inlineRefreshBlocker = (client: SetupClient): string | undefined => {
+  const origins = inlineRegistrationOrigins(client);
+  return origins.length === 0
+    ? undefined
+    : `${origins.join(", ")} sets the ${PRODUCT_IDENTITY.mcpServerKey} entry, which REA does not edit and setup cannot refresh beneath it. Update or remove ${PRODUCT_IDENTITY.mcpServerKey} there, then rerun rea update.`;
 };
 
 /** Setup cannot repair what a read-only inline layer sets for REA's entry. */

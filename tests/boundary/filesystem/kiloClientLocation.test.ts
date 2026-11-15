@@ -20,7 +20,9 @@ import {
   runUninstall,
   systemUninstallHost,
 } from "../../../src/application/Uninstall.js";
+import { existingMaintenanceScope } from "../../../src/application/UpdateMaintenance.js";
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -464,4 +466,38 @@ it("reports REA's Kilo entry that only KILO_CONFIG_CONTENT sets instead of calli
   // One report although uninstall visits each Kilo file.
   expect(details.match(/KILO_CONFIG_CONTENT sets/g)).toHaveLength(1);
   expect(await readFile(join(root, "kilo.json"), "utf8")).toBe(other);
+});
+
+it("leaves a stale Kilo registration KILO_CONFIG_CONTENT pins out of update maintenance", async () => {
+  const home = await createTestTempDirectory("rea-kilo-update-inline-");
+  await mkdir(join(home, ".config", "kilo"), { recursive: true });
+  const environment = {
+    KILO_CONFIG_CONTENT: JSON.stringify({
+      mcp: {
+        rea: {
+          type: "local",
+          command: [
+            "npx",
+            "-y",
+            `${PRODUCT_IDENTITY.packageName}@3.2.0`,
+            "mcp",
+          ],
+          enabled: true,
+        },
+      },
+    }),
+  };
+  const scope = await existingMaintenanceScope(
+    home,
+    command[1] ?? "",
+    environment,
+  );
+  expect(scope.clients).not.toContain("kilo");
+  expect(scope.unresolved).toEqual([
+    expect.objectContaining({
+      client: "kilo",
+      state: "stale",
+      remediation: expect.stringContaining("KILO_CONFIG_CONTENT sets the rea"),
+    }),
+  ]);
 });

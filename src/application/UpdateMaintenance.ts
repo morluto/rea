@@ -144,10 +144,11 @@ export const existingMaintenanceScope = async (
       registration.command_identity !== "owned"
     )
       continue;
-    // Setup refuses a client its own policy blocks, and one refused client
-    // would fail the whole maintenance plan, so report it instead.
-    if (setupBlocker !== undefined) {
-      unresolved.push(registration);
+    // Setup can refuse to refresh a client its policy or a read-only inline
+    // layer blocks, and one refused client would fail the whole maintenance
+    // plan, so a stale one is reported instead.
+    if (registration.state === "stale" && setupBlocker !== undefined) {
+      unresolved.push({ ...registration, remediation: setupBlocker });
       continue;
     }
     clients.push(registration.client);
