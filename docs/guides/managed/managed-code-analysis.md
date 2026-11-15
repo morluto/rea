@@ -56,8 +56,7 @@ NaN and infinities are the strings `-0`, `NaN`, `Infinity` or `-Infinity`;
 NULs and unpaired surrogates, are preserved.
 
 `constant: null` means neither a Constant declaration nor `HasDefault` was
-observed. Historical Evidence can omit the field entirely; omission does not
-prove that the artifact has no default. Missing or duplicate declarations,
+observed. Missing or duplicate declarations,
 inconsistent flags, malformed values and unsupported element types return
 `state: "unavailable"`, a limitation and partial coverage while retaining other
 member facts. This decoding shares the existing metadata representation budget
@@ -148,9 +147,9 @@ Collections are `types`, `exported_types`, `fields`, `methods`, `member_refs`,
 `call_edges`, `field_accesses` and `user_strings` (the literals). Each page names
 its collection, retains original rows, order, tokens, signatures and body facts,
 and carries the source selection and coverage; `user_strings` pages carry the
-literal pool's own coverage. Older Evidence that never examined exported types
-or user strings reports a null count and refuses those pages rather than
-returning an empty one.
+literal pool's own coverage. Evidence whose member decoding exceeded capacity
+never examined exported types or user strings; it reports a null count and
+refuses those pages rather than returning an empty one.
 
 To find specific retained members without returning their IL anchors, select
 exact names and defining types, then project columns:
@@ -298,8 +297,7 @@ When either side's member inspection exceeds its representation budget, the
 comparison limitations name that side and its `resource-limit` diagnostic; its
 empty member collections do not establish added or removed members. Each side's
 `resource_limits` preserves the reported diagnostic's code, scope, detail and
-nullable offset. An empty array means no resource limit was reported; historical
-comparisons omit this field, leaving those diagnostics unrecorded. Always read
+nullable offset. An empty array means no resource limit was reported. Always read
 the comparison coverage alongside member counts. To compare
 a smaller selection, pass the same repeatable `--type` full names that
 `inspect-managed-members --type` accepts to `compare-managed-members`, which
@@ -363,8 +361,8 @@ namespace-qualified spelling. Nested declarations also accept their bare
 types with that name. Selection uses the parsed TypeDef facts and comparison
 uses the returned declaring types, rather than reconstructing scope from the
 caller's spelling. Each type's `enclosing_type_token` records its enclosing
-TypeDef. `nesting_read` distinguishes complete source rows (true), incomplete
-current rows (false), and historical Evidence (null). A null enclosing token
+TypeDef. `nesting_read` distinguishes complete source rows (true) from
+incomplete rows (false). A null enclosing token
 alone does not establish that a type is top-level.
 Each selected type also retains `name_sha256`, a framed digest of its namespace,
 name and enclosing names. It uses the same bounded, cached owner as signature
@@ -381,17 +379,14 @@ remain an assembly-wide inventory, so output size is not guaranteed to be small.
 Coverage describes the selected members. Comparisons leave members outside the
 opposite observation's selection unknown, and application graphs report their
 selected scope as partial. Neither makes an absence claim about the whole
-assembly. Older member Evidence without `selection` remains readable. The
-comparison resolves a member's declaring TypeDef token in its own source, then
+assembly. The comparison resolves a member's declaring TypeDef token in its own source, then
 checks that nominal `name_sha256` against the opposite selected type set.
 Pairing, absence and aggregate selected-scope agreement share these retained
 facts, including enclosing names, rather than requested spellings or display
 labels. Equivalent requests can cover the same types, while the same display
 name can select different nested owners. Such disjoint selected owners cannot
 establish a member pair or added/removed status even when both inventories are
-complete. Missing nominal identities cannot establish selected membership,
-including historical selected Evidence that retains only display names;
-the explicitly limited historical whole-inventory comparison remains available.
+complete. Missing nominal identities cannot establish selected membership.
 Incomplete selected inventories or missing identities leave aggregate agreement
 unknown and coverage partial; known observed member pairs remain available.
 Complete empty selected inventories agree even if their unmatched request names
@@ -400,9 +395,9 @@ inventories remain distinct scopes, and each source retains its exact request.
 The `method_rows` interval records the examined zero-based MethodDef offset, row
 count and full table total before type selection. A complete observation can
 cover only that interval. Comparison keeps omissions from a method page unknown:
-build-local row positions cannot prove member absence across builds. Historical
-Evidence without this interval also cannot establish method absence; observed
-pairs and field inventory comparisons remain available.
+build-local row positions cannot prove member absence across builds.
+`method_rows: null` (the row scope was not examined) also cannot establish
+method absence; observed pairs and field inventory comparisons remain available.
 
 For MCP callers, request `detail: "summary"` and page the `types` collection
 using the returned parent Evidence ID. Select one or more returned full names
@@ -435,8 +430,8 @@ under a `type_names` selection), because `ldstr` instructions there were not
 observed. Normalized CIL digests do not include decoded values.
 `compare_managed_members` does not decode or compare literals: an unchanged
 method does not establish unchanged strings, and the comparison says so in its
-limitations. Older member Evidence without `user_strings` reads as `null`: not
-examined.
+limitations. `user_strings: null` means the literals were not examined
+(member decoding exceeded capacity or CLI metadata was unavailable).
 
 ### Edge target declaring types
 
@@ -458,7 +453,6 @@ with as many type arguments as it declares. Malformed or unsupported rows and
 blobs, and arity mismatches, make coverage partial. A readable MethodSpec
 method column that names a method, or a TypeRef whose resolution scope is
 invalid, keeps its name.
-Older member Evidence without these fields reads them as `null`: unknown.
 
 ## Analysis objective
 
@@ -488,7 +482,7 @@ instruction sites rather than array positions and compares these identities;
 display labels alone cannot establish equal targets. Same-named nested types
 under different enclosing types and different overload signatures stay distinct.
 This is nominal metadata identity, not assembly resolution or runtime binding.
-Historical edges without a site or identity, unresolved/cyclic type scopes,
+Edges without a resolved identity, unresolved/cyclic type scopes,
 TypeSpec owners and unresolved MethodSpec instantiations retain unknown target
 equivalence. Valid MethodSpecs combine the base member identity with the
 resolved instantiation signature, preserving generic argument distinctions.
@@ -501,9 +495,7 @@ A current declared type uses its observed `name_sha256`, so same-named nested
 types in different enclosing types stay distinct even in selected inventories.
 Malformed, missing, contradictory, cyclic or over-deep enclosing identity remains unknown;
 the comparison preserves display names without using them to repair that gap.
-Historical observations retain an explicitly limited bare-name mode when either
-side predates the identity facts. A known current identity gap still remains
-unknown beside a historical observation. Matching then pairs
+Matching then pairs
 methods by exact CIL/signature identity, then by signature, then by
 structural body shape; fields by signature. Exact CIL/signature identity
 requires equal raw CIL digests and decoded fingerprints. Equal decoded
@@ -551,17 +543,16 @@ custom modifiers are named too. Valid but unresolved TypeSpecs, invalid scopes,
 unreadable type names, cycles and nesting beyond the cap keep their raw operand
 spelling. Invalid or missing metadata coordinates retain the existing malformed
 signature result and source issue; rendering does not bypass validation.
-Version 1 Evidence remains readable and compares using the same digest policy.
-Historical Evidence defaults this attestation to `null`. When either
-observation predates resolution, both sides compare raw digests, which pair only where type rows agree,
-and the comparison reports that limitation. The signature is exact whether or
+The attestation is `null` only when member decoding exceeded capacity, and then
+no members were examined: an inspection with `null` resolution and any field,
+method, member reference, call edge or field access is malformed. The signature
+is exact whether or
 not REA decoded it, so undecoded signatures pair by that tuple too, but they
 never enter structural rounds. An unmatched member is therefore reported as
 `unknown`, not added or removed, when its own signature was not decoded or when
 the other side has an unpaired member, one-sided or ambiguous, with the same
-declared type and name whose signature was not decoded. When both observations
-attest type-name resolution, a decoded signature that still compares by its raw
-digest is treated the same way: an unmatched member with one, or beside an
+declared type and name whose signature was not decoded. A decoded signature
+that still compares by its raw digest is treated the same way: an unmatched member with one, or beside an
 unpaired same-named member with one, is `unknown`, because its raw bytes name
 types by build-local row. A matched unresolved signature also remains unknown
 unless another observed dimension establishes a change; identical row bytes
@@ -670,12 +661,10 @@ signature has the other member kind is malformed and cannot establish an
 unchanged signature. Comparison retains exact byte-based pairs for malformed
 signatures, including empty, truncated, or invalid headers, but reports them as
 unknown with a `signature-malformed` limitation when no change is observed.
-This applies to historical Evidence without signature-resolution attestation as
-well. Runtime-provided methods have the Runtime code type or the InternalCall
+Runtime-provided methods have the Runtime code type or the InternalCall
 implementation flag, as core library FCalls do. They are counted separately in
 `native_implementations.runtime_provided`; they have no file-backed native body
-for this workflow to map and do not increase `native_body_unresolved`. Historical
-verification Evidence without this separate count leaves it unknown (`null`).
+for this workflow to map and do not increase `native_body_unresolved`.
 
 An empty declared import name remains unchanged in verification Evidence and
 produces no native-name candidates. With a supplied PE native context and
@@ -774,9 +763,9 @@ as .NET `System.Runtime.dll` provide their types this way: `forwarder: true`
 marks a type forwarder, and `implementation_token` names the AssemblyRef, File,
 or enclosing ExportedType row that implements it. REA does not load the
 implementing assembly to resolve the forwarded definition, and
-`compare_managed_members` does not compare exported types. Member Evidence
-recorded before this field existed reads back with `exported_types: null`,
-which means the table was not examined.
+`compare_managed_members` does not compare exported types. `exported_types:
+null` means the table was not examined. Member Evidence without this field is
+malformed; recreate the observation with the current release.
 
 CLI `#GUID` heap values retain their exact 16-byte GUID text. REA does not impose
 RFC 4122 UUID version or variant bits on MVID, EncId, or EncBaseId because
@@ -790,7 +779,7 @@ A fat method header's nonzero LocalVarSigTok must name an existing StandAloneSig
 row whose blob is a structurally valid LocalVarSig. REA validates its local
 types and exact blob coverage, retaining `local_var_signature` with the raw blob
 digest and whether named types, modifiers, or generic variables require metadata
-or declaring context. Historical Evidence defaults this field to null. An invalid
+or declaring context; it is null when the method has no locals signature. An invalid
 token or malformed signature leaves decoded CIL anchors intact but marks the
 body malformed and coverage partial. Unsupported local type encodings retain
 the readable body with partial coverage. Zero continues to mean no locals
@@ -1001,11 +990,10 @@ For complete bodies, presence or absence of a locals signature also contributes;
 the locals table token is build-local and is not compared. Different validated
 context-free LocalVarSig digests report a metadata encoding difference without
 asserting a semantic type change. Equal digests establish unchanged bytes only
-when neither signature requires metadata or declaring context. Historical
-unrecorded signatures and context-dependent signatures keep local identity
-unknown, preserving any independently observed changes. The same method token
+when neither signature requires metadata or declaring context. Absent and
+context-dependent signatures keep local identity unknown, preserving any independently observed changes. The same method token
 in an artifact with the same authenticated SHA-256 identifies the same local
-signature bytes, including for retained historical Evidence.
+signature bytes.
 An unavailable header value keeps body coverage unknown rather than establishing
 equality or a difference. These comparisons are separate from the CIL/signature
 matching tiers: identical instructions do not establish unchanged method metadata.

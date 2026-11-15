@@ -166,7 +166,7 @@ const networkEventShape = {
   ...eventBase,
   transaction_id: z.string().min(1),
   redirected_from_transaction_id: z.string().min(1).nullable(),
-  /** Distinguishes a captured root from an unobserved predecessor for null links. */
+  /** Present exactly when the predecessor ID is null: a captured root or an unobserved predecessor. */
   redirected_from_transaction_state: z.enum(["root", "unknown"]).optional(),
   method: z.string().min(1),
   url: sanitizedBrowserUrlSchema,
@@ -282,15 +282,15 @@ export const browserScenarioEventSchema = z
     }),
   ])
   .superRefine((event, context) => {
-    if (
-      "redirected_from_transaction_id" in event &&
-      event.redirected_from_transaction_id !== null &&
-      event.redirected_from_transaction_state !== undefined
-    )
+    if (!("redirected_from_transaction_id" in event)) return;
+    const linked = event.redirected_from_transaction_id !== null;
+    const stated = event.redirected_from_transaction_state !== undefined;
+    if (linked === stated)
       context.addIssue({
         code: "custom",
-        message:
-          "Redirect state is valid only when the predecessor transaction ID is null",
+        message: linked
+          ? "Redirect state is valid only when the predecessor transaction ID is null"
+          : "Redirect state is required when the predecessor transaction ID is null",
         path: ["redirected_from_transaction_state"],
       });
   });

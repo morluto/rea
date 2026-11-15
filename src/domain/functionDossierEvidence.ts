@@ -1,7 +1,11 @@
 import { ANALYSIS_EVIDENCE_PREDICATE, type Evidence } from "./evidence.js";
 import { AnalysisInputError } from "./analysisErrorCore.js";
 import type { EvidenceIntegrityError } from "./evidenceErrors.js";
-import { readEvidence, readEvidencePayload } from "./evidenceValidation.js";
+import {
+  readEvidence,
+  readEvidencePayload,
+  type EvidenceSourceLocation,
+} from "./evidenceValidation.js";
 import type { JsonValue } from "./jsonValue.js";
 import { err, ok, type Result } from "./result.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
@@ -56,7 +60,12 @@ export const parseFunctionEvidence = (
     readonly path: readonly (string | number)[];
   },
 ): Result<FunctionSnapshot, AnalysisInputError | EvidenceIntegrityError> => {
-  const parsed = readEvidence(input);
+  const [first] = selection.path;
+  const side: Pick<EvidenceSourceLocation, "side"> =
+    selection.path.length === 1 && (first === "left" || first === "right")
+      ? { side: first }
+      : {};
+  const parsed = readEvidence(input, side);
   if (!parsed.ok) return parsed;
   const evidence = parsed.value;
   const invalidSelection = (message: string, expected?: JsonValue) =>
@@ -96,6 +105,7 @@ export const parseFunctionEvidence = (
   const dossier = readEvidencePayload(
     functionDossierSchema,
     evidence.normalized_result,
+    { ...side, within: ["normalized_result"] },
   );
   if (!dossier.ok) return dossier;
   const callCoverage = assessFunctionCallCoverage(

@@ -1,3 +1,4 @@
+import { OwnerCancellation } from "../domain/analysisErrorCore.js";
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
 import { isAbortOf } from "../process/SignalAbort.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -102,7 +103,7 @@ export const downloadHopperPackage = async (
   const deadline = new AbortController();
   const expire = (limit: "stalled" | "deadline", limitMs: number) => {
     expired ??= { limit, timeoutMs: limitMs, receivedBytes };
-    deadline.abort();
+    deadline.abort(OwnerCancellation.deadlineElapsed);
   };
   const overall = setTimeout(() => {
     expire("deadline", timeoutMs);

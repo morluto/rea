@@ -772,7 +772,9 @@ it.skipIf(process.platform === "win32")(
         process.platform,
         { resourceScope },
       );
-      expect(inspection.checks[0]).toMatchObject({
+      expect(
+        inspection.checks.find(({ name }) => name === "version"),
+      ).toMatchObject({
         ok: false,
         code: "cleanup_incomplete",
         details: {
@@ -813,7 +815,9 @@ it.skipIf(process.platform === "win32")(
         process.platform,
         { resourceScope },
       );
-      expect(inspection.checks[0]).toMatchObject({
+      expect(
+        inspection.checks.find(({ name }) => name === "version"),
+      ).toMatchObject({
         ok: false,
         code: "cleanup_incomplete",
         details: {
@@ -1034,10 +1038,14 @@ it.skipIf(process.platform === "win32").each(
         ).then(
           (inspection) => {
             expect(closeRefusal).toBe(true);
-            expect(inspection.checks[0]).toMatchObject({
+            expect(
+              inspection.checks.find(({ name }) => name === "version"),
+            ).toMatchObject({
               code: "cleanup_incomplete",
             });
-            diagnostics = inspection.checks[0]?.details;
+            diagnostics = inspection.checks.find(
+              ({ name }) => name === "version",
+            )?.details;
           },
           (cause: unknown) => {
             if (!(cause instanceof AnalysisError)) throw cause;

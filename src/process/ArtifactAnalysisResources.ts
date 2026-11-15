@@ -12,12 +12,13 @@ import {
   AnalysisError,
   type AnalysisCapturedOutput,
   type AnalysisErrorOptions,
-  type AnalysisPartialObservation,
 } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisArtifactChangedError,
   AnalysisResourceConstraintError,
+  AnalysisOutputError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -140,9 +141,10 @@ export class ArtifactAnalysisResources {
     if (this.#closed || signal?.aborted)
       return Promise.resolve(
         err(
-          new AnalysisCancelledError(operation, {
-            cause: signal?.aborted ? signal.reason : undefined,
-          }),
+          cancelledBy(
+            operation,
+            carriedReason(signal?.aborted ? signal.reason : undefined),
+          ),
         ),
       );
     if (this.#busy)
@@ -165,11 +167,7 @@ export class ArtifactAnalysisResources {
           // this scope has drained it and admits acquisition for the new request.
           this.#artifacts.operation = operation;
           if (signal?.aborted)
-            return Promise.resolve(
-              err(
-                new AnalysisCancelledError(operation, { cause: signal.reason }),
-              ),
-            );
+            return Promise.resolve(err(cancelledBy(operation, signal)));
           return work();
         }),
       )
@@ -315,12 +313,6 @@ export class ArtifactAnalysisResources {
     return ownership === undefined
       ? [root.path]
       : ownedCommandResources(ownership, root.path);
-  }
-
-  get #pendingResources(): readonly string[] {
-    return [...this.#pending.keys()].flatMap((root) =>
-      this.#resourcesFor(root),
-    );
   }
 
   async release(): Promise<void> {
@@ -527,57 +519,6 @@ export class ArtifactAnalysisResources {
       dialect: (_outcome, _details, unclassified) =>
         unclassified(this.providerId),
     };
-  }
-
-  async finish<T>(
-    result: Result<T, AnalysisError>,
-    observation: (value: T) => AnalysisPartialObservation,
-    operation = this.operation,
-    signal?: AbortSignal,
-  ): Promise<Result<T, AnalysisError>> {
-    try {
-      await this.release();
-      if (result.ok && signal?.aborted)
-        return err(
-          new AnalysisCancelledError(operation, {
-            cause: signal.reason,
-            partialObservation: observation(result.value),
-          }),
-        );
-      return result;
-    } catch (cause: unknown) {
-      const partialObservation = result.ok
-        ? observation(result.value)
-        : result.error.partialObservation;
-      const primary = !result.ok
-        ? result.error
-        : signal?.aborted
-          ? new AnalysisCancelledError(operation, {
-              cause: signal.reason,
-              partialObservation,
-            })
-          : undefined;
-      const cleanup =
-        cause instanceof AnalysisError
-          ? cause
-          : new ProviderCleanupError(
-              this.providerId,
-              this.#pendingResources,
-              { reason: String(cause) },
-              { operation, cause },
-            );
-      const failure =
-        primary === undefined
-          ? cleanup
-          : analysisErrorWithCleanupFailure(
-              primary,
-              cleanup,
-              operation,
-            ).bindCleanupDependencies([primary, cleanup]);
-      if (partialObservation !== undefined)
-        failure.retainPartialObservation(partialObservation);
-      return err(failure);
-    }
   }
 
   close(): Promise<void> {

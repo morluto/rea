@@ -1,3 +1,4 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import type { EvmWorkerLimits } from "./EvmWorkerLimits.js";
 import type {
   AnalysisCapturedOutput,
@@ -14,7 +15,6 @@ import type { ProviderOutcomeContext } from "../process/classifyProviderOutcome.
 import type { ProviderFailureDialect } from "../providers/classifyProviderFailure.js";
 import {
   DEFAULT_EVM_TIMEOUT_MS,
-  MAX_EVM_TIMEOUT_MS,
   selectedEvmProducerLimits,
   evmProducerLimitRecovery,
   type EvmProducerLimits,
@@ -50,9 +50,9 @@ export const evmReplyBudgetFailure = (
 
 const evmTimeoutRecovery = (timeoutMs: number): string =>
   `${
-    timeoutMs < MAX_EVM_TIMEOUT_MS
-      ? `Increase timeout_ms above ${String(timeoutMs)} (integer milliseconds, maximum ${String(MAX_EVM_TIMEOUT_MS)}), or use rea inspect-evm-interface <path> <encoding> --timeout-ms <milliseconds> on the CLI.`
-      : `timeout_ms is already at the maximum supported ${String(MAX_EVM_TIMEOUT_MS)} ms; no higher worker deadline is supported. Report this blocker or select another suitable complete carrier with caller approval.`
+    timeoutMs < MAX_NODE_TIMER_DELAY_MS
+      ? `Increase timeout_ms above ${String(timeoutMs)} (integer milliseconds, maximum ${String(MAX_NODE_TIMER_DELAY_MS)}), or use rea inspect-evm-interface <path> <encoding> --timeout-ms <milliseconds> on the CLI.`
+      : `timeout_ms is already at the maximum supported ${String(MAX_NODE_TIMER_DELAY_MS)} ms; no higher worker deadline is supported. Report this blocker or select another suitable complete carrier with caller approval.`
   } This is a per-call setting; no server restart is needed. It covers the owned EVMole worker command, not carrier acquisition or final reply reads. Allow the MCP client deadline to cover acquisition, the worker, reply reads, cleanup and delivery; increasing only that client deadline does not change this budget. Separate producer_limits control carrier/reply/diagnostic bytes, address-space/file bytes and CPU seconds; timeout_ms does not raise them. The 256 MiB worker heap stays independent. Resolve any incomplete cleanup before retrying; do not repeat the unchanged failed call.`;
 
 /** Correlate a reserved exit with the owned worker's actual failure branch. */

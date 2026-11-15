@@ -1,3 +1,4 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import type {
   ProgressReporter,
   ProgressUpdate,
@@ -19,9 +20,6 @@ import { err, type Result } from "../domain/result.js";
 /** A request oversize refusal is reported before the request reaches Hopper. */
 type HopperRequestFailure = HopperError | AnalysisResourceConstraintError;
 type HopperRequestResult = Result<JsonValue, HopperRequestFailure>;
-
-/** Node timer ceiling; larger deadlines would be clamped instead of honored. */
-const MAX_TIMEOUT_MS = 2_147_483_647;
 
 interface HopperRequestQueueOptions {
   readonly signal?: AbortSignal;
@@ -86,12 +84,12 @@ export class HopperRequestQueue {
       timeoutMs !== undefined &&
       (!Number.isInteger(timeoutMs) ||
         timeoutMs < 0 ||
-        timeoutMs > MAX_TIMEOUT_MS)
+        timeoutMs > MAX_NODE_TIMER_DELAY_MS)
     )
       return Promise.resolve(
         err(
           new HopperProtocolError(
-            `Hopper timeoutMs must be an integer between 0 and ${String(MAX_TIMEOUT_MS)}`,
+            `Hopper timeoutMs must be an integer between 0 and ${String(MAX_NODE_TIMER_DELAY_MS)}`,
           ),
         ),
       );

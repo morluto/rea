@@ -1,3 +1,5 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { processInspectionCancellationError } from "../providers/OwnedCommandCleanup.js";
 import { APKTOOL_PROVIDER_IDENTITY } from "./ApktoolProviderIdentity.js";
 import { countDecodedFiles } from "./ApktoolDecodedInventory.js";
@@ -39,7 +41,6 @@ import {
   apktoolResultSchemas,
   apktoolStringTablesRequested,
   DEFAULT_APKTOOL_DECODE_TIMEOUT_MS,
-  MAX_APKTOOL_DECODE_TIMEOUT_MS,
   type ApktoolRequest,
   type ApktoolDecodeResult,
 } from "../domain/apktool/apktoolResourceAnalysis.js";
@@ -55,6 +56,7 @@ import {
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { finalizedResult, runOwned } from "../providers/runOwned.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
@@ -104,9 +106,9 @@ const apktoolDecodeTimeoutGuidance = (
 ): { readonly userMessage: string; readonly remediationAction: string } => ({
   userMessage: `apktool decode reached its ${String(timeoutMs)} ms wall-clock deadline (deadlineExpired).`,
   remediationAction: `${
-    timeoutMs < MAX_APKTOOL_DECODE_TIMEOUT_MS
-      ? `Increase decode_timeout_ms above ${String(timeoutMs)} (integer milliseconds from 1 to ${String(MAX_APKTOOL_DECODE_TIMEOUT_MS)}; omitted means ${String(DEFAULT_APKTOOL_DECODE_TIMEOUT_MS)}), or use rea decode-android-resources <path> --decode-timeout-ms <milliseconds> on the CLI.`
-      : `decode_timeout_ms is already at the maximum ${String(MAX_APKTOOL_DECODE_TIMEOUT_MS)} ms; do not increase it further.`
+    timeoutMs < MAX_NODE_TIMER_DELAY_MS
+      ? `Increase decode_timeout_ms above ${String(timeoutMs)} (integer milliseconds from 1 to ${String(MAX_NODE_TIMER_DELAY_MS)}; omitted means ${String(DEFAULT_APKTOOL_DECODE_TIMEOUT_MS)}), or use rea decode-android-resources <path> --decode-timeout-ms <milliseconds> on the CLI.`
+      : `decode_timeout_ms is already at the maximum ${String(MAX_NODE_TIMER_DELAY_MS)} ms; do not increase it further.`
   } A change applies on the next decode. It does not raise the ${String(DECODE_MAX_OUTPUT_BYTES)}-byte output capture allowance or the version probe; both have no runtime override. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
 });
 
@@ -296,12 +298,15 @@ export class ApktoolProvider {
     this.selectedEnvironment =
       options.environment === undefined
         ? undefined
-        : snapshotEnvironment(options.environment);
+        : snapshotEnvironment(options.environment, HOST_PLATFORM.platform);
     this.removeWorkspace = options.removeWorkspace;
   }
 
   private operationEnvironment(): Readonly<NodeJS.ProcessEnv> {
-    return this.selectedEnvironment ?? snapshotEnvironment(process.env);
+    return (
+      this.selectedEnvironment ??
+      snapshotEnvironment(process.env, HOST_PLATFORM.platform)
+    );
   }
 
   /** Probe the selected apktool launcher; decodes nothing. */
@@ -765,44 +770,31 @@ export class ApktoolProvider {
         });
       result = err(retained);
     }
-    const released = await this.#artifacts.release(owner);
-    const observation =
-      result.ok && (released.kind === "failed" || signal?.aborted === true)
-        ? createAnalysisExecutionEvidence(
+    const completed = result;
+    return finalizedResult(
+      await runOwned(async () => completed, {
+        providerId: "apktool",
+        operation,
+        signal,
+        close: async () => {
+          const released = await this.#artifacts.release(owner);
+          if (released.kind === "failed")
+            throw new ProviderCleanupError(
+              "apktool",
+              [root],
+              {},
+              { operation, cause: released.cause },
+            );
+        },
+        cleanupLeases: [lease],
+        partial: (execution) =>
+          createAnalysisExecutionEvidence(
             operation,
             input,
-            result.value,
+            execution,
             "observed",
-          )
-        : undefined;
-    if (result.ok && signal?.aborted)
-      result = err(
-        cancelledBy(operation, signal, { partialObservation: observation }),
-      );
-    if (released.kind === "failed") {
-      const cleanup = new ProviderCleanupError(
-        "apktool",
-        [root],
-        {},
-        {
-          operation,
-          cause: released.cause,
-          ...(observation === undefined
-            ? {}
-            : { partialObservation: observation }),
-        },
-      );
-      new AnalysisCleanupLeaseGroup(cleanup, [lease]);
-      return err(
-        result.ok
-          ? cleanup
-          : analysisErrorWithCleanupFailure(
-              result.error,
-              cleanup,
-              operation,
-            ).bindCleanupDependencies([result.error, cleanup]),
-      );
-    }
-    return result;
+          ),
+      }),
+    );
   }
 }

@@ -1,4 +1,5 @@
 import { EvmAdmissionError } from "./EvmAdmissionError.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -44,12 +45,13 @@ import {
   type AnalysisCapturedOutput,
 } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
+  type AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisUnsupportedTargetError,
   AnalysisInputError,
   AnalysisOutputError,
   cancelledBy,
+  carriedReason,
   type AbortedSignal,
 } from "../domain/analysisErrorCore.js";
 import { isAbortOf } from "../process/SignalAbort.js";
@@ -93,7 +95,6 @@ import {
 
 const OPERATION = "inspect_evm_interface";
 
-/** The caller's own abort, keeping any read cleanup bound to the report. */
 /** The caller's cancellation, observed as `signal`'s own abort. */
 const abortedFailure = (
   signal: AbortedSignal,
@@ -148,8 +149,7 @@ const selectEvmLimiter = async (
   operation = OPERATION,
 ): Promise<Result<EvmLimiterSelection, EvmLimiterUnavailable> | undefined> => {
   const throwIfAborted = (): void => {
-    if (signal?.aborted)
-      throw new AnalysisCancelledError(operation, { cause: signal.reason });
+    if (signal?.aborted) throw cancelledBy(operation, signal);
   };
   throwIfAborted();
   const platform = probes?.platform ?? process.platform;
@@ -377,10 +377,11 @@ const evmReplyCompletionFailure = (
 ): AnalysisError => {
   const cancellation =
     cause.reason === "cancelled"
-      ? new AnalysisCancelledError(OPERATION, {
-          cause: artifactFileCancellationCause(cause),
-          capturedOutput,
-        })
+      ? cancelledBy(
+          OPERATION,
+          carriedReason(artifactFileCancellationCause(cause)),
+          { capturedOutput },
+        )
       : undefined;
   if (cause.cleanup === undefined) {
     if (cancellation !== undefined) return cancellation;
@@ -447,7 +448,10 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
     if (this.#closing) return Promise.resolve(err(this.#closedError()));
     const operation = this.#tail.then(async () => {
       if (this.#closing) return err(this.#closedError());
-      const environment = snapshotEnvironment(this.environment);
+      const environment = snapshotEnvironment(
+        this.environment,
+        HOST_PLATFORM.platform,
+      );
       try {
         return await this.#resources.run(() =>
           this.#inspect(input, environment, options),
@@ -538,9 +542,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
     let result: Result<EvmInterfaceExecution, AnalysisError>;
     try {
       if (options?.signal?.aborted)
-        throw new AnalysisCancelledError(OPERATION, {
-          cause: options.signal.reason,
-        });
+        throw cancelledBy(OPERATION, options.signal);
       if (!evmHostSupported(process.platform, process.arch))
         throw new AnalysisCapabilityUnavailableError(
           EVMOLE_PROVIDER_IDENTITY.id,
@@ -704,11 +706,11 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
           cause instanceof ArtifactReaderFailure &&
           cause.reason === "cancelled"
         ) {
-          const failure = new AnalysisCancelledError(OPERATION, {
-            cause: artifactFileCancellationCause(cause),
-            capturedOutput,
-            ...(cleanup === undefined ? {} : { cleanup }),
-          });
+          const failure = cancelledBy(
+            OPERATION,
+            carriedReason(artifactFileCancellationCause(cause)),
+            { capturedOutput, ...(cleanup === undefined ? {} : { cleanup }) },
+          );
           if (cause instanceof ArtifactReaderFailure)
             bindArtifactFileCleanup(cause, failure);
           throw failure;
@@ -945,8 +947,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
     const retainCancellation = (outcome: EvmOutcome): EvmOutcome =>
       outcome.ok && options?.signal?.aborted
         ? err(
-            new AnalysisCancelledError(OPERATION, {
-              cause: options.signal.reason,
+            cancelledBy(OPERATION, options.signal, {
               partialObservation: evmInterfaceEvidence(input, outcome.value),
               ...(retainedOutput === undefined
                 ? {}

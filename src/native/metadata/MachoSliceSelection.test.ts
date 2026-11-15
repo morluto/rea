@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import type { MachoSliceArchitecture } from "../../domain/apple/machoTargetSelection.js";
 import { machoArm64Initializers } from "../initializers/NativeInitializers.fixture.js";
-import { selectNativeImage } from "./MachoSliceSelection.js";
+import { selectMachoSlice } from "./MachoSliceSelection.js";
+
+const selectNativeImage = (
+  bytes: Buffer,
+  architecture: MachoSliceArchitecture | undefined,
+) => selectMachoSlice(bytes, { mode: "architecture", architecture });
 
 const CPU_ARM = 12;
 const CPU_X86_64 = 0x01000007;
@@ -104,7 +109,7 @@ describe("selectNativeImage subtype names", () => {
     const arm64e = select(cpus, "arm64e");
     // The refusal is the caller's to correct and names a selector that works,
     // which the next selection proves.
-    expect(arm64e.kind).toBe("architecture");
+    expect(arm64e.kind).toBe("ambiguous_architecture");
     expect(arm64e.offset).toBeUndefined();
     expect(arm64e.message).toMatch(/Select architecture arm64\.$/u);
     const arm64 = select(cpus, "arm64");
@@ -123,7 +128,7 @@ describe("selectNativeImage subtype names", () => {
       ],
       "arm64e",
     );
-    expect(ambiguous.kind).toBe("architecture");
+    expect(ambiguous.kind).toBe("architecture_not_present");
     expect(ambiguous.message).not.toMatch(/Select architecture/u);
     // A lone family slice is read by its family name, so the refusal names it.
     const lone: readonly (readonly [number, number])[] = [
@@ -131,7 +136,7 @@ describe("selectNativeImage subtype names", () => {
       [CPU_ARM64, 0],
     ];
     const refused = select(lone, "arm64e");
-    expect(refused.kind).toBe("architecture");
+    expect(refused.kind).toBe("architecture_not_present");
     expect(refused.message).toMatch(/Select architecture arm64\.$/u);
     expect(select(lone, "arm64").offset).toBeDefined();
   });

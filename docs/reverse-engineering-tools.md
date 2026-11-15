@@ -275,6 +275,9 @@ REA's packaged `bridge/cutter/rea_bridge.py`, `modified` when it differs, and
 `unknown` when the plugin predates this field. `cutter_command` refuses a
 `modified` session before sending anything and names the packaged plugin to
 copy into Cutter's `plugins/python` directory. An `unknown` session still runs.
+For `modified` and `unknown` sessions, discovery also returns
+`bridge_source_recovery`, which names the packaged plugin to copy before
+restarting Cutter.
 
 The client and plugin must support the current v2 handshake; older peers are
 rejected before dispatch because they cannot preserve cross-caller recovery proof.
@@ -347,6 +350,6 @@ generation error.
 
 ## Configuration and coverage
 
-The optional `REA_OBJDUMP_COMMAND`, `REA_GDB_COMMAND`, and `REA_RIZIN_COMMAND` values select executable names or paths; otherwise REA searches `PATH`. Values are passed directly to process spawning, not expanded as shell command lines. A host executable launch refusal preserves the selected command and host error code, with recovery through the corresponding command setting, PATH, or execute/search permissions. GDB does not retry that refusal with MI2; its MI2 fallback applies to protocol initialization failures. Provider versions and capabilities remain unknown until observed from the installed tool and verified in the corresponding real-provider lane.
+The optional `REA_OBJDUMP_COMMAND`, `REA_GDB_COMMAND`, and `REA_RIZIN_COMMAND` values select executable names or paths; otherwise REA searches `PATH`. On Windows, REA searches `PATH` and `PATHEXT` for a bare objdump or Rizin name itself and refuses with `capability_unavailable` (`boundary: "provider-lookup"`) when it is not found, rather than letting Windows also search the current directory. Values are passed directly to process spawning, not expanded as shell command lines. A host executable launch refusal preserves the selected command and host error code, with recovery through the corresponding command setting, PATH, or execute/search permissions. GDB does not retry that refusal with MI2; its MI2 fallback applies to protocol initialization failures. Provider versions and capabilities remain unknown until observed from the installed tool and verified in the corresponding real-provider lane.
 
 Provider capture limits are separate from the MCP response budget. A result that fits the provider limit may still exceed the default 10 MiB MCP response budget and return a transport `resource_constraint`. Configure `REA_MCP_MAX_RESPONSE_BYTES` to match a larger client receive buffer when that client supports one; otherwise use retained Evidence/export or complete CLI JSON output. See [MCP response limits](reference/mcp-contracts.md#tool-results).

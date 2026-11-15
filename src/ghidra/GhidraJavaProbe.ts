@@ -1,4 +1,5 @@
 import type { ProcessInspectionFailure } from "../process/ProcessInspectionCleanup.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { classifyLaunchFailureCode } from "../process/launchFailure.js";
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import {
@@ -396,10 +397,10 @@ export const parseGhidraJavaOutput = (
       ? {}
       : { unparsedBits: reportedBits }),
     runtime: executablePath(
-      (process.platform === "win32" ? win32 : posix).join(
+      (HOST_PLATFORM.platform === "win32" ? win32 : posix).join(
         home,
         "bin",
-        process.platform === "win32" ? "javac.exe" : "javac",
+        HOST_PLATFORM.platform === "win32" ? "javac.exe" : "javac",
       ),
     )
       ? "jdk"

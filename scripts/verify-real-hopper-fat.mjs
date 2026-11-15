@@ -1,3 +1,4 @@
+import { schemaVerifierEnvironment } from "./lib/mcp-verification-environment.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
@@ -84,11 +85,11 @@ const client = new Client({ name: "hopper-fat-verifier", version: "1" });
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: ["dist/main.js"],
-  env: {
+  env: schemaVerifierEnvironment({
     ...process.env,
     REA_ANALYSIS_PROVIDER: "hopper",
     HOPPER_LOADER_ARGS_JSON: "[]",
-  },
+  }),
   stderr: "pipe",
 });
 transport.stderr?.on("data", (chunk) => process.stderr.write(chunk));

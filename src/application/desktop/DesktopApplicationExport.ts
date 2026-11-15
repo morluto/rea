@@ -78,6 +78,7 @@ import {
   type TaskSummary,
 } from "./DesktopTaskExport.js";
 import { taskReads } from "./DesktopExportReaders.js";
+import { isRecord } from "../../domain/isRecord.js";
 
 const OPERATION = "export_desktop_application";
 /** Largest seed file the export copies; the state view reads only 64 MiB. */
@@ -135,11 +136,6 @@ export interface DesktopExportResult {
   /** Withheld files seeded all the same, with the person's consent. */
   readonly consented_files: readonly string[];
 }
-
-const isRecord = (
-  value: JsonValue | null | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** The application's dconf groups at the seed, as a dconf key file with the identity scrubbed from its strings. */
 const seedDconf = (

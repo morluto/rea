@@ -2,6 +2,7 @@ import {
   chmod,
   cp,
   mkdir,
+  mkdtemp,
   readFile,
   readdir,
   rename,
@@ -10,11 +11,10 @@ import {
 import { dirname, join, matchesGlob } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { afterAll, beforeAll, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it as sequentialIt } from "vitest";
 import { parse } from "yaml";
 import { z } from "zod";
 
-import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   createTestWorkspace,
   removeTestWorkspace,
@@ -26,8 +26,19 @@ import {
 
 async function commit(directory: string) {
   await git(directory, ["add", "."]);
-  await git(directory, ["commit", "-m", "fix: fixture change"]);
-  return git(directory, ["rev-parse", "HEAD"]);
+  // Git names the full commit in its summary line ("[main 0123…] subject"),
+  // so the case needs no separate rev-parse process.
+  const summary = await git(directory, [
+    "-c",
+    "core.abbrev=no",
+    "commit",
+    "-m",
+    "fix: fixture change",
+  ]);
+  const created = /^\[[^\]]* ([0-9a-f]{40})\]/u.exec(summary)?.[1];
+  if (created === undefined)
+    throw new Error(`Git did not report the fixture commit: ${summary}`);
+  return created;
 }
 
 async function change(
@@ -43,32 +54,42 @@ async function change(
   return commit(directory);
 }
 
-let seed: { directory: string; base: string } | undefined;
-let seedWorkspaceRoot: string | undefined;
+// Every case owns its copied repository and output files, so cases run
+// concurrently; each one mostly waits on Git and plan subprocesses.
+const it = sequentialIt.concurrent;
+
+let seed:
+  | { readonly root: string; readonly directory: string; readonly base: string }
+  | undefined;
+// Owned from creation, so a failed seed setup is still removed.
+let workspaceRoot: string | undefined;
 
 beforeAll(async () => {
   const workspace = await createTestWorkspace("rea-ci-scope-seed-");
-  seedWorkspaceRoot = workspace.root;
+  workspaceRoot = workspace.root;
   const directory = await workspace.mkdir("repository");
-  await git(directory, ["init", "--initial-branch=main"]);
+  // No template: every case copies this repository, and sample hooks are
+  // never run (fixture Git disables hooks).
+  await git(directory, ["init", "--initial-branch=main", "--template="]);
   const base = await change(
     directory,
     ["src/provider.ts", "README.md"],
     "Initial fixture content\n",
   );
-  seed = { directory, base };
+  seed = { root: workspace.root, directory, base };
 });
 
+// Case repositories live in the seed workspace and are removed with it. A
+// per-case cleanup hook would bind to whichever concurrent case is current.
 afterAll(async () => {
-  if (seedWorkspaceRoot !== undefined)
-    await removeTestWorkspace(seedWorkspaceRoot);
+  if (workspaceRoot !== undefined) await removeTestWorkspace(workspaceRoot);
 });
 
 async function fixture() {
   const initial = seed;
   if (initial === undefined)
     throw new Error("CI scope seed was not initialized");
-  const directory = await createTestTempDirectory("rea-ci-scope-");
+  const directory = await mkdtemp(join(initial.root, "case-"));
   // Copy the pristine object database, refs and index; each case owns its mutations.
   await cp(initial.directory, directory, { recursive: true });
   return { directory, base: initial.base };

@@ -319,7 +319,7 @@ describe("CLI JSON input", () => {
         code: "access_denied",
         category: "unavailable",
         details: {
-          operation: "inspect-analysis-view",
+          operation: "inspect_analysis_view",
           path,
           system_code: "EACCES",
           boundary: "filesystem-read",
