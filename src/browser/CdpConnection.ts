@@ -11,6 +11,10 @@ import {
   type CdpCommandParams,
   type CdpCommandResult,
 } from "./protocol/CdpCommands.js";
+import {
+  registeredCdpEvent,
+  type CdpRegisteredEvent,
+} from "./protocol/CdpEvents.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import {
   cdpCleanupGraceExpired,
@@ -28,13 +32,26 @@ import { WEB_RUNTIME_LIMITS } from "../domain/webRuntime.js";
 // wrap to a negative number, which disables its limit check.
 const MAX_WEBSOCKET_PAYLOAD_BYTES = 0x7fff_ffff;
 
+/** One event message as the producer sent it. */
 export interface CdpEvent {
   readonly method: string;
   readonly params: unknown;
   readonly sessionId?: string | undefined;
 }
 
-export interface CdpTransportEvent extends CdpEvent {
+/** An event as subscribers receive it: raw payload plus its registered parse. */
+export interface CdpReceivedEvent extends CdpEvent {
+  /** The payload parsed once by its registered schema; undefined for an unregistered event. */
+  readonly registered: CdpRegisteredEvent | undefined;
+}
+
+/** Admit one event message: parse its payload once by its registered schema. */
+export const receiveCdpEvent = (event: CdpEvent): CdpReceivedEvent => ({
+  ...event,
+  registered: registeredCdpEvent(event.method, event.params),
+});
+
+export interface CdpTransportEvent extends CdpReceivedEvent {
   /** Original WebSocket message payload size, before JSON parsing. */
   readonly wireBytes: number;
 }
@@ -341,9 +358,11 @@ class CdpTransportCore {
       return;
     }
     const wireBytes = bytes.byteLength;
+    const params = "params" in message ? message.params : {};
     const event: CdpTransportEvent = {
       method: message.method,
-      params: "params" in message ? message.params : {},
+      params,
+      registered: registeredCdpEvent(message.method, params),
       wireBytes,
       ...(typeof message.sessionId === "string"
         ? { sessionId: message.sessionId }
