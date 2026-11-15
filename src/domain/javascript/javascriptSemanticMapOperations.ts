@@ -4,8 +4,7 @@ import {
   semanticStaticPropertyName,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
-import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference.js";
-import { semanticOpaqueGlobalMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
+import { isIntrinsicGlobalReference } from "./javascriptSemanticGlobalReference.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import {
   resolveSemanticBindingState,
@@ -61,13 +60,12 @@ export const isIntrinsicMapLookup = (
   }
   if (
     !t.isNewExpression(receiver) ||
-    !isUnmodifiedGlobalReference(receiver.callee, bindings, "Map")
+    !isIntrinsicGlobalReference(receiver.callee, bindings, "Map", callee)
   )
     return false;
   // Iterable construction reads and invokes the instance's set hook. A changed
   // adder can install its own get/delete before the constructed value is read.
   if (receiver.arguments.length > 0 && prototypeMemberMayHaveChanged("set"))
     return false;
-  if (semanticOpaqueGlobalMayHaveChanged(callee, bindings)) return false;
   return index === undefined && seen.size > 0 ? undefined : true;
 };
