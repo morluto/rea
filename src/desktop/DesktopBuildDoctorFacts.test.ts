@@ -884,7 +884,7 @@ it.skipIf(process.platform === "win32")(
         },
       );
       await awaitAcknowledgement(
-        Promise.all([slowReached, closeFailed]).then(() => undefined),
+        Promise.all([slowReached, closeFailed]),
         outcome,
         "slow client probe and failed runner close",
       );

@@ -77,7 +77,7 @@ it("closes one inspector file scope without waiting for another", async () => {
   try {
     await awaitAcknowledgement(started, closingFirst, "first file cleanup");
     await awaitAcknowledgement(
-      closingSecond.then(() => undefined),
+      closingSecond,
       closingFirst,
       "second file cleanup",
     );

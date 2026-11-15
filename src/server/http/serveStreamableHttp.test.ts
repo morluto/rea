@@ -2183,11 +2183,7 @@ it.each(["replacement", "shutdown", "DELETE"] as const)(
           : ending === "shutdown"
             ? served.prepareShutdown()
             : connect(served.url).then((next) => next.client.close());
-      await awaitAcknowledgement(
-        aborted.then(() => undefined),
-        ended,
-        "tool abort",
-      );
+      await awaitAcknowledgement(aborted, ended, "tool abort");
       const reason = await aborted;
       if (ending === "DELETE") expect(reason).toBeInstanceOf(CallerAbort);
       else expect(reason).toBe(OwnerCancellation.ownerClosed);
