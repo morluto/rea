@@ -1,3 +1,4 @@
+import { insideArtifact } from "./artifactRange.js";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { KernelModulePort } from "./KernelModulePort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -13,8 +14,8 @@ import {
   MODULE_SIGNATURE_MAGIC,
   MODULE_SIGNATURE_PKCS7_ID_TYPE,
   type KernelModule,
+  type InspectKernelModuleInput,
 } from "../../domain/native/kernelModule.js";
-import { BINARY_ARCHITECTURES } from "../../domain/binaryTargetTypes.js";
 import { elfArchitecture } from "../../domain/elfFixedHeader.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
@@ -49,11 +50,7 @@ export class KernelModuleService {
     if (
       !report.success ||
       report.data.artifact.path !== input.value.path ||
-      !validReport(
-        report.data,
-        input.value.max_entries,
-        input.value.max_file_bytes,
-      )
+      !validReport(report.data, input.value)
     )
       return err(
         new AnalysisOutputError(
@@ -62,11 +59,8 @@ export class KernelModuleService {
         ),
       );
     const value = report.data;
-    const machine = value.machine;
-    const mapped = machine === null ? undefined : elfArchitecture(machine);
-    const architecture = BINARY_ARCHITECTURES.find(
-      (supported) => supported === mapped,
-    );
+    const architecture =
+      value.machine === null ? undefined : elfArchitecture(value.machine);
     const locations = [
       { kind: "artifact-path" as const, path: value.artifact.path },
       ...rangesOf(value).map((range) => ({
@@ -98,11 +92,6 @@ export class KernelModuleService {
   }
 }
 
-const inside =
-  (fileBytes: number) =>
-  (range: Range): boolean =>
-    range.bytes <= fileBytes && range.offset <= fileBytes - range.bytes;
-
 const rangesOf = (report: KernelModule): Range[] => {
   const found: Range[] = [];
   const add = (range: Range | null | undefined): void => {
@@ -124,6 +113,7 @@ const rangesOf = (report: KernelModule): Range[] => {
 
 const modinfoConsistent = (
   modinfo: NonNullable<KernelModule["modinfo"]>,
+  input: InspectKernelModuleInput,
 ): boolean => {
   const closed =
     modinfo.status === "malformed" || modinfo.status === "unsupported";
@@ -145,6 +135,17 @@ const modinfoConsistent = (
     return false;
   return modinfo.entries.every((entry, index) => {
     if (entry.index !== index) return false;
+    if (new Set(entry.omitted_fields).size !== entry.omitted_fields.length)
+      return false;
+    for (const field of ["key", "value"] as const) {
+      const text = entry[field];
+      if (entry.omitted_fields.includes(field) && text !== null) return false;
+      const maximum =
+        field === "key"
+          ? input.max_modinfo_key_bytes
+          : input.max_modinfo_value_bytes;
+      if (text !== null && text.length > maximum) return false;
+    }
     const rawFits = entry.location.bytes <= MAX_KERNEL_MODULE_RAW_BYTES;
     if (rawFits) {
       if (
@@ -155,7 +156,9 @@ const modinfoConsistent = (
     } else if (entry.raw_hex !== null) return false;
     if (entry.status === "observed")
       return (
-        entry.reason === null && entry.key !== null && entry.value !== null
+        entry.reason === null &&
+        (entry.key !== null || entry.omitted_fields.includes("key")) &&
+        (entry.value !== null || entry.omitted_fields.includes("value"))
       );
     return entry.reason !== null;
   });
@@ -274,13 +277,12 @@ const metadataAbsent = (report: KernelModule): boolean =>
 
 const validReport = (
   report: KernelModule,
-  maxEntries: number,
-  maxBytes: number,
+  input: InspectKernelModuleInput,
 ): boolean => {
   if (
-    report.artifact.bytes > maxBytes ||
-    report.coverage.examined_entries > maxEntries ||
-    !rangesOf(report).every(inside(report.artifact.bytes))
+    report.artifact.bytes > input.max_file_bytes ||
+    report.coverage.examined_entries > input.max_entries ||
+    !rangesOf(report).every(insideArtifact(report.artifact.bytes))
   )
     return false;
   if (report.applicability === "unsupported")
@@ -342,7 +344,7 @@ const validReport = (
     return false;
   if (report.type !== 1) return false;
   return (
-    modinfoConsistent(report.modinfo) &&
+    modinfoConsistent(report.modinfo, input) &&
     versionsConsistent(report.versions) &&
     signatureConsistent(report.signature) &&
     sizedConsistent(report.init_text) &&

@@ -15,6 +15,7 @@ import {
   truncateImage,
 } from "../../tests/fixtures/androidBootImage.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { elf } from "../domain/binaryTarget.fixture.js";
 
 const collect = async (stream: Readable): Promise<Buffer> => {
   const chunks: Buffer[] = [];
@@ -103,7 +104,8 @@ it("extracts a v2 DTB, a v4 signature, and compressed ramdisks as stored", async
     "v2.img",
     buildBootImage({
       version: 2,
-      kernel: Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1, 0]),
+      // A decodable ELF64 little-endian x86-64 header, as classification requires.
+      kernel: elf(2, 1, 62),
       ramdisk: Buffer.alloc(0),
       dtb,
     }),

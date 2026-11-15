@@ -10,7 +10,7 @@ is needed. Arbitrary firmware bytes do not pass native executable admission;
 select a returned ELF separately for supported Ghidra analysis.
 
 On Linux, Binwalk and Unblob run as REA-owned processes and require a
-procps-compatible `ps` on REA's `PATH`; see the shared
+procps-compatible system `ps`; see the shared
 [Linux process prerequisite](../../getting-started/installation.md#linux-owned-process-prerequisite).
 
 ## Compare stored firmware components

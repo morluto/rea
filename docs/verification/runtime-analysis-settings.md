@@ -2,11 +2,16 @@
 
 Historical report added in
 [commit f3ed1657f82188fb90914f745a08849537342a23](https://github.com/morluto/rea/commit/f3ed1657f82188fb90914f745a08849537342a23)
-on 2026-10-25. The exact source revisions used for the checks and measurements
-below were not recorded here. This record does not establish current verification.
+on 2026-10-25. The exact source revisions used for the initial checks and
+measurements were not recorded here. Those results do not establish current
+verification. The initial checks describe the runtime-settings introduction;
+dated follow-ups below preserve their own receipts and coverage limitations.
+Rebasing the implementation does not requalify a later runtime against these
+historical measurements.
 
-Verified on macOS with Node 24.22.1, Java 21.0.12.1 and Ghidra 12.1.4.
-This change adds two MCP tools and 11 runtime defaults without a new dependency.
+The initial verification used macOS with Node 24.22.1, Java 21.0.12.1 and
+Ghidra 12.1.4. That implementation added two MCP tools and 11 runtime defaults
+without a new dependency.
 
 ## Behavioral checks
 
@@ -86,3 +91,101 @@ and regex setting integration have source/boundary coverage, not a new real
 provider run for every setting. Linux/Windows engines and Bun are unverified
 for this change. Client deadlines and receive buffers remain externally owned;
 active worker values are explicitly unobserved in the settings inspection.
+
+## Ghidra budget recovery — 2026-11-09
+
+The existing
+[`verify-real-ghidra-decompile-timeout.mjs`](https://github.com/morluto/rea/blob/main/scripts/verify-real-ghidra-decompile-timeout.mjs)
+now covers p-code projection budgets and native payload admission in the same
+real Program as deadline recovery. It replaces the branch fixture in that lane
+with 5,400 straight-line volatile statements. A preliminary 1,800-statement
+calibration completed under one second, so it did not reproduce deadline
+exhaustion; this was fixture calibration, not a failed provider result.
+
+The retained lane ran once on macOS arm64 with Node 24.22.1, Ghidra 12.1.4 and
+Homebrew OpenJDK 21.0.12.1. It compiled its own Mach-O dylib using
+`cc -dynamiclib -fPIC -O0`; the target was never executed. The lane requested
+a 1 GiB JVM heap, bounded compiler execution to 30 seconds, native recovery
+decompiles to 20 seconds, and the overall run to 180 seconds. The JVM request
+does not bound the separate native decompiler's memory.
+
+Reproduce after the runtime build with an existing Ghidra/JDK installation:
+
+```sh
+GHIDRA_INSTALL_DIR=/path/to/ghidra_12.1.4_PUBLIC \
+JAVA_HOME=/path/to/jdk-21 \
+node scripts/verify-real-ghidra-decompile-timeout.mjs
+```
+
+`REA_DECOMPILE_TIMEOUT_STATEMENTS` selects another source-bounded fixture size
+when calibrating a different host. The verifier refuses a scenario that does
+not naturally exhaust the selected allowance instead of claiming a reproduced
+timeout or payload failure.
+
+The [compact receipt](https://github.com/morluto/rea/blob/main/docs/verification/runtime-analysis-settings-ghidra-2026-11-09.json) retains
+the source/target hashes, profile digest, exact setting facts, native failure
+diagnostics, timings and cleanup lineage. Observed results were:
+
+| Selected control          | Observed failure or omission                                                                                                                          | Recovery in the same Program                                                                                                    |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| P-code operations: 1      | One operation retained, omitted-operation lower bound 1                                                                                               | Raising to 3000 returned eight operations without truncation; lowering to 2 subsequently returned two                           |
+| Inputs per operation: 1   | Five known inputs omitted                                                                                                                             | Restoring 64 returned complete input coverage for the selected function                                                         |
+| Def-use edges: 1          | One edge retained, five omitted                                                                                                                       | Restoring 12000 returned six edges without truncation                                                                           |
+| Native payload: 1 MiB     | Ghidra reported `Response buffer size exceeded`                                                                                                       | Raising to 64 MiB returned 261131 bytes of pseudocode                                                                           |
+| Native deadline: 1 second | The dossier retained 49912 assembly lines and one basic block with unavailable decompiler facets; direct pseudocode returned typed `provider_timeout` | Raising to 20 seconds and selecting payload `null` returned 261131 bytes of pseudocode; the next small function also decompiled |
+
+The complete lane took 16.07 seconds. Initial and final authenticated session
+run IDs both equal `c03f277d-d679-4e85-965b-690474ec4e9c`; the target SHA-256
+remained `4004126020cc5517d75c47cacabc68422a12b3260ccd19c105f9a7df087c69d1`.
+Provider close succeeded, token-verified lineage reported no live descendants,
+and the fixture workspace was removed. Ghidra may replace its native decompiler
+after a timeout; this check establishes Program/session continuity, not native
+child-process continuity.
+
+This lane uses the real provider and authenticated loopback bridge with the
+shared runtime setting store. It does not exercise public CLI or MCP transport
+recovery, Windows, another Ghidra release, or every parameter-use edge boundary.
+The successful payload-null call does not measure the installed default's
+effective ceiling. Timings are observations, not a before/after performance
+comparison. CPU time, peak process-family memory and agent token usage were not
+measured in the retained run.
+
+## Native capture qualification — 2026-11-09
+
+The installed Frida Node SDK and system LLDB also exercised the new capture
+controls through their real application service/provider boundaries on macOS
+arm64. The [compact receipt](https://github.com/morluto/rea/blob/main/docs/verification/native-capture-budget-qualification-2026-11-09.json)
+records the selected/effective policies, observations and cleanup.
+
+Frida's existing local-spawn verifier observed its marker and reported no cleanup
+error. Additional controlled runs selected session allowances of 1 byte, 4 KiB
+and 256 KiB. They respectively retained no event, a tagged payload-truncated
+event, and the complete marker. The 4 KiB case exposes conservative accounting:
+the existing fixed 128 KiB metadata reservation leaves no payload allowance.
+This is explicit truncation, not evidence that the nominal 4 KiB is filled with
+retained bytes. Its first marker assertion failed for that explained reason;
+the subsequent larger-budget experiment does not recover discarded observations.
+
+The production LLDB tracer ran a newly compiled arm64 C fixture with one known
+function entry and a 20-byte stdout line. With `output_bytes: 2`, it retained
+`re`, reported 20 drained bytes and truncation. A new run of the same unchanged
+binary with `output_bytes: 64` returned the complete line, one expected event and
+normal exit. Both targets were confirmed terminated and tracer cleanup succeeded.
+An initial one-second observation elapsed during startup before any event; the
+ten-second-window rerun isolated output retention. No caller target was run.
+
+These checks establish real local producer behavior and cleanup, not public
+MCP/CLI recovery, full AgentEnv execution, remote Frida, Windows/Linux behavior,
+or optimal default sizes. Group cleanup observations are not whole-family peak
+memory measurements. The live Ghidra lane above separately establishes same-Program
+recovery for read-only static analysis.
+
+## Main integration qualification — 2026-11-09
+
+After integration onto main `8dfc47b107afc0cf4b53322a10b94c666fe9e18b`, the
+retained Ghidra lane ran again against the integrated feature code. Its
+[integration receipt](https://github.com/morluto/rea/blob/main/docs/verification/runtime-analysis-settings-ghidra-integration-2026-11-09.json)
+records the new source/target identities and observations. Payload and deadline
+recovery again used one Program with unchanged target bytes, and owned cleanup
+completed. This is a fresh correctness qualification, not a new performance
+comparison or a replacement for the historical measurements above.

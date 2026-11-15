@@ -20,6 +20,11 @@ it("reads a Python 3.9 reference-flagged PYZ table", () => {
   ]);
 });
 
+it("reads marshal one-byte string tags as Latin-1", () => {
+  for (const hex of ["6101000000e9", "4101000000e9", "7a01e9", "5a01e9"])
+    expect(readMarshalSubset(bytes(hex))).toEqual({ ok: true, value: "é" });
+});
+
 it("decodes CPython marshal Unicode with surrogatepass", () => {
   expect(
     readMarshalSubset(

@@ -72,6 +72,14 @@ The planned sequence was one PR per step:
     result, log, record or exported bundle holds; sign-in and licence state
     withheld from the seed and supplied at run time, seeded only with the
     person's recorded consent; known handle values are checked explicitly.
+19. [Several tasks](several-tasks/spec.md): one capture yields several
+    tasks, each checked at its own end checkpoint and, when one was taken,
+    failing at its near miss; the eval lists them all and each is witnessed
+    on its own fresh computer.
+20. [Task difficulty](task-difficulty/spec.md): a build tool solves a
+    bundle's task in fresh computers for a model, 3 times and 2 more unless
+    they passed none or all, within a budget, and records its band, cost,
+    turns and failures per check in the bundle.
 
 Version 1 covers Linux with X11, applications whose state lives in files or
 SQLite under the home directory, and real applications from public packages.

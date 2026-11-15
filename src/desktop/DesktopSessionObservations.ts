@@ -11,6 +11,10 @@ import {
   readLinuxProcessStat,
 } from "../process/capture/LinuxProcessSampling.js";
 import type { ProcessLifecycle } from "../process/ProcessLifecycle.js";
+import {
+  processInspectionCleanupFailures,
+  processInspectionCancellations,
+} from "../process/ProcessInspectionCleanup.js";
 import { readProcessRunId } from "../process/ProcessOwnership.js";
 import { systemProcessOwnershipHost } from "../process/ProcessOwnershipObservation.js";
 import { readRunTokenCarriers } from "../process/ProcessRunTokenObservations.js";
@@ -64,6 +68,16 @@ const running = (stat: ProcessStat): stat is NonNullable<ProcessStat> =>
   stat.lifecycle !== "zombie" &&
   stat.lifecycle !== "dead";
 
+/** Optional observations stay unknown unless the producer transfers failure facts or cleanup. */
+const optionalInspectionFailure = (cause: unknown): undefined => {
+  if (
+    processInspectionCleanupFailures(cause).length > 0 ||
+    processInspectionCancellations(cause).length > 0
+  )
+    throw cause;
+  return undefined;
+};
+
 const systemProcfs: SessionProcfs = {
   async stat(pid, signal) {
     const stat = (await readLinuxProcessStat(pid, signal)).value;
@@ -79,7 +93,7 @@ const systemProcfs: SessionProcfs = {
     return (await readLinuxChildren(pid, signal)).value ?? [];
   },
   runId: (pid, signal) =>
-    readProcessRunId(pid, undefined, signal).catch(() => undefined),
+    readProcessRunId(pid, undefined, signal).catch(optionalInspectionFailure),
   async command(pid) {
     const text = await readFile(`/proc/${String(pid)}/cmdline`, "utf8").catch(
       () => "",
@@ -89,10 +103,7 @@ const systemProcfs: SessionProcfs = {
   tokenCarriers: (runId, signal) =>
     readRunTokenCarriers(systemProcessOwnershipHost, runId, signal).then(
       (carriers) => carriers.map(({ pid }) => pid),
-      () => {
-        signal.throwIfAborted();
-        return undefined;
-      },
+      optionalInspectionFailure,
     ),
 };
 

@@ -11,7 +11,6 @@ import { lstat, stat } from "node:fs/promises";
 import { err, ok, type Result } from "../domain/result.js";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
-import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 import {
   MCP_STARTUP_POLICY,
@@ -28,7 +27,6 @@ import {
 import {
   clientEvidencePaths,
   clientOwnershipEvidencePaths,
-  compactInputSchemaByDefault,
   manualRegistrationRemediation,
   supportedClients,
 } from "./SupportedClients.js";
@@ -47,21 +45,30 @@ import type {
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 
 import {
-  parseClientRegistration,
+  parseClientRegistrationPolicy,
+  parseClientRegistrationLauncher,
   clientRegistrationOwnershipRemediation,
   setupPreservesDisabledActivation,
   type ClientRegistration,
 } from "./ClientRegistration.js";
+import { admitClientStdioConnection } from "./ClientRegistrationConnection.js";
 
 interface ClientRegistrationStatusBase {
   readonly client: string;
   readonly config_path: string;
+  /** Parsed launcher ownership; independent of readiness and retained without reinspection. */
+  readonly command_identity: ClientRegistrationCommandIdentity;
   /** Exact package reference requested by npx/bunx, when registration uses one. */
   readonly package_reference?: string;
   /** Non-blocking timeout guidance; caller-selected values remain aligned. */
   readonly advisory?: string;
   /** Provider settings this process selected that the registration's file does not carry. */
   readonly provider_settings?: RecordedProviderSettings;
+  /**
+   * A non-aligned state that setup cannot repair: the shared row's
+   * `enable: false`, which setup preserves for every reader of that storage.
+   */
+  readonly manual_conflict?: "shared_disabled_activation";
 }
 
 type RegistrationCommand = readonly [string, ...string[]];
@@ -79,7 +86,8 @@ export type ClientRegistrationStatus = ClientRegistrationStatusBase &
         readonly remediation: string;
       }
     | {
-        readonly command: RegistrationCommand;
+        /** Empty when the client's configuration location is unresolved. */
+        readonly command: RegistrationCommand | readonly [];
         readonly state: "unknown";
         readonly remediation: string;
       }
@@ -125,8 +133,6 @@ interface ClientRegistrationReadOptions {
 export interface ClientRegistrationInspection {
   readonly status: ClientRegistrationStatus;
   readonly activation: "enabled" | "disabled" | "unknown";
-  /** Ownership remains unknown until this inspection has parsed the launcher. */
-  readonly commandIdentity: ClientRegistrationCommandIdentity;
 }
 
 /** Project diagnostics from the same inspection used to select maintenance. */
@@ -151,9 +157,8 @@ export const readClientRegistrationInspections = async (
   const record = (
     status: ClientRegistrationStatus,
     activation: ClientRegistrationInspection["activation"] = "unknown",
-    commandIdentity: ClientRegistrationCommandIdentity = "unknown",
   ): void => {
-    inspections.push({ status, activation, commandIdentity });
+    inspections.push({ status, activation });
   };
   for (const client of supportedClients(
     home,
@@ -161,12 +166,15 @@ export const readClientRegistrationInspections = async (
     options.environment,
   )) {
     const selected = options.selectedClientIds?.includes(client.name) === true;
+    // An unresolved location leaves this client's registration unknown, never
+    // absent; diagnostics and maintenance still cover every other client.
     if (client.configPathError !== undefined) {
       record({
         client: client.name,
         config_path: client.configPath,
         command: [],
-        state: "invalid",
+        command_identity: "unknown",
+        state: "unknown",
         remediation: client.configPathError,
       });
       continue;
@@ -180,6 +188,7 @@ export const readClientRegistrationInspections = async (
         client: client.name,
         config_path: presence.error.path,
         command: [],
+        command_identity: "unknown",
         state: "invalid",
         remediation: presence.error.detail,
       });
@@ -193,6 +202,7 @@ export const readClientRegistrationInspections = async (
           client: client.name,
           config_path: client.markerPath ?? client.configPath,
           command: [],
+          command_identity: "unknown",
           state: "manual",
           remediation: manualRemediation,
         });
@@ -215,6 +225,7 @@ export const readClientRegistrationInspections = async (
           client: client.name,
           config_path: configuration.error.path,
           command: [],
+          command_identity: "unknown",
           state: "invalid",
           remediation: configuration.error.detail,
         });
@@ -222,8 +233,12 @@ export const readClientRegistrationInspections = async (
       }
       const { document: parsed, configPath } = configuration.value;
       selectedConfigPath = configPath;
+      // A client applicable only through REA's registration has none to report.
+      const reportsAbsence =
+        selected || client.registrationApplicability !== true;
       if (parsed === undefined) {
-        record(unavailableStatus(client, "missing", configPath));
+        if (reportsAbsence)
+          record(unavailableStatus(client, "missing", configPath));
         continue;
       }
       const policy = await readClientPolicyBlock(
@@ -242,6 +257,7 @@ export const readClientRegistrationInspections = async (
           client: client.name,
           config_path: configPath,
           command: [],
+          command_identity: "unknown",
           state: "invalid",
           remediation: policy.error.detail,
         });
@@ -259,12 +275,14 @@ export const readClientRegistrationInspections = async (
             client: client.name,
             config_path: configPath,
             command: [],
+            command_identity: "unknown",
             state: "invalid",
             remediation: editabilityError.message,
           });
           continue;
         }
-        record(unavailableStatus(client, "missing", configPath));
+        if (reportsAbsence)
+          record(unavailableStatus(client, "missing", configPath));
         continue;
       }
       const effectiveClient: SetupClient =
@@ -276,28 +294,71 @@ export const readClientRegistrationInspections = async (
               format: "zcode_fallback",
             }
           : client;
-      const parsedRegistration = parseClientRegistration(raw, effectiveClient);
+      const parsedRegistration = parseClientRegistrationPolicy(
+        raw,
+        effectiveClient,
+      );
       if (!parsedRegistration.ok) {
+        // Invalid readiness settings do not erase a usable launcher identity.
+        const launcher = parseClientRegistrationLauncher(raw, {
+          dialect: parsed.dialect,
+          profile: client.registrationProfile,
+        });
+        const commandIdentity = launcher.ok
+          ? inspectClientRegistrationCommand(
+              [launcher.value.command, ...launcher.value.args],
+              currentCommandPath,
+            ).identity
+          : "unknown";
         record({
           client: client.name,
           config_path: configPath,
           command: [],
+          command_identity: commandIdentity,
           state: "invalid",
           remediation: `${parsedRegistration.error.message}: ${parsedRegistration.error.settings.map(({ setting, constraint }) => `${setting}: ${constraint}`).join("; ")}`,
         });
         continue;
       }
       const registration = parsedRegistration.value;
+      const command: RegistrationCommand = [
+        registration.command,
+        ...registration.args,
+      ];
+      const commandFacts = inspectClientRegistrationCommand(
+        command,
+        currentCommandPath,
+      );
+      const nativeApplicability = admitClientStdioConnection(raw, {
+        dialect: parsed.dialect,
+        profile: client.registrationProfile,
+      });
+      if (
+        !nativeApplicability.ok &&
+        nativeApplicability.error.kind === "invalid"
+      ) {
+        record({
+          client: client.name,
+          config_path: configPath,
+          command: [],
+          command_identity: commandFacts.identity,
+          state: "invalid",
+          remediation: nativeApplicability.error.cause.message,
+        });
+        continue;
+      }
       const registrationEnvironment =
-        compactInputSchemaByDefault(client) || client.name === "codex"
+        client.name === "kimi" ||
+        client.name === "codex" ||
+        client.name === "lm_studio"
           ? await clientRegistrationEnvironmentDetailsWithBudget(
               parsed,
-              client.name,
+              client,
               {},
               "effective",
-              client.name === "kimi" || client.name === "codex"
-                ? options.resolveProviderRequestBudget
-                : undefined,
+              client.name === "lm_studio"
+                ? undefined
+                : options.resolveProviderRequestBudget,
               options.platform,
             )
           : undefined;
@@ -309,98 +370,92 @@ export const readClientRegistrationInspections = async (
           client: client.name,
           config_path: configPath,
           command: [],
+          command_identity: commandFacts.identity,
           state: "invalid",
           remediation: registrationEnvironment.error.message,
         });
         continue;
       }
-      const command: RegistrationCommand = [
-        registration.command,
-        ...registration.args,
-      ];
-      const commandFacts = inspectClientRegistrationCommand(
-        command,
-        currentCommandPath,
-      );
       const packageReference = commandFacts.package?.reference;
       const activation = registrationActivation(registration, client, parsed);
       const packageVersion = commandFacts.package?.exactVersion;
       const packageVersionDrift =
         packageVersion !== undefined &&
         packageVersion !== PRODUCT_IDENTITY.packageVersion;
-      const alignment = registrationAligned({
-        registration,
-        client: effectiveClient,
-        command,
-        commandFacts,
-        platform: options.platform ?? process.platform,
-        inputSchemaProfileSelected:
-          registrationEnvironment?.ok === true &&
-          snapshotEnvironment(
-            registrationEnvironment.value.values,
-            options.platform,
-          ).REA_MCP_INPUT_SCHEMA_PROFILE !== undefined,
-      });
-      record(
-        configuredStatus(
+      // Only a target whose setup preserves the flag is a manual conflict; a
+      // native row (for example ZCode's own storage) is repaired by setup.
+      const sharedDisabledConflict =
+        activation === "disabled" &&
+        registration.enable === false &&
+        setupPreservesDisabledActivation(
           effectiveClient,
-          command,
-          alignment === "unknown"
-            ? "unknown"
-            : activation === "enabled" &&
-                !packageVersionDrift &&
-                alignment === "aligned" &&
-                (parsed.dialect !== "dsh" ||
-                  dshDocument(parsed.document).ready) &&
-                policyBlock === undefined
-              ? "aligned"
-              : "stale",
-          (parsed.dialect !== "dsh" && commandFacts.identity !== "owned"
-            ? clientRegistrationOwnershipRemediation(commandFacts.identity, [
-                configPath,
-              ])
-            : undefined) ??
-            policyBlock ??
-            (packageVersionDrift
-              ? packageVersionRemediation(packageReference ?? "", client)
-              : alignment === "unknown"
-                ? unknownEntryPointRemediation()
-                : undefined) ??
-            // Only a target whose setup preserves the flag is a manual
-            // conflict; a native row (for example ZCode's own storage) is
-            // still repaired by its setup run below.
-            (activation === "disabled" &&
-            registration.enable === false &&
-            setupPreservesDisabledActivation(
-              effectiveClient,
-              effectiveClient.format,
-            )
-              ? sharedDisabledActivationRemediation()
-              : undefined),
-          packageReference,
-          registrationEnvironment?.ok === true
-            ? timeoutAdvisory(
-                client,
-                registration,
-                registrationEnvironment.value.timeoutInputs,
-              )
-            : undefined,
-          options.providerSettings === undefined
-            ? undefined
-            : recordedProviderSettings(
-                parsed,
-                client.name,
-                options.providerSettings,
-                options.platform,
-                options.ownedProviderSetting,
-                options.observeProviderSetting === undefined
-                  ? undefined
-                  : (name, value) =>
-                      options.observeProviderSetting!(client.name, name, value),
-              ),
-        ),
-        activation,
+          effectiveClient.format,
+        );
+      const alignment = !nativeApplicability.ok
+        ? "unknown"
+        : registrationAligned({
+            registration,
+            client: effectiveClient,
+            commandFacts,
+          });
+      const status = configuredStatus(
+        effectiveClient,
+        command,
         commandFacts.identity,
+        alignment === "unknown"
+          ? "unknown"
+          : activation === "enabled" &&
+              !packageVersionDrift &&
+              alignment === "aligned" &&
+              (parsed.dialect !== "dsh" ||
+                dshDocument(parsed.document).ready) &&
+              policyBlock === undefined
+            ? "aligned"
+            : "stale",
+        (parsed.dialect !== "dsh" && commandFacts.identity !== "owned"
+          ? clientRegistrationOwnershipRemediation(commandFacts.identity, [
+              configPath,
+            ])
+          : undefined) ??
+          (!nativeApplicability.ok
+            ? nativeApplicability.error.cause.message
+            : undefined) ??
+          policyBlock ??
+          (packageVersionDrift
+            ? packageVersionRemediation(packageReference ?? "", client)
+            : alignment === "unknown"
+              ? unknownEntryPointRemediation()
+              : undefined) ??
+          (sharedDisabledConflict
+            ? sharedDisabledActivationRemediation()
+            : undefined),
+        packageReference,
+        registrationEnvironment?.ok === true
+          ? timeoutAdvisory(
+              client,
+              registration,
+              registrationEnvironment.value.timeoutInputs,
+            )
+          : undefined,
+        options.providerSettings === undefined
+          ? undefined
+          : recordedProviderSettings(
+              parsed,
+              client,
+              options.providerSettings,
+              options.platform,
+              options.ownedProviderSetting,
+              options.observeProviderSetting === undefined
+                ? undefined
+                : (name, value) =>
+                    options.observeProviderSetting!(client.name, name, value),
+            ),
+      );
+      record(
+        sharedDisabledConflict && status.state !== "aligned"
+          ? { ...status, manual_conflict: "shared_disabled_activation" }
+          : status,
+        activation,
       );
     } catch (cause: unknown) {
       if (
@@ -465,17 +520,11 @@ const registrationActivation = (
 const registrationAligned = ({
   registration,
   client,
-  command,
   commandFacts,
-  platform,
-  inputSchemaProfileSelected,
 }: {
   readonly registration: ClientRegistration;
   readonly client: SetupClient;
-  readonly command: readonly string[];
   readonly commandFacts: ClientRegistrationCommandFacts;
-  readonly platform: NodeJS.Platform;
-  readonly inputSchemaProfileSelected: boolean;
 }): "aligned" | "stale" | "unknown" => {
   const { identity } = commandFacts;
   if (identity === "unknown") return "unknown";
@@ -497,14 +546,8 @@ const registrationAligned = ({
       registration.toolTimeoutMs === undefined)
   )
     return "stale";
-  if (compactInputSchemaByDefault(client) && !inputSchemaProfileSelected)
-    return "stale";
-  // A Harness registration only connects as the rea stdio server; another
-  // server name or transport leaves the session without REA tools.
-  if (
-    client.format === "dsh" &&
-    (registration.serverName !== "rea" || registration.transport !== "stdio")
-  )
+  // Native transport is admitted separately; the Harness route must name REA.
+  if (client.format === "dsh" && registration.serverName !== "rea")
     return "stale";
   // Legacy package runners remain owned, but setup migrates them to the selected installation.
   if (commandFacts.package !== undefined) return "stale";
@@ -527,6 +570,7 @@ const unknownEntryPointRemediation = (): string =>
 const configuredStatus = (
   client: SetupClient,
   command: RegistrationCommand,
+  commandIdentity: ClientRegistrationCommandIdentity,
   state: "aligned" | "stale" | "unknown",
   policyRemediation?: string,
   packageReference?: string,
@@ -538,6 +582,7 @@ const configuredStatus = (
         client: client.name,
         config_path: client.configPath,
         command,
+        command_identity: commandIdentity,
         ...(packageReference === undefined
           ? {}
           : { package_reference: packageReference }),
@@ -552,6 +597,7 @@ const configuredStatus = (
         client: client.name,
         config_path: client.configPath,
         command,
+        command_identity: commandIdentity,
         ...(packageReference === undefined
           ? {}
           : { package_reference: packageReference }),
@@ -610,11 +656,12 @@ const packageVersionRemediation = (
 const unavailableStatus = (
   client: SetupClient,
   state: "missing" | "invalid",
-  configPath: string = client.configPath,
+  configPath: string,
 ): ClientRegistrationStatus => ({
   client: client.name,
   config_path: configPath,
   command: [],
+  command_identity: "unknown",
   state,
   remediation: remediation(client),
 });
@@ -632,7 +679,10 @@ const clientEvidencePresent = async (
   if (evidence.selected) return ok(true);
   const discoveryPaths = new Set(client.discoveryPaths ?? []);
   const paths = [
-    ...clientEvidencePaths(client),
+    // Only the registration file can hold what REA wrote.
+    ...(client.registrationApplicability === true
+      ? [client.configPath, ...(client.configPaths ?? [])]
+      : clientEvidencePaths(client)),
     ...(evidence.ownership ? clientOwnershipEvidencePaths(client) : []),
   ];
   let unavailable:

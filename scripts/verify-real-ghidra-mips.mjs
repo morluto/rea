@@ -284,7 +284,6 @@ try {
       const call = async (name, args = {}) => {
         const reply = await client.callTool(
           { name, arguments: args },
-          undefined,
           { timeout: 180000 },
         );
         return requireMcpOperationResult(reply, name);

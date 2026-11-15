@@ -49,10 +49,16 @@ cliTest(
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-environment-build-cli-");
     const har = join(root, "grafana.har");
+    const selectedCapture = "./grafana.har";
     await writeFile(har, JSON.stringify(environmentManifestHar()));
     const built = await cli.run({
-      arguments: ["environment-build", har, join(root, "built"), "--json"],
-      timeoutMs: 60_000,
+      arguments: [
+        "environment-build",
+        selectedCapture,
+        join(root, "built"),
+        "--json",
+      ],
+      cwd: root,
     });
     expect(built.exitCode, built.stderr).toBe(0);
     expect(built.json).toMatchObject({
@@ -67,13 +73,18 @@ cliTest(
     const inspected = await cli.run({
       arguments: [
         "inspect-web-network-capture",
-        har,
+        selectedCapture,
         "har",
         "--format",
         "json",
       ],
+      cwd: root,
     });
     expect(inspected.exitCode, inspected.stderr).toBe(0);
+    expect(inspected.json).toMatchObject({
+      caller_input_path: selectedCapture,
+      parameters: { capture_path: har },
+    });
     const capture = join(root, "capture.json");
     await writeFile(capture, inspected.stdout);
     const request = join(root, "view.json");
@@ -90,6 +101,26 @@ cliTest(
     expect(projected.exitCode, projected.stderr).toBe(0);
     const manifest = join(root, "manifest.json");
     await writeFile(manifest, projected.stdout);
+    for (const command of [
+      "environment-build",
+      "environment-export",
+    ] as const) {
+      const parent = join(root, `${command}-refused`);
+      await mkdir(parent);
+      // Do not use join for the last segment: the caller's spelling matters.
+      const destination = `${join(parent, "a", "b", "c")}${sep}..`;
+      const args =
+        command === "environment-build"
+          ? [command, har, destination, "--json"]
+          : [command, manifest, "--evidence", capture, destination, "--json"];
+      const refused = await cli.run({ arguments: args });
+      expect(refused.exitCode, refused.stderr).toBe(1);
+      expect(refused.json).toMatchObject({
+        code: "invalid_request",
+        details: { issues: [{ path: ["directory"] }] },
+      });
+      expect(await readdir(parent)).toEqual([]);
+    }
     const exported = await cli.run({
       arguments: [
         "environment-export",
@@ -99,7 +130,6 @@ cliTest(
         join(root, "three-step"),
         "--json",
       ],
-      timeoutMs: 60_000,
     });
     expect(exported.exitCode, exported.stderr).toBe(0);
 
@@ -114,6 +144,13 @@ cliTest(
         ),
         file,
       ).toBe(0);
+    const published = JSON.parse(
+      await readFile(
+        join(root, "built", "envs", "grafana-example", "evidence.json"),
+        "utf8",
+      ),
+    ) as { caller_input_path?: string };
+    expect(published.caller_input_path).toBe(selectedCapture);
     expect(built.json).toMatchObject({
       tool_count: (exported.json as { tool_count: number }).tool_count,
       files: (exported.json as { files: unknown[] }).files,
@@ -159,7 +196,6 @@ cliTest(
         "--capture-timeout-ms=030000",
         "--json",
       ],
-      timeoutMs: 60_000,
     });
     expect(planned.exitCode, planned.stderr).toBe(0);
     expect(planned.json).toMatchObject({
@@ -212,7 +248,6 @@ cliTest(
 
     const noDirectory = await cli.run({
       arguments: ["environment-build", har, "--json"],
-      timeoutMs: 60_000,
     });
     expect(noDirectory.exitCode).toBe(1);
     expect(noDirectory.json).toMatchObject({
@@ -246,7 +281,6 @@ cliTest.for(["--dry-run=abc", "--dry-run="] as const)(
     await writeFile(har, JSON.stringify(environmentManifestHar()));
     const result = await cli.run({
       arguments: ["environment-build", har, output, dryRun, "--json"],
-      timeoutMs: 60_000,
     });
     expect(result.exitCode).not.toBe(0);
     expect(`${result.stdout}\n${result.stderr}`).toContain("--dry-run");
@@ -265,7 +299,6 @@ cliTest.for(["--dry-run=true", "--dry-run=false"] as const)(
     await writeFile(har, JSON.stringify(environmentManifestHar()));
     const result = await cli.run({
       arguments: ["environment-build", har, output, dryRun, "--json"],
-      timeoutMs: 60_000,
     });
     expect(result.exitCode, result.stderr).toBe(0);
     expect(result.json).toMatchObject({
@@ -274,5 +307,28 @@ cliTest.for(["--dry-run=true", "--dry-run=false"] as const)(
     expect((await readdir(root)).includes("bundle")).toBe(
       dryRun === "--dry-run=false",
     );
+  },
+);
+
+cliTest(
+  "reports its default build-stage logging through the routed CLI driver",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-environment-build-logs-");
+    const har = join(root, "grafana.har");
+    await writeFile(har, JSON.stringify(environmentManifestHar()));
+    // Without REA_LOG_LEVEL the build logs its stages at info on stderr.
+    const invocation = {
+      arguments: ["environment-build", har, "--dry-run", "--json"],
+    };
+    const routed = await cli.run(invocation);
+    const fresh = await cli.run({ ...invocation, freshProcess: true });
+    expect(fresh.stderr).toContain("Building environment");
+    const stages = (stderr: string) =>
+      stderr
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((line) => (JSON.parse(line) as { stage?: unknown }).stage);
+    expect(stages(routed.stderr)).toEqual(stages(fresh.stderr));
+    expect(routed.exitCode).toBe(fresh.exitCode);
   },
 );

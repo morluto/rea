@@ -1,4 +1,5 @@
 import { snapshotEnvironment } from "../../process/snapshotEnvironment.js";
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,9 +13,12 @@ import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
 import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
 import { SafeOutputTreeCreationFailure } from "../../artifacts/SafeOutputTreeCreationFailure.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import {
-  AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { artifactFileCancellationCause } from "../../artifacts/ArtifactFileOperation.js";
@@ -75,34 +79,23 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
     input: JavaScriptRecoveryInput,
     options?: ExecutionOptions,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
-    if (this.#closing)
-      return Promise.resolve(
-        err(
-          new ProviderCleanupError(
-            "wakaru",
-            [],
-            { reason: "Provider is closing" },
-            { operation: OPERATION },
-          ),
-        ),
-      );
+    if (this.#closing) return Promise.resolve(err(this.#closedError()));
     const operation = this.#tail.then(() =>
-      this.#closing
-        ? err(
-            new ProviderCleanupError(
-              "wakaru",
-              [],
-              { reason: "Provider is closing" },
-              { operation: OPERATION },
-            ),
-          )
-        : this.#recover(input, options),
+      this.#closing ? err(this.#closedError()) : this.#recover(input, options),
     );
     this.#tail = operation.then(
       () => undefined,
       () => undefined,
     );
     return operation;
+  }
+
+  #closedError(): AnalysisCapabilityUnavailableError {
+    return new AnalysisCapabilityUnavailableError(
+      "wakaru",
+      OPERATION,
+      "Provider is closing",
+    );
   }
 
   async #recover(
@@ -112,7 +105,10 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
     const pending = await this.#retire();
     if (pending !== undefined) return err(pending);
     // Capture configuration after queue/cleanup admission; later requests may select updates.
-    const environment = snapshotEnvironment(this.environment);
+    const environment = snapshotEnvironment(
+      this.environment,
+      HOST_PLATFORM.platform,
+    );
     let root: string | undefined;
     let tree: SafeOutputTree | undefined;
     let failed: { readonly cause: unknown } | undefined;
@@ -172,19 +168,22 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
           ? failed.cause
           : undefined;
       const primary = reportFailure?.failure ?? failed.cause;
-      const failure =
+      let failure =
         primary instanceof ArtifactReaderFailure &&
         primary.reason === "cancelled" &&
         primary.cleanup === undefined
-          ? new AnalysisCancelledError(OPERATION, {
-              cause: artifactFileCancellationCause(primary),
-              ...(primary.partialObservation === undefined
-                ? {}
-                : { partialObservation: primary.partialObservation }),
-              ...(reportFailure === undefined
-                ? {}
-                : { capturedOutput: reportFailure.capturedOutput }),
-            })
+          ? cancelledBy(
+              OPERATION,
+              carriedReason(artifactFileCancellationCause(primary)),
+              {
+                ...(primary.partialObservation === undefined
+                  ? {}
+                  : { partialObservation: primary.partialObservation }),
+                ...(reportFailure === undefined
+                  ? {}
+                  : { capturedOutput: reportFailure.capturedOutput }),
+              },
+            )
           : primary;
       const residuals: string[] = [];
       const cleanupFailures: { resource: string; reason: string }[] = [];
@@ -258,6 +257,29 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
         if (root !== undefined) residuals.push(root);
         root = undefined;
       }
+      // Cleanup can settle after the caller cancels. Preserve the established
+      // physical outcome and record the exact later cancellation on its primary.
+      const signal = options?.signal;
+      if (signal?.aborted === true) {
+        const analysisFailure =
+          failure instanceof AnalysisError
+            ? failure
+            : new ProviderAdapterError("wakaru", OPERATION, {
+                cause: failure,
+                diagnostics: { reason: recoveryFailureMessage(failure) },
+                ...(failure instanceof ArtifactReaderFailure &&
+                failure.partialObservation !== undefined
+                  ? { partialObservation: failure.partialObservation }
+                  : {}),
+                ...(reportFailure === undefined
+                  ? {}
+                  : { capturedOutput: reportFailure.capturedOutput }),
+              });
+        failure = analysisErrorWithCancellation(
+          analysisFailure,
+          cancelledBy(OPERATION, signal),
+        );
+      }
       if (residuals.length > 0) {
         const error = new ProviderCleanupError(
           "wakaru",
@@ -275,6 +297,12 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
           {
             operation: OPERATION,
             cause: failure,
+            ...(failure instanceof AnalysisError
+              ? {
+                  cleanupPrimary: failure,
+                  capturedOutput: failure.capturedOutput,
+                }
+              : {}),
             ...(reportFailure === undefined
               ? {}
               : { capturedOutput: reportFailure.capturedOutput }),
@@ -287,7 +315,8 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
                     ),
                   },
                 }
-              : failure instanceof ArtifactReaderFailure &&
+              : (failure instanceof AnalysisError ||
+                    failure instanceof ArtifactReaderFailure) &&
                   failure.partialObservation !== undefined
                 ? { partialObservation: failure.partialObservation }
                 : {}),
@@ -295,6 +324,8 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
         );
         const lease = this.#pendingCleanup?.lease;
         if (lease !== undefined) {
+          if (failure instanceof WakaruCleanupFailure)
+            lease.bindCleanupError(failure);
           lease.bindCleanupError(error);
           error.bindCleanupResourceOwner(lease);
         }

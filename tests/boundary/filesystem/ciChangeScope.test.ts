@@ -2,6 +2,7 @@ import {
   chmod,
   cp,
   mkdir,
+  mkdtemp,
   readFile,
   readdir,
   rename,
@@ -10,11 +11,10 @@ import {
 import { dirname, join, matchesGlob } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { afterAll, beforeAll, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it as sequentialIt } from "vitest";
 import { parse } from "yaml";
 import { z } from "zod";
 
-import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   createTestWorkspace,
   removeTestWorkspace,
@@ -26,8 +26,19 @@ import {
 
 async function commit(directory: string) {
   await git(directory, ["add", "."]);
-  await git(directory, ["commit", "-m", "fix: fixture change"]);
-  return git(directory, ["rev-parse", "HEAD"]);
+  // Git names the full commit in its summary line ("[main 0123…] subject"),
+  // so the case needs no separate rev-parse process.
+  const summary = await git(directory, [
+    "-c",
+    "core.abbrev=no",
+    "commit",
+    "-m",
+    "fix: fixture change",
+  ]);
+  const created = /^\[[^\]]* ([0-9a-f]{40})\]/u.exec(summary)?.[1];
+  if (created === undefined)
+    throw new Error(`Git did not report the fixture commit: ${summary}`);
+  return created;
 }
 
 async function change(
@@ -43,32 +54,42 @@ async function change(
   return commit(directory);
 }
 
-let seed: { directory: string; base: string } | undefined;
-let seedWorkspaceRoot: string | undefined;
+// Every case owns its copied repository and output files, so cases run
+// concurrently; each one mostly waits on Git and plan subprocesses.
+const it = sequentialIt.concurrent;
+
+let seed:
+  | { readonly root: string; readonly directory: string; readonly base: string }
+  | undefined;
+// Owned from creation, so a failed seed setup is still removed.
+let workspaceRoot: string | undefined;
 
 beforeAll(async () => {
   const workspace = await createTestWorkspace("rea-ci-scope-seed-");
-  seedWorkspaceRoot = workspace.root;
+  workspaceRoot = workspace.root;
   const directory = await workspace.mkdir("repository");
-  await git(directory, ["init", "--initial-branch=main"]);
+  // No template: every case copies this repository, and sample hooks are
+  // never run (fixture Git disables hooks).
+  await git(directory, ["init", "--initial-branch=main", "--template="]);
   const base = await change(
     directory,
     ["src/provider.ts", "README.md"],
     "Initial fixture content\n",
   );
-  seed = { directory, base };
+  seed = { root: workspace.root, directory, base };
 });
 
+// Case repositories live in the seed workspace and are removed with it. A
+// per-case cleanup hook would bind to whichever concurrent case is current.
 afterAll(async () => {
-  if (seedWorkspaceRoot !== undefined)
-    await removeTestWorkspace(seedWorkspaceRoot);
+  if (workspaceRoot !== undefined) await removeTestWorkspace(workspaceRoot);
 });
 
 async function fixture() {
   const initial = seed;
   if (initial === undefined)
     throw new Error("CI scope seed was not initialized");
-  const directory = await createTestTempDirectory("rea-ci-scope-");
+  const directory = await mkdtemp(join(initial.root, "case-"));
   // Copy the pristine object database, refs and index; each case owns its mutations.
   await cp(initial.directory, directory, { recursive: true });
   return { directory, base: initial.base };
@@ -106,7 +127,7 @@ async function classify(
 it.each([
   ["bridge/native/rea_lldb_tracer.py", "python"],
   ["bridge/pwndbg/test_core_context.py", "python"],
-  ["tests/support/analysis-efficiency/test_signal_oracle.py", "python"],
+  ["tests/support/analysis-efficiency/test_catalog_eval.py", "python"],
   ["scripts/run-python-tests.py", "python"],
   ["scripts/verify-browser-request.mjs", "browser"],
   ["scripts/lib/browser-request-e2e.mjs", "browser"],
@@ -501,6 +522,7 @@ it("selects only a trusted successful ancestor from recent CI push runs", async 
 }) => {
   skip(process.platform === "win32", "the fake gh is a POSIX shell script");
   const { directory, base } = await fixture();
+  const foreignBase = await change(directory, ["README.md"]);
   const head = await change(directory, ["src/evm/client.ts"]);
   const bin = join(directory, "fake-bin");
   await mkdir(bin);
@@ -517,7 +539,7 @@ it("selects only a trusted successful ancestor from recent CI push runs", async 
           conclusion: "success",
           head_branch: "main",
           head_repository: { full_name: "untrusted/fork" },
-          head_sha: base,
+          head_sha: foreignBase,
         },
         {
           event: "push",
@@ -691,7 +713,37 @@ it.each([
     "tests/module/example.test.ts",
     { code: true, runtime: false, browser: false, package: false },
   ],
+  // The darwin package baseline is the CI run of packaged Hopper commands
+  // against the fake bridge and the reply contracts.
+  [
+    "tests/fixtures/fakeHopper.mjs",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "tests/fixtures/fakeHopperReplies.mjs",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "src/hopper/HopperReplyContracts.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "src/domain/native/nativeSegments.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  // Schemas the contracts import transitively.
+  [
+    "src/domain/native/functionBody.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "src/domain/native/nativeSymbol.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  ["src/domain/native/functionBody.test.ts", { code: true, package: false }],
   ["scripts/lib/release-proposal.mjs", { code: true, package: true }],
+  ["scripts/lib/release-proposal.d.mts", { code: true, package: true }],
+  ["scripts/lib/release-pull-request.mjs", { code: true, package: true }],
   ["patches/release-please+17.3.0.patch", { code: true, package: true }],
   [
     "tests/boundary/filesystem/releaseProposal.test.ts",
@@ -701,6 +753,10 @@ it.each([
   [
     "website/public/examples/notes-electron/preload.js",
     { code: true, website: true, package: false },
+  ],
+  [
+    "website/public/index.html",
+    { code: false, docs: true, website: true, package: false },
   ],
   [
     "website/locales/zh-CN/messages.po",
@@ -766,6 +822,18 @@ it.each([
     { code: true, ghidra_bridge: true, runtime: false, package: false },
   ],
   [
+    "scripts/verify-ghidra-loader-relocation.mjs",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "tests/conformance/ghidra/ReaLoaderRelocationProbe.java",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "tests/conformance/ghidra/loader-relocation-provider.c",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
     "src/ghidra/GhidraBridgeSources.ts",
     { code: true, ghidra_bridge: true, runtime: true, package: true },
   ],
@@ -782,7 +850,7 @@ it.each([
     { code: false, ghidra_bridge: true, runtime: false, package: false },
   ],
   [
-    "tests/conformance/ghidra/ReaArmContextProbe.java",
+    "tests/conformance/ghidra/ReaInstructionContextProbe.java",
     { ghidra_bridge: true, runtime: false, package: false },
   ],
   [
@@ -1484,6 +1552,26 @@ it.each([
   ],
   [
     "scripts/lib/cli-process-environment.mjs",
+    {
+      code: true,
+      package: true,
+      runtime: true,
+      javascript_recovery: true,
+      readiness: false,
+    },
+  ],
+  [
+    "scripts/lib/runtime-admission.mjs",
+    {
+      code: true,
+      package: true,
+      runtime: true,
+      javascript_recovery: true,
+      readiness: false,
+    },
+  ],
+  [
+    "scripts/lib/runtime-admission.d.mts",
     {
       code: true,
       package: true,

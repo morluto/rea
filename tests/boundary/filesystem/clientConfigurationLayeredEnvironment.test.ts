@@ -20,6 +20,7 @@ import {
   readClientConfigurationFiles,
 } from "../../../src/application/ClientConfigurationFiles.js";
 import { clientRegistrationEnvironmentDetails } from "../../../src/application/ClientRegistrationEnvironment.js";
+import { supportedClientRegistrationProfile } from "../../../src/application/SupportedClients.js";
 
 const command = currentClientRegistrationCommand({
   platform: process.platform,
@@ -68,6 +69,7 @@ it.each(["missing", "empty", "legacy", "native"] as const)(
       );
     const client = {
       name: "opencode",
+      registrationProfile: supportedClientRegistrationProfile("opencode"),
       format: "opencode",
       configPath: upper,
       configPaths: [lower, upper],
@@ -125,6 +127,7 @@ const layered = async (lower: unknown, upper: unknown) => {
     await writeFile(path, sources[index]!);
   const client = {
     name: "opencode",
+    registrationProfile: supportedClientRegistrationProfile("opencode"),
     format: "opencode",
     configPath: paths[1]!,
     configPaths: paths,

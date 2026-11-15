@@ -15,7 +15,9 @@ not establish live model-service acceptance.
 
 `rea mcp doctor --json` starts the production MCP adapter with the current runtime
 executable and environment. A healthy result establishes that adapter's
-initialization, discovery and target-free request flow; it does not verify a
+initialization, discovery and target-free request flow, with the request-flow
+reply validated against the canonical `binary_session` output contract whatever
+output schema profile the server lists. It does not verify a
 client's configured launcher or its inherited environment. Test the generated
 registration through the actual client, including a reduced `PATH` when checking
 desktop or service startup. Record the client version and launch environment
@@ -43,15 +45,47 @@ does not establish broader Pi compatibility. See the pinned upstream
 [`declarations.ts`](https://github.com/earendil-works/pi/blob/b45e0ebcc5ae2fc42a6f2f23104d10e656e6bedb/packages/codemode/src/declarations.ts)
 and [renderer usage notes](https://github.com/earendil-works/pi/blob/b45e0ebcc5ae2fc42a6f2f23104d10e656e6bedb/packages/codemode/README.md#declarations-for-the-model).
 
+## Cline
+
+The original contributor reported a run on 2026-11-11 on Linux (Fedora 45),
+using Cline CLI 3.0.74 and the integration based on REA `main` at `9924bf344`.
+That run checked client config listing and a direct registered-server MCP
+handshake that listed the complete catalog of that build. It predates the
+verifier lifecycle changes below and does not establish their real-client
+behavior.
+
+`npm run verify:cline-client` creates its sandbox home before launching commands
+and removes inherited `CLINE_MCP_SETTINGS_PATH`, `CLINE_DATA_DIR` and `CLINE_DIR`.
+Setup therefore exercises the default
+`~/.cline/data/settings/cline_mcp_settings.json` path under the sandboxed home.
+Cline's CLI must list that registration using the sandbox's explicit
+`--data-dir`; this checks the file parser, not independent default-home discovery.
+The exact registered launcher then
+completes SDK initialization and tool discovery through REA's owned stdio
+transport. Stdin stays open until discovery finishes. Command and transport
+cleanup completes before the verifier records lineage or reports success.
+
+The updated orchestration has recording-port coverage for delayed discovery,
+failed server identification and failed cleanup. These tests use the installed
+SDK and verifier lifecycle owner, but do not execute Cline or a real REA server.
+The updated real-client lane has not been rerun during this reconciliation.
+
+Not covered by the lane: a model-driven tool call inside Cline. Cline's provider
+configuration (`providers.json`) is versioned and auth-shaped, and the CLI ignores
+`OPENAI_BASE_URL`, so the loopback model fixture cannot drive it without depending
+on that private schema. The IDE extension is not covered either: its MCP settings are
+UI-managed and live under editor-specific `globalStorage` roots, which `rea setup`
+does not write in this release.
+
 <a id="llamacpp"></a>
 
 ## llama.cpp
 
 The [manual stdio connection](../getting-started/client-configuration.md#llamacpp) was checked on
 macOS arm64 with Node.js 24.18.0, llama-server b11715 (`9d1878a43`), and the
-published `rea-agents@6.5.0` package. `GET /tools` exposed 207 REA tools without
+published `rea-agents@6.5.0` package. `GET /tools` exposed REA tools without
 enabling llama.cpp's built-in tools. With the source checkout at `9e372c6`, all
-207 forwarded names, descriptions and input schemas matched a direct MCP client.
+forwarded names, descriptions and input schemas matched a direct MCP client.
 
 Calls through `POST /tools` returned session metadata and JavaScript analysis
 Evidence for a fixture at a Unicode path. A missing target returned REA's input
@@ -643,3 +677,65 @@ npm run evidence:check
 
 The records preserve unsupported and unverified coverage as explicit unknowns.
 Run the matching real-tool prerequisites described in this guide.
+
+### Focused tool-description trials
+
+For a wording or discoverability question, begin with one representative case
+per affected workflow boundary and its nearest valid alternative. Repeat a
+concrete failure or ambiguous result after repair. Add repetitions when the
+requested confidence or comparison needs them; a large matrix is not the default.
+Use the user's selected model and budget, and verify the actual client and Node
+executables used by the trial rather than assuming the development shell's
+versions apply.
+
+Reuse the existing optional lane and source-owned scenarios where they fit:
+
+```bash
+REA_AGENT_EVAL_SCENARIOS=javascript-module-view npm run verify:agent
+```
+
+Select the account-supported model with `REA_AGENT_EVAL_MODEL`. Read the selected
+prompt and rubric before interpreting the gate: closed factual scenarios request
+complete producer Evidence, while `javascript-module-view` exercises retained
+views with heuristic scoring. Neither gate alone proves correct selection or
+fully supported prose for a different task. Extend the narrow scenario or grader
+in the existing evaluation tooling when necessary; reusable runners and fixtures
+belong there, not in skills or copied temporary harnesses.
+
+Capture the actual `initialize` and `tools/list` surface. Compact presentation may
+remove parameter descriptions or nested selector shapes, so a concise exact call
+example can remain necessary. Verify the producer-to-consumer handoff before
+removing its visible syntax. For a wording comparison, hold prompts, schemas,
+tool order, fixtures, permissions and host settings fixed; change one surface at
+a time. Use fresh agent context without the audit's answers. Record later source,
+fixture or runtime changes separately rather than claiming a controlled delta.
+
+Score these outcomes separately:
+
+- Tool selection, accepting other valid routes.
+- Canonical argument validity and the exact requested paths, IDs, selectors,
+  fields, units and delivery. Structurally valid arguments can select the wrong
+  input; fixtures should refuse that selection instead of returning the expected
+  answer anyway.
+- Recovery and cleanup. A valid unresolved lookup is not a malformed request;
+  normal status reads and cleanup-only retries are not automatically mistakes.
+  Do not infer that work stopped from a host-only timeout.
+- Final claims against returned facts and coverage. Correct text does not erase
+  malformed-call loops, and valid calls do not prove every claim. A failed name
+  lookup is not a negative reference search; an exhausted partial page does not
+  establish absence in unexamined source. Generic responses without state facts
+  cannot establish that a session is closed.
+
+Retain prompts, condition/catalog hashes, actual calls/results, failures, final
+answers, model/client/runtime versions and cleanup outcomes. Report whole-task
+input, cached input, output and elapsed time when available, and label unmeasured
+CPU or process-family memory. Fewer description bytes do not establish fewer
+task tokens or faster execution. Remove copied authentication after owned
+processes settle and review retained artifacts before sharing them.
+
+Controlled errors can test agent recovery without target effects. Label them as
+simulated and verify applicable workflows separately through the production
+adapter and real provider boundaries. State tool-subset versus full/progressive
+catalog scope and remaining provider/host coverage. Small one-shot trials are
+smoke checks, not statistical success rates or evidence that newer models need
+less guidance in general.

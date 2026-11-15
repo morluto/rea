@@ -9,8 +9,8 @@ import {
   isPortableAbsoluteReferenceTarget,
 } from "./referenceSourcePathIdentity.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
-import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
-const boundedTextSchema = z.string().min(1);
+import { digestSchema, prefixedDigestSchema } from "./digests.js";
+import { nonEmptyTextSchema } from "./textSchemas.js";
 const relativePathSchema = z
   .string()
   .min(1)
@@ -38,9 +38,9 @@ const classificationSchema = z.enum([
 const entryBaseShape = {
   path: relativePathSchema,
   classifications: z.array(classificationSchema).min(1),
-  limitations: z.array(boundedTextSchema),
+  limitations: z.array(nonEmptyTextSchema),
   // Host presentation is retained evidence, separate from relocatable semantics.
-  local_diagnostics: z.array(boundedTextSchema).exactOptional(),
+  local_diagnostics: z.array(nonEmptyTextSchema).exactOptional(),
 };
 
 const sourceFileBaseShape = {
@@ -129,7 +129,7 @@ const sourceRelationshipSchema = z.strictObject({
 const parseFailureSchema = z.strictObject({
   path: relativePathSchema,
   parser: z.string().min(1),
-  reason: boundedTextSchema,
+  reason: nonEmptyTextSchema,
 });
 
 const exclusionSchema = z.discriminatedUnion("reason", [
@@ -144,7 +144,7 @@ const exclusionSchema = z.discriminatedUnion("reason", [
       "default-ignored",
       "caller-excluded",
     ]),
-    pattern: boundedTextSchema,
+    pattern: nonEmptyTextSchema,
   }),
   z.strictObject({
     path: relativePathSchema,
@@ -196,7 +196,7 @@ const graphShape = {
       .min(1)
       .regex(/^[\w .:@\x2f+\x2d]+$/u),
   }),
-  limitations: z.array(boundedTextSchema),
+  limitations: z.array(nonEmptyTextSchema),
 };
 
 const historicalSourceGraphStructureSchema = z
@@ -566,11 +566,6 @@ export const createHistoricalSourceGraph = (
   });
 };
 
-/** Parse a graph and reject stale or caller-invented root commitments. */
-export const parseHistoricalSourceGraph = (
-  input: unknown,
-): HistoricalSourceGraph => historicalSourceGraphSchema.parse(input);
-
 /** Commit semantic graph facts while retaining host-local diagnostic metadata separately. */
 const computeHistoricalSourceGraphSha256 = (
   graph: HistoricalSourceGraph,
@@ -589,7 +584,7 @@ const computeHistoricalSourceGraphSha256 = (
 export const createHistoricalSourceManifest = (
   input: unknown,
 ): HistoricalSourceManifest => {
-  const graph = parseHistoricalSourceGraph(input);
+  const graph = historicalSourceGraphSchema.parse(input);
   const semantic = {
     schema: "HistoricalSourceManifest" as const,
     authority: "historical-reference" as const,

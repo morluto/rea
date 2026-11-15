@@ -1,3 +1,4 @@
+import { WEB_SOURCE_MAP_LIMITS } from "../../domain/sourceMapLimits.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCapabilityUnavailableError,
@@ -17,6 +18,7 @@ export const parseSourceMapReply = (
   text: string,
   path: string,
   processMemoryLimitBytes: number | null,
+  heapMiB: number = WEB_SOURCE_MAP_LIMITS.codecHeapMiB,
 ): Result<WebSourceMapReport, AnalysisError> => {
   let value: unknown;
   try {
@@ -42,6 +44,7 @@ export const parseSourceMapReply = (
   const runtimeFailure = codecRuntimeFailure(
     reply.data.report.runtime,
     processMemoryLimitBytes,
+    heapMiB,
   );
   return runtimeFailure === undefined
     ? ok(reply.data.report)
@@ -52,6 +55,7 @@ export const parseSourceMapReply = (
 const codecRuntimeFailure = (
   runtime: WebSourceMapReport["runtime"],
   processMemoryLimitBytes: number | null,
+  heapMiB: number,
 ): string | undefined => {
   if (
     runtime.id !==
@@ -60,7 +64,7 @@ const codecRuntimeFailure = (
     return `Codec reported runtime ${runtime.id}, not the runtime that launched it.`;
   if (
     runtime.id === "node-v8" &&
-    runtime.v8_heap_limit_bytes > 256 * 1024 * 1024
+    runtime.v8_heap_limit_bytes > (heapMiB + 64) * 1024 * 1024
   )
     return "Codec reported a V8 heap limit exceeding its independent process budget.";
   if (
@@ -83,6 +87,7 @@ const codecFailure = (
           "limit",
           undefined,
           `${path}: ${detail}`,
+          { remediationAction: detail },
         )
       : reason === "unsupported"
         ? new AnalysisCapabilityUnavailableError(

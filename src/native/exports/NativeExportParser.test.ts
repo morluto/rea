@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { deflateSync } from "node:zlib";
 
 import {
   elfExportImage,
@@ -6,12 +7,9 @@ import {
   peExportImage,
 } from "../../../tests/fixtures/binaryDiagnostics/nativeExports.js";
 import * as nativeExportContracts from "../../domain/native/nativeExports.js";
+import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
 import {
-  BinaryFormatFailure,
-  BinaryResourceFailure,
-  BinaryStringReadLimitFailure,
-} from "../metadata/BinaryContainer.js";
-import {
+  NativeExportLimitFailure,
   parseNativeExports,
   parseNativeExportsSteps,
 } from "./NativeExportParser.js";
@@ -21,6 +19,240 @@ const parse = (bytes: Buffer) =>
   nativeExportContracts.nativeExportsSchema.parse(
     parseNativeExports(bytes, artifact),
   );
+/** The refusal thrown for one image, so its structured limit tag is visible. */
+const refusal = (bytes: Buffer): unknown => {
+  try {
+    parseNativeExports(bytes, artifact);
+  } catch (cause) {
+    return cause;
+  }
+  throw new Error("Expected the parser to refuse the image");
+};
+
+/** Encode real gABI compressed storage, retaining logical section links. */
+const compressExportSection = (
+  bytes: Buffer,
+  sectionIndex: number,
+  versionStrings = false,
+): Buffer => {
+  const wide = bytes[4] === 2;
+  const little = bytes[5] === 1;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const word = (at: number) =>
+    Number(wide ? view.getBigUint64(at, little) : view.getUint32(at, little));
+  const table = word(wide ? 40 : 32);
+  const width = wide ? 64 : 40;
+  const section = table + sectionIndex * width;
+  const offset = word(section + (wide ? 24 : 16));
+  const size = word(section + (wide ? 32 : 20));
+  const header = Buffer.alloc(wide ? 24 : 12);
+  const chdr = new DataView(
+    header.buffer,
+    header.byteOffset,
+    header.byteLength,
+  );
+  chdr.setUint32(0, 1, little); // ELFCOMPRESS_ZLIB
+  if (wide) {
+    chdr.setBigUint64(8, BigInt(size), little);
+    chdr.setBigUint64(16, 1n, little);
+  } else {
+    chdr.setUint32(4, size, little);
+    chdr.setUint32(8, 1, little);
+  }
+  const storage = Buffer.concat([
+    header,
+    deflateSync(bytes.subarray(offset, offset + size)),
+  ]);
+  const count = view.getUint16(wide ? 60 : 48, little);
+  const result = Buffer.concat([
+    bytes,
+    Buffer.alloc(versionStrings ? width : 0),
+    storage,
+  ]);
+  const updated = new DataView(
+    result.buffer,
+    result.byteOffset,
+    result.byteLength,
+  );
+  const setWord = (at: number, value: number) =>
+    wide
+      ? updated.setBigUint64(at, BigInt(value), little)
+      : updated.setUint32(at, value, little);
+  const target = versionStrings ? table + count * width : section;
+  if (versionStrings) {
+    bytes.copy(result, target, section, section + width);
+    updated.setUint16(wide ? 60 : 48, count + 1, little);
+    // Definitions and requirements use the copied string table; dynsym keeps
+    // its original uncompressed table and still supplies trustworthy names.
+    for (const index of [4, 5])
+      updated.setUint32(
+        table + index * width + (wide ? 40 : 24),
+        count,
+        little,
+      );
+  }
+  setWord(target + 8, 0x800); // SHF_COMPRESSED, without SHF_ALLOC
+  setWord(
+    target + (wide ? 24 : 16),
+    bytes.length + (versionStrings ? width : 0),
+  );
+  setWord(target + (wide ? 32 : 20), storage.length);
+  return result;
+};
+
+it.each(
+  ([32, 64] as const).flatMap((bits) =>
+    (
+      [
+        "symbols",
+        "strings",
+        "indices",
+        "definitions",
+        "requirements",
+        "version-strings",
+      ] as const
+    ).map((kind) => ({ bits, kind })),
+  ),
+)(
+  "keeps compressed ELF$bits $kind distinct from logical table bytes",
+  ({ bits, kind }) => {
+    for (const little of [false, true]) {
+      const bytes = elfExportImage({
+        bits,
+        little,
+        symbols: [
+          { name: "defined", version: 2 },
+          { name: "required", version: 3 },
+        ],
+        versionDefinitions: ["lib.so", "DEFINED"],
+        versionRequirements: [{ index: 3, name: "REQUIRED" }],
+      });
+      expect(parse(bytes)).toMatchObject({
+        coverage: { status: "complete", exports: 2 },
+      });
+      const index = {
+        symbols: 1,
+        strings: 2,
+        indices: 3,
+        definitions: 4,
+        requirements: 5,
+        "version-strings": 2,
+      }[kind];
+      const result = parse(
+        compressExportSection(bytes, index, kind === "version-strings"),
+      );
+      if (kind === "symbols" || kind === "strings") {
+        expect(result).toMatchObject({
+          exports: [],
+          coverage: {
+            status: "unsupported",
+            examined_entries: 0,
+            reason: expect.stringContaining("SHF_COMPRESSED"),
+          },
+        });
+      } else {
+        expect(result).toMatchObject({
+          coverage: { status: "partial", exports: 2 },
+          exports: [
+            {
+              name: "defined",
+              version:
+                kind === "indices"
+                  ? "unknown"
+                  : {
+                      index: 2,
+                      name:
+                        kind === "definitions" || kind === "version-strings"
+                          ? null
+                          : "DEFINED",
+                    },
+            },
+            {
+              name: "required",
+              version:
+                kind === "indices"
+                  ? "unknown"
+                  : {
+                      index: 3,
+                      name:
+                        kind === "definitions" ||
+                        kind === "requirements" ||
+                        kind === "version-strings"
+                          ? null
+                          : "REQUIRED",
+                    },
+            },
+          ],
+        });
+        expect(result.issues).toContainEqual(
+          expect.objectContaining({
+            code: "version_unresolved",
+            message: expect.stringContaining("SHF_COMPRESSED"),
+          }),
+        );
+      }
+    }
+  },
+);
+
+it("skips an empty compressed requirement table without a version failure", () => {
+  const bytes = elfExportImage({
+    bits: 64,
+    little: true,
+    symbols: [{ name: "defined", version: 2 }],
+    versionDefinitions: ["lib.so", "DEFINED"],
+    versionRequirements: [{ index: 3, name: "REQUIRED" }],
+  });
+  const compressed = compressExportSection(bytes, 5);
+  const view = new DataView(
+    compressed.buffer,
+    compressed.byteOffset,
+    compressed.byteLength,
+  );
+  const table = Number(view.getBigUint64(40, true));
+  view.setUint32(table + 5 * 64 + 44, 0, true);
+  const result = parse(compressed);
+  const defined = result.exports.find(({ name }) => name === "defined");
+  if (defined === undefined || !("version" in defined))
+    throw new Error("Expected the ELF definition export");
+  expect(defined.version).toMatchObject({ index: 2, name: "DEFINED" });
+  expect(result.coverage.status).toBe("complete");
+  expect(result.issues).toEqual([]);
+});
+
+it("keeps requirement names when an empty compressed definition table declares no entries", () => {
+  const bytes = elfExportImage({
+    bits: 64,
+    little: true,
+    symbols: [
+      { name: "defined", version: 2 },
+      { name: "required", version: 3 },
+    ],
+    versionDefinitions: ["lib.so", "DEFINED"],
+    versionRequirements: [{ index: 3, name: "REQUIRED" }],
+  });
+  const compressed = compressExportSection(bytes, 4);
+  const view = new DataView(
+    compressed.buffer,
+    compressed.byteOffset,
+    compressed.byteLength,
+  );
+  const table = Number(view.getBigUint64(40, true));
+  view.setUint32(table + 4 * 64 + 44, 0, true);
+  const result = parse(compressed);
+  const required = result.exports.find(({ name }) => name === "required");
+  if (required === undefined || !("version" in required))
+    throw new Error("Expected the ELF requirement export");
+  expect(required.version).toMatchObject({ index: 3, name: "REQUIRED" });
+  expect(result.issues).toEqual([
+    {
+      code: "version_unresolved",
+      location: "0x1010",
+      message:
+        "Version index 2, first used by symbol 1, has no unambiguous version name",
+    },
+  ]);
+});
 
 it.each(["requirements", "definitions"] as const)(
   "bounds aliased GNU version %s work and keeps exports with unknown versions",
@@ -337,13 +569,17 @@ describe("PE export directories", () => {
     });
   });
 
-  it("refuses an export table above the inventory allowance", () => {
-    expect(() =>
-      parseNativeExports(
-        peExportImage({ functions: [], declaredFunctions: 0x40001 }),
-        artifact,
-      ),
-    ).toThrow(BinaryResourceFailure);
+  it("refuses an export table above the inventory allowance as an entry count", () => {
+    const cause = refusal(
+      peExportImage({ functions: [], declaredFunctions: 0x40001 }),
+    );
+    expect(cause).toBeInstanceOf(NativeExportLimitFailure);
+    expect(cause).toMatchObject({
+      limit: "rows",
+      boundary: "structure",
+      maximum_bytes: nativeExportContracts.MAX_NATIVE_EXPORT_ROWS,
+      message: expect.stringContaining("262144-entry export inventory"),
+    });
   });
 });
 
@@ -504,9 +740,9 @@ describe("ELF version index 0 unversioned exports", () => {
   });
 });
 
-describe("historical ELF export evidence", () => {
-  it("normalizes historical ELF export evidence lacking visibility to unknown", () => {
-    const historical = {
+describe("ELF export evidence without visibility", () => {
+  it("refuses an ELF export row without visibility", () => {
+    const withoutVisibility = {
       artifact,
       format: "elf" as const,
       architecture: "amd64",
@@ -533,10 +769,9 @@ describe("historical ELF export evidence", () => {
       issues: [],
       limitations: [],
     };
-    const parsed = nativeExportContracts.nativeExportsSchema.parse(historical);
-    expect(parsed.format).toBe("elf");
-    if (parsed.format !== "elf") throw new Error("Expected ELF result");
-    expect(parsed.exports[0]?.visibility).toBe("unknown");
+    const parsed =
+      nativeExportContracts.nativeExportsSchema.safeParse(withoutVisibility);
+    expect(parsed.error?.issues[0]?.path).toEqual(["exports", 0, "visibility"]);
   });
 });
 
@@ -647,6 +882,33 @@ describe("ELF export version and name coverage", () => {
   });
 });
 
+it.each(["definition", "requirement"] as const)(
+  "retains an export with an over-limit version %s name as partial",
+  (kind) => {
+    const longName = "v".repeat(65_536);
+    const result = parse(
+      elfExportImage({
+        symbols: [{ name: "kept", version: 2 }],
+        ...(kind === "definition"
+          ? { versionDefinitions: ["base", longName] }
+          : { versionRequirements: [{ index: 2, name: longName }] }),
+      }),
+    );
+    expect(result.exports).toMatchObject([
+      { name: "kept", version: { index: 2, name: null } },
+    ]);
+    expect(result.coverage.status).toBe("partial");
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "version_unresolved",
+          message: expect.stringContaining("65536-byte read allowance"),
+        }),
+      ]),
+    );
+  },
+);
+
 describe("ELF version requirements", () => {
   it("resolves defined copy-relocated symbols through version requirements", () => {
     const result = parse(
@@ -706,13 +968,12 @@ describe("ELF version requirements", () => {
   });
 
   it("uses a definition name when a requirement shares its index", () => {
-    const result = parse(
-      elfExportImage({
-        symbols: [{ name: "ambiguous", version: 2 }],
-        versionDefinitions: ["libfixture.so", "DEFINITION"],
-        versionRequirements: [{ index: 2, name: "REQUIREMENT" }],
-      }),
-    );
+    const bytes = elfExportImage({
+      symbols: [{ name: "ambiguous", version: 2 }],
+      versionDefinitions: ["libfixture.so", "DEFINITION"],
+      versionRequirements: [{ index: 2, name: "REQUIREMENT" }],
+    });
+    const result = parse(bytes);
 
     expect(result.exports).toMatchObject([
       {
@@ -722,6 +983,10 @@ describe("ELF version requirements", () => {
     ]);
     expect(result.coverage.status).toBe("complete");
     expect(result.issues).toEqual([]);
+    expect(parse(compressExportSection(bytes, 4))).toMatchObject({
+      exports: [{ name: "ambiguous", version: { index: 2, name: null } }],
+      coverage: { status: "partial" },
+    });
   });
 
   it("retains exports and reports a truncated version-requirement chain", () => {
@@ -815,9 +1080,14 @@ describe("export inventory review regressions", () => {
     });
 
     expect(bytes.length).toBeLessThan(100_000);
-    expect(() => parseNativeExports(bytes, artifact)).toThrow(
-      BinaryResourceFailure,
-    );
+    const cause = refusal(bytes);
+    expect(cause).toBeInstanceOf(NativeExportLimitFailure);
+    expect(cause).toMatchObject({
+      limit: "retained_text",
+      boundary: "structure",
+      maximum_bytes: 16_777_216,
+      message: expect.stringContaining("16777216-byte retained-text"),
+    });
   });
 
   it("keeps exports when the version table lies outside the file", () => {
@@ -866,37 +1136,6 @@ describe("export inventory review regressions", () => {
     });
   });
 
-  it.each([32, 64] as const)(
-    "rejects nonzero reserved fields in the ELF%s null symbol",
-    (bits) => {
-      for (const little of [true, false]) {
-        // ELF32/64 symbol records have no padding: every field in entry zero
-        // is reserved as zero by the ABI, independently of host endianness.
-        const width = bits === 64 ? 24 : 16;
-        for (let byte = 0; byte < width; byte++) {
-          const bytes = elfExportImage({
-            bits,
-            little,
-            symbols: [{ name: "kept_export" }],
-          });
-          bytes[0x100 + byte] = 1;
-          expect(() => parseNativeExports(bytes, artifact)).toThrow(
-            BinaryFormatFailure,
-          );
-        }
-        expect(
-          parse(
-            elfExportImage({
-              bits,
-              little,
-              symbols: [{ name: "kept_export" }],
-            }),
-          ).exports.map(({ name }) => name),
-        ).toEqual(["kept_export"]);
-      }
-    },
-  );
-
   it("rejects a dynamic symbol table without its null entry", () => {
     expect(() =>
       parseNativeExports(
@@ -905,6 +1144,101 @@ describe("export inventory review regressions", () => {
       ),
     ).toThrow(BinaryFormatFailure);
   });
+});
+
+/** The fixture's `.dynsym` starts at file offset 0x100. */
+const NULL_SYMBOL_OFFSET = 0x100;
+
+const writeNullSymbolName = (
+  bytes: Buffer,
+  nameOffset: number,
+  little: boolean,
+): void => {
+  if (little) bytes.writeUInt32LE(nameOffset, NULL_SYMBOL_OFFSET);
+  else bytes.writeUInt32BE(nameOffset, NULL_SYMBOL_OFFSET);
+};
+
+// One added note naming the skipped entry's facts; its wording is free.
+const nullSymbolNameNote = (nameOffset: number) =>
+  expect.stringMatching(
+    new RegExp(`symbol 0\\b.*0x100\\b.*0x${nameOffset.toString(16)}\\b`, "su"),
+  );
+
+describe("ELF dynamic symbol null entry", () => {
+  it.each([32, 64] as const)(
+    "rejects an ELF%s null symbol with a nonzero field other than st_name",
+    (bits) => {
+      for (const little of [true, false]) {
+        const width = bits === 64 ? 24 : 16;
+        for (let byte = 4; byte < width; byte++) {
+          const bytes = elfExportImage({
+            bits,
+            little,
+            symbols: [{ name: "kept_export" }],
+          });
+          bytes[NULL_SYMBOL_OFFSET + byte] = 1;
+          expect(() => parseNativeExports(bytes, artifact)).toThrow(
+            BinaryFormatFailure,
+          );
+        }
+        const named = elfExportImage({
+          bits,
+          little,
+          symbols: [{ name: "kept_export" }],
+        });
+        writeNullSymbolName(named, 0x956, little);
+        named[NULL_SYMBOL_OFFSET + (bits === 64 ? 4 : 12)] = 0x12;
+        expect(() => parseNativeExports(named, artifact)).toThrow(
+          expect.objectContaining({
+            name: "BinaryFormatFailure",
+            message: "ELF dynamic symbol table null entry has nonzero fields",
+          }),
+        );
+      }
+    },
+  );
+
+  it.each([32, 64] as const)(
+    "records a nonzero st_name on an otherwise undefined ELF%s symbol",
+    (bits) => {
+      for (const little of [true, false]) {
+        const clean = parse(
+          elfExportImage({
+            bits,
+            little,
+            symbols: [{ name: "kept_export" }],
+          }),
+        );
+        expect(clean.exports.map(({ name }) => name)).toEqual(["kept_export"]);
+        expect(clean.limitations.join("\n")).not.toContain("st_name");
+        // 0x956 is the reported shape and falls outside this fixture's
+        // string table. Offset 1 is the bytes of kept_export.
+        for (const nameOffset of [0x956, 1]) {
+          const bytes = elfExportImage({
+            bits,
+            little,
+            symbols: [{ name: "kept_export" }],
+          });
+          writeNullSymbolName(bytes, nameOffset, little);
+          const result = parse(bytes);
+          expect(result.exports.map(({ name }) => name)).toEqual([
+            "kept_export",
+          ]);
+          expect(result.issues).toEqual([]);
+          expect(result.coverage).toEqual({
+            status: "complete",
+            reason: null,
+            examined_entries: 1,
+            exports: 1,
+          });
+          expect(result.limitations).toEqual([
+            ...clean.limitations,
+            nullSymbolNameNote(nameOffset),
+          ]);
+        }
+      }
+    },
+  );
 });
 
 describe("ELF symbol-name text", () => {
@@ -917,14 +1251,15 @@ describe("ELF symbol-name text", () => {
       expect(result.exports.map((entry) => entry.name)).toEqual(
         length === 65535 ? [name] : [],
       );
-      if (length === 65536)
+      if (length === 65536) {
+        expect(result.coverage.status).toBe("partial");
         expect(result.issues).toContainEqual(
           expect.objectContaining({
-            message: expect.stringContaining(
-              new BinaryStringReadLimitFailure(65_536).message,
-            ),
+            code: "name_unreadable",
+            message: expect.stringContaining("65536-byte read allowance"),
           }),
         );
+      }
     },
   );
 
@@ -1016,4 +1351,123 @@ it("refuses formats other than PE and ELF", () => {
   expect(() => parseNativeExports(macho, artifact)).toThrow(
     BinaryFormatFailure,
   );
+});
+
+it.each(
+  ([32, 64] as const).flatMap((bits) =>
+    [false, true].map((little) => ({ bits, little })),
+  ),
+)(
+  "keeps definition names and complete coverage when empty requirements are compressed (ELF$bits, little $little)",
+  ({ bits, little }) => {
+    const bytes = elfExportImage({
+      bits,
+      little,
+      symbols: [{ name: "versioned", version: 2 }],
+      versionDefinitions: ["libfixture.so", "DEFINED"],
+    });
+    const expected = parse(bytes);
+    expect(expected).toMatchObject({
+      exports: [{ name: "versioned", version: { index: 2, name: "DEFINED" } }],
+      coverage: { status: "complete" },
+      issues: [],
+    });
+    expect(parse(compressExportSection(bytes, 5))).toEqual(expected);
+  },
+);
+
+describe("ELF sections of a once-only type", () => {
+  const SHT_DYNSYM = 11;
+  const SHT_GNU_VERDEF = 0x6ffffffd;
+  const SHT_GNU_VERNEED = 0x6ffffffe;
+  const SHT_GNU_VERSYM = 0x6fffffff;
+  /**
+   * Retype the first ELF64 little-endian section header of type `from`,
+   * optionally relinking it to another section index.
+   */
+  const retype = (
+    bytes: Buffer,
+    from: number,
+    to: number,
+    link?: number,
+  ): Buffer => {
+    const copy = Buffer.from(bytes);
+    const offset = Number(copy.readBigUInt64LE(0x28));
+    const width = copy.readUInt16LE(0x3a);
+    const count = copy.readUInt16LE(0x3c);
+    for (let index = 0; index < count; index++) {
+      const at = offset + index * width;
+      if (copy.readUInt32LE(at + 4) !== from) continue;
+      copy.writeUInt32LE(to, at + 4);
+      if (link !== undefined) copy.writeUInt32LE(link, at + 40);
+      return copy;
+    }
+    throw new Error(`No section of type ${String(from)}`);
+  };
+  const symbols = [{ name: "stdout", type: 1, value: 0x28268n, version: 3 }];
+  const required = () =>
+    elfExportImage({
+      symbols,
+      versionRequirements: [{ index: 3, name: "GLIBC_2.2.5" }],
+    });
+
+  it("refuses an image that declares two dynamic symbol tables", () => {
+    expect(
+      refusal(retype(required(), SHT_GNU_VERSYM, SHT_DYNSYM)),
+    ).toMatchObject({
+      kind: "malformed",
+      message: "ELF image has more than one SHT_DYNSYM",
+    });
+  });
+
+  it("keeps exports but names no requirement when two requirement tables are declared", () => {
+    // The empty definition table becomes a second requirement table; the
+    // symbol version table stays linked to .dynsym.
+    const result = parse(retype(required(), SHT_GNU_VERDEF, SHT_GNU_VERNEED));
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({
+        code: "version_unresolved",
+        message:
+          "Version requirements: the ELF declares 2 sections of this type, so none was read",
+      }),
+    );
+    expect(result.exports).toHaveLength(1);
+    expect(result.exports[0]).toMatchObject({ name: "stdout" });
+    expect(JSON.stringify(result.exports[0])).not.toContain("GLIBC_2.2.5");
+  });
+
+  it("names no version when two definition tables are declared", () => {
+    // The empty requirement table becomes a second definition table.
+    const result = parse(
+      retype(
+        elfExportImage({ symbols, versionDefinitions: ["lib", "V1", "V2"] }),
+        SHT_GNU_VERNEED,
+        SHT_GNU_VERDEF,
+      ),
+    );
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({
+        code: "version_unresolved",
+        message:
+          "Version definitions: the ELF declares 2 sections of this type, so none was read",
+      }),
+    );
+    expect(result.exports).toHaveLength(1);
+    expect(JSON.stringify(result.exports[0])).not.toMatch(/"V[12]"/u);
+  });
+
+  it("marks versions unknown when two version tables link to .dynsym", () => {
+    // The empty definition table becomes a second symbol version table
+    // linked to .dynsym (section 1).
+    const result = parse(retype(required(), SHT_GNU_VERDEF, SHT_GNU_VERSYM, 1));
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({
+        code: "version_unresolved",
+        message: "2 symbol version tables link to the dynamic symbol table",
+      }),
+    );
+    expect(result.exports).toEqual([
+      expect.objectContaining({ name: "stdout", version: "unknown" }),
+    ]);
+  });
 });

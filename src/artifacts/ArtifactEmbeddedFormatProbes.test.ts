@@ -11,6 +11,79 @@ import { dotnetBundleFixture } from "./dotnet/DotnetBundle.fixture.js";
 import { denoMachO } from "./deno/DenoStandalone.fixture.js";
 import * as denoLocation from "./deno/DenoStandaloneLocation.js";
 import * as pckLocation from "./GodotPckLocation.js";
+import { resolveArtifactReaderLimits } from "../domain/artifactReaderLimits.js";
+import { nodeSeaElf } from "./nodeSea/NodeSea.fixture.js";
+
+it("readmits cached SEA recognition when the accepted policy changes", async () => {
+  const path = join(
+    await createTestTempDirectory("rea-probe-policy-"),
+    "carrier",
+  );
+  await writeFile(path, nodeSeaElf({ fuse: "set", ownership: "section" }));
+  await withOwnedRegularFile(path, {}, async (source) => {
+    const original = new ArtifactEmbeddedFormatProbes(path, source);
+    const location = await original.nodeSea();
+    expect(location).toBeDefined();
+    const lower = new ArtifactEmbeddedFormatProbes(
+      path,
+      source,
+      undefined,
+      original.completedFacts(),
+      resolveArtifactReaderLimits({ node_sea: { blob_bytes: 1 } }),
+    );
+    await expect(lower.nodeSea()).rejects.toMatchObject({
+      reason: "limit",
+      readerLimit: {
+        parameter: "artifact_limits.node_sea.blob_bytes",
+        effective_value: 1,
+      },
+    });
+    expect(Object.hasOwn(lower.completedFacts(), "nodeSea")).toBe(false);
+    const restored = new ArtifactEmbeddedFormatProbes(
+      path,
+      source,
+      undefined,
+      lower.completedFacts(),
+      resolveArtifactReaderLimits(),
+    );
+    expect(await restored.nodeSea()).toEqual(location);
+    const recognitionLimited = new ArtifactEmbeddedFormatProbes(
+      path,
+      source,
+      undefined,
+      restored.completedFacts(),
+      resolveArtifactReaderLimits({
+        node_sea: { recognition_header_count: 1 },
+      }),
+    );
+    await expect(recognitionLimited.nodeSea()).resolves.toBeUndefined();
+    expect(Object.hasOwn(recognitionLimited.completedFacts(), "nodeSea")).toBe(
+      false,
+    );
+    expect(
+      recognitionLimited.completedFacts().nodeSeaRecognitionFailure,
+    ).toMatchObject({
+      readerLimit: {
+        parameter: "artifact_limits.node_sea.recognition_header_count",
+        effective_value: 1,
+        required_value: 3,
+      },
+    });
+    const recognitionRestored = new ArtifactEmbeddedFormatProbes(
+      path,
+      source,
+      undefined,
+      recognitionLimited.completedFacts(),
+      resolveArtifactReaderLimits({
+        node_sea: { recognition_header_count: 3 },
+      }),
+    );
+    expect(await recognitionRestored.nodeSea()).toEqual(location);
+    expect(
+      recognitionRestored.completedFacts().nodeSeaRecognitionFailure,
+    ).toBeUndefined();
+  });
+});
 
 it("distinguishes examined absence from unexamined formats and honors cancellation on a cached result", async () => {
   const root = await createTestTempDirectory("rea-embedded-probe-facts-");

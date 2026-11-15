@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { lstat, mkdir, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +9,43 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { readStableSymlinkTarget } from "../../../src/reference/ReferenceSourceReaderEntries.js";
 import { readReferenceSource } from "../../support/referenceSourceResourceScope.js";
 import { ok } from "../../../src/domain/result.js";
+
+it.each(["rejected", "returned"] as const)(
+  "retains a symlink's physical failure when cancellation accompanies its %s outcome",
+  async (outcome) => {
+    const root = await createTestTempDirectory("rea-reference-link-failure-");
+    const link = join(root, "alias");
+    await symlink("target", link);
+    const expected = await lstat(link, { bigint: true });
+    const controller = new AbortController();
+    const physical = Object.assign(new Error("authored link EIO"), {
+      code: "EIO",
+    });
+    const result = await readStableSymlinkTarget(
+      link,
+      "alias",
+      expected,
+      controller.signal,
+      async () => {
+        controller.abort("during link failure");
+        if (outcome === "rejected") throw physical;
+        return {
+          status: "failed",
+          kind: "symlink",
+          path: "alias",
+          code: "io",
+          message: "authored link EIO",
+        };
+      },
+    );
+    expect(result).toMatchObject({
+      status: "failed",
+      kind: "symlink",
+      path: "alias",
+      code: "io",
+    });
+  },
+);
 
 it("retains the caller reason and observed entries when traversal is cancelled", async () => {
   const root = await createTestTempDirectory("rea-reference-cancel-");
@@ -148,7 +186,8 @@ describe("readReferenceSource entries", () => {
   it("reads a source file larger than the former 16 MiB ceiling", async () => {
     const root = await createTestTempDirectory("rea-reference-large-");
     const size = 16 * 1024 * 1024 + 1;
-    await writeFile(join(root, "large.bin"), Buffer.alloc(size, 0x61));
+    const bytes = Buffer.alloc(size, 0x61);
+    await writeFile(join(root, "large.bin"), bytes);
 
     const result = await readReferenceSource(root);
 
@@ -161,6 +200,15 @@ describe("readReferenceSource entries", () => {
         path: "large.bin",
         size,
       }),
+    );
+    const entry = result.value.entries.find(
+      (entry) => entry.path === "large.bin",
+    );
+    if (entry?.status !== "read" || entry.kind !== "file")
+      throw new Error("Expected captured file bytes");
+    expect(entry.bytes.byteLength).toBe(size);
+    expect(createHash("sha256").update(entry.bytes).digest("hex")).toBe(
+      createHash("sha256").update(bytes).digest("hex"),
     );
   });
 

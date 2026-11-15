@@ -1,3 +1,10 @@
+import {
+  webSourceLocationViewRequestSchema,
+  webSourceLocationContextSchema,
+  webSourceLocationSummarySchema,
+  webSourceLocationMatchViewSchema,
+} from "./webSourceLocationView.js";
+import { analysisTextPageItemSchema } from "./analysisViewText.js";
 import { graphqlContractViewRequestSchema } from "../apiContract/graphqlContractQuery.js";
 import {
   graphqlContractViewContextSchema,
@@ -206,10 +213,7 @@ import {
   artifactGraphManifestSchema,
   artifactInventoryCoverageSchema,
 } from "../artifactGraph.js";
-import {
-  apiSurfaceFields,
-  apiSurfaceViewSchema,
-} from "./webNetworkApiSurfaceView.js";
+import { apiSurfaceFields, apiSurfaceViewSchema } from "./apiSurfaceSchema.js";
 import {
   evmViewRequestSchema,
   evmViewItemSchema,
@@ -254,10 +258,8 @@ import {
   captureViewItemsSchema,
   captureSummarySchema,
 } from "./webNetworkCaptureView.js";
-import {
-  environmentManifestFields,
-  environmentManifestViewRequestSchema,
-} from "./environmentManifestView.js";
+import { environmentManifestFields } from "./environmentManifestSchema.js";
+import { environmentManifestViewRequestSchema } from "./environmentManifestView.js";
 import {
   environmentStateFields,
   environmentStateViewRequestSchema,
@@ -279,13 +281,15 @@ import {
 import {
   androidPackageSummarySchema,
   androidManifestViewItemSchema,
-  androidManifestViewRequestSchema,
-  androidComponentsViewRequestSchema,
-  androidComponentSummaryViewRequestSchema,
   androidComponentViewRowSchema,
   androidComponentViewContextSchema,
   androidComponentSummarySchema,
 } from "./androidPackageView.js";
+import {
+  androidManifestViewRequestSchema,
+  androidComponentsViewRequestSchema,
+  androidComponentSummaryViewRequestSchema,
+} from "../android/androidPackageQuery.js";
 import {
   androidClassSummarySchema,
   androidMethodSummarySchema,
@@ -357,6 +361,7 @@ const javascriptSummarySchema = z.strictObject({
 const viewResultBase = {
   parent_evidence_id: prefixedDigestSchema("ev"),
   parent_operation: z.enum([
+    "trace_web_source_location",
     "inspect_python_pyc",
     "inspect_erlang_beam",
     "inspect_devicetree",
@@ -409,6 +414,30 @@ const summaryViewResultBase = {
   view: summaryViewSchema,
   ...viewResultBase,
 } as const;
+
+export const webSourceLocationSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("trace_web_source_location"),
+  summary: webSourceLocationSummarySchema,
+});
+export const webSourceLocationMatchesViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  kind: z.literal("source-location"),
+  parent_operation: z.literal("trace_web_source_location"),
+  view: webSourceLocationViewRequestSchema.options[0],
+  source_location: webSourceLocationContextSchema,
+  items: z.array(webSourceLocationMatchViewSchema),
+});
+export const webSourceLocationTextViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  kind: z.literal("source-location-text"),
+  coverage: nullableCollectionViewCoverageSchema,
+  parent_operation: z.literal("trace_web_source_location"),
+  view: webSourceLocationViewRequestSchema.options[1],
+  source_location: webSourceLocationContextSchema,
+  match: webSourceLocationMatchViewSchema,
+  item: analysisTextPageItemSchema.nullable(),
+});
 
 /** Original selector and text availability without the complete decompiled text. */
 export const procedurePseudocodeSummaryViewResultSchema = z.strictObject({
@@ -527,6 +556,7 @@ export const erlangBeamSummaryViewResultSchema = z.strictObject({
 });
 export const erlangBeamTableViewResultSchema = z.strictObject({
   ...viewResultBase,
+  coverage: nullableCollectionViewCoverageSchema,
   kind: z.literal("beam"),
   parent_operation: z.literal("inspect_erlang_beam"),
   view: erlangBeamViewRequestSchema,
@@ -592,6 +622,7 @@ export const rustBinarySummaryViewResultSchema = z.strictObject({
 
 export const rustBinaryPageViewResultSchema = z.strictObject({
   ...viewResultBase,
+  coverage: nullableCollectionViewCoverageSchema,
   ...rustBinaryViewContextSchema.shape,
   kind: z.literal("rust"),
   parent_operation: z.literal("inspect_rust_binary"),
@@ -743,11 +774,11 @@ export const androidMethodSummaryViewResultSchema = z.strictObject({
   summary: androidMethodSummarySchema,
 });
 
-/** Legacy manifest views keep their original shape; new facets are explicit. */
+/** One page of the retained manifest text. */
 export const androidManifestViewResultSchema = z.strictObject({
   ...viewResultBase,
   kind: z.literal("android"),
-  facet: z.literal("manifest").optional(),
+  facet: z.literal("manifest"),
   view: androidManifestViewRequestSchema,
   item: androidManifestViewItemSchema,
   parent_operation: z.literal("inspect_android_package"),
@@ -1332,6 +1363,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     view: environmentCoverageViewRequestSchema,
   }),
   z.discriminatedUnion("parent_operation", [
+    webSourceLocationSummaryViewResultSchema,
     procedurePseudocodeSummaryViewResultSchema,
     nativeObservationSummaryViewResultSchema,
     nativeValueTraceSummaryViewResultSchema,
@@ -1389,6 +1421,8 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     devicetree: devicetreePageContextSchema,
     items: devicetreeViewItemsSchema,
   }),
+  webSourceLocationMatchesViewResultSchema,
+  webSourceLocationTextViewResultSchema,
   erlangBeamTableViewResultSchema,
   pythonPycCodeObjectsViewResultSchema,
   z.strictObject({
@@ -1441,6 +1475,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     view: browserScenarioViewRequestSchema,
     items: browserScenarioViewItemsSchema,
     ...viewResultBase,
+    coverage: nullableCollectionViewCoverageSchema,
     ...browserScenarioViewContextSchema.shape,
     artifact: z.null(),
     parent_operation: z.literal("capture_browser_scenario"),
@@ -1470,6 +1505,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     ...viewResultBase,
     ...goBinaryViewContextSchema.shape,
+    coverage: nullableCollectionViewCoverageSchema,
     kind: z.literal("go"),
     parent_operation: z.literal("inspect_go_binary"),
     view: goBinaryViewRequestSchema,

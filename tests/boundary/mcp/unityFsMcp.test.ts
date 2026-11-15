@@ -107,5 +107,4 @@ it.each(["full", "compact"] as const)(
         await rm(outputRoot, { recursive: true, force: true });
     }
   },
-  60_000,
 );

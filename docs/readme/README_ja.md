@@ -86,7 +86,7 @@ MCP は既定でコンパクトな入力スキーマを使用します。完全�
 
 セットアップは選択したランタイムと REA のエントリースクリプトを直接登録します。パッケージランナーを使う場合は、そのキャッシュ項目とランタイムを残し、対象プロジェクト外の信頼できるディレクトリからパッケージを取得してください。 インストールガイドを参照してください。
 
-出力スキーマはデフォルトで完全なものが公開されます。クライアントが `tools/list` を制限する場合は、MCP 登録で `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` または `off` を設定してください。サーバー側の検証と構造化結果は完全なままです。 MCP 契約ガイドの「Output schemas」を参照してください。
+出力スキーマはデフォルトで `tools/list` から省略されます。モデル API は出力スキーマを読まず、REA 自身がすべての結果を検証するためです。MCP 登録で `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` を設定すると各出力スキーマを 4096 バイト以内で公開し、`full` を設定すると完全な出力スキーマを公開します（結果を検証する MCP クライアント向け）。どの設定でもサーバー側の検証と構造化結果は完全なままです。 MCP 契約ガイドの「Output schemas」を参照してください。
 
 ### エージェントに依頼する
 
@@ -174,7 +174,7 @@ REA には Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）、または 26+ (>=
 | JavaScript / Electron            | モジュール、インポート、ソースマップ、ルート、IPC、ネイティブアドオンの関係                 | Node.js と npm；[アプリケーション分析](../guides/javascript/javascript-application-workflows.md); Linux: procps `ps`                                                          |
 | ウェブサイト                     | ページ構造、スクリプト、ネットワークの観測結果、依頼されたスクリーンショット                | Chrome 系ブラウザー；[ブラウザー分析](../guides/web/browser-observation.md)                                                                                                   |
 | 保存済みのネットワークキャプチャ | リクエスト、レスポンス、取得可能なペイロード、ソース内の位置                                | HAR / Fiddler Everywhere SAZ；mitmproxy ネイティブ形式のキャプチャには Linux 上の mitmdump；[キャプチャガイド](../guides/web/web-network-captures.md)                         |
-| パケットキャプチャ               | エンドポイント、DNS、TLS SNI、プロトコル分布、HTTPリクエスト                                | 呼び出し側が用意した tshark と capinfos；[pcapガイド](../guides/data/pcap-analysis.md)                                                                                        |
+| パケットキャプチャ               | エンドポイント、DNS、TLS SNI、プロトコル分布、HTTPリクエスト                                | 呼び出し側が用意した tshark と capinfos (Linux で検証済み)；[pcapガイド](../guides/data/pcap-analysis.md)                                                                     |
 | .NET アセンブリ                  | メタデータ、CIL 命令、宣言されたネイティブ依存関係、ビルドの比較                            | 静的な検査；[マネージドコードのガイド](../guides/managed/managed-code-analysis.md)                                                                                            |
 | PyInstaller                      | CArchive, PYZ, Python bytecode                                                              | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                                         |
 | Deno compile binaries            | Virtual files, entry point, recorded options, npm snapshot length                           | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                                          |

@@ -12,11 +12,13 @@ import { publishWebScripts } from "../browser/assets/PublishWebScripts.js";
 import { selectScriptCapture } from "../browser/assets/ScriptCaptureAdapters.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
@@ -86,9 +88,7 @@ export const exportWebScriptsValidated = async (
 ): Promise<Result<Evidence, AnalysisError>> => {
   try {
     if (options.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-      );
+      return err(cancelledBy(OPERATION, options.signal));
     const prepared = await prepareCapture(
       input.capture_path,
       resources,
@@ -97,9 +97,7 @@ export const exportWebScriptsValidated = async (
     if (!prepared.ok) return prepared;
     const { bytes, loaded } = prepared.value;
     if (options.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-      );
+      return err(cancelledBy(OPERATION, options.signal));
     const sha256 = createHash("sha256").update(bytes).digest("hex");
     const result = await publishWebScripts(input, loaded, sha256, {
       resources,
@@ -107,8 +105,7 @@ export const exportWebScriptsValidated = async (
     });
     if (options.signal?.aborted === true)
       return err(
-        new AnalysisCancelledError(OPERATION, {
-          cause: options.signal.reason,
+        cancelledBy(OPERATION, options.signal, {
           partialObservation: { kind: "web-script-export", result },
         }),
       );
@@ -189,8 +186,7 @@ const mapExportFailure = (
             cause.message,
             { cause, partialObservation: cause.partialObservation },
           )
-        : new AnalysisCancelledError(OPERATION, {
-            cause: cause.cancellation.reason,
+        : cancelledBy(OPERATION, carriedReason(cause.cancellation.reason), {
             partialObservation: cause.partialObservation,
           });
     if (cause.cleanup === undefined) return primary;
@@ -270,9 +266,10 @@ const readCapture = async (
             ? { reason: signal.reason }
             : regularFileCancellation(cause);
         if (cancellation !== undefined) {
-          const primary = new AnalysisCancelledError(OPERATION, {
-            cause: cancellation.reason,
-          });
+          const primary = cancelledBy(
+            OPERATION,
+            carriedReason(cancellation.reason),
+          );
           return err(
             retry.cleanup === undefined
               ? primary
@@ -303,9 +300,7 @@ const captureReadFailure = (
 ): AnalysisError => {
   const cancellation = regularFileCancellation(failure);
   if (cancellation !== undefined)
-    return new AnalysisCancelledError(OPERATION, {
-      cause: cancellation.reason,
-    });
+    return cancelledBy(OPERATION, carriedReason(cancellation.reason));
   const primary =
     failure instanceof RegularFileCleanupFailure &&
     failure.outcome.kind === "failed"
@@ -323,6 +318,16 @@ const captureReadFailure = (
           "Capture read and file-handle close both failed",
           { cause },
         );
+  if (cause instanceof ConfigurationError) {
+    if (closeFailure === undefined) return cause;
+    return new ConfigurationError(cause.message, {
+      cause: causeWithClose,
+      settings: cause.settings,
+      ...(cause.remediationAction === undefined
+        ? {}
+        : { remediationAction: cause.remediationAction }),
+    });
+  }
   const code =
     cause instanceof Error && "code" in cause ? String(cause.code) : "";
   if (code === "EACCES" || code === "EPERM")

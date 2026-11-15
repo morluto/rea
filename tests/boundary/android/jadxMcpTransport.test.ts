@@ -5,6 +5,7 @@ import {
   type JSONRPCMessage,
 } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
+import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { OwnedMcpStdioTransport } from "../../../src/process/OwnedMcpStdioTransport.js";
 import type { ProviderProcessHandle } from "../../../src/process/ProviderProcess.js";
 import {
@@ -258,9 +259,27 @@ it("retries an incomplete owned stop while joining concurrent close callers", as
   await transport.start();
   const firstClose = transport.close();
   expect(transport.close()).toBe(firstClose);
-  await expect(firstClose).rejects.toMatchObject({ cleanupIncomplete: true });
+  const failure: unknown = await firstClose.catch((cause: unknown) => cause);
+  if (!(failure instanceof ProviderCleanupError)) throw failure;
+  expect(failure.cleanupIncomplete).toBe(true);
+  expect(failure.cleanupResources).toEqual([transport.runId]);
+  expect(failure.diagnostics).toMatchObject({
+    reason: "ownership verification unavailable",
+  });
+  const unrelated = new JadxMcpTransport(
+    { command: "fixture", arguments: [] },
+    fixtureLauncher(new FixtureProcess()),
+  );
+  await unrelated.start();
+  await unrelated.close();
+  expect(failure.cleanupIncomplete).toBe(true);
   cleanupFails = false;
   await transport.close();
+  expect(failure.cleanupIncomplete).toBe(false);
+  expect(failure.cleanupResources).toEqual([]);
+  expect(failure.diagnostics).toMatchObject({
+    reason: "ownership verification unavailable",
+  });
   await transport.close();
 });
 

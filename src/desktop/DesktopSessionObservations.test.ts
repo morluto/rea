@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import { systemProcessOwnershipHost } from "../process/ProcessOwnershipObservation.js";
 import type { ProcessLifecycle } from "../process/ProcessLifecycle.js";
 import {
   SessionObservations,
@@ -257,4 +258,54 @@ describe("sampleTokenCarriers", () => {
     expect(await sampleTokenCarriers(observations, signal)).toBe(false);
     expect(observations.liveProcessIds()).toEqual([]);
   });
+});
+
+it("keeps a failed optional token-table probe unknown", async () => {
+  const observations = new SessionObservations(
+    performance.now(),
+    { runId: "inert-observation", launchPid: process.pid },
+    { names: new Set(), byPid: true },
+  );
+  const table = vi
+    .spyOn(systemProcessOwnershipHost, "listProcesses")
+    .mockRejectedValue(
+      Object.assign(new Error("table read failed"), { code: "EIO" }),
+    );
+  const environment = vi
+    .spyOn(systemProcessOwnershipHost, "environment")
+    .mockRejectedValue(
+      new Error("no token read is authorized after an unreadable table"),
+    );
+  try {
+    expect(
+      await sampleTokenCarriers(observations, new AbortController().signal),
+    ).toBe(false);
+    expect(table).toHaveBeenCalledTimes(1);
+    expect(environment).not.toHaveBeenCalled();
+  } finally {
+    table.mockRestore();
+    environment.mockRestore();
+  }
+});
+
+it("keeps a failed optional process-token read unknown", async () => {
+  const observations = new SessionObservations(
+    performance.now(),
+    { runId: "inert-observation", launchPid: process.pid },
+    { names: new Set(), byPid: false },
+  );
+  const environment = vi
+    .spyOn(systemProcessOwnershipHost, "environment")
+    .mockRejectedValue(
+      Object.assign(new Error("token read failed"), { code: "EIO" }),
+    );
+  try {
+    await trackProcess(observations, process.pid, new AbortController().signal);
+    expect(environment).toHaveBeenCalledTimes(1);
+    expect(observedSession(observations).processes).toEqual([
+      expect.objectContaining({ pid: process.pid, started_by_capture: true }),
+    ]);
+  } finally {
+    environment.mockRestore();
+  }
 });

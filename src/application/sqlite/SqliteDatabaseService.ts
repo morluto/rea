@@ -3,11 +3,10 @@ import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { SqliteDatabasePort } from "./SqliteDatabasePort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
-import {
-  createEvidence,
-  type Evidence,
-  type EvidenceSubjectTarget,
-} from "../../domain/evidence.js";
+import type { Evidence, EvidenceSubjectTarget } from "../../domain/evidence.js";
+import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
+import { ownedJsonValueSchema } from "../../domain/jsonValue.js";
+import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 import {
   inspectSqliteDatabaseInputSchema,
   sqliteDatabaseSchema,
@@ -19,7 +18,7 @@ import {
   sqliteSchemaScope,
   sqliteInspectionParameters,
 } from "../../domain/sqlite/sqliteDatabase.js";
-import { err, ok, type Result } from "../../domain/result.js";
+import { err, type Result } from "../../domain/result.js";
 
 const OPERATION = "inspect_sqlite_database";
 
@@ -102,18 +101,14 @@ export class SqliteDatabaseService {
           "SQLite adapter returned malformed data or changed the selected database identity/table/row limit/worker budget.",
         ),
       );
-    return ok(
-      createEvidence(execution.subject, execution.provider, {
-        operation: OPERATION,
-        parameters: sqliteInspectionParameters(input.value),
-        result: report.data,
-        ...(execution.rawResult === null
-          ? {}
-          : { rawResult: execution.rawResult }),
-        confidence: "observed",
-        locations: execution.locations,
-        limitations: execution.limitations,
-      }),
+    return completeProviderEvidence(
+      createAnalysisExecutionEvidence(
+        OPERATION,
+        sqliteInspectionParameters(input.value),
+        { ...execution, result: ownedJsonValueSchema.parse(report.data) },
+        "observed",
+      ),
+      options?.signal,
     );
   }
 }

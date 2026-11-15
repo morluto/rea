@@ -3,11 +3,12 @@
 A [desktop application export](desktop-application-export.md) can carry one
 task: a prompt for a computer-use agent and checks that grade what the agent
 left in the application's files. An agent, not REA, writes the prompt and the
-checks from the change the capture recorded. REA validates the task against
-the capture and keeps it only when its checks fail on the seed and all pass on
-the captured end state. REA runs no model and no code the agent wrote: the
-checks are declarative, and the exported verifier evaluates them the same way
-REA does.
+checks from the change the capture recorded. For file checks, REA validates
+the task against the capture and keeps it only when its checks fail on the
+seed and all pass on the captured end state. The checks are declarative;
+optional [readers](#readers) run commands to interpret files, and
+[screen judges](#screen-judges) use a model when no file shows the change.
+The exported verifier uses the same checks and reader runner as REA.
 
 ```sh
 rea describe-desktop-application-task ./mousepad-capture --format json > draft.json
@@ -329,7 +330,7 @@ operation `describe_desktop_application_task` and predicate type
   - An element placed by its own position, holding numeric `x` and `y` as a
     like sibling does, as Xournal++ places each `<text>` note on a layer, is
     an item of its own, never a run of the others' text: one added whole
-    gets a `text_contains` of its text on the element holding the items,
+    gets a `member_count` matching its whole text with whitespace collapsed,
     which passes wherever it is placed, and that list's `member_count`.
   - Noise leaves the suggestions when the file's change holds anything
     else, a change only position reaches included: view state, which a tag
@@ -443,7 +444,7 @@ operation `describe_desktop_application_task` and predicate type
   a line with no text of its own, a command such as `\end_layout`, tags
   alone such as `<fonts>` or `</node>`, or a key alone such as a RedNotebook
   day's `24:`, nor a line that repeats; an item placed by its own position
-  that an edit added, a `text_contains` of each of up to four kept items'
+  that an edit added, a `member_count` matching each of up to four kept items'
   text, nearest first. Where members were only edited, a
   `member_count` of the innermost list holding the edited element that an
   edit goes through by a member with like siblings, a record rather than a
@@ -518,7 +519,7 @@ and `CIRCLE`, and only `CIRCLE` going from 5 to 9 is the user's change.
 and hyphens); `prompt` is what the user asks for, naming the app, since a
 solving agent's own shell cannot see the computer's files and the app's name
 sends it to the screen; `checks` holds 1 to 32
-checks. Each check has a `kind`, a `file` given as a path under the home such as
+checks. Each file check has a `kind`, a `file` given as a path under the home such as
 `Documents/todo.txt`, and an optional `id` (`check-1`, `check-2` and so on by
 position otherwise). A check reads the typed view `data/get` returns for that
 file, in the shapes of the state view.
@@ -589,6 +590,86 @@ value, or one of only whitespace with `normalize_whitespace`, an empty
 content, such as a
 counter the app bumps on every save, is for the author to leave out.
 
+## Readers
+
+For a file REA cannot interpret itself, such as an app's binary document,
+the task can define `readers`: 1 to 8 commands using the app's own reading
+capability. Each reader has a unique `id` of lowercase letters, digits and
+hyphens, a home-relative `file`, an `argv` array and `output`, either `json`
+or `lines`. Its `argv`, or optional `stdin` text, must contain `{file}`;
+the runner replaces it with the path of a private copy of that file.
+The command must be installed where the export runs and in the exported
+computer where the task will be graded.
+
+The command prints its answer in lines starting with `REA `; other stdout
+is ignored. With `output: "json"`, those marked lines join into one JSON
+value for `value_equals`, `value_absent` and `member_count`. With
+`output: "lines"`, they supply the lines for `lines_present`, `lines_absent`
+and `line_count`. A check selects a reader with `"reader": "READER-ID"`
+and must give that reader's file as its `file`. Every reader must be used by
+at least one check.
+
+Readers execute commands, including any code in `argv` or `stdin`; review
+them before exporting or running a task. The runner uses a private copy, a
+fresh home, no session bus or computer control token, and no display unless
+the reader requests `display: true`. This is execution isolation from the
+running app's normal profile, not a filesystem sandbox. `timeout_s` defaults
+to 60 seconds and accepts 1 to 300. A failed command, timeout, malformed
+answer or missing marked output reports a reader error; it does not establish
+that the document lacks the expected value. Correct the command or its output and retry; increase
+`timeout_s` within its accepted range when the reader needs longer.
+
+A source inspection failure, such as an inaccessible parent or a symlink loop,
+also reports a reader error and leaves affected checks undecided. Only a missing
+source or a source that is not a regular file is reported as absent.
+
+Export runs readers on both retained ends, using the seed bytes as the bundle
+actually ships them. The witness and exported verifier run them in the
+computer after the app's files settle. Cleanup failures retain the reader's
+reported resources: retry the check or close the build computer to retry
+cleanup; when the command's outcome is unknown, confirm it stopped before
+removing its folder.
+
+## Screen judges
+
+A task whose result exists only on screen can use `screen_judge` checks:
+
+```json
+{
+  "name": "show-list",
+  "prompt": "In Notes, show the shopping list.",
+  "checks": [
+    {
+      "id": "shown",
+      "kind": "screen_judge",
+      "question": "Does the window show the shopping list?"
+    }
+  ]
+}
+```
+
+Each question must be a nonempty yes-or-no question of at most 2,000
+characters, false on the seed and true when the task is done. A screen task
+contains only screen checks and takes no readers. Export refuses it when an
+owned file's readable change could be checked instead, or when the build
+computer's seed or end screenshot is missing or exceeds 2 MiB. Capture those
+checkpoints in a build computer before exporting.
+
+Export ships the two screenshots as labelled failing and passing examples;
+it does not call the judge or establish that the questions distinguish them.
+The [build witness](desktop-build-witness.md) runs the exported judge on a
+fresh screenshot at each stage. The verifier takes a screenshot after the
+solving agent stops. For each question, the judge sees both examples and
+votes three times; a majority of yes answers passes the check.
+
+The judge uses `[model.roles] judge` in the runner's
+`.agentenv/config.toml`, then `[model] default`, then
+`anthropic/claude-sonnet-5-5`. Configure its endpoint with
+`LITELLM_BASE_URL` and `LITELLM_API_KEY`, or `[model] base_url` and `api_key`.
+`agent-env run --judge-model` does not reach this verifier. Without an
+endpoint, grading raises and the run fails rather than scoring the agent;
+configure the endpoint and rerun the witness or task.
+
 ## Pointers and selectors
 
 An app that rewrites a document moves things: FreeCAD 1.0 records more
@@ -604,6 +685,9 @@ rather than by its position:
   the XML view keeps an element's attributes.
 - `[>PATH=VALUE]` names the member that holds `VALUE` at a path of one to
   three `/`-separated steps inside it. `>` reads XML and JSON differently:
+
+  For XML, `[>text()=VALUE]` compares the member's own whole text, with
+  whitespace collapsed, to `VALUE`. In JSON, `text()` remains a field name.
 
   | Form                                   | In an XML element                                                                                                                               | In a JSON record                                    |
   | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
@@ -796,7 +880,7 @@ that may hold only part of the array.
 ## Validation and export
 
 `rea export-desktop-application <capture> <directory> --task <task.json>`
-evaluates the checks on the capture's state view: on each file as it was at
+evaluates file checks on the capture's state view: on each file as it was at
 the seed checkpoint, which is the seed, as the bundle ships it with the
 capture host's name and user removed, and at the end checkpoint, the
 captured end state. Those are the capture's first and last checkpoints unless
@@ -805,9 +889,7 @@ It refuses a task whose every check passes on the seed, and a check that fails
 on the end state, with that check's reason. Only a failure on what the seed's
 view shows counts: a task whose checks fail on the seed only because a view
 could not be read or may have left out what they look for, such as a line past
-the 5,000 a text view keeps, is refused, naming each failure. A capture yields
-one task, so the option is taken once. The result's `task` names the task, its
-number of checks and those that fail on what the seed shows. A refused task
+the 5,000 a text view keeps, is refused, naming each failure. A refused task
 writes no bundle.
 
 The bundle then holds, besides the app and `tasks/smoke.json`:
@@ -816,7 +898,7 @@ The bundle then holds, besides the app and `tasks/smoke.json`:
 | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `tasks/<name>.json`                | Deploy the app, deploy the agent and its skills, record the screen, prompt the agent, run the verifier, stop recording |
 | `artifacts/<name>-check/verify.py` | Reads the app's `data/get` through the computer and evaluates the checks, one result per check                         |
-| `evals/<env>.toml`                 | The task, so a run of the bundle runs it; the smoke task runs with `--task smoke`                                      |
+| `evals/<env>.toml`                 | Every task, so a run of the bundle runs them all; the smoke task runs with `--task smoke`                              |
 
 The verifier finds the app among the computer's child environments, calls its
 `data/get` under the run's grant of the computer's control token, and reads
@@ -824,12 +906,48 @@ the `state` data part. It reads again until the app's files settle, as
 [grading once the app has saved](desktop-application-export.md#grading-once-the-app-has-saved)
 describes, and each result's `settled` says whether they did, and `read_cut`
 whether the bound cut a read still running. It raises when the app cannot be reached, so the run
-fails rather than scoring the agent. The README lists the task, its prompt, its
+fails rather than scoring the agent. The README lists each task, its prompt, its
 checks and the recipe below.
+
+### Several tasks
+
+One capture can yield several tasks: repeat `--task`, one file per task, each
+with its own name. Do each task's change on top of the last one in the same
+capture and take a checkpoint once it is saved; the first task's end is the
+end checkpoint, and `--task-end NAME=CHECKPOINT`, repeatable, names another
+task's. Each task is checked at its own end, so a task whose check fails there
+is refused, naming the task and the checkpoint, even when it passes at the
+last one; its checks should not read what a later task changes. A checkpoint
+named `near-NAME`, when the capture took one, is that task's near miss: a
+plausible wrong edit on top of its change, such as a typo. The export refuses
+the task unless one of its checks fails on what the near miss's views show.
+
+```sh
+rea export-desktop-application ./notes-capture ./notes-bundle \
+  --seed-checkpoint seed --end-checkpoint end \
+  --task add-eggs.json --task add-bread.json --task-end add-bread=end-add-bread
+```
+
+Two tasks of one name, a `--task-end` naming none of the tasks or not in
+`NAME=CHECKPOINT` form, and a checkpoint the capture did not take once at or
+after the seed are refused. The result's `tasks` lists each task: its name,
+its number of checks, its end checkpoint, those that fail on what the seed
+shows, and its near miss's checkpoint, or null, with those that fail there.
+`describe-desktop-application-task` drafts a later task from the end before
+it: `--seed-checkpoint end --end-checkpoint end-add-bread`.
+
+A task's readers run at the seed as the bundle ships it, at its own end and
+at its near miss. A screen-judged task ships the seed's screenshot and its own
+end's as the judge's examples, and is refused when a file shows its change
+since the end before it, or the seed for the first; its near miss is left to
+the witness, so its `near_checkpoint` is null.
 
 ## Solve rate
 
-REA does not run agents. To measure how often an agent solves the task, run it
+REA's CLI runs no agent. On a build host, the MCP tool `measure_build_task`
+measures a bundle's task for a model, records it in the bundle's
+`difficulty.json`, and keeps the task in the band when it passes 1 to 3 of 5;
+see [measuring a task](desktop-build-witness.md#measure). By hand, run the task
 k times, three by default, and count the runs whose summary line says
 `passed`:
 

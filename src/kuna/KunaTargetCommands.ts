@@ -1,14 +1,24 @@
+import {
+  artifactFileCancellationCause,
+  bindArtifactFileCleanup,
+} from "../artifacts/ArtifactFileOperation.js";
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
+import {
+  retainProcessInspectionCleanup,
+  processInspectionCancellationError,
+} from "../providers/OwnedCommandCleanup.js";
 import { basename, join } from "node:path";
 import { realpath } from "node:fs/promises";
 import type { Writable } from "node:stream";
 
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisArtifactChangedError,
-  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
+  OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
-import { KunaDocumentError } from "./KunaDocumentError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -18,6 +28,7 @@ import { prepareProcessOwnershipInspection } from "../process/ProcessOwnershipOb
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
 import {
   copyAndHash,
+  kunaCopyFailureFacts,
   runKunaCommand,
   type KunaInputPrefix,
   type KunaProcessLauncher,
@@ -98,11 +109,11 @@ export class KunaTargetCommands {
       request.releaseRun?.();
       return Promise.resolve(
         err(
-          new AnalysisCancelledError(
+          cancelledBy(
             request.operation,
             request.signal.aborted
-              ? { cause: request.signal.reason }
-              : undefined,
+              ? request.signal
+              : OwnerCancellation.ownerClosed,
           ),
         ),
       );
@@ -115,11 +126,11 @@ export class KunaTargetCommands {
     if (this.#closing || this.lifetime.signal.aborted)
       return Promise.resolve(
         err(
-          new AnalysisCancelledError(
+          cancelledBy(
             "kuna:workspace",
             this.lifetime.signal.aborted
-              ? { cause: this.lifetime.signal.reason }
-              : undefined,
+              ? this.lifetime.signal
+              : OwnerCancellation.ownerClosed,
           ),
         ),
       );
@@ -137,7 +148,16 @@ export class KunaTargetCommands {
    */
   inputHead(operation: string): Promise<Result<KunaInputHead, AnalysisError>> {
     if (this.#closing || this.lifetime.signal.aborted)
-      return Promise.resolve(err(new AnalysisCancelledError(operation)));
+      return Promise.resolve(
+        err(
+          cancelledBy(
+            operation,
+            this.lifetime.signal.aborted
+              ? this.lifetime.signal
+              : OwnerCancellation.ownerClosed,
+          ),
+        ),
+      );
     return this.#admit(operation, async () => {
       const workspace = await this.#ensureWorkspace();
       if (!workspace.ok) return workspace;
@@ -179,8 +199,10 @@ export class KunaTargetCommands {
         if (outcome.kind === "retained") {
           const process = new AnalysisCleanupLease(async () => {
             const stopped = await outcome.owner?.stop();
-            if (stopped === undefined || stopped.status === "incomplete")
-              throw new KunaDocumentError("stop_unproven");
+            if (stopped === undefined)
+              throw new Error("Kuna process ownership remains unresolved");
+            if (stopped.status === "incomplete")
+              throw new Error(stopped.reason, { cause: stopped });
             releaseRun?.();
           }, outcome.processResources);
           new AnalysisCleanupLeaseGroup(outcome.error, [
@@ -225,14 +247,14 @@ export class KunaTargetCommands {
         cause,
         "Kuna command file descriptor",
       );
-      failures.push(
-        new ProviderCleanupError(
-          KUNA_PROVIDER_ID,
-          observation.resources,
-          { reason: observation.reason },
-          { cause },
-        ),
+      const failure = new ProviderCleanupError(
+        KUNA_PROVIDER_ID,
+        observation.resources,
+        { reason: observation.reason },
+        { cause },
       );
+      bindArtifactFileCleanup(cause, failure);
+      failures.push(failure);
     }
     for (const retained of [...this.#retained]) {
       try {
@@ -294,17 +316,21 @@ export class KunaTargetCommands {
     try {
       return await this.#resources.run(work);
     } catch (cause: unknown) {
-      if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
-        return err(
-          new ProviderCleanupError(
-            KUNA_PROVIDER_ID,
-            cause.cleanup.resources,
-            { reason: cause.cleanup.reason },
-            { cause, operation },
-          ),
+      if (
+        cause instanceof ArtifactReaderFailure &&
+        cause.cleanup !== undefined
+      ) {
+        const failure = new ProviderCleanupError(
+          KUNA_PROVIDER_ID,
+          cause.cleanup.resources,
+          { reason: cause.cleanup.reason },
+          { cause, operation },
         );
+        bindArtifactFileCleanup(cause, failure);
+        return err(failure);
+      }
       if (this.#closing && cause instanceof ArtifactReaderFailure)
-        return err(new AnalysisCancelledError(operation, { cause }));
+        return err(cancelledBy(operation, carriedReason(cause)));
       throw cause;
     }
   }
@@ -325,17 +351,27 @@ export class KunaTargetCommands {
     let owned: WorkspaceRoot | undefined;
     try {
       const root = await PrivateRuntimeRoot.create({ prefix: "rea-kuna-" });
+      const copyResources = new ArtifactResourceScope();
       owned = {
         root,
-        cleanup: new AnalysisCleanupLease(() => root.close(), [root.path]),
+        cleanup: new AnalysisCleanupLease(async () => {
+          await copyResources.close();
+          await root.close();
+        }, [root.path]),
       };
       const input = join(root.path, basename(this.target.path));
-      const copied = await copyAndHash(
-        this.target.path,
-        input,
-        this.lifetime.signal,
-        this.lifetime.inputPrefix,
-      );
+      let copied: Awaited<ReturnType<typeof copyAndHash>>;
+      try {
+        copied = await copyAndHash(this.target.path, input, {
+          signal: this.lifetime.signal,
+          resources: copyResources,
+          ...(this.lifetime.inputPrefix === undefined
+            ? {}
+            : { keep: this.lifetime.inputPrefix }),
+        });
+      } catch (cause: unknown) {
+        return await this.#workspaceFailure(this.#copyFailure(cause), owned);
+      }
       if (copied.sha256 !== this.target.sha256)
         return await this.#workspaceFailure(
           new AnalysisArtifactChangedError(
@@ -345,7 +381,21 @@ export class KunaTargetCommands {
           ),
           owned,
         );
-      await prepareProcessOwnershipInspection(this.lifetime.signal);
+      try {
+        await prepareProcessOwnershipInspection(this.lifetime.signal);
+      } catch (cause: unknown) {
+        const primary =
+          processInspectionCancellationError(cause, "kuna:workspace") ??
+          new ProviderAdapterError(KUNA_PROVIDER_ID, "kuna:workspace", {
+            cause,
+          });
+        throw retainProcessInspectionCleanup(
+          cause,
+          primary,
+          this.#resources,
+          "kuna:workspace",
+        );
+      }
       return ok({
         ...owned,
         input: await realpath(input),
@@ -353,16 +403,55 @@ export class KunaTargetCommands {
         prefix: copied.prefix,
       });
     } catch (cause: unknown) {
-      const primary = new ProviderAdapterError(
+      return this.#workspaceFailure(
+        cause instanceof AnalysisError
+          ? cause
+          : new ProviderAdapterError(KUNA_PROVIDER_ID, "kuna:workspace", {
+              cause,
+              userMessage: `Kuna workspace failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+            }),
+        owned,
+      );
+    }
+  }
+
+  #copyFailure(cause: unknown): AnalysisError {
+    const facts = kunaCopyFailureFacts(cause);
+    const completion = facts.completion;
+    const primaryCause = facts.cause;
+    const cancellation =
+      completion?.cancellation ??
+      (facts.origin === "owned-or-classified" &&
+      primaryCause instanceof ArtifactReaderFailure &&
+      primaryCause.reason === "cancelled"
+        ? { reason: artifactFileCancellationCause(primaryCause) }
+        : undefined);
+    const primary =
+      cancellation !== undefined
+        ? cancelledBy("kuna:workspace", carriedReason(cancellation.reason))
+        : completion === undefined
+          ? new ProviderAdapterError(KUNA_PROVIDER_ID, "kuna:workspace", {
+              cause: primaryCause,
+            })
+          : undefined;
+    if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {
+      const error = new ProviderCleanupError(
         KUNA_PROVIDER_ID,
-        "kuna:workspace",
+        cause.cleanup.resources,
+        { reason: cause.cleanup.reason },
         {
+          operation: "kuna:workspace",
           cause,
-          userMessage: `Kuna workspace failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+          ...(primary === undefined ? {} : { cleanupPrimary: primary }),
         },
       );
-      return this.#workspaceFailure(primary, owned);
+      bindArtifactFileCleanup(cause, error);
+      return error;
     }
+    return (
+      primary ??
+      new ProviderAdapterError(KUNA_PROVIDER_ID, "kuna:workspace", { cause })
+    );
   }
 
   /** Rollback and the original outcome share the exact root cleanup lease. */
@@ -370,26 +459,33 @@ export class KunaTargetCommands {
     primary: AnalysisError,
     owned: WorkspaceRoot | undefined,
   ): Promise<Result<never, AnalysisError>> {
-    if (owned === undefined) return err(primary);
-    try {
-      await owned.cleanup.release();
-      return err(primary);
-    } catch (cause: unknown) {
-      this.#roots.push(owned);
-      const cleanup = new ProviderCleanupError(
-        KUNA_PROVIDER_ID,
-        [owned.root.path],
-        { reason: cause instanceof Error ? cause.message : String(cause) },
-        { cause, operation: "kuna:workspace" },
-      );
-      owned.cleanup.bindCleanupError(cleanup);
-      return err(
-        analysisErrorWithCleanupFailure(
+    let failure = primary;
+    if (owned !== undefined) {
+      try {
+        await owned.cleanup.release();
+      } catch (cause: unknown) {
+        this.#roots.push(owned);
+        const cleanup = new ProviderCleanupError(
+          KUNA_PROVIDER_ID,
+          [owned.root.path],
+          { reason: cause instanceof Error ? cause.message : String(cause) },
+          { cause, operation: "kuna:workspace" },
+        );
+        owned.cleanup.bindCleanupError(cleanup);
+        failure = analysisErrorWithCleanupFailure(
           primary,
           cleanup,
           "kuna:workspace",
-        ).bindCleanupDependencies([primary, cleanup]),
-      );
+        ).bindCleanupDependencies([primary, cleanup]);
+      }
     }
+    return err(
+      this.lifetime.signal.aborted
+        ? analysisErrorWithCancellation(
+            failure,
+            cancelledBy("kuna:workspace", this.lifetime.signal),
+          )
+        : failure,
+    );
   }
 }

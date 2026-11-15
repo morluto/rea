@@ -1,4 +1,5 @@
 import { readManagedPeLayout } from "../../../../src/dotnet/ManagedPeReader.js";
+import { machoRuntimeSymbolName } from "../../../../src/domain/native/machoSymbolName.js";
 import {
   metadataRowOffset,
   readManagedMetadataLayout,
@@ -13,7 +14,10 @@ import { inspectManagedNativeBoundariesBytes } from "../../../../src/dotnet/Mana
 import { executeManagedNativeBoundaries } from "../../../../src/application/managed/ManagedNativeVerificationService.js";
 import { MANAGED_NATIVE_VERIFICATION_EXAMPLE } from "../../../../src/contracts/managed/managedWorkflowExamples.js";
 import { createEvidence } from "../../../../src/domain/evidence.js";
-import { managedNativeVerificationResultSchema } from "../../../../src/domain/managed/managedNativeVerificationSchemas.js";
+import {
+  managedNativeVerificationResultSchema,
+  pinvokeVerificationSchema,
+} from "../../../../src/domain/managed/managedNativeVerificationSchemas.js";
 import { managedNativeBoundaryInspectionSchema } from "../../../../src/domain/managed/managedArtifact.js";
 import { inspectMachoSchema } from "../../../../src/domain/native/nativeInspection.js";
 import { functionDossierSchema } from "../../../../src/domain/native/functionDossier.js";
@@ -63,6 +67,7 @@ const nativeEvidenceWithExports = (
           ...macho.exports,
           items: names.map((name, index) => ({
             name,
+            runtime_name: machoRuntimeSymbolName(name),
             address: `0x${(0x1000 + index).toString(16)}`,
             weak: false,
             reexport: false,
@@ -917,30 +922,41 @@ describe("managed/native verification result algebra", () => {
     if (verification === undefined) return;
 
     expect(
-      managedNativeVerificationResultSchema.safeParse({
-        ...result,
-        pinvoke_imports: [
-          {
-            ...verification,
-            matched_native: null,
-            candidates: [],
-          },
-        ],
+      pinvokeVerificationSchema.safeParse({
+        ...verification,
+        matched_native: null,
+        candidates: [],
+      }).success,
+    ).toBe(false);
+    const unresolved = {
+      ...verification,
+      status: "unresolved",
+      basis: "no-native-candidate",
+      confidence: "unknown",
+      matched_native: null,
+      candidates: [],
+    };
+    expect(pinvokeVerificationSchema.safeParse(unresolved).success).toBe(true);
+    expect(
+      pinvokeVerificationSchema.safeParse({
+        ...unresolved,
+        matched_native: verification.matched_native,
       }).success,
     ).toBe(false);
     expect(
-      managedNativeVerificationResultSchema.safeParse({
-        ...result,
-        pinvoke_imports: [
-          {
-            ...verification,
-            status: "unresolved",
-            basis: "no-native-candidate",
-            confidence: "unknown",
-          },
-        ],
+      pinvokeVerificationSchema.safeParse({
+        ...unresolved,
+        candidates: verification.candidates,
       }).success,
     ).toBe(false);
+    // Valid item semantics cannot repair contradictory aggregate counts.
+    expect(
+      managedNativeVerificationResultSchema.safeParse({
+        ...result,
+        pinvoke_imports: [unresolved],
+      }).success,
+    ).toBe(false);
+    // Removed legacy fields are rejected by the strict coverage contract.
     expect(
       managedNativeVerificationResultSchema.safeParse({
         ...result,

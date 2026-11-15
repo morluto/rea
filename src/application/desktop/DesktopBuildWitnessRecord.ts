@@ -28,8 +28,9 @@ import {
 import { errorText } from "./DesktopBuildCommands.js";
 import { DESKTOP_PROVIDER } from "./DesktopCaptureRefusals.js";
 import {
+  planOutputTree,
   writeOutputTree,
-  writtenWithOpenHandles,
+  desktopOutputFailure,
 } from "./DesktopOutputTree.js";
 
 const CHECK = "check_build_task";
@@ -148,12 +149,12 @@ const writeRecordFolder = async (
   | {
       readonly published: true;
       readonly error: AnalysisError;
-      readonly release: () => Promise<void>;
+      readonly release: (() => Promise<void>) | undefined;
     }
 > => {
   try {
-    const unclosed = await writeOutputTree(
-      directory,
+    const completion = await writeOutputTree(
+      await planOutputTree(directory, { operation: CHECK, field: "directory" }),
       async (tree) => {
         for (const file of files)
           await tree.write(
@@ -166,21 +167,20 @@ const writeRecordFolder = async (
       { operation: CHECK, field: "directory" },
       signal,
     );
-    return unclosed === undefined
+    const error = desktopOutputFailure(
+      { provider: AGENTENV_PROVIDER, operation: CHECK, what: "witness record" },
+      directory,
+      completion,
+      evidence,
+    );
+    const release = completion.release;
+    return error === undefined
       ? undefined
       : {
           published: true,
-          error: writtenWithOpenHandles(
-            {
-              provider: AGENTENV_PROVIDER,
-              operation: CHECK,
-              what: "witness record",
-            },
-            directory,
-            unclosed,
-            evidence,
-          ),
-          release: () => unclosed.lease.release(),
+          error,
+          release:
+            release === undefined ? undefined : () => release.lease.release(),
         };
   } catch (cause: unknown) {
     return {
@@ -246,7 +246,7 @@ const howChecked = (task: DesktopTask): string => {
     : "Checks read the app's data/get views and the task's readers' views, the readers run in the computer through computer-exec/v1, with REA's evaluator, as the exported verifier does; the verifier itself did not run.";
 };
 
-/** How a witness write ended: saved, retryable, or published with cleanup still open. */
+/** How a witness write ended: saved, retryable, or published with a failure and optional cleanup ownership. */
 export type WitnessWrite =
   | { readonly kind: "saved"; readonly record: WitnessRecord }
   | {
@@ -258,7 +258,7 @@ export type WitnessWrite =
       readonly kind: "published";
       readonly record: WitnessRecord;
       readonly error: AnalysisError;
-      readonly release: () => Promise<void>;
+      readonly release: (() => Promise<void>) | undefined;
     };
 
 /**

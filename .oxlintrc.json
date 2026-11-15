@@ -64,6 +64,34 @@
   },
   "overrides": [
     {
+      "files": ["src/domain/**/*.ts"],
+      "rules": { "rea/no-locale-compare": "error" }
+    },
+    {
+      "files": [
+        "src/domain/**/*.test.ts",
+        "src/domain/**/*.spec.ts",
+        "src/domain/**/*.fixture.ts"
+      ],
+      "rules": { "rea/no-locale-compare": "off" }
+    },
+    {
+      "files": [
+        "src/**/*.ts",
+        "scripts/lib/browser-*-e2e.mjs",
+        "scripts/verify-browser-dom-destinations.mjs"
+      ],
+      "rules": { "rea/no-raw-cdp-session": "error" }
+    },
+    {
+      "files": [
+        "src/browser/PlaywrightCdpSession.ts",
+        "src/**/*.test.ts",
+        "src/**/*.fixture.ts"
+      ],
+      "rules": { "rea/no-raw-cdp-session": "off" }
+    },
+    {
       "files": [
         "scripts/electron-active-hook*.cjs",
         "tests/conformance/readiness/electron/*.js",
@@ -76,12 +104,25 @@
     {
       "files": ["src/**/*.ts"],
       "rules": {
+        "rea/provider-failure-classifier": "error",
+        "rea/typed-resource-refusal": "error",
+        "rea/no-babel-visitor-keys": "error",
+        "rea/no-raw-file-handle-close": "error",
         "typescript/no-misused-promises": "error"
       }
     },
     {
-      "files": ["tests/**/*.ts", "src/**/*.test.ts", "src/**/*.fixture.ts"],
+      "files": [
+        "tests/**/*.ts",
+        "src/**/*.test.ts",
+        "src/**/*.spec.ts",
+        "src/**/*.fixture.ts"
+      ],
       "rules": {
+        "rea/provider-failure-classifier": "off",
+        "rea/typed-resource-refusal": "off",
+        "rea/no-babel-visitor-keys": "off",
+        "rea/no-raw-file-handle-close": "off",
         "max-lines": "off",
         "max-lines-per-function": [
           "error",
@@ -93,6 +134,14 @@
         ],
         "typescript/no-misused-promises": "warn"
       }
+    },
+    {
+      "files": ["src/filesystem/Owned*.ts"],
+      "rules": { "rea/no-raw-file-handle-close": "off" }
+    },
+    {
+      "files": ["src/domain/javascript/javascriptSemanticTraversal.ts"],
+      "rules": { "rea/no-babel-visitor-keys": "off" }
     },
     {
       "files": ["src/application/**/*.test.ts"],
@@ -147,6 +196,12 @@
         ],
         "vitest/valid-expect-in-promise": "error",
         "vitest/no-focused-tests": "error"
+      }
+    },
+    {
+      "files": ["tests/**/*.ts", "src/**/*.test.ts", "src/**/*.fixture.ts"],
+      "rules": {
+        "rea/project-wait-deadline": "error"
       }
     },
     {

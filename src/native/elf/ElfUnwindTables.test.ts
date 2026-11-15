@@ -53,6 +53,108 @@ vi.mock("../../domain/elfStringTable.js", async (importOriginal) => {
 
 const address = (value: number): string => `0x${value.toString(16)}`;
 
+it.each([true, false])(
+  "retains valid ten-byte sign padding in CIE alignment (little %s)",
+  (little) => {
+    const report = parse(
+      elfUnwindFixture({
+        little,
+        header: "match",
+        leb128: { dataAlignment: [0xfc, ...Array<number>(8).fill(0xff), 0x7f] },
+      }),
+    );
+    expect(report.cies[0]?.data_alignment).toBe(-4);
+    expect(report.coverage).toMatchObject({
+      status: "complete",
+      total_ranges: 2,
+    });
+  },
+);
+
+it("rejects an overflowing ULEB pointer instead of wrapping it to a fabricated function address", () => {
+  const report = parse(
+    elfUnwindFixture({
+      header: "absent",
+      leb128: {
+        pointers: {
+          signed: false,
+          start: [0x81, ...Array<number>(8).fill(0x80), 0x02],
+          size: [0x20],
+        },
+      },
+    }),
+  );
+  expect(report.ranges.map((r) => r.start)).toEqual([address(UNWIND_FN_B)]);
+  expect(report.coverage.status).toBe("incomplete");
+});
+
+it("rejects a padded negative SLEB range instead of publishing a huge positive size", () => {
+  const report = parse(
+    elfUnwindFixture({
+      header: "absent",
+      leb128: {
+        pointers: {
+          signed: true,
+          start: [0x80, 0x82, 0x80, 0x02],
+          size: [...Array<number>(9).fill(0xff), 0x7f],
+        },
+      },
+    }),
+  );
+  expect(report.ranges.map((r) => r.start)).toEqual([address(UNWIND_FN_B)]);
+  expect(report.limitations).toContain("An FDE address range is negative.");
+});
+
+it.each([
+  {
+    signed: false,
+    start: [...Array<number>(9).fill(0xff), 0x01],
+    expected: "0xffffffffffffffff",
+  },
+  {
+    signed: true,
+    start: [...Array<number>(9).fill(0x80), 0x7f],
+    expected: "0x8000000000000000",
+  },
+  {
+    signed: true,
+    start: [...Array<number>(9).fill(0xff), 0x00],
+    expected: "0x7fffffffffffffff",
+  },
+])(
+  "retains the representable LEB128 boundary $expected",
+  ({ signed, start, expected }) => {
+    const report = parse(
+      elfUnwindFixture({
+        header: "absent",
+        leb128: { pointers: { signed, start, size: [0x20] } },
+      }),
+    );
+    expect(report.ranges.map((r) => r.start)).toContain(expected);
+    expect(report.coverage.status).toBe("complete");
+  },
+);
+
+it.each(
+  [
+    [...Array<number>(9).fill(0x80), 0x01],
+    [...Array<number>(9).fill(0xff), 0x7e],
+    Array<number>(10).fill(0x80),
+  ].map((start) => ({ start })),
+)(
+  "omits an overflowing or unterminated signed operand and retains its sibling FDE (%j)",
+  ({ start }) => {
+    const report = parse(
+      elfUnwindFixture({
+        header: "absent",
+        leb128: { pointers: { signed: true, start, size: [0x20] } },
+      }),
+    );
+    expect(report.ranges.map((r) => r.start)).toEqual([address(UNWIND_FN_B)]);
+    expect(report.coverage.status).toBe("incomplete");
+  },
+);
+
 const parse = (bytes: Buffer, raw: Readonly<Record<string, unknown>> = {}) => {
   const input = inspectElfUnwindRangesInputSchema.parse({
     path: "/artifacts/unwind.elf",
@@ -462,6 +564,33 @@ const findSection = (bytes: Buffer, name: string) => {
   throw new Error(`fixture has no ${name}`);
 };
 
+it.each(["compressed-symbols", "compressed-names", "non-string-names"])(
+  "retains unwind ranges without interpreting %s as ordinary symbol storage",
+  (storage) => {
+    const bytes = elfUnwindFixture({ header: "match" });
+    expect(parse(bytes).ranges[0]?.symbol?.text).toBe("alpha");
+    const section = findSection(
+      bytes,
+      storage === "compressed-symbols" ? ".symtab" : ".strtab",
+    );
+    if (storage === "non-string-names")
+      bytes.writeUInt32LE(1, section.headerOffset + 4);
+    else bytes.writeBigUInt64LE(0x800n, section.headerOffset + 8);
+
+    const report = parse(bytes);
+    expect(report.ranges.map(({ start }) => start)).toEqual([
+      address(UNWIND_FN_A),
+      address(UNWIND_FN_B),
+    ]);
+    expect(report.ranges.map(({ symbol }) => symbol)).toEqual([null, null]);
+    expect(report.coverage).toMatchObject({
+      status: "incomplete",
+      ranges_with_symbols: 0,
+      eh_frame_hdr_agreement: "agree",
+    });
+  },
+);
+
 it("keeps .eh_frame ranges when .debug_frame is SHT_NOBITS", () => {
   const report = parse(
     elfUnwindFixture({
@@ -591,6 +720,18 @@ it("caps symbol lookup across .symtab and .dynsym together", () => {
   );
 });
 
+it("keeps the symbol scan allowance for later tables when an earlier table has no string table", () => {
+  const bytes = elfUnwindFixture({ header: "match", symbolCap: true });
+  const section = findSection(bytes, ".symtab");
+  bytes.writeUInt32LE(0, section.headerOffset + 40);
+  const report = parse(bytes);
+  expect(report.ranges[0]?.symbol?.text).toBe("alpha");
+  expect(report.coverage.status).toBe("incomplete");
+  expect(report.limitations).not.toContain(
+    "Symbol tables were capped at 65536 combined entries.",
+  );
+});
+
 it.each([".eh_frame", ".eh_frame_hdr"] as const)(
   "reports coverage incomplete when a duplicate %s is ignored",
   (duplicate) => {
@@ -664,6 +805,84 @@ it.each([
     );
   },
 );
+
+const GOT_UNKNOWN =
+  "A DW_EH_PE_datarel .eh_frame value needs a GOT base that could not be determined; that value is unresolved.";
+
+it.each([
+  ["elf64 little-endian", 64, true],
+  ["elf32 big-endian", 32, false],
+] as const)(
+  "reads DT_PLTGOT through the single PT_DYNAMIC header (%s)",
+  (_label, bits, little) => {
+    const report = parse(
+      elfUnwindFixture({
+        bits,
+        little,
+        header: "match",
+        datarel: "dynamic",
+        dynamicPrograms: 1,
+        dynamicSection: false,
+      }),
+    );
+    expect(report.ranges.map((range) => range.start)).toEqual([
+      address(UNWIND_FN_A),
+      address(UNWIND_FN_B),
+    ]);
+    expect(report.coverage.status).toBe("complete");
+    expect(report.limitations).toContain(
+      "DW_EH_PE_datarel .eh_frame values were resolved against the GOT base from DT_PLTGOT.",
+    );
+  },
+);
+
+it.each([
+  ["repeated PT_DYNAMIC headers", { dynamicPrograms: 2 }],
+  ["repeated SHT_DYNAMIC sections", { duplicate: ".dynamic" }],
+] as const)(
+  "keeps the GOT unknown when %s leave the dynamic table ambiguous",
+  (_label, options) => {
+    const report = parse(
+      elfUnwindFixture({ header: "match", datarel: "dynamic", ...options }),
+    );
+    expect(report.ranges.map((range) => range.start)).not.toContain(
+      address(UNWIND_FN_A),
+    );
+    expect(report.coverage.status).toBe("incomplete");
+    expect(report.limitations).toContain(GOT_UNKNOWN);
+  },
+);
+
+it("keeps the GOT unknown when repeated allocated .got.plt sections disagree", () => {
+  const report = parse(
+    elfUnwindFixture({
+      header: "match",
+      datarel: "got",
+      duplicate: ".got.plt",
+    }),
+  );
+  expect(report.ranges.map((range) => range.start)).not.toContain(
+    address(UNWIND_FN_A),
+  );
+  expect(report.coverage.status).toBe("incomplete");
+  expect(report.limitations).toContain(GOT_UNKNOWN);
+});
+
+it("keeps the GOT unknown when compressed dynamic storage resembles decoded entries", () => {
+  const bytes = elfUnwindFixture({ header: "match", datarel: "dynamic" });
+  const section = findSection(bytes, ".dynamic");
+  // The payload still resembles ordinary DT_PLTGOT/DT_NULL entries, but the
+  // declaration makes it opaque compressed storage, not a decoded table.
+  bytes.writeBigUInt64LE(0x800n, section.headerOffset + 8);
+  const report = parse(bytes);
+  expect(report.ranges.map((range) => range.start)).not.toContain(
+    address(UNWIND_FN_A),
+  );
+  expect(report.coverage.status).toBe("incomplete");
+  expect(report.limitations).toContain(
+    "A DW_EH_PE_datarel .eh_frame value needs a GOT base that could not be determined; that value is unresolved.",
+  );
+});
 
 it("caps .eh_frame_hdr rows at the max_ranges budget and marks the comparison incomplete", () => {
   const report = parse(elfUnwindFixture({ header: "duplicate-row" }), {

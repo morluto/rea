@@ -1184,30 +1184,6 @@ const projectSignature = (
   };
 };
 
-/** Standalone signature decoding used by tests and signature identity utilities. */
-export const signature = (
-  blob: Buffer,
-  rawSha256?: string,
-  typeName: SignatureTypeName = () => null,
-  displayTypeName?: SignatureDisplayTypeName,
-): ManagedSignature => {
-  const operands: TypeOperand[] = [];
-  return projectSignature(
-    blob,
-    rawSha256,
-    typeName,
-    decodeSignature(
-      blob,
-      undefined,
-      operands,
-      undefined,
-      "signature",
-      displayTypeName,
-    ),
-    operands,
-  );
-};
-
 /** Decode a metadata-owned signature while validating referenced table rows. */
 export const metadataSignature = (
   blob: Buffer,

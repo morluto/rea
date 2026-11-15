@@ -1,3 +1,10 @@
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
+import {
+  retainProcessInspectionCleanup,
+  processInspectionCancellationError,
+  processInspectionFailure,
+} from "../providers/OwnedCommandCleanup.js";
+import type { JavaScriptSemanticPrecisionInput } from "../domain/javascript/javascriptSemanticPrecision.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { WorkerFrameSignal } from "../process/WorkerFrameSignal.js";
 import { createHash, randomUUID } from "node:crypto";
@@ -6,6 +13,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { StringDecoder } from "node:string_decoder";
 import { getHeapStatistics } from "node:v8";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
   AnalysisCleanupLease,
@@ -15,6 +23,8 @@ import {
   artifactFileCompletion,
   ArtifactFileCleanupFailure,
   artifactFileCancellationCause,
+  artifactFilePrimaryFacts,
+  assertArtifactReadActive,
   withArtifactFileHandle,
 } from "../artifacts/ArtifactFileOperation.js";
 import {
@@ -28,6 +38,8 @@ import {
   AnalysisTimeoutError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -124,7 +136,6 @@ export interface WebBundleScriptAnalysisFailure {
 
 /** Sequential inert-source analysis; only bounded completed facts cross into the host. */
 export class WebBundleAnalysisWorker {
-  readonly #workerCleanup: WebBundleWorkerCleanup;
   readonly #runtime: OwnedWorkerRuntime;
   readonly #files = new ArtifactResourceScope();
   readonly #cleanup: AnalysisCleanupLease;
@@ -183,7 +194,6 @@ export class WebBundleAnalysisWorker {
     launcher: typeof spawnOwnedProviderProcess = spawnOwnedProviderProcess,
     workerCleanup: WebBundleWorkerCleanup = processWebBundleCleanup,
   ) {
-    this.#workerCleanup = workerCleanup;
     if (
       !Number.isSafeInteger(heapMb) ||
       heapMb < MIN_WEB_BUNDLE_HEAP_MB ||
@@ -273,6 +283,7 @@ export class WebBundleAnalysisWorker {
     script: IncludedScript,
     timeoutMs: number,
     signal?: AbortSignal,
+    precision?: JavaScriptSemanticPrecisionInput,
   ): Promise<Result<WebBundleScriptAnalysis, WebBundleScriptAnalysisFailure>> {
     let deadline: ProviderStartupDeadline | undefined;
     const id = randomUUID();
@@ -280,35 +291,48 @@ export class WebBundleAnalysisWorker {
     this.#activeJob = undefined;
     this.#activeTerminalResponseObserved = false;
     let result: Result<WebBundleScriptAnalysis, AnalysisError>;
+    let ownershipInspectionFailure: AnalysisError | undefined;
     let completed: WebBundleScriptAnalysis | null = null;
     let continuation: "result_capacity_exhausted" | undefined;
     let resultDescriptor: WebBundleResultDescriptor | undefined;
+    let artifactFailure = false;
     const failed = (
       error: AnalysisError,
     ): Result<WebBundleScriptAnalysis, WebBundleScriptAnalysisFailure> =>
       err({
         error: signal?.aborted
-          ? analysisErrorWithCancellation(
-              error,
-              new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
-            )
+          ? analysisErrorWithCancellation(error, cancelledBy(OPERATION, signal))
           : error,
         completed,
         ...(continuation === undefined ? {} : { continuation }),
       });
     try {
-      if (signal?.aborted)
-        throw new AnalysisCancelledError(OPERATION, { cause: signal.reason });
+      if (signal?.aborted) throw cancelledBy(OPERATION, signal);
       const admitted = this.#admittedResultBudget();
       if (!admitted.ok) {
         continuation = "result_capacity_exhausted";
         throw admitted.error;
       }
       const resultBudget = admitted.bytes;
-      await prepareProcessOwnershipInspection(signal);
+      try {
+        await prepareProcessOwnershipInspection(signal);
+      } catch (cause: unknown) {
+        ownershipInspectionFailure = this.#inspectionFailure(cause);
+        throw cause;
+      }
       deadline = new ProviderStartupDeadline(timeoutMs, signal);
       this.#activeDeadline = deadline;
-      await this.#start(deadline);
+      try {
+        await this.#start(deadline);
+      } catch (cause: unknown) {
+        if (
+          processInspectionFailure(cause) !== undefined ||
+          (this.#runtime.launchFailure !== undefined &&
+            Object.is(this.#runtime.launchFailure.cause, cause))
+        )
+          ownershipInspectionFailure = this.#inspectionFailure(cause, deadline);
+        throw cause;
+      }
       if (this.#frames.length > 0 || this.#pending !== "")
         throw new AnalysisOutputError(
           OPERATION,
@@ -319,11 +343,21 @@ export class WebBundleAnalysisWorker {
       if (root === undefined || supervisor === undefined)
         throw new TypeError("Web analyzer resources were not acquired");
       supervisor.resetOutput();
-      const source = await this.#files.run(() =>
-        this.#writeSource(join(root, `${id}.source`), script, deadline!.signal),
-      );
+      const source = await this.#files
+        .run(() =>
+          this.#writeSource(
+            join(root, `${id}.source`),
+            script,
+            deadline!.signal,
+          ),
+        )
+        .catch((cause: unknown) => {
+          artifactFailure = true;
+          throw cause;
+        });
       const request = webBundleWorkerRequestSchema.parse({
         kind: "analyze",
+        ...(precision === undefined ? {} : { semantic_precision: precision }),
         id,
         source,
         result_budget_bytes: resultBudget,
@@ -355,6 +389,7 @@ export class WebBundleAnalysisWorker {
             "memory",
             response.message,
             { result_budget_bytes: resultBudget },
+            { measuredExhaustion: true },
           );
         throw new AnalysisOutputError(
           OPERATION,
@@ -379,16 +414,22 @@ export class WebBundleAnalysisWorker {
           "memory",
           "Completed script facts exceed the host's remaining reserved result capacity",
           { result_budget_bytes: resultBudget },
+          { measuredExhaustion: true },
         );
-      const stored = await this.#files.run(() =>
-        readStableArtifact(
-          join(root, `${id}.result`),
-          descriptor.bytes,
-          deadline!.signal,
-          undefined,
-          this.#files,
-        ),
-      );
+      const stored = await this.#files
+        .run(() =>
+          readStableArtifact(
+            join(root, `${id}.result`),
+            descriptor.bytes,
+            deadline!.signal,
+            undefined,
+            this.#files,
+          ),
+        )
+        .catch((cause: unknown) => {
+          artifactFailure = true;
+          throw cause;
+        });
       const facts = this.#validateCompletedResult(stored, descriptor, script);
       this.#retainedResultBytes += descriptor.bytes;
       completed = facts;
@@ -408,42 +449,71 @@ export class WebBundleAnalysisWorker {
           // The physical read completed, but only validated facts are retained.
         }
       }
-      const cancellationCause = completion?.cancellation;
+      const artifactPrimary = artifactFailure
+        ? artifactFilePrimaryFacts(cause)
+        : undefined;
+      const cancellationCause =
+        completion?.cancellation ??
+        (artifactPrimary?.origin === "owned-or-classified" &&
+        artifactPrimary.cause instanceof ArtifactReaderFailure &&
+        artifactPrimary.cause.reason === "cancelled"
+          ? { reason: artifactFileCancellationCause(artifactPrimary.cause) }
+          : undefined);
+      // File outcomes own their cancellation facts. A later signal cannot
+      // replace a rejected physical read/write that survived descriptor close.
+      const interruptionApplies =
+        !artifactFailure || cancellationCause !== undefined;
       const interrupted =
-        deadline?.interruption === "timeout"
+        interruptionApplies && deadline?.interruption === "timeout"
           ? scriptTimeout(timeoutMs, cause)
           : cancellationCause !== undefined
-            ? new AnalysisCancelledError(OPERATION, {
-                cause: cancellationCause.reason,
-              })
-            : deadline?.interruption === "cancelled" || signal?.aborted
-              ? new AnalysisCancelledError(OPERATION, {
-                  cause: signal?.aborted
-                    ? signal.reason
-                    : deadline?.signal.reason,
-                })
+            ? cancelledBy(OPERATION, carriedReason(cancellationCause.reason))
+            : interruptionApplies &&
+                (deadline?.interruption === "cancelled" || signal?.aborted)
+              ? cancelledBy(
+                  OPERATION,
+                  carriedReason(
+                    signal?.aborted ? signal.reason : deadline?.signal.reason,
+                  ),
+                )
               : undefined;
       const observedFailure =
         this.#observedFailure === undefined
-          ? undefined
+          ? ownershipInspectionFailure
           : this.#projectObservedFailure();
-      if (observedFailure !== undefined && interrupted !== undefined)
-        observedFailure.retainSecondaryFailure(interrupted);
-      const failure =
-        cause instanceof ArtifactFileCleanupFailure && completion !== undefined
-          ? this.#cleanupFailure(cause, interrupted)
+      if (observedFailure !== undefined && interrupted !== undefined) {
+        if (interrupted instanceof AnalysisCancelledError)
+          analysisErrorWithCancellation(observedFailure, interrupted);
+        else observedFailure.retainSecondaryFailure(interrupted);
+      }
+      const primaryCause =
+        artifactPrimary === undefined ? cause : artifactPrimary.cause;
+      const primary =
+        ownershipInspectionFailure !== undefined
+          ? ownershipInspectionFailure
           : interrupted !== undefined && observedFailure !== undefined
             ? observedFailure
             : (interrupted ??
-              (cause instanceof RuntimeControlUnavailableError
-                ? runtimeControlCapabilityError(PROVIDER, OPERATION, cause)
-                : cause instanceof AnalysisError
-                  ? cause
+              (primaryCause instanceof RuntimeControlUnavailableError
+                ? runtimeControlCapabilityError(
+                    PROVIDER,
+                    OPERATION,
+                    primaryCause,
+                  )
+                : primaryCause instanceof AnalysisError
+                  ? primaryCause
                   : new AnalysisOutputError(
                       OPERATION,
                       "Owned web-script analysis failed",
-                      { cause },
+                      { cause: primaryCause },
                     )));
+      const failure =
+        cause instanceof ArtifactFileCleanupFailure
+          ? this.#cleanupFailure(
+              cause,
+              completion === undefined ? primary : interrupted,
+            )
+          : primary;
       result = err(failure);
       try {
         const stopped = await this.#runtime.stop();
@@ -479,17 +549,13 @@ export class WebBundleAnalysisWorker {
       const primary = signal?.aborted
         ? analysisErrorWithCancellation(
             previous,
-            new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
+            cancelledBy(OPERATION, signal),
           )
         : previous;
       return failed(this.#cleanupFailure(cause, primary));
     }
     if (signal?.aborted)
-      return failed(
-        result.ok
-          ? new AnalysisCancelledError(OPERATION, { cause: signal.reason })
-          : result.error,
-      );
+      return failed(result.ok ? cancelledBy(OPERATION, signal) : result.error);
     return result.ok ? result : failed(result.error);
   }
 
@@ -543,7 +609,7 @@ export class WebBundleAnalysisWorker {
       signal,
       async (handle) => {
         for (const part of bufferedJsonParts(jsonParts(script))) {
-          signal.throwIfAborted();
+          assertArtifactReadActive(signal);
           const chunk = Buffer.from(part, "utf8");
           if (chunk.length > WEB_BUNDLE_WORKER_LIMITS.sourceBytes - bytes)
             throw new AnalysisResourceConstraintError(
@@ -554,6 +620,11 @@ export class WebBundleAnalysisWorker {
                 "worker transfer budget",
               ),
               { source_bytes: WEB_BUNDLE_WORKER_LIMITS.sourceBytes },
+              fixedAllowanceOptions(
+                "The web-bundle worker transfer allowance",
+                "bytes",
+                { limit: WEB_BUNDLE_WORKER_LIMITS.sourceBytes, unit: "bytes" },
+              ),
             );
           await handle.writeFile(chunk);
           bytes += chunk.length;
@@ -562,6 +633,33 @@ export class WebBundleAnalysisWorker {
       },
     );
     return { bytes, sha256: digest.digest("hex") };
+  }
+
+  #inspectionFailure(
+    cause: unknown,
+    deadline?: ProviderStartupDeadline,
+  ): AnalysisError {
+    const cancellation = processInspectionCancellationError(cause, OPERATION);
+    const primary =
+      cause instanceof AnalysisError
+        ? cause
+        : cancellation !== undefined
+          ? deadline?.interruption === "timeout"
+            ? scriptTimeout(deadline.timeoutMs, cause)
+            : cancellation
+          : cause instanceof RuntimeControlUnavailableError
+            ? runtimeControlCapabilityError(PROVIDER, OPERATION, cause)
+            : new AnalysisOutputError(
+                OPERATION,
+                "Process ownership inspection or worker startup failed",
+                { cause },
+              );
+    return retainProcessInspectionCleanup(
+      cause,
+      primary,
+      this.#files,
+      OPERATION,
+    );
   }
 
   async #start(deadline: ProviderStartupDeadline): Promise<void> {
@@ -613,10 +711,7 @@ export class WebBundleAnalysisWorker {
       if (deadline.interruption === "timeout")
         throw scriptTimeout(deadline.timeoutMs);
       if (deadline.interruption === "cancelled")
-        throw new AnalysisCancelledError(OPERATION, {
-          cause: deadline.signal.reason,
-        });
-      deadline.signal.throwIfAborted();
+        throw cancelledBy(OPERATION, deadline.signal);
       const frame = this.#frames.shift();
       if (frame !== undefined) return frame;
       if (this.#runtime.inputFailure !== undefined)
@@ -647,9 +742,7 @@ export class WebBundleAnalysisWorker {
           if (completedFrame !== undefined) return completedFrame;
           throw deadline.interruption === "timeout"
             ? scriptTimeout(deadline.timeoutMs)
-            : new AnalysisCancelledError(OPERATION, {
-                cause: deadline.signal.reason,
-              });
+            : cancelledBy(OPERATION, deadline.signal);
         }
         const completedFrame = this.#frames.shift();
         if (completedFrame !== undefined) return completedFrame;
@@ -730,7 +823,7 @@ export class WebBundleAnalysisWorker {
               {
                 result_budget_bytes: failure.resultBudgetBytes,
               },
-              { capturedOutput },
+              { capturedOutput, measuredExhaustion: true },
             )
           : new AnalysisOutputError(
               OPERATION,
@@ -832,7 +925,6 @@ export class WebBundleAnalysisWorker {
   }
 
   #cleanupFailure(cause: unknown, primary?: AnalysisError): AnalysisError {
-    this.#workerCleanup.retain(this);
     this.#runtime.retainForCleanup();
     const cleanup = new ProviderCleanupError(
       PROVIDER,
@@ -865,9 +957,7 @@ export class WebBundleAnalysisWorker {
       await this.#files.close();
       await this.#runtime.close();
       this.#reset();
-      this.#workerCleanup.release(this);
     } catch (cause) {
-      this.#workerCleanup.retain(this);
       this.#runtime.retainForCleanup();
       throw cause;
     }
@@ -876,23 +966,13 @@ export class WebBundleAnalysisWorker {
 
 /** Web-analyzer workers and their runtimes retained by one host. */
 export class WebBundleWorkerCleanup {
-  readonly #workers = new Set<WebBundleAnalysisWorker>();
   readonly runtimes: WorkerCleanupRegistry;
 
   constructor(runtimes?: WorkerCleanupRegistry) {
     this.runtimes = runtimes ?? new WorkerCleanupRegistry();
   }
 
-  retain(worker: WebBundleAnalysisWorker): void {
-    this.#workers.add(worker);
-  }
-
-  release(worker: WebBundleAnalysisWorker): void {
-    this.#workers.delete(worker);
-  }
-
   async retry(): Promise<void> {
-    for (const worker of [...this.#workers]) await worker.close();
     await this.runtimes.retry();
   }
 }

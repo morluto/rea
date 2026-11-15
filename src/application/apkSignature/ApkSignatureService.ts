@@ -13,7 +13,8 @@ import {
   apkSignatureMatchesSubject,
   apkSignatureResultSchema,
 } from "../../domain/apkSignature/apkSignatureReport.js";
-import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import type { Evidence } from "../../domain/evidence.js";
+import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
@@ -66,17 +67,12 @@ export class ApkSignatureService {
         ),
       );
     const completed = completeProviderEvidence(
-      createEvidence(execution.subject, execution.provider, {
-        operation: OPERATION,
-        parameters: { path: input.value.path },
-        result: report.data,
-        ...(execution.rawResult === null
-          ? {}
-          : { rawResult: execution.rawResult }),
-        confidence: "observed",
-        locations: execution.locations,
-        limitations: execution.limitations,
-      }),
+      createAnalysisExecutionEvidence(
+        OPERATION,
+        { path: input.value.path },
+        { ...execution, result: report.data },
+        "observed",
+      ),
       options?.signal,
     );
     if (!completed.ok) return completed;

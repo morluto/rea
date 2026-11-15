@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import type { ProviderIdentity } from "./AnalysisProvider.js";
 import {
   createEvidence,
@@ -39,6 +40,14 @@ import type {
   WebScreenshotDiff,
 } from "../domain/webScreenshot.js";
 
+import type { JsonValue } from "../domain/jsonValue.js";
+
+/** The own JSON source and the facts admitted by its named output contract. */
+export interface BrowserEvidenceReport {
+  readonly source: JsonValue;
+  readonly facts: BrowserEvidenceResult;
+}
+
 type BrowserEvidenceInput =
   | ListBrowserTargetsInput
   | InspectWebPageInput
@@ -77,9 +86,10 @@ const isBundleAcquisition = (
 export const createBrowserEvidence = (
   operation: BrowserEvidenceOperation,
   input: BrowserEvidenceInput,
-  result: BrowserEvidenceResult,
+  report: BrowserEvidenceReport,
   provider: ProviderIdentity,
 ): Evidence => {
+  const result = report.facts;
   const acquisition = isBundleAcquisition(result);
   const observed = acquisition ? result.inspection : result;
   const comparison =
@@ -100,6 +110,7 @@ export const createBrowserEvidence = (
         : {}),
     },
     result,
+    rawResult: isDeepStrictEqual(report.source, result) ? null : report.source,
     confidence: comparison ? "derived" : "observed",
     authority: comparison ? "analyst-inference" : "external-service",
     environment:
@@ -195,6 +206,12 @@ const browserParameters = (
     ...("fetch_source_maps" in input
       ? {
           fetch_source_maps: input.fetch_source_maps,
+          ...(input.source_map_limits === undefined
+            ? {}
+            : { source_map_limits: input.source_map_limits }),
+          ...(input.semantic_precision === undefined
+            ? {}
+            : { semantic_precision: input.semantic_precision }),
           ...(input.max_heap_mb === undefined
             ? {}
             : { max_heap_mb: input.max_heap_mb }),

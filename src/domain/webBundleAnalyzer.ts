@@ -1,3 +1,4 @@
+import type { JavaScriptSemanticPrecisionInput } from "./javascript/javascriptSemanticPrecision.js";
 import { analyzeScript } from "./webBundleAnalyzerInspection.js";
 import {
   createWebBundleAnalysisAccumulator,
@@ -11,9 +12,10 @@ import {
 /** Analyze one selected captured script without executing its source. */
 export const analyzeCapturedWebScript = (
   script: IncludedScript,
+  precision?: JavaScriptSemanticPrecisionInput,
 ): WebBundleScriptAnalysis => {
   const accumulator = createWebBundleAnalysisAccumulator();
-  const routeFacts = analyzeScript(script, accumulator);
+  const routeFacts = analyzeScript(script, accumulator, precision);
   const failed = accumulator.failedScripts.length > 0;
   const recovered = accumulator.recoveredScripts.length > 0;
   return webBundleScriptAnalysisSchema.parse({

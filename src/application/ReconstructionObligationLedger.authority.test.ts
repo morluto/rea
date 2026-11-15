@@ -9,6 +9,7 @@ import {
   proofEvidence,
   request,
   reviewedObligation,
+  readyReviewedLedgerRequest,
 } from "./ReconstructionObligationLedger.fixture.js";
 import { createEvidence } from "../domain/evidence.js";
 import type { ReviewedReconstructionObligation } from "../domain/reconstructionObligationLedgerSchemas.js";
@@ -282,7 +283,23 @@ describe("reconstruction obligation ledger", () => {
 });
 
 describe("reconstruction obligation ledger fail-closed behavior", () => {
-  it("fails closed on parser gaps, ambiguous ownership, and contradiction", () => {
+  it("requires a parser, schema and domain type for a reviewed parser boundary", () => {
+    const input = readyReviewedLedgerRequest();
+    input.reviewed_obligations[0]!.requires_parser_type = true;
+    const missing = build(input);
+    expect(missing.status).toBe("open");
+    expect(missing.obligations[0]?.diagnostics.map(({ code }) => code)).toEqual(
+      ["missing-parser-type"],
+    );
+    input.manifest.bindings[0]!.parser_type = {
+      parser: "parseRequest",
+      schema: "requestSchema",
+      domain_type: "Request",
+    };
+    expect(build(input).status).toBe("ready");
+  });
+
+  it("fails closed on ambiguous ownership and contradiction", () => {
     const original = createEvidence(
       undefined,
       { id: "external", name: "External protocol observer", version: "1" },

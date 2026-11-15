@@ -3,6 +3,7 @@ import { Cli, z } from "incur";
 import {
   captureProcessScenarioFile,
   compareProcessEvidenceFiles,
+  projectProcessCliInputCleanupError,
 } from "../application/process/ProcessCli.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
@@ -24,7 +25,9 @@ export const registerProcessCommands = (
     run: ({ args }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, "capture-process", () =>
-          captureProcessScenarioFile(args.scenario, environment, signal),
+          captureProcessScenarioFile(args.scenario, environment, signal).catch(
+            projectProcessCliInputCleanupError,
+          ),
         ),
       ),
   });
@@ -45,7 +48,7 @@ export const registerProcessCommands = (
             args.right,
             args.traceSpec,
             signal,
-          ),
+          ).catch(projectProcessCliInputCleanupError),
         ),
       ),
   });

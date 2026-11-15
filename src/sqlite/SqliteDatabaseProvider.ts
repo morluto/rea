@@ -12,13 +12,14 @@ import type {
   AnalysisError,
 } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { createEvidence } from "../domain/evidence.js";
+import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -88,12 +89,9 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
     options?: ExecutionOptions,
   ): Promise<SqliteOutcome> {
     if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(operation, {
-          cause: options.signal.reason,
-        }),
-      );
-    if (this.#closed) return err(new AnalysisCancelledError(operation));
+      return err(cancelledBy(operation, options.signal));
+    if (this.#closed)
+      return err(cancelledBy(operation, OwnerCancellation.ownerClosed));
     if (this.#active.size >= SQLITE_DATABASE_LIMITS.concurrentInspections)
       return err(
         new AnalysisResourceConstraintError(
@@ -268,17 +266,14 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
       input.worker_timeout_ms ?? DEFAULT_SQLITE_WORKER_TIMEOUT_MS;
     try {
       if (options?.signal?.aborted)
-        throw new AnalysisCancelledError(operation, {
-          cause: options.signal.reason,
-        });
+        throw cancelledBy(operation, options.signal);
       validateSqliteInput(input);
       const retired = await this.#retryCleanup();
       if (!retired.ok) return retired;
       if (options?.signal?.aborted)
-        throw new AnalysisCancelledError(operation, {
-          cause: options.signal.reason,
-        });
-      if (this.#closed) throw new AnalysisCancelledError(operation);
+        throw cancelledBy(operation, options.signal);
+      if (this.#closed)
+        throw cancelledBy(operation, OwnerCancellation.ownerClosed);
       root = await this.createRuntime();
       phase = "artifact-read";
       const snapshot = await captureSqliteDatabaseSnapshot(
@@ -453,8 +448,7 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
     }
     if (result.ok && options?.signal?.aborted)
       return err(
-        new AnalysisCancelledError(operation, {
-          cause: options.signal.reason,
+        cancelledBy(operation, options.signal, {
           partialObservation: completedSqliteEvidence(input, result.value),
         }),
       );
@@ -537,14 +531,12 @@ const completedSqliteEvidence = (
   input: InspectSqliteDatabaseInput,
   execution: AnalysisExecution,
 ) =>
-  createEvidence(execution.subject ?? undefined, execution.provider, {
+  createAnalysisExecutionEvidence(
     operation,
-    parameters: sqliteInspectionParameters(input),
-    result: execution.result,
-    confidence: "observed",
-    locations: execution.locations,
-    limitations: execution.limitations,
-  });
+    sqliteInspectionParameters(input),
+    execution,
+    "observed",
+  );
 
 const validateSqliteInput = (input: InspectSqliteDatabaseInput): void => {
   const parsed = inspectSqliteDatabaseInputSchema.safeParse(input);

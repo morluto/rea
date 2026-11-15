@@ -8,11 +8,14 @@ import {
   type AnalysisError,
 } from "../../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisCancelledError,
-  AnalysisCapabilityUnavailableError,
   AnalysisInputError,
+  cancelledBy,
+  carriedReason,
+  isAborted,
 } from "../../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { fridaSessionStatusInputSchema } from "../../domain/fridaSessionStatus.js";
@@ -102,14 +105,11 @@ const rejectBeforeStart = async (
   source: FridaScriptSource,
   signal: AbortSignal | undefined,
 ): Promise<AnalysisError | undefined> => {
-  const cancelled = () =>
-    new AnalysisCancelledError(
-      "instrument_with_frida",
-      signal?.reason === undefined ? {} : { cause: signal.reason },
-    );
-  if (signal?.aborted) return cancelled();
+  if (isAborted(signal)) return cancelledBy("instrument_with_frida", signal);
   const unreadable = await unreadableScriptFile(source);
-  return signal?.aborted ? cancelled() : unreadable;
+  return isAborted(signal)
+    ? cancelledBy("instrument_with_frida", signal)
+    : unreadable;
 };
 
 /** Shared CLI/MCP workflows for Frida's device and instrumentation operations. */
@@ -158,14 +158,15 @@ export class FridaInstrumentationService {
     signal: AbortSignal | undefined,
     operation: string,
   ) {
-    if (signal?.aborted)
+    if (signal?.aborted) return err(cancelledBy(operation, signal));
+    const started = await this.#provider.startSession(input);
+    if (!started.ok && signal?.aborted)
       return err(
-        new AnalysisCancelledError(
-          operation,
-          signal.reason === undefined ? {} : { cause: signal.reason },
+        analysisErrorWithCancellation(
+          started.error,
+          cancelledBy(operation, signal),
         ),
       );
-    const started = await this.#provider.startSession(input);
     if (!started.ok || !signal?.aborted) return started;
     return this.#cancelSession(operation, started.value, input, signal.reason);
   }
@@ -210,12 +211,7 @@ export class FridaInstrumentationService {
     source: FridaScriptSource,
     signal?: AbortSignal,
   ): Promise<Result<Evidence, AnalysisError>> {
-    if (signal?.aborted)
-      return err(
-        new AnalysisCancelledError("load_frida_script", {
-          cause: signal.reason,
-        }),
-      );
+    if (signal?.aborted) return err(cancelledBy("load_frida_script", signal));
     const loaded = await this.#provider.loadScript(sessionId, source, signal);
     if (!loaded.ok && loaded.error instanceof FridaScriptLoadCancelledError)
       return err(cancelledScriptEvidence(sessionId, loaded.error));
@@ -324,18 +320,12 @@ export class FridaInstrumentationService {
           ? loaded.error
           : undefined,
       );
-    if (!loaded.ok) {
-      const closed = await this.#provider.closeSession(started.value.sessionId);
-      return closed.ok
-        ? err(resolvedAnalysisError(loaded.error))
-        : err(
-            analysisErrorWithCleanupFailure(
-              loaded.error,
-              closed.error,
-              "instrument_with_frida",
-            ).bindCleanupDependencies([loaded.error, closed.error]),
-          );
-    }
+    if (!loaded.ok)
+      return this.#closeFailedInstrumentation(
+        started.value.sessionId,
+        loaded.error,
+        signal,
+      );
     if (signal?.aborted)
       return this.#cancelSession(
         "instrument_with_frida",
@@ -352,20 +342,12 @@ export class FridaInstrumentationService {
       if (
         !resumed.ok &&
         !(signal?.aborted && resumed.error instanceof AnalysisCancelledError)
-      ) {
-        const closed = await this.#provider.closeSession(
+      )
+        return this.#closeFailedInstrumentation(
           started.value.sessionId,
+          resumed.error,
+          signal,
         );
-        return closed.ok
-          ? resumed
-          : err(
-              analysisErrorWithCleanupFailure(
-                resumed.error,
-                closed.error,
-                "instrument_with_frida",
-              ).bindCleanupDependencies([resumed.error, closed.error]),
-            );
-      }
       if (signal?.aborted)
         return this.#cancelSession(
           "instrument_with_frida",
@@ -432,6 +414,30 @@ export class FridaInstrumentationService {
     });
   }
 
+  /** Release the failed experiment while retaining its physical and caller outcomes. */
+  async #closeFailedInstrumentation(
+    sessionId: string,
+    primary: AnalysisError,
+    signal: AbortSignal | undefined,
+  ): Promise<Result<never, AnalysisError>> {
+    const closed = await this.#provider.closeSession(sessionId);
+    const failure = closed.ok
+      ? resolvedAnalysisError(primary)
+      : analysisErrorWithCleanupFailure(
+          primary,
+          closed.error,
+          "instrument_with_frida",
+        ).bindCleanupDependencies([primary, closed.error]);
+    return err(
+      signal?.aborted
+        ? analysisErrorWithCancellation(
+            failure,
+            cancelledBy("instrument_with_frida", signal),
+          )
+        : failure,
+    );
+  }
+
   closeSession(sessionId: string) {
     return this.#provider.closeSession(sessionId);
   }
@@ -493,8 +499,7 @@ const cancelledFridaSession = ({
   script,
 }: FridaSessionCancellation): AnalysisCancelledError => {
   const cleanupError = closed.ok ? null : closed.error.message;
-  const failure = new AnalysisCancelledError(operation, {
-    ...(cause === undefined ? {} : { cause }),
+  const failure = cancelledBy(operation, carriedReason(cause), {
     diagnostics,
     partialObservation: fridaEvidence(
       operation,
@@ -548,6 +553,9 @@ const fridaParameters = (
         },
       }),
   mode: input.mode,
+  ...(input.captureLimits === undefined
+    ? {}
+    : { capture_limits: input.captureLimits }),
   ...(input.mode === "attach"
     ? { pid: input.pid }
     : {
@@ -563,6 +571,9 @@ const sourceOutput = (script: FridaScriptObservation) => ({
 });
 
 const scriptOutput = (script: FridaScriptObservation) => ({
+  ...(script.captureLimits === undefined
+    ? {}
+    : { capture_limits: script.captureLimits }),
   script_id: script.scriptId,
   ...sourceOutput(script),
   messages: script.messages,
@@ -570,6 +581,9 @@ const scriptOutput = (script: FridaScriptObservation) => ({
 });
 
 const sessionStatusOutput = (status: FridaSessionStatus) => ({
+  ...(status.captureLimits === undefined
+    ? {}
+    : { capture_limits: status.captureLimits }),
   session_id: status.sessionId,
   device_id: status.deviceId,
   state: status.state,
@@ -588,8 +602,7 @@ const cancelledScriptEvidence = (
   sessionId: string,
   error: FridaScriptLoadCancelledError,
 ): AnalysisCancelledError =>
-  new AnalysisCancelledError(error.operation, {
-    cause: error.cause,
+  cancelledBy(error.operation, carriedReason(error.cause), {
     diagnostics: error.diagnostics,
     cleanup: error.cleanup,
     partialObservation: fridaEvidence(

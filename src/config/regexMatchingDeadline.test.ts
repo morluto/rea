@@ -1,3 +1,4 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { expect, it, vi } from "vitest";
 
 import { HopperProvider } from "../hopper/HopperProvider.js";
@@ -8,13 +9,16 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { regexMatchingDeadlineError } from "../process/RegexMatcher.js";
 import { parseEnvironment } from "./environment.js";
 import { parseConfig } from "./parseConfig.js";
+import { runtimeAnalysisConfig } from "./runtimeAnalysisSettings.js";
+import { runWithAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
 import {
   DEFAULT_REGEX_MATCHING_DEADLINE,
   parseRegexMatchingDeadline,
+  resolveRegexMatchingDeadline,
   REGEX_MATCHING_DEADLINE_SETTING,
+  regexMatchingDeadlineContinuingRecovery,
   regexMatchingDeadlineRecovery,
 } from "./regexMatchingDeadline.js";
-import { MAXIMUM_REGEX_MATCHING_DEADLINE_MS } from "../domain/analysisResourceLimits.js";
 
 const configured = (deadlineMs: number) =>
   ({ deadlineMs, source: "setting" }) as const;
@@ -32,9 +36,9 @@ it("keeps the 5000 ms deadline when the setting is unset", () => {
   const recovery = regexMatchingDeadlineRecovery(
     DEFAULT_REGEX_MATCHING_DEADLINE,
   );
-  const projected = projectAnalysisError(
-    regexMatchingDeadlineError("search_procedures"),
-  );
+  const error = regexMatchingDeadlineError("search_procedures");
+  const projected = projectAnalysisError(error);
+  const invocation = projectAnalysisError(error, "invocation");
   expect(projected).toMatchObject({
     code: "resource_constraint",
     details: {
@@ -44,12 +48,13 @@ it("keeps the 5000 ms deadline when the setting is unset", () => {
         effective_value: 5000,
         unit: "ms",
         minimum: 1,
-        maximum: MAXIMUM_REGEX_MATCHING_DEADLINE_MS,
+        maximum: MAX_NODE_TIMER_DELAY_MS,
         source: "default",
         applies_at: "next_operation",
         agent_editable: true,
         scope: "rea-runtime",
-        rea_restart_required: false,
+        update_mode: "runtime",
+        pending_restart: false,
       },
       reported_limits: {
         matching_deadline_ms: DEFAULT_REGEX_MATCHING_DEADLINE.deadlineMs,
@@ -57,7 +62,13 @@ it("keeps the 5000 ms deadline when the setting is unset", () => {
       },
     },
   });
-  expect(projected.remediation.action).toContain(recovery);
+  expect(projected.remediation.action).toContain(
+    regexMatchingDeadlineContinuingRecovery(DEFAULT_REGEX_MATCHING_DEADLINE),
+  );
+  expect(invocation.remediation.action).toContain(recovery);
+  expect(invocation.remediation.action).not.toContain(
+    "update_analysis_settings",
+  );
   expect(projected.remediation.action).toContain(
     REGEX_MATCHING_DEADLINE_SETTING,
   );
@@ -65,8 +76,7 @@ it("keeps the 5000 ms deadline when the setting is unset", () => {
   expect(projected.remediation.action).toContain("source default");
   expect(projected.remediation.action).toContain("update_analysis_settings");
   expect(projected.remediation.action).toContain("regex.matching_deadline_ms");
-  expect(projected.remediation.action).toMatch(/restart REA/i);
-  expect(projected.remediation.action).toMatch(/without a REA restart/i);
+  expect(projected.remediation.action).toContain("launch seed");
   expect(projected.remediation.action).toMatch(
     /heap does not raise this deadline/i,
   );
@@ -77,11 +87,9 @@ it("uses a valid REA_REGEX_MATCHING_DEADLINE_MS override", () => {
     ok: true,
     value: configured(10_000),
   });
-  expect(
-    parseRegexMatchingDeadline(String(MAXIMUM_REGEX_MATCHING_DEADLINE_MS)),
-  ).toEqual({
+  expect(parseRegexMatchingDeadline(String(MAX_NODE_TIMER_DELAY_MS))).toEqual({
     ok: true,
-    value: configured(MAXIMUM_REGEX_MATCHING_DEADLINE_MS),
+    value: configured(MAX_NODE_TIMER_DELAY_MS),
   });
   const parsed = parseConfig({ REA_REGEX_MATCHING_DEADLINE_MS: "10000" });
   if (!parsed.ok) throw new Error("valid deadline was rejected");
@@ -128,7 +136,7 @@ it.each([
   " 5000",
   "5000 ",
   "1.5",
-  String(MAXIMUM_REGEX_MATCHING_DEADLINE_MS + 1),
+  String(MAX_NODE_TIMER_DELAY_MS + 1),
   "9".repeat(40),
 ])("rejects invalid %j as a configuration error", (value) => {
   const parsed = parseRegexMatchingDeadline(value);
@@ -146,19 +154,35 @@ it.each([
     },
   ]);
   const startup = parseEnvironment({ REA_REGEX_MATCHING_DEADLINE_MS: value });
-  if (startup.ok) throw new Error(`Startup accepted ${JSON.stringify(value)}`);
-  expect(startup.error.settings).toContainEqual({
-    setting: REGEX_MATCHING_DEADLINE_SETTING,
-    constraint: parsed.error.message,
-  });
+  if (!startup.ok)
+    throw new Error(`Startup rejected a runtime seed ${JSON.stringify(value)}`);
   const config = parseConfig({ REA_REGEX_MATCHING_DEADLINE_MS: value });
-  if (config.ok)
-    throw new Error(`parseConfig accepted ${JSON.stringify(value)}`);
-  expect(projectAnalysisError(config.error)).toMatchObject({
-    code: "configuration_invalid",
-    message: expect.stringContaining("REA_REGEX_MATCHING_DEADLINE_MS"),
-  });
+  if (!config.ok)
+    throw new Error(
+      `parseConfig rejected a runtime seed ${JSON.stringify(value)}`,
+    );
   expect(
-    () => new KunaProvider({ REA_REGEX_MATCHING_DEADLINE_MS: value }),
+    config.value.invalidRuntimeSeeds?.["regex.matching_deadline_ms"]?.settings,
+  ).toEqual([
+    expect.objectContaining({ setting: REGEX_MATCHING_DEADLINE_SETTING }),
+  ]);
+  const live = runtimeAnalysisConfig(config.value);
+  expect(() => live.regexMatchingDeadline.deadlineMs).toThrow(
+    ConfigurationError,
+  );
+  expect(
+    runWithAnalysisOperationSnapshot(
+      {
+        revision: 1,
+        overrides: { "regex.matching_deadline_ms": 250 },
+      },
+      () => ({
+        deadlineMs: live.regexMatchingDeadline.deadlineMs,
+        source: live.regexMatchingDeadline.source,
+      }),
+    ),
+  ).toEqual({ deadlineMs: 250, source: "runtime" });
+  expect(() =>
+    resolveRegexMatchingDeadline({ REA_REGEX_MATCHING_DEADLINE_MS: value }),
   ).toThrow(ConfigurationError);
 });

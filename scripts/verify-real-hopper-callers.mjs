@@ -1,3 +1,4 @@
+import { schemaVerifierEnvironment } from "./lib/mcp-verification-environment.mjs";
 // Run from the repository root after `npm run build:cached` on macOS arm64,
 // with Hopper and the Xcode command-line tools installed. No target is executed.
 import assert from "node:assert/strict";
@@ -11,6 +12,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { artifactMcpCall } from "./lib/artifact-e2e.mjs";
 import { snapshotHopperRuntime } from "./lib/real-hopper-cleanup.mjs";
+import {
+  closeVerifierResources,
+  withVerifierCleanup,
+} from "./lib/verifier-cleanup.mjs";
 import { HOPPER_TARGET_LEASE_DIRECTORY } from "../dist/process/HopperLease.js";
 
 assert.equal(process.platform, "darwin", "requires macOS");
@@ -48,22 +53,20 @@ const digest = async (path) =>
   createHash("sha256")
     .update(await readFile(path))
     .digest("hex");
-const sessionsBefore = await snapshotHopperRuntime(
-  "/tmp",
-  HOPPER_TARGET_LEASE_DIRECTORY,
-);
-const ownedProcessIds = new Set();
+const sessionsBefore = (
+  await snapshotHopperRuntime("/tmp", HOPPER_TARGET_LEASE_DIRECTORY)
+).paths;
 const client = new Client({ name: "hopper-callers-verifier", version: "1" });
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: ["dist/main.js"],
   cwd: root,
-  env: {
+  env: schemaVerifierEnvironment({
     ...process.env,
     REA_ANALYSIS_PROVIDER: "hopper",
     REA_LOG_LEVEL: "silent",
     REA_HOPPER_CALLER_SCAN_BUDGET_MS: "5000",
-  },
+  }),
   stderr: "pipe",
 });
 let stderr = "";
@@ -93,7 +96,7 @@ const matchingRef = (ref, site, from, to) =>
   ref.source_procedure?.address === from &&
   ref.target_procedure?.address === to &&
   ref.call?.classification === "direct";
-try {
+await withVerifierCleanup(async () => {
   await run(clang, [
     "-isysroot",
     sdk,
@@ -129,7 +132,6 @@ try {
   await client.connect(transport);
   if (transport.pid === null)
     throw new Error("MCP process identity unavailable");
-  ownedProcessIds.add(transport.pid);
   let notifications = 0;
   const original = transport.onmessage;
   transport.onmessage = (message) => {
@@ -287,23 +289,36 @@ try {
       sha256: beforeLarge,
     }),
   );
-} finally {
-  await client.close();
-  await transport.close();
-  await new Promise((resolve) => setTimeout(resolve, 500));
-  const leaked = [
-    ...(await snapshotHopperRuntime(
-      "/tmp",
-      HOPPER_TARGET_LEASE_DIRECTORY,
-      ownedProcessIds,
-    )),
-  ].filter((path) => !sessionsBefore.has(path));
-  if (leaked.length === 0)
+}, [
+  async () => {
+    try {
+      await closeVerifierResources([
+        () => client.close(),
+        () => transport.close(),
+        async () => {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          const leaked = [
+            ...(
+              await snapshotHopperRuntime("/tmp", HOPPER_TARGET_LEASE_DIRECTORY)
+            ).paths,
+          ].filter((path) => !sessionsBefore.has(path));
+          assert.deepEqual(
+            leaked,
+            [],
+            `Hopper resources remain: ${leaked.join(", ")}`,
+          );
+        },
+      ]);
+    } catch (cause) {
+      throw new Error(
+        `Hopper cleanup failed; fixture retained at ${directory}`,
+        {
+          cause,
+        },
+      );
+    } finally {
+      if (stderr) process.stderr.write(stderr);
+    }
     await rm(directory, { recursive: true, force: true });
-  if (stderr) process.stderr.write(stderr);
-  assert.deepEqual(
-    leaked,
-    [],
-    `Hopper resources remain: ${leaked.join(", ")}; fixture retained at ${directory}`,
-  );
-}
+  },
+]);

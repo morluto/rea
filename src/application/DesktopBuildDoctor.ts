@@ -4,7 +4,7 @@ import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.j
 import type { ClientRegistrationStatus } from "./ClientRegistrationStatus.js";
 import type { DoctorCheck, DoctorHost, DoctorSkillState } from "./Doctor.js";
 import { nodeCheck } from "./DoctorDiagnostics.js";
-import { DESKTOP_BUILD_PROVIDER_ID } from "./DoctorProviderIds.js";
+import { DESKTOP_BUILD_PROVIDER_ID } from "../domain/doctorProviderIds.js";
 import type { DoctorScopeReport } from "./DoctorScope.js";
 
 /** Free space agentenv's images need where Docker keeps them. */
@@ -153,7 +153,7 @@ export const desktopBuildChecks = (
   result("ps", facts.ps.found, facts.ps.detail, {
     classification: "missing_dependency",
     remediation:
-      "Install procps, whose ps REA's process supervisor runs: sudo apt install procps.",
+      "Install procps, whose ps REA's process supervisor runs from /bin/ps or /usr/bin/ps: sudo apt install procps.",
   }),
   dockerCheck(facts.docker),
   daemonCheck(facts.daemon),
@@ -362,6 +362,13 @@ const registrationCheck = (
       unresolved.length > 0 || (unchecked?.length ?? 0) > 0,
   );
   const repair = failing[0]?.client ?? unknown[0]?.client;
+  const remediation = failing.some(
+    ({ differing }) => (differing?.length ?? 0) > 0,
+  )
+    ? "Correct or remove the failed settings in the client's REA registration, then restart the client and run doctor again."
+    : unknown.length > 0
+      ? "Check the unverified settings in the client's REA registration, then restart the client and run doctor again."
+      : `Run ${setupCommand(repair === undefined ? clients : [repair])}, then restart the client.`;
   return result(
     "registration",
     gaps.length > 0 && failing.length === 0 && unknown.length === 0,
@@ -371,7 +378,7 @@ const registrationCheck = (
     {
       classification:
         failing.length === 0 && gaps.length > 0 ? "unknown" : "config_drift",
-      remediation: `Run ${setupCommand(repair === undefined ? clients : [repair])}, then restart the client.`,
+      remediation,
       details: { registrations: gaps },
     },
   );
@@ -398,12 +405,12 @@ const registrationDetail = (gap: {
     ...(gap.differing === undefined
       ? []
       : [
-          `${gap.client}'s registration records different values for ${gap.differing.join(", ")}.`,
+          `${gap.client}'s recorded ${gap.differing.join(", ")} failed verification.`,
         ]),
     ...(gap.unchecked === undefined
       ? []
       : [
-          `REA did not check ${gap.client}'s recorded ${gap.unchecked.join(", ")} against the paths used in this terminal.`,
+          `REA could not verify ${gap.client}'s recorded ${gap.unchecked.join(", ")}.`,
         ]),
   ];
   return details.length > 0

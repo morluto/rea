@@ -1,3 +1,4 @@
+import { isPortableBundleName } from "../../domain/portableBundleName.js";
 import { describe, expect, it } from "vitest";
 
 import { timedCaptureEvidence } from "../../../tests/fixtures/analysisView.js";
@@ -13,9 +14,6 @@ import {
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { PACKAGE_METADATA } from "../../generatedPackageMetadata.js";
 import {
-  BUNDLE_BASE_IMAGE,
-  bundleDockerfile,
-  isPortableBundleName,
   ENVIRONMENT_EXPORT_OPERATION,
   planEnvironmentBundle,
   registryPackageSource,
@@ -115,7 +113,7 @@ describe("planEnvironmentBundle", () => {
   it("pins the registry package to this build's exact version in the Dockerfile", () => {
     const dockerfile = file(plan(), "envs/grafana-example/Dockerfile");
     const lines = dockerfile.trimEnd().split("\n");
-    expect(lines[0]).toBe(`FROM ${BUNDLE_BASE_IMAGE}`);
+    expect(lines[0]).toMatch(/^FROM node:\d+\.\d+\.\d+-bookworm-slim$/u);
     expect(lines).toContain("ENV MCP_HOST=0.0.0.0");
     expect(lines).toContain("ENV MCP_PORT=18765");
     expect(lines).toContain(
@@ -149,7 +147,9 @@ describe("planEnvironmentBundle", () => {
       "RUN npm install -g --ignore-scripts --no-fund --no-audit /tmp/rea-agents.tgz && rm /tmp/rea-agents.tgz\n",
     );
     expect(dockerfile).not.toContain(`rea-agents@${PACKAGE_METADATA.version}`);
-    expect(bundleDockerfile(registryPackageSource())).not.toBe(dockerfile);
+    expect(file(plan(), "envs/grafana-example/Dockerfile")).not.toBe(
+      dockerfile,
+    );
   });
 
   it("writes a verifier that checks the served tool count and the status the server answers the first parameterless GET tool with", () => {

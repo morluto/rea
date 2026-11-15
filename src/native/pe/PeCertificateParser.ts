@@ -43,7 +43,7 @@ const LIMITATIONS = [
 const TELETEX_LIMITATION =
   "TeletexString values use OpenSSL's ISO-8859-1 compatibility mapping; this is not a full T.61 decoder.";
 
-export const UNSIGNED_ATTRIBUTES_LIMITATION =
+const UNSIGNED_ATTRIBUTES_LIMITATION =
   "Signer unsigned attribute contents are not decoded; nested signatures and timestamp token certificates and times may be omitted.";
 
 const ABSENT_LIMITATIONS = [

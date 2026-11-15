@@ -1,4 +1,8 @@
 import {
+  resolveJavaScriptSemanticPrecision,
+  javaScriptSemanticPrecisionSchema,
+} from "../../domain/javascript/javascriptSemanticPrecision.js";
+import {
   javaScriptSemanticUnknownOmissionsSchema,
   javaScriptSemanticNodeSchema,
   javaScriptSemanticRelationSchema,
@@ -609,18 +613,27 @@ const coverage = z
       status: z.literal("complete"),
       omittedCount: z.literal(0),
       resourceLimits: z.array(javaScriptSemanticResourceLimitSchema).optional(),
+      precision: javaScriptSemanticPrecisionSchema
+        .transform((value) => resolveJavaScriptSemanticPrecision(value))
+        .exactOptional(),
       widenedReturnedReferences: z.array(range).optional(),
     }),
     z.strictObject({
       status: z.literal("partial"),
       omittedCount: z.union([z.literal(0), z.null()]),
       resourceLimits: z.array(javaScriptSemanticResourceLimitSchema).optional(),
+      precision: javaScriptSemanticPrecisionSchema
+        .transform((value) => resolveJavaScriptSemanticPrecision(value))
+        .exactOptional(),
       widenedReturnedReferences: z.array(range).optional(),
     }),
     z.strictObject({
       status: z.literal("failed"),
       omittedCount: z.null(),
       resourceLimits: z.array(javaScriptSemanticResourceLimitSchema).optional(),
+      precision: javaScriptSemanticPrecisionSchema
+        .transform((value) => resolveJavaScriptSemanticPrecision(value))
+        .exactOptional(),
       widenedReturnedReferences: z.array(range).optional(),
     }),
   ])

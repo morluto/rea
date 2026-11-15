@@ -106,11 +106,7 @@ const requestedExports = (nodes: readonly ApplicationNode[]): string[] => {
   const values = nodes.flatMap((node) =>
     node.observations.flatMap((observation) => {
       const facts = nativeExportObservationFacts(observation);
-      return [
-        ...(facts.label === null ? [] : [facts.label]),
-        ...facts.requested,
-        ...facts.members,
-      ];
+      return [...facts.requested, ...facts.members];
     }),
   );
   return [...new Set(values)].sort(compareUnicodeCodePoints);

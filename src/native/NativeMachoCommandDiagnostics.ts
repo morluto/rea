@@ -91,22 +91,17 @@ export const isUnbackedTextDyldFailure = (
   dyldFailureDiagnostic(capture) ===
   "section '__TEXT/__text' has offset=0 but is not a zero-fill section type";
 
-/** Reported CORE/FVMLIB refusals still require an independently matching header. */
+/** A sole CORE/FVMLIB refusal still requires an independently matching header. */
 export const parseDyldFileTypeRefusal = (
   capture: NativeCommandCapture,
 ): {
   readonly fileType: "3" | "4";
   readonly diagnostic: string;
 } | null => {
-  for (const line of dyldFailureDiagnostics(capture, [
-    capture.stdout,
-    capture.stderr,
-  ])) {
-    const fileType = /^unknown (?:mh\.)?filetype ([34])$/u.exec(line)?.[1];
-    if (fileType === "3" || fileType === "4")
-      return { fileType, diagnostic: line };
-  }
-  return null;
+  const diagnostic = dyldFailureDiagnostic(capture);
+  if (diagnostic === null) return null;
+  const fileType = /^unknown (?:mh\.)?filetype ([34])$/u.exec(diagnostic)?.[1];
+  return fileType === "3" || fileType === "4" ? { fileType, diagnostic } : null;
 };
 
 /** Complete captures come from the settled native command owner. */
