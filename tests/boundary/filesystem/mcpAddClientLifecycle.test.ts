@@ -6,7 +6,10 @@ import { currentClientRegistrationCommand } from "../../../src/application/Clien
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
 import { registerMcpClients } from "../../../src/application/McpClientRegistration.js";
 import { resolveMcpRegistrationClients } from "../../../src/application/McpRegistrationCatalog.js";
-import { inspectClientConfiguration } from "../../../src/application/SetupClientConfiguration.js";
+import {
+  configureClientConfiguration,
+  inspectClientConfiguration,
+} from "../../../src/application/SetupClientConfiguration.js";
 import { supportedClients } from "../../../src/application/SupportedClients.js";
 import {
   runUninstall,
@@ -50,9 +53,12 @@ it.each([
       row.configPath,
     ]);
 
+    // An older, still REA-owned launcher: the package runner form that
+    // current setup migrates to the selected installation.
+    const legacy = { command: "npx", args: ["-y", "rea-agents@1.0.0", "mcp"] };
     const [outcome] = await registerMcpClients(
       selected.value,
-      { command: command[0] ?? "", args: command.slice(1) },
+      legacy,
       undefined,
       resources,
     );
@@ -60,23 +66,35 @@ it.each([
       status: "completed",
       result: { ok: true, value: { status: "configured" } },
     });
+    const status = async () =>
+      (
+        await readClientRegistrationStatuses(home, command[1], {
+          platform,
+          environment,
+        })
+      ).find((entry) => entry.client === client);
 
     // Doctor reads the registration from the same row.
-    const statuses = await readClientRegistrationStatuses(home, command[1], {
-      platform,
-      environment,
-    });
-    expect(statuses.find((status) => status.client === client)).toMatchObject({
+    expect(await status()).toMatchObject({
       config_path: row.configPath,
+      command: [legacy.command, ...legacy.args],
       command_identity: "owned",
+      state: "stale",
     });
-    // Update selects it and setup can plan its refresh.
+    // Update selects it, and setup refreshes it to the current launcher.
     await expect(
       existingMaintenanceScope(home, command[1] ?? "", environment),
     ).resolves.toMatchObject({ clients: [client] });
     await expect(
       inspectClientConfiguration(row, {}, command),
-    ).resolves.not.toMatchObject({ status: "invalid" });
+    ).resolves.toMatchObject({ status: "update" });
+    await expect(
+      configureClientConfiguration(row, {}, command),
+    ).resolves.toMatchObject({ status: "configured" });
+    expect(await status()).toMatchObject({
+      command: [...command],
+      command_identity: "owned",
+    });
 
     // Uninstall removes only REA's row and keeps the file.
     const uninstall = await runUninstall(
