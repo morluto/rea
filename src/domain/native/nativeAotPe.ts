@@ -7,6 +7,7 @@ import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../analysisErrorCore.js";
+import { allKeyed, keyedBy, uniqueKeyed } from "../keyedCollection.js";
 import type { NativeMetadataRecovery } from "./nativeMetadataRecovery.js";
 import {
   NativeAotAdmissionError,
@@ -911,7 +912,12 @@ const findDirectory = (
           break;
         }
         if (isConsumedRange || isTypeManagerIndirection) {
-          if (rows.some((existing) => existing.type === type)) {
+          // A repeated frozen region is kept for the consumer to report as
+          // ambiguous; other repeated rows disqualify the candidate.
+          if (
+            type !== FROZEN_OBJECT_REGION &&
+            rows.some((existing) => existing.type === type)
+          ) {
             valid = false;
             break;
           }
@@ -1543,9 +1549,8 @@ export const parseNativeAotPe = (
       },
       maximumSummaryBytes,
     );
-  const dehydrated = directory.sections.filter(
-    (section) => section.type === DEHYDRATED_DATA,
-  );
+  const byType = keyedBy(directory.sections, ({ type }) => type);
+  const dehydrated = allKeyed(byType, DEHYDRATED_DATA);
   if (dehydrated.length !== 1)
     return parsedSummary(
       {
@@ -1570,9 +1575,10 @@ export const parseNativeAotPe = (
     hydration = nativeAotHydrationFailure(cause, budget);
   }
   const discovered = discoverTables(image, overlay, budget);
-  const frozen = directory.sections.find(
-    (section) => section.type === FROZEN_OBJECT_REGION,
-  );
+  // Repeated regions are ambiguous: the scan reads neither rather than
+  // choosing one by position.
+  const frozenRegion = uniqueKeyed(byType, FROZEN_OBJECT_REGION);
+  const frozen = frozenRegion.ok ? frozenRegion.value : undefined;
   const isRecoveredStringTable = (address: bigint): boolean => {
     const index = discovered.tables.find(address, budget);
     if (
@@ -1625,9 +1631,13 @@ export const parseNativeAotPe = (
     "Names are address identities; original managed type names are unavailable.",
     "Metadata rows omitted to fit the NativeAOT report-byte budget are counted explicitly.",
     "Parser work, parser-owned typed buffers, NativeAOT report JSON, and MCP delivery have separate byte budgets; incomplete scans report examined and unexamined coverage.",
-    ...(frozen === undefined
-      ? ["The RTR directory has no FROZEN_OBJECT_REGION section."]
-      : []),
+    ...(!frozenRegion.ok
+      ? [
+          `The RTR directory declares ${String(frozenRegion.error.ordinals.length)} FROZEN_OBJECT_REGION sections, so none was read.`,
+        ]
+      : frozen === undefined
+        ? ["The RTR directory has no FROZEN_OBJECT_REGION section."]
+        : []),
   ];
   const reportFacts = {
     format: "dotnet-nativeaot" as const,

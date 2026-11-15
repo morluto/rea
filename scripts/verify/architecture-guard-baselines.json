@@ -397,7 +397,7 @@
   },
   "section-first-match": {
     "src/application/GuidanceAccess.ts": 1,
-    "src/domain/native/nativeAotPe.ts": 2,
+    "src/domain/native/nativeAotPe.ts": 1,
     "src/dotnet/ManagedPeReader.ts": 1,
     "src/go/GoBuildInfoSearch.ts": 1
   }
