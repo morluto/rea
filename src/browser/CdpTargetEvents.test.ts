@@ -1,34 +1,21 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  receiveCdpEvent,
-  type CdpEvent,
-  type CdpTransportEvent,
-} from "./CdpConnection.js";
+import { fakeCdpEvents } from "../../tests/fixtures/fakeCdpEvents.js";
+import type { CdpEvent } from "./CdpConnection.js";
 import { onCdpTargetEvent } from "./CdpTargetEvents.js";
 
 const route = (
   sessionId: string | undefined,
-  events: readonly CdpEvent[],
+  sent: readonly CdpEvent[],
 ): (string | undefined)[] => {
-  let deliver: ((event: CdpTransportEvent) => void) | undefined;
+  const events = fakeCdpEvents();
   const received: (string | undefined)[] = [];
-  const unsubscribe = onCdpTargetEvent(
-    {
-      onEvent: (listener) => {
-        deliver = listener;
-        return () => {
-          deliver = undefined;
-        };
-      },
-    },
-    sessionId,
-    (event) => received.push(event.registered?.method ?? event.domain),
+  const unsubscribe = onCdpTargetEvent(events, sessionId, (event) =>
+    received.push(event.registered?.method ?? event.domain),
   );
-  for (const event of events)
-    deliver?.({ ...receiveCdpEvent(event), wireBytes: 0 });
+  for (const event of sent) events.emit(event);
   unsubscribe();
-  expect(deliver).toBeUndefined();
+  expect(events.listenerCount()).toBe(0);
   return received;
 };
 
