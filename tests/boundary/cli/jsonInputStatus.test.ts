@@ -11,13 +11,13 @@ const JSON_COMMANDS = [
   ["trace-application-feature", "trace_application_feature"],
   ["trace-javascript-semantics", "trace_javascript_semantics"],
   ["compare-application-versions", "compare_application_versions"],
-  ["compare-source-to-bundle", "compare-source-to-bundle"],
+  ["compare-source-to-bundle", "compare_source_to_bundle"],
   ["compare-javascript-export-shapes", "compare_javascript_export_shapes"],
   [
     "build-reconstruction-obligation-ledger",
-    "build-reconstruction-obligation-ledger",
+    "build_reconstruction_obligation_ledger",
   ],
-  ["evaluate-reconstruction-coverage", "evaluate-reconstruction-coverage"],
+  ["evaluate-reconstruction-coverage", "evaluate_reconstruction_coverage"],
   ["project-android-application-graph", "project_android_application_graph"],
   ["project-apple-application-graph", "project_apple_application_graph"],
   ["import-managed-reconstruction", "import_managed_reconstruction"],
@@ -87,6 +87,78 @@ describe("compiled CLI JSON input failure status", () => {
         expect(result.exitCode).toBe(1);
       },
     );
+});
+
+describe("compiled CLI JSON document omissions", () => {
+  // A one-shot command retains no session Evidence, so a selected view would
+  // otherwise reach an owner that accepts it and be silently dropped.
+  for (const [command, operation] of [
+    ["compare-source-to-bundle", "compare_source_to_bundle"],
+    ["trace-application-feature", "trace_application_feature"],
+  ] as const)
+    cliTest(`${command} refuses an omitted view field`, async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-cli-json-omitted-");
+      const result = await cli.run({
+        arguments: [
+          command,
+          JSON.stringify({ view: { kind: "summary" } }),
+          "--json",
+        ],
+        environment: {
+          HOME: root,
+          XDG_CONFIG_HOME: root,
+          XDG_CACHE_HOME: root,
+        },
+      });
+      expect(result.json).toMatchObject({
+        code: "invalid_request",
+        category: "invalid_input",
+        details: {
+          operation,
+          issues: [
+            {
+              path: ["view"],
+              message: expect.stringContaining("inspect-analysis-view"),
+            },
+          ],
+        },
+      });
+      expect(result.exitCode).toBe(1);
+    });
+});
+
+describe("compiled CLI JSON document caller paths", () => {
+  // A `file:` spelling is a URL, never resolved against the working directory
+  // (#2577); a caller names such a file as `./file:ref.json`.
+  cliTest(
+    "compare-source-to-bundle refuses a file URL reference path",
+    async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-cli-json-url-path-");
+      const result = await cli.run({
+        arguments: [
+          "compare-source-to-bundle",
+          JSON.stringify({
+            reference: { kind: "file", path: "file:ref.json" },
+            application: {},
+          }),
+          "--json",
+        ],
+        environment: {
+          HOME: root,
+          XDG_CONFIG_HOME: root,
+          XDG_CACHE_HOME: root,
+        },
+      });
+      expect(result.json).toMatchObject({
+        code: "invalid_request",
+        details: {
+          operation: "compare_source_to_bundle",
+          issues: [{ path: ["reference", "path"], reason: "invalid_format" }],
+        },
+      });
+      expect(result.exitCode).toBe(1);
+    },
+  );
 });
 
 describe("compiled CLI JSON input diagnostic preservation", () => {
