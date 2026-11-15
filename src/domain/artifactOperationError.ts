@@ -19,6 +19,22 @@ export interface ArtifactAdmissionLimit {
   readonly source: "default" | "setting" | "runtime";
 }
 
+/**
+ * Which consistency check an `integrity` failure tripped, so consumers need
+ * not read the message: a member the reader did not produce, member metadata
+ * that differs from inventory, a container or unpacked file whose identity
+ * changed, short read coverage, bytes disagreeing with the declared size, or a
+ * read stream over a handle the reader does not own.
+ */
+export type ArtifactIntegrityCheck =
+  | "foreign-entry"
+  | "entry-metadata"
+  | "container-identity"
+  | "unpacked-entry-identity"
+  | "read-coverage"
+  | "declared-size"
+  | "reader-ownership";
+
 /** Artifact inventory or extraction failed a typed safety boundary. */
 export class ArtifactOperationError extends AnalysisError {
   readonly _tag = "ArtifactOperationError";
@@ -27,6 +43,8 @@ export class ArtifactOperationError extends AnalysisError {
   readonly admission: ArtifactAdmissionLimit | undefined;
   readonly boundary: ArtifactLimitBoundary | undefined;
   readonly readerLimit: ArtifactReaderLimitFact | undefined;
+  /** For an `integrity` reason, the check the producing reader named. */
+  readonly integrityCheck: ArtifactIntegrityCheck | undefined;
 
   constructor(
     readonly operation:
@@ -71,6 +89,7 @@ export class ArtifactOperationError extends AnalysisError {
       readonly admission?: ArtifactAdmissionLimit;
       readonly boundary?: ArtifactLimitBoundary;
       readonly readerLimit?: ArtifactReaderLimitFact;
+      readonly integrityCheck?: ArtifactIntegrityCheck;
     },
   ) {
     super(
@@ -82,6 +101,7 @@ export class ArtifactOperationError extends AnalysisError {
     this.admission = options?.admission;
     this.boundary = options?.boundary;
     this.readerLimit = options?.readerLimit;
+    this.integrityCheck = options?.integrityCheck;
     this.remediationAction = options?.remediationAction;
     this.userMessage =
       options?.userMessage ??

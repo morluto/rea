@@ -6,6 +6,7 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
 import { constants as bufferConstants } from "node:buffer";
 import { imageFileSizeRemediation } from "./StableArtifactFailure.js";
+import { artifactIntegrityDetails } from "../domain/artifactIntegrity.js";
 
 // The provider ceiling test uses a sparse file and is skipped on Windows.
 it.skipIf(process.platform !== "win32")(
@@ -143,5 +144,54 @@ it("keeps producer-owned recovery through cleanup wrapping and public projection
     cleanup: "incomplete",
     cleanup_reason: "Owned staging cleanup needs retry",
     resources: ["owned staging"],
+  });
+});
+
+it("names the failed integrity check through cleanup wrapping and public projection", () => {
+  const failure = new ArtifactReaderFailure(
+    "integrity",
+    "ASAR container changed before read: main.js",
+    { integrityCheck: "container-identity" },
+  );
+  expect(
+    projectAnalysisError(
+      translateArtifactFailure("inventory_artifact", failure),
+    ),
+  ).toMatchObject({
+    details: { reason: "integrity", integrity_check: "container-identity" },
+  });
+  const wrapped = ArtifactReaderFailure.withCleanup(failure, {
+    reason: "close failed",
+    resources: ["handle"],
+  });
+  expect(
+    projectAnalysisError(
+      translateArtifactFailure("inventory_artifact", wrapped),
+    ),
+  ).toMatchObject({
+    code: "cleanup_incomplete",
+    details: {
+      integrity_check: "container-identity",
+      cleanup: "incomplete",
+      resources: ["handle"],
+    },
+  });
+
+  const unpacked = new ArtifactReaderFailure(
+    "integrity",
+    "ASAR unpacked entry changed before read: main.js",
+    { integrityCheck: "unpacked-entry-identity" },
+    artifactIntegrityDetails("main.js", null, null, true),
+  );
+  expect(
+    projectAnalysisError(
+      translateArtifactFailure("extract_artifact", unpacked),
+    ),
+  ).toMatchObject({
+    details: {
+      logical_path: "main.js",
+      unpacked: true,
+      integrity_check: "unpacked-entry-identity",
+    },
   });
 });

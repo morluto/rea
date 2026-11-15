@@ -52,17 +52,7 @@ import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
 /** Preserve the owning reader's facts when retaining a different cause. */
 const artifactFailureFacts = (failure: ArtifactReaderFailure) => ({
-  ...(failure.userMessage === undefined
-    ? {}
-    : { userMessage: failure.userMessage }),
-  ...(failure.resolvedPath === undefined
-    ? {}
-    : { resolvedPath: failure.resolvedPath }),
-  ...(failure.boundary === undefined ? {} : { boundary: failure.boundary }),
-  ...(failure.admission === undefined ? {} : { admission: failure.admission }),
-  ...(failure.readerLimit === undefined
-    ? {}
-    : { readerLimit: failure.readerLimit }),
+  ...failure.primaryFacts(),
   ...(failure.cleanup === undefined ? {} : { cleanup: failure.cleanup }),
   ...(failure.partialObservation === undefined
     ? {}
