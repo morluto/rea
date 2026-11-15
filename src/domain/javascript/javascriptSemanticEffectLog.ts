@@ -288,6 +288,21 @@ export const opaqueCodeMayChangeGlobalRead = (
   (!IMMUTABLE_GLOBALS.has(root) &&
     semanticOpaqueGlobalMayHaveChanged(observedAt, state));
 
+/**
+ * Whether a source-visible ambient effect recorded anywhere in the source may
+ * have changed `path` (a `global`, `import-meta` or module-tagged property
+ * path): a write to it or to one of its prefixes. With `"contents"`, an escape
+ * of it or of a prefix to code whose effects are not evaluated counts too.
+ * The answer ignores timing, so it holds at every read site.
+ */
+export const ambientPathMayHaveChanged = (
+  state: JavaScriptSemanticAnalysisState,
+  path: JavaScriptSemanticPropertyPath,
+  observes: "value" | "contents" = "value",
+): boolean =>
+  state.ambientWrites.covers(path) ||
+  (observes === "contents" && state.ambientEscapes.covers(path));
+
 /** Declaration assignability is independent of observed explicit writes. */
 const semanticBindingCanBeRebound = (
   binding: JavaScriptSemanticBindingState,
