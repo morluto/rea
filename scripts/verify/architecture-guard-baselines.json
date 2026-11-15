@@ -113,7 +113,6 @@
     "src/browser/modules/NativeModuleResolver.ts": 3,
     "src/captures/TsharkCaptureProvider.ts": 2,
     "src/cli/environmentCommands.ts": 2,
-    "src/cli/finishAnalysisCommand.ts": 3,
     "src/cliJsonInput.ts": 1,
     "src/desktop/BuildComputerLongRuns.ts": 5,
     "src/desktop/DesktopBuildDoctorFacts.ts": 5,
