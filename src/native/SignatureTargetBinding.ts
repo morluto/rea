@@ -22,7 +22,7 @@ import {
 import { InternalInvariantError } from "../domain/internalInvariant.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
@@ -222,11 +222,11 @@ export const withSignatureTarget = async (
       );
       bindArtifactFileCleanup(cause, failure);
       return err(
-        analysisErrorWithCleanupFailure(
+        analysisErrorWithCleanupDependencies(
           outcome,
           failure,
           "inspect_signature",
-        ).bindCleanupDependencies([outcome, failure]),
+        ),
       );
     }
     return err(outcome);
