@@ -343,14 +343,19 @@ const throughRemovableLocation = (
 ): boolean => {
   let value = root;
   for (const [index, step] of schemaPointerSteps(path).entries()) {
+    // Relaxing a draft-07 reference removes its ignored siblings, including
+    // literal-valued ones such as `const`.
+    if (
+      draft07 &&
+      step.kind !== "entry" &&
+      isObject(value) &&
+      hasReference(value) &&
+      !DRAFT07_REDUCED_REFERENCE_KEYS.has(step.keyword)
+    )
+      return true;
     if (
       step.kind === "keyword" &&
       (REMOVABLE_KEYWORDS.has(step.keyword) ||
-        // Relaxing a draft-07 reference removes its ignored siblings.
-        (draft07 &&
-          isObject(value) &&
-          hasReference(value) &&
-          !DRAFT07_REDUCED_REFERENCE_KEYS.has(step.keyword)) ||
         (step.keyword === "anyOf" &&
           isObject(value) &&
           Array.isArray(value.anyOf) &&
