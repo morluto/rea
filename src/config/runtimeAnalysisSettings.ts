@@ -3,8 +3,8 @@ import {
   currentAnalysisOperationSnapshot,
   currentAnalysisSettingOverride,
 } from "../domain/analysisOperationSnapshot.js";
-import type { ConfigurationError } from "../domain/configurationErrors.js";
-import { ok, type Result } from "../domain/result.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
+import { err, ok, type Result } from "../domain/result.js";
 import type { AppConfig } from "./types.js";
 import {
   DEFAULT_GHIDRA_VALUE_FLOW_MAX_OPERATIONS,
@@ -26,6 +26,23 @@ import {
 } from "./nativeMatchingAllowance.js";
 
 /**
+ * Read typed runtime settings at a request boundary. The views below throw the
+ * `ConfigurationError` of a malformed launch seed whenever no override covers
+ * it, which can first happen after startup (an override is reset); a caller
+ * that admits settings per request receives that refusal as a value.
+ */
+export const readRuntimeSetting = <T>(
+  read: () => T,
+): Result<T, ConfigurationError> => {
+  try {
+    return ok(read());
+  } catch (cause: unknown) {
+    if (cause instanceof ConfigurationError) return err(cause);
+    throw cause;
+  }
+};
+
+/**
  * Typed views read the enclosing operation snapshot, never the ambient
  * environment. A malformed launch seed is rejected here unless that snapshot
  * supplies an override. Resetting the override reveals the same seed.
@@ -38,6 +55,7 @@ export const runtimeAnalysisConfig = (
   const heap = config.regexWorkerHeapRequest;
   const scan = config.hopperCallerScanBudget;
   const bridge = config.bridgeMaxRequestBytes;
+  const bridgeReply = config.bridgeMaxReplyBytes;
   const overrides = () =>
     (read === undefined
       ? currentAnalysisOperationSnapshot()?.overrides
@@ -156,6 +174,20 @@ export const runtimeAnalysisConfig = (
           return "runtime";
         admit("bridge.max_request_bytes");
         return bridge.source;
+      },
+    },
+    bridgeMaxReplyBytes: {
+      get maximumBytes() {
+        return (
+          overrides()["bridge.max_reply_bytes"] ??
+          (admit("bridge.max_reply_bytes"), bridgeReply.maximumBytes)
+        );
+      },
+      get source() {
+        if (overrides()["bridge.max_reply_bytes"] !== undefined)
+          return "runtime";
+        admit("bridge.max_reply_bytes");
+        return bridgeReply.source;
       },
     },
   };

@@ -127,6 +127,7 @@ const session = async (
       args: [],
       env: {},
       mode,
+      protocol: mode === "attached" ? "legacy" : "modern",
       timeoutMs: 1000,
       workspaceRoot: root,
     },

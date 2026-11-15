@@ -44,6 +44,12 @@ export type ClientConfigurationResult =
     }
   | {
       readonly status: "failed";
+      /** A read-only layer above the write target overrides REA's entry. */
+      readonly reason: "read_only_override";
+      readonly detail: string;
+    }
+  | {
+      readonly status: "failed";
       readonly reason: "conflict";
       readonly backupPath?: string;
     }

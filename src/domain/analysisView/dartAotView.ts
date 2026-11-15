@@ -97,7 +97,7 @@ export const projectDartAotView = (
       view,
       ...shared,
       summary: { ...report, string_pool },
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   const collection = report.string_pool[view.collection];
   const items = collection.slice(view.offset, view.offset + view.limit);

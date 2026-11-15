@@ -240,6 +240,8 @@ export const nativeCallObservationResultSchema = z.strictObject({
     capture_limit: z.enum(["trace_bytes", "trace_frames"]).optional(),
     /** Aggregate breakpoint-location metadata exhausted its retained-byte budget. */
     breakpoint_locations_truncated: z.boolean().optional(),
+    /** Other stops that may be unrecorded breakpoint hits; events may be missing. */
+    unattributed_breakpoint_stops: z.int().positive().optional(),
     /** Requests that matched no code in any image loaded while observing. */
     unresolved_breakpoints: z.array(z.int().nonnegative()),
   }),

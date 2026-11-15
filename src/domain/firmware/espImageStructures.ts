@@ -5,6 +5,7 @@ import type {
   EspImageMetadata,
   EspImageSignatureBlockMetadata,
 } from "../artifactFormatMetadata.js";
+import { strictUtf8Decoder } from "../strictUtf8.js";
 
 /*
  * Fixed-layout structures inside an ESP image, from ESP-IDF v6.1
@@ -54,7 +55,7 @@ export const firstUnerased = (
 const allZero = (bytes: Uint8Array): boolean =>
   bytes.every((byte) => byte === 0);
 
-const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const UTF8 = strictUtf8Decoder("preserve");
 
 /** The bytes of a NUL-terminated C string in a fixed array. */
 export const cStringBytes = (bytes: Uint8Array): Uint8Array => {

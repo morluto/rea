@@ -33,11 +33,13 @@ export const readValidatedAsarEntry = (
       return new ArtifactReaderFailure(
         "integrity",
         `ASAR entry read coverage is incomplete: ${entryPath}`,
+        { integrityCheck: "read-coverage" },
       );
     if (expectedExtent !== undefined && coverage.bytes !== expectedExtent)
       return new ArtifactReaderFailure(
         "integrity",
         `ASAR entry size disagrees with its header: ${entryPath}`,
+        { integrityCheck: "declared-size" },
       );
     if (signal?.aborted) return asarCancellationFailure(signal.reason);
     return undefined;
@@ -60,6 +62,7 @@ export const readValidatedAsarEntry = (
             throw new ArtifactReaderFailure(
               "integrity",
               `ASAR entry exceeded its declared size: ${entryPath}`,
+              { integrityCheck: "declared-size" },
             );
           if (coverage.kind === "complete" && signal?.aborted) {
             const failure = completionFailure();

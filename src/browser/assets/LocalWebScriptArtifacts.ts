@@ -145,7 +145,7 @@ export class LocalWebScriptArtifacts implements WebScriptArtifactPort {
         throw new ArtifactReaderFailure(
           "integrity",
           `Selected source identity mismatch: ${sourcePath}; expected sha256=${selected.content.sha256}, bytes=${String(selected.content.bytes)}; observed sha256=${sourceBytes.sha256}, bytes=${String(sourceBytes.bytes.length)}.`,
-          undefined,
+          { integrityCheck: "member-identity" },
           {
             logicalPath: selected.content.relative_path,
             declaredSha256: selected.content.sha256,

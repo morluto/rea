@@ -6,6 +6,7 @@ import {
   retainSemanticAmbientEffect,
 } from "./javascriptSemanticAmbientWrites.js";
 import { isIntrinsicMapLookup } from "./javascriptSemanticMapOperations.js";
+import { JavaScriptSemanticWorkMeter } from "./javascriptSemanticWorkAllowance.js";
 import {
   isIntrinsicTypedArrayConstruction,
   isTypedArrayNumericIndex,
@@ -515,6 +516,9 @@ export function* collectSemanticMemberMutationsSteps(
   const deferredMapReceivers = new Set<
     t.CallExpression | t.OptionalCallExpression
   >();
+  // Alias states are retained until their query finishes; bound the phase
+  // before a pathological alias history exhausts the worker heap.
+  const work = new JavaScriptSemanticWorkMeter(state.memberMutationAllowance);
   // The binding pass already retained callable nodes. Ordinary data-only code
   // must not pay an alias walk for every member read or assignment.
   const accessorKeys = {
@@ -923,6 +927,10 @@ export function* collectSemanticMemberMutationsSteps(
         };
       };
     const pending: PendingValue[] = [];
+    const schedule = (value: PendingValue): void => {
+      work.charge();
+      pending.push(value);
+    };
     // The effect, mutation and assigned sources belong to this invocation.
     // Alias histories do not select a value: the binding/capture/projection do.
     // Keep small alternatives exact. Bound additional states across this whole
@@ -949,7 +957,7 @@ export function* collectSemanticMemberMutationsSteps(
         ? resolveBinding(expression, expression.name)
         : undefined;
       if (binding === undefined) {
-        pending.push(value);
+        schedule(value);
         return;
       }
       const observablePath = observablePaths.normalize(
@@ -1014,12 +1022,12 @@ export function* collectSemanticMemberMutationsSteps(
           : { path, definiteReceiver, scheduled: false };
       joinedProjections.set(key, joined);
       if (!projectionsWidened) {
-        pending.push({ ...value, exactKey: key });
+        schedule({ ...value, exactKey: key });
         return;
       }
       if (joined.scheduled) return;
       joined.scheduled = true;
-      pending.push({
+      schedule({
         ...value,
         path,
         definiteReceiver,

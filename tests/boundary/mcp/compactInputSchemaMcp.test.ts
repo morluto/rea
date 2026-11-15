@@ -9,7 +9,8 @@ import {
 } from "../../../src/contracts/toolContracts.js";
 import { PROMPT_CONTRACTS } from "../../../src/contracts/promptContracts.js";
 import { advertisedInputJsonSchema } from "../../../src/contracts/toolSchemaMetadata.js";
-import { presentAdvertisedInputSchema } from "../../../src/contracts/compactInputSchema.js";
+import { advertiseTool } from "../../../src/contracts/advertisedTool.js";
+import { advertisedToolPresentation } from "../../../src/config/mcpOutputSchemaProfile.js";
 import { createCatalogDigests } from "../../../src/catalogIdentity.js";
 import {
   COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
@@ -22,7 +23,6 @@ import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOpt
 import { createTestMcp } from "../../support/mcp/mcpFixture.js";
 import {
   arrayItemSchemaError,
-  strictGatewayItemSchemaErrors,
   unsupportedInputLiteralSchemaError,
 } from "../../fixtures/mcpClientSchemaConstraints.js";
 
@@ -63,109 +63,73 @@ const compactServer = (): EvidenceMcpServer =>
     { capabilities: {} },
     undefined,
     createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
-    { budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES },
   );
 
-const fullServer = (): EvidenceMcpServer =>
-  new EvidenceMcpServer(
-    { name: "full-profile", version: "0" },
-    { capabilities: {} },
-    undefined,
-    createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
-  );
+/** Canonical input contracts, before the compact presentation. */
+const canonicalTools = (): readonly AdvertisedTool[] =>
+  TOOL_CONTRACTS.map((contract) => ({
+    name: contract.name,
+    inputSchema: advertisedInputJsonSchema(contract),
+  }));
 
 describe("MCP compact input schema profile", () => {
-  it("matches profile digests to tools/list and excludes stripped annotations", async () => {
+  it("matches the catalog digest to tools/list and excludes stripped annotations", async () => {
     const compactPresentation = {
       budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
     };
-    const full = fullServer();
     const compact = compactServer();
-    registerCatalog(full);
     registerCatalog(compact);
-    const [fullTools, compactTools] = await Promise.all([
-      listToolsThroughTransport(full),
-      listToolsThroughTransport(compact),
-    ]);
-    const toolsByName = [
-      new Map(fullTools.map((tool) => [tool.name, tool])),
-      new Map(compactTools.map((tool) => [tool.name, tool])),
-    ];
-    for (const [index, presentation] of [
-      undefined,
-      compactPresentation,
-    ].entries()) {
-      for (const contract of TOOL_CONTRACTS) {
-        expect(toolsByName[index]?.get(contract.name)?.inputSchema).toEqual(
-          presentAdvertisedInputSchema(
-            advertisedInputJsonSchema(contract),
-            presentation,
-          ),
-        );
-      }
-    }
-
-    const fullIdentity = createCatalogDigests();
-    const compactIdentity = createCatalogDigests(
-      TOOL_CONTRACTS,
-      PROMPT_CONTRACTS,
-      compactPresentation,
+    const compactTools = new Map(
+      (await listToolsThroughTransport(compact)).map((tool) => [
+        tool.name,
+        tool,
+      ]),
     );
-    expect(full.catalogIdentity.digests).toEqual(fullIdentity);
+    for (const contract of TOOL_CONTRACTS)
+      expect(compactTools.get(contract.name)?.inputSchema).toEqual(
+        advertiseTool(
+          { inputSchema: advertisedInputJsonSchema(contract) },
+          advertisedToolPresentation("off", compactPresentation),
+        ).inputSchema,
+      );
+
+    const compactIdentity = createCatalogDigests();
     expect(compact.catalogIdentity.digests).toEqual(compactIdentity);
-    expect(compactIdentity.tools_sha256).not.toBe(fullIdentity.tools_sha256);
     expect(
       createCatalogDigests(TOOL_CONTRACTS, PROMPT_CONTRACTS, {
         budgetBytes: 1,
       }).tools_sha256,
     ).not.toBe(compactIdentity.tools_sha256);
 
+    // Examples are not advertised, so they do not change the identity.
     const withoutExamples = TOOL_CONTRACTS.map((contract) =>
       contract.examples.length === 0 ? contract : { ...contract, examples: [] },
     );
-    expect(createCatalogDigests(withoutExamples).tools_sha256).not.toBe(
-      fullIdentity.tools_sha256,
+    expect(createCatalogDigests(withoutExamples).tools_sha256).toBe(
+      compactIdentity.tools_sha256,
     );
-    expect(
-      createCatalogDigests(
-        withoutExamples,
-        PROMPT_CONTRACTS,
-        compactPresentation,
-      ).tools_sha256,
-    ).toBe(compactIdentity.tools_sha256);
   });
 });
 
-it("advertises item schemas strict gateways accept", async () => {
-  const server = compactServer();
-  registerCatalog(server);
-  const tools = await listToolsThroughTransport(server);
-  expect(tools.map(({ name }) => name).sort()).toEqual(
-    TOOL_CONTRACTS.map(({ name }) => name).sort(),
-  );
-  expect(
-    tools.flatMap(({ name, inputSchema }) =>
-      strictGatewayItemSchemaErrors(inputSchema, name),
-    ),
-  ).toEqual([]);
-});
-
-it("keeps output schemas and tool descriptions identical to the default profile", async () => {
+it("extends tool descriptions only with input guidance", async () => {
   const compact = compactServer();
-  const full = fullServer();
   registerCatalog(compact);
-  registerCatalog(full);
-  const [compactTools, fullTools] = await Promise.all([
-    listToolsThroughTransport(compact),
-    listToolsThroughTransport(full),
-  ]);
-  const fullByName = new Map(fullTools.map((tool) => [tool.name, tool]));
-  expect(compactTools.length).toBe(fullTools.length);
+  const compactTools = await listToolsThroughTransport(compact);
+  expect(compactTools.length).toBe(TOOL_CONTRACTS.length);
   for (const tool of compactTools) {
-    const reference = fullByName.get(tool.name);
-    if (reference === undefined) throw new Error(`Missing ${tool.name}`);
-    expect(tool.outputSchema, tool.name).toEqual(reference.outputSchema);
-    expect(tool.description, tool.name).toBe(reference.description);
+    // Guidance the compact schema omits follows the unchanged description.
+    const contract = TOOL_CONTRACTS.find(({ name }) => name === tool.name);
+    if (contract === undefined) throw new Error(`Missing ${tool.name}`);
+    expect(tool.description, tool.name).toBe(
+      advertiseTool(
+        {
+          description: toolRegistrationOptions(contract).description,
+          inputSchema: advertisedInputJsonSchema(contract),
+        },
+        advertisedToolPresentation("off"),
+      ).description,
+    );
+    expect(tool.inputSchema.description, tool.name).toBeUndefined();
   }
 });
 
@@ -189,41 +153,6 @@ it("detects missing client-required items in nested array alternatives", () => {
   );
 });
 
-it("detects item schemas Gemini declarations reject in schema positions only", () => {
-  // The #5201 report: `properties[functions].items.items: field predicate
-  // failed: $type == Type.ARRAY` for an any-value element type list.
-  expect(
-    strictGatewayItemSchemaErrors(
-      {
-        type: "object",
-        properties: {
-          functions: {
-            type: "array",
-            items: {
-              type: ["null", "boolean", "object", "array", "number", "string"],
-              items: {},
-            },
-          },
-          actions: {
-            type: "array",
-            items: { oneOf: [{ type: "object" }, { type: "string" }] },
-          },
-          nested: {
-            type: "array",
-            items: { type: "array", items: { type: "string" } },
-          },
-        },
-        default: { items: {} },
-        examples: [{ items: {} }],
-      },
-      "injected",
-    ),
-  ).toEqual([
-    'injected.properties.functions.items.items is beside type ["null","boolean","object","array","number","string"]',
-    "injected.properties.actions.items is an untyped union",
-  ]);
-});
-
 it("preserves arbitrary nested JSON values at the converted SDK boundary", async () => {
   const contract = {
     ...toolContract("binary_session"),
@@ -232,8 +161,8 @@ it("preserves arbitrary nested JSON values at the converted SDK boundary", async
   const value = {
     deeply_nested: [[[[null, true, 7, "text"]]], { mixed: [[], [false]] }],
   };
-  for (const profile of ["full", "compact"] as const) {
-    const server = profile === "full" ? fullServer() : compactServer();
+  {
+    const server = compactServer();
     server.registerTool(
       contract.name,
       toolRegistrationOptions(contract),
@@ -248,16 +177,20 @@ it("preserves arbitrary nested JSON values at the converted SDK boundary", async
       validateFormats: false,
     }).compile(tool.inputSchema);
     expect(contract.inputSchema.safeParse({ value }).success).toBe(true);
-    expect(validate({ value }), `${profile} profile`).toBe(true);
+    expect(validate({ value })).toBe(true);
   }
 });
 
-it("keeps SDK-converted schemas valid and accepting canonical examples", async () => {
-  let checkedFullRestrictions = false;
-  for (const profile of ["full", "compact"] as const) {
-    const server = profile === "full" ? fullServer() : compactServer();
-    registerCatalog(server);
-    const tools = await listToolsThroughTransport(server);
+it("keeps SDK-converted and canonical schemas valid and accepting canonical examples", async () => {
+  let checkedCanonicalRestrictions = false;
+  for (const profile of ["canonical", "compact"] as const) {
+    let tools: readonly AdvertisedTool[];
+    if (profile === "canonical") tools = canonicalTools();
+    else {
+      const server = compactServer();
+      registerCatalog(server);
+      tools = await listToolsThroughTransport(server);
+    }
     const ajv = new Ajv2020({ strict: false, validateFormats: false });
     const contractsByName = new Map<string, (typeof TOOL_CONTRACTS)[number]>(
       TOOL_CONTRACTS.map((contract) => [contract.name, contract]),
@@ -282,7 +215,7 @@ it("keeps SDK-converted schemas valid and accepting canonical examples", async (
           `${profile} profile, ${tool.name}: ${example.title}`,
         ).toBe(true);
     }
-    if (profile === "full") {
+    if (profile === "canonical") {
       const adb = tools.find(({ name }) => name === "start_adb_activity");
       const managed = tools.find(
         ({ name }) => name === "inspect_managed_members",
@@ -356,32 +289,36 @@ it("keeps SDK-converted schemas valid and accepting canonical examples", async (
           validateWasm({ path: "/artifacts/program", command_timeout_ms }),
           String(command_timeout_ms),
         ).toBe(false);
-      checkedFullRestrictions = true;
+      checkedCanonicalRestrictions = true;
     }
   }
-  expect(checkedFullRestrictions).toBe(true);
+  expect(checkedCanonicalRestrictions).toBe(true);
 });
 
-it("states dependency keywords as prose in both catalog profiles", async () => {
-  const full = fullServer();
+it("states dependency keywords as prose in the canonical and compact schemas", async () => {
   const compact = compactServer();
-  registerCatalog(full);
   registerCatalog(compact);
-  const [fullTools, compactTools] = await Promise.all([
-    listToolsThroughTransport(full),
-    listToolsThroughTransport(compact),
-  ]);
-  const sqlite = fullTools.find(
+  const compactTools = await listToolsThroughTransport(compact);
+  const sqlite = canonicalTools().find(
     ({ name }) => name === "inspect_sqlite_database",
   );
   expect(sqlite?.inputSchema.description).toContain(
     "When row_limit is provided, also provide table.",
   );
-  for (const tools of [fullTools, compactTools])
-    expect(
-      tools.find(({ name }) => name === "inspect_sqlite_database")?.inputSchema
-        .description,
-    ).toContain("When schema_scope is selected_table, also provide table.");
+  expect(sqlite?.inputSchema.description).toContain(
+    "When schema_scope is selected_table, also provide table.",
+  );
+  // Compact moves the sentence to the tool description, which Codex keeps
+  // when it strips descriptions inside a schema above 5,000 bytes.
+  const compactSqlite = compactTools.find(
+    ({ name }) => name === "inspect_sqlite_database",
+  );
+  expect(compactSqlite?.description).toContain(
+    "When schema_scope is selected_table, also provide table.",
+  );
+  expect(JSON.stringify(compactSqlite?.inputSchema)).not.toContain(
+    "also provide",
+  );
 });
 
 it("retains parameter types and avoids client-side reference expansion", async () => {
@@ -510,9 +447,8 @@ describe("MCP compact input schema canonical enforcement", () => {
   });
 });
 
-it.each(["full", "compact"] as const)(
-  "preserves nested resource validation through the %s SDK catalog and canonical handler",
-  async (profile) => {
+it("preserves nested resource validation through the SDK catalog and canonical handler", async () => {
+  {
     const source = {
       $schema: "https://json-schema.org/draft/2020-12/schema",
       $id: "https://example.test/root.json",
@@ -550,7 +486,7 @@ it.each(["full", "compact"] as const)(
             : { issues: [{ message: "Invalid resource value" }] },
       },
     };
-    const server = profile === "compact" ? compactServer() : fullServer();
+    const server = compactServer();
     let calls = 0;
     server.registerTool("resource_fixture", { inputSchema }, async () => {
       calls++;
@@ -579,18 +515,13 @@ it.each(["full", "compact"] as const)(
       expect(result.isError === true).toBe(!canonical(args));
     }
     expect(calls).toBe(1);
-  },
-);
+  }
+});
 
 it("keeps root detail guidance so callers can choose bounded summaries", async () => {
-  const full = fullServer();
   const compact = compactServer();
-  registerCatalog(full);
   registerCatalog(compact);
-  const [fullTools, compactTools] = await Promise.all([
-    listToolsThroughTransport(full),
-    listToolsThroughTransport(compact),
-  ]);
+  const compactTools = await listToolsThroughTransport(compact);
   const detailGuidance = (tools: readonly AdvertisedTool[]) =>
     Object.fromEntries(
       tools.flatMap(({ name, inputSchema }) => {
@@ -602,7 +533,7 @@ it("keeps root detail guidance so callers can choose bounded summaries", async (
           : [];
       }),
     );
-  const expected = detailGuidance(fullTools);
+  const expected = detailGuidance(canonicalTools());
   expect(Object.keys(expected)).toEqual(
     expect.arrayContaining(["inspect_artifact", "inspect_macho"]),
   );
@@ -624,21 +555,11 @@ it.each([
     { bundle: "/bundle", model: "test-model", budget_usd: 1 },
   ],
 ] as const)(
-  "advertises portable names for %s through the SDK",
-  async (name, field, base) => {
+  "declares portable names for %s in the canonical input schema",
+  (name, field, base) => {
     const contract = toolContract(name);
-    const server = fullServer();
-    server.registerTool(
-      contract.name,
-      toolRegistrationOptions(contract),
-      async () => ({ content: [] }),
-    );
-    const tool = (await listToolsThroughTransport(server)).find(
-      ({ name }) => name === contract.name,
-    );
-    expect(tool).toBeDefined();
     const ajv = new Ajv2020({ strict: false, validateFormats: false });
-    const validate = ajv.compile(tool!.inputSchema);
+    const validate = ajv.compile(advertisedInputJsonSchema(contract));
     for (const [name, accepted] of [
       [undefined, field === "name"],
       ["replay-2", true],

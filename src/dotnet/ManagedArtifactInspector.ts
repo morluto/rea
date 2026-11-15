@@ -160,6 +160,8 @@ const unavailableResult = (
 
 interface RuntimeClassificationInput {
   readonly layout: ManagedPeLayout;
+  /** The layout's CLI header, which a managed classification requires. */
+  readonly cli: ManagedCliHeader;
   readonly metadata: ManagedMetadataLayout;
   readonly inventory: ManagedMetadataInventory;
 }
@@ -283,14 +285,13 @@ const managedArchitectureFor = (
 
 const runtimeClassification = ({
   layout,
+  cli,
   metadata,
   inventory,
 }: RuntimeClassificationInput): Pick<
   ManagedArtifactInspection["classification"],
   "runtime_family" | "implementation" | "managed_architecture" | "evidence"
 > => {
-  const cli = layout.cli;
-  if (cli === null) throw new TypeError("Managed classification requires CLI");
   const { runtime_family: runtimeFamily, evidence } = runtimeFamilyFor(
     cli,
     inventory,
@@ -432,7 +433,7 @@ export const inspectManagedArtifactBytes = (
           classification: {
             status: "managed",
             container: "pe",
-            ...runtimeClassification({ layout, metadata, inventory }),
+            ...runtimeClassification({ layout, cli, metadata, inventory }),
           },
           metadata: {
             status: issues.length === 0 ? "complete" : "partial",

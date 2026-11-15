@@ -1,9 +1,9 @@
-import { z } from "zod";
+import {
+  MAX_NODE_TIMER_DELAY_MS,
+  timerDurationMsSchema,
+} from "./analysisResourceLimits.js";
 
 import type { BrowserObservationOperation } from "./browserObservationErrors.js";
-
-/** Largest delay supported without overflowing Node timers. */
-export const MAX_BROWSER_DEADLINE_MS = 2_147_483_647;
 
 /**
  * CDP command and WebSocket handshake deadline. Discovery and cleanup grace
@@ -19,13 +19,7 @@ export const CDP_CLEANUP_GRACE_MS = 5_000;
 
 /** Optional caller deadline. An omitted field stays absent in Evidence. */
 export const optionalBrowserDeadlineMs = (description: string) =>
-  z
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_BROWSER_DEADLINE_MS)
-    .optional()
-    .describe(description);
+  timerDurationMsSchema.optional().describe(description);
 
 export const selectedBrowserDeadlineMs = (
   selected: number | undefined,
@@ -38,9 +32,9 @@ export const browserDeadlineIncrease = (
   defaultMs: number,
   cli: string,
 ): string =>
-  timeoutMs < MAX_BROWSER_DEADLINE_MS
-    ? `Increase ${key} above ${String(timeoutMs)} (integer milliseconds from 1 to ${String(MAX_BROWSER_DEADLINE_MS)}; omitted means ${String(defaultMs)}), or use ${cli} on the CLI.`
-    : `${key} is already at the maximum ${String(MAX_BROWSER_DEADLINE_MS)} ms; do not increase it further.`;
+  timeoutMs < MAX_NODE_TIMER_DELAY_MS
+    ? `Increase ${key} above ${String(timeoutMs)} (integer milliseconds from 1 to ${String(MAX_NODE_TIMER_DELAY_MS)}; omitted means ${String(defaultMs)}), or use ${cli} on the CLI.`
+    : `${key} is already at the maximum ${String(MAX_NODE_TIMER_DELAY_MS)} ms; do not increase it further.`;
 
 export const browserDeadlineRetry =
   "Applies on the next call. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.";

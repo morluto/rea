@@ -275,6 +275,9 @@ REA's packaged `bridge/cutter/rea_bridge.py`, `modified` when it differs, and
 `unknown` when the plugin predates this field. `cutter_command` refuses a
 `modified` session before sending anything and names the packaged plugin to
 copy into Cutter's `plugins/python` directory. An `unknown` session still runs.
+For `modified` and `unknown` sessions, discovery also returns
+`bridge_source_recovery`, which names the packaged plugin to copy before
+restarting Cutter.
 
 The client and plugin must support the current v2 handshake; older peers are
 rejected before dispatch because they cannot preserve cross-caller recovery proof.
@@ -311,7 +314,12 @@ never sends its authenticated frame does not hold the bridge accept loop.
 At most 8 connection threads run. A further accept is closed, and a failure to start a thread closes that socket without stopping the listener. A status `completed_connection` is the longest prefix of accepted connections that have terminated. It does not treat an earlier connection as finished because a later status reached the command lock first. Scalar values in one Cutter reply are encoded in bounded batches.
 A command reply that does not fit keeps its completion state and document
 generation, and reports an oversized path as unknown. Cutter response frames use this same ceiling and
-also exclude the terminating LF. A command response the client discards because it exceeds that ceiling stays an unknown execution and sets `output_truncated`, so Evidence records the omitted output. Hopper response reads are unchanged.
+also exclude the terminating LF. A command response the client discards because it exceeds that ceiling stays an unknown execution and sets `output_truncated`, so Evidence records the omitted output. Hopper and Ghidra reply lines are bounded separately by
+`REA_BRIDGE_MAX_REPLY_BYTES` (`bridge.max_reply_bytes`): default 268435456 bytes
+(256 MiB), from 1048576 to 536870888. The client admits the value with each
+request. A reply line, or an unterminated tail, above it is refused as a typed
+`transport` resource constraint naming the setting; REA discards the bytes and
+closes that bridge connection rather than retaining them.
 `cutter_command` reports `output_truncated` and `document_generation` as `null`
 when the plugin did not declare them, for example when no reply was read, the
 reply was malformed, or an older plugin omitted them. A null generation means
@@ -347,6 +355,6 @@ generation error.
 
 ## Configuration and coverage
 
-The optional `REA_OBJDUMP_COMMAND`, `REA_GDB_COMMAND`, and `REA_RIZIN_COMMAND` values select executable names or paths; otherwise REA searches `PATH`. Values are passed directly to process spawning, not expanded as shell command lines. A host executable launch refusal preserves the selected command and host error code, with recovery through the corresponding command setting, PATH, or execute/search permissions. GDB does not retry that refusal with MI2; its MI2 fallback applies to protocol initialization failures. Provider versions and capabilities remain unknown until observed from the installed tool and verified in the corresponding real-provider lane.
+The optional `REA_OBJDUMP_COMMAND`, `REA_GDB_COMMAND`, and `REA_RIZIN_COMMAND` values select executable names or paths; otherwise REA searches `PATH`. On Windows, REA searches `PATH` and `PATHEXT` for a bare objdump or Rizin name itself and refuses with `capability_unavailable` (`boundary: "provider-lookup"`) when it is not found, rather than letting Windows also search the current directory. Values are passed directly to process spawning, not expanded as shell command lines. A host executable launch refusal preserves the selected command and host error code, with recovery through the corresponding command setting, PATH, or execute/search permissions. GDB does not retry that refusal with MI2; its MI2 fallback applies to protocol initialization failures. Provider versions and capabilities remain unknown until observed from the installed tool and verified in the corresponding real-provider lane.
 
 Provider capture limits are separate from the MCP response budget. A result that fits the provider limit may still exceed the default 10 MiB MCP response budget and return a transport `resource_constraint`. Configure `REA_MCP_MAX_RESPONSE_BYTES` to match a larger client receive buffer when that client supports one; otherwise use retained Evidence/export or complete CLI JSON output. See [MCP response limits](reference/mcp-contracts.md#tool-results).

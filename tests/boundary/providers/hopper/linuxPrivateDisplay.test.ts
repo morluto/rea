@@ -1,3 +1,4 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../../../../src/domain/analysisResourceLimits.js";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -10,7 +11,6 @@ import * as ownership from "../../../../src/process/ProcessOwnership.js";
 import {
   DEFAULT_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
   HOPPER_DEMO_DIALOG_TIMEOUT_SETTING,
-  MAXIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
   MINIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
   type HopperStartupDiagnostic,
   type HopperStartupFailureCode,
@@ -165,7 +165,7 @@ describe("Hopper demo dialog timeout outcomes", () => {
             value: "-5",
             source: "setting",
             minimum_ms: MINIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
-            maximum_ms: MAXIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
+            maximum_ms: MAX_NODE_TIMER_DELAY_MS,
             default_ms: DEFAULT_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
           },
         },

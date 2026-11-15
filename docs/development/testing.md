@@ -42,7 +42,7 @@ that invoke PowerShell themselves remain subject to their own policy checks.
 | `npm run test:python`             | LLDB and mitmproxy producer contracts plus analysis-efficiency checks; no real debugger or proxy required               |
 | `npm run test:watch`              | Dirty source tests in watch mode, without build                                                                         |
 | `npm run test:watch:all`          | Changed tests from every project; builds at startup, so rebuild after production edits before relying on compiled tests |
-| `npm run check:fast`              | Cached typecheck and lint                                                                                               |
+| `npm run check:fast`              | Cached typecheck and lint, then the architecture guards and their counted baselines                                     |
 | `npm run check:changed`           | Cached typecheck/lint and branch-related source feedback                                                                |
 | `npm run check:pr`                | Opt-in complete local deterministic gate and generated-file checks                                                      |
 | `npm run docs:check`              | Generated-document validation and fresh onboarding example consistency checks                                           |
@@ -111,9 +111,9 @@ API dependency, and independent fixture compiler oracles keep their existing
 TypeScript versions.
 
 `npm run build:cached` compiles the CLI/MCP runtime and its packaged skill.
-The build also records `dist/mcp-catalog.json` (compact inputs) and
-`dist/mcp-catalog-full.json` from the canonical SDK registrations and binds
-each to the runtime with its own SHA-256 digest. These are
+The build also records `dist/mcp-catalog.json` (compact inputs) from the
+canonical SDK registrations and binds it to the runtime with its SHA-256
+digest. These are
 runtime artifacts, separate from the test catalog below. Default target-free
 MCP startup serves its schemas without constructing analysis validators;
 the first tool or guided-workflow request materializes the canonical runtime
@@ -186,9 +186,14 @@ Its reason argument is required: an aborted `AbortSignal`, an earlier
 failure, or an `OwnerCancellation` when REA itself closed the work's owner. The
 architecture guard rejects a direct `new AnalysisCancelledError(` outside that
 module. Files that still construct one directly are listed with their counts in
-`scripts/verify/architecture-guard-baselines.json`; a file may not exceed its
-count, and after removing copies run
+`scripts/verify/baselines/analysis-cancelled-constructor.json`; a file may not
+exceed its count, and after removing copies run
 `node scripts/verify/architecture-guards.mjs --shrink-baselines` to lower it.
+Each counted guard keeps its baseline in its own
+`scripts/verify/baselines/<guard-key>.json`, with paths sorted by code unit, so
+changes to different guards never edit the same file. Resolve a conflict in one
+of these files by keeping both sides' entries (the higher count where they
+differ) and rerunning `--shrink-baselines`.
 
 `rea/no-evidence-json-preadmission` rejects direct generic JSON parses in
 `createEvidence` payload expressions; it does not analyze intermediate values.
@@ -212,9 +217,9 @@ directives are errors. `vitest/valid-expect` warns (`maxArgs: 2`) because valid 
 collected assertions can be awaited later. `import/no-duplicates` warns with
 `preferInline: false`.
 
-`no-useless-escape` keeps intentional `\-` regex escapes because advertised
-patterns must also compile in `v` mode; the catalog regression checks every
-advertised pattern.
+`no-useless-escape` keeps intentional `\-` regex escapes. Source regexes need
+no escaping for clients: the presentation re-emits every advertised pattern in
+the portable grammar (`src/contracts/portablePattern.ts`).
 
 Fast lint stays syntax-based. `npm run lint:typed` runs serially with pinned
 `oxlint-tsgolint` 7.0.2005 and records native plus typed diagnostics in
@@ -258,7 +263,9 @@ Actions jobs own their runner and use up to four; see
 shares host resources. Acceptance and process-global cases use isolated forks
 without serial scheduling. Pure domain/service, composition, conformance,
 evaluation, CLI boundary, and MCP boundary projects share module graphs. Their
-tests avoid process-global state and keep resource cleanup test-scoped. Each
+tests avoid process-global state and keep resource cleanup test-scoped. Source
+projects run those shared graphs in forked workers, so each worker owns its own
+heap and no single process holds the whole lane. Each
 MCP session still owns its resources, and CLI cases retain fresh command
 instances or subprocesses. Fixtures using `vi.mock` or `vi.doMock` need an
 isolated project. CLI/MCP fixtures normally live in `tests/process-global/`.
@@ -292,11 +299,74 @@ profile. Meta-schema validity does not establish client acceptance or useful
 rendered declarations. `src/contracts/advertisedDialect.ts` owns the portable
 advertised dialect: the keyword allowlist, size and depth limits, and the regex
 grammar that compiles in V8, Python, RE2 and Rust. `advertisedDialect.test.ts`
-lists every input, output and catalog profile combination and compares the
-violation counts with `advertisedDialectBaseline.ts`, which may only shrink;
-the packaged catalog check applies the same rules to the default profiles. Keep canonical rejection checks separate from the
+lists every output and catalog profile combination and requires zero dialect
+violations; there is no baseline, so a construct outside the dialect fails the
+test by name. The packaged catalog check applies the same rule to the default
+profiles.
+Advertised patterns, input and output, are enforced at zero:
+`portablePattern.ts` re-emits each one exactly, widens it, or omits it, and the
+presentation drops any enclosing `not` or `if` and turns `oneOf` into `anyOf`
+when a pattern widens. `portablePattern.test.ts` pins the same acceptance of
+BMP strings in V8's plain, `u` and `v` modes. Python, Go and Rust read code
+points as `u` does; Python's `$` also matches before a final newline, which
+only widens. A client compiling without `u` may still reject one astral
+character where a wildcard, shorthand or negated class must match it (for
+example `^[\S]$`); `PortablePatternProjection` documents this accepted
+limitation. Keep canonical rejection checks separate from the
 intentionally reduced compact advertisement, and probe actual client renderers
 when changing schema representations.
+
+The grammar rules are not evidence that an engine accepts a pattern.
+`npm run verify:advertised-schemas` lists tools from the built package's stdio
+entry in every input, output and catalog profile, then compiles each distinct
+advertised regular expression (`pattern` values and `patternProperties` keys)
+with the engines clients run: V8 (plain, `u`, `v`), Go `regexp` (RE2), C++
+RE2, Python `re`, and Rust `regex` and `fancy-regex` through the Rust
+`jsonschema` crate. A refusal names the engine, its error, and each tool,
+schema path and profile that advertises the pattern. Go is the host
+toolchain, run with `GOTOOLCHAIN=local` so it is never downloaded. The other
+engines are pinned, hash-checked wheels listed in
+`scripts/verify/advertised-schemas/requirements.txt`; nothing installs them on
+a developer machine. To check them locally, install that file into a virtual
+environment with `pip install --require-hashes -r` and set
+`REA_SCHEMA_ENGINES_PYTHON` to its interpreter. A missing engine is reported
+as not verified rather than passed; `REA_REQUIRE_SCHEMA_ENGINES=1` turns it
+into a failure. CI's build job sets it after uploading the build, using the
+runner's Go and a virtual environment cached by the requirements file's
+digest, so every code change runs every engine. The pre-push hook does not
+run the check, because it needs a current build. `--package-root=DIR` lists
+an installed package instead of the checkout's build; the release guide uses
+it to [check the qualified archive](releasing.md#check-the-packed-catalog-with-client-engines).
+
+The same run compares the listings with the per-tool summaries in
+`scripts/verify/advertised-schemas/tools/`: each file records one tool's
+schema digest per input or output profile and the patterns its schemas
+advertise. A difference fails the check and prints aggregated lines such as
+`119 tool schemas gained pattern /…/`, so a change that reaches many tools at
+once is visible in review, followed by the expected contents of every missing
+or stale file. Commit those contents with the schema change, or regenerate
+them with `npm run verify:advertised-schemas -- --update-summary`, which also
+deletes the files of removed tools. A PR that adds a tool adds only its own
+file, so PRs adding different tools do not conflict. Absolute local paths
+advertise the host's pattern, so the summaries record the POSIX advertisement
+and Windows hosts skip the comparison.
+
+The same run builds a validator for every distinct advertised input and output
+schema with the Rust `jsonschema` crate's defaults, which check the declared
+draft's meta-schema and formats and compile every subschema, as a Rust client
+using that crate does. `--complete` adds Python `jsonschema`'s
+`check_schema`, which `jsonschema.validate` runs before validating a
+structured result in Python clients; it takes several seconds, so CI runs it
+only in full qualification. Ajv
+strict mode is not part of the check: it rejects authoring constructs such as
+unknown formats that no supported client has been seen to refuse, and Ajv's
+default meta-schema validation already runs in the package verifier. Clients
+whose validators cannot run here keep their documented rejections as rules in
+`advertisedDialect.ts`, each citing its report: the keyword allowlist and type
+rules encode Gemini's function-declaration subset, and the root-shape rule the
+Anthropic and OpenAI function-calling root. OpenAI strict mode (`strict: true`)
+is not covered: it requires every property to be required, which REA's
+optional inputs do not meet, and REA does not claim strict-mode support.
 
 The reused CLI boundary workers cap V8 old space at 512 MiB, with or without
 coverage. Ordinary CI also exhausted the former 384 MiB budget after earlier
@@ -695,12 +765,14 @@ to reach their original memory, depth, cycle or representation boundary; retain
 those stronger assertions.
 
 When a matrix already holds a named tool definition from live `tools/list`,
-pass that definition through the SDK's `toolDefinition` call option. This keeps
-the selected output-schema validation without eagerly compiling unrelated
-catalog schemas. Re-read definitions if the server advertises a changed list.
+pass that definition through the SDK's `toolDefinition` call option, with the
+canonical output schema attached (`tools/list` omits output schemas by default).
+This keeps output-schema validation without eagerly compiling unrelated catalog
+schemas. Re-read definitions if the server advertises a changed list.
 
-For exact nested input constraints, select the full profile explicitly or use
-the full-SDK conformance suite that owns the field. Compact workflow tests
+For exact nested input constraints, assert the canonical input schema
+(`advertisedInputJsonSchema`) or use the full-SDK conformance suite that owns
+the field. Compact workflow tests
 should assert canonical failure categories and provider-call controls where
 rejection before provider work matters. Do not make today's omission of a
 constraint a compact-profile invariant.
@@ -776,6 +848,12 @@ controlled production seam for interleavings that cannot be reproduced reliably.
 | Cleanup owners recover after an error was returned                                      | Retain the original child and aggregate errors and project them after each owner releases. A successful peer stays released; the aggregate remains incomplete until all owners release. Preserve the first cause even when rejection is `undefined`.                                      |
 | Target exits without an acknowledgement, or transport disappears while it stays alive   | Positive owned exit proof resolves target lifetime; other resources still need cleanup. Lost transport alone does not prove exit. Verify unrelated/attached targets survive and same-connection recovery works when supported.                                                            |
 
+Owners that finalize through `runOwned` inherit the precedence rows above from
+`src/providers/runOwned.lifecycle.test.ts`, which runs each scenario over a
+table of adopter shapes (partial or diagnostics record, publication, lease).
+Add a shape to that table instead of repeating those cases per provider; a
+provider's own tests cover how its work and close reach `runOwned`.
+
 Shared process-supervision controls separate leader exit from output closure.
 Cover output during held or failed cleanup, bounded retention and drain timeout,
 retry, and borrowed stream authority. The POSIX inherited-stderr control uses a
@@ -784,7 +862,11 @@ native Windows Job Object behavior.
 
 Synchronize cancellation with the finalization boundary being tested; a fixed
 delay after dispatch does not establish that phase. Use markers, barriers, or
-owned cleanup seams while preserving real cleanup where feasible. Check server
+owned cleanup seams while preserving real cleanup where feasible.
+`tests/support/lifecycleHarness.ts` provides the shared controls: `phaseGate`
+holds a late handshake or in-flight work at a boundary, `cancelDuringCleanup`
+cancels from inside final cleanup, and `controlledCleanup` gives children
+refused or confirmed outcomes with counted retries. Check server
 settlement and retained resources even if the MCP SDK rejects the client promise
 before the handler finishes. A cancellation during active execution does not
 cover cancellation during final cleanup.

@@ -15,11 +15,13 @@ import {
   type ClientConfigurationDocument,
 } from "./ClientConfigurationDocument.js";
 import {
+  launchedRegistrationEntry,
   readConfigurationFile,
   readConfigurationText,
   type ClientConfigurationFileError,
 } from "./ClientConfigurationFiles.js";
 import type { SetupClient } from "./SupportedClients.js";
+import { readJunieLocationBlock } from "./JunieClientSettings.js";
 
 type SettingsSource = { path: string; document: ClientConfigurationDocument };
 const folderTrustSchema = z
@@ -128,6 +130,8 @@ export const readClientPolicyBlock = async (
   desiredRegistration?: unknown,
   resources?: ArtifactResourceScope,
 ): Promise<Result<string | undefined, ClientConfigurationFileError>> => {
+  if (client.junieSettings !== undefined)
+    return readJunieLocationBlock(client.junieSettings, resources);
   if (client.name !== "gemini_cli" || client.geminiSettings === undefined)
     return ok(undefined);
   const settings = client.geminiSettings;
@@ -223,8 +227,16 @@ export const readClientPolicyBlock = async (
   if (
     override !== undefined &&
     !clientConfigurationValuesEqual(
-      override.document.servers[PRODUCT_IDENTITY.mcpServerKey],
-      desired,
+      launchedRegistrationEntry(
+        override.document.servers[PRODUCT_IDENTITY.mcpServerKey],
+        override.document.environmentKey,
+        settings.platform,
+      ),
+      launchedRegistrationEntry(
+        desired,
+        override.document.environmentKey,
+        settings.platform,
+      ),
     )
   )
     return ok(

@@ -1,3 +1,4 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import {
   copyFile,
   cp,
@@ -73,7 +74,7 @@ processTest.skipIf(process.platform === "win32")(
         tools,
         reply: await harness.client.callTool(
           { name: "binary_session", arguments: {} },
-          { toolDefinition: sessionDefinition },
+          { toolDefinition: withCanonicalOutputSchema(sessionDefinition) },
         ),
       };
     } finally {

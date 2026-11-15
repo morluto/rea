@@ -207,6 +207,7 @@ const resolveHopperAnalysisProfileInScope = async (
 export type HopperDeclinedArchitecture =
   | ElfMetadataArchitecture
   | "hexagon"
+  | "xtensa"
   | "arm64_32";
 
 export const isHopperDeclinedArchitecture = (
@@ -214,6 +215,7 @@ export const isHopperDeclinedArchitecture = (
 ): architecture is HopperDeclinedArchitecture =>
   isElfMetadataArchitecture(architecture) ||
   architecture === "hexagon" ||
+  architecture === "xtensa" ||
   architecture === "arm64_32";
 
 /**

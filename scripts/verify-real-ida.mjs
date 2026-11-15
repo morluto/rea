@@ -4,7 +4,10 @@ import {
   findMappedNonFunction,
 } from "./lib/ida-feature-trace.mjs";
 import { requireMcpToolError } from "./lib/mcp-verifier-results.mjs";
-import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import {
+  verifierFailureReasons,
+  withVerifierCleanup,
+} from "./lib/verifier-cleanup.mjs";
 import { withVerifierResourceOwner } from "./lib/verifier-file-resources.mjs";
 
 import assert from "node:assert/strict";
@@ -411,7 +414,9 @@ const mcp = async (cliDossier) => {
 };
 const cleanup = async () => {
   phase = "upstream lifecycle verification";
-  const upstream = createIdaMcpConnection(config, process.env);
+  const upstream = createIdaMcpConnection(config, process.env, {
+    platform: process.platform,
+  });
   try {
     await upstream.connect();
     if (config.mode === "attached") {
@@ -452,11 +457,7 @@ try {
     phase,
     message: cause instanceof Error ? cause.message : String(cause),
     ...(cause instanceof AggregateError
-      ? {
-          causes: cause.errors.map((failure) =>
-            failure instanceof Error ? failure.message : String(failure),
-          ),
-        }
+      ? { causes: verifierFailureReasons(cause) }
       : {}),
   };
   process.exitCode = 1;
