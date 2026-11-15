@@ -1245,6 +1245,19 @@ describe("JavaScript export return-shape selection", () => {
         expect.objectContaining({ export_name: "third" }),
       ]),
     });
+    // The missing side recovered no return shapes, so its source omission
+    // counts are unknown, not zero; the selected side keeps its counts.
+    expect(missing.coverage).toMatchObject({
+      left_source_omitted_variants: null,
+      left_omitted_fields: null,
+      left_omitted_property_coverage: null,
+      right_source_omitted_variants: 0,
+      right_omitted_fields: 0,
+      right_omitted_property_coverage: 0,
+    });
+    expect(missing.limitations).toContain(
+      "The left export has no return-shape projection because the export selection is missing, so its source omission counts are null (unknown), not zero.",
+    );
 
     const parsers = await sourceOwnedParsers();
     const variants = compare(parsers[0], parsers[1]);

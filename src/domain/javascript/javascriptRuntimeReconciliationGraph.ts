@@ -10,6 +10,13 @@ import type {
 import type { ParsedStaticLayer } from "./javascriptRuntimeReconciliationParsing.js";
 import type { ParsedRuntimeCapture } from "./javascriptRuntimeReconciliationCaptureParsing.js";
 import { joinCoverageStatus } from "../coverage.js";
+import {
+  known,
+  knownOrNull,
+  sumKnownCounts,
+  unknownBecause,
+  type Known,
+} from "../known.js";
 import { applicationCoverageKnowledge } from "./javascriptApplicationEvidenceSchemas.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
@@ -25,8 +32,8 @@ interface ReconciledGraphInput {
 
 interface GraphCoverageFacts {
   readonly projectionOmissions: number;
-  readonly knownOmissions: number;
-  readonly omissionsKnown: boolean;
+  /** Projection plus source omissions; unknown when any source cannot count. */
+  readonly omissions: Known<number>;
   readonly inputStatus: ReconciliationInputStatus;
   readonly inputTruncated: boolean;
   readonly outputTruncated: boolean;
@@ -192,19 +199,24 @@ const graphCoverageFacts = (
       inspection.completeness.unavailable_sections.length > 0,
   );
   const outputTruncated = projectionOmissions > 0;
-  const sourceOmissions = input.layers.reduce(
-    (total, { graph }) => total + (graph.coverage.omitted_count ?? 0),
-    0,
-  );
-  const omissionsKnown =
-    !captureTruncated &&
-    !captureHasUnknownOmissions &&
-    input.layers.every(({ graph }) => graph.coverage.omitted_count !== null);
+  const omissions = captureTruncated
+    ? unknownBecause("a passive capture is truncated")
+    : captureHasUnknownOmissions
+      ? unknownBecause(
+          "a passive capture has attach-limited or unavailable sections",
+        )
+      : sumKnownCounts([
+          known(projectionOmissions),
+          ...input.layers.map(({ graph }) =>
+            graph.coverage.omitted_count === null
+              ? unknownBecause("a static graph did not count its omissions")
+              : known(graph.coverage.omitted_count),
+          ),
+        ]);
   const inputCoverage = reconciliationInputCoverage(input);
   return {
     projectionOmissions,
-    knownOmissions: projectionOmissions + sourceOmissions,
-    omissionsKnown,
+    omissions,
     inputStatus: inputCoverage.status,
     inputTruncated: inputCoverage.truncated,
     outputTruncated,
@@ -224,7 +236,7 @@ const graphCoverage = (
         ? {
             status: "partial",
             truncated: true,
-            omitted_count: facts.omissionsKnown ? facts.knownOmissions : null,
+            omitted_count: knownOrNull(facts.omissions, (count) => count),
             limits: [
               ...(facts.inputStatus === "truncated"
                 ? [
@@ -249,7 +261,7 @@ const graphCoverage = (
         : {
             status: "partial",
             truncated: false,
-            omitted_count: facts.omissionsKnown ? facts.knownOmissions : null,
+            omitted_count: knownOrNull(facts.omissions, (count) => count),
             limits: [],
           };
 
