@@ -1,4 +1,5 @@
 import {
+  lstat,
   mkdir,
   readFile,
   readdir,
@@ -324,62 +325,90 @@ it("refuses global Junie registration when known configuration disables or obscu
   const home = await createTestTempDirectory("rea-junie-selection-");
   await mkdir(join(home, ".junie"));
   const config = join(home, ".junie", "config.json");
-  const selection = {
-    agents: ["junie"],
-    global: true,
-    home,
-    cwd: home,
-    platform: process.platform,
+  const registration = join(home, ".junie", "mcp", "mcp.json");
+  const register = async (environment: NodeJS.ProcessEnv) => {
+    const selected = await resolveMcpRegistrationClients(
+      {
+        agents: ["junie"],
+        global: true,
+        home,
+        cwd: home,
+        platform: process.platform,
+        environment,
+      },
+      resources,
+    );
+    if (!selected.ok) throw selected.error;
+    const [client] = selected.value;
+    if (client === undefined) throw new Error("Junie was not selected");
+    return registerMcpClient(client, launcher, undefined, resources);
   };
   await writeFile(config, JSON.stringify({ "mcp-default-locations": false }));
-  const disabled = await resolveMcpRegistrationClients(
-    { ...selection, environment: {} },
-    resources,
-  );
-  expect(disabled.ok).toBe(false);
-  const configDisabled = await resolveMcpRegistrationClients(
-    { ...selection, environment: { JUNIE_CONFIG_DEFAULT_LOCATIONS: "false" } },
-    resources,
-  );
-  expect(configDisabled.ok).toBe(true);
-  const envDisabled = await resolveMcpRegistrationClients(
-    {
-      ...selection,
-      environment: {
-        JUNIE_CONFIG_DEFAULT_LOCATIONS: "false",
-        JUNIE_MCP_DEFAULT_LOCATIONS: "false",
-      },
-    },
-    resources,
-  );
-  expect(envDisabled.ok).toBe(false);
-  const extra = await resolveMcpRegistrationClients(
-    {
-      ...selection,
-      environment: { JUNIE_CONFIG_LOCATION: "/fixture/extra.json" },
-    },
-    resources,
-  );
-  expect(extra.ok).toBe(false);
+  expect(await register({})).toMatchObject({
+    ok: false,
+    error: { message: expect.stringContaining("disables its default MCP") },
+  });
+  await expect(lstat(registration)).rejects.toMatchObject({ code: "ENOENT" });
+  expect(
+    await register({ JUNIE_CONFIG_DEFAULT_LOCATIONS: "false" }),
+  ).toMatchObject({ ok: true });
+  expect(
+    await register({
+      JUNIE_CONFIG_DEFAULT_LOCATIONS: "false",
+      JUNIE_MCP_DEFAULT_LOCATIONS: "false",
+    }),
+  ).toMatchObject({ ok: false });
+  expect(
+    await register({ JUNIE_CONFIG_LOCATION: "/fixture/extra.json" }),
+  ).toMatchObject({ ok: false });
   await writeFile(config, JSON.stringify({ "mcp-default-locations": true }));
-  const enabled = await resolveMcpRegistrationClients(
-    { ...selection, environment: {} },
-    resources,
+  expect(await register({})).toMatchObject({ ok: true });
+  await writeFile(config, JSON.stringify({ "mcp-default-locations": "no" }));
+  expect(await register({})).toMatchObject({ ok: false });
+  // Junie reads strict JSON, so a document it cannot load decides nothing.
+  for (const source of [
+    '{ // comment\n "mcp-default-locations": true }',
+    '{ "mcp-default-locations": true, }',
+    " ",
+  ]) {
+    await writeFile(config, source);
+    expect(await register({})).toMatchObject({ ok: false });
+  }
+});
+
+it("selects an absolute JUNIE_HOME and refuses a relative one before writing", async () => {
+  const home = await createTestTempDirectory("rea-junie-home-");
+  const select = (JUNIE_HOME: string) =>
+    resolveMcpRegistrationClients(
+      {
+        agents: ["junie"],
+        global: true,
+        home,
+        cwd: home,
+        platform: process.platform,
+        environment: { JUNIE_HOME },
+      },
+      resources,
+    );
+  const selectedHome = join(home, "selected-junie");
+  const absolute = await select(selectedHome);
+  if (!absolute.ok) throw absolute.error;
+  expect(absolute.value[0]?.configPath).toBe(
+    join(selectedHome, "mcp", "mcp.json"),
   );
-  expect(enabled.ok).toBe(true);
-  await mkdir(join(home, ".cursor"));
-  await rm(join(home, ".junie"), { recursive: true });
-  const automatic = await resolveMcpRegistrationClients(
-    {
-      ...selection,
-      agents: [],
-      environment: { JUNIE_MCP_DEFAULT_LOCATIONS: "false" },
+  // Junie resolves a relative home against its own working directory, which
+  // REA cannot know; resolving it against `cwd` would write the wrong file.
+  const relative = await select("selected-junie");
+  expect(relative).toMatchObject({
+    ok: false,
+    error: {
+      message:
+        "JUNIE_HOME is relative, so the location Junie reads depends on its working directory. Set an absolute JUNIE_HOME before configuring Junie.",
     },
-    resources,
-  );
-  expect(automatic.ok).toBe(true);
-  if (!automatic.ok) throw automatic.error;
-  expect(automatic.value.some((client) => client.id === "cursor")).toBe(true);
+  });
+  await expect(
+    lstat(join(home, "selected-junie", "mcp")),
+  ).rejects.toMatchObject({ code: "ENOENT" });
 });
 const settingsFixture = async (original?: string) => {
   const directory = await createTestTempDirectory("rea-amp-writer-");

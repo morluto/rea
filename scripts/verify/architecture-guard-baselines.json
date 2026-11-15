@@ -341,7 +341,7 @@
     "src/application/Doctor.ts": 1,
     "src/application/DshCordisPatch.ts": 2,
     "src/application/JsonFiles.ts": 1,
-    "src/application/McpClientRegistration.ts": 4,
+    "src/application/McpClientRegistration.ts": 3,
     "src/application/SetupHost.ts": 1,
     "src/application/SupportedClients.ts": 2,
     "src/application/Uninstall.ts": 1,
