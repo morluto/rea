@@ -9,7 +9,8 @@ import {
 import { readFirmwareCommandReport } from "../../../src/firmware/FirmwareCommand.js";
 import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
 import { AnalysisCleanupLease } from "../../../src/artifacts/AnalysisCleanupLease.js";
-import { firmwareFailure } from "../../../src/firmware/FirmwareFailures.js";
+import { firmwareFailureDialect } from "../../../src/firmware/FirmwareFailures.js";
+import { classifyProviderFailure } from "../../../src/providers/classifyProviderFailure.js";
 import { FIRMWARE_LIMITS } from "../../../src/firmware/FirmwareRelease.js";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
@@ -25,6 +26,12 @@ import {
 } from "../../../src/domain/firmware/firmwareAnalysis.js";
 import { createHash } from "node:crypto";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+/** Classify a raw firmware failure the way the firmware producers do. */
+const firmwareFailure = (
+  cause: unknown,
+  context: Parameters<typeof firmwareFailureDialect>[0],
+) => classifyProviderFailure(cause, firmwareFailureDialect(context));
 
 it.each([
   ["invalid leading byte", [0xff]],

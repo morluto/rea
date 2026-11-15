@@ -1,6 +1,8 @@
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
+  ArtifactFileCleanupFailure,
   artifactFileCancellationCause,
+  artifactFileCompletion,
   artifactFilePrimaryFacts,
   bindArtifactFileCleanup,
 } from "../artifacts/ArtifactFileOperation.js";
@@ -13,6 +15,7 @@ import { completedStableArtifactObservation } from "../artifacts/StableArtifactO
 import {
   AnalysisError,
   type AnalysisCapturedOutput,
+  type AnalysisCleanupObservation,
   type AnalysisErrorOptions,
 } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -80,6 +83,25 @@ export interface ProviderFailureDialect {
   ) => AnalysisError;
   /** The selected file this phase reads; absent when it reads none. */
   readonly file?: ProviderFileDialect;
+  /**
+   * What the producing phase's own signal reports when it cancelled a read,
+   * such as that phase's deadline timeout; undefined when the phase's caller
+   * cancelled it. The phase owns this fact. Without it, or when it reports
+   * nothing, the read's cancellation is reported as a cancellation.
+   */
+  readonly interruption?: (
+    details: Omit<AnalysisErrorOptions, "cause">,
+  ) => AnalysisError | undefined;
+  /**
+   * Report for a selected-file read whose own cleanup failed, given what the
+   * read reports apart from that cleanup: its classified failed outcome or its
+   * cancellation, or undefined when only the cleanup failed. Without it the
+   * unresolved cleanup is attached to the reported failure.
+   */
+  readonly readCleanup?: (
+    read: CleanupFailedRead,
+    primary: AnalysisError | undefined,
+  ) => AnalysisError;
   /** Output a finished command left before a later read was cancelled. */
   readonly observedOutput?: AnalysisCapturedOutput | undefined;
   /** What the provider reports for a cause none of the above recognised. */
@@ -91,6 +113,41 @@ export interface ProviderFailureDialect {
 
 type CleanupFailedCommand = OwnedCommandFailure & {
   readonly cleanupFailure: string;
+};
+
+/** A selected-file read whose own cleanup failed. */
+export type CleanupFailedRead = ArtifactReaderFailure & {
+  readonly cleanup: AnalysisCleanupObservation;
+};
+
+const cleanupFailedRead = (cause: unknown): cause is CleanupFailedRead =>
+  cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined;
+
+/** A read's cancellation: the producing phase's interruption, else a cancellation. */
+const readCancellation = (
+  reason: unknown,
+  dialect: ProviderFailureDialect,
+  details: Omit<AnalysisErrorOptions, "cause">,
+): AnalysisError =>
+  dialect.interruption?.(details) ??
+  cancelledBy(dialect.operation, carriedReason(reason), details);
+
+/** What a read whose cleanup failed reports apart from that cleanup. */
+const readPrimary = (
+  read: CleanupFailedRead,
+  dialect: ProviderFailureDialect,
+): AnalysisError | undefined => {
+  if (read instanceof ArtifactFileCleanupFailure) {
+    const outcome = read.fileCleanupFailure.outcome;
+    if (outcome.kind === "failed")
+      return classifyProviderFailure(outcome.cause, dialect);
+    const cancellation = artifactFileCompletion(read)?.cancellation;
+    if (cancellation !== undefined)
+      return readCancellation(cancellation.reason, dialect, {});
+  }
+  return read.reason === "cancelled"
+    ? readCancellation(artifactFileCancellationCause(read), dialect, {})
+    : undefined;
 };
 
 const cleanupFailed = (cause: unknown): cause is CleanupFailedCommand =>
@@ -139,9 +196,9 @@ const fileFailure = (
     if (physical.reason === "cancelled") {
       // The reader's recorded abort reason is the cancellation's cause.
       const { cause: _reader, ...cancellationDetails } = details;
-      return cancelledBy(
-        operation,
-        carriedReason(artifactFileCancellationCause(physical)),
+      return readCancellation(
+        artifactFileCancellationCause(physical),
+        dialect,
         {
           ...cancellationDetails,
           // What the reader had already established stays reported.
@@ -201,6 +258,8 @@ export const classifyProviderFailure = (
     dialect.command === undefined ? undefined : providerOutcomeOf(cause);
   if (outcome !== undefined && dialect.command !== undefined)
     return commandFailure(cause, outcome, dialect, dialect.command);
+  if (dialect.readCleanup !== undefined && cleanupFailedRead(cause))
+    return dialect.readCleanup(cause, readPrimary(cause, dialect));
   // A failed read's unresolved cleanup stays on whatever it is reported as.
   const details: AnalysisErrorOptions =
     cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined
