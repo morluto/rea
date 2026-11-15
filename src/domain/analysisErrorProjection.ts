@@ -59,7 +59,7 @@ import {
   type AnalysisErrorOptions,
   type AnalysisErrorTag,
 } from "./analysisErrorBase.js";
-import { invocationSettingLimit } from "./analysisSettingDefinitions.js";
+import { invocationLimit } from "./analysisSettingDefinitions.js";
 import { analysisErrorRefusal } from "./analysisErrorRefusal.js";
 import { analysisRefusalDetails } from "./analysisRefusal.js";
 
@@ -380,6 +380,16 @@ const projectError = (
     owner = owner.cleanupPrimary
   )
     partialObservation = owner.partialObservation;
+  let argumentObservations =
+    composed.argumentObservations.length > 0
+      ? composed.argumentObservations
+      : error.argumentObservations;
+  for (
+    let owner = composed.cleanupPrimary;
+    argumentObservations.length === 0 && owner !== undefined;
+    owner = owner.cleanupPrimary
+  )
+    argumentObservations = owner.argumentObservations;
   const completedSourceObservation =
     publication?.completed.kind === "omitted"
       ? undefined
@@ -428,7 +438,7 @@ const projectError = (
       : {
           limit:
             callerLifetime === "invocation"
-              ? { ...invocationSettingLimit(primary.limit) }
+              ? { ...invocationLimit(primary.limit) }
               : { ...primary.limit },
         }),
     ...(refusal === undefined
@@ -483,6 +493,18 @@ const projectError = (
           partial_observation: isImmutableJsonSnapshot(partialObservation)
             ? partialObservation
             : jsonValueSchema.parse(partialObservation),
+        }),
+    ...(!options.partialObservation || argumentObservations.length === 0
+      ? {}
+      : {
+          argument_observations: argumentObservations.map(
+            ({ argument, observation }) => ({
+              argument,
+              observation: isImmutableJsonSnapshot(observation)
+                ? observation
+                : jsonValueSchema.parse(observation),
+            }),
+          ),
         }),
     ...(!options.partialObservation || completedSourceObservation === undefined
       ? {}
@@ -619,6 +641,7 @@ const BROWSER_ERROR_CODES: Readonly<
   window_not_found: "unreadable_output",
   window_metadata_missing: "unreadable_output",
   process_ownership_unavailable: "unreadable_output",
+  application_already_running: "target_unavailable",
   cleanup_failed: "execution_failure",
   cancelled: "cancelled",
   timeout: "provider_timeout",
@@ -741,6 +764,9 @@ const requestErrorDetails = (
       resource: error.resource,
       reason: error.reason,
       reported_limits: error.reportedLimits,
+      ...(error.requestSent === undefined
+        ? {}
+        : { request_sent: error.requestSent }),
     };
   if (error instanceof AnalysisArtifactChangedError)
     return {
@@ -748,6 +774,9 @@ const requestErrorDetails = (
       path: error.path,
       reason: error.reason,
       boundary: "stable-artifact-read",
+      ...(error.integrityCheck === undefined
+        ? {}
+        : { integrity_check: error.integrityCheck }),
     };
   if (error instanceof AnalysisAccessDeniedError)
     return {

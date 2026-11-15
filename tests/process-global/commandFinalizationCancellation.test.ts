@@ -11,7 +11,7 @@ import { registerAnalysisViewCommands } from "../../src/cli/analysisViewCommands
 import { registerCutterCommands } from "../../src/cli/cutterCommands.js";
 import { registerWasmCommands } from "../../src/cli/wasmCommands.js";
 import { wasmArtifactModule } from "../../src/composition/wasm.js";
-import { analysisErrorProjectionSchema } from "../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../src/domain/analysisErrorProjectionSchema.js";
 import { toolContract } from "../../src/contracts/toolContracts.js";
 import { CutterBridgeService } from "../../src/cutter/CutterBridgeService.js";
 import { AnalysisOutputError } from "../../src/domain/analysisErrorCore.js";

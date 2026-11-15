@@ -5,7 +5,7 @@ import {
 } from "../../domain/parseFailure.js";
 import { InternalInvariantError } from "../../domain/internalInvariant.js";
 
-import { decodeBinaryPropertyList } from "./BinaryPlistMaterializer.js";
+import { decodeBinaryPropertyList } from "../../domain/apple/binaryPlistMaterializer.js";
 import {
   plistDuplicateKeyLimitations,
   type PlistDuplicateKeys,
@@ -20,9 +20,14 @@ import {
   isSourceLessAppKitAnnotationConnector,
   isUIKitRuntimeConnectionClass,
 } from "../../domain/apple/interfaceBuilderKeyedArchive.js";
-import { streamChunkToBuffer } from "../StreamBytes.js";
+import {
+  streamChunkToBuffer,
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+  type ArtifactEntry,
+  type ArtifactReaderTraversal,
+} from "../../resources/index.js";
 import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
-import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
 import { ArtifactTraversalObservation } from "../ArtifactTraversalObservation.js";
 import {
   projectPlistValue,
@@ -41,16 +46,11 @@ import {
 import {
   preflightPropertyListDecode,
   type PlistDecodePreflight,
-} from "./PropertyListDecodeBudget.js";
+} from "../../domain/apple/propertyListDecodeBudget.js";
 import {
   InterfaceBuilderDecodeBudget,
-  InterfaceBuilderDecodeBudgetExceeded,
+  interfaceBuilderDecodeBudgetExceeded,
 } from "./InterfaceBuilderDecodeBudget.js";
-import {
-  ArtifactReaderFailure,
-  type ArtifactEntry,
-  type ArtifactReaderTraversal,
-} from "../ArtifactReader.js";
 import {
   buildInterfaceBuilderAnalysis,
   interfaceBuilderLimitsSchema,
@@ -65,7 +65,7 @@ import { decodeXmlPlistText } from "../../domain/propertyListXmlText.js";
 import {
   scanBinaryPlistScalars,
   UnsupportedBinaryPlistUidError,
-} from "./PlistScalars.js";
+} from "../../domain/apple/plistScalars.js";
 import type { PlistNumberLiterals } from "../../domain/apple/plistNumbers.js";
 import {
   hasBinaryPlistSignature,
@@ -287,15 +287,13 @@ const decodeInterfaceBuilderBundle = async (
         if (cause instanceof ArtifactReaderFailure) throw cause;
         // A broken internal assumption is a REA defect, not an invalid archive.
         if (cause instanceof InternalInvariantError) throw cause;
-        if (cause instanceof InterfaceBuilderDecodeBudgetExceeded) {
-          // A document rejected while decoding, e.g. beyond the shared depth
-          // limit, retains no representation; later documents keep its share.
-          recordOmittedArchive(entry.path, cause.reason);
-          continue;
-        }
-        // A plist decode budget or nesting limit is not evidence the archive
-        // is malformed; it is omitted against the shared budget.
-        if (cause instanceof ParseFailureError && cause.kind === "limit") {
+        // A decode budget, nesting limit or host stack/capacity limit is not
+        // evidence the archive is malformed. The rejected document retains no
+        // representation, so later documents keep its share of the budget.
+        if (
+          (cause instanceof ParseFailureError && cause.kind === "limit") ||
+          isHostLimitFailure(cause)
+        ) {
           recordOmittedArchive(entry.path, "aggregate_decode_budget_exhausted");
           continue;
         }
@@ -1046,9 +1044,10 @@ const readEntry = async (
   maxInputBytes: number,
 ): Promise<Buffer> => {
   if (entry.declaredSize !== null && entry.declaredSize > maxInputBytes)
-    throw new InterfaceBuilderDecodeBudgetExceeded(
-      "aggregate_decode_budget_exhausted",
+    throw interfaceBuilderDecodeBudgetExceeded(
+      "interface-builder",
       "archive exceeds the aggregate Interface Builder decode budget",
+      maxInputBytes,
     );
   const stream = await reader.open(entry, signal);
   const chunks: Buffer[] = [];
@@ -1058,33 +1057,15 @@ const readEntry = async (
     length += bytes.length;
     if (length > maxInputBytes) {
       stream.destroy();
-      throw new InterfaceBuilderDecodeBudgetExceeded(
-        "aggregate_decode_budget_exhausted",
+      throw interfaceBuilderDecodeBudgetExceeded(
+        "interface-builder",
         "archive exceeded the aggregate Interface Builder decode budget",
+        maxInputBytes,
       );
     }
     chunks.push(bytes);
   }
   return Buffer.concat(chunks, length);
-};
-
-/**
- * The shared parser bounds plist value nesting before its recursive decode and
- * reports the limit as a `limit` parse failure, which the document loop omits.
- * A host stack or capacity limit is likewise an omitted archive, not a
- * malformed one.
- */
-const parseXmlWithinDecodeBudget = (text: string) => {
-  try {
-    return parseXmlPropertyList(text);
-  } catch (cause: unknown) {
-    if (cause instanceof Error && isHostLimitFailure(cause))
-      throw new InterfaceBuilderDecodeBudgetExceeded(
-        "aggregate_decode_budget_exhausted",
-        cause.message,
-      );
-    throw cause;
-  }
 };
 
 /** Project decoded plist data and dates while retaining scalar coverage. */
@@ -1105,7 +1086,7 @@ const decodePlist = (
     : undefined;
   const { value, numberLiterals, duplicateKeys } = binary
     ? decodeBinaryPropertyList(bytes, scalarPlan, binaryScalarMetadata)
-    : parseXmlWithinDecodeBudget(xmlText ?? decodeXmlPlistText(bytes));
+    : parseXmlPropertyList(xmlText ?? decodeXmlPlistText(bytes));
   const projected = projectPlistValue(value);
   return {
     value: projected.value,

@@ -1,3 +1,7 @@
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -66,10 +70,11 @@ const verifyProjection = async ({
   const viewDefinition = advertised.find(
     (tool) => tool.name === "inspect_analysis_view",
   );
-  if (viewDefinition?.outputSchema === undefined)
-    throw new Error("View schema is absent");
+  if (viewDefinition === undefined) throw new Error("View schema is absent");
   const viewInputSchema: Record<string, unknown> = viewDefinition.inputSchema;
-  const viewOutputSchema: Record<string, unknown> = viewDefinition.outputSchema;
+  const viewOutputSchema: Record<string, unknown> = canonicalOutputSchema(
+    viewDefinition.name,
+  );
   for (const collection of COLLECTIONS) {
     const projectedReply = await client.callTool(
       {
@@ -88,7 +93,7 @@ const verifyProjection = async ({
           },
         },
       },
-      { toolDefinition: viewDefinition },
+      { toolDefinition: withCanonicalOutputSchema(viewDefinition) },
     );
     expect(projectedReply.isError).not.toBe(true);
     const projected = analysisViewResultSchema.parse(
@@ -122,7 +127,7 @@ const verifyProjection = async ({
   ).toBe(true);
   const selectedReply = await client.callTool(
     { name: "inspect_analysis_view", arguments: selectedRequest },
-    { toolDefinition: viewDefinition },
+    { toolDefinition: withCanonicalOutputSchema(viewDefinition) },
   );
   expect(selectedReply.isError).not.toBe(true);
   const selectedEvidence = parseEvidence(selectedReply.structuredContent);
@@ -197,9 +202,11 @@ it("summarizes selected members and pages every original collection after the fi
   const definition = advertised.find(
     (x) => x.name === "inspect_managed_members",
   );
-  if (definition?.outputSchema === undefined)
+  if (definition === undefined)
     throw new Error("Managed member schemas are absent");
-  const outputSchema: Record<string, unknown> = definition.outputSchema;
+  const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+    definition.name,
+  );
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   expect(ajv.validateSchema(definition.inputSchema)).toBe(true);
   expect(ajv.validateSchema(outputSchema)).toBe(true);
@@ -216,7 +223,7 @@ it("summarizes selected members and pages every original collection after the fi
       name: "inspect_managed_members",
       arguments: { path, type_names, detail: "summary" },
     },
-    { toolDefinition: definition },
+    { toolDefinition: withCanonicalOutputSchema(definition) },
   );
   expect(reply.isError).not.toBe(true);
   const receipt = parseEvidence(reply.structuredContent);

@@ -16,7 +16,7 @@ import {
 const openHttp = async (
   processes: TestProcesses,
   maximum: string | undefined,
-  outputProfile: "full" | "off" = "full",
+  outputProfile: "compact" | "off" = "off",
 ) => {
   const root = await createTestTempDirectory("rea-input-capacity-http-");
   const { url, stderr, child } = await startListeningProcess(

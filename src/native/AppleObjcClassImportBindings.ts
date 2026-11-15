@@ -1,11 +1,16 @@
-import type { PointerFixups } from "./AppleMachoFixups.js";
-import type { MachoLayout } from "./AppleMachoSelection.js";
+import type { PointerFixups } from "../domain/apple/appleMachoFixups.js";
+import type { MachoLayout } from "../domain/apple/appleMachoSelection.js";
 import type { MachoImportBinding } from "../domain/native/objcSwiftMetadata.js";
 
 export interface ObjcClassImportBindingScan {
   readonly bindings: readonly MachoImportBinding[];
   readonly coverage: {
-    readonly status: "complete" | "partial" | "unsupported" | "not_requested";
+    readonly status:
+      | "complete"
+      | "partial"
+      | "unknown"
+      | "unsupported"
+      | "not_requested";
     readonly reason: string | null;
     readonly examined: number;
     readonly decoded: number;
@@ -18,14 +23,18 @@ export const inspectObjcClassImportBindings = (input: {
   readonly layout: MachoLayout;
   readonly fixups: PointerFixups;
   readonly addresses: readonly string[] | undefined;
-  readonly addressesComplete: boolean;
+  /** Whether `addresses` covers every class-label row; undefined is unknown. */
+  readonly addressesComplete: boolean | undefined;
   readonly maxRecords: number;
 }): ObjcClassImportBindingScan => {
   const { bytes, layout, fixups, addresses, addressesComplete, maxRecords } =
     input;
-  // An explicitly truncated candidate scan keeps its limitation even when no
-  // candidate was retained.
-  if (addresses === undefined || (addresses.length === 0 && addressesComplete))
+  // A candidate scan that is truncated, or whose completeness was not stated,
+  // reports that limitation even when no candidate was retained.
+  if (
+    addresses === undefined ||
+    (addresses.length === 0 && addressesComplete === true)
+  )
     return {
       bindings: [],
       coverage: {
@@ -47,9 +56,13 @@ export const inspectObjcClassImportBindings = (input: {
     };
 
   const reasons = new Set<string>();
-  if (!addressesComplete)
+  if (addressesComplete === false)
     reasons.add(
       "Candidate address scan reached the existing max_records limit",
+    );
+  if (addressesComplete === undefined)
+    reasons.add(
+      "The caller did not state whether the candidate addresses include every class-label row (objc_class_import_addresses_complete)",
     );
   for (const failure of fixups.failures) reasons.add(failure);
 
@@ -104,7 +117,14 @@ export const inspectObjcClassImportBindings = (input: {
   return {
     bindings,
     coverage: {
-      status: reason === null ? "complete" : "partial",
+      // Unstated candidate completeness leaves the whole scan's coverage
+      // unknown, even when other gaps are also known.
+      status:
+        addressesComplete === undefined
+          ? "unknown"
+          : reason === null
+            ? "complete"
+            : "partial",
       reason,
       examined: examinedAddresses.size,
       decoded: bindings.length,

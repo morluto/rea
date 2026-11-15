@@ -16,8 +16,8 @@ import type {
   CapabilityDescriptor,
   ExecutionOptions,
   ProviderIdentity,
-} from "../AnalysisProvider.js";
-import { closeAnalysisClient } from "../AnalysisClientCleanup.js";
+} from "../../ports/AnalysisProvider.js";
+import { closeAnalysisClient } from "../../providers/AnalysisClientCleanup.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 
 /** Synthetic identity for a deterministic provider set. */

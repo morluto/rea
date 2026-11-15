@@ -9,7 +9,7 @@ import {
   OBSIDIAN_FUSE_BYTES,
 } from "../../fixtures/electron/fuseImage.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 
 cliTest.for([

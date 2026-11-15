@@ -25,6 +25,8 @@ import {
   clientPathDependence,
   absoluteXdgConfigHome,
   type ClientRootFailure,
+  mcporterExpandHome,
+  mcporterXdgConfigHome,
   vscodeUserDirectory,
   xdgConfigHomeOrDefault,
 } from "./ClientConfigRoots.js";
@@ -744,14 +746,6 @@ const zedLocation = ({
       });
 };
 
-/** MCPorter's expandHome: a leading `~` path segment names the home folder. */
-const mcporterExpandHome = (value: string, home: string): string =>
-  value === "~"
-    ? home
-    : value.startsWith("~/") || value.startsWith("~\\")
-      ? join(home, value.slice(2))
-      : value;
-
 const regularPathPresent = (
   path: string,
 ): Result<boolean, ClientPathFailure> => {
@@ -801,13 +795,8 @@ const mcporterLocation = ({
         })
       : absolute;
   }
-  const configHome = mcporterExpandHome(
-    env.XDG_CONFIG_HOME?.trim() ?? "",
-    home,
-  );
-  const base = pathApi.isAbsolute(configHome)
-    ? join(configHome, "mcporter")
-    : legacy;
+  const configHome = mcporterXdgConfigHome({ home, platform, env });
+  const base = configHome === undefined ? legacy : join(configHome, "mcporter");
   const candidates = [base, ...(base === legacy ? [] : [legacy])].flatMap(
     (directory) => [
       join(directory, "mcporter.json"),
@@ -2006,7 +1995,7 @@ const layerLoadOrder = (
 /** Describe every client location that setup, doctor, or uninstall may inspect. */
 export const supportedClients = (
   home: string,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
   env: ClientPathContext["env"] = process.env,
   systemPaths: ClientSystemPaths = {},
 ): readonly SetupClient[] => {
@@ -2136,8 +2125,8 @@ export const resolveSupportedClients = async (
 export const clientSkillDirectories = (
   home: string,
   clientIds: readonly string[] | undefined,
-  environment: Readonly<NodeJS.ProcessEnv> = {},
-  platform: NodeJS.Platform = process.platform,
+  environment: Readonly<NodeJS.ProcessEnv>,
+  platform: NodeJS.Platform,
 ): {
   readonly directories: readonly {
     readonly client: string;

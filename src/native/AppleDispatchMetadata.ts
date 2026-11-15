@@ -1,5 +1,16 @@
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import {
+  readerIntegrityFailure,
+  ArtifactFileCleanupFailure,
+  artifactFileCancellationCause,
+  artifactFilePrimaryFacts,
+  type ArtifactFilePrimaryFacts,
+  bindArtifactFileCleanup,
+  withArtifactRegularFile,
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+} from "../resources/index.js";
+import {
   malformedInput,
   parseFailureFromCause,
 } from "../domain/parseFailure.js";
@@ -27,16 +38,6 @@ import {
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
-import {
-  ArtifactFileCleanupFailure,
-  artifactFileCancellationCause,
-  artifactFilePrimaryFacts,
-  type ArtifactFilePrimaryFacts,
-  bindArtifactFileCleanup,
-  withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -46,13 +47,13 @@ import { NATIVE_MACOS_PROVIDER_IDENTITY as IDENTITY } from "./NativeMacosProvide
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import { pushDispatchCoverage } from "./AppleDispatchCoverage.js";
-import { parsePointerFixupsSteps } from "./AppleMachoFixups.js";
-import { BinaryFormatFailure } from "./metadata/BinaryContainer.js";
-import { parseMachoLayout } from "./AppleMachoSelection.js";
+import { parsePointerFixupsSteps } from "../domain/apple/appleMachoFixups.js";
+import { BinaryFormatFailure } from "../domain/binaryContainer.js";
+import { parseMachoLayout } from "../domain/apple/appleMachoSelection.js";
 import {
   selectMachoSlice,
   type AdmittedMachoSlice,
-} from "./metadata/MachoSliceSelection.js";
+} from "../domain/apple/machoSliceSelection.js";
 import { decodeObjcDispatchFacets } from "./AppleObjcDispatchFacets.js";
 import {
   createSwiftRelativeReader,
@@ -75,7 +76,7 @@ export function* decodeAppleDispatchMetadataSteps(
   provenance: { path: string; sha256: string },
   architecture = "arm64",
   objcClassImportAddresses?: readonly string[],
-  objcClassImportAddressesComplete = true,
+  objcClassImportAddressesComplete?: boolean,
   admittedSlice?: AdmittedMachoSlice,
 ): Generator<void, ObjcSwiftMetadata, void> {
   const selected = selectMachoSlice(bytes, {
@@ -361,6 +362,7 @@ const inputBudgetExceeded = (
 export interface AppleDispatchMetadataOptions {
   readonly signal?: AbortSignal | undefined;
   readonly objcClassImportAddresses?: readonly string[] | undefined;
+  /** Whether the addresses cover every class-label row; omitted is unknown. */
   readonly objcClassImportAddressesComplete?: boolean | undefined;
   /** Caller-selected input budget; the default applies when omitted. */
   readonly maxInputBytes?: number | undefined;
@@ -420,7 +422,7 @@ export const inspectAppleDispatchMetadata = async (
     { path: target.path, sha256: digest },
     target.architecture,
     options.objcClassImportAddresses,
-    options.objcClassImportAddressesComplete ?? true,
+    options.objcClassImportAddressesComplete,
     target.format === "mach-o-universal" ? target.universalSlice : undefined,
   );
   let next = steps.next();
@@ -524,9 +526,7 @@ const appleDispatchMetadataPrimaryFailure = (
         { cause },
       );
     if (cause instanceof ArtifactReaderFailure && cause.reason === "integrity")
-      return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {
-        cause,
-      });
+      return readerIntegrityFailure(OPERATION, path, cause);
     if (cause instanceof ArtifactReaderFailure && cause.reason === "path")
       return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {
         cause,

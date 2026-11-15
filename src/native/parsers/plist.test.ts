@@ -10,7 +10,7 @@ import {
   decodeBinaryPlistScalars,
   scanBinaryPlistScalars,
   UnsupportedBinaryPlistUidError,
-} from "../../artifacts/apple/PlistScalars.js";
+} from "../../domain/apple/plistScalars.js";
 
 import { plistDuplicateKeyLimitations } from "../../domain/apple/plistDuplicateKeys.js";
 import {
@@ -19,7 +19,7 @@ import {
   parsePlistXml,
   parsePlistXmlSource,
 } from "./plist.js";
-import { estimateBinaryPlistExpansion } from "../../artifacts/apple/PropertyListDecodeBudget.js";
+import { estimateBinaryPlistExpansion } from "../../domain/apple/propertyListDecodeBudget.js";
 import {
   binaryPlistObjectTable,
   binaryPlistWithOverlappingDateAndData,
@@ -1049,7 +1049,7 @@ it("lists each repeated key once, shortens long keys and marks omitted names", (
   const parsed = parseXmlPropertyList(`{ ${entries} }`).duplicateKeys;
   expect(parsed).toMatchObject({ replaced: 11, namesOmitted: true });
   expect(plistDuplicateKeyLimitations(parsed)[0]).toContain(
-    `"${"k".repeat(64)}" (shortened from 100 characters), "n0"`,
+    `"${"k".repeat(64)}"… (100 UTF-16 code units), "n0"`,
   );
   // One key repeated three times names no further key.
   const single = parseXmlPropertyList("{ a = 1; a = 2; a = 3; }").duplicateKeys;

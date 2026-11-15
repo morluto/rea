@@ -126,7 +126,7 @@ export const projectNativeExportsView = (
       kind: "summary" as const,
       view,
       summary,
-      coverage: completeWithinViewCoverage(exports.length, exports.length),
+      coverage: completeWithinViewCoverage(exports.length),
     });
   const indices =
     view.indices === undefined ? undefined : new Set(view.indices);

@@ -1,0 +1,879 @@
+/**
+ * The effect log: one owner of the questions readers ask about recorded
+ * effects (docs/adr/javascript/pushed-effect-invalidation.md). Readers ask
+ * whether a read may observe an effect; the timing, capture and path proofs
+ * stay here. Recorded opaque sites live in javascriptSemanticEffectRecord.ts.
+ */
+import * as t from "@babel/types";
+import { javaScriptProgramStrictness } from "./javascriptSourceParser.js";
+import {
+  semanticStaticPropertyKey,
+  unwrapJavaScriptExpression,
+} from "./javascriptAstValues.js";
+import {
+  semanticPropertyPathKeyMatches,
+  type JavaScriptSemanticPropertyPath,
+} from "./javascriptSemanticPropertyPaths.js";
+import {
+  invalidateSemanticEscapedPath,
+  invalidateSemanticMutationPaths,
+} from "./javascriptSemanticMutationValues.js";
+import type { JavaScriptSemanticValue } from "./javascriptSemanticValueTypes.js";
+import {
+  isUnshadowedGlobal,
+  semanticBindingEffectFollowsCapture,
+  semanticEscapeFollowsCapture,
+  semanticEffectTiming,
+  semanticBindingEffectFollowsRead,
+  semanticReadPrecedesEffectWithinActivation,
+  semanticTopLevelEffectFollowsCapture,
+} from "./javascriptSemanticMutationInitializers.js";
+import {
+  resolveSemanticBindingState,
+  semanticBindingLookupAt,
+  type JavaScriptSemanticAnalysisState,
+  type JavaScriptSemanticBindingState,
+  type JavaScriptSemanticReferenceEffectsAtSite,
+} from "./javascriptSemanticState.js";
+
+export const indexSemanticOpaqueEffects = (
+  candidates: readonly {
+    node: t.CallExpression;
+    scopeId: string;
+  }[],
+  state: JavaScriptSemanticAnalysisState,
+): void => {
+  for (const { node, scopeId } of candidates) {
+    const callee = unwrapJavaScriptExpression(node.callee).node;
+    if (!isUnshadowedGlobal(callee, state, "eval")) continue;
+    state.opaqueEffects.sites.add(node);
+    if (!strictEval(node, state)) state.opaqueEffects.sloppySites.add(node);
+    const sites = state.opaqueEffects.byScope.get(scopeId) ?? [];
+    sites.push(node);
+    state.opaqueEffects.byScope.set(scopeId, sites);
+    let scope = state.scopesById.get(scopeId);
+    while (scope?.parentScopeId != null) {
+      const children =
+        state.opaqueEffects.children.get(scope.parentScopeId) ??
+        new Set<string>();
+      if (children.has(scope.scopeId)) break;
+      children.add(scope.scopeId);
+      state.opaqueEffects.children.set(scope.parentScopeId, children);
+      scope = state.scopesById.get(scope.parentScopeId);
+    }
+  }
+};
+
+/** The existing ambient invocation walk owns global effects; ordinary sources
+ * neither retain a second call list nor create another alias resolver. */
+export const createSemanticOpaqueGlobalObserver = (
+  state: JavaScriptSemanticAnalysisState,
+  dependencies: {
+    createAmbientPathResolver: (
+      state: JavaScriptSemanticAnalysisState,
+      observeGlobals: boolean,
+    ) => (
+      node: t.Node,
+      site: t.Node | undefined,
+    ) => {
+      paths: readonly (readonly (string | null)[])[];
+      callerPaths: readonly (readonly (string | null)[])[];
+    };
+    createSemanticModuleInterop: (
+      state: JavaScriptSemanticAnalysisState,
+      options?: {
+        intrinsicPath: (node: t.Node) => readonly string[] | undefined;
+      },
+    ) => {
+      intrinsicPath: (node: t.Node) => readonly string[] | undefined;
+      intrinsicInvocation: (
+        node:
+          | t.CallExpression
+          | t.OptionalCallExpression
+          | t.NewExpression
+          | t.TaggedTemplateExpression,
+      ) => { readonly path: readonly string[] } | undefined;
+    };
+  },
+): ((node: t.Node) => void) | undefined => {
+  if (!state.opaqueEffects.mayReferenceGlobalCode) return undefined;
+  const ambientPaths = dependencies.createAmbientPathResolver(state, true);
+  let invocationSite: t.Node | undefined;
+  const interop = dependencies.createSemanticModuleInterop(state, {
+    intrinsicPath: (node) => {
+      const { paths, callerPaths } = ambientPaths(node, invocationSite);
+      const path =
+        paths.find((path) => path[1] === "eval" || path[1] === "Function") ??
+        callerPaths.find(
+          (path) => path[1] === "eval" || path[1] === "Function",
+        ) ??
+        paths[0];
+      if (path?.[0] !== "global" || path.some((key) => key === null))
+        return undefined;
+      // Keep the global callable owner for generic call/apply/bind resolution.
+      return path[1] === "eval" || path[1] === "Function"
+        ? ["intrinsic", ...(path as readonly string[])]
+        : ["intrinsic", ...(path.slice(1) as readonly string[])];
+    },
+  });
+  return (node) => {
+    if (
+      !t.isCallExpression(node) &&
+      !t.isOptionalCallExpression(node) &&
+      !t.isNewExpression(node) &&
+      !t.isTaggedTemplateExpression(node)
+    )
+      return;
+    invocationSite = node;
+    const path = interop.intrinsicInvocation(node)?.path;
+    // Constructed code may escape and activate a classic-script global. Keep
+    // its creation as a conservative timing bound, not proof of execution.
+    if (
+      path?.join(".") === "intrinsic.global.eval" ||
+      path?.join(".") === "intrinsic.global.Function"
+    )
+      state.opaqueEffects.globalSites.push(node);
+  };
+};
+
+/** Global code can affect globals, but cannot rebind its caller's locals. */
+const semanticOpaqueGlobalMayHaveChanged = (
+  read: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  state.opaqueEffects.globalSites.some(
+    (effect) => semanticEffectTiming(read, effect, state) !== "after",
+  );
+
+/** Rebinding requires lexical visibility. Object references can remain reachable
+ * through aliases even where the original name is shadowed or out of block scope.
+ * Without a disjointness proof, consider their enclosing activation and closures.
+ * Queries retain no binding-by-eval table. */
+function* semanticOpaqueBindingEffects(
+  binding: JavaScriptSemanticBindingState,
+  state: JavaScriptSemanticAnalysisState,
+  kind: "binding" | "reference" = "binding",
+): Generator<t.CallExpression> {
+  if (state.opaqueEffects.byScope.size === 0) return;
+  const pending = [
+    kind === "reference" ? activation(binding.scopeId, state) : binding.scopeId,
+  ];
+  while (pending.length > 0) {
+    const scope = pending.pop()!;
+    for (const node of state.opaqueEffects.byScope.get(scope) ?? [])
+      if (
+        kind === "reference" ||
+        resolveSemanticBindingState(state, node, binding.name)?.bindingId ===
+          binding.bindingId
+      )
+        yield node;
+    for (const child of state.opaqueEffects.children.get(scope) ?? [])
+      pending.push(child);
+  }
+}
+
+const semanticBindingMayHaveOpaqueEffect = (
+  binding: JavaScriptSemanticBindingState,
+  state: JavaScriptSemanticAnalysisState,
+  read?: t.Node,
+  kind: "binding" | "reference" = "binding",
+): boolean => {
+  if (state.opaqueEffects.byScope.size === 0) return false;
+  for (const effect of semanticOpaqueBindingEffects(binding, state, kind))
+    if (
+      read === undefined ||
+      (semanticEffectTiming(read, effect, state) !== "after" &&
+        !semanticBindingEffectFollowsCapture(
+          binding,
+          read,
+          effect,
+          state.parentsByNode,
+        ) &&
+        // Rebinding a freshly initialized local is activation-specific;
+        // mutations to the referenced object may persist across calls.
+        !(
+          kind === "binding" &&
+          semanticBindingEffectFollowsRead(
+            binding,
+            read,
+            effect,
+            state.parentsByNode,
+          )
+        ))
+    )
+      return true;
+  return false;
+};
+
+/** Opaque eval may introduce an otherwise unbound name in a visible activation. */
+const semanticOpaqueNameMayHaveChanged = (
+  read: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  binding?: JavaScriptSemanticBindingState,
+): boolean => {
+  if (state.opaqueEffects.byScope.size === 0) return false;
+  const visible = new Set<string>();
+  let node: t.Node | undefined = read;
+  while (node !== undefined) {
+    const scope = state.scopeByNode.get(node);
+    if (scope !== undefined) {
+      let current: typeof scope | undefined = scope;
+      while (current !== undefined) {
+        visible.add(current.scopeId);
+        current =
+          current.parentScopeId === null
+            ? undefined
+            : state.scopesById.get(current.parentScopeId);
+      }
+      break;
+    }
+    node = state.parentsByNode.get(node);
+  }
+  for (const [scopeId, sites] of state.opaqueEffects.byScope) {
+    let scope = state.scopesById.get(scopeId);
+    while (
+      scope !== undefined &&
+      scope.kind !== "function" &&
+      scope.kind !== "program"
+    )
+      scope =
+        scope.parentScopeId === null
+          ? undefined
+          : state.scopesById.get(scope.parentScopeId);
+    if (
+      scope !== undefined &&
+      visible.has(scope.scopeId) &&
+      (binding === undefined ||
+        activation(binding.scopeId, state) !== scope.scopeId) &&
+      sites.some(
+        (effect) =>
+          state.opaqueEffects.sloppySites.has(effect) &&
+          (binding === undefined ||
+            resolveSemanticBindingState(state, effect, binding.name)
+              ?.bindingId === binding.bindingId) &&
+          semanticEffectTiming(read, effect, state) !== "after" &&
+          // A sloppy-eval name belongs to this activation, not a prior call.
+          !semanticReadPrecedesEffectWithinActivation(
+            read,
+            effect,
+            state.parentsByNode,
+          ),
+      )
+    )
+      return true;
+  }
+  return false;
+};
+
+/**
+ * Non-writable, non-configurable global properties. Global code cannot replace
+ * them; only a binding that shadows the name can.
+ */
+const IMMUTABLE_GLOBALS = new Set(["undefined", "NaN", "Infinity"]);
+
+/**
+ * Whether opaque code may have changed what an intrinsic global read observes.
+ * A sloppy direct eval in an activation visible from `reference` may introduce
+ * a binding for its root name; global code (`eval`, `Function`) that may run
+ * before `observedAt` may replace a writable global or its prototype. Pass
+ * `observedAt` when the intrinsic behavior is used later than the reference is
+ * read, such as a method called on an instance constructed earlier.
+ */
+export const opaqueCodeMayChangeGlobalRead = (
+  reference: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  root: string,
+  observedAt: t.Node = reference,
+): boolean =>
+  semanticOpaqueNameMayHaveChanged(reference, state) ||
+  (!IMMUTABLE_GLOBALS.has(root) &&
+    semanticOpaqueGlobalMayHaveChanged(observedAt, state));
+
+/**
+ * Whether a source-visible ambient effect recorded anywhere in the source may
+ * have changed `path` (a `global`, `import-meta` or module-tagged property
+ * path): a write to it or to one of its prefixes. With `"contents"`, an escape
+ * of it or of a prefix to code whose effects are not evaluated counts too.
+ * The answer ignores timing, so it holds at every read site.
+ */
+export const ambientPathMayHaveChanged = (
+  state: JavaScriptSemanticAnalysisState,
+  path: JavaScriptSemanticPropertyPath,
+  observes: "value" | "contents" = "value",
+): boolean =>
+  state.ambientWrites.covers(path) ||
+  (observes === "contents" && state.ambientEscapes.covers(path));
+
+/** Whether a recorded ambient effect's path is `target` or one of its prefixes. */
+export const ambientEffectCovers = (
+  effect: JavaScriptSemanticAnalysisState["ambientWriteEffects"][number],
+  target: readonly string[],
+): boolean =>
+  effect.path.length <= target.length &&
+  effect.path.every((key, index) =>
+    semanticPropertyPathKeyMatches(key, target[index]!),
+  );
+
+/**
+ * How a read proves that an effect runs after it. `"activation"` is
+ * `semanticEffectTiming`, which orders effects within and across activations;
+ * `"top-level"` orders only top-level statements of the program.
+ */
+export type SemanticEffectOrdering = "activation" | "top-level";
+
+const effectMayPrecedeRead = (
+  state: JavaScriptSemanticAnalysisState,
+  read: t.Node,
+  effect: t.Node | undefined,
+  ordering: SemanticEffectOrdering,
+): boolean =>
+  ordering === "activation"
+    ? semanticEffectTiming(read, effect, state) !== "after"
+    : !semanticTopLevelEffectFollowsCapture(read, effect, state.parentsByNode);
+
+type AmbientEffect =
+  JavaScriptSemanticAnalysisState["ambientWriteEffects"][number];
+
+/** Matching effects per queried path; the effect lists only grow, so their
+ * lengths tell when a retained selection is stale. */
+const ambientPathSelections = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  {
+    writes: number;
+    escapes: number;
+    readonly byPath: Map<
+      string,
+      { readonly writes: AmbientEffect[]; readonly escapes: AmbientEffect[] }
+    >;
+  }
+>();
+
+const ambientPathEffects = (
+  state: JavaScriptSemanticAnalysisState,
+  path: readonly string[],
+): { readonly writes: AmbientEffect[]; readonly escapes: AmbientEffect[] } => {
+  let cache = ambientPathSelections.get(state);
+  if (
+    cache === undefined ||
+    cache.writes !== state.ambientWriteEffects.length ||
+    cache.escapes !== state.ambientEscapeEffects.length
+  ) {
+    cache = {
+      writes: state.ambientWriteEffects.length,
+      escapes: state.ambientEscapeEffects.length,
+      byPath: new Map(),
+    };
+    ambientPathSelections.set(state, cache);
+  }
+  const key = JSON.stringify(path);
+  let selected = cache.byPath.get(key);
+  if (selected === undefined) {
+    selected = {
+      writes: state.ambientWriteEffects.filter((effect) =>
+        ambientEffectCovers(effect, path),
+      ),
+      escapes: state.ambientEscapeEffects.filter((effect) =>
+        ambientEffectCovers(effect, path),
+      ),
+    };
+    cache.byPath.set(key, selected);
+  }
+  return selected;
+};
+
+/**
+ * `mayObserve` for an ambient member path: whether a recorded write to `path`
+ * or to one of its prefixes may run before `read`. With `"contents"`, an
+ * escape of it to code whose effects are not evaluated counts too.
+ */
+export const ambientPathMayObserveAt = (
+  state: JavaScriptSemanticAnalysisState,
+  read: t.Node,
+  path: readonly string[],
+  observes: "value" | "contents" = "value",
+  ordering: SemanticEffectOrdering = "activation",
+): boolean => {
+  const { writes, escapes } = ambientPathEffects(state, path);
+  const mayPrecede = ({ node }: AmbientEffect): boolean =>
+    effectMayPrecedeRead(state, read, node, ordering);
+  return (
+    writes.some(mayPrecede) ||
+    (observes === "contents" && escapes.some(mayPrecede))
+  );
+};
+
+/**
+ * `mayObserve` for an unbound name: whether a recorded assignment to the
+ * ambient binding `name` may run before `read`.
+ */
+export const ambientBindingMayObserveWriteAt = (
+  state: JavaScriptSemanticAnalysisState,
+  read: t.Node,
+  name: string,
+  ordering: SemanticEffectOrdering = "activation",
+): boolean =>
+  (state.ambientBindingWrites.get(name) ?? []).some((write) =>
+    effectMayPrecedeRead(state, read, write, ordering),
+  );
+
+/**
+ * A count that grows whenever an ambient write is recorded. A cache that
+ * depends on ambient writes stores it and recomputes when it differs.
+ */
+export const semanticAmbientWriteGeneration = (
+  state: JavaScriptSemanticAnalysisState,
+): number => state.ambientWriteEffects.length;
+
+/**
+ * A count that grows whenever a member write or escape is recorded on
+ * `binding`. A cache that depends on the binding's member effects stores it
+ * and recomputes when it differs.
+ */
+export const semanticBindingEffectGeneration = (
+  binding: JavaScriptSemanticBindingState,
+): number => binding.memberWrites.length + binding.escapedPaths.length;
+
+/**
+ * Recorded ambient writes to `global` paths, as intrinsic paths with
+ * non-literal keys as null. A write recorded without a site is placed at the
+ * program, so it may precede every read.
+ */
+export function* semanticAmbientIntrinsicWrites(
+  state: JavaScriptSemanticAnalysisState,
+): Generator<{
+  readonly site: t.Node;
+  readonly path: readonly (string | null)[];
+}> {
+  for (const { node, path } of state.ambientWriteEffects)
+    if (path[0] === "global")
+      yield {
+        site: node ?? state.program,
+        path: [
+          "intrinsic",
+          ...path
+            .slice(1)
+            .map((key) =>
+              key === null || typeof key === "object" ? null : String(key),
+            ),
+        ],
+      };
+}
+
+/** Sites of recorded ambient writes to `path` or to one of its prefixes. */
+export const ambientPathWriteSites = (
+  state: JavaScriptSemanticAnalysisState,
+  path: readonly string[],
+): readonly (t.Node | undefined)[] =>
+  ambientPathEffects(state, path).writes.map(({ node }) => node);
+
+/**
+ * Whether a member write to `binding`'s object, or an escape of it, may run
+ * before `read`. An escape whose site encloses `read` is the call that reads
+ * it, so it does not count.
+ */
+export const bindingMemberEffectMayPrecede = (
+  state: JavaScriptSemanticAnalysisState,
+  binding: JavaScriptSemanticBindingState,
+  read: t.Node,
+): boolean =>
+  binding.memberWrites.some(
+    (effect) => semanticEffectTiming(read, effect.node, state) !== "after",
+  ) ||
+  binding.escapedPaths.some(
+    (effect) =>
+      effect.node !== undefined &&
+      !(
+        (effect.node.start ?? -1) <= (read.start ?? -1) &&
+        (effect.node.end ?? -1) >= (read.end ?? -1)
+      ) &&
+      semanticEffectTiming(read, effect.node, state) !== "after",
+  );
+
+/**
+ * Whether an assignment to `binding` recorded as a reference initializer
+ * (a pattern or other non-ordinary write) may run before `read`.
+ */
+export const bindingAssignmentMayPrecede = (
+  state: JavaScriptSemanticAnalysisState,
+  binding: JavaScriptSemanticBindingState,
+  read: t.Node,
+): boolean =>
+  binding.referenceInitializers.some(
+    ({ assignment, node }) =>
+      assignment && semanticEffectTiming(read, node, state) !== "after",
+  );
+
+/** The initializers of `binding` that may run before `read`. */
+export const bindingInitializersMayPrecede = (
+  state: JavaScriptSemanticAnalysisState,
+  binding: JavaScriptSemanticBindingState,
+  read: t.Node,
+): JavaScriptSemanticBindingState["initializers"] =>
+  binding.initializers.filter(
+    ({ node }) => semanticEffectTiming(read, node, state) !== "after",
+  );
+
+/** Whether a recorded write to `<owner>.prototype` may run before `read`. */
+export const prototypeMutationMayPrecede = (
+  state: JavaScriptSemanticAnalysisState,
+  owner: string,
+  read: t.Node,
+): boolean =>
+  state.prototypeMutationSites.some(
+    (effect) =>
+      effect.owner === owner &&
+      semanticEffectTiming(read, effect.node, state) !== "after",
+  );
+
+/** The sources recorded member writes assigned into `binding`'s object. */
+export function* semanticMemberWriteSources(
+  binding: JavaScriptSemanticBindingState,
+): Generator<NonNullable<AmbientEffect["assignedSources"]>[number]> {
+  for (const effect of binding.memberWrites)
+    yield* effect.assignedSources ?? [];
+}
+
+/** Declaration assignability is independent of observed explicit writes. */
+const semanticBindingCanBeRebound = (
+  binding: JavaScriptSemanticBindingState,
+): boolean =>
+  binding.mutable ||
+  (binding.definitions.some(
+    ({ kind }) => kind === "function" || kind === "class",
+  ) &&
+    binding.initializers.some(
+      ({ node }) => t.isFunctionDeclaration(node) || t.isClassDeclaration(node),
+    ));
+
+/**
+ * Whether opaque code (a direct eval visible to the binding) may have rebound
+ * it. With a read, only effects that may precede that read count, and a sloppy
+ * direct eval may also have introduced a shadowing name visible from it.
+ * Without one, any visible direct eval counts.
+ */
+export const opaqueCodeMayRebindBinding = (
+  binding: JavaScriptSemanticBindingState,
+  state: JavaScriptSemanticAnalysisState,
+  read?: t.Node,
+): boolean =>
+  (semanticBindingCanBeRebound(binding) &&
+    semanticBindingMayHaveOpaqueEffect(binding, state, read)) ||
+  (read !== undefined &&
+    semanticOpaqueNameMayHaveChanged(read, state, binding));
+
+/**
+ * Whether opaque code may have mutated the object a binding references after
+ * it was captured; objects stay reachable through aliases where the name is
+ * shadowed or out of scope.
+ */
+const opaqueCodeMayReachBindingReference = (
+  binding: JavaScriptSemanticBindingState,
+  state: JavaScriptSemanticAnalysisState,
+  capturePoint: t.Node | undefined,
+): boolean =>
+  semanticBindingMayHaveOpaqueEffect(binding, state, capturePoint, "reference");
+
+/**
+ * The value of `binding`'s reference as a read captured at `capturePoint`
+ * observes it, after the recorded effects that may precede the capture:
+ * member writes invalidate their paths, escapes invalidate the escaped object
+ * references, and a direct eval that may reach the reference makes an object
+ * or array unknown. Without a capture point, every recorded effect counts.
+ */
+export const applySemanticBindingReferenceEffects = (
+  value: JavaScriptSemanticValue,
+  binding: JavaScriptSemanticBindingState,
+  state: JavaScriptSemanticAnalysisState,
+  capturePoint: t.Node | undefined,
+): JavaScriptSemanticValue => {
+  let projected = invalidateSemanticMutationPaths(
+    value,
+    binding.memberWrites
+      .filter(
+        ({ node }) =>
+          capturePoint === undefined ||
+          node === undefined ||
+          !semanticBindingEffectFollowsCapture(
+            binding,
+            capturePoint,
+            node,
+            state.parentsByNode,
+          ),
+      )
+      .map(({ path }) => path),
+  );
+  for (const escape of binding.escapedPaths) {
+    // Escapes only invalidate object references; other lattice values survive.
+    if (projected.status !== "object" && projected.status !== "array") break;
+    if (
+      capturePoint !== undefined &&
+      semanticEscapeFollowsCapture(
+        binding,
+        capturePoint,
+        escape.node,
+        state.parentsByNode,
+      )
+    )
+      continue;
+    projected = invalidateSemanticEscapedPath(projected, escape.path);
+  }
+  if (
+    (projected.status === "object" || projected.status === "array") &&
+    opaqueCodeMayReachBindingReference(binding, state, capturePoint)
+  )
+    projected = {
+      status: "unknown",
+      reason: "Direct eval may have mutated this object reference.",
+    };
+  return projected;
+};
+
+/**
+ * Opaque sites that may affect a binding, for a report of every effect: direct
+ * evals that may rebind it when its declaration is assignable, then every
+ * direct eval that may reach the object it references (an escape of its whole
+ * value). Timing and path proofs stay with the caller's effect report.
+ */
+function* semanticOpaqueReferenceEffects(
+  binding: JavaScriptSemanticBindingState,
+  state: JavaScriptSemanticAnalysisState,
+): Generator<{
+  readonly kind: "binding-write" | "escape";
+  readonly node: t.CallExpression;
+}> {
+  if (semanticBindingCanBeRebound(binding))
+    for (const node of semanticOpaqueBindingEffects(binding, state))
+      yield { kind: "binding-write", node };
+  for (const node of semanticOpaqueBindingEffects(binding, state, "reference"))
+    yield { kind: "escape", node };
+}
+
+const activation = (
+  scopeId: string,
+  state: JavaScriptSemanticAnalysisState,
+): string => {
+  let scope = state.scopesById.get(scopeId);
+  while (
+    scope !== undefined &&
+    scope.kind !== "function" &&
+    scope.kind !== "program" &&
+    scope.parentScopeId !== null
+  )
+    scope = state.scopesById.get(scope.parentScopeId);
+  return scope?.scopeId ?? scopeId;
+};
+
+const strictEval = (
+  site: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  for (
+    let node: t.Node | undefined = site;
+    node !== undefined;
+    node = state.parentsByNode.get(node)
+  ) {
+    if (
+      t.isClass(node) ||
+      (t.isProgram(node) && javaScriptProgramStrictness(node) === "strict")
+    )
+      return true;
+    const directives =
+      t.isFunction(node) && t.isBlockStatement(node.body)
+        ? node.body.directives
+        : [];
+    if (directives.some(({ value }) => value.value === "use strict"))
+      return true;
+  }
+  return false;
+};
+
+/** Ambient root paths a global reference may alias; the ambient-write owner
+ * resolves them, so the effect log takes the resolver from its caller. */
+export type SemanticAmbientRootPaths = (
+  root: t.Node,
+) => readonly (readonly (string | null)[])[];
+
+/** One owner projects source-site effects for complete reports or early exit. */
+const visitSemanticReferenceEffectsAtSite = (
+  state: JavaScriptSemanticAnalysisState,
+  ambientPaths: SemanticAmbientRootPaths,
+  site: t.Node,
+  referenceNode: t.Node,
+  visit: (
+    effect: JavaScriptSemanticReferenceEffectsAtSite["effects"][number],
+  ) => boolean,
+  requestedPath?: JavaScriptSemanticPropertyPath,
+  effectTiming: typeof semanticEffectTiming = semanticEffectTiming,
+): Omit<JavaScriptSemanticReferenceEffectsAtSite, "effects"> => {
+  const { root, path: inferredPath } = semanticReferenceRoot(referenceNode);
+  const memberEffectsIndexed = state.memberMutationFactsComplete;
+  if (!t.isIdentifier(root))
+    return {
+      bindingId: null,
+      resolution: "unknown",
+      memberEffectsIndexed,
+    };
+  const lookup = semanticBindingLookupAt(state, root, root.name);
+  const binding = "binding" in lookup ? lookup.binding : undefined;
+  const blocked = lookup.kind !== "binding" && lookup.kind !== "ambient";
+  const resolution =
+    lookup.kind === "binding" ? "resolved" : blocked ? "unknown" : "unbound";
+  const path = requestedPath ?? inferredPath;
+  const metadata: Omit<JavaScriptSemanticReferenceEffectsAtSite, "effects"> = {
+    bindingId: binding?.bindingId ?? null,
+    resolution,
+    memberEffectsIndexed,
+  };
+  const retain = (
+    kind: JavaScriptSemanticReferenceEffectsAtSite["effects"][number]["kind"],
+    node: t.Node | undefined,
+    effectPath?: JavaScriptSemanticPropertyPath,
+  ): boolean => {
+    if (effectPath !== undefined && !semanticPathsOverlap(path, effectPath))
+      return true;
+    return visit({
+      kind,
+      ...(effectPath === undefined ? {} : { path: effectPath }),
+      timing: effectTiming(site, node, state),
+    });
+  };
+  if (binding !== undefined) {
+    for (const { kind, node } of semanticOpaqueReferenceEffects(binding, state))
+      if (!retain(kind, node, kind === "escape" ? [] : undefined))
+        return metadata;
+    for (const node of state.bindingWrites.get(binding.bindingId) ?? [])
+      if (!retain("binding-write", node)) return metadata;
+    // The mutation producer also queries its growing facts during convergence.
+    // Completion stays explicit in metadata; callers cannot infer readiness.
+    for (const effect of binding.memberWrites)
+      if (!retain("member-write", effect.node, effect.path)) return metadata;
+    for (const effect of binding.escapedPaths)
+      if (!retain("escape", effect.node, effect.path)) return metadata;
+  } else if (lookup.kind === "ambient" || lookup.kind === "uncertain-ambient") {
+    for (const node of state.ambientBindingWrites.get(root.name) ?? [])
+      if (!retain("ambient-write", node)) return metadata;
+    const ambientRoots = ambientPaths(root);
+    for (const ambientRoot of ambientRoots) {
+      const selectedPath = [...ambientRoot, ...path];
+      for (const [kind, effects] of [
+        ["member-write", state.ambientWriteEffects],
+        ["escape", state.ambientEscapeEffects],
+      ] as const)
+        for (const effect of effects)
+          if (
+            semanticPathsOverlap(selectedPath, effect.path) &&
+            !retain(kind, effect.node, effect.path.slice(ambientRoot.length))
+          )
+            return metadata;
+    }
+  }
+  return metadata;
+};
+
+/** Query current producer facts; public consumers additionally require completion. */
+export const semanticReferenceEffectsMayHaveChanged = (
+  state: JavaScriptSemanticAnalysisState,
+  ambientPaths: SemanticAmbientRootPaths,
+  site: t.Node,
+  referenceNode: t.Node,
+  propertyPath?: JavaScriptSemanticPropertyPath,
+): boolean => {
+  let changed = false;
+  const metadata = visitSemanticReferenceEffectsAtSite(
+    state,
+    ambientPaths,
+    site,
+    referenceNode,
+    (effect) => {
+      changed = effect.timing !== "after";
+      return !changed;
+    },
+    propertyPath,
+  );
+  return metadata.resolution !== "resolved" || changed;
+};
+
+/**
+ * `mayObserve(read, target, path)` (ADR decision 2): whether reading `target`
+ * at `path` (default: the member path `target` spells) at `read` may observe
+ * a recorded effect. Before the member-mutation phase completes, every read
+ * may observe one (decision 4).
+ */
+export const semanticReadMayObserveEffect = (
+  state: JavaScriptSemanticAnalysisState,
+  ambientPaths: SemanticAmbientRootPaths,
+  read: t.Node,
+  target: t.Node,
+  path?: JavaScriptSemanticPropertyPath,
+): boolean =>
+  !state.memberMutationFactsComplete ||
+  semanticReferenceEffectsMayHaveChanged(
+    state,
+    ambientPaths,
+    read,
+    target,
+    path,
+  );
+
+/** Preserve the complete diagnostic contract for consumers needing every effect. */
+export const semanticReferenceEffectsAtSite = (
+  state: JavaScriptSemanticAnalysisState,
+  ambientPaths: SemanticAmbientRootPaths,
+  site: t.Node,
+  referenceNode: t.Node,
+  requestedPath?: JavaScriptSemanticPropertyPath,
+  effectTiming: typeof semanticEffectTiming = semanticEffectTiming,
+): JavaScriptSemanticReferenceEffectsAtSite => {
+  const effects: JavaScriptSemanticReferenceEffectsAtSite["effects"][number][] =
+    [];
+  const metadata = visitSemanticReferenceEffectsAtSite(
+    state,
+    ambientPaths,
+    site,
+    referenceNode,
+    (effect) => {
+      effects.push(effect);
+      return true;
+    },
+    requestedPath,
+    effectTiming,
+  );
+  return { ...metadata, effects };
+};
+
+export const semanticReferenceRoot = (
+  node: t.Node,
+): { readonly root: t.Node; readonly path: JavaScriptSemanticPropertyPath } => {
+  const path: (string | number | null)[] = [];
+  let current = unwrapJavaScriptExpression(node).node;
+  while (
+    t.isMemberExpression(current) ||
+    t.isOptionalMemberExpression(current)
+  ) {
+    const key = semanticStaticPropertyKey(current.property, current.computed);
+    path.unshift(key ?? null);
+    current = unwrapJavaScriptExpression(current.object).node;
+  }
+  return { root: current, path };
+};
+
+const semanticPathsOverlap = (
+  left: JavaScriptSemanticPropertyPath,
+  right: JavaScriptSemanticPropertyPath,
+): boolean => {
+  for (let index = 0; index < Math.min(left.length, right.length); index++) {
+    const leftKey = left[index];
+    const rightKey = right[index];
+    if (leftKey === undefined || rightKey === undefined) return true;
+    const leftMatchesRight =
+      typeof rightKey === "string" || typeof rightKey === "number"
+        ? semanticPropertyPathKeyMatches(leftKey, String(rightKey))
+        : true;
+    const rightMatchesLeft =
+      typeof leftKey === "string" || typeof leftKey === "number"
+        ? semanticPropertyPathKeyMatches(rightKey, String(leftKey))
+        : true;
+    if (!leftMatchesRight && !rightMatchesLeft) return false;
+  }
+  return true;
+};

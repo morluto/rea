@@ -15,6 +15,7 @@ import {
   type WebBundleWorkerMessage,
   WEB_BUNDLE_WORKER_LIMITS,
 } from "./WebBundleAnalysisWorkerProtocol.js";
+import { JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT } from "../domain/javascript/javascriptSemanticWorkAllowance.js";
 
 const makeScript = (text: string): IncludedScript => ({
   script_key: `scr_${createHash("sha256").update(text).digest("hex")}`,
@@ -58,8 +59,12 @@ const writeSource = async (
   });
 };
 
+/** The parent always sends its accepted allowance with an analysis request. */
+const DEFAULT_ALLOWANCE = { alias_states: 524_288, source: "default" } as const;
+
 const startServer = async (
   root: string,
+  analyzer = "analyzeCapturedWebScript",
 ): Promise<{
   readonly process: ChildProcessWithoutNullStreams;
   readonly next: () => Promise<WebBundleWorkerMessage>;
@@ -71,10 +76,15 @@ const startServer = async (
   ).href;
   const analyzerUrl = new URL("../domain/webBundleAnalyzer.ts", import.meta.url)
     .href;
+  const workUrl = new URL(
+    "../domain/javascript/javascriptSemanticWorkAllowance.ts",
+    import.meta.url,
+  ).href;
   const program = `
     const { serveWebBundleAnalysisWorker } = await import(${JSON.stringify(serverUrl)});
     const { analyzeCapturedWebScript } = await import(${JSON.stringify(analyzerUrl)});
-    await serveWebBundleAnalysisWorker(analyzeCapturedWebScript);
+    const { JavaScriptSemanticWorkMeter } = await import(${JSON.stringify(workUrl)});
+    await serveWebBundleAnalysisWorker(${analyzer});
   `;
   const child = spawn(
     process.execPath,
@@ -138,6 +148,39 @@ const closeServer = async (
   }
 };
 
+it("refuses with the allowance the parent sent and reports its limit", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rea-web-worker-work-"));
+  let worker: ChildProcessWithoutNullStreams | undefined;
+  onTestFinished(async () => {
+    if (worker !== undefined) await closeServer(worker);
+    await rm(root, { recursive: true, force: true });
+  });
+  const server = await startServer(
+    root,
+    "(_script, _precision, allowance) => new JavaScriptSemanticWorkMeter(allowance).charge(2)",
+  );
+  worker = server.process;
+  expect(await server.next()).toMatchObject({ kind: "ready" });
+  const input = sourceDescriptor(makeScript("fetch('/work');"));
+  const id = randomUUID();
+  await writeSource(root, id, input.bytes);
+  await send(worker, {
+    kind: "analyze",
+    member_mutation_allowance: { alias_states: 1, source: "runtime" },
+    id,
+    source: input.descriptor,
+    result_budget_bytes: WEB_BUNDLE_WORKER_LIMITS.resultBytes,
+  });
+  expect(await server.next()).toMatchObject({ kind: "phase", id });
+  expect(await server.next()).toEqual({
+    kind: "failure",
+    id,
+    reason: "resource",
+    limits: { [JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT]: 1 },
+    message: expect.stringMatching(/more than 1 alias states/u),
+  });
+});
+
 const framingServer = async () => {
   const root = await mkdtemp(join(tmpdir(), "rea-web-worker-framing-"));
   let worker: ChildProcessWithoutNullStreams | undefined;
@@ -159,6 +202,7 @@ it("serves split and coalesced LF/CRLF requests as separate jobs", async () => {
   const ids = [randomUUID(), randomUUID()];
   const requests = ids.map((id) => ({
     kind: "analyze",
+    member_mutation_allowance: DEFAULT_ALLOWANCE,
     id,
     source: input.descriptor,
     result_budget_bytes: WEB_BUNDLE_WORKER_LIMITS.resultBytes,
@@ -191,6 +235,7 @@ it.each([
     await writeSource(server.root, id, input.bytes);
     const request = JSON.stringify({
       kind: "analyze",
+      member_mutation_allowance: DEFAULT_ALLOWANCE,
       id,
       source: input.descriptor,
       result_budget_bytes: WEB_BUNDLE_WORKER_LIMITS.resultBytes,
@@ -232,6 +277,7 @@ it("rejects an oversized unterminated frame at EOF without starting analysis", a
   await writeSource(server.root, id, input.bytes);
   const request = JSON.stringify({
     kind: "analyze",
+    member_mutation_allowance: DEFAULT_ALLOWANCE,
     id,
     source: input.descriptor,
     result_budget_bytes: WEB_BUNDLE_WORKER_LIMITS.resultBytes,
@@ -273,6 +319,7 @@ it("bounds and binds per-script worker jobs, then reuses one worker for the next
     await writeSource(root, randomUUID(), input.bytes);
     await send(worker, {
       kind: "analyze",
+      member_mutation_allowance: DEFAULT_ALLOWANCE,
       id: missingId,
       source: input.descriptor,
       result_budget_bytes: WEB_BUNDLE_WORKER_LIMITS.resultBytes,
@@ -288,6 +335,7 @@ it("bounds and binds per-script worker jobs, then reuses one worker for the next
     await writeSource(root, digestId, input.bytes);
     await send(worker, {
       kind: "analyze",
+      member_mutation_allowance: DEFAULT_ALLOWANCE,
       id: digestId,
       source: { ...input.descriptor, sha256: "0".repeat(64) },
       result_budget_bytes: WEB_BUNDLE_WORKER_LIMITS.resultBytes,
@@ -302,6 +350,7 @@ it("bounds and binds per-script worker jobs, then reuses one worker for the next
     await writeSource(root, budgetId, input.bytes);
     await send(worker, {
       kind: "analyze",
+      member_mutation_allowance: DEFAULT_ALLOWANCE,
       id: budgetId,
       source: input.descriptor,
       result_budget_bytes: 1,
@@ -323,6 +372,7 @@ it("bounds and binds per-script worker jobs, then reuses one worker for the next
     await writeSource(root, nextId, nextInput.bytes);
     await send(worker, {
       kind: "analyze",
+      member_mutation_allowance: DEFAULT_ALLOWANCE,
       id: nextId,
       source: nextInput.descriptor,
       result_budget_bytes: WEB_BUNDLE_WORKER_LIMITS.resultBytes,
@@ -364,6 +414,7 @@ it("bounds and binds per-script worker jobs, then reuses one worker for the next
     await writeSource(root, routesId, routesInput.bytes);
     await send(worker, {
       kind: "analyze",
+      member_mutation_allowance: DEFAULT_ALLOWANCE,
       id: routesId,
       source: routesInput.descriptor,
       result_budget_bytes: offered,

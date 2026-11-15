@@ -5,7 +5,7 @@ import type { PlaywrightTrace } from "./playwrightTrace/playwrightTrace.js";
 import type { ApiContract } from "./apiContract/apiContract.js";
 import type { GraphqlContract } from "./apiContract/graphqlContract.js";
 import type { SavedAnalysisSnapshotPartialObservation } from "./savedAnalysisSnapshot.js";
-import type { AnalysisSettingLimit } from "./analysisSettings.js";
+import type { AnalysisLimit } from "./analysisSettings.js";
 import type { JsonValue } from "./jsonValue.js";
 import type { AnalysisCleanupRetry } from "./analysisErrorRecovery.js";
 import type { EnvironmentBundlePublication } from "./environmentBundleExport.js";
@@ -100,7 +100,7 @@ export interface AnalysisErrorOptions extends ErrorOptions {
   readonly cleanupPrimary?: AnalysisError | undefined;
   /** Producer-owned, caller-safe facts retained through every typed projection. */
   readonly diagnostics?: Readonly<Record<string, JsonValue>> | undefined;
-  readonly limit?: AnalysisSettingLimit | undefined;
+  readonly limit?: AnalysisLimit | undefined;
   readonly continuingCallerGuidance?:
     | AnalysisContinuingCallerGuidance
     | undefined;
@@ -114,6 +114,16 @@ export interface AnalysisErrorOptions extends ErrorOptions {
   readonly capturedOutput?: AnalysisCapturedOutput | undefined;
   readonly cleanup?: AnalysisCleanupObservation | undefined;
   readonly partialObservation?: AnalysisPartialObservation | undefined;
+}
+
+/**
+ * A completed observation for one argument of a composite request, kept
+ * beside the failing operation's own partial observation.
+ */
+export interface AnalysisArgumentObservation {
+  /** The composite contract's input field this observation completes. */
+  readonly argument: string;
+  readonly observation: AnalysisPartialObservation;
 }
 
 /** Exact cleanup owner that can attribute its currently unresolved resources. */
@@ -165,9 +175,9 @@ export interface SourcePublicationRecovery {
 
 /** Base class for expected analysis, provider, and session failures. */
 export abstract class AnalysisError extends Error {
-  limit: Readonly<AnalysisSettingLimit> | undefined;
+  limit: Readonly<AnalysisLimit> | undefined;
   /** Bind the accepted setting at its producing boundary. */
-  bindLimit(limit: AnalysisSettingLimit): this {
+  bindLimit(limit: AnalysisLimit): this {
     this.limit = Object.freeze({ ...limit });
     return this;
   }
@@ -233,6 +243,11 @@ export abstract class AnalysisError extends Error {
   readonly userCategory: "cancelled" | undefined = undefined;
   readonly executionFailure: string | undefined = undefined;
   partialObservation: AnalysisPartialObservation | undefined;
+  #argumentObservations: AnalysisArgumentObservation[] = [];
+  /** Completed argument observations of a composite request, in retention order. */
+  get argumentObservations(): readonly AnalysisArgumentObservation[] {
+    return this.#argumentObservations;
+  }
   sourcePublicationRecovery: SourcePublicationRecovery | undefined;
   workflowUnknownPublication: WorkflowUnknownPublication | undefined;
 
@@ -440,6 +455,19 @@ export abstract class AnalysisError extends Error {
   /** Retain a completed observation when a later step fails. */
   retainPartialObservation(observation: AnalysisPartialObservation): this {
     this.partialObservation ??= observation;
+    return this;
+  }
+
+  /**
+   * Retain a composite argument's completed observation without replacing
+   * this failure's own partial observation; the first per argument wins.
+   */
+  retainArgumentObservation(
+    argument: string,
+    observation: AnalysisPartialObservation,
+  ): this {
+    if (!this.#argumentObservations.some((kept) => kept.argument === argument))
+      this.#argumentObservations.push(Object.freeze({ argument, observation }));
     return this;
   }
 

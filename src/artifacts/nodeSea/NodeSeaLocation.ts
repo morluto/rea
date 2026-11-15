@@ -10,11 +10,11 @@ import { readElfProgramHeader } from "../../domain/elfProgramHeader.js";
 import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
 import { createHash } from "node:crypto";
 import { constants as bufferConstants } from "node:buffer";
-import { parsePeResources } from "../../native/pe/PeResourceParser.js";
+import { parsePeResources } from "../pe/PeResourceParser.js";
 import {
   hasPeResourceName,
   readPeResourceLayout,
-} from "../../native/pe/PeResourceLayout.js";
+} from "../pe/PeResourceLayout.js";
 import {
   MAX_INSPECT_PE_FILE_BYTES,
   MAX_INSPECT_PE_DIRECTORY_ENTRIES,
@@ -22,13 +22,15 @@ import {
 import type { FileHandle } from "node:fs/promises";
 import type { StableRegularFileDescriptor } from "../../filesystem/RegularFile.js";
 
-import { abortIfNeeded } from "../ArtifactHash.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  artifactReaderLimitFailure,
+  abortIfNeeded,
+} from "../../resources/index.js";
 import {
   DEFAULT_NODE_SEA_READER_LIMITS,
   type NodeSeaReaderLimits,
 } from "../../domain/artifactReaderLimits.js";
-import { artifactReaderLimitFailure } from "../ArtifactReaderLimits.js";
 import {
   readFatContainerHeader,
   readFatHeaderPrefix,
@@ -183,6 +185,7 @@ export const scanNodeSeaFuse = async (
       throw new ArtifactReaderFailure(
         "integrity",
         "Node SEA carrier shrank during the fuse scan",
+        { integrityCheck: "read-coverage" },
       );
     const window = carry.length === 0 ? chunk : Buffer.concat([carry, chunk]);
     for (const match of window

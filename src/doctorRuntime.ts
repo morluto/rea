@@ -1,10 +1,9 @@
 import { HOST_PLATFORM, type HostPlatform } from "./platform/HostPlatform.js";
-import {
-  systemDoctorHost,
-  type DoctorCheck,
-  type DoctorHost,
-  type DoctorProviderInspection,
-} from "./application/Doctor.js";
+import { systemDoctorHost, type DoctorHost } from "./application/Doctor.js";
+import type {
+  DoctorCheck,
+  DoctorProviderInspection,
+} from "./ports/DoctorProviderInspection.js";
 import { fileURLToPath } from "node:url";
 import { readDesktopBuildFacts } from "./desktop/DesktopBuildDoctorFacts.js";
 import {
@@ -28,8 +27,8 @@ import { selectLinuxPrivateDisplayStrategy } from "./hopper/LinuxPrivateDisplayP
 import { ok } from "./domain/result.js";
 import { cancelledBy, carriedReason } from "./domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "./domain/providerCleanupError.js";
-import { AnalysisCleanupLeaseGroup } from "./artifacts/AnalysisCleanupLease.js";
-import type { RetainedResourceScope } from "./application/AnalysisProvider.js";
+import { AnalysisCleanupLeaseGroup } from "./resources/index.js";
+import type { RetainedResourceScope } from "./ports/AnalysisProvider.js";
 import { RegularFileCleanupFailure } from "./filesystem/OwnedRegularFile.js";
 import { readEffectiveClientRegistrationConfiguration } from "./application/ClientConfigurationFiles.js";
 import { clientRegistrationEnvironmentDetails } from "./application/ClientRegistrationEnvironment.js";
@@ -162,9 +161,9 @@ const readSelectedRegistration = async (
   const details = clientRegistrationEnvironmentDetails(
     configuration.value.document,
     client,
+    platform,
     {},
     "effective",
-    platform,
   );
   return details.ok
     ? {
@@ -396,6 +395,7 @@ export const createSystemDoctorHost = (
           (await inspectJadxProvider(
             inspectionEnvironment,
             resourceScope,
+            host,
             inspectionSignal,
           )),
         unresolvedProvider("kuna", selected, inspectionEnvironment, platform) ??

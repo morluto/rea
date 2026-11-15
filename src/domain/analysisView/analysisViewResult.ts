@@ -177,6 +177,7 @@ import {
   nativeInventoryOperationSchema,
 } from "../native/nativeInventory.js";
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import {
   browserScenarioSummarySchema,
   browserScenarioViewContextSchema,
@@ -1492,7 +1493,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     kind: z.literal("pcap"),
     view: pcapViewRequestSchema,
     page: pcapViewPageSchema,
-    source_coverage: z.enum(["complete", "partial"]),
+    source_coverage: knownCoverageStatusSchema,
     ...viewResultBase,
     parent_operation: z.literal("inspect_pcap_capture"),
   }),

@@ -14,6 +14,8 @@ import type {
   SpawnedOwnedProviderProcess,
 } from "./ProviderProcess.js";
 import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
+import { Budget } from "../domain/budget.js";
+import type { FixedAllowance } from "../domain/fixedAllowanceRemediation.js";
 import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
@@ -28,7 +30,7 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
+} from "../resources/index.js";
 
 /** Injectable acquisition seam; production owns a POSIX group or Windows job. */
 export type OwnedMcpLauncher = (
@@ -40,19 +42,17 @@ export type OwnedMcpTransportFailure =
   | { readonly kind: "process"; readonly cause: unknown }
   | { readonly kind: "exit" }
   | { readonly kind: "protocol"; readonly cause: Error }
+  | {
+      /**
+       * The protocol process exceeded a fixed frame or per-operation byte
+       * ceiling; the adapter attributes the refusal to its operation.
+       */
+      readonly kind: "output_limit";
+      readonly scope: "frame" | "operation";
+      readonly ceiling: FixedAllowance & { readonly limit: number };
+      readonly cause: Error;
+    }
   | { readonly kind: "interrupted"; readonly reason: unknown };
-
-/** A frame or per-operation byte budget the protocol process exceeded. */
-export class OwnedMcpOutputLimitError extends Error {
-  constructor(
-    readonly scope: "frame" | "operation",
-    readonly limitBytes: number,
-    message: string,
-  ) {
-    super(message);
-    this.name = "OwnedMcpOutputLimitError";
-  }
-}
 
 /** SDK-framed stdio with REA-owned process cleanup rather than an unowned child. */
 export class OwnedMcpStdioTransport implements Transport {
@@ -64,7 +64,8 @@ export class OwnedMcpStdioTransport implements Transport {
   #supervisor: ProviderProcessSupervisor | undefined;
   #frameBuffer = Buffer.alloc(0);
   #frameLength = 0;
-  #bytes = 0;
+  /** Output charged to the current operation; stays over once it is exceeded. */
+  readonly #bytes: Budget | undefined;
   #started = false;
   #closed = false;
   readonly #cleanup = new AnalysisCleanupLease(
@@ -97,7 +98,10 @@ export class OwnedMcpStdioTransport implements Transport {
       readonly notifyOnExit?: boolean;
     },
     readonly launcher: OwnedMcpLauncher = spawnOwnedProviderProcess,
-  ) {}
+  ) {
+    if (settings.maxOperationBytes !== undefined)
+      this.#bytes = new Budget(settings.maxOperationBytes);
+  }
 
   /** Acquires exactly one protocol process after the SDK installs callbacks. */
   start(): Promise<void> {
@@ -226,7 +230,7 @@ export class OwnedMcpStdioTransport implements Transport {
 
   /** Scope both the byte budget and diagnostic retention to the next serialized request. */
   beginOperation(): void {
-    this.#bytes = 0;
+    this.#bytes?.restore(0);
     this.#supervisor?.resetOutput();
   }
 
@@ -355,16 +359,15 @@ export class OwnedMcpStdioTransport implements Transport {
   };
   /** Charge output to the operation budget; false once it is exceeded. */
   #countOperationBytes(bytes: number): boolean {
-    const limit = this.settings.maxOperationBytes;
-    if (limit === undefined) return true;
-    this.#bytes += bytes;
-    if (this.#bytes <= limit) return true;
-    this.#fail(
-      new OwnedMcpOutputLimitError(
-        "operation",
-        limit,
-        `${this.settings.label} operation output exceeds ${limit} bytes; no complete result is available`,
-      ),
+    const budget = this.#bytes;
+    if (budget === undefined) return true;
+    budget.chargeOverCommitting(bytes);
+    if (budget.overCommitted === 0) return true;
+    const limit = budget.maximum;
+    this.#failLimit(
+      "operation",
+      limit,
+      `${this.settings.label} operation output exceeds ${limit} bytes; no complete result is available`,
     );
     return false;
   }
@@ -379,12 +382,14 @@ export class OwnedMcpStdioTransport implements Transport {
         const end = newline === -1 ? bytes.length : newline;
         const fragment = bytes.subarray(offset, end);
         const frameBytes = this.#frameLength + fragment.length;
-        if (frameBytes > this.settings.maxFrameBytes)
-          throw new OwnedMcpOutputLimitError(
+        if (frameBytes > this.settings.maxFrameBytes) {
+          this.#failLimit(
             "frame",
             this.settings.maxFrameBytes,
             `${this.settings.label} MCP frame exceeds ${this.settings.maxFrameBytes} bytes`,
           );
+          return;
+        }
         this.#appendFrame(fragment, frameBytes);
         if (newline === -1) return;
         // Preserve a leading BOM so the JSON-RPC parser can reject it.
@@ -417,5 +422,25 @@ export class OwnedMcpStdioTransport implements Transport {
   #fail(error: Error): void {
     this.#failure ??= { kind: "protocol", cause: error };
     this.#error(error);
+  }
+  /** Record a fixed output ceiling the process exceeded, then fail the session. */
+  #failLimit(
+    scope: "frame" | "operation",
+    limit: number,
+    message: string,
+  ): void {
+    const cause = new Error(message);
+    this.#failure ??= {
+      kind: "output_limit",
+      scope,
+      ceiling: {
+        name: `The ${this.settings.label} ${scope === "frame" ? "frame" : "operation output"} allowance of ${String(limit)} bytes`,
+        kind: "bytes",
+        limit,
+        unit: "bytes",
+      },
+      cause,
+    };
+    this.#error(cause);
   }
 }

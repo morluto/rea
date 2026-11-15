@@ -5,7 +5,7 @@ import { selectedSourceMapLimits } from "../../domain/sourceMapLimits.js";
 import { expect, it } from "vitest";
 
 import { inspectSourceMapEnvelope } from "../../domain/sourceMapEnvelope.js";
-import { inspectSourceMapValue } from "./SourceMapFormat.js";
+import { inspectSourceMapValue } from "../../domain/sourceMapFormat.js";
 import { traceSourceMap } from "./TraceSourceMap.js";
 
 const leaf = {

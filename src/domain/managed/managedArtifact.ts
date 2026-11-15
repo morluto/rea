@@ -1,10 +1,33 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
+import type { CoverageStatus } from "../coverage.js";
 import { digestSchema } from "../digests.js";
 import { managedFieldConstantSchema } from "./managedFieldConstant.js";
 
 /** Build-local ECMA-335 metadata token emitted as an eight-digit lowercase hex value. */
 export const managedMetadataTokenSchema = z.string().regex(/^0x[0-9a-f]{8}$/u);
 const offsetSchema = z.int().min(0);
+
+/**
+ * Parser coverage of one managed inspection. `unavailable` means the parser
+ * examined nothing of that kind, unlike `partial`, which records a known gap.
+ */
+export const managedInspectionStateSchema = z.enum([
+  ...knownCoverageStatusSchema.options,
+  "unavailable",
+]);
+export type ManagedInspectionState = z.infer<
+  typeof managedInspectionStateSchema
+>;
+
+/**
+ * What a result derived from one managed inspection can claim about its
+ * coverage: an unavailable inspection examined nothing, so what it would cover
+ * is unknown rather than partially known.
+ */
+export const managedInspectionCoverage = (
+  state: ManagedInspectionState,
+): CoverageStatus => (state === "unavailable" ? "unknown" : state);
 
 /** A 16-byte CLI metadata GUID without RFC 4122 version/variant restrictions. */
 export const cliMetadataGuidSchema = z
@@ -42,6 +65,16 @@ const moduleIdentitySchema = z.object({
   row_offset: offsetSchema,
 });
 
+/**
+ * What a managed inspection established about the CLI metadata: none present,
+ * read in full or in part, or present but unreadable.
+ */
+export const managedMetadataStatusSchema = z.enum([
+  "absent",
+  ...knownCoverageStatusSchema.options,
+  "malformed",
+]);
+
 const managedArtifactReferenceSchema = z.object({
   path: z.string().min(1),
   sha256: digestSchema,
@@ -50,7 +83,7 @@ const managedArtifactReferenceSchema = z.object({
 });
 
 const managedMetadataSummarySchema = z.object({
-  status: z.enum(["absent", "complete", "partial", "malformed"]),
+  status: managedMetadataStatusSchema,
   version: z.string().nullable(),
   table_row_counts: z.record(z.string(), z.int().min(0).max(0xffff_ffff)),
 });
@@ -359,7 +392,14 @@ const managedNativeImplementationSchema = z.object({
   ]),
 });
 
+const targetRowResolvedSchema = z
+  .boolean()
+  .describe(
+    "True when the producer resolved the operand to a matching member row with a decoded signature and owner; false means unresolved. Does not establish runtime binding.",
+  );
+
 const managedCallEdgeSchema = z.object({
+  target_row_resolved: targetRowResolvedSchema,
   caller_token: managedMetadataTokenSchema,
   il_offset: offsetSchema.nullable(),
   target_identity_sha256: digestSchema
@@ -381,6 +421,7 @@ const managedCallEdgeSchema = z.object({
 });
 
 const managedFieldAccessSchema = z.object({
+  target_row_resolved: targetRowResolvedSchema,
   method_token: managedMetadataTokenSchema,
   il_offset: offsetSchema.nullable(),
   target_identity_sha256: digestSchema
@@ -489,7 +530,7 @@ export const managedArtifactInspectionSchema = z.object({
     ),
   }),
   metadata: z.object({
-    status: z.enum(["absent", "complete", "partial", "malformed"]),
+    status: managedMetadataStatusSchema,
     version: z.string().nullable(),
     stream_names: z.array(z.string()),
     table_row_counts: z.record(z.string(), z.int().min(0).max(0xffff_ffff)),
@@ -501,7 +542,7 @@ export const managedArtifactInspectionSchema = z.object({
   resources: z.array(managedResourceSchema),
   attributes: z.array(customAttributeSchema),
   coverage: z.object({
-    state: z.enum(["complete", "partial", "unavailable"]),
+    state: managedInspectionStateSchema,
     issues: z.array(managedParseIssueSchema),
   }),
   limitations: z.array(z.string()),
@@ -550,7 +591,7 @@ export const managedMemberInspectionSchema = z
     // coverage. null means they were not examined, not that there were none.
     user_strings: z
       .object({
-        state: z.enum(["complete", "partial"]),
+        state: knownCoverageStatusSchema,
         literals: z.array(managedUserStringSchema),
         issues: z.array(managedParseIssueSchema),
       })
@@ -573,7 +614,7 @@ export const managedMemberInspectionSchema = z
         "Examined zero-based MethodDef row interval before declaring-type selection; null means the row scope was not recorded. Row coordinates are build-local and cannot prove cross-build member absence for a page.",
       ),
     coverage: z.object({
-      state: z.enum(["complete", "partial", "unavailable"]),
+      state: managedInspectionStateSchema,
       issues: z.array(managedParseIssueSchema),
     }),
     limitations: z.array(z.string()),
@@ -620,7 +661,7 @@ export const managedNativeBoundaryInspectionSchema = z.object({
     mixed_mode_or_native_header: z.boolean().nullable(),
   }),
   coverage: z.object({
-    state: z.enum(["complete", "partial", "unavailable"]),
+    state: managedInspectionStateSchema,
     issues: z.array(managedParseIssueSchema),
   }),
   limitations: z.array(z.string()),

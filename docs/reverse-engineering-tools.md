@@ -98,7 +98,7 @@ Session status retains up to 64 recent protocol frames. Each history entry keeps
 
 ### Stopped debugger sessions
 
-A Rizin or GDB session stops accepting commands when REA stops it, for example after an output or frame limit, a command deadline, cancellation or a protocol failure, or when the debugger process exits. REA keeps the stopped session and the first reason it observed until `close_rizin_debug_session` or `close_gdb_session` releases it, including after a retried cleanup succeeds. `rizin_debug_session_status` and `gdb_session_status` then report `state: "closed"` with that reason in `closed_reason`. A later `rizin_debug_command` or `gdb_console` on the session fails with `capability_unavailable`; `details.reason` carries the same reason, and the remediation is to close the session and start a new one. A `session_id` that this server never returned, or that close already released, fails with `invalid_request` instead.
+A Rizin or GDB session stops accepting commands when REA stops it, for example after an output or frame limit, a command deadline, cancellation or a protocol failure, or when the debugger process exits. REA keeps the stopped session and the first reason it observed until `close_rizin_debug_session` or `close_gdb_session` releases it, including after a retried cleanup succeeds. `rizin_debug_session_status` and `gdb_session_status` then report `state: "closed"` with that reason in `closed_reason` and its code in `closed_reason_code`: `input-stream-failure`, `output-correlation-failure`, `command-deadline`, `command-cancelled`, `server-shutdown`, `close-requested`, `process-exited` or `stopped`. A later `rizin_debug_command` or `gdb_console` on the session fails with `capability_unavailable`; `details.reason` carries the same reason and `details.diagnostics.session_stop` the same code (when that failure also left cleanup incomplete and REA reports `cleanup_incomplete`, the stopping failure and its code are under `details.diagnostics.primary_error`), and the remediation is to close the session and start a new one. A `session_id` that this server never returned, or that close already released, fails with `invalid_request` instead.
 
 ### Debugger launch settings
 
@@ -314,7 +314,12 @@ never sends its authenticated frame does not hold the bridge accept loop.
 At most 8 connection threads run. A further accept is closed, and a failure to start a thread closes that socket without stopping the listener. A status `completed_connection` is the longest prefix of accepted connections that have terminated. It does not treat an earlier connection as finished because a later status reached the command lock first. Scalar values in one Cutter reply are encoded in bounded batches.
 A command reply that does not fit keeps its completion state and document
 generation, and reports an oversized path as unknown. Cutter response frames use this same ceiling and
-also exclude the terminating LF. A command response the client discards because it exceeds that ceiling stays an unknown execution and sets `output_truncated`, so Evidence records the omitted output. Hopper response reads are unchanged.
+also exclude the terminating LF. A command response the client discards because it exceeds that ceiling stays an unknown execution and sets `output_truncated`, so Evidence records the omitted output. Hopper and Ghidra reply lines are bounded separately by
+`REA_BRIDGE_MAX_REPLY_BYTES` (`bridge.max_reply_bytes`): default 268435456 bytes
+(256 MiB), from 1048576 to 536870888. The client admits the value with each
+request. A reply line, or an unterminated tail, above it is refused as a typed
+`transport` resource constraint naming the setting; REA discards the bytes and
+closes that bridge connection rather than retaining them.
 `cutter_command` reports `output_truncated` and `document_generation` as `null`
 when the plugin did not declare them, for example when no reply was read, the
 reply was malformed, or an older plugin omitted them. A null generation means

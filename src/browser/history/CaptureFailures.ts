@@ -1,24 +1,25 @@
 import { javaScriptWorkerMemoryLimitBytes } from "../../process/JavaScriptWorkerMemoryLimit.js";
 import { captureBudgets } from "./CaptureBudgets.js";
 import { analysisSettingLimit } from "../../domain/analysisSettingDefinitions.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import {
   AnalysisCleanupLeaseGroup,
   type AnalysisCleanupLease,
-} from "../../artifacts/AnalysisCleanupLease.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { stableArtifactInputRecovery } from "../../artifacts/StableArtifactFailure.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
-import {
+  ArtifactReaderFailure,
+  stableArtifactInputRecovery,
+  readerIntegrityFailure,
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
   artifactSelectedPathErrno,
-} from "../../artifacts/ArtifactFileOperation.js";
+} from "../../resources/index.js";
+import {
+  analysisErrorWithCleanupFailure,
+  analysisErrorWithCleanupDependencies,
+} from "../../domain/analysisErrorCleanup.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
@@ -203,12 +204,7 @@ export const historicalCaptureFailure = (
     cause instanceof ArtifactReaderFailure &&
     cause.reason === "integrity"
   )
-    return new AnalysisArtifactChangedError(
-      OPERATION,
-      sourcePath,
-      cause.message,
-      { cause },
-    );
+    return readerIntegrityFailure(OPERATION, sourcePath, cause);
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure &&
@@ -446,11 +442,11 @@ export const withCaptureReaderCleanup = (
       cleanup.retainPartialObservation(primary.partialObservation);
     return cleanup;
   }
-  const composed = analysisErrorWithCleanupFailure(
+  const composed = analysisErrorWithCleanupDependencies(
     primary,
     cleanup,
     OPERATION,
-  ).bindCleanupDependencies([primary, cleanup]);
+  );
   bindArtifactFileCleanup(cause, composed);
   return composed;
 };

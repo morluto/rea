@@ -11,7 +11,7 @@ import {
   type ResourceConstraintRecovery,
 } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import type { AnalysisSettingLimit } from "../domain/analysisSettings.js";
+import type { AnalysisLimit } from "../domain/analysisSettings.js";
 import type { ProviderOutcome } from "./ProviderOutcome.js";
 import type { ProviderProcessSnapshot } from "./ProviderProcess.js";
 import {
@@ -55,8 +55,8 @@ export interface ProviderOutcomeContext {
     readonly userMessage?: string;
     /** The setting or action that changes that deadline. */
     readonly remediationAction?: string;
-    /** The analysis setting that selected the deadline, when one did. */
-    readonly limit?: AnalysisSettingLimit;
+    /** The setting, parameter or environment control that selected the deadline. */
+    readonly limit?: AnalysisLimit;
   };
   readonly outputLimit: {
     /** The budget that was exceeded, when the generic report is not enough. */

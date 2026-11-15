@@ -18,7 +18,8 @@ export class VerifierFixture {
   constructor(root: VerifierFixtureRoot);
   /**
    * Allocate a `PrivateRuntimeRoot` under `parent` (default: the OS temporary
-   * directory), or a plain temporary directory with `private: false`.
+   * directory), or a plain temporary directory with `private: false`, whose
+   * removal retries Windows sharing violations.
    */
   static open(options?: {
     readonly prefix?: string;
@@ -39,6 +40,12 @@ export class VerifierFixture {
   /** Register a cleanup that must confirm before the root may be removed. */
   releaseAfter<T extends () => unknown>(cleanup: T): T;
   /**
+   * Run cleanups now, in order; one that fails stays registered, so `release`
+   * retries it and keeps the root until it confirms. Failures are thrown as
+   * an AggregateError.
+   */
+  closeEarly(cleanups: readonly (() => unknown)[]): Promise<void>;
+  /**
    * Keep the root for good: something that may still use it cannot be
    * confirmed stopped. Every later release fails with `reason`.
    */
@@ -48,6 +55,12 @@ export class VerifierFixture {
    * failure is an AggregateError whose `cleanupLeases` is `[this fixture]`.
    */
   release(): Promise<void>;
+  /**
+   * Run pending cleanups as `release` does, then keep the root instead of
+   * removing it and name it and `reason` on stderr. A failed cleanup fails
+   * the same way `release` does.
+   */
+  keep(reason: string): Promise<void>;
 }
 
 /**

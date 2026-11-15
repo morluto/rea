@@ -22,6 +22,7 @@ import {
 } from "./ComputerHomeFiles.js";
 import { DRAWN_WAIT_MS, drawnScreenshot } from "./DrawnScreenshot.js";
 import { awaitHttpReply, type HttpReply } from "./HttpReply.js";
+import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
 
 const READY_TIMEOUT_MS = 180_000;
 const REQUEST_TIMEOUT_MS = 120_000;
@@ -697,7 +698,9 @@ export class AgentEnvComputer {
   redacted(text: string): string {
     return this.#token === null
       ? text
-      : text.replaceAll(this.#token, "[control token]");
+      : redactExplicitText(text, [this.#token], {
+          replacement: "[control token]",
+        });
   }
 
   /** A framework-only route of the computer, with its control token; its answer is read within `bounds.limit`. */

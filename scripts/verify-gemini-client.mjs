@@ -34,8 +34,6 @@ const repo = fileURLToPath(new URL("..", import.meta.url));
 const runtimeRoot = process.env.REA_VERIFY_RUNTIME_ROOT ?? repo;
 const command = process.env.REA_VERIFY_GEMINI_COMMAND ?? "gemini";
 const mode = process.argv[2] ?? "call";
-const schemaProfile = process.env.REA_VERIFY_GEMINI_SCHEMA_PROFILE ?? "full";
-assert(["full", "compact"].includes(schemaProfile));
 // npm installs of Gemini CLI provide a JavaScript entry point; on Windows only a gemini.cmd shim reaches
 // PATH, which Node does not spawn without a shell, so a selected .js entry runs under this Node. It is
 // resolved once, because the preflight runs from the caller's directory and the client from the workspace.
@@ -99,7 +97,6 @@ await withVerifierCleanup(async () => {
       GEMINI_CLI_NO_RELAUNCH: "1",
       GEMINI_CLI_TRUST_WORKSPACE: "true",
       REA_PROCESS_RUN_ID: verifier.run_id,
-      REA_MCP_INPUT_SCHEMA_PROFILE: schemaProfile,
     };
     try {
       clientVersion = (
@@ -417,7 +414,6 @@ await withVerifierCleanup(async () => {
       client: "Gemini CLI",
       clientVersion,
       mode,
-      schemaProfile,
       schemasChecked,
       examplesChecked,
       passed,

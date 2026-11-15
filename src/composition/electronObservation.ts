@@ -1,6 +1,6 @@
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 import { runtimeAsarHeaderAdmission } from "../config/runtimeAnalysisSettings.js";
-import type { ElectronObservationPort } from "../application/javascript/ElectronObservationPort.js";
+import type { ElectronObservationPort } from "../ports/javascript/ElectronObservationPort.js";
 import { CdpElectronProvider } from "../browser/CdpElectronProvider.js";
 
 /** Construct a fresh provider without opening a target or acquiring an engine. */

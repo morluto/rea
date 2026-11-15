@@ -22,8 +22,10 @@ import {
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import {
+  ArtifactReaderFailure,
+  bindArtifactFileCleanup,
+} from "../resources/index.js";
 
 /** Copy authored outcome facts; semantic attribution never inspects a later signal. */
 export const analysisClientFailureContext = (
@@ -256,7 +258,7 @@ export const analysisClientFailureForOperation = (
       operation,
       cause.path,
       cause.reason,
-      context,
+      { ...context, integrityCheck: cause.integrityCheck },
     );
   else if (cause instanceof AnalysisResourceConstraintError)
     result = reattributedResourceConstraint(operation, cause, context);

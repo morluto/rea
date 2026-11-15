@@ -8,7 +8,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   createAnalysisExecution,
   type AnalysisClient,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import type { AnalysisProfileCommitment } from "../../../src/domain/analysisProfile.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../../../src/contracts/artifactComparisonExample.js";

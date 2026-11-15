@@ -1,25 +1,21 @@
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { processInspectionCancellationError } from "../providers/OwnedCommandCleanup.js";
 import { APKTOOL_PROVIDER_IDENTITY } from "./ApktoolProviderIdentity.js";
 import { countDecodedFiles } from "./ApktoolDecodedInventory.js";
 import { ApktoolWorkspace } from "./ApktoolWorkspace.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
+  ArtifactResourceScope,
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import {
+  ArtifactReaderFailure,
   ArtifactFileCleanupFailure,
   artifactFilePrimaryFacts,
   artifactFileCancellationCause,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
-import {
-  capturedApktoolCommandOutput,
-  capturedApktoolFailureOutput,
-} from "./ApktoolCommandOutput.js";
+import { capturedApktoolFailureOutput } from "./ApktoolCommandOutput.js";
 import { providerOutcomeOf } from "../process/ProviderOutcome.js";
 import { classifyProviderOutcome } from "../process/classifyProviderOutcome.js";
 import { ApktoolCommandCleanup } from "./ApktoolCommandCleanup.js";
@@ -37,7 +33,7 @@ import {
   type ProviderAvailability,
   createAnalysisExecution,
   type AnalysisExecution,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { providerConfigurationRefusal } from "../domain/providerConfigurationRefusal.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import {
@@ -69,7 +65,7 @@ import {
 import type { RuntimeExhaustionArea } from "../process/RuntimeExhaustion.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { WindowsBatchCommandError } from "../process/WindowsBatchCommand.js";
-import { ownedProcessPrerequisiteAvailability } from "../application/ownedProcessAvailability.js";
+import { ownedProcessPrerequisiteAvailability } from "../providers/ownedProcessAvailability.js";
 import {
   ApktoolConfigurationFailure,
   apktoolConfigurationAvailability,
@@ -143,11 +139,17 @@ const runApktool = async (
   environment: Readonly<Record<string, string | undefined>>,
   commands: ApktoolCommandCleanup,
   root: string,
+  platform: NodeJS.Platform,
 ): Promise<Result<{ stdout: string; stderr: string }, AnalysisError>> => {
   if (signal?.aborted === true) return err(cancelledBy(operation, signal));
   let invocation: ReturnType<typeof apktoolInvocation>;
   try {
-    invocation = apktoolInvocation(selection, arguments_, environment);
+    invocation = apktoolInvocation(
+      selection,
+      arguments_,
+      environment,
+      platform,
+    );
   } catch (cause) {
     if (!(cause instanceof WindowsBatchCommandError)) throw cause;
     const reason = `The apktool batch launcher cannot receive REA's decode paths through cmd.exe: ${cause.message}`;
@@ -227,7 +229,7 @@ const apktoolCommandFailure = (
     });
   return classifyProviderOutcome(providerOutcomeOf(failure), {
     operation,
-    capturedOutput: capturedApktoolCommandOutput,
+    capturedOutput: capturedProviderOutput,
     // Ownership preparation can retain output before any process exists.
     details: capturedOutput === undefined ? {} : { capturedOutput },
     timeout: {
@@ -277,6 +279,8 @@ const apktoolCommandFailure = (
 export interface ApktoolProviderOptions {
   readonly environment?: Readonly<Record<string, string | undefined>>;
   readonly removeWorkspace?: (path: string) => Promise<void>;
+  /** The host apktool runs on; defaults to the running host. */
+  readonly platform?: NodeJS.Platform;
 }
 
 type DecodeFacts = Pick<ApktoolDecodeResult, "client" | "target" | "locale"> &
@@ -294,6 +298,7 @@ type DecodeFacts = Pick<ApktoolDecodeResult, "client" | "target" | "locale"> &
  * (`--no-src`) because Java-source recovery belongs to the JADX family.
  */
 export class ApktoolProvider {
+  private readonly platform: NodeJS.Platform;
   private readonly selectedEnvironment:
     | Readonly<Record<string, string | undefined>>
     | undefined;
@@ -309,17 +314,18 @@ export class ApktoolProvider {
   #closePromise: Promise<void> | undefined;
 
   constructor(options: ApktoolProviderOptions = {}) {
+    this.platform = options.platform ?? HOST_PLATFORM.platform;
     this.selectedEnvironment =
       options.environment === undefined
         ? undefined
-        : snapshotEnvironment(options.environment, HOST_PLATFORM.platform);
+        : snapshotEnvironment(options.environment, this.platform);
     this.removeWorkspace = options.removeWorkspace;
   }
 
   private operationEnvironment(): Readonly<NodeJS.ProcessEnv> {
     return (
       this.selectedEnvironment ??
-      snapshotEnvironment(process.env, HOST_PLATFORM.platform)
+      snapshotEnvironment(process.env, this.platform)
     );
   }
 
@@ -359,12 +365,13 @@ export class ApktoolProvider {
     try {
       const selection = await resolveApktoolCommand(
         environment,
-        process.platform,
+        this.platform,
         signal,
       );
       await inspectApktoolClient(selection, this.#commands, {
         signal,
         environment,
+        platform: this.platform,
       });
       throwIfCancelled("inspect_apktool_client", signal);
       return {
@@ -439,12 +446,13 @@ export class ApktoolProvider {
     try {
       selection = await resolveApktoolCommand(
         environment,
-        process.platform,
+        this.platform,
         signal,
       );
       identity = await inspectApktoolClient(selection, this.#commands, {
         signal,
         environment,
+        platform: this.platform,
       });
     } catch (cause) {
       if (cause instanceof AnalysisError)
@@ -598,6 +606,7 @@ export class ApktoolProvider {
         environment,
         this.#commands,
         root,
+        this.platform,
       );
       if (!decoded.ok) {
         throw decoded.error;

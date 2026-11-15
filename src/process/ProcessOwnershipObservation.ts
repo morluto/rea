@@ -2,6 +2,7 @@ import { readProcessInspectionFile } from "./ProcessInspectionFile.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   describeSystemPs,
+  PROCESS_INVENTORY_PS_ARGUMENTS,
   LINUX_SYSTEM_PS_LOCATIONS,
   resolveSystemPs,
   type SystemPs,
@@ -756,7 +757,7 @@ const identityFact = (
   };
 
 const readIdentityFacts = async (
-  processes: readonly ProcessTableEntry[],
+  processes: readonly Pick<ProcessTableEntry, "pid">[],
   host: ProcessOwnershipHost,
   phase: "before" | "after",
   signal?: AbortSignal,
@@ -809,7 +810,7 @@ export const readNativeProcessIdentityMap = async (
  * A deadline, unavailable read or changed generation remains explicit evidence.
  */
 export const settleExitingProcessIdentities = async (
-  processes: readonly ProcessTableEntry[],
+  processes: readonly Pick<ProcessTableEntry, "pid">[],
   host: ProcessOwnershipHost,
   initial: ReadonlyMap<number, ProcessIdentityObservation>,
   signal?: AbortSignal,
@@ -1240,7 +1241,7 @@ export const createSystemProcessOwnershipHost = (
     try {
       ({ stdout } = await execFileOutput(
         ps.command,
-        ["-axo", "pid=,ppid=,pgid=,uid=,stat=,command="],
+        PROCESS_INVENTORY_PS_ARGUMENTS,
         {
           env: hostEnvironment,
           stopSignal: "SIGTERM",
@@ -1726,14 +1727,13 @@ export const observeProcessStartIdentity = async (
 ): Promise<ProcessIdentityObservation | undefined> => {
   if (host.processIdentities === undefined)
     return { state: "unavailable", reason: "process identity is unsupported" };
-  const identity: ProcessIdentityObservation = (
-    await host.processIdentities([{ pid }])
-  ).get(pid) ?? {
-    state: "unavailable",
-    reason: "process identity was not returned",
-  };
-  if (identity.state === "absent" || processIdentityHasExited(identity))
-    return undefined;
+  const identity = liveProcessIdentity(
+    (await host.processIdentities([{ pid }])).get(pid) ?? {
+      state: "unavailable",
+      reason: "process identity was not returned",
+    },
+  );
+  if (identity === undefined) return undefined;
   if (expectedRunId === undefined || identity.state !== "readable")
     return identity;
   const process = (await host.listProcesses()).find(
@@ -1772,10 +1772,19 @@ export const observeProcessStartIdentity = async (
       };
 };
 
+/** An absent or exited identity has no live process; others stay as observed. */
+const liveProcessIdentity = (
+  identity: ProcessIdentityObservation,
+): ProcessIdentityObservation | undefined =>
+  identity.state === "absent" || processIdentityHasExited(identity)
+    ? undefined
+    : identity;
+
 /**
  * Confirm whether the process that held an authenticated bridge has exited.
  * `exiting` is a positively observed native exit in progress (Linux
- * PF_EXITING before state Z); like `present`, it does not confirm exit.
+ * PF_EXITING before state Z) that outlasted the cleanup grace; like
+ * `present`, it does not confirm exit.
  */
 export const observeProcessStartIdentityExit = async (
   pid: number,
@@ -1783,7 +1792,25 @@ export const observeProcessStartIdentityExit = async (
   host: ProcessOwnershipHost = systemProcessOwnershipHost,
 ): Promise<"exited" | "exiting" | "present" | "unverified"> => {
   try {
-    const observed = await observeProcessStartIdentity(pid, host);
+    let observed = await observeProcessStartIdentity(pid, host);
+    // An exiting process closes its sockets before it becomes a zombie, so a
+    // caller that reacts to the closed transport can observe the same
+    // generation mid-exit. The shared settlement waits only for that
+    // positively observed state of the same identity.
+    if (
+      observed?.state === "readable" &&
+      observed.identity === expectedIdentity
+    ) {
+      const settled = (
+        await settleExitingProcessIdentities(
+          [{ pid }],
+          host,
+          new Map([[pid, observed]]),
+        )
+      ).get(pid);
+      observed =
+        settled === undefined ? observed : liveProcessIdentity(settled);
+    }
     if (observed === undefined) return "exited";
     if (observed.state !== "readable") return "unverified";
     if (observed.identity !== expectedIdentity) return "exited";

@@ -3,14 +3,22 @@ import {
   sqliteDatabaseSchema,
 } from "../../domain/sqlite/sqliteDatabase.js";
 import type { ToolContract } from "../toolContractTypes.js";
-import { toolContractMetadata } from "../toolEffects.js";
+import { toolContractMetadata, toolEffects } from "../toolEffects.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 
 /** Snapshot inspection is independent of any active native-analysis target. */
 export const SQLITE_TOOL_CONTRACTS = [
   {
     name: "inspect_sqlite_database",
-    ...toolContractMetadata("inspect_sqlite_database"),
+    cli: true,
+    ...toolContractMetadata(
+      "inspect_sqlite_database",
+      toolEffects({
+        mutatesSession: true,
+        writesFilesystem: true,
+        launchesProcess: true,
+      }),
+    ),
     kind: "artifact-provider",
     requiresActiveTarget: true,
     description:

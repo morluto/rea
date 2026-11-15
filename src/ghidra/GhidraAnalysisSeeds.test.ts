@@ -1,4 +1,4 @@
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { createHash } from "node:crypto";
 import {
   mkdtemp,

@@ -4,11 +4,11 @@ import { mkdir, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { z } from "zod";
 
-import type { AnalysisOperation } from "../application/AnalysisProvider.js";
+import type { AnalysisOperation } from "../ports/AnalysisProvider.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import {
   readGhidraProfileArtifact,
   writeGhidraProfileArtifact,

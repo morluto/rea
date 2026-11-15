@@ -1540,9 +1540,7 @@ it.each([
           {
             path: ["status"],
             code: "custom",
-            message: expect.stringMatching(
-              /status contradicts.*dimensions or function match/i,
-            ),
+            params: { constraint: "status-matches-dimensions" },
           },
         ]);
     }

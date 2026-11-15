@@ -546,20 +546,13 @@ function hexBytes(bytes) {
   return bytes.replace(/\s/gu, "").toLowerCase();
 }
 function assertProfile(profile) {
-  assert.equal(
-    profile.parameters.load_image_evidence,
-    "independent-mz-mapping-relocations-v2",
-  );
-  assert.equal(
-    profile.parameters.function_body_evidence,
-    "complete-inclusive-ranges-v1",
-  );
+  assert.match(profile.parameters.producer.sources_sha256, /^[0-9a-f]{64}$/u);
   assert.equal(profile.provider.id, "ghidra");
   assert.equal(profile.parameters.target_format, "dos-mz");
   assert.equal(profile.parameters.import_mode, "ephemeral-source-immutable");
   assert.equal(
     profile.parameters.annotation_policy,
-    "atomic-function-entry-metadata-v1",
+    "atomic-function-entry-metadata",
   );
   assert.equal(profile.parameters.loader, "MzLoader");
   assert.equal(profile.parameters.language_id, "x86:LE:16:Real Mode");

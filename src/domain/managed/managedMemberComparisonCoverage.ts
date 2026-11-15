@@ -1,8 +1,12 @@
+import { joinCoverageStatus, type CoverageStatus } from "../coverage.js";
 import type {
   ManagedMemberComparisonResult,
   ManagedMemberComparisonSide,
 } from "./managedMemberComparison.js";
-import type { ManagedMemberInspection } from "./managedArtifact.js";
+import {
+  managedInspectionCoverage,
+  type ManagedMemberInspection,
+} from "./managedArtifact.js";
 
 interface ComparisonCoverageInput {
   readonly left: ManagedMemberInspection;
@@ -17,20 +21,22 @@ export const buildComparisonCoverage = ({
   right,
   selectionAgreement,
 }: ComparisonCoverageInput): ManagedMemberComparisonResult["coverage"] => {
-  const leftStatus = sideCoverageStatus(left);
-  const rightStatus = sideCoverageStatus(right);
-  const unknownInput =
-    left.coverage.state !== "complete" ||
-    right.coverage.state !== "complete" ||
-    selectionAgreement !== "same" ||
-    !sameMethodRows(left, right);
+  // An unavailable side examined nothing, and an unknown selection agreement
+  // cannot tell whether both sides cover the same types: either makes the
+  // comparison unknown, even beside a known gap.
+  const joined = joinCoverageStatus([
+    managedInspectionCoverage(left.coverage.state),
+    managedInspectionCoverage(right.coverage.state),
+    selectionAgreement === "unknown"
+      ? "unknown"
+      : selectionAgreement === "different" || !sameMethodRows(left, right)
+        ? "partial"
+        : "complete",
+  ]);
   return {
-    status:
-      !unknownInput && leftStatus === "complete" && rightStatus === "complete"
-        ? "complete-within-inputs"
-        : "partial",
-    left_status: leftStatus,
-    right_status: rightStatus,
+    status: joined === "complete" ? "complete-within-inputs" : joined,
+    left_status: left.coverage.state,
+    right_status: right.coverage.state,
   };
 };
 
@@ -120,15 +126,6 @@ export const managedComparisonScope = (
 };
 
 export type ManagedComparisonScope = ReturnType<typeof managedComparisonScope>;
-
-const sideCoverageStatus = (
-  result: ManagedMemberInspection,
-): ManagedMemberComparisonResult["coverage"]["left_status"] =>
-  result.coverage.state === "unavailable"
-    ? "unavailable"
-    : result.coverage.state === "complete"
-      ? "complete"
-      : "partial";
 
 /** Copy the source's typed capacity facts without retaining unrelated issue inventories. */
 const resourceLimits = (

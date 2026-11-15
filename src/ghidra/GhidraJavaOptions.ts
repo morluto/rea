@@ -2,9 +2,11 @@ import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { withArtifactRegularFile } from "../artifacts/ArtifactFileOperation.js";
+import {
+  type ArtifactResourceScope,
+  ArtifactReaderFailure,
+  withArtifactRegularFile,
+} from "../resources/index.js";
 import { RegularFileOperationCancelled } from "../filesystem/RegularFile.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import { writeGhidraRuntimeFile } from "./GhidraRuntimeFile.js";

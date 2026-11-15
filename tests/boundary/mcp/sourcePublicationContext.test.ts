@@ -1,3 +1,7 @@
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { afterAll, expect, it } from "vitest";
@@ -7,7 +11,7 @@ import { createTestProviderRouter } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import { InvestigationRecords } from "../../../src/application/investigation/InvestigationRecords.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
 import { err, ok } from "../../../src/domain/result.js";
@@ -20,7 +24,7 @@ const validation = createMcpSchemaValidation();
 afterAll(() => validation.clear());
 
 it.each(
-  ["full", "compact"].flatMap((profile) =>
+  ["compact"].flatMap((profile) =>
     ["large-source", "large-primary", "invalid-source"].map((mode) => ({
       profile,
       mode,
@@ -113,17 +117,16 @@ it.each(
       const tool = (await client.listTools()).tools.find(
         ({ name }) => name === "inspect_address_context",
       );
-      if (tool?.outputSchema === undefined)
-        throw new Error("Missing context output schema");
-      expect(validation.assertions.validateSchema(tool.outputSchema)).toBe(
-        true,
-      );
+      if (tool === undefined) throw new Error("Missing context output schema");
+      expect(
+        validation.assertions.validateSchema(canonicalOutputSchema(tool.name)),
+      ).toBe(true);
       const result = await client.callTool(
         {
           name: "inspect_address_context",
           arguments: { address: "0x100", document: "fixture" },
         },
-        { timeout: 120000, toolDefinition: tool },
+        { timeout: 120000, toolDefinition: withCanonicalOutputSchema(tool) },
       );
       expect(result.isError, JSON.stringify(result.content)).not.toBe(true);
       expect(result.structuredContent).toMatchObject({

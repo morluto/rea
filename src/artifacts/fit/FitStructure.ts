@@ -18,9 +18,9 @@ import {
 import {
   DevicetreeLimitFailure,
   parseDevicetree,
-} from "../../firmware/devicetree/DevicetreeParser.js";
-import { BinaryFormatFailure } from "../../native/metadata/BinaryContainer.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
+} from "../../domain/firmware/devicetreeParser.js";
+import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
+import { ArtifactReaderFailure } from "../../resources/index.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 
 // Fixed resource bounds; configurable ceilings are tracked in #6176.
@@ -311,6 +311,7 @@ const imageHashes = (
       throw new ArtifactReaderFailure(
         "integrity",
         `FIT image ${nodeName(image)} ${name} ${algo} value is ${String(value.bytes)} bytes; ${algo} values are ${String(expected)} bytes`,
+        { integrityCheck: "declared-digest" },
       );
     // Copy the value so the devicetree buffer can be released.
     hashes.push({

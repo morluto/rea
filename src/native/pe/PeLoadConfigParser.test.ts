@@ -1,14 +1,11 @@
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { describe, expect, it } from "vitest";
 import {
   inspectPeLoadConfigInputSchema,
   peLoadConfigSchema,
   type PeLoadConfigField,
 } from "../../domain/native/peLoadConfig.js";
-import {
-  parsePeLoadConfig,
-  PeLoadConfigLimitFailure,
-} from "./PeLoadConfigParser.js";
+import { parsePeLoadConfig } from "./PeLoadConfigParser.js";
 import {
   peLoadConfigImage,
   peManySectionsImage,
@@ -100,9 +97,9 @@ describe.each([32, 64] as const)("PE%s load configuration", (bits) => {
     expect(
       (await parse({ bits, callbackCount: 1 }, 1)).examined_callbacks,
     ).toBe(1);
-    await expect(parse({ bits }, 1)).rejects.toBeInstanceOf(
-      PeLoadConfigLimitFailure,
-    );
+    await expect(parse({ bits }, 1)).rejects.toMatchObject({
+      failure: { kind: "limit", limit: { name: "callbacks", maximum: 1 } },
+    });
   });
   it("reports absent directories", async () => {
     expect(await parse({ bits, tls: false, loadConfig: false })).toMatchObject({

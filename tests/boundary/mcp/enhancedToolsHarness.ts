@@ -6,7 +6,7 @@ import {
   type JsonValue,
 } from "../../../src/domain/jsonValue.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../../../src/ports/AnalysisProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
 
 export const PROCEDURES = {
