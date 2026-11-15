@@ -1201,6 +1201,13 @@ const patchWebContents = (webContents, windowId) => {
 // and keep the process alive so the provider reads the refusal, fails the
 // capture, and terminates the process it owns.
 let singleInstanceLockRefused = false;
+// Resolves when the lock is refused so the provider can stop actions that
+// wait for a window the stopped path would have opened. The snapshot's
+// `single_instance_lock_refused` remains the fact the provider reports.
+let announceSingleInstanceLockRefusal = () => undefined;
+globalThis.__reaElectronSingleInstanceLockRefusal = new Promise((resolve) => {
+  announceSingleInstanceLockRefusal = () => resolve(true);
+});
 const singleInstanceLockRefusal = new Error(
   "Another instance holds this application's single-instance lock",
 );
@@ -1223,6 +1230,7 @@ const patchSingleInstanceLock = (app) => {
         "uncaughtException",
         () => undefined,
       ]);
+      announceSingleInstanceLockRefusal();
     }
     throw singleInstanceLockRefusal;
   };

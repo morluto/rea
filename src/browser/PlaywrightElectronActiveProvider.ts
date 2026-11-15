@@ -50,6 +50,7 @@ import {
   runElectronActions,
   readApplicationState,
   readFinalApplicationState,
+  watchSingleInstanceLockRefusal,
   type ElectronHookSnapshot,
 } from "./PlaywrightElectronActiveActions.js";
 import { projectElectronActiveCapture } from "./PlaywrightElectronActiveProjection.js";
@@ -125,8 +126,12 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
     let lineage: ProcessLineageObservation | undefined;
     let capture: ElectronActiveObservationResult | undefined;
     let paths: ElectronPaths | undefined;
-    let initialState:
-      | Awaited<ReturnType<typeof readApplicationState>>
+    // The latest completed snapshot, retained when a later stage fails.
+    let retained:
+      | {
+          readonly stage: "initial" | "final";
+          readonly state: Awaited<ReturnType<typeof readApplicationState>>;
+        }
       | undefined;
     let actions: ElectronActiveObservationResult["actions"] = [];
     let outcome: Result<ElectronActiveObservationResult, AnalysisError>;
@@ -225,16 +230,27 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         ...(captureBaseline === undefined ? {} : { captureBaseline }),
       };
       lineage = await observeOwnedProcessLineage(ownership);
-      initialState = await runWithExecutionLimits(
+      const initialState = await runWithExecutionLimits(
         readApplicationState(application),
         options.signal,
         startupDeadline,
       );
+      retained = { stage: "initial", state: initialState };
       refuseHandedOffInstance(initialState.hookSnapshot);
+      // A lock refused while actions run stops the path that would open their
+      // windows, so the refusal also ends pending actions; the final snapshot
+      // then reports it.
+      const handedOff = watchSingleInstanceLockRefusal(application);
       const actionOutcome = await runElectronActions(
         application,
         input,
-        options,
+        {
+          ...options,
+          signal:
+            options.signal === undefined
+              ? handedOff
+              : AbortSignal.any([options.signal, handedOff]),
+        },
         this.#resources,
       );
       actions = actionOutcome.actions;
@@ -244,21 +260,26 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         application,
         options.signal,
       );
+      const finalCapture = projectElectronActiveCapture(paths, actions, state);
+      retained = { stage: "final", state };
       refuseHandedOffInstance(state.hookSnapshot);
-      capture = projectElectronActiveCapture(paths, actions, state);
+      capture = finalCapture;
       outcome = ok(capture);
     } catch (cause: unknown) {
-      if (paths !== undefined && initialState !== undefined) {
+      if (paths !== undefined && retained !== undefined) {
         const retainedCapture = projectElectronActiveCapture(
           paths,
           actions,
-          initialState,
+          retained.state,
         );
+        const reason = cause instanceof Error ? cause.message : String(cause);
         capture = {
           ...retainedCapture,
           limitations: [
             ...retainedCapture.limitations,
-            `Capture stopped after the initial pre-action snapshot: ${cause instanceof Error ? cause.message : String(cause)}. Final Windows, metrics, IPC, and timeline state is unknown; the retained snapshot may omit action effects.`,
+            retained.stage === "initial"
+              ? `Capture stopped after the initial pre-action snapshot: ${reason}. Final Windows, metrics, IPC, and timeline state is unknown; the retained snapshot may omit action effects.`
+              : `Capture failed after its final snapshot: ${reason}. The retained final snapshot includes action effects.`,
           ],
         };
       }
