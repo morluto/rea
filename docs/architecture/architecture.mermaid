@@ -74,6 +74,7 @@ graph TD
         WINDOWS["src/windows/<br/>Windows host boundary adapters<br/>package loader, opaque handles, owned jobs and private runtimes"]
         WINDOWS_NATIVE["native/windows/src/<br/>Node-API implementation<br/>NTFS/ReFS admission, protected DACLs and atomic Job Object assignment"]
         FILESYSTEM["src/filesystem/<br/>owned file and directory handles<br/>stable reads, staged output, caller paths"]
+        HOPPER_PATHS["src/hopperPaths/<br/>Hopper install paths and launcher discovery<br/>read by the Hopper provider, doctor and setup"]
         RESOURCES["src/resources/<br/>shared analysis resource owners<br/>cleanup leases, artifact reader contract, resource scope, owned file operations, stable reads"]
     end
 
@@ -215,5 +216,8 @@ graph TD
     RUNTIME --> DOMAIN
     PROCESS --> FILESYSTEM
     PROCESS --> RESOURCES
+    HOPPER --> HOPPER_PATHS
+    APP --> HOPPER_PATHS
+    HOPPER_PATHS --> FILESYSTEM
     AUX --> FILESYSTEM
     APP --> FILESYSTEM

@@ -31,6 +31,7 @@ export const UNIT_LAYERS = Object.freeze(
       "compression",
       "config",
       "filesystem",
+      "hopperPaths",
       "platform",
       "process",
       "resources",

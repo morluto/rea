@@ -205,6 +205,9 @@ it.each([
   ["src/resources/ArtifactReader.ts", "binary_layout"],
   ["src/resources/ArtifactReader.ts", "evm"],
   ["src/resources/ArtifactReader.ts", "web_network"],
+  // Hopper launcher discovery moved out of config; the packaged Hopper
+  // baseline still checks the launcher it selects.
+  ["src/hopperPaths/HopperLauncherDiscovery.ts", "package"],
   ["bridge/native/rea_lldb_tracer.py", "python"],
   ["bridge/pwndbg/test_core_context.py", "python"],
   ["tests/support/analysis-efficiency/test_catalog_eval.py", "python"],

@@ -1,14 +1,11 @@
 {
   "upward": {
-    "android -> application": 1,
-    "apktool -> application": 1,
     "application -> catalogDiscovery.ts": 1,
     "application -> catalogIdentity.ts": 2,
     "application -> mcpStartupPolicy.ts": 3,
     "application -> serverIdentity.ts": 1,
     "artifacts -> application": 2,
     "composition -> cliCommandNames.ts": 3,
-    "config -> application": 2,
     "config -> native": 1,
     "desktop -> application": 5,
     "dotnet -> application": 2,
@@ -17,7 +14,6 @@
   },
   "cycles": [
     "application <-> artifacts",
-    "application <-> config",
     "application <-> desktop",
     "application <-> dotnet",
     "artifacts <-> firmware",

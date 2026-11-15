@@ -299,7 +299,6 @@
     "src/composition/auxiliaryAnalysisProviders.ts": 1,
     "src/composition/binary.ts": 2,
     "src/composition/reverseEngineering.ts": 1,
-    "src/config/parseConfig.ts": 2,
     "src/cutter/CutterBridgeClient.ts": 1,
     "src/desktop/BuildComputerEnvironment.ts": 3,
     "src/desktop/BuildSecretFiles.ts": 1,

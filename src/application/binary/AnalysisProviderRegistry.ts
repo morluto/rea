@@ -53,7 +53,7 @@ import {
 } from "./AnalysisProviderEvaluation.js";
 import { withCandidateRejections } from "./AnalysisProviderCandidateDiagnostics.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
-import { ownedProcessPrerequisiteAvailability } from "../ownedProcessAvailability.js";
+import { ownedProcessPrerequisiteAvailability } from "../../providers/ownedProcessAvailability.js";
 
 /** Where a selected provider's choice came from; never a priority or fallback. */
 export type AnalysisProviderSelectionSource =
