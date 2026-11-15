@@ -116,18 +116,6 @@ export const firstExisting = async (
   return fallback;
 };
 
-export const clineLocation = async (
-  context: McpRegistrationLocationContext,
-): Promise<McpRegistrationGlobalLocation> =>
-  location(
-    join(
-      vscodeUserDirectory(rootContext(context)),
-      "globalStorage",
-      "saoudrizwan.claude-dev",
-      "settings",
-      "cline_mcp_settings.json",
-    ),
-  );
 export const gooseLocation = async (
   context: McpRegistrationLocationContext,
 ): Promise<McpRegistrationGlobalLocation> => {
@@ -169,13 +157,6 @@ export const fixedProjectLocation =
       ),
     };
   };
-export const kiroLocation = async (
-  context: McpRegistrationLocationContext,
-): Promise<McpRegistrationGlobalLocation> =>
-  location(
-    join(context.home, ".kiro", "settings", "mcp.json"),
-    join(context.home, ".kiro"),
-  );
 export const mcporterLocation = async (
   context: McpRegistrationLocationContext,
 ): Promise<McpRegistrationGlobalLocation> => {
@@ -186,36 +167,8 @@ export const mcporterLocation = async (
     root,
   );
 };
-export const zedLocation = async (
-  context: McpRegistrationLocationContext,
-): Promise<McpRegistrationGlobalLocation> =>
-  // Zed's paths::config_dir. On Windows it reads the RoamingAppData known
-  // folder, which APPDATA normally names; on Linux, `dirs::config_dir`
-  // admits only an absolute XDG_CONFIG_HOME.
-  location(
-    context.platform === "darwin"
-      ? join(context.home, ".config", "zed", "settings.json")
-      : context.platform === "win32"
-        ? join(windowsRoaming(context), "Zed", "settings.json")
-        : join(
-            absoluteXdgConfigHome({
-              home: context.home,
-              env: context.environment,
-            }),
-            "zed",
-            "settings.json",
-          ),
-  );
 
 export const fxLocation = async (
   context: McpRegistrationLocationContext,
 ): Promise<McpRegistrationGlobalLocation> =>
   location(join(context.home, ".fx", "mcp.json"));
-export const mastraLocation = async (
-  context: McpRegistrationLocationContext,
-): Promise<McpRegistrationGlobalLocation> =>
-  location(join(context.home, ".mastracode", "mcp.json"));
-export const ampLocation = async (
-  context: McpRegistrationLocationContext,
-): Promise<McpRegistrationGlobalLocation> =>
-  location(join(context.home, ".config", "amp", "settings.json"));

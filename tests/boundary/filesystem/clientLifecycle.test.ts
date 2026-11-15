@@ -80,6 +80,11 @@ describe("client configuration filesystem lifecycle", () => {
       "zcode",
       "dsh",
       "freebuff",
+      "cline_vscode",
+      "kiro",
+      "mastracode",
+      "zed",
+      "amp",
       "grok_bot",
     ]);
     expect(

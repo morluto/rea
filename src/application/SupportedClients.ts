@@ -14,6 +14,7 @@ import {
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { appendCallerPath } from "../filesystem/callerPath.js";
 import {
+  absoluteXdgConfigHome,
   vscodeUserDirectory,
   xdgConfigHomeOrDefault,
 } from "./ClientConfigRoots.js";
@@ -75,6 +76,8 @@ export interface SetupClient {
     | "zcode_fallback"
     | "zcode"
     | "dsh"
+    | "zed"
+    | "amp"
     | "unsupported";
 }
 
@@ -540,6 +543,27 @@ const devinDirectory = ({ home, platform, env }: ClientPathContext): string =>
  * FreeBuff-specific: REA's own skill installs create it, so it cannot
  * prove FreeBuff is installed.
  */
+/** The Cline VS Code extension's settings in VS Code's global storage. */
+const clineVscodeSettingsDirectory = (context: ClientPathContext): string =>
+  join(
+    vscodeUserDirectory(context),
+    "globalStorage",
+    "saoudrizwan.claude-dev",
+    "settings",
+  );
+
+/**
+ * Zed's paths::config_dir. On Windows it reads the RoamingAppData known
+ * folder, which APPDATA normally names; on Linux, `dirs::config_dir` admits
+ * only an absolute XDG_CONFIG_HOME.
+ */
+const zedConfigDirectory = ({ home, platform, env }: ClientPathContext) =>
+  platform === "darwin"
+    ? join(home, ".config", "zed")
+    : platform === "win32"
+      ? join(windowsAppDataRoots(home, env).roaming, "Zed")
+      : join(absoluteXdgConfigHome({ home, env }), "zed");
+
 const freebuffProfileDirectory = ({ home }: ClientPathContext): string =>
   join(home, ".config", "freebuff-desktop");
 
@@ -1056,6 +1080,73 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     // proves neither product is installed; see clientOwnershipEvidencePaths.
     sharedRegistration: true,
     format: "json",
+  }),
+  defineClient({
+    name: "cline_vscode",
+    mcpAdd: { aliases: ["cline-vscode"] },
+    registrationConnection: { kind: "cline" },
+    displayName: "Cline VS Code extension",
+    configPath: (context: ClientPathContext) =>
+      join(clineVscodeSettingsDirectory(context), "cline_mcp_settings.json"),
+    markerPath: clineVscodeSettingsDirectory,
+    format: "json",
+  }),
+  defineClient({
+    name: "kiro",
+    mcpAdd: { aliases: ["kiro"], projectPaths: [".kiro/settings/mcp.json"] },
+    registrationConnection: {
+      kind: "flat",
+      fields: ["type", "url"],
+      stdio: [
+        { kind: "optional-enum", field: "type", values: ["stdio"] },
+        { kind: "present", field: "url" },
+      ],
+    },
+    // The IDE, CLI and web clients share the user file.
+    displayName: "Kiro",
+    configPath: [".kiro", "settings", "mcp.json"],
+    markerPath: [".kiro"],
+    format: "json",
+  }),
+  defineClient({
+    name: "mastracode",
+    mcpAdd: { aliases: ["mastra"], projectPaths: [".mastracode/mcp.json"] },
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url"],
+      stdio: [{ kind: "string", field: "url" }],
+    },
+    displayName: "Mastra Code",
+    configPath: [".mastracode", "mcp.json"],
+    markerPath: [".mastracode"],
+    format: "json",
+  }),
+  defineClient({
+    name: "zed",
+    mcpAdd: { projectPaths: [".zed/settings.json"] },
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url"],
+      stdio: [{ kind: "present", field: "url" }],
+    },
+    displayName: "Zed",
+    configPath: (context: ClientPathContext) =>
+      join(zedConfigDirectory(context), "settings.json"),
+    markerPath: zedConfigDirectory,
+    format: "zed",
+  }),
+  defineClient({
+    name: "amp",
+    mcpAdd: {},
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url"],
+      stdio: [{ kind: "present", field: "url" }],
+    },
+    displayName: "Amp",
+    configPath: [".config", "amp", "settings.json"],
+    markerPath: [".config", "amp"],
+    format: "amp",
   }),
   defineClient({
     name: "grok_bot",
