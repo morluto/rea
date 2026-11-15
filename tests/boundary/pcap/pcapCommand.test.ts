@@ -278,6 +278,66 @@ it.each([
   },
 );
 
+posixIt(
+  "names the selected tool on a launch refusal Node throws synchronously",
+  async () => {
+    // Node throws ENOTDIR synchronously with a bare `spawn` syscall rather
+    // than emitting `spawn <path>`. A path through a regular file refuses
+    // the same way on every POSIX host; ENOEXEC does not, because Linux
+    // libc may retry a headerless file through /bin/sh.
+    const directory = await createTestTempDirectory("rea-pcap-enotdir-");
+    const file = join(directory, "not-a-directory");
+    await writeFile(file, "");
+    const command = join(file, "tshark");
+    const failure = await runPcapCommand({
+      operation: "inspect_pcap_client",
+      command,
+      arguments: ["--version"],
+      limits: { timeoutMs: 5000, maxOutputBytes: 1024 },
+      environment: {},
+      signal: undefined,
+      launcher: spawnOwnedProviderProcess,
+      retain: () => {
+        throw new Error("No provider resources were acquired");
+      },
+    }).catch((cause: unknown) => cause);
+    expect(failure).toMatchObject({
+      _tag: "AnalysisCapabilityUnavailableError",
+      message: expect.stringContaining("was not found (ENOTDIR)"),
+    });
+  },
+);
+
+it("reports the Windows native launcher's refusal of the selected tool as an unavailable tool", async () => {
+  const command = "C:\\Wireshark\\tshark.exe";
+  const failure = await runPcapCommand({
+    operation: "inspect_pcap_capture",
+    command,
+    arguments: ["-r", "/authored-capture.pcap"],
+    inputPath: "/authored-capture.pcap",
+    limits: { timeoutMs: 5000, maxOutputBytes: 1024 },
+    environment: {},
+    signal: undefined,
+    launcher: async () => {
+      // The native addon names the refused executable without Node's
+      // `syscall` and `path` fields.
+      throw Object.assign(new Error("refused"), {
+        code: "ENOENT",
+        constraint: "Create process atomically inside owned Job Object failed",
+        requestedPath: command,
+        win32Code: 2,
+      });
+    },
+    retain: () => {
+      throw new Error("No provider resources were acquired");
+    },
+  }).catch((cause: unknown) => cause);
+  expect(failure).toMatchObject({
+    _tag: "AnalysisCapabilityUnavailableError",
+    message: expect.stringContaining("was not found (ENOENT)"),
+  });
+});
+
 it("attributes a refused limiter spawn to the limiter, not Wireshark", async () => {
   const limiter = await selectArtifactCommandPath(process.execPath);
   const failure = await runPcapCommand({
