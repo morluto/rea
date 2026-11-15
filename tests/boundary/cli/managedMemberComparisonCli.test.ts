@@ -143,14 +143,20 @@ cliTest(
       if (field === "rightPath")
         expect(result.json).toMatchObject({
           details: {
-            partial_observation: {
-              operation: "inspect_managed_members",
-              subject: { local_path: good },
-            },
+            argument_observations: [
+              {
+                argument: "left",
+                observation: {
+                  operation: "inspect_managed_members",
+                  subject: { local_path: good },
+                },
+              },
+            ],
           },
         });
       else
-        expect(result.json).not.toHaveProperty("details.partial_observation");
+        expect(result.json).not.toHaveProperty("details.argument_observations");
+      expect(result.json).not.toHaveProperty("details.partial_observation");
     }
 
     const inspection = await cli.run({
@@ -433,10 +439,15 @@ it("retains the left Evidence when the right target's cleanup fails", async () =
       code: "cleanup_incomplete",
       details: {
         resources: [rightPath],
-        partial_observation: {
-          operation: "inspect_managed_members",
-          subject: { local_path: leftPath },
-        },
+        argument_observations: [
+          {
+            argument: "left",
+            observation: {
+              operation: "inspect_managed_members",
+              subject: { local_path: leftPath },
+            },
+          },
+        ],
       },
     });
     expect(owners.size).toBe(1);
@@ -446,7 +457,7 @@ it("retains the left Evidence when the right target's cleanup fails", async () =
   }
 });
 
-it("retains the left Evidence when interrupted as the last target settles", async () => {
+it("retains both sources' Evidence when interrupted as the last target settles", async () => {
   const { leftPath, rightPath } = await comparisonFixture();
   const runner = createDirectAnalysis({}).runManagedProviderEvidence;
   const previousExitCode = process.exitCode;
@@ -459,10 +470,22 @@ it("retains the left Evidence when interrupted as the last target settles", asyn
     expect(result).toMatchObject({
       code: "cancelled",
       details: {
-        partial_observation: {
-          operation: "inspect_managed_members",
-          subject: { local_path: leftPath },
-        },
+        argument_observations: [
+          {
+            argument: "left",
+            observation: {
+              operation: "inspect_managed_members",
+              subject: { local_path: leftPath },
+            },
+          },
+          {
+            argument: "right",
+            observation: {
+              operation: "inspect_managed_members",
+              subject: { local_path: rightPath },
+            },
+          },
+        ],
       },
     });
     expect(process.exitCode).toBe(130);
@@ -471,7 +494,7 @@ it("retains the left Evidence when interrupted as the last target settles", asyn
   }
 });
 
-it("retains completed comparison Evidence when interrupted as the comparison settles", async () => {
+it("retains the comparison and both sources' Evidence when interrupted as the comparison settles", async () => {
   const { leftPath, rightPath } = await comparisonFixture();
   const parse = managedMemberComparisonResultSchema.parse.bind(
     managedMemberComparisonResultSchema,
@@ -495,6 +518,16 @@ it("retains completed comparison Evidence when interrupted as the comparison set
             operation: "compare_managed_members",
             parameters: { left_path: leftPath, right_path: rightPath },
           },
+          argument_observations: [
+            {
+              argument: "left",
+              observation: { subject: { local_path: leftPath } },
+            },
+            {
+              argument: "right",
+              observation: { subject: { local_path: rightPath } },
+            },
+          ],
         },
       },
     );
