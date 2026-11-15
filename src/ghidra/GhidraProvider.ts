@@ -18,6 +18,7 @@ import { resolveGhidraProject } from "./GhidraProjectSnapshot.js";
 import { DeferredAnalysisClient } from "../providers/DeferredAnalysisClient.js";
 import type { ProviderInspectionScope } from "../application/ProviderInspectionScope.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
+import { finalizedResult, runOwned } from "../providers/runOwned.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
@@ -196,7 +197,9 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       "binary_session",
       scope,
     );
-    const admission = admitGhidraInstallation(installation);
+    const admission = admitGhidraInstallation(installation, {
+      existingProject: this.config.ghidraExistingProject !== undefined,
+    });
     const readiness = admission.windowsNative;
     const availability = this.#availability(installation, admission);
     if (availability.status === "available" && signal.aborted)
@@ -221,22 +224,18 @@ export class GhidraProvider implements AnalysisProviderCandidate {
     admission: GhidraAdmission,
   ): ProviderAvailability {
     const diagnostics = ghidraInstallationDiagnostics(installation);
-    // Runtime configuration doctor does not inspect.
-    if (
-      this.config.ghidraExistingProject !== undefined &&
-      installation.platform === "win32"
-    )
-      return {
-        status: "unavailable",
-        code: "unsupported_host",
-        reason: EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
-        remediation: EXISTING_PROJECT_WINDOWS_REMEDIATION,
-        diagnostics,
-      };
     if (admission.admitted)
       return { status: "available", code: null, reason: null, diagnostics };
     const { refusal } = admission;
     switch (refusal.kind) {
+      case "existing_project_unsupported_host":
+        return {
+          status: "unavailable",
+          code: "unsupported_host",
+          reason: EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
+          remediation: EXISTING_PROJECT_WINDOWS_REMEDIATION,
+          diagnostics,
+        };
       case "installation_rejected":
         return {
           status: "unavailable",
@@ -383,27 +382,31 @@ export class GhidraProvider implements AnalysisProviderCandidate {
   ): Promise<Result<AnalysisProfileResolution, AnalysisError>> {
     try {
       return await this.#runInspectionWork(async (signal) => {
-        const result = await this.#resolveProfile(target, {
+        const resolved = await this.#resolveProfile(target, {
           ...options,
           signal,
         });
-        if (!result.ok && result.error instanceof AnalysisCancelledError)
+        if (!resolved.ok && resolved.error instanceof AnalysisCancelledError)
           return err(
             analysisClientFailureForOperation(
-              result.error,
+              resolved.error,
               "ghidra",
               "open_binary",
             ),
           );
-        if (result.ok && signal.aborted)
-          return err(
-            cancelledBy("open_binary", signal, {
-              diagnostics: {
-                completed_profile_digest: result.value.profile?.digest ?? null,
-              },
+        // Resolution owns no resource of its own; runOwned still decides
+        // whether a completed profile survives a cancellation.
+        return finalizedResult(
+          await runOwned(async () => resolved, {
+            providerId: "ghidra",
+            operation: "open_binary",
+            signal,
+            close: async () => undefined,
+            diagnostics: (resolution) => ({
+              completed_profile_digest: resolution.profile?.digest ?? null,
             }),
-          );
-        return result;
+          }),
+        );
       }, options?.signal);
     } catch (cause: unknown) {
       return err(

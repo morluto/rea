@@ -1,4 +1,11 @@
-import { lstat, mkdir, readlink, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  readlink,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { join, sep as separator } from "node:path";
 
 import { expect, it as test } from "vitest";
@@ -8,6 +15,7 @@ import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js
 import { fakeKunaCalls, writeFakeKuna } from "./fakeKuna.js";
 import { createSystemDoctorHost } from "../../../../src/doctorRuntime.js";
 import { runDoctorOwned } from "../../../../src/application/Doctor.js";
+import { KunaProvider } from "../../../../src/kuna/KunaProvider.js";
 import {
   AnalysisCancelledError,
   OwnerCancellation,
@@ -64,6 +72,12 @@ it("publishes the caller's explicit settings once the installation validates", a
       {
         name: "installation",
         ok: true,
+        remediation: null,
+        details: { command: kuna },
+      },
+      {
+        name: "version",
+        ok: true,
         detail: expect.stringMatching(
           /reports Kuna 1\.990 \(sha256 [a-f0-9]{64}\)\.$/u,
         ),
@@ -88,7 +102,8 @@ it("flags an unverified release without failing the installation", async () => {
 
   const inspection = await inspectKunaProvider({ REA_KUNA_COMMAND: kuna });
 
-  expect(inspection.checks[0]).toMatchObject({
+  expect(inspection.checks[1]).toMatchObject({
+    name: "version",
     ok: true,
     detail: expect.stringContaining(
       "You may continue with the selected unverified release.",
@@ -115,9 +130,10 @@ it("reports a cache root REA cannot use without creating anything", async () => 
     REA_KUNA_CACHE_DIR: existing,
   });
 
-  expect(blocked.available).toBe(false);
+  // The cache is a health check; admission (settings and command) decides readiness.
+  expect(blocked.available).toBe(true);
   expect(blocked.checks[0]).toMatchObject({ name: "installation", ok: true });
-  expect(blocked.checks[1]).toMatchObject({
+  expect(blocked.checks.find(({ name }) => name === "cache")).toMatchObject({
     name: "cache",
     ok: false,
     code: "open_options_invalid",
@@ -126,7 +142,7 @@ it("reports a cache root REA cannot use without creating anything", async () => 
     REA_KUNA_COMMAND: kuna,
     REA_KUNA_CACHE_DIR: occupied,
   });
-  expect(ready.checks[1]).toMatchObject({
+  expect(ready.checks.find(({ name }) => name === "cache")).toMatchObject({
     name: "cache",
     ok: true,
     detail: expect.stringContaining(`cached in ${existing}`),
@@ -150,12 +166,14 @@ it("reports a cache root REA cannot create under its nearest existing parent", a
     REA_KUNA_CACHE_DIR: join(occupied, "cache"),
   });
 
-  expect(underReadOnly.checks[1]).toMatchObject({
+  expect(
+    underReadOnly.checks.find(({ name }) => name === "cache"),
+  ).toMatchObject({
     name: "cache",
     ok: false,
     detail: expect.stringContaining(`${readOnly} is not writable`),
   });
-  expect(underFile.checks[1]).toMatchObject({
+  expect(underFile.checks.find(({ name }) => name === "cache")).toMatchObject({
     name: "cache",
     ok: false,
     // stat reports ENOTDIR for a path beneath a regular file.
@@ -196,8 +214,8 @@ it("reports a dangling cache link as unusable and accepts a resolving link", asy
   });
 
   for (const blocked of [direct, trailing, beneath]) {
-    expect(blocked.available).toBe(false);
-    expect(blocked.checks[1]).toMatchObject({
+    expect(blocked.available).toBe(true);
+    expect(blocked.checks.find(({ name }) => name === "cache")).toMatchObject({
       name: "cache",
       ok: false,
       code: "open_options_invalid",
@@ -206,19 +224,21 @@ it("reports a dangling cache link as unusable and accepts a resolving link", asy
       ),
     });
   }
-  expect(trailing.checks[1]).toMatchObject({
+  expect(trailing.checks.find(({ name }) => name === "cache")).toMatchObject({
     detail: expect.stringContaining(`${dangling}${separator}`),
     details: { cache_root: `${dangling}${separator}` },
   });
   for (const usable of [ready, readyTrailing]) {
     expect(usable.available).toBe(true);
-    expect(usable.checks[1]).toMatchObject({
+    expect(usable.checks.find(({ name }) => name === "cache")).toMatchObject({
       name: "cache",
       ok: true,
       detail: expect.stringContaining("cached in"),
     });
   }
-  expect(ready.checks[1]?.detail).toContain(resolving);
+  expect(ready.checks.find(({ name }) => name === "cache")?.detail).toContain(
+    resolving,
+  );
   // Diagnosis neither creates the cache nor repairs the link.
   expect(await readlink(dangling)).toBe(missing);
   await expect(lstat(missing)).rejects.toMatchObject({ code: "ENOENT" });
@@ -238,8 +258,8 @@ it("keeps a trailing backslash as part of a POSIX cache path", async () => {
     REA_KUNA_CACHE_DIR: named,
   });
 
-  expect(inspection.available).toBe(false);
-  expect(inspection.checks[1]).toMatchObject({
+  expect(inspection.available).toBe(true);
+  expect(inspection.checks.find(({ name }) => name === "cache")).toMatchObject({
     name: "cache",
     ok: false,
     code: "open_options_invalid",
@@ -419,3 +439,41 @@ it.each([
     await expect(lstat(command)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );
+
+it.each([
+  { name: "a failing version probe", setup: "probe" },
+  { name: "a non-executable command", setup: "mode" },
+  { name: "a missing command", setup: "missing" },
+] as const)("agrees with runtime availability for $name", async ({ setup }) => {
+  const root = await createTestTempDirectory("rea-kuna-doctor-admission-");
+  const kuna =
+    setup === "missing"
+      ? join(root, "missing-kuna")
+      : await writeFakeKuna(
+          root,
+          setup === "probe" ? { version: { exit: 3 } } : {},
+        );
+  if (setup === "mode") await chmod(kuna, 0o644);
+  const environment = { REA_KUNA_COMMAND: kuna };
+
+  const doctor = await inspectKunaProvider(environment);
+  const runtime = new KunaProvider(environment).inspectAvailability();
+
+  expect(doctor.available).toBe(runtime.status === "available");
+  expect(doctor.available).toBe(setup === "probe");
+  if (runtime.status === "unavailable")
+    expect(doctor.checks[0]).toMatchObject({
+      name: "installation",
+      ok: false,
+      code: runtime.code,
+      detail: runtime.reason,
+      remediation: runtime.remediation,
+    });
+  // The version probe is a health check reported beside admission.
+  if (setup === "probe")
+    expect(doctor.checks[1]).toMatchObject({
+      name: "version",
+      ok: false,
+      code: "version_unresolved",
+    });
+});

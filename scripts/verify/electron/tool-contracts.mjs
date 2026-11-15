@@ -3,6 +3,7 @@ import {
   withVerifierCleanup,
 } from "../../lib/verifier-cleanup.mjs";
 import { requireMcpToolError } from "../../lib/mcp-verifier-results.mjs";
+import { schemaVerifierEnvironment } from "../../lib/mcp-verification-environment.mjs";
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -77,7 +78,8 @@ bridge.exposeInMainWorld("fixture", {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [entrypoint, "mcp"],
-    env: {
+    // Results are validated against the listed complete output contracts.
+    env: schemaVerifierEnvironment({
       ...Object.fromEntries(
         ["DISPLAY", "XAUTHORITY", "WAYLAND_DISPLAY"].flatMap((name) =>
           process.env[name] === undefined ? [] : [[name, process.env[name]]],
@@ -86,7 +88,7 @@ bridge.exposeInMainWorld("fixture", {
       PATH: process.env.PATH,
       REA_LOG_LEVEL: "silent",
       HOPPER_LAUNCHER_PATH: "/rea-unconfigured/hopper",
-    },
+    }),
     stderr: "pipe",
   });
   const client = new Client({ name: "electron-real-e2e", version: "1" });

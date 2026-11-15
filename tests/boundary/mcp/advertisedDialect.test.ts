@@ -67,6 +67,67 @@ describe("portable regex grammar", () => {
   });
 });
 
+describe("nullable values", () => {
+  const check = (properties: Record<string, unknown>) =>
+    advertisedInputDialectViolations({
+      name: "probe",
+      inputSchema: { type: "object", properties },
+    }).map(({ path, rule, detail }) => [path, rule, detail]);
+
+  it("accepts anyOf one typed branch and null below the root", () => {
+    expect(
+      check({
+        limit: {
+          description: "Entries; null returns every remaining entry.",
+          anyOf: [{ type: "integer", minimum: 1 }, { type: "null" }],
+        },
+        names: {
+          anyOf: [
+            { type: "array", items: { type: "string" } },
+            { type: "null" },
+          ],
+        },
+      }),
+    ).toEqual([]);
+  });
+
+  it.each([
+    [
+      "a type list",
+      { type: ["integer", "null"] },
+      ["$.properties.value", "type", "type-list"],
+    ],
+    [
+      "a bare null type",
+      { type: "null" },
+      ["$.properties.value", "type", "type:null"],
+    ],
+    [
+      "an untyped non-null branch",
+      { anyOf: [{ minimum: 1 }, { type: "null" }] },
+      ["$.properties.value", "type", "untyped"],
+    ],
+  ])("refuses %s", (_name, value, violation) => {
+    expect(check({ value })).toContainEqual(violation);
+  });
+
+  it("refuses a nullable root", () => {
+    expect(
+      advertisedInputDialectViolations({
+        name: "probe",
+        inputSchema: {
+          anyOf: [{ type: "object", properties: {} }, { type: "null" }],
+        },
+      }).map(({ rule, detail }) => [rule, detail]),
+    ).toEqual(
+      expect.arrayContaining([
+        ["root-shape", undefined],
+        ["any-of", "root"],
+      ]),
+    );
+  });
+});
+
 const listTools = async (environment: Readonly<NodeJS.ProcessEnv>) => {
   const session = createTestBinarySession(() => {
     throw new Error("No deep provider may start for a schema projection");
@@ -87,6 +148,35 @@ const listTools = async (environment: Readonly<NodeJS.ProcessEnv>) => {
   await client.connect(clientTransport);
   return (await client.listTools()).tools;
 };
+
+it("presents transport discovery through the selected input profile", async () => {
+  const discovery = async (profile: "compact" | "full") =>
+    (
+      await listTools({
+        ...process.env,
+        REA_MCP_INPUT_SCHEMA_PROFILE: profile,
+        REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold",
+      })
+    ).find(({ name }) => name === "discover_tools")?.inputSchema;
+  const full = await discovery("full");
+  // The canonical page defaults remain declared in the full profile only.
+  expect(full?.properties).toMatchObject({
+    offset: { default: 0 },
+    limit: { default: 3 },
+  });
+  const compact = await discovery("compact");
+  expect(compact?.properties).toEqual({
+    query: { type: "string" },
+    names: {
+      type: "array",
+      items: { type: "string", minLength: 1 },
+      minItems: 1,
+      maxItems: 20,
+    },
+    offset: { type: "integer", minimum: 0, maximum: 9007199254740991 },
+    limit: { type: "integer", minimum: 1, maximum: 20 },
+  });
+});
 
 const distinct = (
   into: Map<string, AdvertisedToolDefinition>,

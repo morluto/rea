@@ -4,7 +4,10 @@ import { Client } from "@modelcontextprotocol/client";
 import { createVerifierCommands } from "./verify-commands.mjs";
 import { createOwnedMcpStdioTransport } from "./owned-mcp-stdio.mjs";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
-import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "./mcp-verification-environment.mjs";
+import {
+  INLINE_EVIDENCE_MCP_ENVIRONMENT,
+  schemaVerifierEnvironment,
+} from "./mcp-verification-environment.mjs";
 
 // Bind parsed definitions to this connection. Hot/cold catalogs may add tools;
 // refresh a missing name once without throwing away already validated bindings.
@@ -95,7 +98,7 @@ const environment = () => {
   const compileCache =
     process.env.NODE_COMPILE_CACHE ??
     process.env.REA_ARTIFACT_NODE_COMPILE_CACHE;
-  return {
+  return schemaVerifierEnvironment({
     PATH: process.env.PATH ?? "/usr/bin:/bin",
     ...(compileCache &&
     process.env.NODE_V8_COVERAGE === undefined &&
@@ -106,7 +109,7 @@ const environment = () => {
     REA_ANALYSIS_PROVIDER: "auto",
     // Artifact workflows have no deep-provider prerequisite or GUI authority.
     HOPPER_LAUNCHER_PATH: "/rea-unconfigured-deep-provider/hopper",
-  };
+  });
 };
 
 /** Execute the compiled CLI with production providers and no test adapters. */

@@ -7,22 +7,22 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 const JSON_COMMANDS = [
-  ["inspect-analysis-view", "inspect-analysis-view"],
-  ["trace-application-feature", "trace-application-feature"],
-  ["trace-javascript-semantics", "trace-javascript-semantics"],
-  ["compare-application-versions", "compare-application-versions"],
+  ["inspect-analysis-view", "inspect_analysis_view"],
+  ["trace-application-feature", "trace_application_feature"],
+  ["trace-javascript-semantics", "trace_javascript_semantics"],
+  ["compare-application-versions", "compare_application_versions"],
   ["compare-source-to-bundle", "compare-source-to-bundle"],
-  ["compare-javascript-export-shapes", "compare-javascript-export-shapes"],
+  ["compare-javascript-export-shapes", "compare_javascript_export_shapes"],
   [
     "build-reconstruction-obligation-ledger",
     "build-reconstruction-obligation-ledger",
   ],
   ["evaluate-reconstruction-coverage", "evaluate-reconstruction-coverage"],
-  ["project-android-application-graph", "project-android-application-graph"],
-  ["project-apple-application-graph", "project-apple-application-graph"],
-  ["import-managed-reconstruction", "import-managed-reconstruction"],
-  ["verify-managed-native-boundaries", "verify-managed-native-boundaries"],
-  ["project-managed-application-graph", "project-managed-application-graph"],
+  ["project-android-application-graph", "project_android_application_graph"],
+  ["project-apple-application-graph", "project_apple_application_graph"],
+  ["import-managed-reconstruction", "import_managed_reconstruction"],
+  ["verify-managed-native-boundaries", "verify_managed_native_boundaries"],
+  ["project-managed-application-graph", "project_managed_application_graph"],
   ["capture-browser-scenario", "capture_browser_scenario"],
   ["capture-electron-scenario", "capture_electron_scenario"],
   ["reconcile-javascript-runtime", "reconcile_javascript_runtime"],
@@ -80,7 +80,7 @@ describe("compiled CLI JSON input failure status", () => {
           input_path: input,
           input_reason: kind === "file" ? "invalid-json" : "read-failed",
           ...(kind === "file"
-            ? { details: { operation: "compare-javascript-export-shapes" } }
+            ? { details: { operation: "compare_javascript_export_shapes" } }
             : {}),
         });
         expect(result.stderr).toBe("");
@@ -160,7 +160,7 @@ describe("compiled CLI JSON input diagnostic preservation", () => {
         code: "invalid_request",
         category: "invalid_input",
         details: {
-          operation: "compare-javascript-export-shapes",
+          operation: "compare_javascript_export_shapes",
           issues: [{ path: [], reason: "invalid_format", expected: "JSON" }],
         },
       });

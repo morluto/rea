@@ -18,10 +18,9 @@ summary's `root_format_metadata` holds the image facts. Use its
 `extract_artifact` writes one file per segment and per signature block.
 
 For agent sessions, advertise the `session,artifact,application` tool families
-and consider setting both `REA_MCP_INPUT_SCHEMA_PROFILE` and
-`REA_MCP_OUTPUT_SCHEMA_PROFILE` to `compact`. The output profile bounds each
-advertised output schema to 4,096 bytes by relaxing nested client validation;
-REA still validates complete results against the canonical contracts. Pair
+and keep the default `compact` input profile and `off` output profile, which
+omits output schemas; REA still validates complete results against the
+canonical contracts. Pair
 this with retained summaries and selected inventory views to limit the context
 needed for one question. See [MCP contracts](reference/mcp-contracts.md) for the profiles
 and their client compatibility tradeoffs.

@@ -5,6 +5,7 @@ import {
 import { isDeepStrictEqual } from "node:util";
 
 import { advertisedSchemaPatterns } from "./advertisedDialect.js";
+import { dependencyGuidance } from "./advertisedDialectProjection.js";
 import { projectPortablePattern } from "./portablePattern.js";
 import {
   schemaArrays,
@@ -1016,30 +1017,15 @@ export const presentInputJsonSchema = (
     dependentRequired: _dependentRequired,
     ...presentation
   } = described;
-  const rootDependencies = isObject(described.dependentRequired)
-    ? described.dependentRequired
-    : isObject(described.dependencies)
-      ? described.dependencies
-      : undefined;
-  const dependencyGuidance =
-    rootDependencies === undefined
-      ? []
-      : Object.entries(rootDependencies).flatMap(([property, partners]) =>
-          Array.isArray(partners) &&
-          partners.every((partner) => typeof partner === "string")
-            ? [
-                `When ${property} is provided, also provide ${partners.join(" and ")}.`,
-              ]
-            : [],
-        );
-  if (dependencyGuidance.length === 0)
+  const dependencies = dependencyGuidance(described);
+  if (dependencies.length === 0)
     return normalizeAdvertisedSchema(presentation, INPUT_NORMALIZATION)
       .schema as Record<string, unknown>;
   const description = [
     typeof presentation.description === "string"
       ? presentation.description
       : undefined,
-    ...dependencyGuidance,
+    ...dependencies,
   ].filter((text) => text !== undefined);
   return normalizeAdvertisedSchema(
     { ...presentation, description: description.join(" ") },

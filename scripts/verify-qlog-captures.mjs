@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { schemaVerifierEnvironment } from "./lib/mcp-verification-environment.mjs";
 import {
   closeVerifierResources,
   withVerifierCleanup,
@@ -40,7 +41,7 @@ const environment = {
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
-  env: environment,
+  env: schemaVerifierEnvironment(environment),
   stderr: "pipe",
 });
 let diagnostics = "";

@@ -4,6 +4,14 @@ import {
 } from "./BinaryPlistLayout.js";
 import { decodeXmlPlistText } from "../../domain/propertyListXmlText.js";
 import { hasBinaryPlistSignature } from "../../domain/apple/appleArchiveFormat.js";
+import { PlistNestingLimitError } from "../../domain/apple/plistValue.js";
+import {
+  decodeLimit,
+  malformedInput,
+  ParseFailureError,
+  truncatedInput,
+  unsupportedInput,
+} from "../../domain/parseFailure.js";
 import {
   binaryPlistCloneOffsetWidth,
   binaryDateRequiresExactSeconds,
@@ -18,21 +26,19 @@ export const preflightPropertyListDecode = (
   xmlText?: string,
   options: Pick<
     BinaryPlistExpansionOptions,
-    "numberProjection" | "uidProjection" | "budget" | "fail"
+    "numberProjection" | "uidProjection" | "budget"
   > = {},
 ): PlistDecodePreflight => {
   const {
     numberProjection = false,
     uidProjection = false,
     budget = "the property list decode budget",
-    fail = propertyListDecodeBudgetFailure,
   } = options;
   const expansion = hasBinaryPlistSignature(bytes)
     ? estimateBinaryPlistExpansion(bytes, maxBytes, {
         numberProjection,
         uidProjection,
         budget,
-        fail,
       })
     : {
         estimatedBytes: estimateXmlPlistExpansion(
@@ -41,7 +47,6 @@ export const preflightPropertyListDecode = (
           xmlText,
           numberProjection,
           budget,
-          fail,
         ),
 
         datePrecisionOverlapCount: 0,
@@ -56,7 +61,10 @@ export const preflightPropertyListDecode = (
         normalizedReferenceSize: 1,
       };
   if (expansion.estimatedBytes > maxBytes)
-    throw fail("expansion", `plist representation exceeds ${budget}`);
+    throw decodeBudgetExceeded(
+      `plist representation exceeds ${budget}`,
+      maxBytes,
+    );
   return expansion;
 };
 
@@ -77,7 +85,6 @@ const estimateXmlPlistExpansion = (
   xmlText: string | undefined,
   numberProjection: boolean,
   budget: string,
-  fail: (kind: BinaryPlistExpansionFailure, message: string) => Error,
 ): number => {
   const xml = xmlText ?? decodeXmlPlistText(bytes);
   // The decoded text and the DOM's copies of its character data.
@@ -91,9 +98,9 @@ const estimateXmlPlistExpansion = (
     if (token.internalSubset)
       // Only a declaration outside opaque text can introduce an internal
       // subset. Brackets in quoted external identifiers are literal text.
-      throw fail(
-        "expansion",
+      throw decodeBudgetExceeded(
         `XML plist internal entity expansion exceeds ${budget}`,
+        maxBytes,
       );
     if (token.text) estimate += XML_NODE_BYTES;
     estimate += token.references * XML_REFERENCE_BYTES;
@@ -219,26 +226,25 @@ function* xmlPreflightTokens(xml: string): Generator<{
 /** Deepest binary plist value nesting the reference walk admits. */
 export const MAX_BINARY_PLIST_NESTING_DEPTH = 128;
 
-/** Resource or structural failure found while preflighting a plist. */
-export type BinaryPlistExpansionFailure = "cycle" | "depth" | "expansion";
+/** Limit name of the decoded-representation budget a plist preflight enforces. */
+export const PLIST_DECODE_BYTES_LIMIT = "plist-decode-bytes";
 
-/** Typed failure for shared plist preflight resource limits. */
-export class PropertyListDecodeBudgetFailure extends Error {
-  constructor(
-    readonly kind: BinaryPlistExpansionFailure,
-    message: string,
-  ) {
-    super(message);
-    this.name = "PropertyListDecodeBudgetFailure";
-  }
-}
+/** The decoded representation would exceed the caller's byte budget. */
+const decodeBudgetExceeded = (
+  detail: string,
+  maximum: number,
+): ParseFailureError<"limit"> =>
+  decodeLimit("plist", detail, { name: PLIST_DECODE_BYTES_LIMIT, maximum });
 
-const propertyListDecodeBudgetFailure = (
-  kind: BinaryPlistExpansionFailure,
-  message: string,
-): Error => new PropertyListDecodeBudgetFailure(kind, message);
+/** Whether a plist preflight refused the decode for its byte budget. */
+export const isPlistDecodeBudgetFailure = (
+  cause: unknown,
+): cause is ParseFailureError<"limit"> =>
+  cause instanceof ParseFailureError &&
+  cause.failure.kind === "limit" &&
+  cause.failure.limit.name === PLIST_DECODE_BYTES_LIMIT;
 
-/** How a caller names and reports binary plist expansion failures. */
+/** How a caller names its budget and selects binary plist projection. */
 export interface BinaryPlistExpansionOptions {
   /** Source-value depth; archive consumers retain the default 128-level allowance. */
   readonly maximumDepth?: number;
@@ -248,8 +254,6 @@ export interface BinaryPlistExpansionOptions {
   readonly uidProjection?: boolean;
   /** Budget named in failure messages. */
   readonly budget?: string;
-  /** Error for budget, depth, and reference-cycle failures. */
-  readonly fail?: (kind: BinaryPlistExpansionFailure, message: string) => Error;
   /**
    * Structural bounds: "strict" keeps objects and the offset table before the
    * trailer; "decoder" follows the decoder's object-table boundary policy
@@ -334,15 +338,16 @@ const findOverlappingScalarOffsets = (
 
 /**
  * Validate and budget every expanded source reference before scalar decoding
- * and independent container materialization. Malformed
- * structure throws TypeError; resource and cycle failures use `fail`.
+ * and independent container materialization. Malformed structure throws
+ * TypeError, and a reference cycle a malformed parse failure; a budget throws
+ * a `limit` parse failure ({@link PLIST_DECODE_BYTES_LIMIT}, or the
+ * nesting-depth limit of {@link PlistNestingLimitError}).
  */
 export const estimateBinaryPlistExpansion = (
   bytes: Buffer,
   maxBytes: number,
   {
     budget = "the property list decode budget",
-    fail = propertyListDecodeBudgetFailure,
     bounds = "strict",
     numberProjection = false,
     uidProjection = false,
@@ -350,10 +355,10 @@ export const estimateBinaryPlistExpansion = (
   }: BinaryPlistExpansionOptions = {},
 ): PlistDecodePreflight => {
   if (bytes.length < 40)
-    throw new TypeError("binary plist trailer is truncated");
+    throw truncatedInput("plist", "binary plist trailer is truncated");
   const sourceLayoutResult = readBinaryPlistLayout(bytes);
   if (!sourceLayoutResult.ok)
-    throw new TypeError("binary plist trailer is truncated");
+    throw truncatedInput("plist", "binary plist trailer is truncated");
   const sourceLayout = sourceLayoutResult.value;
   const {
     trailerOffset: trailer,
@@ -361,7 +366,10 @@ export const estimateBinaryPlistExpansion = (
     referenceWidth: referenceSize,
   } = sourceLayout;
   if (offsetSize < 1 || referenceSize < 1)
-    throw new TypeError("binary plist trailer integer sizes are invalid");
+    throw malformedInput(
+      "plist",
+      "binary plist trailer integer sizes are invalid",
+    );
   const safeDeclaration = (value: bigint): number =>
     value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : -1;
   const readInteger = (offset: number, size: number): number => {
@@ -382,12 +390,18 @@ export const estimateBinaryPlistExpansion = (
     !Number.isSafeInteger(offsetTable + objectCount * offsetSize) ||
     offsetTable + objectCount * offsetSize > tableEnd
   )
-    throw new TypeError("binary plist trailer or object table is invalid");
+    throw malformedInput(
+      "plist",
+      "binary plist trailer or object table is invalid",
+    );
   if (
     (offsetSize < 8 && offsetTable >= 2 ** (offsetSize * 8)) ||
     (referenceSize < 8 && objectCount >= 2 ** (referenceSize * 8))
   )
-    throw new TypeError("binary plist table width cannot address its contents");
+    throw malformedInput(
+      "plist",
+      "binary plist table width cannot address its contents",
+    );
   const normalizedReferenceSize =
     [1, 2, 4, 8].includes(referenceSize) &&
     (referenceSize === 8 || objectCount < 2 ** (referenceSize * 8))
@@ -396,7 +410,10 @@ export const estimateBinaryPlistExpansion = (
           (width) => width === 8 || objectCount < 2 ** (width * 8),
         );
   if (normalizedReferenceSize === undefined)
-    throw new TypeError("binary plist object reference count is invalid");
+    throw malformedInput(
+      "plist",
+      "binary plist object reference count is invalid",
+    );
   // Reserve source container/reference facts, scalar indexing, and the scalar
   // array/table overhead; projection also retains numeric/UID source metadata.
   const objectBytes = numberProjection || uidProjection ? 512 : 256;
@@ -407,7 +424,10 @@ export const estimateBinaryPlistExpansion = (
   let estimate =
     bytes.length * (numberProjection ? 4 : 3) + objectCount * objectBytes;
   if (estimate > maxBytes)
-    throw fail("expansion", `binary plist object table exceeds ${budget}`);
+    throw decodeBudgetExceeded(
+      `binary plist object table exceeds ${budget}`,
+      maxBytes,
+    );
 
   const active = new Set<number>();
   const pending: Array<{
@@ -431,23 +451,39 @@ export const estimateBinaryPlistExpansion = (
     if (prior !== undefined) return prior;
     const offset = safeDeclaration(sourceLayout.objectOffset(object));
     if (offset < 8 || offset >= objectsEnd)
-      throw new TypeError("binary plist object offset is invalid");
+      throw malformedInput("plist", "binary plist object offset is invalid");
     const marker = bytes[offset] ?? 0;
     const type = marker >> 4;
     if (type !== 5 && type !== 6)
-      throw new TypeError("binary plist dictionary key is not a string");
+      throw malformedInput(
+        "plist",
+        "binary plist dictionary key is not a string",
+      );
     let size = marker & 0x0f;
     let cursor = offset + 1;
     if (size === 15) {
       const extended = bytes[cursor] ?? 0;
       if (extended >> 4 !== 1 || (extended & 15) > 3)
-        throw new TypeError("binary plist extended object size is invalid");
+        throw malformedInput(
+          "plist",
+          "binary plist extended object size is invalid",
+        );
       const width = 1 << (extended & 15);
       size = readInteger(cursor + 1, width);
       cursor += 1 + width;
+      if (cursor > objectsEnd)
+        throw truncatedInput(
+          "plist",
+          "binary plist extended object size is truncated",
+        );
+      if (size < 0)
+        throw malformedInput(
+          "plist",
+          "binary plist extended object size is invalid",
+        );
     }
-    if (size < 0 || cursor + size * (type === 6 ? 2 : 1) > objectsEnd)
-      throw new TypeError("binary plist scalar object is truncated");
+    if (cursor + size * (type === 6 ? 2 : 1) > objectsEnd)
+      throw truncatedInput("plist", "binary plist scalar object is truncated");
     let key = "";
     for (let index = 0; index < size; index += 1)
       key += String.fromCharCode(
@@ -482,18 +518,21 @@ export const estimateBinaryPlistExpansion = (
     }
     pendingObjectCount -= 1;
     if (entry.depth > maximumDepth)
-      throw fail("depth", `binary plist nesting exceeds ${budget}`);
+      throw new PlistNestingLimitError(maximumDepth);
     if (active.has(entry.object))
-      throw fail("cycle", `binary plist reference cycle exceeds ${budget}`);
+      throw malformedInput(
+        "plist",
+        "binary plist object references form a cycle, which a property list cannot represent",
+      );
     estimate += expandedNodeBytes;
     if (estimate > maxBytes)
-      throw fail(
-        "expansion",
+      throw decodeBudgetExceeded(
         `binary plist reference expansion exceeds ${budget}`,
+        maxBytes,
       );
     const offset = safeDeclaration(sourceLayout.objectOffset(entry.object));
     if (offset < 8 || offset >= objectsEnd)
-      throw new TypeError("binary plist object offset is invalid");
+      throw malformedInput("plist", "binary plist object offset is invalid");
     if (numberProjection) reachableObjectOffsets.add(offset);
     const marker = bytes[offset] ?? 0;
     const type = marker >> 4;
@@ -503,17 +542,21 @@ export const estimateBinaryPlistExpansion = (
         uid: type === 8,
       });
     if (entry.dictionaryKey && type !== 5 && type !== 6)
-      throw new TypeError("binary plist dictionary key is not a string");
+      throw malformedInput(
+        "plist",
+        "binary plist dictionary key is not a string",
+      );
     if (type === 3) {
       if (marker !== 0x33)
-        throw new TypeError(
+        throw malformedInput(
+          "plist",
           `binary plist date marker 0x${marker.toString(16)} is invalid`,
         );
       // The offset table and trailer are not part of an encoded object. Keep
       // this scalar boundary even when compatibility mode follows decoder
       // bounds for other object and reference checks.
       if (offset + 9 > offsetTable)
-        throw new TypeError("binary plist date object is truncated");
+        throw truncatedInput("plist", "binary plist date object is truncated");
       if (numberProjection) {
         reachableDateOffsets.add(offset);
         reachableDateOccurrences.push(offset);
@@ -523,7 +566,7 @@ export const estimateBinaryPlistExpansion = (
     if (type === 8) {
       const uidWidth = (marker & 0x0f) + 1;
       if (offset + 1 + uidWidth > objectsEnd)
-        throw new TypeError("binary plist UID object is truncated");
+        throw truncatedInput("plist", "binary plist UID object is truncated");
       const normalizedWidth = binaryPlistUidNormalizationWidth(bytes, offset);
       if (normalizedWidth !== undefined)
         uidWidthsToNormalize.set(offset, normalizedWidth);
@@ -532,12 +575,15 @@ export const estimateBinaryPlistExpansion = (
     if (type === 1 || type === 2) {
       const info = marker & 0x0f;
       if (type === 1 && info > 4)
-        throw new TypeError("binary plist integer width is invalid");
+        throw malformedInput("plist", "binary plist integer width is invalid");
       if (type === 2 && info !== 2 && info !== 3)
-        throw new TypeError("binary plist real width is invalid");
+        throw malformedInput("plist", "binary plist real width is invalid");
       const width = 1 << info;
       if (offset + 1 + width > offsetTable)
-        throw new TypeError("binary plist numeric scalar is truncated");
+        throw truncatedInput(
+          "plist",
+          "binary plist numeric scalar is truncated",
+        );
       if (numberProjection) {
         reachableNumericOffsets.add(offset);
         if (type === 1 && width === 16) reachableWideIntegerOffsets.add(offset);
@@ -549,23 +595,39 @@ export const estimateBinaryPlistExpansion = (
     if (size === 0x0f && type !== 0 && type !== 8) {
       const extMarker = bytes[cursor] ?? 0;
       if (extMarker >> 4 !== 1 || (extMarker & 0x0f) > 3)
-        throw new TypeError("binary plist extended object size is invalid");
+        throw malformedInput(
+          "plist",
+          "binary plist extended object size is invalid",
+        );
       cursor += 1;
       const integerSize = 1 << (extMarker & 0x0f);
       size = readInteger(cursor, integerSize);
       cursor += integerSize;
-      if (size < 0 || cursor > objectsEnd)
-        throw new TypeError("binary plist extended object size is invalid");
+      // The length record crossing the object area is missing bytes; a
+      // complete record whose value is not a safe length is invalid.
+      if (cursor > objectsEnd)
+        throw truncatedInput(
+          "plist",
+          "binary plist extended object size is truncated",
+        );
+      if (size < 0)
+        throw malformedInput(
+          "plist",
+          "binary plist extended object size is invalid",
+        );
     }
     if (type === 4 || type === 5 || type === 6) {
       const byteLength = type === 6 ? size * 2 : size;
       if (cursor + byteLength > objectsEnd)
-        throw new TypeError("binary plist scalar object is truncated");
+        throw truncatedInput(
+          "plist",
+          "binary plist scalar object is truncated",
+        );
       estimate += type === 4 ? size + 4 * Math.ceil(size / 3) : byteLength * 2;
       if (estimate > maxBytes)
-        throw fail(
-          "expansion",
+        throw decodeBudgetExceeded(
           `binary plist scalar expansion exceeds ${budget}`,
+          maxBytes,
         );
       continue;
     }
@@ -573,14 +635,17 @@ export const estimateBinaryPlistExpansion = (
     const childCount = type === 13 ? size * 2 : size;
     const refsEnd = cursor + childCount * referenceSize;
     if (!Number.isSafeInteger(refsEnd) || refsEnd > objectsEnd)
-      throw new TypeError("binary plist reference table is truncated");
+      throw truncatedInput(
+        "plist",
+        "binary plist reference table is truncated",
+      );
     const availableNodes = Math.floor(
       (maxBytes - estimate) / expandedNodeBytes,
     );
     if (childCount > availableNodes - pendingObjectCount)
-      throw fail(
-        "expansion",
+      throw decodeBudgetExceeded(
         `binary plist reference expansion exceeds ${budget}`,
+        maxBytes,
       );
     const references = Array.from({ length: childCount }, (_, index) => {
       const reference = readInteger(
@@ -588,7 +653,7 @@ export const estimateBinaryPlistExpansion = (
         referenceSize,
       );
       if (reference < 0 || reference >= objectCount)
-        throw new TypeError("binary plist reference is invalid");
+        throw malformedInput("plist", "binary plist reference is invalid");
       return reference;
     });
     if (!sourceContainers.has(entry.object))
@@ -638,7 +703,10 @@ export const estimateBinaryPlistExpansion = (
       const cloneLength =
         headerLength + references.length * normalizedReferenceSize;
       if (!Number.isSafeInteger(cloneLength))
-        throw new TypeError("binary plist reference table is too large");
+        throw unsupportedInput(
+          "plist",
+          "binary plist reference table is too large",
+        );
       return cloneLength;
     },
   );
@@ -651,7 +719,10 @@ export const estimateBinaryPlistExpansion = (
       cloneLengths,
     );
     if (width === undefined)
-      throw new TypeError("binary plist object offset exceeds supported width");
+      throw unsupportedInput(
+        "plist",
+        "binary plist object offset exceeds supported width",
+      );
     return width;
   };
   if (!numberProjection) {
@@ -668,9 +739,9 @@ export const estimateBinaryPlistExpansion = (
       const cloneBytes = cloneLengths.reduce((sum, length) => sum + length, 0);
       estimate += 2 * (cloneBytes + objectCount * normalizedOffsetSize);
       if (estimate > maxBytes)
-        throw fail(
-          "expansion",
+        throw decodeBudgetExceeded(
           `binary plist UID-copy expansion exceeds ${budget}`,
+          maxBytes,
         );
     }
     return {
@@ -743,9 +814,9 @@ export const estimateBinaryPlistExpansion = (
     const cloneBytes = cloneLengths.reduce((sum, length) => sum + length, 0);
     estimate += 2 * (cloneBytes + objectCount * normalizedOffsetSize);
     if (estimate > maxBytes)
-      throw fail(
-        "expansion",
+      throw decodeBudgetExceeded(
         `binary plist scalar-copy expansion exceeds ${budget}`,
+        maxBytes,
       );
   }
   const precisionUnknownOffsets = new Set(precisionUnknownDateOffsets);

@@ -27,7 +27,12 @@ export interface MaintenanceScope {
 
 /** Unapplied maintenance evidence produced by the updated setup executable. */
 export type IntegrationMaintenance =
-  | { readonly status: "current"; readonly plannedActions: readonly [] }
+  | {
+      readonly status: "current";
+      readonly plannedActions: readonly [];
+      /** Clients left unmaintained because their registration is unknown. */
+      readonly unresolved?: readonly ClientRegistrationStatus[];
+    }
   | {
       readonly status: "planned";
       readonly scope: MaintenanceScope;
@@ -56,6 +61,43 @@ const setupPlanSchema = z.object({
     }),
   ),
 });
+
+const unresolvedRegistrationDetail = ({
+  client,
+  config_path,
+  remediation,
+}: ClientRegistrationStatus): string =>
+  `${client} (${config_path}): ${remediation ?? "Registration identity is unresolved"}`;
+
+/** Clients a maintenance result left alone because their registration is unknown. */
+export const unresolvedMaintenanceClients = (
+  maintenance: IntegrationMaintenance,
+): readonly ClientRegistrationStatus[] =>
+  (maintenance.status === "current"
+    ? maintenance.unresolved
+    : maintenance.scope?.unresolved) ?? [];
+
+/** One sentence naming each unknown client and its own recovery. */
+export const unresolvedMaintenanceRemediation = (
+  unresolved: readonly ClientRegistrationStatus[],
+): string =>
+  `REA did not maintain ${unresolved.length === 1 ? "one client" : `${String(unresolved.length)} clients`} whose registration is unknown: ${unresolved.map(unresolvedRegistrationDetail).join(" ")}`;
+
+/** A maintenance failure that still reports the unknown clients it found. */
+const unavailableMaintenance = (
+  remediation: string,
+  scope: MaintenanceScope | undefined,
+): IntegrationMaintenance => {
+  const unresolved = scope?.unresolved ?? [];
+  return {
+    status: "unavailable",
+    remediation:
+      unresolved.length === 0
+        ? remediation
+        : `${remediation} ${unresolvedMaintenanceRemediation(unresolved)}`,
+    ...(scope === undefined ? {} : { scope }),
+  };
+};
 
 /** Discover owned registrations and REA skills without writes. */
 export const existingMaintenanceScope = async (
@@ -122,34 +164,36 @@ export const planIntegrationMaintenance = async (
   execute: (command: readonly string[]) => Promise<Result<string, string>>,
   resources?: ArtifactResourceScope,
 ): Promise<IntegrationMaintenance> => {
+  let scope: MaintenanceScope | undefined;
   try {
-    const scope = await existingMaintenanceScope(
+    scope = await existingMaintenanceScope(
       home,
       entryPoint,
       environment,
       resources,
     );
-    if (
-      (scope.unresolved?.length ?? 0) > 0 ||
-      (scope.skillIssues?.length ?? 0) > 0
-    )
-      return {
-        status: "unavailable",
-        scope,
-        remediation: `Integration maintenance is unresolved: ${[
-          ...(scope.unresolved ?? []).map(
-            ({ client, config_path, remediation }) =>
-              `${client} (${config_path}): ${remediation ?? "Registration identity is unresolved"}`,
-          ),
-          ...(scope.skillIssues ?? []).map(
+    // An unresolved client fails closed on its own: it stays out of the
+    // maintained clients and is reported, while every resolved client is
+    // still maintained. Skill destinations are one shared selection.
+    if ((scope.skillIssues?.length ?? 0) > 0)
+      return unavailableMaintenance(
+        `Integration maintenance is unresolved: ${(scope.skillIssues ?? [])
+          .map(
             ({ client, path, detail }) =>
               `${client ?? "skill"} (${path}): ${detail}`,
-          ),
-        ].join(" ")}`,
-      };
+          )
+          .join(" ")}`,
+        scope,
+      );
+    const current: IntegrationMaintenance = {
+      status: "current",
+      plannedActions: [],
+      ...(scope.unresolved === undefined
+        ? {}
+        : { unresolved: scope.unresolved }),
+    };
     const skillDestinations = scope.skillDestinations ?? [];
-    if (scope.clients.length === 0 && !scope.skill)
-      return { status: "current", plannedActions: [] };
+    if (scope.clients.length === 0 && !scope.skill) return current;
     const command = [
       process.execPath,
       entryPoint,
@@ -159,16 +203,14 @@ export const planIntegrationMaintenance = async (
       `--skill=${String(scope.skill)}`,
     ];
     const execution = await execute([...command, "--dry-run", "--json"]);
-    if (!execution.ok)
-      return { status: "unavailable", remediation: execution.error };
+    if (!execution.ok) return unavailableMaintenance(execution.error, scope);
     const plan = setupPlanSchema.safeParse(JSON.parse(execution.value));
     if (!plan.success)
-      return {
-        status: "unavailable",
-        remediation: `The updated setup executable returned an invalid maintenance plan: ${plan.error.message}`,
-      };
-    if (plan.data.plannedActions.length === 0)
-      return { status: "current", plannedActions: [] };
+      return unavailableMaintenance(
+        `The updated setup executable returned an invalid maintenance plan: ${plan.error.message}`,
+        scope,
+      );
+    if (plan.data.plannedActions.length === 0) return current;
     const allowedIds = new Set(
       scope.clients.map((client) => `configure_client:${client}`),
     );
@@ -180,11 +222,10 @@ export const planIntegrationMaintenance = async (
           : !allowedIds.has(action.id),
       )
     )
-      return {
-        status: "unavailable",
-        remediation:
-          "The updated setup plan included an integration outside the existing REA maintenance scope.",
-      };
+      return unavailableMaintenance(
+        "The updated setup plan included an integration outside the existing REA maintenance scope.",
+        scope,
+      );
     return {
       status: "planned",
       scope,
@@ -201,9 +242,9 @@ export const planIntegrationMaintenance = async (
     // Without a supplied scope, the typed failure is the caller's cleanup capability.
     if (resources === undefined && cause instanceof RegularFileCleanupFailure)
       throw cause;
-    return {
-      status: "unavailable",
-      remediation: cause instanceof Error ? cause.message : String(cause),
-    };
+    return unavailableMaintenance(
+      cause instanceof Error ? cause.message : String(cause),
+      scope,
+    );
   }
 };

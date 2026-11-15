@@ -30,7 +30,8 @@ import {
 import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
 import { transportClosedByOwner } from "./transportOwnerClose.js";
 import {
-  presentAdvertisedInputSchema,
+  describeAdvertisedTool,
+  presentAdvertisedInput,
   type CompactInputSchemaPresentation,
 } from "../contracts/compactInputSchema.js";
 import { presentAdvertisedOutputSchema } from "../contracts/compactOutputSchema.js";
@@ -346,11 +347,16 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     this.progressiveCatalog = catalog;
     const { name, ...config } = DISCOVER_TOOLS;
     // Transport discovery has no target or analysis lifecycle. Domain tools
-    // continue through registerTool and their original named handlers.
-    super.registerTool(name, config, (input, context) => {
-      context.mcpReq.signal.throwIfAborted();
-      return catalog.discover(input);
-    });
+    // continue through registerTool and their original named handlers. Its
+    // advertisement still follows the selected input presentation.
+    super.registerTool(
+      name,
+      { ...config, ...this.presentInput(name, config) },
+      (input, context) => {
+        context.mcpReq.signal.throwIfAborted();
+        return catalog.discover(input);
+      },
+    );
   }
 
   override sendToolListChanged(): void {
@@ -448,30 +454,21 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
   ): RegisteredTool {
     if (canReferenceInlineEvidence(config.inputSchema))
       this.registerEvidenceReferenceAlternative(name);
-    const budget = this.compactPresentation?.budgetBytes;
-    const inputSchema =
-      budget !== undefined &&
-      config !== undefined &&
-      hasAdvertisedInputJsonSchema(config.inputSchema)
-        ? transformAdvertisedInputJsonSchema(
-            config.inputSchema as Parameters<
-              typeof transformAdvertisedInputJsonSchema
-            >[0],
-            (projected) =>
-              presentAdvertisedInputSchema(projected, { budgetBytes: budget }),
-          )
-        : undefined;
-    const presentedSchema = inputSchema ?? config.inputSchema;
-    const registeredConfig =
-      presentedSchema === undefined
-        ? config
+    const presented = this.presentInput(name, config);
+    const registeredConfig = {
+      ...config,
+      ...(presented.description === undefined
+        ? {}
+        : { description: presented.description }),
+      ...(presented.inputSchema === undefined
+        ? {}
         : {
-            ...config,
             inputSchema: captureInputValidation(
               name,
-              presentedSchema as StandardSchemaWithJSON,
+              presented.inputSchema as StandardSchemaWithJSON,
             ),
-          };
+          }),
+    };
     const scoped = async (input: never, context: never) => {
       const request = currentMcpToolRequest();
       request?.beginHandler();
@@ -512,6 +509,53 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     );
     if (!this.advertisesTool(name)) registered.disable();
     return registered;
+  }
+
+  /**
+   * The input schema and tool description this server advertises for one
+   * registration: the selected compact presentation, whose guidance joins
+   * the description, or both unchanged. Every listed tool, including
+   * transport discovery, takes this one path.
+   */
+  private presentInput<Schema>(
+    name: string,
+    config: { readonly description?: string; readonly inputSchema?: Schema },
+  ): { description?: string; inputSchema?: Schema } {
+    const { description, inputSchema } = config;
+    const presentation = this.compactPresentation;
+    if (
+      presentation === undefined ||
+      inputSchema === undefined ||
+      !hasAdvertisedInputJsonSchema(inputSchema)
+    )
+      return config;
+    const present = (projected: Record<string, unknown>) =>
+      presentAdvertisedInput(projected, presentation);
+    return {
+      ...this.describeTool(name, description, () => {
+        const projected = (inputSchema as StandardSchemaWithJSON)[
+          "~standard"
+        ].jsonSchema.input({ target: "draft-2020-12" });
+        return isRecord(projected) ? present(projected).guidance : [];
+      }),
+      inputSchema: transformAdvertisedInputJsonSchema(
+        inputSchema,
+        (projected) => present(projected).schema,
+      ),
+    };
+  }
+
+  /**
+   * The listed description: guidance the compact input schema omits follows
+   * the registered description. Reading the guidance projects the schema.
+   */
+  protected describeTool(
+    _name: string,
+    description: string | undefined,
+    guidance: () => readonly string[],
+  ): { description?: string } {
+    const described = describeAdvertisedTool(description, guidance());
+    return described === undefined ? {} : { description: described };
   }
 
   /** Whether this process advertises one named operation. */

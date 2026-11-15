@@ -186,7 +186,8 @@ REA_MCP_TOOL_CATALOG_PROFILE=full
 
 This advertises all tools without requiring catalog refresh. Compact output
 schemas widen client-side validation; REA still validates complete results
-against the canonical contracts. See [output schemas](../reference/mcp-contracts.md#output-schemas).
+against the canonical contracts. The default output profile, `off`, omits
+output schemas and is smaller still. See [output schemas](../reference/mcp-contracts.md#output-schemas).
 
 On main `3e0599a94`, a real FastMCP 4.1.6 / Python MCP 2.3.0 HTTP client with
 the default 1 MiB SSE event limit rejected the 4,108,975-byte full catalog.
@@ -370,11 +371,12 @@ and Claude Code reports that autocompact is thrashing. To avoid this:
 The sizes above come from REA's own `tools/list`. A live Claude Code session
 against DeepSeek's API is unverified.
 
-For a client whose stdio reader rejects the complete catalog frame, set
-`"REA_MCP_OUTPUT_SCHEMA_PROFILE": "compact"` to bound every advertised output
-schema, or `"off"` to omit them, in REA's `env` object, then restart the client.
-Both keep canonical result validation and complete structured results; `compact`
-keeps a widened root shape and `off` advertises nothing. On catalogs large
+Output schemas are omitted by default (`"REA_MCP_OUTPUT_SCHEMA_PROFILE": "off"`).
+If you selected `"full"` and a client's stdio reader rejects the complete
+catalog frame, return to the default or select `"compact"`, which bounds every
+advertised output schema, in REA's `env` object, then restart the client.
+Every profile keeps canonical result validation and complete structured
+results; `compact` keeps a widened root shape and `off` advertises nothing. On catalogs large
 enough that full input schemas alone approach the frame limit, also keep the
 input profile at its `compact` default. See [MCP output schema
 profiles](../reference/mcp-contracts.md#output-schemas).
@@ -856,6 +858,25 @@ Zed you use and refuses. Zed's comments and formatting are preserved. These
 locations follow each client's documentation and source; no installed client
 was run to verify loading.
 
+## MCPorter
+
+`rea setup --client mcporter` and `rea mcp add --agent mcporter` write
+`mcpServers.rea` into MCPorter's home file: the file `MCPORTER_CONFIG` names,
+otherwise the first existing of `$XDG_CONFIG_HOME/mcporter/mcporter.json[c]`
+(an absolute `XDG_CONFIG_HOME` only) and `~/.mcporter/mcporter.json[c]`. A new
+file goes to the XDG path when `XDG_CONFIG_HOME` is set, as
+`mcporter config add --scope home` does. A relative `MCPORTER_CONFIG` depends on
+the directory each MCPorter command runs from, so REA refuses writes to
+MCPorter and doctor and update report its registration as `unknown` while
+still covering every other client. Uninstall stops until it is repaired,
+because it cannot tell whether that file holds REA's row.
+
+MCPorter imports Claude Code, Claude Desktop, Codex, Cursor, Windsurf, OpenCode
+and VS Code registrations by default, so setup never selects it from detection,
+and doctor reports it only when its file holds a `rea` row or you select it.
+Update and uninstall refresh and remove the row REA wrote. A project
+`config/mcporter.json` entry with the same name overrides the home file.
+
 ## WorkBuddy
 
 For [WorkBuddy](https://www.workbuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/MCP-Guide), setup writes `mcpServers.rea` into the
@@ -899,7 +920,10 @@ fallback server, uninstall refuses before changing either file; review the
 fallback configuration before retrying. Other fallback servers, settings and a
 foreign `rea` entry are kept. ZCode disables a
 server with `enable: false` on its entry; doctor reports such a registration
-as stale, and rerunning setup removes the flag to repair it. Native configuration
+as stale, and rerunning setup removes the flag to repair it. In shared storage
+that setup preserves (the fallback file), the flag binds every reader, so doctor
+reports the stale row with `manual_conflict: "shared_disabled_activation"`:
+re-enable it in the product that disabled it rather than rerunning setup. Native configuration
 uses strict JSON; setup refuses comments, trailing commas and a BOM rather than
 writing a registration ZCode cannot load.
 
