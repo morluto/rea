@@ -16,7 +16,7 @@ export const verifyAndroidDirectInvokes = async ({
   const digest = await hashAndroidFile(apk);
   const check = (value) => {
     const evidence = parseEvidence(value);
-    assert.equal(evidence.subject.digest.sha256, digest);
+    assert.equal(evidence.subject.identity.sha256, digest);
     assert.equal(evidence.operation, "trace_android_references");
     const result = evidence.normalized_result;
     assert.equal(result.class_name, "fixture.Target");

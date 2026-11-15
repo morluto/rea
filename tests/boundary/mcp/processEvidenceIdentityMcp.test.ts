@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -19,6 +20,7 @@ import {
   createEvidence,
   parseEvidence,
   type Evidence,
+  evidenceSubjectInput,
 } from "../../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { correlateStaticAndRuntime } from "../../../src/domain/staticRuntimeCorrelation.js";
@@ -36,7 +38,7 @@ const captureEvidence = (
   side: "left" | "right",
   result: Evidence["normalized_result"] = EMPTY_PROCESS_CAPTURE_EXAMPLE,
 ) =>
-  createEvidence(undefined, PROCESS_PROVIDER, {
+  createEvidence(unknownTarget("not-observed"), PROCESS_PROVIDER, {
     predicateType: "rea.process-capture",
     operation: "capture_process_scenario",
     parameters: { side },
@@ -212,33 +214,19 @@ const rehashedComparison = (
   change: IdentityChange,
 ): Evidence => {
   const next = { ...base, ...change };
-  const subject = next.subject;
-  return createEvidence(
-    subject === null
-      ? undefined
-      : {
-          path: subject.local_path,
-          sha256: subject.digest.sha256,
-          format: subject.format,
-          ...(subject.architecture === null
-            ? {}
-            : { architecture: subject.architecture }),
-        },
-    next.provider,
-    {
-      predicateType: next.predicate_type,
-      operation: next.operation,
-      parameters: next.parameters,
-      result: next.normalized_result,
-      rawResult: next.raw_result,
-      confidence: next.confidence,
-      authority: next.authority,
-      environment: next.environment,
-      limitations: next.limitations,
-      locations: next.locations,
-      evidenceLinks: next.evidence_links,
-    },
-  );
+  return createEvidence(evidenceSubjectInput(next.subject), next.provider, {
+    predicateType: next.predicate_type,
+    operation: next.operation,
+    parameters: next.parameters,
+    result: next.normalized_result,
+    rawResult: next.raw_result,
+    confidence: next.confidence,
+    authority: next.authority,
+    environment: next.environment,
+    limitations: next.limitations,
+    locations: next.locations,
+    evidenceLinks: next.evidence_links,
+  });
 };
 
 it.each(providerNames)(

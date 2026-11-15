@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import {
   parseEvidenceBundle,
@@ -606,11 +607,15 @@ describe("snapshot output cleanup lifecycle", () => {
               ["fixture provider"],
               {},
               {
-                partialObservation: createEvidence(undefined, IDENTITY, {
-                  operation: "health",
-                  parameters: {},
-                  result: "cleanup facts",
-                }),
+                partialObservation: createEvidence(
+                  unknownTarget("not-observed"),
+                  IDENTITY,
+                  {
+                    operation: "health",
+                    parameters: {},
+                    result: "cleanup facts",
+                  },
+                ),
               },
             )
           : new AnalysisCancelledError("close_binary");

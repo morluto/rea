@@ -390,7 +390,7 @@ async function inspect(mode, path, includeStringLiterals = false) {
   const evidence = parseEvidence(envelope);
   assert.equal(evidence.subject.local_path, path);
   const report = goBinarySchema.parse(evidence.normalized_result);
-  assert.equal(evidence.subject.digest.sha256, report.artifact.sha256);
+  assert.equal(evidence.subject.identity.sha256, report.artifact.sha256);
   return { evidence, report };
 }
 
@@ -450,7 +450,7 @@ async function verify(
     assert.equal(report.format, target[2]);
     assert.equal(report.architecture, target[1]);
     assert.equal(
-      evidence.subject.architecture,
+      evidence.subject.identity.architecture,
       { amd64: "x86_64", 386: "x86", arm64: "arm64", mips: "mips" }[
         target[1]
       ] ?? null,

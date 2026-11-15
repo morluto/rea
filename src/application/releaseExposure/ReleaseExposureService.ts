@@ -25,11 +25,8 @@ import {
   electronFuseReportSchema,
   type ElectronFuseReport,
 } from "../../domain/electron/electronFuses.js";
-import {
-  createEvidence,
-  evidenceSchema,
-  type Evidence,
-} from "../../domain/evidence.js";
+import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import { recognizeEvidence } from "../../domain/evidenceValidation.js";
 import { evidenceSubjectFormatSchema } from "../../domain/evidenceSubject.js";
 import { goBinarySchema } from "../../domain/go/goBinary.js";
 import { RELEASE_EXPOSURE_PROVIDER } from "../../domain/investigationProviders.js";
@@ -458,10 +455,9 @@ interface OwnerOutcome {
  * completeProviderEvidence carries as the error's partial observation.
  */
 const completedOwnerEvidence = (error: AnalysisError): Evidence | undefined => {
-  const partial = error.partialObservation;
-  return evidenceSchema.safeParse(partial).success
-    ? (partial as Evidence)
-    : undefined;
+  // Only authenticated Evidence settles the owner; otherwise it did not run.
+  const partial = recognizeEvidence(error.partialObservation);
+  return partial.ok ? partial.value : undefined;
 };
 
 /** Settle one fuse image from its owner's Evidence. */

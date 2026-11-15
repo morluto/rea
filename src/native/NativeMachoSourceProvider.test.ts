@@ -88,7 +88,7 @@ it.each(
     expect(result.error.partialObservation).toMatchObject({
       operation,
       parameters: { native_command_timeout_ms: 5000 },
-      subject: { local_path: path, digest: { sha256: target.sha256 } },
+      subject: { local_path: path, identity: { sha256: target.sha256 } },
       normalized_result: { provenance: expect.any(Array) },
       locations: expect.any(Array),
     });
@@ -194,7 +194,7 @@ it.each(
     } else {
       expect(result.error.partialObservation).toMatchObject({
         operation,
-        subject: { local_path: path, digest: { sha256: target.sha256 } },
+        subject: { local_path: path, identity: { sha256: target.sha256 } },
         normalized_result: { provenance: expect.any(Array) },
       });
     }
