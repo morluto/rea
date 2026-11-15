@@ -885,14 +885,30 @@ const gooseUserConfigPath = ({ home, platform, env }: ClientPathContext) => {
     : join(absoluteXdgConfigHome({ home, env }), "goose", "config.yaml");
 };
 
-/** `GOOSE_ADDITIONAL_CONFIG_FILES`, split as Rust's `env::split_paths`. */
+/**
+ * `GOOSE_ADDITIONAL_CONFIG_FILES`, split as Rust's `env::split_paths`: `:` on
+ * Unix; on Windows `;` outside double quotes, which are removed.
+ */
 const gooseAdditionalConfigFiles = ({
   platform,
   env,
-}: Pick<ClientPathContext, "platform" | "env">): string[] =>
-  (env.GOOSE_ADDITIONAL_CONFIG_FILES ?? "")
-    .split(platform === "win32" ? ";" : ":")
-    .filter((path) => path.length > 0);
+}: Pick<ClientPathContext, "platform" | "env">): string[] => {
+  const value = env.GOOSE_ADDITIONAL_CONFIG_FILES ?? "";
+  if (platform !== "win32")
+    return value.split(":").filter((path) => path.length > 0);
+  const paths: string[] = [];
+  let current = "";
+  let quoted = false;
+  for (const character of value) {
+    if (character === '"') quoted = !quoted;
+    else if (character === ";" && !quoted) {
+      paths.push(current);
+      current = "";
+    } else current += character;
+  }
+  paths.push(current);
+  return paths.filter((path) => path.length > 0);
+};
 
 /**
  * Goose's layers in increasing precedence (`Config::default`): the system
@@ -915,12 +931,21 @@ const gooseLocation = (
   return ok({ configPath, markerPath: configPath });
 };
 
-/** Goose's read-only lower layers, before the user file it writes. */
-const gooseConfigPaths = ({ platform, env }: ClientPathContext) => [
-  platform === "win32"
-    ? win32.join(env.PROGRAMDATA || "C:\\ProgramData", "goose", "config.yaml")
+/**
+ * Goose's load order: the system file, each additional file, then the user
+ * file it writes. An additional entry can name the user file too; Goose then
+ * loads it twice, and its last load decides precedence.
+ */
+const gooseConfigPaths = (context: ClientPathContext) => [
+  context.platform === "win32"
+    ? win32.join(
+        context.env.PROGRAMDATA || "C:\\ProgramData",
+        "goose",
+        "config.yaml",
+      )
     : "/etc/goose/config.yaml",
-  ...gooseAdditionalConfigFiles({ platform, env }),
+  ...gooseAdditionalConfigFiles(context),
+  gooseUserConfigPath(context),
 ];
 
 /**
@@ -1758,6 +1783,19 @@ const resolveLocation = (
     : marker;
 };
 
+/**
+ * Layers in increasing precedence, ending with the writable file unless the
+ * row already places it. A file loaded more than once takes effect at its last
+ * load, so only that occurrence is kept.
+ */
+const layerLoadOrder = (
+  paths: readonly string[],
+  configPath: string,
+): readonly string[] => {
+  const ordered = paths.includes(configPath) ? paths : [...paths, configPath];
+  return ordered.filter((path, index) => ordered.lastIndexOf(path) === index);
+};
+
 /** Describe every client location that setup, doctor, or uninstall may inspect. */
 export const supportedClients = (
   home: string,
@@ -1796,9 +1834,10 @@ export const supportedClients = (
         ...(definition.configPaths === undefined
           ? {}
           : {
-              configPaths: [
-                ...new Set([...definition.configPaths(context), configPath]),
-              ],
+              configPaths: layerLoadOrder(
+                definition.configPaths(context),
+                configPath,
+              ),
             }),
         ...(definition.zcodeFallbackPath === undefined
           ? {}

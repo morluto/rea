@@ -714,6 +714,44 @@ export const systemUninstallHost = (
               "Removing REA's registration would activate or change an unowned OpenCode registration in another configuration layer, including a possible V1 fallback; no change was made. Remove or replace that registration manually, then rerun uninstall.",
             );
         }
+        // REA writes only the user layer. If the read-only lower layers alone
+        // still define an entry that is not disabled, removal would leave it
+        // (or expose it) in effect, so nothing changes.
+        if (client.readOnlyLowerLayers === true && removal.value.removeNative) {
+          const lowerLayers: ClientConfigurationSource[] = [];
+          for (const configPath of client.configPaths ?? []) {
+            if (configPath === client.configPath) continue;
+            const layer = await readClientConfiguration(
+              { ...client, configPath },
+              fileSystem,
+              resources,
+              ownershipEstablished,
+            );
+            if (layer.kind === "item") {
+              if (layer.item.status !== "skipped") return layer.item;
+              continue;
+            }
+            lowerLayers.push({ ...layer.parsed, sourcePath: configPath });
+          }
+          const remaining =
+            effectiveClientConfiguration(lowerLayers)?.servers[
+              PRODUCT_IDENTITY.mcpServerKey
+            ];
+          if (
+            remaining !== undefined &&
+            !(
+              typeof remaining === "object" &&
+              remaining !== null &&
+              "enabled" in remaining &&
+              remaining.enabled === false
+            )
+          )
+            return item(
+              client.name,
+              "failed",
+              "A read-only configuration layer REA does not change also defines an enabled REA registration, which would stay in effect after removal; no change was made. Remove that registration with its owner, then rerun uninstall.",
+            );
+        }
         if (
           !removal.value.removeNative &&
           removal.value.legacyPath === undefined
