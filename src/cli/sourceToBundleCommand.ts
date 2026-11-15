@@ -38,12 +38,11 @@ export const registerSourceToBundleCommand = (
       },
       cliOptions: { evidenceBundle: evidenceBundleOption },
     },
-    async (document, { signal, operation, spelled, cliOptions }) => {
+    async (document, { signal, operation, spelled, frame, cliOptions }) => {
       const requestedReferencePath = spelledReferencePath(spelled);
       const result = await runEvidenceInputCommand(
-        operation,
-        cliOptions.evidenceBundle,
-        signal,
+        document,
+        { operation, signal, frame, cliOptions },
         async (lookup, resources) => {
           const { executeSourceToBundleComparison } =
             await import("../application/javascript/JavaScriptApplicationWorkflowService.js");

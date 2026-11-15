@@ -193,8 +193,11 @@ const suppliedField = (
 ): z.ZodType => {
   const field = contractShape(description)[parameter.field]!;
   if (parameter.member === undefined) return field;
+  // A member is omittable when it or any enclosing object is.
   let supplied: z.ZodType = field;
+  let omittable = false;
   for (const member of parameter.member) {
+    omittable ||= admits(supplied, undefined);
     while (
       supplied instanceof z.ZodOptional ||
       supplied instanceof z.ZodExactOptional
@@ -202,7 +205,7 @@ const suppliedField = (
       supplied = supplied.unwrap() as z.ZodType;
     supplied = (supplied as z.ZodObject).shape[member] as z.ZodType;
   }
-  return supplied.optional();
+  return omittable ? supplied.optional() : supplied;
 };
 
 /**
@@ -227,6 +230,25 @@ const expectInboundView = (
   expect(admits(cliField, undefined), key).toBe(
     admits(contractField, undefined),
   );
+};
+
+/** Each positional caller path is resolved, and kept as typed in callerInputs. */
+const expectResolvedPositionalPaths = (
+  description: ContractCliDescription,
+  values: Readonly<Record<string, unknown>>,
+  input: Readonly<Record<string, unknown>>,
+): void => {
+  for (const parameter of description.parameters) {
+    if (!parameter.callerPath || !parameter.positional) continue;
+    // A flattened member is resolved inside its object.
+    const path = [parameter.field, ...(parameter.member ?? [])];
+    const resolved = path.reduce<unknown>(
+      (value, key) => (value as Record<string, unknown>)[key],
+      input,
+    );
+    expect(resolved).toBe(absoluteCallerPath("rel/target"));
+    expect(description.callerInputs(values)[path.join(".")]).toBe("rel/target");
+  }
 };
 
 /** A caller-relative target, or the first probe the argument admits. */
@@ -383,12 +405,7 @@ const contractBuilt: ReadonlySet<string> = new Set(
  * Commands named after a public tool contract that still register by hand.
  * Migrating one removes it here; this list may only shrink.
  */
-const HAND_REGISTERED_CONTRACT_COMMANDS = [
-  "inspect-android-jni-bindings",
-  "inspect-api-contract",
-  "inspect-with-objdump",
-  "trace-web-source-location",
-];
+const HAND_REGISTERED_CONTRACT_COMMANDS = ["inspect-android-jni-bindings"];
 
 /** Contract-built commands whose name differs from their contract's. */
 const RENAMED_CONTRACT_COMMANDS = [
@@ -397,6 +414,7 @@ const RENAMED_CONTRACT_COMMANDS = [
   "function",
   "inspect",
   "instructions",
+  "list-objdump-architectures",
   "search",
   "trace",
   "validate-browser-scenario",
@@ -450,6 +468,7 @@ describe("CLI commands projected from tool contracts", () => {
         [
           ...new Set(description.parameters.map(({ field }) => field)),
           ...Object.keys(description.omitted),
+          ...Object.keys(description.fixedFields),
           ...handlerSuppliedFields(description),
         ]
           .toSorted()
@@ -590,13 +609,7 @@ describe("CLI commands projected from tool contracts", () => {
               ),
             );
       expect(admitted.safeParse(input).error).toBe(undefined);
-      for (const parameter of description.parameters)
-        if (parameter.callerPath && parameter.positional) {
-          expect(input[parameter.field]).toBe(absoluteCallerPath("rel/target"));
-          expect(description.callerInputs(values)[parameter.field]).toBe(
-            "rel/target",
-          );
-        }
+      expectResolvedPositionalPaths(description, values, input);
     },
   );
 });
@@ -880,9 +893,13 @@ describe("Flattened object fields of contract commands", () => {
   it.each(flattening)(
     "%s supplies the object with only the given members",
     (_command, description) => {
+      // A required object is always supplied, so only optional ones apply.
       const fields = new Set(
         description.parameters.flatMap(({ field, member }) =>
-          member === undefined ? [] : [field],
+          member === undefined ||
+          !contractShape(description)[field]!.safeParse(undefined).success
+            ? []
+            : [field],
         ),
       );
       for (const field of fields) {
@@ -935,7 +952,85 @@ describe("Flattened object fields of contract commands", () => {
         description: "Probe",
         flatten: { range: { a: {}, b: {} }, value: { a: {} } },
       }),
-    ).toThrow("probe.value is not an optional object");
+    ).toThrow("probe.value is not an object");
+  });
+
+  it("takes a required object's members as positionals in member order", () => {
+    const inputSchema = z.strictObject({
+      name: z.string(),
+      position: z.strictObject({ line: z.int(), column: z.int() }),
+      limits: z.strictObject({ bytes: z.int().optional() }).optional(),
+    });
+    const described = describeContractCommand(
+      { name: "probe", inputSchema },
+      {
+        command: "probe",
+        description: "Probe",
+        positionals: ["name", "position"],
+        flatten: {
+          position: { line: {}, column: { name: "col" } },
+          limits: { bytes: {} },
+        },
+      },
+    );
+    expect(
+      described.parameters.map(({ key, positional }) => [key, positional]),
+    ).toEqual([
+      ["name", true],
+      ["line", true],
+      ["col", true],
+      ["bytes", false],
+    ]);
+    const [, line] = described.parameters;
+    expect(line!.schema.safeParse(undefined).success).toBe(false);
+    expect(line!.schema.safeParse("2").success).toBe(true);
+    expect(described.toContractInput({ name: "n", line: 2, col: 0 })).toEqual({
+      name: "n",
+      position: { line: 2, column: 0 },
+    });
+    expect(() =>
+      describeContractCommand(
+        { name: "probe", inputSchema },
+        {
+          command: "probe",
+          description: "Probe",
+          positionals: ["limits"],
+          flatten: { limits: { bytes: {} } },
+        },
+      ),
+    ).toThrow("probe.limits is an optional positional object");
+    expect(() =>
+      describeContractCommand(
+        {
+          name: "probe",
+          inputSchema: z.strictObject({
+            position: z.strictObject({ line: z.int().optional() }),
+          }),
+        },
+        {
+          command: "probe",
+          description: "Probe",
+          positionals: ["position"],
+          flatten: { position: { line: {} } },
+        },
+      ),
+    ).toThrow("probe.position.line is an optional positional");
+    // Omitting every member would drop a required object argv cannot spell.
+    expect(() =>
+      describeContractCommand(
+        {
+          name: "probe",
+          inputSchema: z.strictObject({
+            limits: z.strictObject({ bytes: z.int().optional() }),
+          }),
+        },
+        {
+          command: "probe",
+          description: "Probe",
+          flatten: { limits: { bytes: {} } },
+        },
+      ),
+    ).toThrow("probe.limits has no required member");
   });
 });
 
@@ -1223,7 +1318,75 @@ describe("Evidence delivery of contract commands", () => {
         { name: "probe", inputSchema },
         { command: "probe", description: "Probe" },
       ),
-    ).toThrow("probe.detail differs between input branches");
+    ).toThrow("probe.limit differs between input branches");
+  });
+
+  it("selects an input branch with a literal in one branch and an enum in another", () => {
+    const inputSchema = z.union([
+      z.strictObject({ format: z.literal("json").default("json") }),
+      z.strictObject({ format: z.enum(["sdl", "graphql"]) }),
+    ]);
+    const [format] = describeContractCommand(
+      { name: "probe", inputSchema },
+      { command: "probe", description: "Probe" },
+    ).parameters;
+    expect(format!.schema.parse(undefined)).toBe("json");
+    expect(format!.schema.safeParse("graphql").success).toBe(true);
+    expect(format!.schema.safeParse("xml").success).toBe(false);
+  });
+
+  it("takes the input branches a command selects and fixes a single selected value", () => {
+    const path = z.string();
+    const inputSchema = z.discriminatedUnion("operation", [
+      z.strictObject({ operation: z.enum(["a", "b"]), path }),
+      z.strictObject({
+        operation: z.literal("c"),
+        path,
+        symbol: z.string().optional(),
+      }),
+      z.strictObject({ operation: z.literal("d") }),
+    ]);
+    const describe = (values: readonly [string, ...string[]]) =>
+      describeContractCommand(
+        { name: "probe", inputSchema },
+        {
+          command: "probe",
+          description: "Probe",
+          inputBranches: { field: "operation", values },
+        },
+      );
+    const artifact = describe(["a", "b", "c"]);
+    expect(artifact.parameters.map(({ key }) => key)).toEqual([
+      "operation",
+      "path",
+      "symbol",
+    ]);
+    const operation = artifact.parameters[0]!.schema;
+    expect(operation.safeParse("c").success).toBe(true);
+    expect(operation.safeParse("d").success).toBe(false);
+    expect(artifact.parameters[1]!.schema.safeParse(undefined).success).toBe(
+      false,
+    );
+    const fixed = describe(["d"]);
+    expect(fixed.parameters).toEqual([]);
+    expect(fixed.toContractInput({})).toEqual({ operation: "d" });
+    expect(inputSchema.safeParse(fixed.toContractInput({})).success).toBe(true);
+    expect(() => describe(["a"])).toThrow(
+      "probe.operation would narrow an input branch",
+    );
+    expect(() => describe(["e"])).toThrow(
+      "probe.operation selects no branch for a value",
+    );
+    expect(() =>
+      describeContractCommand(
+        { name: "probe", inputSchema: z.object({ operation: z.string() }) },
+        {
+          command: "probe",
+          description: "Probe",
+          inputBranches: { field: "operation", values: ["a"] },
+        },
+      ),
+    ).toThrow("probe has one input branch");
   });
 });
 
