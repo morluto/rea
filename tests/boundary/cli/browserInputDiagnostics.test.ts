@@ -322,6 +322,52 @@ describe("browser correction facts", () => {
   );
 
   cliTest(
+    "chooses the capture comparison shape from the documents",
+    async ({ cli, workspace }) => {
+      const run = async (...argv: string[]) =>
+        (
+          await cli.run({
+            arguments: ["compare-web-captures", ...argv, "--json"],
+            cwd: workspace.root,
+            environment: { ...workspace.environment, REA_LOG_LEVEL: "silent" },
+          })
+        ).json;
+      // A scenario-owned field selects the scenario shape, so its own
+      // issues are reported rather than the passive capture's.
+      expect(await run('{"steps":[]}', "{}")).toMatchObject({
+        code: "invalid_request",
+        details: {
+          operation: "compare_web_captures",
+          issues: expect.arrayContaining([
+            expect.objectContaining({
+              path: ["before_scenario", "browser"],
+              reason: "missing_argument",
+            }),
+          ]),
+        },
+      });
+      // Normalization applies only to scenarios; passive captures refuse it
+      // instead of ignoring it.
+      expect(
+        await run("{}", "{}", "--normalization-json", '{"rules":[]}'),
+      ).toMatchObject({
+        code: "invalid_request",
+        details: {
+          operation: "compare_web_captures",
+          issues: [
+            {
+              path: ["normalizationJson"],
+              reason: "invalid_value",
+              message:
+                "--normalization-json requires recorded browser scenario captures; the given input selects passive page captures, which does not take it.",
+            },
+          ],
+        },
+      });
+    },
+  );
+
+  cliTest(
     "preserves the parser diagnostic for an omitted endpoint",
     async ({ cli, workspace }) => {
       const result = await cli.run({
