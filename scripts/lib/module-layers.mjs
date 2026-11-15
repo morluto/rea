@@ -7,8 +7,8 @@
  * The order follows docs/architecture/architecture.mermaid: domain and
  * contracts at the centre, the process/filesystem foundation, the ports
  * that providers implement and application consumes, provider adapters,
- * shared application workflows, production composition, then the
- * CLI and MCP entry points.
+ * shared application workflows, production composition, then the CLI and
+ * MCP entry points.
  */
 export const LAYER_ORDER = Object.freeze([
   "domain",
@@ -41,6 +41,8 @@ export const UNIT_LAYERS = Object.freeze(
       "logger.ts",
     ]),
     ...units("ports", ["ports"]),
+    // Every unit here except the shared provider core (`providers`) is a
+    // provider folder; see PROVIDER_CORE and providerBoundaryFacts.
     ...units("providers", [
       "adb",
       "android",
@@ -199,14 +201,75 @@ export const layerGraphFacts = (imports, files = []) => {
     undeclared: [...undeclared].sort(),
     upward,
     cycles: mutualPairs(edges),
+    ...providerBoundaryFacts(imports),
   };
 };
 
+/** The shared provider core that every provider folder may import. */
+export const PROVIDER_CORE = "providers";
+
+/** Whether a unit is a provider folder (not the shared provider core). */
+export const isProviderUnit = (unit) =>
+  UNIT_LAYERS[unit] === "providers" && unit !== PROVIDER_CORE;
+
+const ENTRY_IMPORTER_LAYERS = new Set([
+  "application",
+  "composition",
+  "adapters",
+]);
+
+const sortedCounts = (counts) =>
+  Object.fromEntries(
+    [...counts].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+  );
+
 /**
- * Compare facts with the recorded baseline. Growth fails: a new upward pair,
- * more imports on a recorded pair, or a cycle group not recorded. Shrinkage is
- * returned separately: the caller fails on it too, so the baseline is lowered
- * in the change that removes the imports and can never grow back silently.
+ * Provider boundary facts, counted per unit pair.
+ *
+ * A provider folder may import the domain, contracts, foundation and ports
+ * layers, the shared provider core and its own files. An import of another
+ * provider folder is an explicit, recorded exception (for example inspector
+ * reusing browser's CDP helpers): `crossProvider` counts them per pair, and a
+ * pair that is not in the baseline fails. Application, composition and the
+ * CLI/MCP adapters reach a provider only through its entry file
+ * `src/<provider>/index.ts`: `providerEntry` counts their imports of any other
+ * file in a provider folder. Both counts may only shrink.
+ */
+export const providerBoundaryFacts = (imports) => {
+  const cross = new Map();
+  const entry = new Map();
+  for (const { file, target } of imports) {
+    const from = sourceUnit(file);
+    const to = sourceUnit(target);
+    if (from === undefined || to === undefined || from === to) continue;
+    if (!isProviderUnit(to)) continue;
+    const key = `${from} -> ${to}`;
+    if (isProviderUnit(from)) cross.set(key, (cross.get(key) ?? 0) + 1);
+    else if (
+      ENTRY_IMPORTER_LAYERS.has(UNIT_LAYERS[from]) &&
+      sourcePath(target) !== `src/${to}/index.ts`
+    )
+      entry.set(key, (entry.get(key) ?? 0) + 1);
+  }
+  return {
+    crossProvider: sortedCounts(cross),
+    providerEntry: sortedCounts(entry),
+  };
+};
+
+/** Counted pair maps a baseline ratchets, with the wording of each finding. */
+const COUNTED = Object.freeze([
+  ["upward", "upward import"],
+  ["crossProvider", "cross-provider import"],
+  ["providerEntry", "import past the provider entry"],
+]);
+
+/**
+ * Compare facts with the recorded baseline. Growth fails: a new counted pair
+ * (upward, cross-provider, or past a provider entry), more imports on a
+ * recorded pair, or a cycle group not recorded. Shrinkage is returned
+ * separately: the caller fails on it too, so the baseline is lowered in the
+ * change that removes the imports and can never grow back silently.
  */
 export const compareLayerBaseline = (facts, baseline) => {
   const failures = [];
@@ -215,17 +278,19 @@ export const compareLayerBaseline = (facts, baseline) => {
     failures.push(
       `undeclared unit src/${unit}: add it to UNIT_LAYERS in scripts/lib/module-layers.mjs`,
     );
-  for (const [key, count] of Object.entries(facts.upward)) {
-    const allowed = baseline.upward[key] ?? 0;
-    if (count > allowed)
-      failures.push(
-        `upward import ${key}: ${count} imports, baseline ${allowed}`,
-      );
-  }
-  for (const [key, allowed] of Object.entries(baseline.upward)) {
-    const count = facts.upward[key] ?? 0;
-    if (count < allowed)
-      lowerable.push(`upward import ${key}: ${count}, baseline ${allowed}`);
+  for (const [kind, label] of COUNTED) {
+    const observed = facts[kind] ?? {};
+    const recorded = baseline[kind] ?? {};
+    for (const [key, count] of Object.entries(observed)) {
+      const allowed = recorded[key] ?? 0;
+      if (count > allowed)
+        failures.push(`${label} ${key}: ${count} imports, baseline ${allowed}`);
+    }
+    for (const [key, allowed] of Object.entries(recorded)) {
+      const count = observed[key] ?? 0;
+      if (count < allowed)
+        lowerable.push(`${label} ${key}: ${count}, baseline ${allowed}`);
+    }
   }
   const recordedCycles = new Set(baseline.cycles);
   for (const group of facts.cycles)
@@ -238,17 +303,23 @@ export const compareLayerBaseline = (facts, baseline) => {
   return { failures, lowerable };
 };
 
-/**
- * The baseline lowered to the observed facts: each recorded upward pair keeps
- * the smaller of its recorded and observed counts, and only recorded cycles
- * that are still present remain. Nothing is added, so growth still fails.
- */
-export const lowerLayerBaseline = (facts, baseline) => ({
-  upward: Object.fromEntries(
-    Object.entries(baseline.upward).flatMap(([key, allowed]) => {
-      const count = Math.min(allowed, facts.upward[key] ?? 0);
+const lowerCounts = (observed = {}, recorded = {}) =>
+  Object.fromEntries(
+    Object.entries(recorded).flatMap(([key, allowed]) => {
+      const count = Math.min(allowed, observed[key] ?? 0);
       return count > 0 ? [[key, count]] : [];
     }),
-  ),
+  );
+
+/**
+ * The baseline lowered to the observed facts: each recorded counted pair
+ * keeps the smaller of its recorded and observed counts, and only recorded
+ * cycles that are still present remain. Nothing is added, so growth still
+ * fails.
+ */
+export const lowerLayerBaseline = (facts, baseline) => ({
+  upward: lowerCounts(facts.upward, baseline.upward),
   cycles: baseline.cycles.filter((group) => facts.cycles.includes(group)),
+  crossProvider: lowerCounts(facts.crossProvider, baseline.crossProvider),
+  providerEntry: lowerCounts(facts.providerEntry, baseline.providerEntry),
 });

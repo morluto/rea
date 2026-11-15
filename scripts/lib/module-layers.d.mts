@@ -14,11 +14,31 @@ export function isLayerException(file: string, target: string): boolean;
 /** The top-level unit of a production `src/` file, or undefined. */
 export function sourceUnit(path: string): string | undefined;
 
-export interface LayerGraphFacts {
+/** The shared provider core that every provider folder may import. */
+export declare const PROVIDER_CORE: string;
+
+/** Whether a unit is a provider folder (not the shared provider core). */
+export function isProviderUnit(unit: string): boolean;
+
+export interface ProviderBoundaryFacts {
+  /** Imports from one provider folder into another, per unit pair. */
+  readonly crossProvider: Readonly<Record<string, number>>;
+  /** Application, composition and adapter imports past a provider's index.ts. */
+  readonly providerEntry: Readonly<Record<string, number>>;
+}
+
+export function providerBoundaryFacts(
+  imports: readonly { readonly file: string; readonly target: string }[],
+): ProviderBoundaryFacts;
+
+export interface LayerGraphFacts extends ProviderBoundaryFacts {
   readonly undeclared: readonly string[];
   readonly upward: Readonly<Record<string, number>>;
   readonly cycles: readonly string[];
 }
+
+export type LayerBaseline = Pick<LayerGraphFacts, "upward" | "cycles"> &
+  Partial<ProviderBoundaryFacts>;
 
 export function layerGraphFacts(
   imports: readonly { readonly file: string; readonly target: string }[],
@@ -27,10 +47,10 @@ export function layerGraphFacts(
 
 export function compareLayerBaseline(
   facts: LayerGraphFacts,
-  baseline: Pick<LayerGraphFacts, "upward" | "cycles">,
+  baseline: LayerBaseline,
 ): { readonly failures: string[]; readonly lowerable: string[] };
 
 export function lowerLayerBaseline(
   facts: LayerGraphFacts,
-  baseline: Pick<LayerGraphFacts, "upward" | "cycles">,
-): Pick<LayerGraphFacts, "upward" | "cycles">;
+  baseline: LayerBaseline,
+): Required<LayerBaseline>;

@@ -665,6 +665,8 @@ describe("layer baseline ratchet", () => {
     expect(await recorded(root)).toEqual({
       upward: { "native -> application": 1 },
       cycles: [],
+      crossProvider: {},
+      providerEntry: {},
     });
     expect(run(root).status).toBe(0);
   });

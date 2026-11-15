@@ -8,6 +8,13 @@ graph TD
     %% top-level src/ directory and root file; verify:module-boundaries fails on
     %% an undeclared unit and ratchets the recorded outward imports and mutual
     %% imports in scripts/lib/module-layers.baseline.json.
+    %% Provider boundary: a provider folder (src/ghidra/, src/native/, ...)
+    %% imports inner layers, the shared provider core (src/providers/) and its
+    %% own files. Importing another provider folder is a recorded exception
+    %% (for example inspector -> browser CDP helpers); shared pieces belong in
+    %% ports, foundation or the provider core. Application, composition and
+    %% adapters reach a provider through its entry file src/<provider>/index.ts.
+    %% The baseline counts both kinds of import per unit pair; both only shrink.
     subgraph "Entry Points"
         CLI["src/cli.ts + src/cli/<br/>One-shot CLI adapter<br/>setup, diagnostics, analysis, decompilation<br/>cliLoader: recorded registrar per command, complete CLI otherwise"]
         MAIN["src/main.ts + src/main/<br/>MCP server adapter: stdio default, streamable HTTP opt-in<br/>config, session, process lifetime"]

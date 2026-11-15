@@ -6,6 +6,7 @@ import {
   compareLayerBaseline,
   layerGraphFacts,
   lowerLayerBaseline,
+  providerBoundaryFacts,
   sourceUnit,
 } from "../../scripts/lib/module-layers.mjs";
 
@@ -46,22 +47,9 @@ describe("top-level module layers", () => {
       undeclared: [],
       upward: { "native -> application": 2 },
       cycles: ["application <-> native"],
+      crossProvider: {},
+      providerEntry: { "application -> native": 1 },
     });
-  });
-
-  it("skips only the exact declared file-to-file exception", () => {
-    expect(
-      layerGraphFacts([
-        edge("src/domain/localPath.ts", "src/platform/HostPlatform.js"),
-      ]).upward,
-    ).toEqual({});
-    expect(
-      layerGraphFacts([
-        edge("src/domain/localPath.ts", "src/platform/HostPlatform.js"),
-        edge("src/domain/other.ts", "src/platform/HostPlatform.js"),
-        edge("src/domain/localPath.ts", "src/platform/Other.js"),
-      ]).upward,
-    ).toEqual({ "domain -> platform": 2 });
   });
 
   it("refuses an undeclared unit instead of leaving it unconstrained", () => {
@@ -90,16 +78,20 @@ describe("top-level module layers", () => {
         undeclared: [],
         upward: { "native -> application": 3, "rizin -> application": 1 },
         cycles: ["application <-> native", "application <-> rizin"],
+        crossProvider: { "gpu -> native": 2 },
+        providerEntry: {},
       },
-      baseline,
+      { ...baseline, providerEntry: { "composition -> ghidra": 1 } },
     );
     expect(grown.failures).toEqual([
       "upward import native -> application: 3 imports, baseline 2",
       "upward import rizin -> application: 1 imports, baseline 0",
+      "cross-provider import gpu -> native: 2 imports, baseline 0",
       "mutual import not in baseline: application <-> rizin",
     ]);
     expect(grown.lowerable).toEqual([
       "upward import gdb -> application: 0, baseline 1",
+      "import past the provider entry composition -> ghidra: 0, baseline 1",
       "recorded mutual import no longer present: application <-> gdb",
     ]);
   });
@@ -115,8 +107,12 @@ describe("top-level module layers", () => {
             "rizin -> application": 1,
           },
           cycles: ["application <-> native", "application <-> rizin"],
+          crossProvider: { "gpu -> native": 1, "go -> native": 4 },
+          providerEntry: {},
         },
         {
+          crossProvider: { "gpu -> native": 3 },
+          providerEntry: { "composition -> ghidra": 2 },
           upward: {
             "native -> application": 2,
             "gdb -> application": 2,
@@ -128,6 +124,45 @@ describe("top-level module layers", () => {
     ).toEqual({
       upward: { "native -> application": 1, "gdb -> application": 2 },
       cycles: ["application <-> native"],
+      crossProvider: { "gpu -> native": 1 },
+      providerEntry: {},
     });
+  });
+});
+
+describe("provider boundaries", () => {
+  it("counts cross-provider imports and imports past a provider entry", () => {
+    expect(
+      providerBoundaryFacts([
+        edge("src/gpu/A.ts", "src/native/B.js"),
+        edge("src/gpu/A.ts", "src/native/index.js"),
+        edge("src/gpu/A.ts", "src/providers/Core.js"),
+        edge("src/gpu/A.ts", "src/resources/Reader.js"),
+        edge("src/gpu/A.ts", "src/gpu/C.js"),
+        edge("src/composition/D.ts", "src/ghidra/E.js"),
+        edge("src/composition/D.ts", "src/ghidra/index.js"),
+        edge("src/server/F.ts", "src/ghidra/E.js"),
+        edge("src/providers/Core.ts", "src/ghidra/E.js"),
+        edge("src/composition/D.test.ts", "src/ghidra/E.js"),
+      ]),
+    ).toEqual({
+      crossProvider: { "gpu -> native": 2 },
+      providerEntry: { "composition -> ghidra": 1, "server -> ghidra": 1 },
+    });
+  });
+
+  it("skips only the exact declared file-to-file exception", () => {
+    expect(
+      layerGraphFacts([
+        edge("src/domain/localPath.ts", "src/platform/HostPlatform.js"),
+      ]).upward,
+    ).toEqual({});
+    expect(
+      layerGraphFacts([
+        edge("src/domain/localPath.ts", "src/platform/HostPlatform.js"),
+        edge("src/domain/other.ts", "src/platform/HostPlatform.js"),
+        edge("src/domain/localPath.ts", "src/platform/Other.js"),
+      ]).upward,
+    ).toEqual({ "domain -> platform": 2 });
   });
 });
