@@ -365,7 +365,16 @@ export const ENTRY_FILES = Object.freeze(
         "PcapProviderIdentity.ts",
       ],
       python: ["PythonPycProvider.ts", "PythonPycProviderIdentity.ts"],
-      reference: [],
+      reference: [
+        // The reference-source import workflow (src/application/ReferenceSource*)
+        // runs the reader and consumes its result and failure types. It reports
+        // its own root and VCS reads with the reader's two failure builders, so
+        // both kinds of failure share one shape and wording. Traversal state,
+        // symlink reconciliation and the per-entry failure helpers stay private.
+        "ReferenceSourceFailureBuilders.ts",
+        "ReferenceSourceReader.ts",
+        "ReferenceSourceReaderTypes.ts",
+      ],
       rizin: [
         "RizinCommand.ts",
         "RizinDebugSessionManager.ts",
@@ -441,6 +450,17 @@ export const PROVIDER_DEPENDENCIES = Object.freeze([
     // and reports its failures, instead of parsing the fuse wire twice.
     reason:
       "active Electron capture checks the inspect-arguments fuse with the electron provider's fuse reader",
+  }),
+  Object.freeze({
+    from: "captures",
+    to: "pcap",
+    files: Object.freeze(["PcapConfiguration.ts"]),
+    // Live packet capture runs the same Wireshark tshark that the pcap
+    // provider runs. It locates, selects, versions and identity-checks it
+    // through pcap's Wireshark tool configuration, so REA_TSHARK_COMMAND and
+    // the executable identity rules have one owner.
+    reason:
+      "live packet capture selects and verifies tshark with the pcap provider's Wireshark tool configuration",
   }),
 ]);
 

@@ -32,8 +32,17 @@ it.each([null, "owned stop unconfirmed"])(
     if (cleanup === null)
       expect(projected).toMatchObject({
         code: "provider_timeout",
-        details: { timeout_ms: 1234 },
-        remediation: { action: expect.stringContaining("--worker-timeout-ms") },
+        details: {
+          timeout_ms: 1234,
+          limit: {
+            control_kind: "parameter",
+            parameter: "worker_timeout_ms",
+            effective_value: 1234,
+          },
+        },
+        remediation: {
+          action: expect.not.stringContaining("--"),
+        },
       });
     else
       expect(projected).toMatchObject({

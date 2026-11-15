@@ -10,8 +10,8 @@ import {
   type ArtifactResourceScope,
   bindArtifactFileCleanup,
 } from "../resources/index.js";
-import { publishWebScripts } from "../browser/assets/PublishWebScripts.js";
-import { selectScriptCapture } from "../browser/assets/ScriptCaptureAdapters.js";
+import { publishWebScripts } from "./PublishWebScripts.js";
+import { selectScriptCapture } from "../domain/webScriptCaptureAdapters.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,

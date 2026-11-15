@@ -28,7 +28,9 @@ import {
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import {
   MAX_FLUTTER_LIBRARY_PATH_BYTES,
+  dartPoolBudgetLimit,
   dartPoolPolicy,
+  type DartPoolBudget,
   type DartPoolPolicy,
   type FlutterRequest,
 } from "../domain/flutter/flutterBuildAnalysis.js";
@@ -1305,6 +1307,14 @@ export class FlutterBuildProvider {
       dataHeaders.some((section) => !section.header.complete) ||
       hashScan.candidates.length !== 1 ||
       hashScan.sources !== SYMBOL_PAIR_COUNT;
+    const poolBudgetsReached = new Set<DartPoolBudget>(pool.limitsReached);
+    if (
+      pool.packageUriCount > poolPolicy.uri_limit ||
+      pool.dartUriCount > poolPolicy.uri_limit
+    )
+      poolBudgetsReached.add("uri_limit");
+    if (pool.classLikeTokenCount > poolPolicy.token_limit)
+      poolBudgetsReached.add("token_limit");
     const poolPartial =
       isolateData === null ||
       pool.collectionCapped ||
@@ -1339,6 +1349,13 @@ export class FlutterBuildProvider {
             ),
             class_like_token_count_at_least: pool.classLikeTokenCount,
             printable_run_count: pool.printableRunCount,
+            ...(poolBudgetsReached.size === 0
+              ? {}
+              : {
+                  limits: [...poolBudgetsReached].map((budget) =>
+                    dartPoolBudgetLimit(budget, poolPolicy),
+                  ),
+                }),
           },
           coverage: snapshotPartial || poolPartial ? "partial" : "complete",
         },
@@ -1377,21 +1394,21 @@ export class FlutterBuildProvider {
               ),
             ...pool.limitsReached.map(
               (limit) =>
-                `String-pool admission reached pool_policy.${limit}=${String(poolPolicy[limit])}. Retry with a narrower pool_policy.contains or increase ${limit} (CLI --pool-policy JSON); no REA restart is required. Counts remain lower bounds and overflowed runs are omitted. APK, library and response limits are unchanged`,
+                `String-pool admission reached pool_policy.${limit}=${String(poolPolicy[limit])}. Retry with a narrower pool_policy.contains or increase ${limit}; string_pool.limits records the control and no REA restart is required. Counts remain lower bounds and overflowed runs are omitted. APK, library and response limits are unchanged`,
             ),
             ...(pool.dartUriCount > poolPolicy.uri_limit
               ? [
-                  `dart_uris reports ${String(poolPolicy.uri_limit)} of at least ${String(pool.dartUriCount)} distinct URIs; narrow pool_policy.contains or raise pool_policy.uri_limit (CLI --pool-policy JSON) on a new call, no restart required`,
+                  `dart_uris reports ${String(poolPolicy.uri_limit)} of at least ${String(pool.dartUriCount)} distinct URIs; narrow pool_policy.contains or raise pool_policy.uri_limit (recorded in string_pool.limits) on a new call, no restart required`,
                 ]
               : []),
             ...(pool.packageUriCount > poolPolicy.uri_limit
               ? [
-                  `package_uris reports ${String(poolPolicy.uri_limit)} of at least ${String(pool.packageUriCount)} distinct URIs; narrow pool_policy.contains or raise pool_policy.uri_limit (CLI --pool-policy JSON) on a new call, no restart required`,
+                  `package_uris reports ${String(poolPolicy.uri_limit)} of at least ${String(pool.packageUriCount)} distinct URIs; narrow pool_policy.contains or raise pool_policy.uri_limit (recorded in string_pool.limits) on a new call, no restart required`,
                 ]
               : []),
             ...(pool.classLikeTokenCount > poolPolicy.token_limit
               ? [
-                  `class_like_tokens reports ${String(poolPolicy.token_limit)} of at least ${String(pool.classLikeTokenCount)} distinct tokens; narrow pool_policy.contains or raise pool_policy.token_limit (CLI --pool-policy JSON) on a new call, no restart required`,
+                  `class_like_tokens reports ${String(poolPolicy.token_limit)} of at least ${String(pool.classLikeTokenCount)} distinct tokens; narrow pool_policy.contains or raise pool_policy.token_limit (recorded in string_pool.limits) on a new call, no restart required`,
                 ]
               : []),
           ],
@@ -1421,13 +1438,13 @@ const projectStringPool = async (
   classLikeTokenCount: number;
   printableRunCount: number;
   collectionCapped: boolean;
-  limitsReached: readonly Exclude<keyof DartPoolPolicy, "contains">[];
+  limitsReached: readonly DartPoolBudget[];
 }> => {
   const packages = new Set<string>();
   const darts = new Set<string>();
   const tokens = new Set<string>();
   let runCount = 0;
-  const limitsReached = new Set<Exclude<keyof DartPoolPolicy, "contains">>();
+  const limitsReached = new Set<DartPoolBudget>();
   const COLLECTION_SLACK = 2;
   // Input bytes bound useful capacity before slack multiplication; large safe
   // integer requests never overflow the collection-budget arithmetic.

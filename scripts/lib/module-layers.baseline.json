@@ -9,14 +9,11 @@
   ],
   "crossProvider": {
     "apktool -> artifacts": 2,
-    "captures -> pcap": 2,
     "desktop -> electron": 1,
-    "gpu -> artifacts": 2,
+    "gpu -> artifacts": 1,
     "model -> artifacts": 1
   },
   "entry": {
-    "application -> browser": 2,
-    "application -> desktop": 41,
-    "application -> reference": 8
+    "application -> desktop": 41
   }
 }

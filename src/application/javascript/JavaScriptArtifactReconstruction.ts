@@ -1,3 +1,4 @@
+import { javaScriptSemanticPrecisionControls } from "./JavaScriptSemanticPrecisionControls.js";
 import type { JavaScriptMemberMutationAllowance } from "../../domain/javascript/javascriptSemanticWorkAllowance.js";
 import { discoverJavaScriptPreloadPaths } from "./JavaScriptPreloadDiscovery.js";
 import { artifactNameForClassification } from "../../domain/artifactNameSelection.js";
@@ -332,6 +333,7 @@ export const reconstructJavaScriptArtifact = async (
       const semanticGraphSteps = semanticProjection.finishImmutableSteps(
         snapshot.manifest.root_sha256,
         graph,
+        javaScriptSemanticPrecisionControls(analysis.files),
       );
       await reportCompletedPhase(
         "seal_javascript_semantic_graph",

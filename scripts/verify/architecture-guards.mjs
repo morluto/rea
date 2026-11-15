@@ -12,6 +12,10 @@ import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
 import { budgetArithmeticCount } from "./budget-arithmetic-guard.mjs";
 import { localLimitErrorClassCount } from "./limit-class-guard.mjs";
 import {
+  cliTextGuardSelects,
+  cliTextOutsideCliCount,
+} from "./cli-text-guard.mjs";
+import {
   TOOL_REGISTRATION_OWNERS,
   toolRegistrationCount,
 } from "./tool-registration-guard.mjs";
@@ -474,14 +478,14 @@ checkCounted(
   [],
 );
 
-// `tshark -T json` has one envelope reader, src/pcap/TsharkJsonPackets.ts,
+// `tshark -T json` has one envelope reader, src/domain/pcap/tsharkJsonPackets.ts,
 // which owns malformed JSON, the packet array and each packet's layers.
 checkCounted(
-  "local tshark JSON envelope read (use parseTsharkJsonPackets or readTsharkJsonPackets from src/pcap/TsharkJsonPackets)",
+  "local tshark JSON envelope read (use parseTsharkJsonPackets or readTsharkJsonPackets from src/domain/pcap/tsharkJsonPackets)",
   "tshark-json-envelope",
   files,
   /\b_source\s*\.\s*layers\b/gu,
-  ["src/pcap/TsharkJsonPackets.ts"],
+  ["src/domain/pcap/tsharkJsonPackets.ts"],
 );
 
 // Text from an unknown caught value has one owner, src/kernel/errorMessage.ts.
@@ -576,18 +580,13 @@ checkCounted(
   ["src/gdb/GdbMiRecord.ts"],
 );
 
-// Services name the contract field they refuse or ask the caller to change;
-// the CLI layer owns option spellings (each command's field binding renames
-// issue paths to CLI keys). A `--flag` written outside src/cli copies that
-// mapping and goes stale when the command renames the option.
+// src/cli owns option and command spellings; cli-text-guard.mjs states the
+// rule and its written exemptions (host-only commands, CLI-only files).
 checkCounted(
-  "REA CLI option named outside the CLI layer (name the contract field; src/cli owns option spellings)",
+  "REA CLI option or command named outside the CLI layer (name the contract field or operation; src/cli owns option and command spellings)",
   "cli-option-text-outside-cli",
-  files.filter(
-    ({ path }) =>
-      !path.startsWith("src/cli/") && !/^src\/cli[^/]*\.ts$/u.test(path),
-  ),
-  /\(CLI:? [^)\n]*--[a-z]|--[a-z][a-z0-9-]* on the CLI|or (?:use|pass) --[a-z]|\bcli(?:Flag|Total|PerFile)?:\s*"--[a-z]|(?:message|userMessage):\s*["`]--[a-z]/gu,
+  files.filter(({ path }) => cliTextGuardSelects(path)),
+  cliTextOutsideCliCount,
   [],
 );
 

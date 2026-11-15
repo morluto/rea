@@ -1,20 +1,10 @@
-import type { ArtifactResourceScope } from "../../resources/index.js";
-import type {
-  EvidenceWriter,
-  EvidenceReader,
-  EvidenceUnknownWriter,
-} from "../../application/investigation/InvestigationRecordPort.js";
+import type { EvidenceReader } from "../../application/investigation/InvestigationRecordPort.js";
 import type { Logger } from "pino";
 import type { WithAdmittedAnalysis } from "../analysisAdmission.js";
 
-/** Shared services for registering JavaScript application graph workflows. */
+/** Shared services for the application tools that deliver plain results. */
 export interface ApplicationToolRegistration {
-  readonly artifactResources: ArtifactResourceScope;
   readonly withAdmittedAnalysis?: WithAdmittedAnalysis;
   readonly logger: Logger;
   readonly evidenceById: EvidenceReader["evidenceById"] | undefined;
-  readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
-  readonly recordEvidenceWithUnknown:
-    | EvidenceUnknownWriter["recordEvidenceWithUnknown"]
-    | undefined;
 }

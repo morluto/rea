@@ -1,4 +1,5 @@
 import { capturedProviderOutput } from "../../process/capturedProviderOutput.js";
+import { producerLimitControl } from "../../domain/producerResourceLimits.js";
 import { analysisSettingLimit } from "../../domain/analysisSettingDefinitions.js";
 import {
   PWNTOOLS_LIMITS,
@@ -6,13 +7,13 @@ import {
   type PwntoolsProducerLimits,
 } from "../../domain/native/pwntoolsResourceLimits.js";
 import type { AnalysisCapturedOutput } from "../../domain/analysisErrorBase.js";
+import type { AnalysisControlLimit } from "../../domain/analysisSettings.js";
 import type { ProviderProcessSnapshot } from "../../process/ProviderProcess.js";
 import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
-import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { ProviderSelectionError } from "../../domain/providerSelectionError.js";
 import type { ProviderOutcomeContext } from "../../process/classifyProviderOutcome.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
@@ -64,7 +65,7 @@ const pwntoolsInputLimitRecovery = (
   const shared =
     "CPU, memory, output and transport allowances remain independent.";
   if (source === "request")
-    return `producer_limits.input_bytes is ${effective} bytes for this call. Raise it on the next call (CLI --producer-limits JSON). ${shared}`;
+    return `producer_limits.input_bytes is ${effective} bytes for this call. Raise it on the next call. ${shared}`;
   if (source === "runtime")
     return `pwntools.max_input_bytes is ${effective} bytes (source runtime) and can be changed with update_analysis_settings. The launch seed is REA_PWNTOOLS_MAX_INPUT_BYTES. producer_limits.input_bytes overrides that ceiling on the next call. ${shared}`;
   if (source === "setting")
@@ -76,7 +77,25 @@ const pwntoolsInputLimitRecovery = (
 export const pwntoolsBudgetRecovery = (
   limits: PwntoolsProducerLimits = resolvePwntoolsLimits(),
 ): string =>
-  `Selected producer_limits: cpu_seconds=${String(limits.cpu_seconds)} seconds, output_bytes=${String(limits.output_bytes)}, diagnostic_bytes=${String(limits.diagnostic_bytes)}, address_space_bytes=${String(limits.address_space_bytes)}, file_bytes=${String(limits.file_bytes)}, input_bytes=${String(limits.input_bytes)} bytes. Increase the exhausted producer_limits field on the next call (CLI --producer-limits JSON); no REA restart is required. Tighter inherited OS limits remain enforced and are not raised by this request. pwntools_timeout_ms changes only the wall deadline.`;
+  `Selected producer_limits: cpu_seconds=${String(limits.cpu_seconds)} seconds, output_bytes=${String(limits.output_bytes)}, diagnostic_bytes=${String(limits.diagnostic_bytes)}, address_space_bytes=${String(limits.address_space_bytes)}, file_bytes=${String(limits.file_bytes)}, input_bytes=${String(limits.input_bytes)} bytes. Increase the exhausted producer_limits field on the next call; no REA restart is required. Tighter inherited OS limits remain enforced and are not raised by this request. pwntools_timeout_ms changes only the wall deadline.`;
+
+/**
+ * Recovery for a bridge reply larger than `producer_limits.output_bytes`: the
+ * reply file's own budget, shared by the decoder and the core-only debugger.
+ */
+export const pwntoolsReplyOutputLimit = (
+  limits: PwntoolsProducerLimits,
+): {
+  readonly remediationAction: string;
+  readonly limit: AnalysisControlLimit;
+} => ({
+  remediationAction: `Increase producer_limits.output_bytes above ${String(limits.output_bytes)} bytes on the next call; no restart is required. File output follows the selected output allowance unless file_bytes is explicit. Diagnostic output, worker memory, tighter inherited limits and transport remain independent.`,
+  limit: producerLimitControl(
+    "output_bytes",
+    limits.output_bytes,
+    PWNTOOLS_LIMITS.output_bytes,
+  ),
+});
 
 /** Name the file-size cap and any reported effective limit, not address space. */
 const fileSizeAllowance = (
@@ -85,7 +104,7 @@ const fileSizeAllowance = (
 ): string => {
   const cap = String(selectedBytes);
   const inherited =
-    "A tighter inherited limit is retained. Increase producer_limits.file_bytes on the next call (CLI --producer-limits JSON); no restart is required. pwntools_timeout_ms does not raise the file-size allowance.";
+    "A tighter inherited limit is retained. Increase producer_limits.file_bytes on the next call; no restart is required. pwntools_timeout_ms does not raise the file-size allowance.";
   return reportedBytes === undefined
     ? `The file-size cap is ${cap} bytes (producer_limits.file_bytes). The effective file_size_bytes limit was not reported. ${inherited}`
     : `The effective file-size allowance is ${String(reportedBytes)} bytes (file_size_bytes). The file-size cap is ${cap} bytes (producer_limits.file_bytes). ${inherited}`;
@@ -129,26 +148,6 @@ export const pwntoolsFailureDialect = (
     providerId: context.providerId,
     operation: context.operation,
     command: () => pwntoolsCommandContext(state, limits),
-    commandCleanup: (failure) => {
-      const output = combinedPwntoolsOutput(failure.snapshot, context);
-      return new ProviderCleanupError(
-        context.providerId,
-        failure.resources,
-        {
-          reason: failure.cleanupFailure,
-          ...(output === undefined ? {} : { captured_output: { ...output } }),
-          previous_error: {
-            failure_kind: failure.reason,
-            message: failure.message,
-            exit_code: failure.snapshot?.exitCode ?? null,
-            signal: failure.snapshot?.signal ?? null,
-            stdout: failure.snapshot?.stdout.text ?? null,
-            stderr: failure.snapshot?.stderr.text ?? null,
-          },
-        },
-        { operation: context.operation, cause: failure },
-      );
-    },
     // Only the configuration phase checks the selected Python by path.
     recognise: (cause) =>
       phase === "configuration" && cause instanceof Error && "code" in cause
@@ -224,6 +223,12 @@ const pwntoolsCommandContext = (
     limits.file_bytes,
   );
   const fileSizeRecovery = `Review the reported worker file-size limits and write failure. ${allowance} Repeating the unchanged request fails the same way.`;
+  // An omitted file_bytes follows this call's selected output allowance.
+  const fileSizeLimit = producerLimitControl(
+    "file_bytes",
+    limits.file_bytes,
+    limits.output_bytes,
+  );
   const timeoutMs = context.timeoutMs ?? PWNTOOLS_LIMITS.command_timeout_ms;
   const deadline = nativeDeadlineRecovery({
     timeoutMs,
@@ -257,12 +262,21 @@ const pwntoolsCommandContext = (
       remediationAction: deadline.remediationAction,
       limit: deadline.limit,
     },
+    // The command retains stdout and stderr under one aggregate
+    // diagnostic_bytes budget; output_bytes bounds the reply file, which
+    // reports its own refusal. Exceeding the command budget therefore names
+    // diagnostic_bytes whichever stream overflowed it.
     outputLimit: {
-      limits: {
-        output_bytes: limits.output_bytes,
-        diagnostic_bytes: limits.diagnostic_bytes,
+      reason: `Owned pwntools stdout and stderr exceeded the selected ${String(limits.diagnostic_bytes)}-byte producer_limits.diagnostic_bytes budget.`,
+      limits: { diagnostic_bytes: limits.diagnostic_bytes },
+      recovery: {
+        remediationAction: `Increase producer_limits.diagnostic_bytes above ${String(limits.diagnostic_bytes)} bytes on the next call; no restart is required. It bounds retained process stdout and stderr only; output_bytes, file and transport limits remain independent.`,
       },
-      recovery: { remediationAction: budgetRecovery },
+      limit: producerLimitControl(
+        "diagnostic_bytes",
+        limits.diagnostic_bytes,
+        PWNTOOLS_LIMITS.diagnostic_bytes,
+      ),
     },
     resourceSignal: (signal) =>
       signal === "SIGXFSZ"
@@ -270,14 +284,20 @@ const pwntoolsCommandContext = (
             limits: reportedLimits,
             detail: `${reportFailure} ${allowance}`.trim(),
             recovery: { remediationAction: fileSizeRecovery },
+            limit: fileSizeLimit,
           }
         : {
             limits: reportedLimits,
             detail:
               `${reportFailure} Selected producer_limits.cpu_seconds is ${String(limits.cpu_seconds)} seconds; inherited tighter limits remain enforced.`.trim(),
             recovery: {
-              remediationAction: `Review the reported worker CPU limit and observed signal; the signal alone does not establish exhaustion. Increase producer_limits.cpu_seconds above ${String(limits.cpu_seconds)} on the next call (CLI --producer-limits JSON) when that policy was limiting. No restart is required; a tighter inherited limit remains enforced. pwntools_timeout_ms does not raise CPU admission.`,
+              remediationAction: `Review the reported worker CPU limit and observed signal; the signal alone does not establish exhaustion. Increase producer_limits.cpu_seconds above ${String(limits.cpu_seconds)} on the next call when that policy was limiting. No restart is required; a tighter inherited limit remains enforced. pwntools_timeout_ms does not raise CPU admission.`,
             },
+            limit: producerLimitControl(
+              "cpu_seconds",
+              limits.cpu_seconds,
+              PWNTOOLS_LIMITS.cpu_seconds,
+            ),
           },
     dialect: (outcome, details) => {
       if (outcome.kind === "launch-refused")
@@ -304,7 +324,11 @@ const pwntoolsCommandContext = (
           "file-size",
           `The owned Python bridge reported EFBIG while writing a file; the exact write failure cause is unknown.${reportFailure} ${allowance}`,
           reportedLimits,
-          { ...details, remediationAction: fileSizeRecovery },
+          {
+            ...details,
+            remediationAction: fileSizeRecovery,
+            limit: fileSizeLimit,
+          },
         );
       if (marked === "memory" && reservedExit === PWNTOOLS_MEMORY_FAILURE_EXIT)
         return new AnalysisResourceConstraintError(

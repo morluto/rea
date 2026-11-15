@@ -49,6 +49,12 @@ import {
   withoutDefault,
 } from "./contractCliDescription.js";
 import {
+  cliDeliveredEvidence,
+  recordCliResultControls,
+} from "./cliResultControls.js";
+import {
+  cliResultControlsIn,
+  failurePartialObservation,
   projectCliAnalysisResult,
   projectCliInputFields,
 } from "./projectCliAnalysisResult.js";
@@ -140,6 +146,8 @@ export const admittedContractInput = <Parsed>(context: {
 export interface CliEvidenceTargetSelection {
   /** The source contract each target runs. */
   readonly source: string;
+  /** Source contract fields this command takes as options, with their flags. */
+  readonly sourceFlags: Readonly<Record<string, string>>;
   readonly targets: readonly {
     /** The contract field the target's source Evidence supplies. */
     readonly field: string;
@@ -344,6 +352,34 @@ export const runDirectOnTarget =
   };
 
 /**
+ * A command's output named for the CLI: renamed issue paths and failure
+ * flags (`projectCliInputFields`), and the flags of controls its result
+ * records, which the CLI renders in its own envelope.
+ */
+const projectCliResult = <Output>(
+  output: Output,
+  outputSchema: z.ZodType | undefined,
+  binding: Parameters<typeof projectCliInputFields>[1],
+): Output => {
+  // A command without flags, or without a result schema that declares
+  // recorded controls, has no control to render.
+  if (outputSchema !== undefined && Object.keys(binding.flags).length > 0)
+    recordCliResultControls(() =>
+      // A wrapped delivery recorded its complete Evidence, which the
+      // contract's output schema describes; so does a failure's partial
+      // Evidence of the same operation.
+      cliResultControlsIn(
+        cliDeliveredEvidence() ??
+          failurePartialObservation(output, binding.operation) ??
+          output,
+        outputSchema,
+        binding,
+      ),
+    );
+  return projectCliInputFields(output, binding);
+};
+
+/**
  * Run the source contract on each Evidence target in argv order with the
  * source fields the caller selected, then compose the contract from that
  * Evidence. A target's failure names its positional; any failure retains
@@ -387,7 +423,7 @@ export const runOnEvidenceTargets =
           {
             operation: evidenceTargets.source,
             fields: { path: key },
-            flags: {},
+            flags: evidenceTargets.sourceFlags,
           },
         );
       sources[field] = source.value;
@@ -635,7 +671,19 @@ export const registerContractCommand = <
             );
           const opening = admitOpening(selected, values);
           if (!opening.ok) return projectAnalysisError(opening.error);
-          return projectCliInputFields(
+          // A composed command also takes its sources' options; a control
+          // its result records from a source is set by that option.
+          const resultBinding =
+            description.evidenceTargets === undefined
+              ? selected.inputBinding
+              : {
+                  ...selected.inputBinding,
+                  flags: {
+                    ...description.evidenceTargets.sourceFlags,
+                    ...selected.inputBinding.flags,
+                  },
+                };
+          return projectCliResult(
             await run(
               admitted.value.input as z.input<Contract["inputSchema"]>,
               {
@@ -651,6 +699,7 @@ export const registerContractCommand = <
                     ? undefined
                     : {
                         source: description.evidenceTargets.source,
+                        sourceFlags: description.evidenceTargets.sourceFlags,
                         targets: description.evidenceTargets.targets.map(
                           ({ field, key }) => ({
                             field,
@@ -676,7 +725,8 @@ export const registerContractCommand = <
                 ) as CliOptionValues<CliOptions>,
               },
             ),
-            selected.inputBinding,
+            selected.contract.outputSchema,
+            resultBinding,
           );
         }),
       );
@@ -934,7 +984,7 @@ export const registerRoutedCommand = (
             );
           const opening = admitOpening(description, values);
           if (!opening.ok) return projectAnalysisError(opening.error);
-          return projectCliInputFields(
+          return projectCliResult(
             await route.run(admitted.value.input, {
               signal,
               operation: description.contract.name,
@@ -953,6 +1003,7 @@ export const registerRoutedCommand = (
                 withCliOnlyDefaults(description, values),
               ),
             }),
+            description.contract.outputSchema,
             description.inputBinding,
           );
         }),

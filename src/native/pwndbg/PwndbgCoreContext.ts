@@ -37,7 +37,7 @@ import { analysisErrorWithCleanupDependencies } from "../../domain/analysisError
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import {
   pwntoolsFailureDialect,
-  pwntoolsBudgetRecovery,
+  pwntoolsReplyOutputLimit,
 } from "../pwntools/PwntoolsFailures.js";
 import {
   resolvePwntoolsLimits,
@@ -289,7 +289,7 @@ export const inspectPwndbgCore = async ({
         {
           cause,
           ...(cause instanceof ArtifactReaderFailure && cause.reason === "limit"
-            ? { remediationAction: pwntoolsBudgetRecovery(producerLimits) }
+            ? pwntoolsReplyOutputLimit(producerLimits)
             : {}),
           ...(cause instanceof ArtifactReaderFailure
             ? { cleanup: cause.cleanup }
@@ -319,7 +319,7 @@ export const inspectPwndbgCore = async ({
           new AnalysisOutputError(OPERATION, reply.message, {
             capturedOutput: recordedCrashStageOutput(diagnostics, output),
             ...(reply.reason === "output-limit"
-              ? { remediationAction: pwntoolsBudgetRecovery(producerLimits) }
+              ? pwntoolsReplyOutputLimit(producerLimits)
               : {}),
           }),
           finalization,

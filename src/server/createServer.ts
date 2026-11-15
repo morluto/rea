@@ -366,6 +366,7 @@ export const createServer = (
   const contractTools = {
     logger: toolLogger,
     recordEvidence,
+    recordEvidenceWithUnknown,
     withAdmittedAnalysis: analysisAdmission,
     evidenceById,
   };
@@ -619,15 +620,13 @@ export const createServer = (
           webModuleTrace,
           webSourceLocation,
           javascriptRecovery: javascriptRecoveryService,
+          applicationWorkflows: { resources: artifactResources },
         },
         contractTools,
       );
       registerApplicationTools(server, {
-        artifactResources,
         evidenceById,
         logger: toolLogger,
-        recordEvidence,
-        recordEvidenceWithUnknown,
         withAdmittedAnalysis: analysisAdmission,
       });
       registerDesktopBuildTools(server, desktopBuildComputers, toolLogger);
