@@ -2312,26 +2312,27 @@ it("recovers omitted Dart pool strings through selection and per-call admission 
   ).toBe(true);
   // The result records each budget that left the projection partial by
   // contract field; adapters name their own option.
-  expect(limited.report.string_pool.limits).toEqual(
-    expect.arrayContaining([
-      {
-        control_kind: "parameter",
-        parameter: "pool_policy.run_bytes",
-        effective_value: 1024,
-        unit: "bytes",
-        minimum: 1,
-        maximum: Number.MAX_SAFE_INTEGER,
-        default_value: 1024,
-        applies_at: "next_call",
-      },
-      expect.objectContaining({
-        parameter: "pool_policy.uri_limit",
-        unit: "count",
-        effective_value: 500,
-      }),
-      expect.objectContaining({ parameter: "pool_policy.token_limit" }),
-    ]),
-  );
+  // Every budget this fixture exceeds is recorded, and nothing else.
+  const control = (budget: string, unit: "bytes" | "count", value: number) => ({
+    control_kind: "parameter",
+    parameter: `pool_policy.${budget}`,
+    effective_value: value,
+    unit,
+    minimum: 1,
+    maximum: Number.MAX_SAFE_INTEGER,
+    default_value: value,
+    applies_at: "next_call",
+  });
+  expect(
+    [...(limited.report.string_pool.limits ?? [])].sort((left, right) =>
+      left.parameter.localeCompare(right.parameter),
+    ),
+  ).toEqual([
+    control("run_bytes", "bytes", 1024),
+    control("token_bytes", "bytes", 128),
+    control("token_limit", "count", 2000),
+    control("uri_limit", "count", 500),
+  ]);
   expect(limited.evidence.limitations.join(" ")).not.toContain("--pool-policy");
   const selected = await inspect({ contains: "package:tail/" });
   expect(selected.report.string_pool.package_uris).toEqual([tail]);
