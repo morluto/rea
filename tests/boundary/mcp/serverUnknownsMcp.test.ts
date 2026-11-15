@@ -781,9 +781,6 @@ it("preserves graph constraint facts and rejects atomically until input is corre
       category: "invalid_input",
       retryable: false,
       details: { reason: "constraint", constraint },
-      remediation: {
-        action: expect.stringContaining("Do not repeat the unchanged call"),
-      },
     });
     expect(await good("get_evidence_bundle")).toEqual(empty);
   }

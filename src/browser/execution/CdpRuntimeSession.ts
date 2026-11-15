@@ -15,8 +15,9 @@ import { classifyCdpFrameUrl } from "../CdpCaptureDocuments.js";
 import type { CdpFrameTree } from "../protocol/CdpFrameTree.js";
 import type {
   CdpDomainWith,
-  CdpSendParams,
-  CdpSendResult,
+  CdpCommand,
+  CdpCommandParams,
+  CdpCommandResult,
 } from "../protocol/CdpCommands.js";
 import {
   WEB_RUNTIME_LIMITS,
@@ -153,10 +154,10 @@ export class CdpRuntimeSession {
   }
 
   /** Bound each command separately from the caller-selected observation duration. */
-  async command<M extends string>(
+  async command<M extends CdpCommand>(
     method: M,
-    params?: CdpSendParams<M>,
-  ): Promise<CdpSendResult<M>> {
+    params?: CdpCommandParams<M>,
+  ): Promise<CdpCommandResult<M>> {
     const signals = [this.options.signal, this.#completion?.signal].filter(
       (signal): signal is AbortSignal => signal !== undefined,
     );
@@ -252,7 +253,7 @@ export class CdpRuntimeSession {
     const failures: string[] = [];
     let transportFailure: AnalysisError | undefined;
     const send = async (
-      method: string,
+      method: CdpCommand,
       params: Readonly<Record<string, unknown>> = {},
     ): Promise<void> => {
       try {

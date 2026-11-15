@@ -1,8 +1,17 @@
 import { z } from "zod";
 
+import type { AnalysisInputError } from "../domain/analysisErrorCore.js";
+import type { AnalysisViewRequest } from "../domain/analysisView/analysisViewRequest.js";
+import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { localPathStringSchema } from "../domain/localPath.js";
+import { err, ok, type Result } from "../domain/result.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
-import { analysisEvidenceDeliveryOptions } from "./analysisEvidenceDelivery.js";
+import {
+  analysisEvidenceDeliveryOptions,
+  cliEvidenceDeliveryInputError,
+} from "./analysisEvidenceDelivery.js";
+import { parseCliJsonOption } from "./cliJsonOption.js";
+import { safeParseJson } from "../domain/safeJson.js";
 import { cliDecimalShape } from "./options.js";
 
 /**
@@ -12,10 +21,16 @@ import { cliDecimalShape } from "./options.js";
  * framework adapter (today `contractCommand.ts` for Incur) only renders it.
  */
 
-/** The parts of a tool contract that a CLI projection reads. */
+/**
+ * The parts of a tool contract that a CLI projection reads. A union input
+ * shares every field except those the CLI delivery owns, such as a
+ * `detail`-discriminated delivery.
+ */
 export interface ProjectedContract<Name extends string = string> {
   readonly name: Name;
-  readonly inputSchema: z.ZodObject;
+  readonly inputSchema:
+    | z.ZodObject
+    | z.ZodDiscriminatedUnion<readonly z.ZodObject[]>;
 }
 
 /** A contract input field name. */
@@ -50,6 +65,11 @@ export interface CliContractProjection<Field extends string> {
    * resolves it with `absoluteCallerPath` before the contract sees it.
    */
   readonly callerPaths?: readonly Field[];
+  /**
+   * Structured fields taken as one JSON text argument. The text is decoded
+   * at argv parsing and then admitted by the contract field's own schema.
+   */
+  readonly jsonText?: readonly Field[];
   readonly fields?: { readonly [Key in Field]?: CliFieldProjection };
   /**
    * Optional fields this one-shot command does not expose, each with the
@@ -68,6 +88,26 @@ export interface CliContractProjection<Field extends string> {
    * field selects that delivery and is not passed to the analysis.
    */
   readonly evidenceDelivery?: true;
+  /**
+   * With `evidenceDelivery`, the contract `view` field selects the delivered
+   * page. `--view` takes JSON text that is decoded when the command runs, and
+   * the delivery is then checked against the contract input before any
+   * target is opened.
+   */
+  readonly viewDelivery?: CliViewDelivery;
+}
+
+/** How a contract command takes its `view` selection. */
+export interface CliViewDelivery {
+  /** The refusal when `--view` is not JSON. */
+  readonly invalidJson: string;
+  /** Added to the selection when the contract's view does not name its kind. */
+  readonly kind?: AnalysisViewRequest["kind"];
+  /**
+   * `--detail` has no default: a view selects summary delivery, and complete
+   * applies otherwise, as in the contract.
+   */
+  readonly viewSelectsSummary?: true;
 }
 
 /** A CLI option with no contract field, such as `--evidence_output`. */
@@ -81,6 +121,8 @@ export interface CliOnlyOption {
 export interface CliEvidenceDeliveryChoice {
   readonly detail: "complete" | "summary";
   readonly evidenceOutput: string | undefined;
+  /** The admitted view, for a projection with `viewDelivery`. */
+  readonly view?: AnalysisViewRequest;
 }
 
 /** One positional argument or option of a contract command. */
@@ -105,8 +147,15 @@ export interface ContractCliParameter {
   readonly decimal: boolean;
   /** Resolved with `absoluteCallerPath` before the contract sees it. */
   readonly callerPath: boolean;
+  /** The value is JSON text decoded into the contract field. */
+  readonly jsonText: boolean;
   /** Selects CLI Evidence delivery and is not analysis input. */
   readonly delivery: boolean;
+  /**
+   * A delivery view as JSON text, decoded when the command runs and admitted
+   * with the delivery by the contract input.
+   */
+  readonly viewSelection: boolean;
 }
 
 /** One cross-field refusal, naming CLI keys. */
@@ -121,6 +170,11 @@ export interface ContractCliDescription {
   readonly command: string;
   readonly description: string;
   readonly contract: ProjectedContract;
+  /**
+   * Each contract input field's own schema. In a union input, a field the
+   * delivery owns admits the value of any branch.
+   */
+  readonly fields: Readonly<Record<string, z.ZodType>>;
   readonly parameters: readonly ContractCliParameter[];
   /** Options after the contract parameters that no contract field owns. */
   readonly cliOnlyOptions: readonly CliOnlyOption[];
@@ -145,10 +199,15 @@ export interface ContractCliDescription {
   readonly callerInputs: (
     values: Readonly<Record<string, unknown>>,
   ) => Readonly<Record<string, string>>;
-  /** The selected delivery, for a projection with `evidenceDelivery`. */
-  readonly delivery: (
-    values: Readonly<Record<string, unknown>>,
-  ) => CliEvidenceDeliveryChoice;
+  /**
+   * The selected delivery, for a projection with `evidenceDelivery`, refused
+   * before any target is opened when it is not admitted.
+   */
+  readonly delivery:
+    | ((
+        values: Readonly<Record<string, unknown>>,
+      ) => Result<CliEvidenceDeliveryChoice, AnalysisInputError>)
+    | undefined;
 }
 
 /** One contract from a contract group, keeping its exact schema types. */
@@ -196,6 +255,39 @@ const core = (value: z.ZodType): z.ZodType => {
  * Accept only field forms argv can carry, so a new contract field cannot
  * reach the CLI with an unreviewed spelling.
  */
+const kebabCase = (key: string): string =>
+  key.replaceAll(/[A-Z]/gu, (letter) => `-${letter.toLowerCase()}`);
+
+/**
+ * JSON text for a structured contract field. Argv carries text; the decoded
+ * value is admitted by the contract field itself, so `--schema` advertises
+ * the contract's structure.
+ */
+const jsonTextField = (declared: z.ZodType, flag: string): z.ZodType => {
+  const value =
+    declared instanceof z.ZodOptional || declared instanceof z.ZodExactOptional
+      ? (declared.unwrap() as z.ZodType)
+      : declared;
+  const expected =
+    core(value) instanceof z.ZodObject ? "a JSON object" : "valid JSON";
+  const decoded = z
+    .string()
+    .transform((text, context) => {
+      const parsed = safeParseJson(text);
+      if (parsed.ok) return parsed.value;
+      context.addIssue({
+        code: "custom",
+        message: `${flag} must be ${expected}`,
+      });
+      return z.NEVER;
+    })
+    .pipe(value);
+  const admitted = admitsOmission(declared) ? decoded.optional() : decoded;
+  return declared.description === undefined
+    ? admitted
+    : admitted.describe(declared.description);
+};
+
 const assertArgvField = (
   contract: string,
   field: string,
@@ -269,16 +361,24 @@ const renameConstraint = (
   );
 };
 
+/** The union keyword naming a root discriminator, checked with the delivery. */
+const ROOT_DISCRIMINATOR = "x-rea-root-discriminator";
+
 const projectObjectConstraints = (
   contract: ProjectedContract,
   rename: (field: string) => string,
+  deliveryFields: ReadonlySet<string>,
 ): Record<string, unknown> | undefined => {
   const metadata = contract.inputSchema.meta();
   if (metadata === undefined) return undefined;
   for (const keyword of Object.keys(metadata))
     if (
       !ROOT_ANNOTATIONS.has(keyword) &&
-      !(OBJECT_CONSTRAINTS as readonly string[]).includes(keyword)
+      !(OBJECT_CONSTRAINTS as readonly string[]).includes(keyword) &&
+      !(
+        keyword === ROOT_DISCRIMINATOR &&
+        deliveryFields.has(String(metadata[keyword]))
+      )
     )
       throw new Error(
         `${contract.name} input keyword ${keyword} has no CLI projection`,
@@ -299,12 +399,59 @@ const projectObjectConstraints = (
   return Object.keys(projected).length === 0 ? undefined : projected;
 };
 
+/**
+ * Each input field's schema. Branches of a union input must share each field
+ * the CLI takes as an argument; only delivery-owned fields may differ, and
+ * they admit any branch's value here. The delivery is then checked against
+ * the whole union.
+ */
+const inputFields = (
+  contract: ProjectedContract,
+  deliveryFields: ReadonlySet<string>,
+): Record<string, z.ZodType> => {
+  const schema = contract.inputSchema;
+  if (schema instanceof z.ZodObject)
+    return schema.shape as Record<string, z.ZodType>;
+  const shapes = schema.options.map(
+    (option) => option.shape as Record<string, z.ZodType>,
+  );
+  const names = new Set(shapes.flatMap((shape) => Object.keys(shape)));
+  return Object.fromEntries(
+    [...names].map((field) => {
+      const branches = shapes.map((shape) => shape[field]);
+      const [first] = branches;
+      if (branches.every((branch) => branch === first)) return [field, first!];
+      if (
+        !deliveryFields.has(field) ||
+        branches.some((branch) => branch === undefined)
+      )
+        throw new Error(
+          `${contract.name}.${field} differs between input branches and has no argv projection`,
+        );
+      return [field, z.union(branches as z.ZodType[])];
+    }),
+  );
+};
+
 /** Derive the CLI parameters of one contract from its input schema and projection. */
 export const describeContractCommand = <Contract extends ProjectedContract>(
   contract: Contract,
   projection: CliContractProjection<ContractField<Contract>>,
 ): ContractCliDescription => {
-  const shape = contract.inputSchema.shape as Record<string, z.ZodType>;
+  const evidenceDelivery = projection.evidenceDelivery === true;
+  const { viewDelivery } = projection;
+  if (viewDelivery !== undefined && !evidenceDelivery)
+    throw new Error(`${contract.name} view delivery requires evidenceDelivery`);
+  const deliveryFields: ReadonlySet<string> = new Set(
+    evidenceDelivery
+      ? viewDelivery === undefined
+        ? ["detail"]
+        : ["detail", "view"]
+      : [],
+  );
+  const shape = inputFields(contract, deliveryFields);
+  if (viewDelivery !== undefined && !admitsOmission(shape.view ?? z.never()))
+    throw new Error(`${contract.name} has no optional input field view`);
   const positionals: readonly string[] = projection.positionals ?? [];
   const callerPaths: ReadonlySet<string> = new Set(
     projection.callerPaths ?? [],
@@ -312,6 +459,9 @@ export const describeContractCommand = <Contract extends ProjectedContract>(
   const fieldProjections: Readonly<
     Record<string, CliFieldProjection | undefined>
   > = projection.fields ?? {};
+  const jsonTextFields: ReadonlySet<string> = new Set(
+    projection.jsonText ?? [],
+  );
   const omitted: Readonly<Record<string, string>> = Object.fromEntries(
     Object.entries(projection.omit ?? {}).filter(
       (entry): entry is [string, string] => typeof entry[1] === "string",
@@ -320,6 +470,7 @@ export const describeContractCommand = <Contract extends ProjectedContract>(
   for (const field of [
     ...positionals,
     ...callerPaths,
+    ...jsonTextFields,
     ...Object.keys(fieldProjections),
     ...Object.keys(omitted),
   ])
@@ -329,14 +480,22 @@ export const describeContractCommand = <Contract extends ProjectedContract>(
     if (!admitsOmission(shape[field]!))
       throw new Error(`${contract.name}.${field} is required on the CLI`);
 
-  const evidenceDelivery = projection.evidenceDelivery === true;
   const parameter = (field: string): ContractCliParameter => {
     const declared = shape[field]!;
     const projected = fieldProjections[field];
     const callerPath = callerPaths.has(field);
-    const delivery = evidenceDelivery && field === "detail";
+    const delivery = deliveryFields.has(field);
+    const viewSelection = delivery && field === "view";
+    const jsonText = jsonTextFields.has(field);
+    const key = projected?.name ?? camelCase(field);
     let schema: z.ZodType;
-    if (delivery) schema = analysisEvidenceDeliveryOptions.detail;
+    if (viewSelection) schema = z.string().optional();
+    else if (delivery)
+      schema =
+        viewDelivery?.viewSelectsSummary === true
+          ? analysisEvidenceDeliveryOptions.detail.unwrap().optional()
+          : analysisEvidenceDeliveryOptions.detail;
+    else if (jsonText) schema = jsonTextField(declared, kebabCase(key));
     else if (callerPath) {
       schema = admitsOmission(declared)
         ? localPathStringSchema.optional()
@@ -353,7 +512,7 @@ export const describeContractCommand = <Contract extends ProjectedContract>(
     const value = core(declared);
     return {
       field,
-      key: projected?.name ?? camelCase(field),
+      key,
       positional: positionals.includes(field),
       alias: projected?.alias,
       description,
@@ -363,6 +522,8 @@ export const describeContractCommand = <Contract extends ProjectedContract>(
       decimal: value instanceof z.ZodNumber,
       callerPath,
       delivery,
+      jsonText,
+      viewSelection,
     };
   };
   const parameters = [
@@ -445,7 +606,12 @@ export const describeContractCommand = <Contract extends ProjectedContract>(
     parameters,
     cliOnlyOptions,
     omitted,
-    optionConstraints: projectObjectConstraints(contract, rename),
+    fields: shape,
+    optionConstraints: projectObjectConstraints(
+      contract,
+      rename,
+      deliveryFields,
+    ),
     checkOptions,
     toContractInput,
     callerInputs: (values) =>
@@ -457,12 +623,70 @@ export const describeContractCommand = <Contract extends ProjectedContract>(
             : [];
         }),
       ),
-    delivery: (values) => ({
-      detail: values.detail === "summary" ? "summary" : "complete",
-      evidenceOutput:
-        typeof values.evidence_output === "string"
-          ? values.evidence_output
-          : undefined,
-    }),
+    delivery: evidenceDelivery
+      ? (values) => {
+          const selected = selectDelivery(
+            contract,
+            viewDelivery,
+            values,
+            toContractInput,
+            rename,
+          );
+          if (!selected.ok) return selected;
+          const refused = cliEvidenceDeliveryInputError({
+            ...selected.value,
+            operation: contract.name,
+          });
+          return refused === undefined ? selected : err(refused);
+        }
+      : undefined,
   };
+};
+
+/**
+ * The delivery the parsed values select. A view is decoded from its JSON
+ * text and admitted with the delivery and the other inputs by the contract
+ * input schema, so the contract's own delivery rules and messages apply.
+ */
+const selectDelivery = (
+  contract: ProjectedContract,
+  viewDelivery: CliViewDelivery | undefined,
+  values: Readonly<Record<string, unknown>>,
+  toContractInput: ContractCliDescription["toContractInput"],
+  rename: (field: string) => string,
+): Result<CliEvidenceDeliveryChoice, AnalysisInputError> => {
+  const detail = values[rename("detail")] as "complete" | "summary" | undefined;
+  const evidenceOutput = values.evidence_output as string | undefined;
+  if (viewDelivery === undefined)
+    return ok({ detail: detail ?? "complete", evidenceOutput });
+  const viewKey = rename("view");
+  const decoded = parseCliJsonOption(
+    contract.name,
+    viewKey,
+    values[viewKey] as string | undefined,
+    viewDelivery.invalidJson,
+  );
+  if (!decoded.ok) return decoded;
+  const input = {
+    ...toContractInput(values),
+    ...(detail === undefined ? {} : { detail }),
+    ...(decoded.value === undefined ? {} : { view: decoded.value }),
+  };
+  const admitted = contract.inputSchema.safeParse(input);
+  if (!admitted.success)
+    return err(
+      analysisInputErrorFromIssues(contract.name, admitted.error.issues, input),
+    );
+  const { view } = admitted.data as { readonly view?: object };
+  return ok({
+    detail: detail ?? (view === undefined ? "complete" : "summary"),
+    evidenceOutput,
+    ...(view === undefined
+      ? {}
+      : {
+          view: (viewDelivery.kind === undefined
+            ? view
+            : { kind: viewDelivery.kind, ...view }) as AnalysisViewRequest,
+        }),
+  });
 };

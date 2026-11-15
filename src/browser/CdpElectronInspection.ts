@@ -11,11 +11,11 @@ import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import type { CdpConnection, CdpEvent } from "./CdpConnection.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
+import { delayWithCancellation, cdpStringValue } from "./CdpCaptureValues.js";
 import {
-  delayWithCancellation,
-  requiredRecord,
-  cdpStringValue,
-} from "./CdpCaptureValues.js";
+  CdpMalformedReply,
+  type CdpCommandResult,
+} from "./protocol/CdpCommands.js";
 import {
   cdpFrameUrl,
   snapshotDocuments,
@@ -776,17 +776,19 @@ const captureDom = async (
   completeness: CdpCaptureCompleteness,
 ): Promise<ElectronPageInspection["dom"]> => {
   const nodeValueLengthUnit = "utf8-bytes";
-  const result = requiredRecord(
-    await context.connection.send(
+  const invalid = (count: number | null) =>
+    completeness.exclude("dom", "invalid_protocol_value", count);
+  let result: CdpCommandResult<"DOMSnapshot.captureSnapshot">;
+  try {
+    result = await context.connection.send(
       "DOMSnapshot.captureSnapshot",
       { computedStyles: [], includePaintOrder: false, includeDOMRects: false },
       context.sessionId,
       context.signal,
-    ),
-  );
-  const invalid = (count: number | null) =>
-    completeness.exclude("dom", "invalid_protocol_value", count);
-  if (!Array.isArray(result.strings)) {
+    );
+  } catch (cause: unknown) {
+    // A malformed snapshot leaves the DOM unknown rather than empty.
+    if (!(cause instanceof CdpMalformedReply)) throw cause;
     invalid(null);
     return {
       total_nodes: 0,
