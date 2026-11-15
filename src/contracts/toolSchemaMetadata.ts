@@ -118,6 +118,19 @@ const presentAnnotatedInput = ({
   Object.assign(jsonSchema, { type: "object", description });
 };
 
+/**
+ * Declare `type: "object"` on a union root whose alternatives are all objects,
+ * after its combinator, where Zod places root metadata.
+ */
+const objectRoot = ({
+  $defs,
+  ...root
+}: Record<string, unknown>): Record<string, unknown> => ({
+  ...root,
+  type: "object",
+  ...($defs === undefined ? {} : { $defs }),
+});
+
 /** Attach caller guidance to a canonical schema for the SDK wire projection. */
 export const toolInputSchemaWithMetadata = <Contract extends ToolContract>(
   contract: Contract,
@@ -180,11 +193,14 @@ export const toolOutputSchemaWithMetadata = <Contract extends ToolContract>(
       contract.outputSchema,
       "output",
       (project) => (options) => {
+        const projected = project({
+          ...options,
+          libraryOptions: { reused: "ref", ...options.libraryOptions },
+        });
         const shared = presentOutputJsonSchema(
-          project({
-            ...options,
-            libraryOptions: { reused: "ref", ...options.libraryOptions },
-          }),
+          schemaAnnotations(contract.outputSchema)?.objectRoot === true
+            ? objectRoot(projected)
+            : projected,
         );
         // An explicit ID owns the reference base. Relative external references
         // also depend on that base, so leave those projections unchanged.

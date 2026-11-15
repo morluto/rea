@@ -405,9 +405,6 @@
     "src/cli/il2cppCommands.ts": 1,
     "src/cli/jsonInputArgument.ts": 2,
     "src/cli/signalCommands.ts": 2,
-    "src/cli/utilityCommands.ts": 1,
-    "src/contracts/guidedWorkflowSchemas.ts": 1,
-    "src/domain/portableBundleName.ts": 1,
-    "src/domain/stringPatterns.ts": 1
+    "src/cli/utilityCommands.ts": 1
   }
 }

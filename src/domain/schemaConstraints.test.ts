@@ -2,22 +2,32 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
+import { canonicalBase64Schema } from "./stringPatterns.js";
+import { portableBundleNameSchema } from "./portableBundleName.js";
+import { schemaAnnotations } from "./schemaAnnotations.js";
 import {
+  declaredByPatterns,
   distinctItems,
   excludedValues,
   maxCodePoints,
   requirePresence,
 } from "./schemaConstraints.js";
 
-/** The declared JSON Schema and the Zod parser accept exactly the same values. */
+/**
+ * The declared JSON Schema and the Zod parser accept the same values, or, for
+ * a declaration annotated as a wider pattern approximation, the declaration
+ * accepts every value parsing does.
+ */
 const expectAgreement = (schema: z.ZodType, samples: readonly unknown[]) => {
   const declared = new Ajv2020({ strict: false }).compile(
     z.toJSONSchema(schema, { io: "input" }),
   );
-  for (const sample of samples)
-    expect(declared(sample), JSON.stringify(sample)).toBe(
-      schema.safeParse(sample).success,
-    );
+  const wider = schemaAnnotations(schema)?.patternDeclaration === "wider";
+  for (const sample of samples) {
+    const parsed = schema.safeParse(sample).success;
+    if (wider && !parsed) continue;
+    expect(declared(sample), JSON.stringify(sample)).toBe(parsed);
+  }
 };
 
 describe("schema constraints", () => {
@@ -102,6 +112,60 @@ describe("schema constraints", () => {
       { first: true },
       { second: true },
       { first: true, second: true, target: "t" },
+    ]);
+  });
+
+  it("declares a predicate by patterns built from the same expressions", () => {
+    const schema = declaredByPatterns(
+      z.string(),
+      (value) => value.startsWith("a") && !/b/u.test(value),
+      { matches: [/^a/u], excludes: [/b/u], relation: "exact" },
+      { message: "rejected" },
+    );
+    expect(z.toJSONSchema(schema)).toHaveProperty("allOf", [
+      { pattern: "^a" },
+      { not: { pattern: "b" } },
+    ]);
+    expect(schemaAnnotations(schema)?.patternDeclaration).toBe("exact");
+    expectAgreement(schema, ["", "a", "ab", "ac", "b"]);
+  });
+
+  it("declares canonical base64 exactly", () => {
+    expect(schemaAnnotations(canonicalBase64Schema)?.patternDeclaration).toBe(
+      "exact",
+    );
+    expectAgreement(canonicalBase64Schema, [
+      "",
+      "AA==",
+      "AB==",
+      "AAA=",
+      "AAB=",
+      "AAAA",
+      "AAAAAA==",
+      "A===",
+      "AA=A",
+      "A",
+      "AA\nA",
+      "\u{1F600}AA=",
+    ]);
+  });
+
+  it("declares portable bundle names by a wider pattern approximation", () => {
+    expect(
+      schemaAnnotations(portableBundleNameSchema)?.patternDeclaration,
+    ).toBe("wider");
+    expectAgreement(portableBundleNameSchema, [
+      "app",
+      "my-app-2",
+      "con",
+      "lpt1",
+      "123",
+      "0x1f",
+      "0x",
+      "1e5",
+      "Upper",
+      "a".repeat(63),
+      "a".repeat(64),
     ]);
   });
 });
