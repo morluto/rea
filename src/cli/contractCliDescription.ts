@@ -469,6 +469,11 @@ export interface ContractCliParameter {
 /** The contract input and delivery one invocation selected. */
 export interface ContractCliAdmission {
   readonly input: Record<string, unknown>;
+  /**
+   * The contract's parse of the whole input, when admission decoded JSON at
+   * run time and so parsed it; undefined otherwise.
+   */
+  readonly parsed: unknown;
   /** The admitted delivery, for a projection with `evidenceDelivery`. */
   readonly delivery: CliEvidenceDeliveryChoice | undefined;
 }
@@ -1516,8 +1521,14 @@ export const describeContractCommand = <
     let schema: z.ZodType;
     if (runtimeJson !== undefined) {
       // Argv requires the text of a required field; the contract admits
-      // what it decodes to.
-      schema = admitsOmission(declared) ? z.string().optional() : z.string();
+      // what it decodes to. Help and `--schema` show a contract default as
+      // the JSON text that decodes to it.
+      schema =
+        declared instanceof z.ZodDefault
+          ? z.string().default(JSON.stringify(declared.parse(undefined)))
+          : admitsOmission(declared)
+            ? z.string().optional()
+            : z.string();
       if (declared.description !== undefined && !viewSelection)
         schema = schema.describe(declared.description);
     } else if (nullFlag !== undefined) {
@@ -2018,6 +2029,7 @@ const admitInvocation = (
     ? (decoded[rename("detail")] as "complete" | "summary" | undefined)
     : undefined;
   let view: object | undefined;
+  let parsed: unknown;
   if (parameters.some(({ runtimeJson }) => runtimeJson !== undefined)) {
     const selected =
       viewDelivery === undefined ? undefined : decoded[rename("view")];
@@ -2037,10 +2049,11 @@ const admitInvocation = (
           candidate,
         ),
       );
+    parsed = admitted.data;
     if (viewDelivery !== undefined)
       ({ view } = admitted.data as { readonly view?: object });
   }
-  if (!evidenceDelivery) return ok({ input, delivery: undefined });
+  if (!evidenceDelivery) return ok({ input, parsed, delivery: undefined });
   const delivery: CliEvidenceDeliveryChoice = {
     detail: detail ?? (view === undefined ? "complete" : "summary"),
     evidenceOutput: decoded.evidence_output as string | undefined,
@@ -2056,7 +2069,7 @@ const admitInvocation = (
     ...delivery,
     operation: contract.name,
   });
-  return refused === undefined ? ok({ input, delivery }) : err(refused);
+  return refused === undefined ? ok({ input, parsed, delivery }) : err(refused);
 };
 
 /**
