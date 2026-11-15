@@ -15,7 +15,7 @@ import {
   appDataRedirection,
   registrationWriteBlocker,
   supportedClientDefinition,
-  supportedClients,
+  resolveSupportedClients,
   type ClientSystemPaths,
   type SetupClient,
   type SupportedClientName,
@@ -334,7 +334,7 @@ export const resolveMcpRegistrationClients = async (
       ...selection,
       resources,
       setup: selection.global
-        ? supportedClients(
+        ? await resolveSupportedClients(
             selection.home,
             selection.platform,
             selection.environment,

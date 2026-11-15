@@ -1308,9 +1308,10 @@ status while retaining successful client outcomes and recovery paths.
 
 User-level registration for a client that `rea setup` also supports uses that
 client's setup definition, so the same native read rules apply, and doctor,
-update and uninstall inspect, refresh and remove what it wrote. Kilo Code is
-registered only by `rea mcp add` until its native layers are modeled; doctor,
-update and uninstall do not yet see that registration. Gemini CLI
+update and uninstall inspect, refresh and remove what it wrote. For Kilo Code
+that is the last user-scope file Kilo loads (its config root, `KILO_CONFIG`,
+`~/.kilocode`, `~/.kilo`, then `KILO_CONFIG_DIR`); a relative Kilo path is
+reported as unresolved because Kilo's working directory is unknown. Gemini CLI
 registration fails without writing when Gemini's system, defaults or trusted
 workspace settings exclude `rea`, leave it off a nonempty allowlist, or define
 a different `rea` entry with higher precedence. On Windows, registration refuses
