@@ -15,8 +15,10 @@
     "scripts/verify-package-evidence.mjs",
     "scripts/verify/javascript/digests.mjs",
     "scripts/verify/javascript/output.mjs",
+    "scripts/verify/managed/completion-report.mjs",
     "scripts/verify/managed/manifest-parser.mjs",
-    "scripts/verify/managed/manifest.mjs"
+    "scripts/verify/managed/manifest.mjs",
+    "scripts/verify/managed/oracles.mjs"
   ],
   "include": []
 }
