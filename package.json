@@ -130,7 +130,7 @@
     "precheck": "npm run deps:check",
     "check": "node scripts/run-exclusive.mjs artifacts node scripts/run-turbo.mjs run typecheck lint format:check knip metadata:check && npm run verify:architecture-guards && npm run knip:production && npm run lint:typed",
     "precheck:fast": "npm run deps:check",
-    "check:fast": "node scripts/run-turbo.mjs run typecheck lint --output-logs=errors-only",
+    "check:fast": "node scripts/run-turbo.mjs run typecheck lint --output-logs=errors-only && npm run verify:architecture-guards",
     "precheck:changed": "npm run deps:check",
     "check:changed": "npm run check:fast && npm run test:changed",
     "precheck:test": "npm run deps:check",
