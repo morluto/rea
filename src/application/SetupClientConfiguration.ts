@@ -503,7 +503,8 @@ interface ClientRefresh {
 
 /**
  * Read a client's layers and compute the registration setup would write,
- * with setup's own refusal checks. `undefined` when the layers are unreadable.
+ * with setup's own refusal checks. An unreadable or malformed layer is a typed
+ * failure that keeps its path and recovery.
  */
 const readClientRefresh = async (
   client: SetupClient,
@@ -511,7 +512,7 @@ const readClientRefresh = async (
   command: readonly string[],
   resolveProviderRequestBudget?: ProviderRequestBudgetResolver,
   resources?: ArtifactResourceScope,
-): Promise<ClientRefresh | undefined> => {
+): Promise<Result<ClientRefresh, ClientConfigurationFileError>> => {
   const files = await readClientConfigurationFiles(
     client,
     resources,
@@ -520,7 +521,7 @@ const readClientRefresh = async (
   );
   if (!files.ok) {
     throwCleanupFailure(files.error);
-    return undefined;
+    return files;
   }
   let original: string | undefined;
   try {
@@ -548,7 +549,7 @@ const readClientRefresh = async (
   );
   const override = inlineOverrideBlocker(client, files.value, desired);
   if (override !== undefined)
-    return { original, parsed, desired, refusal: override };
+    return ok({ original, parsed, desired, refusal: override });
   const policy = await readClientPolicyBlock(
     client,
     parsed,
@@ -557,9 +558,9 @@ const readClientRefresh = async (
   );
   if (!policy.ok) {
     throwCleanupFailure(policy.error);
-    return { original, parsed, desired, refusal: policy.error.detail };
+    return ok({ original, parsed, desired, refusal: policy.error.detail });
   }
-  return { original, parsed, desired, refusal: policy.value };
+  return ok({ original, parsed, desired, refusal: policy.value });
 };
 
 /** Determine whether an existing client configuration matches the desired registration. */
@@ -578,11 +579,12 @@ export const clientConfigurationAligned = async (
       resolveProviderRequestBudget,
     );
     return (
-      refresh?.original !== undefined &&
-      refresh.parsed !== undefined &&
-      refresh.refusal === undefined &&
-      registrationCurrent(refresh.parsed, refresh.desired) &&
-      (await privateProfileCurrent(client, refresh.original))
+      refresh.ok &&
+      refresh.value.original !== undefined &&
+      refresh.value.parsed !== undefined &&
+      refresh.value.refusal === undefined &&
+      registrationCurrent(refresh.value.parsed, refresh.value.desired) &&
+      (await privateProfileCurrent(client, refresh.value.original))
     );
   } catch (cause: unknown) {
     if (cause instanceof RegularFileCleanupFailure) throw cause;
@@ -608,15 +610,16 @@ export const clientRefreshRefusal = async (
 ): Promise<string | undefined> => {
   if (client.configPathError !== undefined) return client.configPathError;
   try {
-    return (
-      await readClientRefresh(
-        client,
-        providerEnvironment,
-        command,
-        undefined,
-        resources,
-      )
-    )?.refusal;
+    const refresh = await readClientRefresh(
+      client,
+      providerEnvironment,
+      command,
+      undefined,
+      resources,
+    );
+    // An unreadable or malformed layer is a refusal too: setup's preflight
+    // reports it the same way.
+    return refresh.ok ? refresh.value.refusal : refresh.error.detail;
   } catch (cause: unknown) {
     if (cause instanceof RegularFileCleanupFailure) throw cause;
     if (cause instanceof ConfigurationError)
