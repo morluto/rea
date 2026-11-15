@@ -392,6 +392,19 @@ const REDUCED_ITEM_MAX_DEPTH = 3;
  * unknown, uses the empty schema: it accepts every element and still gives
  * clients that require `items` an item schema.
  */
+/**
+ * One `type`, or `anyOf` typed branches for several. Gemini, Moonshot and Ark
+ * reject type lists (#7103, #3800); `[T, "null"]` becomes the dialect's
+ * nullable union, and other unions keep the typed branches every surveyed
+ * target accepts below the root.
+ */
+const typedAlternatives = (
+  types: readonly string[],
+): Record<string, unknown> =>
+  types.length === 1
+    ? { type: types[0] }
+    : { anyOf: types.map((type) => ({ type })) };
+
 const reducedItemSchema = (
   alternatives: readonly ScopedSchema[] | undefined,
   references: JsonSchemaReferences,
@@ -410,8 +423,7 @@ const reducedItemSchema = (
     types.push(...detected);
   }
   const unique = [...new Set(types)];
-  if (!unique.includes("array"))
-    return { type: unique.length === 1 ? unique[0] : unique };
+  if (!unique.includes("array")) return typedAlternatives(unique);
   if (unique.length > 1) return {};
   const nested: ScopedSchema[] = [];
   for (const { schema, scope } of alternatives) {
@@ -437,8 +449,7 @@ const reducedPropertyTypes = (
 ): Record<string, unknown> => {
   const types = detectedTypes(value, references, references.rootScope);
   if (types === undefined || types.length === 0) return {};
-  if (!types.includes("array"))
-    return { type: types.length === 1 ? types[0] : types };
+  if (!types.includes("array")) return typedAlternatives(types);
   const array = {
     type: "array",
     items: reducedItemSchema(
