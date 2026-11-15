@@ -254,23 +254,27 @@ it.skipIf(process.platform === "win32").each([
     const allow = workspace.path("allow-cleanup");
     const runtimeParent = await workspace.mkdir("runtime");
     await workspace.mkdir("scripts/lib");
-    await workspace.mkdir("dist/process");
+    // VerifierFixture loads src/process/PrivateRuntimeRoot.ts beside its
+    // copied scripts/lib, so the observer stands in for it there.
+    await workspace.mkdir("src/process");
     await Promise.all([
       workspace.write("package.json", '{"type":"module"}\n'),
       copyFile(
         resolve("scripts/verify-packaged-wasm-artifact.mjs"),
         workspace.path("scripts/verify-packaged-wasm-artifact.mjs"),
       ),
-      copyFile(
-        resolve("scripts/lib/verifier-cleanup.mjs"),
-        workspace.path("scripts/lib/verifier-cleanup.mjs"),
-      ),
+      ...[
+        "scripts/lib/verifier-cleanup.mjs",
+        "scripts/lib/verifier-fixture.mjs",
+        "scripts/lib/canonical-temporary-directory.mjs",
+        "scripts/lib/verifier-source-loader.mjs",
+      ].map((path) => copyFile(resolve(path), workspace.path(path))),
       workspace.write(
         "scripts/lib/wabt-verifier-timeouts.mjs",
         "export const WABT_WORKFLOW_TIMEOUT_MS = 1000;\n",
       ),
       workspace.write(
-        "dist/process/PrivateRuntimeRoot.js",
+        "src/process/PrivateRuntimeRoot.ts",
         PRIVATE_ROOT_OBSERVER,
       ),
       workspace.write("scripts/verify-package-pack.mjs", PACKAGE_PACK_FIXTURE),

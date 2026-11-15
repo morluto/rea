@@ -1416,7 +1416,8 @@ cliTest(
         issues: [
           {
             path: ["ghidra_seeds"],
-            message: expect.stringContaining("needs --binary"),
+            message:
+              "Ghidra seed output links method addresses in binary_path.",
           },
         ],
       },

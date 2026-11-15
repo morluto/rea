@@ -15,10 +15,7 @@ import type { OwnedProcessGroup } from "../../../src/process/ProcessOwnership.js
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
-import {
-  JAVASCRIPT_MEMBER_MUTATION_WORK_ALLOWANCE,
-  JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT,
-} from "../../../src/domain/javascript/javascriptSemanticWorkAllowance.js";
+import { JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT } from "../../../src/domain/javascript/javascriptSemanticWorkAllowance.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { javaScriptWorkerMemoryLimitBytes } from "../../../src/process/JavaScriptWorkerMemoryLimit.js";
@@ -112,6 +109,66 @@ it("reuses one real owned analyzer while retaining distinct source identities an
     ).toEqual([]);
   } finally {
     await worker.close();
+  }
+});
+
+it("applies a changed member-mutation allowance to the next analysis on the same scope", async () => {
+  const scope = new ArtifactResourceScope();
+  // Four conditional self-selections before one member write (#8294).
+  const file = source(
+    "allowance.js",
+    [
+      "function probe(input, env) { var m; if (env.first) m = env.first.info;",
+      ...Array.from(
+        { length: 4 },
+        (_, index) =>
+          `if (/case${String(index)}/.test(input)) m = m[${String(index % 2)}];`,
+      ),
+      "m[1] = input.length; return m; } module.exports = probe;",
+    ].join(" "),
+  );
+  try {
+    for (const allowance of [
+      undefined,
+      { aliasStates: 8, source: "runtime" } as const,
+      undefined,
+    ]) {
+      const worker = await createJavaScriptSourceAnalysis(
+        {
+          heapMb: 128,
+          timeoutMs: 30_000,
+          ...(allowance === undefined
+            ? {}
+            : { memberMutationAllowance: allowance }),
+        },
+        1,
+        { scope },
+      );
+      try {
+        const result = await worker.analyze(file, {
+          nodes: 100,
+          unknowns: 100,
+        });
+        if (allowance === undefined) {
+          if (!result.ok) throw result.error.error;
+          continue;
+        }
+        expect(result.ok).toBe(false);
+        if (result.ok)
+          throw new Error("Expected the lowered allowance to refuse");
+        expect(result.error.error).toMatchObject({
+          limit: {
+            setting: "javascript.member_mutation_alias_states",
+            effective_value: 8,
+            source: "runtime",
+          },
+        });
+      } finally {
+        await worker.close();
+      }
+    }
+  } finally {
+    await scope.close();
   }
 });
 
@@ -760,16 +817,26 @@ it("reports the worker heap limit only when the runtime enforces V8 heap flags",
   }
 });
 
-it("names the fixed work allowance a worker refusal reports", async () => {
-  const worker = resourceFailureWorker(
-    'process.versions.bun === undefined ? require("node:v8").getHeapStatistics().heap_size_limit : null',
+it("sends the accepted member-mutation allowance and names its setting on refusal", async () => {
+  // The fixture reports the allowance the parent sent, as the real worker does.
+  const worker = new JavaScriptAnalysisWorker(
     {
-      resource: "cpu",
-      limits: {
-        [JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT]:
-          JAVASCRIPT_MEMBER_MUTATION_WORK_ALLOWANCE,
-      },
+      heapMb: 128,
+      timeoutMs: 30_000,
+      memberMutationAllowance: { aliasStates: 4096, source: "runtime" },
     },
+    (request) =>
+      spawnOwnedProviderProcess({
+        ...request,
+        arguments: [
+          "-e",
+          `process.stdout.write(JSON.stringify({ kind: "ready", heap_limit_bytes: process.versions.bun === undefined ? require("node:v8").getHeapStatistics().heap_size_limit : null }) + "\\n");
+require("node:readline").createInterface({ input: process.stdin }).once("line", (line) => {
+  const request = JSON.parse(line);
+  process.stdout.write(JSON.stringify({ kind: "failure", id: request.id, reason: "resource", resource: "cpu", limits: { ${JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT}: request.member_mutation_allowance.alias_states, sent_source: request.member_mutation_allowance.source }, message: "fixture" }) + "\\n");
+});`,
+        ],
+      }),
   );
   try {
     const result = await worker.analyze(
@@ -783,13 +850,18 @@ it("names the fixed work allowance a worker refusal reports", async () => {
     expect(error).toMatchObject({
       resource: "cpu",
       retryable: false,
-      remediationAction: undefined,
-      fixedAllowance: {
-        kind: "work",
-        limit: JAVASCRIPT_MEMBER_MUTATION_WORK_ALLOWANCE,
-        unit: "alias states",
+      reportedLimits: {
+        [JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT]: 4096,
+        sent_source: "runtime",
+      },
+      limit: {
+        setting: "javascript.member_mutation_alias_states",
+        effective_value: 4096,
+        source: "runtime",
       },
     });
+    expect(error.fixedAllowance).toBeUndefined();
+    expect(error.remediationAction).toContain("update_analysis_settings");
   } finally {
     await worker.close();
   }
