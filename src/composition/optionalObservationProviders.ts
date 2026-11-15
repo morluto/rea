@@ -5,7 +5,7 @@ import type {
   OptionalObservationProviders,
   OptionalProviderLoadFailure,
   OptionalProviderLoadResult,
-} from "../application/OptionalObservationProviders.js";
+} from "../ports/OptionalObservationProviders.js";
 import {
   CDP_BROWSER_PROVIDER_IDENTITY,
   PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY,

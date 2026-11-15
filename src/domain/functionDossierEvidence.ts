@@ -1,4 +1,12 @@
-import { ANALYSIS_EVIDENCE_PREDICATE, type Evidence } from "./evidence.js";
+import {
+  ANALYSIS_EVIDENCE_PREDICATE,
+  evidenceFileTarget,
+  type Evidence,
+} from "./evidence.js";
+import {
+  sameTargetIdentity,
+  type FileTargetIdentity,
+} from "./targetIdentity.js";
 import { AnalysisInputError } from "./analysisErrorCore.js";
 import type { EvidenceIntegrityError } from "./evidenceErrors.js";
 import {
@@ -19,7 +27,8 @@ import { functionCoordinateContextsEqual } from "./native/functionCoordinateCont
 /** Complete function observation parsed from one analyze_function Evidence record. */
 export interface FunctionSnapshot {
   readonly evidence: Evidence;
-  readonly subject: NonNullable<Evidence["subject"]>;
+  /** The file the function was analysed in, selection included. */
+  readonly target: FileTargetIdentity;
   readonly dossier: FunctionDossier;
   readonly limitations: readonly string[];
   readonly callCoverageBlockers: readonly string[];
@@ -39,11 +48,11 @@ export const functionSnapshotCoordinateContext = (
   left: FunctionSnapshot,
   right: FunctionSnapshot,
 ): FunctionSnapshotCoordinateContext => {
-  if (left.subject.digest.sha256 !== right.subject.digest.sha256)
-    return "cross-artifact";
-  return left.subject.format === right.subject.format &&
-    left.subject.architecture !== null &&
-    left.subject.architecture === right.subject.architecture &&
+  if (left.target.sha256 !== right.target.sha256) return "cross-artifact";
+  // The same bytes share coordinates only when opened as the same target:
+  // format, architecture and selection (a raw entry point or flash offset).
+  return left.target.architecture !== null &&
+    sameTargetIdentity(left.target, right.target) &&
     functionCoordinateContextsEqual(
       left.evidence.analysis_profile,
       right.evidence.analysis_profile,
@@ -107,7 +116,8 @@ export const parseFunctionEvidence = (
       },
     );
   }
-  if (evidence.subject === null)
+  const target = evidenceFileTarget(evidence);
+  if (target === undefined)
     return invalidSelection(
       "Function analysis requires artifact-bound Evidence",
     );
@@ -123,7 +133,7 @@ export const parseFunctionEvidence = (
   );
   return ok({
     evidence,
-    subject: evidence.subject,
+    target,
     dossier: dossier.value,
     limitations: [
       ...new Set([...evidence.limitations, ...dossier.value.limitations]),

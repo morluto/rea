@@ -22,7 +22,7 @@ import {
   AnalysisError,
   type AnalysisCleanupObservation,
 } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { copyFile, lstat, realpath, rm, rmdir } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
@@ -34,7 +34,7 @@ import {
   hasParentTraversal,
   sameLexicalDirectory,
   withinLexicalDirectory,
-} from "../config/kunaCacheDirectory.js";
+} from "../filesystem/cacheDirectory.js";
 import { defaultDarwinHelperCacheDirectory } from "../process/DarwinHelperCache.js";
 import { linuxHopperReleaseCacheDirectory } from "./LinuxHopperCacheDirectory.js";
 
@@ -64,9 +64,11 @@ import {
   InvalidUtf8FileError,
   readRegularFileText,
   bindRegularFileCleanup,
-} from "./RegularFileRead.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+} from "../process/RegularFileRead.js";
+import {
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+} from "../resources/index.js";
 import {
   appDataRedirection,
   clientOwnershipEvidencePaths,
@@ -246,11 +248,11 @@ export const runUninstall = async (
   if (failed) {
     if (cleanupFailure !== undefined) {
       if (primaryFailure instanceof AnalysisError)
-        throw analysisErrorWithCleanupFailure(
+        throw analysisErrorWithCleanupDependencies(
           primaryFailure,
           cleanupFailure,
           "uninstall",
-        ).bindCleanupDependencies([primaryFailure, cleanupFailure]);
+        );
       throw new AggregateError(
         [primaryFailure, cleanupFailure],
         "Uninstall failed and its resource cleanup remains incomplete.",

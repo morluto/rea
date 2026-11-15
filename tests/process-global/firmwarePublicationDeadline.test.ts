@@ -2,9 +2,9 @@ import { projectCliAnalysisResult } from "../../src/cli/projectCliAnalysisResult
 import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../support/lifecycleHarness.js";
 import * as firmwareFiles from "../../src/firmware/FirmwareFiles.js";
-import { SafeOutputTree } from "../../src/artifacts/SafeOutputTree.js";
+import { SafeOutputTree } from "../../src/resources/SafeOutputTree.js";
 import { PrivateRuntimeRoot } from "../../src/process/PrivateRuntimeRoot.js";
 import { DEFAULT_FIRMWARE_ANALYSIS_TIMEOUT_MS } from "../../src/domain/firmware/firmwareAnalysis.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
@@ -190,14 +190,7 @@ test("keeps each queued request's independent analysis and publication budgets",
     budgets.push(ms);
     return timeout(ms);
   });
-  let enter!: () => void;
-  let release!: () => void;
-  const entered = new Promise<void>((resolve) => {
-    enter = resolve;
-  });
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
+  const publication = phaseGate();
   const publish = firmwareFiles.FirmwareFileAccess.prototype.publish;
   let first = true;
   vi.spyOn(
@@ -209,8 +202,7 @@ test("keeps each queued request's independent analysis and publication budgets",
   ) {
     if (first) {
       first = false;
-      enter();
-      await gate;
+      await publication.hold();
     }
     return publish.apply(this, args);
   });
@@ -222,7 +214,7 @@ test("keeps each queued request's independent analysis and publication budgets",
   });
   let queued: typeof pending | undefined;
   try {
-    await awaitAcknowledgement(entered, pending, "firmware publication");
+    await publication.reached(pending, "firmware publication");
     queued = fixture.service.execute("extract_firmware", {
       path: fixture.path,
       output_directory: join(fixture.root, "second-output"),
@@ -230,7 +222,7 @@ test("keeps each queued request's independent analysis and publication budgets",
       analysis_timeout_ms: 765_432,
     });
     expect(budgets).toEqual([234_567, 123_456]);
-    release();
+    publication.release();
     const results = await Promise.all([pending, queued]);
     expect(
       results.map((result) =>
@@ -247,7 +239,7 @@ test("keeps each queued request's independent analysis and publication budgets",
     ]);
     expect(budgets).toEqual([234_567, 123_456, 765_432, 654_321]);
   } finally {
-    release();
+    publication.release();
     try {
       await Promise.allSettled([pending, queued]);
     } finally {

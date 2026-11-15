@@ -10,6 +10,11 @@ import {
   compositeKey,
 } from "./unicodeCodePointOrder.js";
 import { localPathStringSchema } from "./localPath.js";
+import {
+  binaryTargetIdentity,
+  sameTargetIdentity,
+  type FileTargetIdentity,
+} from "./targetIdentity.js";
 
 import {
   analysisProfileSchema,
@@ -20,6 +25,7 @@ import {
 } from "./analysisProfile.js";
 import {
   BINARY_ARCHITECTURES,
+  BINARY_TARGET_FORMAT_KINDS,
   RAW_ONLY_ARCHITECTURES,
   type BinaryTarget,
 } from "./binaryTargetTypes.js";
@@ -30,7 +36,9 @@ import {
   parseImmutableEvidenceBundle,
 } from "./evidenceBundle.js";
 import {
+  evidenceFileTarget,
   evidenceLocationSchema,
+  evidenceSubjectTarget,
   rebindEvidenceToTargetPath,
   type Evidence,
   type EvidenceLocation,
@@ -103,41 +111,57 @@ const targetIdentitySchema = z.object({
   kind: kindSchema,
   architecture: architectureSchema.nullable(),
 });
-const targetSchema = z.discriminatedUnion("format", [
-  targetIdentitySchema.extend({
-    format: z.enum(
-      formatSchema.options.filter(
-        (format) =>
-          format !== "raw-binary" &&
-          format !== "gamecube-dol" &&
-          format !== "esp-flash-image",
+const targetSchema = z
+  .discriminatedUnion("format", [
+    targetIdentitySchema.extend({
+      format: z.enum(
+        formatSchema.options.filter(
+          (format) =>
+            format !== "raw-binary" &&
+            format !== "gamecube-dol" &&
+            format !== "esp-flash-image",
+        ),
       ),
-    ),
-    architecture: architectureSchema
-      .exclude([...RAW_ONLY_ARCHITECTURES])
-      .nullable(),
-  }),
-  targetIdentitySchema.extend({
-    format: z.literal("raw-binary"),
-    kind: z.literal("executable"),
-    architecture: binaryArchitectureSchema,
-    entry_point: rawBinaryEntryPointSchema,
-  }),
-  targetIdentitySchema.extend({
-    format: z.literal("gamecube-dol"),
-    kind: z.literal("executable"),
-    architecture: z.literal("powerpc"),
-    entry_point: rawBinaryEntryPointSchema,
-  }),
-  // The caller's inputs select how the dump is read, so they are identity.
-  targetIdentitySchema.extend({
-    format: z.literal("esp-flash-image"),
-    kind: z.literal("archive"),
-    architecture: z.null(),
-    flash_offset: z.number().int().min(0).max(0xffff_ffff).nullable(),
-    partition_table_offset: z.number().int().min(0).max(0xffff_ffff).nullable(),
-  }),
-]);
+      architecture: architectureSchema
+        .exclude([...RAW_ONLY_ARCHITECTURES])
+        .nullable(),
+    }),
+    targetIdentitySchema.extend({
+      format: z.literal("raw-binary"),
+      kind: z.literal("executable"),
+      architecture: binaryArchitectureSchema,
+      entry_point: rawBinaryEntryPointSchema,
+    }),
+    targetIdentitySchema.extend({
+      format: z.literal("gamecube-dol"),
+      kind: z.literal("executable"),
+      architecture: z.literal("powerpc"),
+      entry_point: rawBinaryEntryPointSchema,
+    }),
+    // The caller's inputs select how the dump is read, so they are identity.
+    targetIdentitySchema.extend({
+      format: z.literal("esp-flash-image"),
+      kind: z.literal("archive"),
+      architecture: z.null(),
+      flash_offset: z.number().int().min(0).max(0xffff_ffff).nullable(),
+      partition_table_offset: z
+        .number()
+        .int()
+        .min(0)
+        .max(0xffff_ffff)
+        .nullable(),
+    }),
+  ])
+  .superRefine((target, context) => {
+    // Query IDs commit to the kind, so a kind the format cannot have would
+    // admit entries that no live lookup or export of this target can reach.
+    if (target.kind !== BINARY_TARGET_FORMAT_KINDS[target.format])
+      context.addIssue({
+        code: "custom",
+        path: ["kind"],
+        message: `Snapshot target kind ${target.kind} does not match format ${target.format}`,
+      });
+  });
 const bindingSchema = z
   .object({
     provider: committedProviderSchema,
@@ -351,15 +375,7 @@ const snapshotContentDigest = (
   const metadata = jsonObjectSchema.parse({
     limitations: execution.limitations,
     locations: execution.locations,
-    subject:
-      execution.subject === null
-        ? null
-        : {
-            local_path: execution.subject.path,
-            sha256: execution.subject.sha256,
-            format: execution.subject.format,
-            architecture: execution.subject.architecture,
-          },
+    subject: executionSubjectContent(execution.subject ?? undefined),
     relationship_coverage: execution.relationship_coverage,
   });
   return contentDigest({
@@ -368,6 +384,26 @@ const snapshotContentDigest = (
     raw_result: rawResult,
   });
 };
+
+/** The execution subject facts a snapshot content digest commits to. */
+const executionSubjectContent = (
+  subject:
+    | {
+        readonly path: string;
+        readonly sha256: string;
+        readonly format: string;
+        readonly architecture?: string | null;
+      }
+    | undefined,
+) =>
+  subject === undefined
+    ? null
+    : {
+        local_path: subject.path,
+        sha256: subject.sha256,
+        format: subject.format,
+        architecture: subject.architecture ?? null,
+      };
 
 const evidenceContentDigest = (evidence: Evidence): string => {
   return contentDigest({
@@ -475,26 +511,35 @@ export const snapshotBinding = (
     analysis_profile: profile,
   });
 
+/** The target identity a persisted snapshot target names. */
+export const snapshotTargetIdentity = (
+  target: AnalysisSnapshotTarget,
+): FileTargetIdentity => ({
+  kind: "file",
+  sha256: target.sha256,
+  format: target.format,
+  architecture: target.architecture,
+  selection:
+    target.format === "raw-binary" || target.format === "gamecube-dol"
+      ? { kind: "entry-point", entry_point: target.entry_point }
+      : target.format === "esp-flash-image"
+        ? {
+            kind: "esp-flash",
+            flash_offset: target.flash_offset,
+            partition_table_offset: target.partition_table_offset,
+          }
+        : null,
+});
+
 /** Compare an open binary with the immutable target identity in a snapshot. */
 export const snapshotMatchesTarget = (
   snapshot: AnalysisSnapshotTarget,
   target: BinaryTarget,
 ): boolean =>
-  snapshot.sha256 === target.sha256 &&
-  snapshot.kind === target.kind &&
-  snapshot.format === target.format &&
-  snapshot.architecture === (target.architecture ?? null) &&
-  (snapshot.format !== "raw-binary" ||
-    (target.format === "raw-binary" &&
-      snapshot.entry_point === target.entryPoint)) &&
-  (snapshot.format !== "gamecube-dol" ||
-    (target.format === "gamecube-dol" &&
-      snapshot.entry_point === target.entryPoint)) &&
-  (snapshot.format !== "esp-flash-image" ||
-    (target.format === "esp-flash-image" &&
-      snapshot.flash_offset === target.espFlash.flashOffset &&
-      snapshot.partition_table_offset ===
-        target.espFlash.partitionTableOffset));
+  sameTargetIdentity(
+    snapshotTargetIdentity(snapshot),
+    binaryTargetIdentity(target),
+  );
 
 /** Compare a snapshot binding with the selected concrete analysis profile. */
 export const snapshotMatchesProfile = (
@@ -611,7 +656,7 @@ export const snapshotEvidenceForQuery = (
   for (const record of snapshot.evidence_bundle.records) {
     if (
       !(
-        record.subject?.digest.sha256 === target.sha256 &&
+        evidenceFileTarget(record)?.sha256 === target.sha256 &&
         record.operation === operation &&
         committedProvidersEqual(record.provider, provider) &&
         record.analysis_profile !== null &&
@@ -798,7 +843,7 @@ const restoreSnapshot = (
     if (
       evidence.predicate_type !== "rea.analysis" ||
       evidence.authority !== "shipped-artifact" ||
-      evidence.subject?.digest.sha256 !== header.target.sha256 ||
+      evidenceFileTarget(evidence)?.sha256 !== header.target.sha256 ||
       evidence.analysis_profile === null ||
       (evidence.confidence !== "observed" && evidence.confidence !== "derived")
     )
@@ -922,6 +967,21 @@ const hasCanonicalQueryOrder = (
   return true;
 };
 
+/**
+ * Whether Evidence is about the snapshot target's bytes. A subject in the
+ * target's own format is the target, so its whole identity, including the
+ * selection that the query IDs commit to, must agree with the header.
+ */
+const subjectNamesSnapshotTarget = (
+  evidence: Evidence,
+  target: AnalysisSnapshotTarget,
+): boolean => {
+  const file = evidenceFileTarget(evidence);
+  if (file === undefined || file.sha256 !== target.sha256) return false;
+  const expected = snapshotTargetIdentity(target);
+  return file.format !== expected.format || sameTargetIdentity(file, expected);
+};
+
 const isCorrespondingEvidence = (
   evidence: Evidence,
   snapshot: Pick<AnalysisSnapshot, "target" | "binding">,
@@ -929,7 +989,7 @@ const isCorrespondingEvidence = (
   evidence.predicate_type === "rea.analysis" &&
   evidence.confidence === "observed" &&
   evidence.authority === "shipped-artifact" &&
-  evidence.subject?.digest.sha256 === snapshot.target.sha256 &&
+  subjectNamesSnapshotTarget(evidence, snapshot.target) &&
   evidence.analysis_profile !== null &&
   analysisProfilesEqual(
     evidence.analysis_profile,
@@ -1005,7 +1065,7 @@ const isWorkflowEvidence = (
   evidence.predicate_type === "rea.analysis" &&
   evidence.confidence === "derived" &&
   evidence.authority === "shipped-artifact" &&
-  evidence.subject?.digest.sha256 === snapshot.target.sha256 &&
+  subjectNamesSnapshotTarget(evidence, snapshot.target) &&
   evidence.analysis_profile !== null &&
   analysisProfilesEqual(
     evidence.analysis_profile,
@@ -1030,15 +1090,7 @@ const evidenceContentMetadata = (evidence: Evidence) => {
     limitations: evidence.limitations,
     relationship_coverage: evidence.relationship_coverage,
     locations: evidence.locations,
-    subject:
-      evidence.subject === null
-        ? null
-        : {
-            local_path: evidence.subject.local_path,
-            sha256: evidence.subject.digest.sha256,
-            format: evidence.subject.format,
-            architecture: evidence.subject.architecture,
-          },
+    subject: executionSubjectContent(evidenceSubjectTarget(evidence.subject)),
   };
 };
 

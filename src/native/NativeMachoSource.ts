@@ -4,11 +4,11 @@ import {
   withArtifactRegularFile,
   assertArtifactReadActive,
   artifactSelectedPathErrno,
-} from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { hashStableRootArtifactHandle } from "../artifacts/inventory/hashStableRootArtifact.js";
-import { targetDigestChangedFailure } from "../artifacts/withArtifactTargetIdentity.js";
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+  hashStableRootArtifactHandle,
+  targetDigestChangedFailure,
+} from "../resources/index.js";
 
 /** A positional reader for one slice of the descriptor bound to the target. */
 export interface NativeMachoSource {

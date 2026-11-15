@@ -3,7 +3,7 @@ import {
   debPackageSchema,
 } from "../../domain/deb/debPackage.js";
 import type { ToolContract } from "../toolContractTypes.js";
-import { toolContractMetadata } from "../toolEffects.js";
+import { evidenceEffects, toolContractMetadata } from "../toolEffects.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 
 /** Static Debian package inspection is independent of dpkg, apt, and active native providers. */
@@ -11,7 +11,8 @@ export const DEB_PACKAGE_TOOL_CONTRACTS = [
   {
     name: "inspect_deb_package",
     availability: "standalone",
-    ...toolContractMetadata("inspect_deb_package"),
+    cli: true,
+    ...toolContractMetadata("inspect_deb_package", evidenceEffects),
     kind: "artifact-provider",
     requiresActiveTarget: true,
     description:

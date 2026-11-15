@@ -1,3 +1,5 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { WabtAdmissionError } from "./WabtAdmissionError.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
@@ -10,21 +12,19 @@ import type {
   WasmArtifactExecutionOptions,
   WasmArtifactExecution,
   WasmArtifactPort,
-} from "../application/wasm/WasmArtifactPort.js";
-import { createAnalysisExecution } from "../application/AnalysisProvider.js";
+} from "../ports/wasm/WasmArtifactPort.js";
+import { createAnalysisExecution } from "../ports/AnalysisProvider.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import {
   completedStableArtifact,
   readStableArtifact,
   type StableArtifactSnapshot,
-} from "../artifacts/readStableArtifact.js";
-import {
   ArtifactResourceScope,
   ArtifactResourceRetryFailure,
-} from "../artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLeaseGroup } from "../artifacts/AnalysisCleanupLease.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+  AnalysisCleanupLeaseGroup,
+  bindArtifactFileCleanup,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import type {
   AnalysisError,
   AnalysisCapturedOutput,
@@ -38,7 +38,7 @@ import {
   isAborted,
 } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { createEvidence } from "../domain/evidence.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
@@ -56,7 +56,6 @@ import { err, ok, type Result } from "../domain/result.js";
 import { runOwnedCommand } from "../process/OwnedCommand.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
-import { artifactCommandOutput } from "../process/ArtifactAnalysisResources.js";
 import {
   assertArtifactCommandPath,
   selectArtifactCommandPath,
@@ -193,7 +192,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         ? undefined
         : createEvidence(
             artifact === undefined
-              ? undefined
+              ? unknownTarget("not-observed")
               : {
                   path: artifact.path,
                   format: "file",
@@ -272,7 +271,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         const selection = await selectArtifactCommandPath(
           appendCallerPath(
             directory,
-            `${tool}${process.platform === "win32" ? ".exe" : ""}`,
+            `${tool}${HOST_PLATFORM.platform === "win32" ? ".exe" : ""}`,
           ),
           options?.signal,
         );
@@ -353,7 +352,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
             ...(this.launcher === undefined ? {} : { launcher: this.launcher }),
           },
         );
-        capturedOutput = artifactCommandOutput(snapshot);
+        capturedOutput = capturedProviderOutput(snapshot);
         const invalidUtf8Streams = [
           ...(snapshot.stdout.invalidUtf8 ? ["stdout"] : []),
           ...(snapshot.stderr.invalidUtf8 ? ["stderr"] : []),
@@ -412,11 +411,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
             {
               userMessage: reason,
               diagnostics: versionProbe,
-              capturedOutput: {
-                stdout: version.stdout.text,
-                stderr: version.stderr.text,
-                truncated: version.diagnosticTruncated === true,
-              },
+              capturedOutput: capturedProviderOutput(version),
               remediationAction: wabtConfigurationRecoveryAction(),
             },
           );
@@ -567,7 +562,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
                 ],
               },
             ),
-            capturedOutput: artifactCommandOutput(validation),
+            capturedOutput: capturedProviderOutput(validation),
           },
           [
             {
@@ -594,7 +589,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
             OPERATION,
             "Unexpected WABT diagnostic output.",
             {
-              capturedOutput: artifactCommandOutput(output),
+              capturedOutput: capturedProviderOutput(output),
             },
           );
         if (warnings.length > 0)
@@ -622,7 +617,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
       // WAT framing reads module names, not every inner name map. A producer
       // warning may concern a skipped body or another custom section; without
       // section attribution it cannot establish complete debug-name coverage.
-      capturedOutput = artifactCommandOutput(dump);
+      capturedOutput = capturedProviderOutput(dump);
       const { sections, headers, details, invalidNameEnds } = parseWabtOutput(
         dump.stdout.text,
         selected.bytes.length,
@@ -644,7 +639,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
               OPERATION,
               "Unexpected WABT diagnostic output.",
               {
-                capturedOutput: artifactCommandOutput(
+                capturedOutput: capturedProviderOutput(
                   warning.tool === "wasm-validate"
                     ? validation
                     : warning.tool === "wasm-objdump"
@@ -802,11 +797,11 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         result = result.ok
           ? err(failure)
           : err(
-              analysisErrorWithCleanupFailure(
+              analysisErrorWithCleanupDependencies(
                 result.error,
                 failure,
                 OPERATION,
-              ).bindCleanupDependencies([result.error, failure]),
+              ),
             );
       }
     }

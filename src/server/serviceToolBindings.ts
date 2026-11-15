@@ -1,5 +1,17 @@
 import type { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisService.js";
-import type { AnalysisViewRetention } from "../application/analysisView/AnalysisViewService.js";
+import type { AnalysisSettings } from "../application/AnalysisSettings.js";
+import { analysisSettingsConstraints } from "./analysisSettingsConstraints.js";
+import type { ToolResultDelivery } from "./ToolResultDelivery.js";
+import type { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
+import { inspectAndroidJniBindings } from "../application/android/AndroidJniInspection.js";
+import { inspectAndroidPackage } from "../application/android/AndroidPackageInspection.js";
+import { inspectAndroidSymbol } from "../application/android/AndroidSymbolInspection.js";
+import {
+  inspectAnalysisView,
+  type AnalysisViewRetention,
+} from "../application/analysisView/AnalysisViewService.js";
+import { z } from "zod";
+import { analysisViewSourceSchema } from "../domain/analysisView/analysisViewRequest.js";
 import type { ApkSignatureService } from "../application/apkSignature/ApkSignatureService.js";
 import type { ApktoolResourceAnalysisService } from "../application/apktool/ApktoolResourceAnalysisService.js";
 import type { DesktopApplicationService } from "../application/artifacts/DesktopApplicationService.js";
@@ -42,9 +54,32 @@ import type { SqliteDatabaseService } from "../application/sqlite/SqliteDatabase
 import type { V8CodeCacheService } from "../application/v8CodeCache/V8CodeCacheService.js";
 import type { WasmArtifactService } from "../application/wasm/WasmArtifactService.js";
 import { compareWasmInterfaces } from "../application/wasm/WasmInterfaceComparisonService.js";
+import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
+import { compareFunctionEvidence } from "../application/investigation/FunctionComparisonEvidence.js";
+import { compareProcessEvidence } from "../application/process/ProcessComparisonService.js";
+import {
+  buildCallPathEvidence,
+  correlateStaticAndRuntimeEvidence,
+  findChangedBehaviorEvidence,
+  verifyReconstructionEvidence,
+} from "../application/investigation/InvestigationWorkflows.js";
 import type { WebModuleTraceService } from "../application/WebModuleTraceService.js";
 import type { WebSourceLocationService } from "../application/WebSourceLocationService.js";
-import { ok } from "../domain/result.js";
+import { toolContract } from "../contracts/toolContracts.js";
+import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
+import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
+import { err, ok, type Result } from "../domain/result.js";
+import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import {
+  readGuidanceSection,
+  searchGuidance,
+} from "../application/GuidanceAccess.js";
+import type { CutterBridgeService } from "../cutter/CutterBridgeService.js";
+import { captureSensitiveValues } from "../domain/webNetworkCapture.js";
+import type { WebNetworkCaptureService } from "../application/WebNetworkCaptureService.js";
+import type { WebRuntimeService } from "../application/WebRuntimeService.js";
+import { exportWebScriptsValidated } from "../application/WebScriptExportService.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import {
   contractServiceBindings,
   registerContractTools,
@@ -52,6 +87,43 @@ import {
   type ContractToolDependencies,
 } from "./contractToolBindings.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
+import { retainedSummaryDelivery } from "./retainedSummaryDelivery.js";
+import {
+  readSessionStatus,
+  type SessionStatusToolOptions,
+} from "./sessionStatusTool.js";
+
+/** The runtime settings owner and the delivery whose limits it reports. */
+export interface AnalysisSettingsToolOptions {
+  readonly settings: AnalysisSettings;
+  readonly delivery: ToolResultDelivery;
+}
+
+/** Artifact resources a selected view may read, when the server owns them. */
+export interface AnalysisViewToolOptions {
+  readonly resources?: ArtifactResourceScope | undefined;
+}
+
+const viewInputSourceSchema = z.looseObject({
+  source: analysisViewSourceSchema,
+});
+
+/**
+ * The source overflow recovery may name again. An inline record cannot be
+ * repeated within the response it just overflowed, so it has none.
+ */
+const analysisViewOverflowSource = (input: unknown): JsonValue | undefined => {
+  const parsed = viewInputSourceSchema.safeParse(input);
+  return parsed.success && parsed.data.source.kind !== "inline"
+    ? jsonValueSchema.parse(parsed.data.source)
+    : undefined;
+};
+
+/** Deliver a workflow's typed output as the JSON value its contract declares. */
+const jsonValueResult = <Error>(
+  result: Result<unknown, Error>,
+): Result<JsonValue, Error> =>
+  result.ok ? ok(jsonValueSchema.parse(result.value)) : result;
 
 type Bind<Service> = (
   service: Service,
@@ -307,6 +379,44 @@ const SERVICE_TOOL_BINDINGS = {
         inspectDartAot(service, input, retention, options),
     },
   })) satisfies Bind<FlutterBuildAnalysisService>,
+  androidAnalysis: ((service, retention) => ({
+    ...contractServiceBindings(service, [
+      "search_android_classes",
+      "trace_android_references",
+    ]),
+    inspect_android_package: {
+      admission: "sdk",
+      run: (input, options) =>
+        inspectAndroidPackage(service, input, retention, options),
+    },
+    inspect_android_jni_bindings: {
+      admission: "sdk",
+      run: (input, options) =>
+        inspectAndroidJniBindings(service, input, retention, options),
+    },
+    inspect_android_class: {
+      admission: "sdk",
+      run: (input, options) =>
+        inspectAndroidSymbol(
+          service,
+          "inspect_android_class",
+          input,
+          retention,
+          options,
+        ),
+    },
+    inspect_android_method: {
+      admission: "sdk",
+      run: (input, options) =>
+        inspectAndroidSymbol(
+          service,
+          "inspect_android_method",
+          input,
+          retention,
+          options,
+        ),
+    },
+  })) satisfies Bind<AndroidAnalysisService>,
   apktoolAnalysis: ((service) =>
     contractServiceBindings(service, [
       "inspect_apktool_client",
@@ -358,12 +468,167 @@ const SERVICE_TOOL_BINDINGS = {
       summary: (input, options) => service.trace(input, options),
     },
   })) satisfies Bind<WebSourceLocationService>,
+  webNetworkCapture: ((service, retention) => {
+    const contract = toolContract("inspect_web_network_capture");
+    const delivery = retainedSummaryDelivery(contract.name, retention);
+    return {
+      inspect_web_network_capture: {
+        // The workflow admits the raw request so caller-declared sensitivity
+        // also covers invalid arguments; SDK admission would emit unprojected
+        // issue paths as plain text.
+        admission: "application",
+        run: async (rawInput, options) => {
+          const parsed = contract.inputSchema.safeParse(rawInput);
+          if (!parsed.success)
+            return err(
+              redactExplicitFailure(
+                analysisInputErrorFromIssues(
+                  contract.name,
+                  parsed.error.issues,
+                  rawInput,
+                  { cause: parsed.error },
+                ),
+                captureSensitiveValues(rawInput),
+              ),
+            );
+          const { detail, ...input } = parsed.data;
+          const parameters = { detail };
+          const ready = delivery.preflight(parameters);
+          if (!ready.ok) return ready;
+          const inspected = await service.inspect(input, options);
+          return inspected.ok
+            ? delivery.projectEvidence(parameters, inspected.value)
+            : inspected;
+        },
+      },
+    };
+  }) satisfies Bind<WebNetworkCaptureService>,
+  webRuntime: ((service) => ({
+    observe_web_execution: {
+      admission: "sdk",
+      run: (input, options) => service.observe(input, options),
+    },
+    inspect_web_event_listeners: {
+      admission: "sdk",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<WebRuntimeService>,
+  webScripts: ((resources) => ({
+    export_web_scripts: {
+      admission: "sdk",
+      run: (input, options) =>
+        exportWebScriptsValidated(input, resources, options),
+    },
+  })) satisfies Bind<ArtifactResourceScope>,
   javascriptRecovery: ((service) => ({
     recover_javascript_sources: {
       admission: "sdk",
       run: (input, options) => service.recover(input, options),
     },
   })) satisfies Bind<JavaScriptRecoveryService>,
+  guidance: ((resources) => ({
+    search_guidance: {
+      admission: "application",
+      value: async (input) =>
+        jsonValueResult(await searchGuidance(input, resources)),
+    },
+    read_guidance_section: {
+      admission: "application",
+      value: async (input) =>
+        jsonValueResult(await readGuidanceSection(input, resources)),
+    },
+  })) satisfies Bind<ArtifactResourceScope>,
+  cutterSessions: ((service) => ({
+    list_cutter_sessions: {
+      admission: "sdk",
+      value: async (_input, { signal }) => {
+        const listed = await service.listSessions({ signal });
+        return listed.ok
+          ? ok({ ...listed.value, sessions: [...listed.value.sessions] })
+          : listed;
+      },
+    },
+  })) satisfies Bind<CutterBridgeService>,
+  // Runtime settings remain usable without an active target or healthy
+  // provider, so they run outside analysis admission.
+  analysisSettings: (({ settings, delivery }) => ({
+    inspect_analysis_settings: {
+      admission: "sdk",
+      value: async (input) =>
+        jsonValueResult(
+          ok({
+            ...settings.inspect(input),
+            constraints: analysisSettingsConstraints(delivery),
+          }),
+        ),
+    },
+    update_analysis_settings: {
+      admission: "application",
+      value: async (input) => jsonValueResult(settings.update(input)),
+    },
+  })) satisfies Bind<AnalysisSettingsToolOptions>,
+  // A selected view of other Evidence; its overflow recovery can name the
+  // same retained source again.
+  analysisView: (({ resources }, retention) => ({
+    inspect_analysis_view: {
+      admission: "application",
+      viewSource: analysisViewOverflowSource,
+      run: (input, { signal }) =>
+        inspectAnalysisView(input, retention.evidenceById, {
+          ...(signal === undefined ? {} : { signal }),
+          ...(resources === undefined ? {} : { resources }),
+        }),
+    },
+  })) satisfies Bind<AnalysisViewToolOptions>,
+  sessionDerived: ((session) => ({
+    compare_functions: {
+      admission: "sdk",
+      session,
+      derive: (input, evidenceForAnalysis, signal) =>
+        compareFunctionEvidence(input, evidenceForAnalysis, signal),
+    },
+    compare_process_captures: {
+      admission: "sdk",
+      session,
+      derive: (input, evidenceForAnalysis, signal) =>
+        compareProcessEvidence(input, evidenceForAnalysis, { signal }),
+    },
+    // Investigation workflows validate their own raw request.
+    find_changed_behavior: {
+      admission: "application",
+      session,
+      derive: (input, evidenceForAnalysis, signal) =>
+        findChangedBehaviorEvidence(input, { evidenceForAnalysis }, signal),
+    },
+    build_call_path: {
+      admission: "application",
+      session,
+      derive: (input, evidenceForAnalysis, signal) =>
+        buildCallPathEvidence(input, { evidenceForAnalysis }, signal),
+    },
+    correlate_static_and_runtime: {
+      admission: "application",
+      session,
+      derive: (input, evidenceForAnalysis, signal) =>
+        correlateStaticAndRuntimeEvidence(
+          input,
+          { evidenceForAnalysis },
+          signal,
+        ),
+    },
+    // Verification reads the session's immutable bundle as a whole.
+    verify_reconstruction: {
+      admission: "sdk",
+      session,
+      derive: (input) => verifyReconstructionEvidence(input, session),
+    },
+  })) satisfies Bind<BinarySessionPort>,
+  sessionStatus: ((options) => ({
+    binary_session: {
+      admission: "sdk",
+      value: (input, { context }) => readSessionStatus(options, input, context),
+    },
+  })) satisfies Bind<SessionStatusToolOptions>,
 } as const;
 
 type ServiceBindings = typeof SERVICE_TOOL_BINDINGS;

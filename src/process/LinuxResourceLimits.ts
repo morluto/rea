@@ -1,8 +1,10 @@
 import { ProcessAdmissionError } from "./ProcessAdmissionError.js";
 import { open } from "node:fs/promises";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
-import { withArtifactFileHandle } from "../artifacts/ArtifactFileOperation.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import {
+  withArtifactFileHandle,
+  type ArtifactResourceScope,
+} from "../resources/index.js";
 
 /** Per-process ceilings inherited by an owned Linux producer. */
 export interface LinuxResourceLimits {

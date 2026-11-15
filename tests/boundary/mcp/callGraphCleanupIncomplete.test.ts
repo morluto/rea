@@ -8,7 +8,7 @@ import { z } from "zod";
 import {
   createAnalysisExecution,
   type AnalysisOperationPort,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
@@ -385,7 +385,7 @@ it.each(tools)(
     const retained = await retainedPartial(client, session, error);
     expect(retained).toMatchObject({
       operation: tool,
-      subject: { format: "dos-com" },
+      subject: { identity: { format: "dos-com" } },
       normalized_result:
         tool === "get_call_graph"
           ? { graph: { "0": [{ address: "0x1", status: "ok" }] } }

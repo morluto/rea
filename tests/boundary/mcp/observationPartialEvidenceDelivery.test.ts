@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, expect, it } from "vitest";
 
@@ -32,7 +33,7 @@ it.each(operations)(
     }));
     const makeEvidence = (operation: ObservationOperation): Evidence =>
       createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         {
           id: "observation-fixture",
           name: "Observation fixture",

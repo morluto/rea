@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { parseNativeExports } from "./NativeExportParser.js";
+import { parseNativeExports } from "../../domain/native/nativeExportParser.js";
 import {
   elfExportImage,
   peExportImage,

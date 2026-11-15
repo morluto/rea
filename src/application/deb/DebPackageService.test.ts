@@ -127,7 +127,7 @@ it("records the selected artifact as observed Evidence", async () => {
   if (!result.ok) throw result.error;
   expect(result.value).toMatchObject({
     confidence: "observed",
-    subject: { format: "file" },
+    subject: { identity: { format: "file" } },
     normalized_result: report,
   });
   expect(result.value.locations).toEqual([

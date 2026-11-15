@@ -1,13 +1,16 @@
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import {
   processInspectionCancellationError,
   retainProcessInspectionCleanup,
 } from "../providers/OwnedCommandCleanup.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import {
+  type ArtifactResourceScope,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import {
   selectArtifactCommandPath,
   type ArtifactCommandPath,
 } from "../process/ArtifactCommandPath.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   FIRMWARE_TOOL_REQUIREMENTS,
   type FirmwareEngineName,
@@ -57,19 +60,6 @@ export type FirmwareLauncher = (
   options: OwnedProviderProcessSpawnOptions,
 ) => Promise<SpawnedOwnedProviderProcess>;
 
-/** Captured tool output for one finished firmware command, including byte coverage. */
-const capturedFirmwareOutput = (
-  snapshot: ProviderProcessSnapshot,
-): AnalysisCapturedOutput => ({
-  stdout: snapshot.stdout.text,
-  stderr: snapshot.stderr.text,
-  stdout_bytes: snapshot.stdout.bytes,
-  stderr_bytes: snapshot.stderr.bytes,
-  exit_code: snapshot.exitCode ?? null,
-  signal: snapshot.signal ?? null,
-  truncated: snapshot.diagnosticTruncated === true,
-});
-
 /** Refuse an unmet host or tool requirement, which another target cannot satisfy. */
 export const firmwareToolUnavailable = (
   engine: string,
@@ -112,12 +102,14 @@ export const resolveFirmwareCommand = async (
   engine: FirmwareEngineName,
   operation: string,
   files: FirmwareFileAccess,
+  /** The host the engine runs on; firmware engines are admitted on Linux only. */
+  platform: NodeJS.Platform,
   signal?: AbortSignal,
 ) => {
   const variable = FIRMWARE_TOOL_REQUIREMENTS[engine].commandEnvironment;
   const configured = environment[variable];
   if (
-    !firmwareHostSupported(process.platform) ||
+    !firmwareHostSupported(platform) ||
     configured === undefined ||
     !isAbsolute(configured)
   )
@@ -326,20 +318,14 @@ export const runFirmwareCommand = async (context: {
         snapshot.signal,
         fileSizeBytes,
         fileSizeAdjustable,
-        capturedFirmwareOutput(snapshot),
+        capturedProviderOutput(snapshot),
       );
       if (signalLimit !== undefined) return signalLimit;
       return new ProviderAdapterError(engine, operation, {
         diagnostics: {
           reason:
             "Tool failed; inspect exit status and stderr for format, dependency, sandbox or resource-limit failures",
-          exit_code: snapshot.exitCode ?? null,
-          signal: snapshot.signal ?? null,
-          stdout: snapshot.stdout.text,
-          stderr: snapshot.stderr.text,
-          stdout_bytes: snapshot.stdout.bytes,
-          stderr_bytes: snapshot.stderr.bytes,
-          truncated: snapshot.diagnosticTruncated === true,
+          ...capturedProviderOutput(snapshot),
         },
         remediationAction: `Inspect exit status and stderr for format, dependency, sandbox, or resource-limit failures. ${firmwareProcessLimitRecovery(fileSizeBytes, fileSizeAdjustable)} A format or dependency failure is not repaired by changing analysis_timeout_ms.`,
       });
@@ -381,11 +367,7 @@ export const runFirmwareCommand = async (context: {
         operation,
         `Tool diagnostics exceeded the ${FIRMWARE_LIMITS.diagnosticBytes}-byte capture budget`,
         {
-          capturedOutput: {
-            stdout: snapshot.stdout.text,
-            stderr: snapshot.stderr.text,
-            truncated: true,
-          },
+          capturedOutput: capturedProviderOutput(snapshot),
           userMessage: `Firmware diagnostics exceeded the ${String(FIRMWARE_LIMITS.diagnosticBytes)}-byte capture allowance. This release has no runtime override.`,
           remediationAction: firmwareLimitRecovery(
             `The firmware diagnostic capture allowance is ${String(FIRMWARE_LIMITS.diagnosticBytes)} bytes`,
@@ -440,7 +422,7 @@ export const runFirmwareCommand = async (context: {
       {
         operation,
         cleanupPrimary: failure,
-        capturedOutput: capturedFirmwareOutput(snapshot),
+        capturedOutput: capturedProviderOutput(snapshot),
       },
     );
   }
@@ -455,6 +437,20 @@ export const runFirmwareCommand = async (context: {
     resource_limiter: context.limiter,
   };
 };
+
+/** The captured output of a completed firmware command, from the shared owner. */
+export const firmwareExecutionOutput = (
+  execution: Pick<
+    Awaited<ReturnType<typeof runFirmwareCommand>>,
+    "stdout" | "stderr" | "exit_code" | "signal"
+  >,
+) =>
+  capturedProviderOutput({
+    stdout: execution.stdout,
+    stderr: execution.stderr,
+    exitCode: execution.exit_code,
+    signal: execution.signal,
+  });
 
 /**
  * Consume the report a completed command was asked to write. A successful exit
@@ -494,15 +490,7 @@ export const readFirmwareCommandReport = async (context: {
       );
       if (cause.partialObservation !== undefined)
         failure.retainPartialObservation(cause.partialObservation);
-      throw failure.retainCapturedOutput({
-        stdout: execution.stdout.text,
-        stderr: execution.stderr.text,
-        stdout_bytes: execution.stdout.bytes,
-        stderr_bytes: execution.stderr.bytes,
-        exit_code: execution.exit_code ?? null,
-        signal: execution.signal,
-        truncated: false,
-      });
+      throw failure.retainCapturedOutput(firmwareExecutionOutput(execution));
     }
     const { engine, operation, execution } = context;
     const reportFailure =
@@ -516,12 +504,7 @@ export const readFirmwareCommandReport = async (context: {
       command: execution.command,
       args: execution.args,
       resource_limiter: execution.resource_limiter,
-      exit_code: execution.exit_code ?? null,
-      signal: execution.signal,
-      stdout: execution.stdout.text,
-      stderr: execution.stderr.text,
-      stdout_bytes: execution.stdout.bytes,
-      stderr_bytes: execution.stderr.bytes,
+      ...firmwareExecutionOutput(execution),
     };
     if (execution.exit_code === 1)
       throw new ProviderAdapterError(engine, operation, {

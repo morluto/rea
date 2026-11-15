@@ -21,11 +21,11 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference.js";
-import { semanticOpaqueBindingReadMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
 import {
-  semanticBindingAtRead,
-  semanticEffectTiming,
-} from "./javascriptSemanticMutationInitializers.js";
+  opaqueCodeMayRebindBinding,
+  prototypeMutationMayPrecede,
+} from "./javascriptSemanticEffectLog.js";
+import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
@@ -457,10 +457,10 @@ const collectReleases = (
     const candidates =
       binding === undefined ? [] : (byBinding.get(binding.bindingId) ?? []);
     if (binding === undefined || candidates.length === 0) return;
-    const opaqueReceiver = semanticOpaqueBindingReadMayHaveChanged(
+    const opaqueReceiver = opaqueCodeMayRebindBinding(
       binding,
-      member.object,
       context.state,
+      member.object,
     );
     const receiver = candidates.some(({ resultIsPromise }) => resultIsPromise)
       ? semanticBindingAtRead(binding, member.object, context.state).binding
@@ -996,11 +996,7 @@ const rejectsSocketHostMember = (
     staticJavaScriptTruthiness(value) === false;
   // Node reads an absent member through the prototype chain, so a write to
   // Object.prototype that may run first can supply a path or socket.
-  const inheritable = state.prototypeMutationSites.some(
-    (effect) =>
-      effect.owner === "Object" &&
-      semanticEffectTiming(node, effect.node, state) !== "after",
-  );
+  const inheritable = prototypeMutationMayPrecede(state, "Object", node);
   for (const member of specifier === "tls" ? ["path", "socket"] : ["path"]) {
     const value = effective(member);
     if (value === "unknown" || (value !== undefined && !falsy(value)))

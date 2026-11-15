@@ -1,9 +1,9 @@
 import { malformedInput } from "../domain/parseFailure.js";
 import { describe, expect, it } from "vitest";
 
-import type { PointerFixups } from "./AppleMachoFixups.js";
+import type { PointerFixups } from "../domain/apple/appleMachoFixups.js";
 import { parsePointerFixups } from "./AppleMachoFixups.fixture.js";
-import type { MachoLayout } from "./AppleMachoSelection.js";
+import type { MachoLayout } from "../domain/apple/appleMachoSelection.js";
 import { inspectObjcClassImportBindings } from "./AppleObjcClassImportBindings.js";
 
 const createInput = (

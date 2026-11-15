@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { expect, it } from "vitest";
 
@@ -23,7 +24,11 @@ it
     const probe = inspectApktoolClient(
       { command: fixture.command, commandSource: "environment" },
       commands,
-      { signal: controller.signal, environment: process.env },
+      {
+        signal: controller.signal,
+        environment: process.env,
+        platform: HOST_PLATFORM.platform,
+      },
     ).catch((cause: unknown) => cause);
     try {
       await expect

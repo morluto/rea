@@ -1,5 +1,6 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
 import { isDeepStrictEqual } from "node:util";
-import type { ProviderIdentity } from "./AnalysisProvider.js";
+import type { ProviderIdentity } from "../ports/AnalysisProvider.js";
 import {
   createEvidence,
   type Evidence,
@@ -95,7 +96,7 @@ export const createBrowserEvidence = (
   const comparison =
     operation === "compare_web_captures" ||
     operation === "compare_web_screenshots";
-  return createEvidence(undefined, provider, {
+  return createEvidence(unknownTarget("not-observed"), provider, {
     predicateType: browserPredicate(operation),
     operation,
     parameters: {

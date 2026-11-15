@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
 import { ReverseEngineeringService } from "../../src/application/reverse/ReverseEngineeringService.js";
-import { analysisErrorProjectionSchema } from "../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../src/domain/analysisErrorProjectionSchema.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { ok } from "../../src/domain/result.js";
 import { createReverseEngineeringCommandPort } from "../../src/composition/reverseEngineering.js";

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 import { z } from "zod";
 
-import { AnalysisCleanupLease } from "../../../src/artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../../src/resources/AnalysisCleanupLease.js";
 import { captureDesktopApplication } from "../../../src/application/desktop/DesktopApplicationCapture.js";
 import {
   projectFailure,

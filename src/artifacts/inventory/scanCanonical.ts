@@ -19,8 +19,10 @@ import {
   ArtifactReaderFailure,
   type ArtifactReader,
   type ArtifactReaderTraversal,
-} from "../ArtifactReader.js";
-import type { ArtifactResourceOwner } from "../ArtifactResourceScope.js";
+  type ArtifactResourceOwner,
+  hashStableRootArtifact,
+  hashStableRootArtifactHandle,
+} from "../../resources/index.js";
 import {
   artifactInventoryResultSchema,
   type ArtifactInventoryResult,
@@ -45,10 +47,6 @@ import {
 import { classifyAndHashRootForInventory } from "./classify.js";
 import { hostExecutableMarking } from "../hostExecutableMarking.js";
 import type { HashResult } from "../ArtifactHash.js";
-import {
-  hashStableRootArtifact,
-  hashStableRootArtifactHandle,
-} from "./hashStableRootArtifact.js";
 import { createReader, inventoryCoverage } from "./reader.js";
 import {
   scanReader,

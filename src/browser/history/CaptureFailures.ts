@@ -1,23 +1,22 @@
 import { javaScriptWorkerMemoryLimitBytes } from "../../process/JavaScriptWorkerMemoryLimit.js";
 import { captureBudgets } from "./CaptureBudgets.js";
 import { analysisSettingLimit } from "../../domain/analysisSettingDefinitions.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import {
   AnalysisCleanupLeaseGroup,
   type AnalysisCleanupLease,
-} from "../../artifacts/AnalysisCleanupLease.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import {
+  ArtifactReaderFailure,
   stableArtifactInputRecovery,
   readerIntegrityFailure,
-} from "../../artifacts/StableArtifactFailure.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
-import {
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
   artifactSelectedPathErrno,
-} from "../../artifacts/ArtifactFileOperation.js";
+} from "../../resources/index.js";
+import {
+  analysisErrorWithCleanupFailure,
+  analysisErrorWithCleanupDependencies,
+} from "../../domain/analysisErrorCleanup.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
@@ -443,11 +442,11 @@ export const withCaptureReaderCleanup = (
       cleanup.retainPartialObservation(primary.partialObservation);
     return cleanup;
   }
-  const composed = analysisErrorWithCleanupFailure(
+  const composed = analysisErrorWithCleanupDependencies(
     primary,
     cleanup,
     OPERATION,
-  ).bindCleanupDependencies([primary, cleanup]);
+  );
   bindArtifactFileCleanup(cause, composed);
   return composed;
 };

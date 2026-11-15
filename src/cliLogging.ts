@@ -1,7 +1,5 @@
-import {
-  analysisCliErrorEnvelopeSchema,
-  analysisErrorProjectionSchema,
-} from "./contracts/errorSchemas.js";
+import { analysisCliErrorEnvelopeSchema } from "./contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "./domain/analysisErrorProjectionSchema.js";
 import { AnalysisError } from "./domain/analysisErrorBase.js";
 import {
   projectAnalysisError,

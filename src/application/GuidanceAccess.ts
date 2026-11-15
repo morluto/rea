@@ -1,8 +1,12 @@
+import { boundedList, type BoundedList } from "../domain/boundedList.js";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import type { z } from "zod";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import {
+  ArtifactResourceScope,
+  AnalysisCleanupLease,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import { MANAGED_SKILL_FILES, readSkillFile } from "./SetupSkill.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import {
@@ -16,11 +20,10 @@ import {
 } from "../contracts/guidanceContracts.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   bindRegularFileCleanup,
   RetainedRegularFileCleanupFailure,
-} from "./RegularFileRead.js";
+} from "../process/RegularFileRead.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -503,7 +506,7 @@ const isWithin = (section: GuideSection, ancestor: GuideSection): boolean => {
 const subsectionPointers = (
   match: RankedSection,
   coverage: readonly TermCoverage[],
-): { readonly pointers: readonly TermCoverage[]; readonly omitted: number } => {
+): BoundedList<TermCoverage> => {
   const descendants: TermCoverage[] = [];
   // Document order keeps every subsection contiguous after its parent.
   for (let index = match.index + 1; index < coverage.length; index += 1) {
@@ -528,10 +531,7 @@ const subsectionPointers = (
     for (const word of best.own) remaining.delete(word);
     pointers.push(best);
   }
-  return {
-    pointers: pointers.slice(0, MAX_SUBSECTION_POINTERS),
-    omitted: Math.max(0, pointers.length - MAX_SUBSECTION_POINTERS),
-  };
+  return boundedList(pointers, MAX_SUBSECTION_POINTERS);
 };
 
 const presentMatch = (
@@ -554,7 +554,7 @@ const presentMatch = (
       relevance: `Matched ${matched.join(", ")} in this section's own text.`,
       context: contextFor(section.ownContent, matched),
     };
-  const { pointers, omitted } = subsectionPointers(match, coverage);
+  const { items: pointers, omitted } = subsectionPointers(match, coverage);
   return {
     ...common,
     relevance: `Matched ${matched.join(", ")} only across different subsections; no single subsection contains every term.`,

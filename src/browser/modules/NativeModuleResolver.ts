@@ -13,10 +13,10 @@ import type {
   ConsoleMessage,
   LaunchOptions,
 } from "playwright-core";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
-import type { WebModuleResolutionPort } from "../../application/WebModulePorts.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { WebModuleResolutionPort } from "../../ports/WebModulePorts.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import {
   AnalysisCapabilityUnavailableError,
@@ -32,7 +32,7 @@ import { err, ok, type Result } from "../../domain/result.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../../artifacts/AnalysisCleanupLease.js";
+} from "../../resources/index.js";
 import type {
   WebModuleResolutionBatch,
   WebModuleResolutionObservation,
@@ -105,8 +105,10 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
   constructor(
     environment: Readonly<Record<string, string | undefined>>,
     readonly launcher: ModuleResolverLauncher = launch,
+    // The host Chromium launches on; defaults to the running host.
+    private readonly platform: NodeJS.Platform = HOST_PLATFORM.platform,
   ) {
-    this.environment = snapshotEnvironment(environment, HOST_PLATFORM.platform);
+    this.environment = snapshotEnvironment(environment, platform);
   }
 
   resolve(
@@ -150,7 +152,10 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
           },
         ),
       );
-    const chromiumSandbox = chromiumSandboxEnabled(this.environment);
+    const chromiumSandbox = chromiumSandboxEnabled(
+      this.environment,
+      this.platform,
+    );
     const deadline = new ProviderStartupDeadline(TIMEOUT_MS, options?.signal);
     let activeCall:
       | { settled: boolean; interruption?: AnalysisError }
@@ -300,11 +305,11 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
       return err(
         result.ok
           ? cleanupError
-          : analysisErrorWithCleanupFailure(
+          : analysisErrorWithCleanupDependencies(
               result.error,
               cleanupError,
               OPERATION,
-            ).bindCleanupDependencies([result.error, cleanupError]),
+            ),
       );
 
     return result;

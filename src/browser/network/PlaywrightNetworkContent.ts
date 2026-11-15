@@ -1,4 +1,5 @@
 import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
+import { isTransportCredentialHeader } from "../../domain/explicitSensitiveValues.js";
 import {
   isJson,
   mediaTypeEssence,
@@ -54,13 +55,6 @@ export type NetworkBodyPreflight = (input: {
   readonly mediaType: string | undefined;
 }) => BrowserScenarioEventAdmission | Promise<BrowserScenarioEventAdmission>;
 
-const credentialHeaders = new Set([
-  "authorization",
-  "proxy-authorization",
-  "cookie",
-  "set-cookie",
-]);
-
 const errorMessage = (
   cause: unknown,
   secrets: BrowserScenarioSecrets,
@@ -95,7 +89,7 @@ export const captureNetworkHeaders = async (
       { state: "captured" }
     >["items"] = [];
     for (const { name, value } of headers) {
-      const credential = credentialHeaders.has(name.toLowerCase());
+      const credential = isTransportCredentialHeader(name);
       cost +=
         secrets.redactionAllocationCost(
           name.length + (credential ? 0 : value.length),

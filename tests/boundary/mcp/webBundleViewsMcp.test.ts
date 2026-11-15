@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, expect, it } from "vitest";
@@ -18,7 +19,7 @@ afterAll(() => schemaValidation.clear());
 
 const makeParent = () =>
   createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "rea-browser", name: "REA Browser", version: "6.8.0" },
     {
       operation: "analyze_web_bundle",

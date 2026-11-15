@@ -1,6 +1,5 @@
 import type { Logger } from "pino";
 
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { createDebPackageService } from "../composition/debPackage.js";
 import { DEB_PACKAGE_TOOL_CONTRACTS } from "../contracts/deb/debPackageToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
@@ -25,7 +24,6 @@ export const registerDebPackageCommands = (
     logger,
     contract,
     {
-      command: CLI_COMMANDS.inspectDebPackage,
       description:
         "Inspect a local Debian .deb without installing it or running maintainer scripts",
       positionals: ["path"],

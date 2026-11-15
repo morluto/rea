@@ -1,13 +1,12 @@
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
+  ArtifactReaderFailure,
   stableArtifactInputFailure,
   readerIntegrityFailure,
-} from "../artifacts/StableArtifactFailure.js";
-import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import {
   projectAnalysisError,
   projectAnalysisErrorWithoutCapturedOutput,
@@ -40,15 +39,6 @@ import {
   classifyProviderFailure,
   type ProviderFailureDialect,
 } from "../providers/classifyProviderFailure.js";
-
-/** Preserve diagnostics independently of worker exit and private-root cleanup. */
-export const capturedSqliteOutput = (
-  snapshot: ProviderProcessSnapshot,
-): AnalysisCapturedOutput => ({
-  stdout: snapshot.stdout.text,
-  stderr: snapshot.stderr.text,
-  truncated: snapshot.diagnosticTruncated === true,
-});
 
 /** Keep typed cleanup history and one canonical output owner, including after resolution. */
 export const createSqliteCleanupError = (
@@ -193,7 +183,7 @@ export const sqliteDatabaseDialect = (
                 failure_kind: cause.reason,
                 exit_code: cause.snapshot.exitCode ?? null,
                 signal: cause.snapshot.signal ?? null,
-                captured_output: { ...capturedSqliteOutput(cause.snapshot) },
+                captured_output: { ...capturedProviderOutput(cause.snapshot) },
               }
             : {}),
         },
@@ -209,7 +199,9 @@ const ownedCommandFailure = (
 ): AnalysisError | undefined => {
   const operation = "inspect_sqlite_database";
   const capturedOutput =
-    cause.snapshot === null ? undefined : capturedSqliteOutput(cause.snapshot);
+    cause.snapshot === null
+      ? undefined
+      : capturedProviderOutput(cause.snapshot);
   const optionsWithoutCause =
     capturedOutput === undefined ? {} : { capturedOutput };
   const options = { cause, ...optionsWithoutCause };

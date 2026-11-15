@@ -1,13 +1,13 @@
 import { DEB_PACKAGE_PROVIDER_IDENTITY } from "./DebPackageProviderIdentity.js";
-import { projectArtifactCloseFailure } from "../artifacts/StableArtifactFailure.js";
-import { completedStableArtifactObservation } from "../artifacts/StableArtifactObservation.js";
 import {
-  type StableArtifactSnapshot,
+  ArtifactResourceScope,
+  completedStableArtifactObservation,
+  projectArtifactCloseFailure,
   readStableArtifact,
-} from "../artifacts/readStableArtifact.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+  type StableArtifactSnapshot,
+} from "../resources/index.js";
 import type { DebPackagePort } from "../application/deb/DebPackagePort.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import {
   DEB_PACKAGE_LIMIT_MAXIMA,

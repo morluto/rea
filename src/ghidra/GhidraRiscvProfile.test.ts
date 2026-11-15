@@ -306,7 +306,7 @@ const registerRiscvAdmissionAndCapabilityCases = () => {
     if (!resolved.ok || resolved.value.profile === null)
       throw new Error("expected a configured profile");
     expect(resolved.value.profile.parameters.language_selection).toBe(
-      "configured-v1",
+      "configured",
     );
     expect(resolved.value.profile.parameters.language_id).toBe(
       "RISCV:LE:64:default",
@@ -486,7 +486,7 @@ describe("RISC-V ilp32 admission", () => {
       "elf32-exec-le-soft-float-generic-v1",
     );
     expect(parameters.language_id).toBe("RISCV:LE:32:default");
-    expect(parameters.language_selection).toBe("provider-pinned-v1");
+    expect(parameters.language_selection).toBe("provider-pinned");
     const other = await ghidra().resolveAnalysisProfile(
       ilp32(`${C3_ARCH.replace("_zmmul1p0", "")}_zaamo1p0`),
     );
