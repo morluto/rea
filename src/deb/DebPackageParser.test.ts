@@ -367,6 +367,25 @@ it("counts a hardlinked md5sums path as present in the inventory", () => {
   });
 });
 
+it("keeps the md5sums cross-check unknown when md5sums is not UTF-8", () => {
+  const report = parse(
+    debPackageFixture({
+      controlEntries: [
+        {
+          name: "./control",
+          content: "Package: hello\nVersion: 1.0\nArchitecture: all\n",
+        },
+        { name: "./md5sums", content: Buffer.from([0xff, 0xfe, 0x0a]) },
+      ],
+    }),
+  );
+  expect(report.control?.md5sums.present).toBe(true);
+  expect(report.md5sums_cross_check).toBeNull();
+  expect(report.limitations).toContain(
+    "md5sums is not readable UTF-8 text; the md5sums cross-check is unknown.",
+  );
+});
+
 it("flags extra ar members without treating them as control or data", () => {
   const report = parse(
     debPackageFixture({

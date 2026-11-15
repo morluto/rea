@@ -776,10 +776,22 @@ export const parseDebPackage = (
     attachPartial(cause, snapshot());
   }
   let md5sums_cross_check: DebPackage["md5sums_cross_check"] = null;
-  if (control !== null && control.md5sums.present && controlTar !== null) {
-    const listed = md5Paths(listedFile(controlTar.files, "md5sums").text);
+  const md5sumsText =
+    control !== null && control.md5sums.present && controlTar !== null
+      ? listedFile(controlTar.files, "md5sums").text
+      : null;
+  if (control !== null && control.md5sums.present && md5sumsText === null)
+    limitations.push(
+      "md5sums is not readable UTF-8 text; the md5sums cross-check is unknown.",
+    );
+  else if (md5sumsText !== null && dataTar === null)
+    limitations.push(
+      "No data.tar inventory was read; the md5sums cross-check is unknown.",
+    );
+  if (md5sumsText !== null && dataTar !== null) {
+    const listed = md5Paths(md5sumsText);
     const inventory = new Set(
-      (dataTar?.entries ?? [])
+      dataTar.entries
         .filter((entry) => entry.type === "file" || entry.type === "hardlink")
         .map((entry) => logicalTarPath(entry.path)),
     );
