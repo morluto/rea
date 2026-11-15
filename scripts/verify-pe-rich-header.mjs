@@ -5,9 +5,12 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readdir, stat, writeFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 import { createPeRichHeaderService } from "../dist/composition/binaryDiagnostics.js";
 import { MAX_INSPECT_PE_RICH_HEADER_FILE_BYTES } from "../dist/domain/native/peRichHeader.js";
 
@@ -95,10 +98,10 @@ try {
   await service.close();
 }
 
-const scratch = await mkdtemp(join(tmpdir(), "rea-pe-rich-header-"));
 const pefile = new Map();
-try {
-  const list = join(scratch, "files.json");
+const scratch = await VerifierFixture.open({ prefix: "rea-pe-rich-header-" });
+await withVerifierFixture(scratch, async ({ path }) => {
+  const list = join(path, "files.json");
   await writeFile(list, JSON.stringify(files));
   const output = execFileSync(python, ["-I", "-c", PEFILE_SCRIPT, list], {
     encoding: "utf8",
@@ -108,9 +111,7 @@ try {
     const row = JSON.parse(line);
     pefile.set(row.path, row);
   }
-} finally {
-  await rm(scratch, { recursive: true, force: true });
-}
+});
 
 const summary = {
   files: files.length,
