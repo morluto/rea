@@ -411,12 +411,15 @@ describe("request route cleanup", () => {
       const page = fakePage({});
       const secrets = resolved(parsed);
       const cancel = new AbortController();
-      const began = Date.now();
+      const began = performance.now();
       const unroute = vi.spyOn(page, "unroute").mockImplementation(async () => {
         if (end === "cancellation")
           cancel.abort("cancelled during final route cleanup");
         else {
-          const now = vi.spyOn(Date, "now").mockReturnValue(began + 5001);
+          // The step deadline is monotonic; move that clock past it.
+          const now = vi
+            .spyOn(performance, "now")
+            .mockReturnValue(began + 6_000);
           onTestFinished(() => now.mockRestore());
         }
       });
