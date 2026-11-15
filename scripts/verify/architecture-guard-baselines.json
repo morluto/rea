@@ -103,7 +103,6 @@
     "src/rust/RustAuditableReader.ts": 1
   },
   "parser-plain-throw": {
-    "src/android/JadxJavaProbe.ts": 1,
     "src/android/JadxWorkspaceRoot.ts": 4,
     "src/artifacts/DirectoryArtifactReader.ts": 1,
     "src/artifacts/NativeDmgArtifactReader.ts": 1,
