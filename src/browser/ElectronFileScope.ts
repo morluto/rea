@@ -320,7 +320,9 @@ const asarFiles = async (
       throwIfAborted(signal);
       if (!sameRegularFileState(identity, afterRead))
         throw new Error("ASAR identity changed during header read");
-      const parsed: unknown = JSON.parse(decodeStrictUtf8(json, "preserve"));
+      const parsed: unknown = JSON.parse(
+        decodeStrictUtf8(json, "strip-signature"),
+      );
       if (!isRecord(parsed) || !isRecord(parsed.files))
         throw new Error("ASAR header has no file tree");
       return { files: parsed.files, jsonBytes, headerBytes };

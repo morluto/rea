@@ -121,7 +121,7 @@ const analyzeJob = async (
     let script: IncludedScript;
     try {
       const decoded: unknown = JSON.parse(
-        decodeStrictUtf8(source.bytes, "preserve"),
+        decodeStrictUtf8(source.bytes, "strip-signature"),
       );
       script = includedWebScriptSchema.parse(decoded);
     } catch (cause) {

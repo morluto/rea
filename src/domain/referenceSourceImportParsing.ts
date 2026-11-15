@@ -292,8 +292,7 @@ export const parseReferenceSourceImports = (
 
   let source: string;
   try {
-    // Source offsets stay aligned with the file; parsers treat U+FEFF as space.
-    source = decodeStrictUtf8(bytes, "preserve");
+    source = decodeStrictUtf8(bytes, "strip-signature");
   } catch {
     return {
       relationships: [],
