@@ -1,3 +1,4 @@
+import { parseFailureFromCause } from "../domain/parseFailure.js";
 import { binaryMetadataArchitecture } from "../domain/binaryMetadataArchitecture.js";
 import {
   IL2CPP_SLICE_SELECTORS,
@@ -154,7 +155,17 @@ export function* openImageSteps(image: Buffer): Generator<void, NativeImage> {
           "unsupported-container",
           cause.message,
         );
-      if (cause instanceof RangeError || cause instanceof TypeError)
+      const failure = parseFailureFromCause(cause);
+      if (failure !== undefined)
+        throw new Il2cppBinaryFormatFailure(
+          failure.kind === "unsupported"
+            ? "unsupported-container"
+            : "malformed-container",
+          failure.message,
+        );
+      // Mach-O slice selection reports an inconsistent FAT or CPU identity as
+      // a TypeError.
+      if (cause instanceof TypeError)
         throw new Il2cppBinaryFormatFailure(
           "malformed-container",
           cause.message,

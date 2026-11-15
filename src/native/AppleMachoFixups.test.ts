@@ -1,3 +1,4 @@
+import { ParseFailureError } from "../domain/parseFailure.js";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -165,8 +166,10 @@ describe("chained import names", () => {
   it("rejects a malformed import table", () => {
     const data = chainedData(1);
     data.writeUInt32LE(4, 20);
-    expect(() => chainedImportNames(data)).toThrow(RangeError);
-    expect(() => chainedImportNames(Buffer.alloc(0))).toThrow(RangeError);
+    expect(() => chainedImportNames(data)).toThrow(ParseFailureError);
+    expect(() => chainedImportNames(Buffer.alloc(0))).toThrow(
+      ParseFailureError,
+    );
   });
 });
 
