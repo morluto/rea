@@ -11,7 +11,7 @@ import {
 import { toolContract } from "../contracts/toolContracts.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { err, ok } from "../domain/result.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { cancelledBy } from "../domain/analysisErrorCore.js";
 import { inspectEvidenceBundle } from "../application/investigation/InspectEvidenceBundle.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import { withAdmittedAnalysis } from "./analysisAdmission.js";
@@ -131,11 +131,7 @@ const registerImportEvidenceTool = ({
             return server.delivery.toCallToolResult(loaded, importContract);
           if (signal.aborted)
             return server.delivery.toCallToolResult(
-              err(
-                new AnalysisCancelledError("import_evidence_bundle", {
-                  cause: signal.reason,
-                }),
-              ),
+              err(cancelledBy("import_evidence_bundle", signal)),
               importContract,
             );
           const imported = session.importEvidenceBundle(loaded.value);

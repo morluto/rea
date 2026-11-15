@@ -17,6 +17,8 @@ import {
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -217,7 +219,7 @@ export const firmwareCancellation = (
 ): AnalysisError =>
   deadline?.signal.aborted && reason === deadline.signal.reason
     ? timeoutFailure(operation, reason, deadline, { publication })
-    : new AnalysisCancelledError(operation, { cause: reason });
+    : cancelledBy(operation, carriedReason(reason));
 
 /** Preserve observed cancellation identity; otherwise enforce the monotonic budget. */
 export const firmwarePhaseInterruption = (

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { machoArchitectureFamily } from "./machoCpuIdentity.js";
-import { AnalysisCancelledError } from "../analysisErrorCore.js";
+import { cancelledBy } from "../analysisErrorCore.js";
 
 import {
   compatibleSlice,
@@ -631,10 +631,7 @@ const traceProcess = async (
     { image: context.root, chain: [context.root], conditional: false },
   ];
   while (pending.length > 0) {
-    if (signal?.aborted)
-      throw new AnalysisCancelledError("trace_dylib_resolution", {
-        cause: signal.reason,
-      });
+    if (signal?.aborted) throw cancelledBy("trace_dylib_resolution", signal);
     const next = pending.pop();
     if (next === undefined || expanded.has(next.image)) continue;
     const loader = next.image;

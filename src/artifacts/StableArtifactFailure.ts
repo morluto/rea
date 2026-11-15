@@ -16,8 +16,9 @@ import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 
 /** Preserve ownership classification for stable-file identity and cancellation. */
@@ -37,9 +38,10 @@ export const projectOwnedArtifactIdentityFailure = (
       cause,
     });
   if (cause.reason === "cancelled")
-    return new AnalysisCancelledError(operation, {
-      cause: artifactFileCancellationCause(cause),
-    });
+    return cancelledBy(
+      operation,
+      carriedReason(artifactFileCancellationCause(cause)),
+    );
   return undefined;
 };
 
