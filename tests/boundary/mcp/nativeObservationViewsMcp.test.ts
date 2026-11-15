@@ -1,3 +1,4 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -29,7 +30,7 @@ it("delivers native primitive and graph summaries with exact retained parents an
       if (tool === undefined) throw new Error("Missing named contract");
       const result = await harness.mcp.callTool(
         { name, arguments: input },
-        { toolDefinition: tool },
+        { toolDefinition: withCanonicalOutputSchema(tool) },
       );
       expect(result.isError, JSON.stringify(result.content)).not.toBe(true);
       return parseEvidence(result.structuredContent);
