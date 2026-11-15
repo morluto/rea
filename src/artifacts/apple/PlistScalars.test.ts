@@ -12,7 +12,7 @@ import {
 } from "./PlistScalars.js";
 import {
   estimateBinaryPlistExpansion,
-  PropertyListDecodeBudgetFailure,
+  isPlistDecodeBudgetFailure,
 } from "./PropertyListDecodeBudget.js";
 
 const dataObjectWithUnusedOverlappingInteger = (): Buffer => {
@@ -191,6 +191,9 @@ describe("binary plist scalar bounds", () => {
     expect(() => estimateBinaryPlistExpansion(malformed, 1024 * 1024)).toThrow(
       /date marker/u,
     );
+    expect(() => estimateBinaryPlistExpansion(malformed, 1024 * 1024)).toThrow(
+      expect.objectContaining({ kind: "malformed" }),
+    );
   });
 
   it.each([
@@ -284,9 +287,22 @@ describe("binary plist UID widths", () => {
     const bytes = binaryPlistWithUid(3, 0xabcdefn);
     for (const options of [{}, { numberProjection: true }]) {
       const plan = estimateBinaryPlistExpansion(bytes, 1024 * 1024, options);
-      expect(() =>
-        estimateBinaryPlistExpansion(bytes, plan.estimatedBytes - 1, options),
-      ).toThrow(PropertyListDecodeBudgetFailure);
+      const refusal = (() => {
+        try {
+          estimateBinaryPlistExpansion(bytes, plan.estimatedBytes - 1, options);
+          return undefined;
+        } catch (cause: unknown) {
+          return cause;
+        }
+      })();
+      expect(isPlistDecodeBudgetFailure(refusal)).toBe(true);
+      expect(refusal).toMatchObject({
+        failure: {
+          kind: "limit",
+          format: "plist",
+          limit: { maximum: plan.estimatedBytes - 1 },
+        },
+      });
     }
   });
 
@@ -297,6 +313,22 @@ describe("binary plist UID widths", () => {
     binaryPlistObjectTable(truncated, [8], 10);
     expect(() => estimateBinaryPlistExpansion(truncated, 1024)).toThrow(
       "binary plist UID object is truncated",
+    );
+    expect(() => estimateBinaryPlistExpansion(truncated, 1024)).toThrow(
+      expect.objectContaining({
+        failure: expect.objectContaining({
+          kind: "truncated",
+          format: "plist",
+        }),
+      }),
+    );
+
+    // An eight-byte string length with only two bytes before the table.
+    const cutLength = Buffer.alloc(50);
+    cutLength.set([0x5f, 0x13, 0, 0], 8);
+    binaryPlistObjectTable(cutLength, [8], 12);
+    expect(() => estimateBinaryPlistExpansion(cutLength, 1024)).toThrow(
+      expect.objectContaining({ kind: "truncated" }),
     );
 
     const inexact = binaryPlistWithUid(8, BigInt(Number.MAX_SAFE_INTEGER) + 1n);

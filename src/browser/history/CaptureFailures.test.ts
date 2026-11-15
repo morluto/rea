@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
   captureDecoderHeapContinuingRecovery,
@@ -322,6 +323,38 @@ it("retains actual command status and both diagnostic streams when cleanup also 
   );
   expect(JSON.stringify(redacted)).not.toContain("private-marker");
   expect(redacted.code).toBe("cleanup_incomplete");
+});
+it("resolves the reported cleanup when the decoder's process lease confirms release", async () => {
+  const input = inspectWebNetworkCaptureInputSchema.parse({
+    capture_path: "/selected/input.har",
+    format: "har",
+  });
+  const cause = new OwnedCommandFailure(
+    "process",
+    "Observed command failure",
+    null,
+    "Observed cleanup failure",
+    undefined,
+    ["pid:42"],
+  );
+  let stopped = false;
+  const processLease = new AnalysisCleanupLease(async () => {
+    if (!stopped) throw new Error("decoder still running");
+  }, ["pid:42"]);
+  const error = historicalCaptureFailure(
+    input,
+    cause,
+    "decoder",
+    undefined,
+    DEFAULT_CAPTURE_DECODER_HEAP,
+    processLease,
+  );
+  expect(error.cleanupIncomplete).toBe(true);
+  await expect(processLease.release()).rejects.toThrow("decoder still running");
+  expect(error.cleanupIncomplete).toBe(true);
+  stopped = true;
+  await processLease.release();
+  expect(error.cleanupIncomplete).toBe(false);
 });
 it.each(["io", "unavailable"] as const)(
   "keeps %s read failures separate from malformed capture input",

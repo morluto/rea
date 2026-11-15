@@ -146,14 +146,6 @@ export const selectMachoSlice = (
   };
 };
 
-/** A recognized Mach-O class outside this metadata reader's supported formats. */
-export class UnsupportedMachoMetadataFormatError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "UnsupportedMachoMetadataFormatError";
-  }
-}
-
 /** Parse segments/sections for a little-endian 64-bit Mach-O architecture slice. */
 export const parseMachoLayout = (
   bytes: Buffer,
@@ -196,8 +188,13 @@ export const parseMachoLayout = (
         "unsupported",
         "Unsupported big-endian Mach-O CPU type",
       );
-    throw new UnsupportedMachoMetadataFormatError(
+    throw new BinaryFormatFailure(
+      "unsupported",
       "Unsupported big-endian 64-bit PowerPC Mach-O metadata",
+      {
+        format: "macho",
+        undecodedContent: true,
+      },
     );
   }
   // A thin image has no FAT declaration to bind the requested CPU family.
@@ -207,8 +204,13 @@ export const parseMachoLayout = (
       `Mach-O CPU type does not match requested architecture ${architecture}`,
     );
   if (!table.wide)
-    throw new UnsupportedMachoMetadataFormatError(
+    throw new BinaryFormatFailure(
+      "unsupported",
       `Unsupported 32-bit Mach-O metadata for requested CPU type ${architecture}`,
+      {
+        format: "macho",
+        undecodedContent: true,
+      },
     );
   const commandEnd = slice + table.headerSize + table.commandBytes;
   if (commandEnd > sliceEnd)
@@ -224,6 +226,7 @@ export const parseMachoLayout = (
     binds: [],
     rebases: [],
     chained: null,
+    dyldInfo: false,
     baseAddress: undefined,
   };
   const framing = new MachoLoadCommandCursor(table);
@@ -236,12 +239,12 @@ export const parseMachoLayout = (
       kind: frame.value.command,
       size: frame.value.size,
     };
-    if (command.kind === 1)
+    if (command.kind === LC.SEGMENT)
       throw malformedInput(
         "macho",
         "Mach-O segment command does not match the header width",
       );
-    if (command.kind === 0x19) collectSegment(bytes, command, state);
+    if (command.kind === LC.SEGMENT_64) collectSegment(bytes, command, state);
     else collectFixupCommand(bytes, command, state);
   }
   const complete = framing.finish();
@@ -297,6 +300,8 @@ interface LayoutState {
   readonly binds: FixupCommands["binds"][number][];
   readonly rebases: FixupCommands["rebases"][number][];
   chained: FixupCommands["chained"];
+  /** Whether an LC_DYLD_INFO or LC_DYLD_INFO_ONLY command was read. */
+  dyldInfo: boolean;
   baseAddress: bigint | undefined;
 }
 
@@ -393,12 +398,25 @@ const collectFixupCommand = (
       throw malformedInput("macho", "Fixup data exceeds the Mach-O slice");
     return { offset, size: length };
   };
+  // An image has one fixup table of each kind; with a repeat, neither table
+  // is the image's, so the slice is refused rather than read by position.
   if (kind === LC.DYLD_CHAINED_FIXUPS) {
     if (size < 16)
       throw truncatedInput("macho", "Truncated chained-fixups command");
+    if (state.chained !== null)
+      throw malformedInput(
+        "macho",
+        "Mach-O slice declares more than one LC_DYLD_CHAINED_FIXUPS command",
+      );
     state.chained = range(cursor + 8);
   } else if (kind === LC.DYLD_INFO || kind === LC.DYLD_INFO_ONLY) {
     if (size < 48) throw truncatedInput("macho", "Truncated dyld-info command");
+    if (state.dyldInfo)
+      throw malformedInput(
+        "macho",
+        "Mach-O slice declares more than one LC_DYLD_INFO or LC_DYLD_INFO_ONLY command",
+      );
+    state.dyldInfo = true;
     const rebase = range(cursor + 8);
     if (rebase.size > 0) state.rebases.push(rebase);
     for (const [at, stream] of [

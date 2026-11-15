@@ -306,7 +306,7 @@ it("summarizes selected members and pages every original collection after the fi
   expect(portable.value.normalized_result).toEqual(view);
 });
 
-it("keeps collections that historical member Evidence never examined unknown", async () => {
+it("keeps collections that member Evidence never examined unknown", async () => {
   const directory = await createTestTempDirectory("rea-member-historical-");
   const path = join(directory, "fixture.dll");
   await writeFile(path, buildManagedPeFixture());
@@ -319,13 +319,13 @@ it("keeps collections that historical member Evidence never examined unknown", a
       })
     ).structuredContent,
   );
-  const {
-    exported_types: _exported,
-    user_strings: _strings,
-    selection: _selection,
-    signature_resolution: _resolution,
-    ...recorded
-  } = managedMemberInspectionSchema.parse(parent.normalized_result);
+  const recorded = {
+    ...managedMemberInspectionSchema.parse(parent.normalized_result),
+    exported_types: null,
+    user_strings: null,
+    selection: null,
+    signature_resolution: null,
+  };
   const historical = createEvidence(undefined, parent.provider, {
     operation: parent.operation,
     parameters: parent.parameters,

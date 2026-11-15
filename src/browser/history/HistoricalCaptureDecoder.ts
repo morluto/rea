@@ -46,6 +46,7 @@ import {
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
@@ -422,7 +423,14 @@ export class HistoricalCaptureDecoder {
       // historical error already follows the post-launch completion owner.
       const error = retainProcessInspectionCleanup(
         processInspectionFailure(cause),
-        historicalCaptureFailure(input, cause, phase, options, reportedHeap),
+        historicalCaptureFailure(
+          input,
+          cause,
+          phase,
+          options,
+          reportedHeap,
+          processLease,
+        ),
         runtimeResources,
         OPERATION,
       );
@@ -504,11 +512,7 @@ export class HistoricalCaptureDecoder {
       }
     }
     if (result.ok && options?.signal?.aborted)
-      result = err(
-        new AnalysisCancelledError(OPERATION, {
-          cause: options.signal.reason,
-        }),
-      );
+      result = err(cancelledBy(OPERATION, options.signal));
     if (cleanupFailure !== undefined) {
       const cleanupError = new ProviderCleanupError(
         input.format,

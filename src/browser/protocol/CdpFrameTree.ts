@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isRecord } from "../../domain/isRecord.js";
 
 import {
   observeCdpFrameUrl,
@@ -58,9 +59,6 @@ export interface CdpResourceTree {
 interface MutableNode extends CdpFrameTreeNode {
   readonly children: CdpFrameTreeNode[];
 }
-
-const isRecord = (value: unknown): value is UnknownRecord =>
-  recordValue(value) !== undefined;
 
 const treeRecord = z.custom<UnknownRecord>(isRecord, {
   message: "Expected a frame tree object.",

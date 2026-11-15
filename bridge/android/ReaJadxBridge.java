@@ -46,6 +46,10 @@ import org.xml.sax.InputSource;
 
 /** REA-owned metadata boundary for the unmodified jadx-headless-mcp 0.7.1 JAR. */
 class ReaJadxBridge {
+  // REA reads this identity from this source (JadxRelease.ts), so it is typed
+  // once. Change BRIDGE_VERSION with any protocol change REA must not mix.
+  static final String BRIDGE_NAME = "rea-jadx-bridge";
+  static final String BRIDGE_VERSION = "11";
   private static final Gson JSON = new Gson();
   private final SessionHolder holder;
   private JadxSession indexedSession;
@@ -1080,7 +1084,7 @@ class ReaJadxBridge {
     SessionHolder holder = new SessionHolder(defaults);
     ServerCapabilities capabilities = new ServerCapabilities(
         new ServerCapabilities.Tools(null), null, null, null, null, null, null, Map.of());
-    Server server = new Server(new Implementation("rea-jadx-bridge", "11", null, null, null),
+    Server server = new Server(new Implementation(BRIDGE_NAME, BRIDGE_VERSION, null, null, null),
         new ServerOptions(capabilities), "", ignored -> Unit.INSTANCE);
     SessionToolsKt.registerSessionTools(server, holder);
     ClassToolsKt.registerClassTools(server, holder);

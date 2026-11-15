@@ -58,7 +58,7 @@ import {
   type ProviderFailureDialect,
 } from "../providers/classifyProviderFailure.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
+import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
 import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
 import {
   KUNA_INVENTORY_OUTPUT_BYTES,
@@ -224,8 +224,8 @@ const waitFor = async <T>(
   operation: string,
 ): Promise<Result<T, AnalysisError>> => {
   const result = await waitForAbortable(work, signal);
-  return result === ABORTED
-    ? err(cancelledBy(operation, carriedReason(signal?.reason)))
+  return result instanceof AbortedWait
+    ? err(cancelledBy(operation, result))
     : result;
 };
 
@@ -1703,7 +1703,7 @@ export class KunaSessionClient implements AnalysisClient {
       ? slot
       : Promise.race([slot, exported]));
     if (admitted !== EXPORT_READY) return admitted;
-    yielded.abort();
+    yielded.abort(OwnerCancellation.noLongerNeeded);
     // A slot granted in the same turn is returned rather than leaked.
     void slot.then((release) => release?.());
     return EXPORT_READY;

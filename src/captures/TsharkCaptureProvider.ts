@@ -23,6 +23,10 @@ import {
   type LinuxResourceLimits,
 } from "../process/LinuxResourceLimits.js";
 import { parsePacketOutput } from "./parsePacketOutput.js";
+import {
+  capturePacketJsonExpansionError,
+  resolveCapturePacketJsonExpansion,
+} from "../config/capturePacketJsonExpansion.js";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { access, mkdir, writeFile } from "node:fs/promises";
@@ -51,10 +55,11 @@ import {
 } from "../domain/analysisErrorBase.js";
 import {
   AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
@@ -64,6 +69,7 @@ import {
   packetCaptureSchema,
 } from "../domain/captures/packetCapture.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { finalizedResult, runOwned } from "../providers/runOwned.js";
 import {
   runOwnedCommand,
   OwnedCommandFailure,
@@ -152,9 +158,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
     let result: Result<AnalysisExecution, AnalysisError>;
     try {
       if (options?.signal?.aborted)
-        throw new AnalysisCancelledError(operation, {
-          cause: options.signal.reason,
-        });
+        throw cancelledBy(operation, options.signal);
       await this.#resources.release();
       if (!tsharkHostSupported(this.platform))
         throw new Error(
@@ -339,6 +343,8 @@ export class TsharkCaptureProvider implements PacketCapturePort {
           }),
         );
       } else {
+        const expansion = resolveCapturePacketJsonExpansion(this.environment);
+        if (!expansion.ok) throw expansion.error;
         const selected = await this.#resources.readSelectedArtifact({
           path: input.path,
           maximumBytes: limits.input_bytes,
@@ -390,10 +396,28 @@ export class TsharkCaptureProvider implements PacketCapturePort {
         resourcePath = "path" in input ? input.path : command;
         // TShark resolves `-e` aliases before emitting canonical field names;
         // the command arguments, not output names, own field selection.
-        const matchingPackets = parsePacketOutput(
+        const parsedPackets = await parsePacketOutput(
           output.stdout.text,
           input.packet_limit,
+          {
+            outputBytes: limits.output_bytes,
+            expansionBytes: expansion.value.maximumBytes,
+          },
         );
+        if (!parsedPackets.ok) {
+          const failure = parsedPackets.error;
+          if (failure.kind === "expansion")
+            throw capturePacketJsonExpansionError(
+              operation,
+              expansion.value,
+              capturedOutput,
+            );
+          throw new AnalysisOutputError(operation, failure.reason, {
+            ...(failure.cause === undefined ? {} : { cause: failure.cause }),
+            ...(capturedOutput === undefined ? {} : { capturedOutput }),
+          });
+        }
+        const matchingPackets = parsedPackets.value;
         const start = Math.min(input.match_offset, matchingPackets.length);
         const end =
           input.match_limit === null
@@ -459,17 +483,21 @@ export class TsharkCaptureProvider implements PacketCapturePort {
         ),
       );
     }
-    return this.#resources.finish(
-      result,
-      (execution) =>
-        createAnalysisExecutionEvidence(
-          operation,
-          input,
-          execution,
-          "observed",
-        ),
-      operation,
-      options?.signal,
+    const completed = result;
+    return finalizedResult(
+      await runOwned(async () => completed, {
+        providerId: this.#resources.providerId,
+        operation,
+        signal: options?.signal,
+        close: () => this.#resources.release(),
+        partial: (execution) =>
+          createAnalysisExecutionEvidence(
+            operation,
+            input,
+            execution,
+            "observed",
+          ),
+      }),
     );
   }
   /** This provider's dialect for the shared provider failure classifier. */

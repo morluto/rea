@@ -1,8 +1,9 @@
 import { err, ok, type Result } from "../domain/result.js";
 import {
   CdpMalformedReply,
-  type CdpSendParams,
-  type CdpSendResult,
+  type CdpCommand,
+  type CdpCommandParams,
+  type CdpCommandResult,
 } from "./protocol/CdpCommands.js";
 import { CdpCommandRejection } from "./CdpCommandRejection.js";
 import { CdpConnection } from "./CdpConnection.js";
@@ -17,16 +18,16 @@ export type CdpOptionalCommandGap =
  * its result schema are returned as gaps for the caller's section to record;
  * transport and cancellation failures still propagate.
  */
-export const optionalCdpCommand = async <M extends string>(
+export const optionalCdpCommand = async <M extends CdpCommand>(
   context: {
     readonly connection: CdpConnection;
     readonly sessionId: string | undefined;
     readonly signal?: AbortSignal;
   },
   method: M,
-  parameters: CdpSendParams<M>,
+  parameters: CdpCommandParams<M>,
   limitations: string[],
-): Promise<Result<CdpSendResult<M>, CdpOptionalCommandGap>> => {
+): Promise<Result<CdpCommandResult<M>, CdpOptionalCommandGap>> => {
   try {
     return ok(
       await context.connection.send(

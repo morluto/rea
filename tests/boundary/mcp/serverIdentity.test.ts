@@ -151,7 +151,7 @@ describe("server and catalog identity", () => {
   it("binds output schema profile and canonical output contracts into identity", () => {
     const profiles = createCatalogDigestProfiles();
     expect(FULL_CATALOG_IDENTITY.digests).toEqual(profiles.full.full);
-    expect(DEFAULT_CATALOG_IDENTITY.digests).toEqual(profiles.compact.full);
+    expect(DEFAULT_CATALOG_IDENTITY.digests).toEqual(profiles.compact.off);
     const changedOutput = TOOL_CONTRACTS.map((contract, index) =>
       index === 0
         ? {

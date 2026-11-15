@@ -2,10 +2,7 @@ import { expect, it } from "vitest";
 import { createEvidence } from "../../domain/evidence.js";
 import { inspectAnalysisViewInputSchema } from "../../domain/analysisView/analysisViewRequest.js";
 import { analysisViewResultSchema } from "../../domain/analysisView/analysisViewResult.js";
-import {
-  RELOCATION_SYMBOL_UNRECORDED,
-  projectNativeLoadImageView,
-} from "../../domain/analysisView/nativeLoadImageView.js";
+import { projectNativeLoadImageView } from "../../domain/analysisView/nativeLoadImageView.js";
 import type { NativeLoadImage } from "../../domain/native/nativeLoadImage.js";
 import {
   nativeDosLoadImageFixture,
@@ -27,6 +24,7 @@ const source = (): Extract<NativeLoadImage, { status: "unsupported" }> => ({
         offset: null,
         status: "APPLIED",
         type: 8,
+        symbol: null,
         values: [16],
         original_bytes_hex: "0000",
         memory_bytes_hex: "1000",
@@ -37,6 +35,7 @@ const source = (): Extract<NativeLoadImage, { status: "unsupported" }> => ({
         offset: null,
         status: "UNSUPPORTED",
         type: 9,
+        symbol: null,
         values: [],
         original_bytes_hex: null,
         memory_bytes_hex: null,
@@ -68,7 +67,7 @@ const view = async (report: NativeLoadImage, request: unknown) => {
   return analysisViewResultSchema.parse(result.value.normalized_result);
 };
 
-it("distinguishes recorded, absent, and historical unrecorded relocation symbols", async () => {
+it("pages recorded and absent relocation symbols", async () => {
   const report = source();
   report.observations.relocations[0]!.symbol = "external_symbol";
   report.observations.relocations[1]!.symbol = null;
@@ -81,7 +80,6 @@ it("distinguishes recorded, absent, and historical unrecorded relocation symbols
     { record: { symbol: "external_symbol" } },
     { record: { symbol: null } },
   ]);
-  expect(current.unknowns).not.toContain(RELOCATION_SYMBOL_UNRECORDED);
 
   report.observations.relocations[1]!.symbol = "";
   const emptyName = await view(report, request);
@@ -89,15 +87,11 @@ it("distinguishes recorded, absent, and historical unrecorded relocation symbols
   if (emptyName.items.collection !== "relocations")
     throw new Error("Expected relocations");
   expect(emptyName.items.rows?.[1]?.record).toMatchObject({ symbol: "" });
-  expect(emptyName.unknowns).not.toContain(RELOCATION_SYMBOL_UNRECORDED);
 
-  delete report.observations.relocations[0]!.symbol;
-  const historical = await view(report, request);
-  if (historical.kind !== "native-load-image") throw new Error("Expected page");
-  expect(historical.items.rows?.[0]?.record).not.toHaveProperty("symbol");
-  expect(historical.unknowns).toContain(RELOCATION_SYMBOL_UNRECORDED);
-  const omitted = await view(report, { ...request, fields: ["address"] });
-  expect(omitted.unknowns).not.toContain(RELOCATION_SYMBOL_UNRECORDED);
+  delete (report.observations.relocations[0] as { symbol?: unknown }).symbol;
+  await expect(view(report, request)).rejects.toMatchObject({
+    _tag: "AnalysisInputError",
+  });
 });
 
 it("summarizes measured ELF facts without upgrading unsupported verification", async () => {
@@ -145,6 +139,7 @@ it("preserves same-address alternatives, padding, nulls and byte facts over page
         "offset",
         "status",
         "type",
+        "symbol",
         "values",
         "original_bytes_hex",
         "memory_bytes_hex",
@@ -301,6 +296,7 @@ it("keeps byte and potentially large comparison payloads opt-in while retaining 
     offset: null,
     status: "APPLIED",
     type: 8,
+    symbol: null,
     values: [16],
   });
   const report = nativeDosLoadImageFixture();

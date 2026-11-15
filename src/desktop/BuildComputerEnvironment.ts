@@ -5,6 +5,8 @@ import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { reaCacheDirectory } from "../config/kunaCacheDirectory.js";
 import { appendCallerPath } from "../filesystem/callerPath.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { windowsPathCandidates } from "../process/executableSearch.js";
 import { BUILD_COMPUTER_SETTINGS } from "../domain/desktop/buildComputerSettings.js";
 import { resolveProgram } from "./ProgramLookup.js";
 
@@ -39,11 +41,23 @@ export const defaultBuildComputerArchive = (
 export const agentEnvReportedVersion = (stdout: string): string | undefined =>
   /^agent-env (\S+)\s*$/u.exec(stdout.trim())?.[1];
 
-/** An absolute program on PATH, never one a relative PATH entry found. */
+/**
+ * An absolute program on this host's PATH, never one a relative PATH entry
+ * found. Windows searches PATH and PATHEXT as its launcher does; other hosts
+ * search POSIX PATH.
+ */
 export const programOnPath = async (
   program: string,
   environment: Readonly<NodeJS.ProcessEnv>,
 ): Promise<string | undefined> => {
+  if (HOST_PLATFORM.platform === "win32") {
+    const candidates = windowsPathCandidates(program, environment);
+    if (!candidates.ok) return undefined;
+    for (const candidate of candidates.value)
+      if (!candidate.relativeEntry && (await isFile(candidate.path)))
+        return candidate.path;
+    return undefined;
+  }
   const found = await resolveProgram(program, environment, process.cwd());
   return found === undefined || found.fromRelativeEntry
     ? undefined

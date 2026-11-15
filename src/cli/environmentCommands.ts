@@ -28,9 +28,9 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import type { StreamableHttpListenError } from "../server/http/streamableHttpListenError.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -119,11 +119,7 @@ interface ServeInputs {
 }
 
 const cancelledServe = (signal: AbortSignal): JsonValue =>
-  cliError(
-    new AnalysisCancelledError(CLI_COMMANDS.environmentServe, {
-      cause: signal.reason,
-    }),
-  );
+  cliError(cancelledBy(CLI_COMMANDS.environmentServe, signal));
 
 /** Pure replay, as `--replay-only` asks for: no state is derived. */
 const REPLAY_ONLY: ServedState = {
@@ -453,11 +449,7 @@ const buildEnvironmentCommand = async (
     capture = read.value;
   }
   if (signal.aborted)
-    return cliError(
-      new AnalysisCancelledError(CLI_COMMANDS.environmentBuild, {
-        cause: signal.reason,
-      }),
-    );
+    return cliError(cancelledBy(CLI_COMMANDS.environmentBuild, signal));
   const captureInput: EnvironmentBuildCaptureInput = kind.value;
   const built = await buildEnvironment({
     capture,
