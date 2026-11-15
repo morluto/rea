@@ -906,6 +906,15 @@ it.each(["heap-exit", "heap-exit-after-noise"] as const)(
           worker_process_memory_limit_bytes:
             javaScriptWorkerMemoryLimitBytes(heapMb),
         },
+        // The runtime's own report survives even when it lies past the
+        // retained stderr.
+        diagnostics: {
+          runtime_exhaustion_report: {
+            runtime: "v8",
+            stream: "stderr",
+            line_complete: true,
+          },
+        },
       });
     } finally {
       await worker.close();

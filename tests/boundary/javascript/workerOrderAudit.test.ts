@@ -780,6 +780,15 @@ it.each([
         expect(result.error.error).toBeInstanceOf(
           AnalysisResourceConstraintError,
         );
+        // The runtime's own report survives even when it lies past the
+        // retained stderr.
+        expect(result.error.error.diagnostics).toMatchObject({
+          runtime_exhaustion_report: {
+            runtime: "v8",
+            stream: "stderr",
+            line_complete: true,
+          },
+        });
         const projected = projectAnalysisError(result.error.error);
         if (javaScriptRuntime(process.versions).id === "node") {
           expect(projected.message).toContain(

@@ -1,3 +1,7 @@
+import {
+  runtimeExhaustionReport,
+  type RuntimeExhaustion,
+} from "../process/RuntimeExhaustion.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import {
   retainProcessInspectionCleanup,
@@ -121,6 +125,8 @@ type WebBundleObservedFailure =
       readonly signal: NodeJS.Signals | null;
       readonly memoryLimitReached: boolean;
       readonly heapExhaustion: boolean;
+      /** The runtime's own report, kept once the supervisor observed it. */
+      readonly exhaustion?: RuntimeExhaustion;
     };
 
 type WebBundleActiveJob = {
@@ -234,6 +240,9 @@ export class WebBundleAnalysisWorker {
               heapExhaustion:
                 memoryLimitReached ||
                 event.snapshot.runtimeExhaustion !== undefined,
+              ...(event.snapshot.runtimeExhaustion === undefined
+                ? {}
+                : { exhaustion: event.snapshot.runtimeExhaustion }),
             });
           } else if (event.type === "output-close") {
             if (
@@ -248,13 +257,14 @@ export class WebBundleAnalysisWorker {
             if (failure?.kind !== "exit") return;
             const snapshot = this.#runtime.supervisor?.snapshot();
             const memoryLimitReached = snapshot?.memoryLimitReached === true;
-            const heapMarker = snapshot?.runtimeExhaustion !== undefined;
-            if (!memoryLimitReached && !heapMarker) return;
+            const reported = snapshot?.runtimeExhaustion;
+            if (!memoryLimitReached && reported === undefined) return;
             this.#observedFailure = {
               ...failure,
               heapExhaustion: true,
               memoryLimitReached:
                 failure.memoryLimitReached || memoryLimitReached,
+              ...(reported === undefined ? {} : { exhaustion: reported }),
             };
           }
         },
@@ -848,6 +858,15 @@ export class WebBundleAnalysisWorker {
             },
             {
               capturedOutput,
+              ...(failure.exhaustion === undefined
+                ? {}
+                : {
+                    diagnostics: {
+                      runtime_exhaustion_report: runtimeExhaustionReport(
+                        failure.exhaustion,
+                      ),
+                    },
+                  }),
               remediationAction: webBundleHeapExhaustedRemediation(exhaustion),
             },
           );

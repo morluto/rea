@@ -1,3 +1,7 @@
+import {
+  runtimeExhaustionReport,
+  type RuntimeExhaustion,
+} from "../../process/RuntimeExhaustion.js";
 import { MAX_NODE_TIMER_DELAY_MS } from "../../domain/analysisResourceLimits.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
@@ -120,6 +124,8 @@ type WorkerPrimaryFailure =
       readonly code: number | null;
       readonly signal: NodeJS.Signals | null;
       readonly heapExhaustion: boolean;
+      /** The runtime's own report, kept once the supervisor observed it. */
+      readonly exhaustion?: RuntimeExhaustion;
     };
 
 /** One sequential owned worker, retained between source files and closed after analysis. */
@@ -1069,12 +1075,16 @@ export class JavaScriptAnalysisWorker {
         );
       return;
     }
-    if (
-      event.type === "output" &&
-      this.#primaryFailure?.kind === "exit" &&
-      this.#runtime.supervisor?.snapshot().runtimeExhaustion !== undefined
-    ) {
-      this.#primaryFailure = { ...this.#primaryFailure, heapExhaustion: true };
+    const reported =
+      event.type === "output"
+        ? this.#runtime.supervisor?.snapshot().runtimeExhaustion
+        : undefined;
+    if (reported !== undefined && this.#primaryFailure?.kind === "exit") {
+      this.#primaryFailure = {
+        ...this.#primaryFailure,
+        heapExhaustion: true,
+        exhaustion: reported,
+      };
       this.#frameSignal.wake("failure");
     }
     if (event.type === "exit" && (event.code !== 0 || event.signal !== null)) {
@@ -1084,6 +1094,9 @@ export class JavaScriptAnalysisWorker {
           code: event.code,
           signal: event.signal,
           heapExhaustion: event.snapshot.runtimeExhaustion !== undefined,
+          ...(event.snapshot.runtimeExhaustion === undefined
+            ? {}
+            : { exhaustion: event.snapshot.runtimeExhaustion }),
         };
       else if (
         this.#primaryFailure.kind === "exit" &&
@@ -1092,6 +1105,7 @@ export class JavaScriptAnalysisWorker {
         this.#primaryFailure = {
           ...this.#primaryFailure,
           heapExhaustion: true,
+          exhaustion: event.snapshot.runtimeExhaustion,
         };
         this.#frameSignal.wake("failure");
       }
@@ -1233,6 +1247,15 @@ export class JavaScriptAnalysisWorker {
         this.#limits(),
         {
           capturedOutput: this.#captured(),
+          ...(failure.exhaustion === undefined
+            ? {}
+            : {
+                diagnostics: {
+                  runtime_exhaustion_report: runtimeExhaustionReport(
+                    failure.exhaustion,
+                  ),
+                },
+              }),
           ...(WORKER_HEAP_FLAGS_ENFORCED
             ? {
                 limit: analysisSettingLimit(
