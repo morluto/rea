@@ -1,6 +1,5 @@
 import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 import { isUtf8 } from "node:buffer";
-import { TextDecoder } from "node:util";
 import { setImmediate } from "node:timers/promises";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type {

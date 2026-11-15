@@ -2,7 +2,6 @@ import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { escapeJsonPointerToken } from "../domain/jsonPointer.js";
 import { setImmediate } from "node:timers/promises";
 import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
-import { TextDecoder } from "node:util";
 import type {
   ModelMetadata,
   ModelTensor,
