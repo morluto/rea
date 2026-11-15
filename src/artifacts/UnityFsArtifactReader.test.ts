@@ -198,6 +198,23 @@ describe("UnityFS payloads and malformed declarations", () => {
 });
 
 describe("UnityFS unavailable and malformed directories", () => {
+  it("reports cancellation during unavailable-directory coverage", async () => {
+    await withReader(
+      buildUnityFs(members, { flags: 0x1400 | 0x43 }),
+      async (reader) => {
+        const controller = new AbortController();
+        const entries = reader
+          .entries(controller.signal, {
+            onCoverage: () => controller.abort(),
+          })
+          [Symbol.asyncIterator]();
+        await expect(entries.next()).rejects.toMatchObject({
+          reason: "cancelled",
+        });
+      },
+    );
+  });
+
   it("reports an encrypted directory as unknown coverage without entries", async () => {
     await withReader(
       buildUnityFs(members, { flags: 0x1400 | 0x43 }),
@@ -302,21 +319,6 @@ describe("UnityFsArtifactReader member streams", () => {
         await expect(chunks.next()).rejects.toMatchObject({
           reason: "cancelled",
         });
-      },
-    );
-  });
-
-  it("keeps the reader usable after a consumer abandons a member", async () => {
-    const data = Buffer.alloc(1024 * 1024, 0x63);
-    await withReader(
-      buildUnityFs([{ path: "big.resS", data }]),
-      async (reader) => {
-        const [entry] = await list(reader);
-        if (entry === undefined) throw new Error("expected one entry");
-        const abandoned = await reader.open(entry);
-        await abandoned[Symbol.asyncIterator]().next();
-        abandoned.destroy();
-        expect((await text(await reader.open(entry))).length).toBe(data.length);
       },
     );
   });

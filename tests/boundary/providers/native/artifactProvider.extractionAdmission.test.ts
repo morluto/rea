@@ -18,7 +18,10 @@ import * as pckLocation from "../../../../src/artifacts/GodotPckLocation.js";
 import * as seaLocation from "../../../../src/artifacts/nodeSea/NodeSeaLocation.js";
 import * as pyInstallerLocation from "../../../../src/artifacts/pyinstaller/CArchiveLayout.js";
 import { nodeSeaElf } from "../../../../src/artifacts/nodeSea/NodeSea.fixture.js";
-import { cArchiveExecutable } from "../../../../src/artifacts/pyinstaller/CArchive.fixture.js";
+import {
+  CARCHIVE_COOKIE_MAGIC,
+  cArchiveExecutable,
+} from "../../../../src/artifacts/pyinstaller/CArchive.fixture.js";
 import { artifactExtractionResultSchema } from "../../../../src/domain/artifactGraph.js";
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
@@ -395,7 +398,7 @@ it("keeps incidental rejected cookie signatures unsupported during native extrac
       pythonVersion: 314,
       members: [],
     }).subarray(0, 64),
-    pyInstallerLocation.PYINSTALLER_COOKIE_MAGIC,
+    CARCHIVE_COOKIE_MAGIC,
     Buffer.alloc(88),
   ]);
   await writeFile(source, bytes);

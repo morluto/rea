@@ -85,6 +85,7 @@ const unavailable = (
       },
       types: [],
       signature_resolution: "type-names-v2",
+      assembly: null,
       nesting_read: false,
       exported_types: null,
       user_strings: null,
@@ -111,7 +112,11 @@ const unavailable = (
     }),
   );
 
-const readMemberLayout = (bytes: Buffer, pe: ManagedPeLayout) => {
+const readMemberLayout = (
+  bytes: Buffer,
+  pe: ManagedPeLayout,
+  maxRepresentationBytes?: number,
+) => {
   const cli = pe.cli;
   if (cli === null)
     throw new TypeError("Managed inventory requires CLI metadata");
@@ -124,6 +129,7 @@ const readMemberLayout = (bytes: Buffer, pe: ManagedPeLayout) => {
     bytes,
     rootOffset,
     cli.metadata.size,
+    maxRepresentationBytes,
   );
   const memberLists = readTypeMemberListFacts(bytes, layout);
   return { layout, memberLists };
@@ -172,12 +178,14 @@ export const inspectManagedMembersBytes = (
     methodOffset = 0,
     methodLimit = Number.MAX_SAFE_INTEGER,
     userStrings: readUserStrings = true,
+    maxRepresentationBytes,
   }: {
     readonly typeNames?: readonly string[];
     /** Zero-based offset into MethodDef rows. */
     readonly methodOffset?: number;
     readonly methodLimit?: number;
     readonly userStrings?: boolean;
+    readonly maxRepresentationBytes?: number;
   } = {},
 ): ManagedMemberInspection => {
   if (
@@ -195,7 +203,11 @@ export const inspectManagedMembersBytes = (
   const issues: ManagedParseIssue[] = [];
   let recover: ReturnType<typeof prepareManagedMemberRecovery> | undefined;
   try {
-    const { layout, memberLists } = readMemberLayout(bytes, pe);
+    const { layout, memberLists } = readMemberLayout(
+      bytes,
+      pe,
+      maxRepresentationBytes,
+    );
     const methodTotal = layout.table(6)?.rowCount ?? 0;
     const methodRows = {
       offset: Math.min(methodOffset, methodTotal),

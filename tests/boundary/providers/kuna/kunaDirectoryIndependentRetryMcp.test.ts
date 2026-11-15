@@ -1,18 +1,19 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterAll, expect, it as test, vi } from "vitest";
+import { afterAll, expect, it as test } from "vitest";
 import { AnalysisProviderRegistry } from "../../../../src/application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../../../src/application/binary/BinarySessionComposition.js";
 import { parseEvidence } from "../../../../src/domain/evidence.js";
 import { KunaProvider } from "../../../../src/kuna/KunaProvider.js";
 import { elfNoteFixture } from "../../../../src/native/elf/ElfNotes.fixture.js";
 import { createApplicationMcpHarness } from "../../../fixtures/applicationMcpHarness.js";
-import { advertisedMcpToolSchemas } from "../../../fixtures/advertisedMcpTool.js";
+import { callAdvertisedMcpTool } from "../../../fixtures/advertisedMcpTool.js";
 import { createMcpSchemaValidation } from "../../../fixtures/mcpSchemaValidation.js";
 import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { fakeKunaCalls, writeFakeKuna } from "./fakeKuna.js";
 import { FUNCTIONS, unprovenCleanupLauncher } from "./kunaSessionFixture.js";
+import { waitFor } from "../../../support/testWait.js";
 
 const it = test.skipIf(process.platform === "win32");
 const schemas = createMcpSchemaValidation();
@@ -71,23 +72,8 @@ it.each(["compact", "full"] as const)(
       },
     });
     try {
-      const call = async (name: string, args: Record<string, unknown>) => {
-        const schema = await advertisedMcpToolSchemas(
-          harness.client,
-          name,
-          schemas.assertions,
-        );
-        const result = await harness.client.callTool(
-          { name, arguments: args },
-          { toolDefinition: schema.toolDefinition },
-        );
-        expect(result.isError, JSON.stringify(result)).not.toBe(true);
-        expect(
-          schema.ajv.validate(schema.outputSchema, result.structuredContent),
-          JSON.stringify(schema.ajv.errors),
-        ).toBe(true);
-        return result.structuredContent;
-      };
+      const call = (name: string, args: Record<string, unknown>) =>
+        callAdvertisedMcpTool(harness.client, name, args, schemas.assertions);
       await call("open_binary", { path: target, provider_id: "kuna" });
       await call("procedure_assembly", { procedure: "main" });
       const initial = parseEvidence(
@@ -324,7 +310,7 @@ it("retains the project failure when cancellation stops the independent retry", 
         { signal: controller.signal, timeout: 15000 },
       )
       .catch(() => undefined);
-    const launched = vi.waitFor(
+    const launched = waitFor(
       async () => {
         expect(
           (await fakeKunaCalls(kuna)).some(
@@ -332,14 +318,9 @@ it("retains the project failure when cancellation stops the independent retry", 
           ),
         ).toBe(true);
       },
-      { timeout: 5000, interval: 20 },
+      { interval: 20 },
     );
-    await awaitAcknowledgement(
-      launched,
-      pending,
-      "independent retry launch",
-      6000,
-    );
+    await awaitAcknowledgement(launched, pending, "independent retry launch");
     controller.abort();
     await pending;
     expect(

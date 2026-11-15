@@ -1,4 +1,5 @@
 import { setImmediate } from "node:timers/promises";
+import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
 
 import { expect, it as test, vi } from "vitest";
 
@@ -48,7 +49,11 @@ it.each(["procedure_callees", "xrefs"] as const)(
     const text = run(client, "procedure_pseudo_code", { procedure: "main" });
     let reference: ReturnType<typeof run> | undefined;
     try {
-      await started.promise;
+      await awaitAcknowledgement(
+        started.promise,
+        text,
+        "Kuna decompile admission",
+      );
       const budget = grants[0]?.owner;
       expect(budget).toBeDefined();
       reference = run(
@@ -104,7 +109,7 @@ it("keeps an admission lease until retained native cleanup is proven", async () 
     installation: installed.value,
     operation: "lease-probe",
     arguments: (input) => ["functions", input, "--json"],
-    deadline: { setting: "REA_KUNA_TIMEOUT_MS", ms: 10_000 },
+    deadline: { setting: "REA_KUNA_TIMEOUT_MS", source: "setting", ms: 10_000 },
     outputBytes: 16384,
     signal: caller.signal,
     releaseRun: lease!,

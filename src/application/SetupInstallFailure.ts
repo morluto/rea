@@ -54,6 +54,7 @@ export type HopperInstallFailureReason =
   | "release_metadata"
   | "download"
   | "integrity"
+  | "launcher_digest_mismatch"
   | "authorization_or_package_manager"
   | "launcher_missing"
   | "runtime_dependencies"
@@ -165,6 +166,13 @@ const stageFailure = (
         code: "integrity_mismatch",
         remediation:
           "The Hopper download failed integrity verification. Retry setup; if it repeats, update REA before installing.",
+      };
+    case "launcher_digest_mismatch":
+      return {
+        status: "failed",
+        code: "integrity_mismatch",
+        remediation:
+          "The package signature verified, so the download is authentic, but the vendor release feed describes a different launcher build, so REA cannot identify this Hopper build and did not install it. Retrying setup or updating REA does not change the feed; report the mismatch to the Hopper vendor and rerun setup after the feed is corrected.",
       };
     case "authorization_or_package_manager":
       return {

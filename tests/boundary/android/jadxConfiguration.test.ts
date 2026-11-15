@@ -358,13 +358,11 @@ it("cancels an in-flight Java readiness probe", async () => {
   );
   try {
     await expect
-      .poll(
-        () =>
-          readFile(marker, "utf8").then(
-            () => true,
-            () => false,
-          ),
-        { timeout: 10_000 },
+      .poll(() =>
+        readFile(marker, "utf8").then(
+          () => true,
+          () => false,
+        ),
       )
       .toBe(true);
     controller.abort();
@@ -510,7 +508,9 @@ const check = setInterval(() => {
   }
 }, 10);
 const watchdog = setTimeout(() => { process.exitCode = 99; clearInterval(check); }, 10000);
-fs.writeFileSync(ready, String(process.pid));
+// The test polls for this path; publish only the complete PID by renaming.
+fs.writeFileSync(ready + ".pending", String(process.pid));
+fs.renameSync(ready + ".pending", ready);
 `,
   );
   await chmod(java, 0o700);

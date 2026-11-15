@@ -115,15 +115,14 @@ describe("managed application graph MethodDef scope", () => {
     }
   });
 
-  it("keeps unrecorded legacy MethodDef scope unknown", () => {
+  it("keeps an unexamined MethodDef scope unknown", () => {
     const bytes = buildManagedPeFixture({ ilBody: tinyIl([0x2a]) });
     const binary = managedPeFixtureTarget(bytes);
     const members = inspectManagedMembersBytes(bytes, binary);
-    const { method_rows: _methodRows, ...legacy } = members;
     const evidence = createEvidence(binary, MANAGED_STATIC_PROVIDER, {
       operation: "inspect_managed_members",
       parameters: {},
-      result: legacy,
+      result: { ...members, method_rows: null },
       rawResult: null,
       limitations: members.limitations,
     });
@@ -882,6 +881,45 @@ describe("managed application graph coverage", () => {
       omitted_count: null,
       limits: [],
     });
+    const complete = memberGraph(
+      buildManagedPeFixture({ ilBody: tinyIl([0x2a]) }),
+    );
+    for (const [graph, status, evidenceId] of [
+      [parserPartialResult.graph, "partial", parserPartialEvidence.evidence_id],
+      [complete.graph, "complete", complete.memberEvidence.evidence_id],
+    ] as const) {
+      const expected = {
+        status,
+        truncated: false,
+        omitted_count: status === "partial" ? null : 0,
+        limits: [],
+      };
+      for (const kind of [
+        "managed-type",
+        "managed-method",
+        "managed-field",
+      ] as const) {
+        const nodes = graph.nodes.filter((node) => node.kind === kind);
+        expect(nodes.length).toBeGreaterThan(0);
+        for (const node of nodes) {
+          expect(node.observations.length).toBeGreaterThan(0);
+          for (const observation of node.observations) {
+            expect(observation.evidence.coverage).toEqual(expected);
+            expect(observation.evidence.evidence_ids).toContain(evidenceId);
+          }
+        }
+        const ids = new Set(nodes.map(({ node_id }) => node_id));
+        const contains = graph.edges.filter(
+          (edge) =>
+            edge.relation === "contains" && ids.has(edge.target_node_id),
+        );
+        expect(contains).toHaveLength(nodes.length);
+        for (const edge of contains) {
+          expect(edge.evidence.coverage).toEqual(expected);
+          expect(edge.evidence.evidence_ids).toContain(evidenceId);
+        }
+      }
+    }
   });
 });
 
@@ -924,23 +962,6 @@ describe("managed application graph type selection", () => {
     expect(result.limitations).not.toContainEqual(
       expect.stringMatching(/managed Evidence.*partial coverage/iu),
     );
-  });
-
-  it("accepts member Evidence recorded before type selection existed", () => {
-    // Only in-module relations, so nothing else makes the graph partial.
-    const bytes = buildManagedPeFixture({
-      ilBody: tinyIl([0x02, 0x7b, 0x01, 0, 0, 0x04, 0x26, 0x2a]),
-    });
-    const binary = managedPeFixtureTarget(bytes, "/fixture/ManagedInterop.exe");
-    const { selection: _selection, ...legacy } = inspectManagedMembersBytes(
-      bytes,
-      binary,
-    );
-
-    expect(managedMemberInspectionSchema.parse(legacy).selection).toBeNull();
-    expect(project(legacy, bytes).coverage).toMatchObject({
-      status: "complete-within-inputs",
-    });
   });
 });
 
@@ -1054,17 +1075,14 @@ describe("managed call and field-access relations", () => {
     );
   });
 
-  it("reads graph Evidence projected before relation counters existed", () => {
+  it("refuses graph Evidence without relation counters", () => {
     const { result } = memberGraph(relationsFixture());
-    const {
-      calls: _calls,
-      field_accesses: _fieldAccesses,
-      ...summary
-    } = result.summary;
+    const { calls: _calls, ...summary } = result.summary;
 
     expect(
-      managedApplicationGraphResultSchema.parse({ ...result, summary }).summary,
-    ).toMatchObject({ calls: null, field_accesses: null });
+      managedApplicationGraphResultSchema.safeParse({ ...result, summary })
+        .error?.issues[0]?.path,
+    ).toEqual(["summary", "calls"]);
   });
 
   it("counts relations whose endpoints a type selection omitted", () => {

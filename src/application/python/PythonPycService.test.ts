@@ -66,6 +66,28 @@ const report: PythonPyc = {
   ],
 };
 
+it.each([
+  {
+    flags: 1,
+    hash_based: true,
+    source_hash_hex: "",
+    source_mtime: null,
+    source_size: null,
+  },
+  { flags: 1 },
+])("refuses inconsistent provider header facts %j", async (header) => {
+  const result = await new PythonPycService({
+    close: async () => {},
+    identity,
+    inspect: async () =>
+      ok({ ...report, header: { ...report.header, ...header } }),
+  }).inspect({ path: report.artifact.path });
+  expect(result).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
+});
+
 it("rejects a relative path and extra arguments before reading", async () => {
   let calls = 0;
   const service = new PythonPycService({

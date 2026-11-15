@@ -709,7 +709,8 @@ linux(
       ).toMatchObject({
         ok: false,
         error: {
-          reason: "integrity",
+          // The signature verified; only the feed's launcher digest differs.
+          reason: "launcher_digest_mismatch",
           message: expect.stringContaining(f.release.main_exe_hash),
         },
       });
@@ -1080,17 +1081,39 @@ portableTar(
     const metadataCloseGate = new Promise<void>((resolve) => {
       releaseMetadataClose = resolve;
     });
+    const metadataIdentity = await stat(join(f.cache, "release.json"));
+    const launcherIdentity = await stat(f.launcher);
+    let metadataOwner: OwnedFileHandle | undefined;
+    let hashOwner: OwnedFileHandle | undefined;
+    let hashActive = false;
+    let allowHashClose = false;
+    let hashCloseAttempts = 0;
     const originalClose = OwnedFileHandle.prototype.close;
     const close = vi
       .spyOn(OwnedFileHandle.prototype, "close")
       .mockImplementation(async function (this: OwnedFileHandle) {
-        const attempt = close.mock.calls.length;
-        if (attempt === 2) {
+        const observed = await this.handle.stat();
+        if (
+          metadataOwner === undefined &&
+          observed.dev === metadataIdentity.dev &&
+          observed.ino === metadataIdentity.ino
+        ) {
+          metadataOwner = this;
           reachedMetadataClose();
           await metadataCloseGate;
         }
-        if (attempt === 3 || attempt === 4 || attempt === 5)
-          throw new Error("Fixture descriptor close temporarily unavailable");
+        if (
+          hashActive &&
+          hashOwner === undefined &&
+          observed.dev === launcherIdentity.dev &&
+          observed.ino === launcherIdentity.ino
+        )
+          hashOwner = this;
+        if (this === hashOwner) {
+          hashCloseAttempts += 1;
+          if (!allowHashClose)
+            throw new Error("Fixture descriptor close temporarily unavailable");
+        }
         return await originalClose.apply(this);
       });
     const inspection = f.publisher.inspectLauncher(f.launcher);
@@ -1100,6 +1123,7 @@ portableTar(
         inspection,
         "metadata close",
       );
+      hashActive = true;
       const hashFailure = await f.publisher.hashLauncher(f.launcher).then(
         () => undefined,
         (cause: unknown) => cause,
@@ -1112,15 +1136,23 @@ portableTar(
         .cause.errors;
       expect(cleanupOutcomes).toHaveLength(2);
       expect(cleanupOutcomes[0]).toMatchObject({ reason: "cleanup_failed" });
+      expect(metadataOwner?.handle.fd).toBeGreaterThanOrEqual(0);
+      expect(hashOwner?.handle.fd).toBeGreaterThanOrEqual(0);
+      expect(hashCloseAttempts).toBeGreaterThanOrEqual(2);
+      allowHashClose = true;
       releaseMetadataClose();
       await expect(inspection).resolves.toMatchObject({
         ok: true,
         value: { source: "signed_package_cache" },
       });
       await expect(f.publisher.close()).resolves.toBeUndefined();
-      expect(close).toHaveBeenCalledTimes(9);
+      expect(metadataOwner?.handle.fd).toBe(-1);
+      expect(hashOwner?.handle.fd).toBe(-1);
     }, [
-      releaseMetadataClose,
+      () => {
+        allowHashClose = true;
+        releaseMetadataClose();
+      },
       async () => {
         await inspection;
       },

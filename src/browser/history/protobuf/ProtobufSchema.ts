@@ -1,3 +1,4 @@
+import { captureBudgets } from "../CaptureBudgets.js";
 import { err, ok, type Result } from "../../../domain/result.js";
 import {
   createFileRegistry,
@@ -18,7 +19,6 @@ import {
 } from "@bufbuild/protobuf/wkt";
 import { BinaryReader } from "@bufbuild/protobuf/wire";
 import type { ProtobufField } from "../../../domain/protobufWire.js";
-import { WEB_NETWORK_CAPTURE_LIMITS } from "../../../domain/webNetworkCapture.js";
 import { CaptureFormatError } from "../CaptureFormatError.js";
 import {
   decodeProtobufWire,
@@ -260,7 +260,7 @@ export class ProtobufSchema implements WireSchema {
     try {
       descriptor = fromBinary(FileDescriptorSetSchema, bytes, {
         readUnknownFields: true,
-        recursionLimit: WEB_NETWORK_CAPTURE_LIMITS.depth,
+        recursionLimit: captureBudgets().depth,
       });
     } catch (cause) {
       return err({

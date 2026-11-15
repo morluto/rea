@@ -1,4 +1,7 @@
-import { artifactReaderLifecycleCases } from "../../tests/fixtures/artifactReaderLifecycle.js";
+import {
+  artifactPreparationRecoveryCases,
+  artifactReaderLifecycleCases,
+} from "../../tests/fixtures/artifactReaderLifecycle.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
@@ -91,10 +94,21 @@ it("preserves cancellation during payload CRC admission", async () => {
         }
       })(),
     ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
-  } finally {
-    await reader.close();
     reads.mockRestore();
-    await admitted.handle.close();
+    const recovered = await entries(reader);
+    expect(recovered).toHaveLength(1);
+    expect(
+      (await buffer(await reader.open(recovered[0]!))).equals(
+        Buffer.alloc(128 * 1024, 0x61),
+      ),
+    ).toBe(true);
+  } finally {
+    try {
+      await reader.close();
+    } finally {
+      reads.mockRestore();
+      await admitted.handle.close();
+    }
   }
 });
 
@@ -138,9 +152,12 @@ it("admits a multi-image count before scanning the remaining payload", async () 
       results.reduce((sum, result) => sum + result.bytesRead, 0),
     ).toBeLessThanOrEqual(UIMAGE_HEADER_SIZE + UIMAGE_MULTI_TABLE_WINDOW);
   } finally {
-    await reader.close();
-    reads.mockRestore();
-    await admitted.handle.close();
+    try {
+      await reader.close();
+    } finally {
+      reads.mockRestore();
+      await admitted.handle.close();
+    }
   }
 });
 
@@ -204,4 +221,9 @@ it("reports impossible over-cap component extents as malformed", async () => {
   } finally {
     await reader.close();
   }
+});
+
+artifactPreparationRecoveryCases({
+  image: () => buildUImage({ payload: Buffer.from("payload") }),
+  createReader: (path, admitted) => new UImageArtifactReader(path, admitted),
 });

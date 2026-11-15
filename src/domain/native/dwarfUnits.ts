@@ -8,7 +8,10 @@ import {
 } from "../apple/machoTargetSelection.js";
 import { BINARY_ARCHITECTURES } from "../binaryTargetTypes.js";
 import { digestSchema } from "../digests.js";
-import { localPathStringSchema } from "../localPath.js";
+import {
+  absoluteLocalPathStringSchema,
+  localPathStringSchema,
+} from "../localPath.js";
 
 /** Hard ceiling on the caller-selected input read budget. */
 export const MAX_INSPECT_DWARF_UNITS_FILE_BYTES = 536870912;
@@ -228,7 +231,7 @@ const sectionSchema = z.strictObject({
 
 /** One explicit-file DWARF compile-unit inspection. */
 export const inspectDwarfUnitsInputSchema = z.strictObject({
-  path: localPathStringSchema.describe(
+  path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to an ELF, Mach-O, or PE image",
   ),
   max_file_bytes: z

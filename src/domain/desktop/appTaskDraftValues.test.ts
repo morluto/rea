@@ -157,7 +157,9 @@ describe("draftTaskFiles values", () => {
       ["removed", `${paragraph}/2`, "by_position"],
     ]);
   });
+});
 
+describe("draftTaskFiles values budgets", () => {
   it("lists at most 20 values and 8 KB a file and 24 KB a draft, saying when it left any out", () => {
     const items = (count: number, value: (index: number) => string) =>
       `<doc>${Array.from({ length: count }, (_, index) => `<p id="${String(index)}" v="${value(index)}"/>`).join("")}</doc>`;
@@ -194,6 +196,47 @@ describe("draftTaskFiles values", () => {
       drafted[0]?.values.length ?? 0,
     );
   });
+
+  it.each([
+    { files: 1, width: 1989, exact: true, cut: false },
+    { files: 1, width: 1989, exact: false, cut: true },
+    { files: 4, width: 1477, exact: true, cut: false },
+    { files: 4, width: 1477, exact: false, cut: true },
+  ])(
+    "includes serialized array delimiters in the values budget ($files files, exact: $exact)",
+    ({ files, width, exact, cut }) => {
+      const keys = Array.from(
+        { length: 4 },
+        (_, index) =>
+          `${String(index)}${"a".repeat(width - (exact && index === 0 ? 1 : 0))}`,
+      );
+      const drafted = draftOf(
+        Object.fromEntries(
+          Array.from({ length: files }, (_, index) => [
+            `settings-${String(index)}.json`,
+            statePath(
+              "application_state",
+              "json",
+              Object.fromEntries(keys.map((key) => [key, "x"])),
+              Object.fromEntries(keys.map((key) => [key, "y"])),
+            ),
+          ]),
+        ),
+      );
+      const sizes = drafted.map(
+        (file) => new TextEncoder().encode(JSON.stringify(file.values)).length,
+      );
+      expect(sizes.every((size) => size <= 8192)).toBe(true);
+      expect(sizes.reduce((sum, size) => sum + size, 0)).toBeLessThanOrEqual(
+        24576,
+      );
+      expect(drafted.some((file) => file.values_cut)).toBe(cut);
+      if (exact)
+        expect(sizes.reduce((sum, size) => sum + size, 0)).toBe(
+          files === 1 ? 8192 : 24576,
+        );
+    },
+  );
 });
 
 it("preserves JSON objects whose keys resemble XML and archive views", () => {

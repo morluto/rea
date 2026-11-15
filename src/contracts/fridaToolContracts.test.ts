@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { TOOL_CONTRACTS } from "./toolContracts.js";
+import { toolContract, TOOL_CONTRACTS } from "./toolContracts.js";
 import { FRIDA_KEEPALIVE_INTERVAL_DESCRIPTION } from "./fridaToolContracts.js";
 import { isValidFridaRemoteAddress } from "../domain/fridaRemoteAddress.js";
 
@@ -166,5 +166,50 @@ describe("Frida tool contracts", () => {
     expect(isValidFridaRemoteAddress("127.0.0.1:")).toBe(false);
     expect(isValidFridaRemoteAddress("frida-target/path")).toBe(false);
     expect(isValidFridaRemoteAddress("user@frida-target")).toBe(false);
+  });
+});
+
+it("keeps request defaults out of observed Frida policies", () => {
+  const start = toolContract("start_frida_session");
+  const identity = {
+    session_id: "00000000-0000-4000-8000-000000000001",
+    device_id: "fixture",
+    target: "fixture",
+    pid: 1,
+    mode: "attach",
+    state: "detached",
+  };
+  expect(
+    start.inputSchema.parse({
+      mode: "attach",
+      pid: 1,
+      capture_limits: { session_bytes: 12345 },
+    }),
+  ).toEqual({
+    mode: "attach",
+    pid: 1,
+    capture_limits: { session_bytes: 12345 },
+  });
+  expect(start.outputSchema.parse(identity)).not.toHaveProperty(
+    "capture_limits",
+  );
+  for (const capture_limits of [
+    {},
+    { session_bytes: 12345 },
+    { session_bytes: -1 },
+  ])
+    expect(
+      start.outputSchema.safeParse({ ...identity, capture_limits }).success,
+    ).toBe(false);
+  const capture_limits = {
+    session_bytes: 12345,
+    message_type_bytes: 456,
+    message_text_bytes: 789,
+    json_nodes: 100,
+    json_depth: 10,
+  };
+  expect(start.outputSchema.parse({ ...identity, capture_limits })).toEqual({
+    ...identity,
+    capture_limits,
   });
 });

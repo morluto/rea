@@ -39,6 +39,17 @@ path and supported version of the runtime you intend to use, then update only
 the runtime command, preserving the REA script arguments and other settings.
 Rerun setup to review the registration and restart the client.
 
+Doctor JSON records each registration's `command_identity` as `owned`, `foreign`,
+or `unknown`, separately from its readiness `state`. An invalid timeout or client
+policy can leave ownership established. Setup uses that recorded observation for
+its default client selection, then inspects selected configuration again before
+planning writes; a missing or unreadable launcher remains unknown.
+
+A retained command does not prove the client selects it. Doctor also checks
+that client's native transport selectors; a higher-priority remote selector can
+leave the command owned while alignment remains unknown. Metadata that is not a
+native connection selector is preserved rather than interpreted as a transport.
+
 `rea mcp doctor --json` tests the production MCP adapter using the runtime
 executable and environment of the terminal running doctor. It does not launch
 the client's configured command or reproduce the client's environment. If doctor
@@ -109,7 +120,25 @@ unfamiliar prefix. The unavailable fork reported in
 For a client that supports MCP catalog refresh, set
 `REA_MCP_TOOL_CATALOG_PROFILE=hot-cold` in REA's server environment and restart
 the connection. REA then advertises a small initial catalog and loads other
-named tools through `discover_tools`. Setup preserves this explicit setting.
+named tools through `discover_tools`. Setup can record the explicit choice:
+
+```bash
+rea setup --client codex --tool-catalog-profile hot-cold --dry-run
+rea setup --client codex --tool-catalog-profile hot-cold
+```
+
+The plan shows `REA_MCP_TOOL_CATALOG_PROFILE=hot-cold` before approval. This
+selects server catalog loading; enable and verify the client's catalog refresh
+separately. Setup preserves its existing feature flags and tool approval lists.
+To restore upfront advertisement, use `--tool-catalog-profile full`, then
+reconnect. Omitting the option preserves the saved profile and keeps `full` for
+a new registration. Existing explicit environment selections are also retained.
+
+Setup does not infer refresh from a client name or enable experimental client
+features. The verified Codex trial below covers one version with an explicit
+flag; FastMCP was tested with explicit refresh calls. Neither establishes
+automatic refresh for every installed version or other client. Keep `full`
+until refresh is established for the selected client and configuration.
 See the [discovery contract](../reference/mcp-contracts.md#hotcold-catalog-discovery) for
 pagination, identity and family-scope semantics.
 
@@ -157,11 +186,12 @@ REA_MCP_TOOL_CATALOG_PROFILE=full
 
 This advertises all tools without requiring catalog refresh. Compact output
 schemas widen client-side validation; REA still validates complete results
-against the canonical contracts. See [output schemas](../reference/mcp-contracts.md#output-schemas).
+against the canonical contracts. The default output profile, `off`, omits
+output schemas and is smaller still. See [output schemas](../reference/mcp-contracts.md#output-schemas).
 
 On main `3e0599a94`, a real FastMCP 4.1.6 / Python MCP 2.3.0 HTTP client with
 the default 1 MiB SSE event limit rejected the 4,108,975-byte full catalog.
-The settings above delivered all 240 tools in 611,305 bytes and a
+The settings above delivered every tool of that catalog in 611,305 bytes and a
 `binary_session` call succeeded. These are measured SSE response sizes for
 that catalog, not a size guarantee for future catalogs or other profiles.
 
@@ -310,8 +340,8 @@ when `ANTHROPIC_BASE_URL` points to a non-first-party host, such as DeepSeek's
 Anthropic-compatible endpoint. It then sends every REA tool's name, description
 and input schema with every request
 ([#2019](https://github.com/morluto/rea/issues/2019)). On main at 04089d5be,
-with 172 tools, that payload measured about 496 KB with the default profile and
-about 290 KB with `compact`. By the o200k and cl100k tokenizers, that is roughly
+that payload measured about 496 KB with the default profile and about 290 KB
+with `compact`. By the o200k and cl100k tokenizers, that is roughly
 120k and 68k tokens. Compaction cannot remove tool definitions. If they nearly
 fill the window Claude Code assumes, the context refills after every compaction
 and Claude Code reports that autocompact is thrashing. To avoid this:
@@ -341,11 +371,12 @@ and Claude Code reports that autocompact is thrashing. To avoid this:
 The sizes above come from REA's own `tools/list`. A live Claude Code session
 against DeepSeek's API is unverified.
 
-For a client whose stdio reader rejects the complete catalog frame, set
-`"REA_MCP_OUTPUT_SCHEMA_PROFILE": "compact"` to bound every advertised output
-schema, or `"off"` to omit them, in REA's `env` object, then restart the client.
-Both keep canonical result validation and complete structured results; `compact`
-keeps a widened root shape and `off` advertises nothing. On catalogs large
+Output schemas are omitted by default (`"REA_MCP_OUTPUT_SCHEMA_PROFILE": "off"`).
+If you selected `"full"` and a client's stdio reader rejects the complete
+catalog frame, return to the default or select `"compact"`, which bounds every
+advertised output schema, in REA's `env` object, then restart the client.
+Every profile keeps canonical result validation and complete structured
+results; `compact` keeps a widened root shape and `off` advertises nothing. On catalogs large
 enough that full input schemas alone approach the frame limit, also keep the
 input profile at its `compact` default. See [MCP output schema
 profiles](../reference/mcp-contracts.md#output-schemas).
@@ -398,18 +429,12 @@ client environment overrides remain intact unless setup supplies the same key.
 You can edit `startupTimeoutMs` and `toolTimeoutMs` there; doctor keeps positive
 caller-selected values aligned and reports a non-blocking advisory when a tool
 timeout is shorter than the known provider allowance.
-Setup selects the compact input-schema advertisement for new or refreshed Kimi
-registrations unless their stored configuration or setup environment explicitly
-selects `REA_MCP_INPUT_SCHEMA_PROFILE=full` or `compact`. This keeps REA's
-canonical tool validation unchanged while avoiding a Moonshot Kimi Code 2.2.0
-failure observed with the full catalog: its request was rejected because a
-single tool schema exceeded the provider's size limit. The limit is
-provider-specific and not an MCP protocol limit. `rea doctor --client kimi`
-reports an older registration with no explicit profile as stale. To restore the
-compact profile, run `rea setup --client kimi` or add
-`REA_MCP_INPUT_SCHEMA_PROFILE=compact` to the registration's `env`, then restart
-Kimi Code. An explicit `full` profile remains respected and can still exceed
-Moonshot's limit.
+The server advertises compact input schemas by default, which avoids a Moonshot
+Kimi Code 2.2.0 failure observed with the full catalog: its request was rejected
+because a single tool schema exceeded the provider's size limit. The limit is
+provider-specific and not an MCP protocol limit. Setup preserves an explicit
+`REA_MCP_INPUT_SCHEMA_PROFILE` from the stored registration or the setup
+environment; an explicit `full` profile can still exceed Moonshot's limit.
 Kimi Code also discovers personal skills in `~/.agents/skills` and project-local
 `.agents/skills`, so no separate skill root is required; setup still installs
 and verifies the matching skill files through the normal shared-skill flow.
@@ -424,10 +449,9 @@ LM Studio does: the path stored in `~/.lmstudio-home-pointer`, otherwise
 the pointer file. LM Studio parses `mcp.json` as strict JSON, so setup rejects
 a file with comments, trailing commas, or a byte order mark without a backup
 or a write. The entry carries `command`, `args`, and `env`, and setup keeps
-every other server. Local models often have small context windows, so setup
-selects `REA_MCP_INPUT_SCHEMA_PROFILE=compact` unless the stored entry or the
-setup environment selects a profile explicitly. Doctor reports an entry with no
-explicit profile as stale, as for Kimi Code. LM Studio 0.4.26 on macOS loaded
+every other server. Local models often have small context windows; the default
+compact input-schema profile applies unless the stored entry or the setup
+environment selects `REA_MCP_INPUT_SCHEMA_PROFILE` explicitly. LM Studio 0.4.26 on macOS loaded
 this registration, and a local model called an REA tool through it. Linux and
 Windows remain unverified.
 
@@ -482,11 +506,45 @@ parent environment does not establish that Qwen removed Homebrew from it.
 Antigravity 2.0 discovers personal skills in `~/.gemini/config/skills`.
 Setup installs its selected skill copy there.
 
+## Cursor
+
+For Cursor, setup writes `mcpServers.rea` into the user-level `~/.cursor/mcp.json`
+(`%USERPROFILE%\.cursor\mcp.json` on Windows). Entries carry `command`, `args`,
+and `env`; stdio is the default transport. Setup manages only this user-scope
+file. Cursor has no client-specific skill directory, so setup installs the
+bundled skill under the shared `~/.agents/skills`.
+
+## Windsurf
+
+For Windsurf, setup writes `mcpServers.rea` into the user-level
+`~/.codeium/windsurf/mcp_config.json` (`%USERPROFILE%\.codeium\windsurf\mcp_config.json`
+on Windows). Entries carry `command`, `args`, and `env`; stdio is the default
+transport. Setup manages only this user-scope file. Windsurf has no
+client-specific skill directory, so setup installs the bundled skill under the
+shared `~/.agents/skills`.
+
+## Command Code
+
+For Command Code, setup writes `mcpServers.rea` into the user-level
+`~/.commandcode/mcp.json` (`%USERPROFILE%\.commandcode\mcp.json` on Windows).
+Entries carry `transport: "stdio"`, `enabled: true`, `command`, `args`, and
+`env`. Doctor reads the entry's transport from `transport`, falling back to
+`type`, case-insensitively. An entry with `http` or `sse`, or with a `url` and
+no `command`, selects a remote connection rather than REA's stdio launcher, so
+its alignment is reported as unknown. A transport tag that is not text is
+invalid.
+Setup manages only this user-scope file, and installs the bundled skill under
+the shared `~/.agents/skills`.
+
 ## Gemini CLI
 
 Gemini CLI uses `$GEMINI_CLI_HOME/.gemini/settings.json` when that home override
 is nonempty, including its shared personal skills at
-`$GEMINI_CLI_HOME/.agents/skills`. Setup and doctor check MCP allow/exclude
+`$GEMINI_CLI_HOME/.agents/skills`. Automatic detection uses Gemini CLI's own
+settings, trusted-folder records or `.gemini/tmp` session state; the `.gemini`
+directory alone does not identify it, because Antigravity keeps its
+configuration there too. Select `--client gemini_cli` explicitly before those
+files exist. Setup and doctor check MCP allow/exclude
 policies from system defaults, user settings, trusted workspace settings, and
 system overrides. Workspace trust follows `GEMINI_CLI_TRUST_WORKSPACE`,
 `GEMINI_RESTRICTED_MODE`, the effective `security.folderTrust.enabled` setting,
@@ -723,6 +781,102 @@ The global MCP path is a plain JSON file; setup preserves every other server
 and top-level key when it upserts `rea`. Loading this registration, the
 bundled skill, and real REA tool calls through CodeBuddy are verified.
 
+## Cline
+
+MCP registration already supports both clients: `rea mcp add --agent cline`
+(or `cline-vscode`) configures the VS Code extension, while
+`rea mcp add --agent cline-cli` configures the CLI. The setup lifecycle uses
+`rea setup --client cline` and `rea doctor --client cline` for the CLI.
+`rea uninstall` also removes its REA-owned Cline CLI entry.
+
+For Cline's CLI, setup writes `mcpServers.rea` into
+`~/.cline/data/settings/cline_mcp_settings.json`; set `CLINE_MCP_SETTINGS_PATH`
+to select another file. Otherwise `CLINE_DATA_DIR` selects the data directory,
+then `CLINE_DIR` selects the root containing `data`; blank overrides are ignored.
+Setup and `mcp add --agent cline-cli` share this native path selection. Entries carry
+`command`, `args`, and `env`; stdio is the default transport. Setup preserves
+every other server and top-level key when it upserts `rea`, and refuses a
+`rea` entry it did not write rather than adopting or overwriting it.
+
+Existing nested `transport` registrations retain their representation during
+setup. In that shape, launch `env` and `cwd` belong inside `transport`;
+setup preserves those values and other nested metadata separately from outer
+registration policy.
+
+That refusal includes a hand-written `rea` entry: ownership is decided by
+comparing the entry's launcher with the running installation's entry point, so a
+registration that points at a different install path is reported as `foreign`
+and left unchanged. Rename or remove that entry, then rerun setup; doctor's
+remediation names the file and the entry to change.
+
+Cline discovers skills in the shared `~/.agents/skills` directory. Setup
+installs the bundled skill there,
+and `--skill-client cline` resolves to that shared directory; setup does not
+write a second copy under `~/.cline/skills`.
+
+The IDE extension keeps its own MCP settings, reached from the Cline panel's
+**Configure MCP Servers** action. Use `rea mcp add --agent cline` for that
+registration; `rea setup --client cline` configures the CLI only.
+
+Restart Cline after setup so the client reloads `mcpServers`. Cline's default
+MCP tool-call timeout is 120 seconds; native provider work that spends longer
+starting Hopper, Ghidra, or IDA can exceed it, so raise the timeout in Cline's
+MCP settings for long native investigations.
+
+Setup, doctor's alignment report, foreign-registration refusal, and uninstall
+removal are covered by `tests/acceptance/setup/clineClientSetup.test.ts`.
+
+## Cline VS Code extension, Kiro, Mastra Code, Zed and Amp
+
+Setup, doctor, update, uninstall and `rea mcp add` share one definition for each
+of these clients. Setup offers a client when its directory exists.
+
+| Client                  | `--client`     | User configuration                                                                                                              | Server table      |
+| ----------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| Cline VS Code extension | `cline_vscode` | `<VS Code user directory>/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`                                | `mcpServers`      |
+| Kiro                    | `kiro`         | `~/.kiro/settings/mcp.json`, shared by the IDE and CLI                                                                          | `mcpServers`      |
+| Mastra Code             | `mastracode`   | `~/.mastracode/mcp.json`                                                                                                        | `mcpServers`      |
+| Zed                     | `zed`          | `~/.config/zed/settings.json` on macOS, `%APPDATA%\Zed\settings.json` on Windows, `$XDG_CONFIG_HOME/zed/settings.json` on Linux | `context_servers` |
+| Amp                     | `amp`          | `~/.config/amp/settings.json`, or `settings.jsonc` when that is the only one                                                    | `amp.mcpServers`  |
+
+The Cline extension keeps a separate settings file in each editor that runs
+it. `cline_vscode_insiders`, `cline_vscodium`, `cline_cursor` and
+`cline_windsurf` manage the same file under that editor's user directory
+(`Code - Insiders`, `VSCodium`, `Cursor` or `Windsurf` in place of `Code`), and
+setup offers each where that editor's Cline settings folder exists.
+`VSCODE_APPDATA` applies to all of them; `VSCODE_PORTABLE` only to VS Code.
+`rea mcp add --agent cline` keeps add-mcp's meaning, VS Code. A same-named server in a Kiro,
+Mastra Code, Zed or Amp project file overrides the user registration; doctor
+reports the user file. Mastra Code keeps enabled state outside `mcp.json`, and
+Amp's managed settings and `amp.mcpPermissions` can block a server; doctor
+cannot observe either. When both Amp settings files exist, Amp does not
+document which it reads, so REA refuses to choose; merge them into one file.
+On Linux, `FLATPAK_XDG_CONFIG_HOME` selects Zed's folder as Zed itself does,
+and a Flathub Zed's `~/.var/app/dev.zed.Zed/config/zed` is used when only that
+folder exists; with both it and the native folder present, REA cannot tell which
+Zed you use and refuses. Zed's comments and formatting are preserved. These
+locations follow each client's documentation and source; no installed client
+was run to verify loading.
+
+## MCPorter
+
+`rea setup --client mcporter` and `rea mcp add --agent mcporter` write
+`mcpServers.rea` into MCPorter's home file: the file `MCPORTER_CONFIG` names,
+otherwise the first existing of `$XDG_CONFIG_HOME/mcporter/mcporter.json[c]`
+(an absolute `XDG_CONFIG_HOME` only) and `~/.mcporter/mcporter.json[c]`. A new
+file goes to the XDG path when `XDG_CONFIG_HOME` is set, as
+`mcporter config add --scope home` does. A relative `MCPORTER_CONFIG` depends on
+the directory each MCPorter command runs from, so REA refuses writes to
+MCPorter and doctor and update report its registration as `unknown` while
+still covering every other client. Uninstall stops until it is repaired,
+because it cannot tell whether that file holds REA's row.
+
+MCPorter imports Claude Code, Claude Desktop, Codex, Cursor, Windsurf, OpenCode
+and VS Code registrations by default, so setup never selects it from detection,
+and doctor reports it only when its file holds a `rea` row or you select it.
+Update and uninstall refresh and remove the row REA wrote. A project
+`config/mcporter.json` entry with the same name overrides the home file.
+
 ## WorkBuddy
 
 For [WorkBuddy](https://www.workbuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/MCP-Guide), setup writes `mcpServers.rea` into the
@@ -737,6 +891,13 @@ and top-level key when it upserts `rea`. WorkBuddy also reads a project-level
 `<project>/.workbuddy/mcp.json`, which setup does not touch: it registers the
 user-level file only. Loading this registration and real REA tool calls
 through WorkBuddy are verified.
+
+For CodeBuddy and WorkBuddy, REA's write checks cover their documented stdio
+entries. If an existing `rea` row contains fields whose native interpretation is
+unclassified, setup preserves it and reports unknown write applicability before
+changing the file. Doctor retains any established launcher ownership while
+reporting alignment as unknown. This does not prevent safe removal of a row
+whose REA ownership is established.
 
 ## ZCode
 
@@ -759,7 +920,10 @@ fallback server, uninstall refuses before changing either file; review the
 fallback configuration before retrying. Other fallback servers, settings and a
 foreign `rea` entry are kept. ZCode disables a
 server with `enable: false` on its entry; doctor reports such a registration
-as stale, and rerunning setup removes the flag to repair it. Native configuration
+as stale, and rerunning setup removes the flag to repair it. In shared storage
+that setup preserves (the fallback file), the flag binds every reader, so doctor
+reports the stale row with `manual_conflict: "shared_disabled_activation"`:
+re-enable it in the product that disabled it rather than rerunning setup. Native configuration
 uses strict JSON; setup refuses comments, trailing commas and a BOM rather than
 writing a registration ZCode cannot load.
 

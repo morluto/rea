@@ -37,8 +37,6 @@ import {
   type JsonValue,
 } from "../../../src/domain/jsonValue.js";
 
-const HTTP_BOUNDARY_TIMEOUT_MS = 90_000;
-
 /** The book the first served create of "Boundary Book" makes: one second past the served clock's start. */
 const BOUNDARY_BOOK = book(3, "Boundary Book", bookClock(13));
 
@@ -160,7 +158,6 @@ processTest(
       await client.close();
     }
   },
-  HTTP_BOUNDARY_TIMEOUT_MS,
 );
 
 processTest(
@@ -220,7 +217,6 @@ processTest(
       await client.close();
     }
   },
-  HTTP_BOUNDARY_TIMEOUT_MS,
 );
 
 processTest(
@@ -357,7 +353,6 @@ processTest(
       await client.close();
     }
   },
-  HTTP_BOUNDARY_TIMEOUT_MS,
 );
 
 describe("rea environment-serve write tools", () => {
@@ -428,7 +423,6 @@ describe("rea environment-serve write tools", () => {
         await client.close();
       }
     },
-    HTTP_BOUNDARY_TIMEOUT_MS,
   );
 
   processTest(
@@ -504,7 +498,6 @@ describe("rea environment-serve write tools", () => {
         await client.close();
       }
     },
-    HTTP_BOUNDARY_TIMEOUT_MS,
   );
 });
 
@@ -597,7 +590,6 @@ processTest(
       await client.close();
     }
   },
-  HTTP_BOUNDARY_TIMEOUT_MS,
 );
 
 processTest.for([
@@ -619,7 +611,6 @@ processTest.for([
   })),
 ])(
   "withholds $label from public tools",
-  { timeout: HTTP_BOUNDARY_TIMEOUT_MS },
   async ({ rows, read, write }, { processes }) => {
     const root = await createTestTempDirectory("rea-create-reference-mcp-");
     const files = await writeEnvironmentServeFiles(

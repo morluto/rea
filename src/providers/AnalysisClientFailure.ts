@@ -1,3 +1,4 @@
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import {
   HopperRemoteError,
   HopperTimeoutError,
@@ -13,9 +14,10 @@ import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisResourceConstraintError,
-  resourceConstraintRecovery,
+  reattributedResourceConstraint,
   AnalysisOutputError,
   AnalysisTimeoutError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -201,6 +203,7 @@ export const analysisClientFailureForOperation = (
       ...(cause.remediationAction === undefined
         ? {}
         : { remediationAction: cause.remediationAction }),
+      ...(cause.limit === undefined ? {} : { limit: cause.limit }),
     });
   else if (cause instanceof AnalysisOutputError)
     result = new AnalysisOutputError(operation, cause.reason, {
@@ -213,12 +216,10 @@ export const analysisClientFailureForOperation = (
         ? {}
         : { remediationAction: cause.remediationAction }),
     });
-  else if (cause instanceof AnalysisCancelledError)
-    result = new AnalysisCancelledError(operation, {
-      ...context,
-      cause: cause.cause,
-    });
-  else if (cause instanceof AnalysisCapabilityUnavailableError)
+  else if (cause instanceof AnalysisCancelledError) {
+    const { cause: _wrapped, ...cancellationContext } = context;
+    result = cancelledBy(operation, cause, cancellationContext);
+  } else if (cause instanceof AnalysisCapabilityUnavailableError)
     result = new AnalysisCapabilityUnavailableError(
       cause.providerId,
       operation,
@@ -258,13 +259,7 @@ export const analysisClientFailureForOperation = (
       context,
     );
   else if (cause instanceof AnalysisResourceConstraintError)
-    result = new AnalysisResourceConstraintError(
-      operation,
-      cause.resource,
-      cause.reason,
-      cause.reportedLimits,
-      { ...context, ...resourceConstraintRecovery(cause) },
-    );
+    result = reattributedResourceConstraint(operation, cause, context);
   else
     result = new ProviderAdapterError(providerId, operation, {
       ...context,
@@ -275,6 +270,11 @@ export const analysisClientFailureForOperation = (
         ? {}
         : { remediationAction: cause.remediationAction }),
     });
+  for (const secondary of cause.secondaryFailures) {
+    if (secondary instanceof AnalysisCancelledError)
+      result = analysisErrorWithCancellation(result, secondary);
+    else result.retainSecondaryFailure(secondary);
+  }
   return cause.cleanupIncomplete
     ? result.bindCleanupDependencies([cause])
     : result.resolveCleanup();

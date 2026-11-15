@@ -9,7 +9,7 @@ import { z } from "zod";
 import {
   pythonPycSummaryViewResultSchema,
   pythonPycCodeObjectsViewResultSchema,
-} from "../../domain/analysisView/analysisView.js";
+} from "../../domain/analysisView/analysisViewResult.js";
 import {
   pythonPycCompleteDeliveryShape,
   pythonPycSummaryDeliveryShape,
@@ -31,7 +31,7 @@ export const PYTHON_PYC_TOOL_CONTRACTS = [
     kind: "artifact-provider",
     requiresActiveTarget: true,
     description:
-      "Inspect one explicit local CPython 3.7–3.13 .pyc file with a supported 16-byte header without executing bytecode, invoking CPython or recovering source. Returns the header (magic, pinned python_version, PEP 552 flags, source hash or mtime/size), the top-level code object with nested functions, names, const summaries, and bytecode length/SHA-256. Complete output is the default. detail summary retains the complete Evidence and returns header/coverage. Include an optional python-pyc code_objects view to return selected names/indices/fields in the first call; inspect_analysis_view pages the same retained source later. Every matching display name survives under its parent-scoped source_index; nested_code represents code-constant references, not runtime calls. Marshal is walked with object, depth and string budgets; unsupported magics/layouts, truncated streams and exhausted budgets return no partial success. A recognized 3.14 (3627) or 3.15 (3666) magic is qualified from its packed 16-byte header — the refusal names the observed version and flags — but no marshal code layout is pinned for those versions, so no code object is reported. A decoded header is not proof the matching .py is present. Portable on supported Node hosts; no Python installation required.",
+      "Inspect local CPython 3.7–3.15 .pyc headers and nested code objects without executing bytecode, invoking Python or recovering source. Returns pinned version/header fields, names, constant summaries and bytecode lengths/digests; nested_code links code constants, not runtime calls. Default complete returns full Evidence; detail summary retains it for inspect_analysis_view kind python-pyc, collection code_objects, with exact names/indices/fields and paging. source_index preserves same-name alternatives. Unsupported magics/layouts, truncation and exhausted budgets fail without partial success. A header does not prove matching .py source exists.",
     inputSchema: inspectPythonPycRequestSchema,
     outputSchema: analysisDetailOutputSchemaOf(
       pythonPycSchema,

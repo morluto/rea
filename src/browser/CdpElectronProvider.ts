@@ -18,7 +18,7 @@ import {
 } from "../domain/javascript/electronObservation.js";
 import { selectedCdpCommandTimeoutMs } from "../domain/browserDeadline.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { cancelledBy } from "../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -214,45 +214,33 @@ export class CdpElectronProvider implements ElectronObservationPort {
         }),
       );
     } catch (cause: unknown) {
+      const completedPrefix = {
+        browser_version: discovery?.version ?? null,
+        examined_targets: examined,
+        discovered_targets: discovery?.targets.length ?? null,
+        allowed_targets: allowed,
+        excluded: {
+          unsupported_url: unsupportedUrl,
+          non_page: nonPage,
+        },
+        unconnectable_targets: unconnectable,
+        coverage:
+          "partial: target authorization stopped; remaining targets are unknown",
+      };
       const fileFailure = mapElectronFileAuthorizationFailure(
         cause,
         CDP_ELECTRON_PROVIDER_IDENTITY.id,
         "list_electron_targets",
         {
-          completed_prefix: {
-            browser_version: discovery?.version ?? null,
-            examined_targets: examined,
-            discovered_targets: discovery?.targets.length ?? null,
-            allowed_targets: allowed,
-            excluded: {
-              unsupported_url: unsupportedUrl,
-              non_page: nonPage,
-            },
-            unconnectable_targets: unconnectable,
-            coverage:
-              "partial: target authorization stopped; remaining targets are unknown",
-          },
+          completed_prefix: completedPrefix,
         },
       );
       if (fileFailure !== undefined) return err(fileFailure);
       return err(
         options.signal?.aborted === true
-          ? new AnalysisCancelledError("list_electron_targets", {
-              cause: options.signal.reason,
+          ? cancelledBy("list_electron_targets", options.signal, {
               diagnostics: {
-                completed_prefix: {
-                  browser_version: discovery?.version ?? null,
-                  examined_targets: examined,
-                  discovered_targets: discovery?.targets.length ?? null,
-                  allowed_targets: allowed,
-                  excluded: {
-                    unsupported_url: unsupportedUrl,
-                    non_page: nonPage,
-                  },
-                  unconnectable_targets: unconnectable,
-                  coverage:
-                    "partial: target authorization stopped; remaining targets are unknown",
-                },
+                completed_prefix: completedPrefix,
               },
             })
           : providerError(cause, "list_electron_targets"),
@@ -345,8 +333,7 @@ export class CdpElectronProvider implements ElectronObservationPort {
     }
     const finalCancellation =
       result.ok && options.signal?.aborted === true
-        ? new AnalysisCancelledError("inspect_electron_page", {
-            cause: options.signal.reason,
+        ? cancelledBy("inspect_electron_page", options.signal, {
             partialObservation: {
               kind: "electron-page-observation",
               inspection: result.value,
@@ -464,8 +451,7 @@ const throwIfElectronOperationCancelled = (
   signal: AbortSignal | undefined,
   operation: "list_electron_targets" | "inspect_electron_page",
 ): void => {
-  if (signal?.aborted === true)
-    throw new AnalysisCancelledError(operation, { cause: signal.reason });
+  if (signal?.aborted === true) throw cancelledBy(operation, signal);
 };
 
 const providerError = (

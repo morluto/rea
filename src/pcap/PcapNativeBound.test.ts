@@ -1,3 +1,4 @@
+import { BOUNDED_PRODUCER_LIMITS } from "../domain/producerResourceLimits.js";
 import { chmod, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -9,7 +10,6 @@ import {
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import {
-  BOUNDED_PRODUCER_LIMITS,
   prlimitCeilingArguments,
   type LinuxResourceLimits,
 } from "../process/LinuxResourceLimits.js";

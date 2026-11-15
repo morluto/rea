@@ -64,6 +64,8 @@ export class ClientConfigurationWriteError extends Error {
 export interface ClientConfigurationSelection {
   readonly requestedPath: string;
   readonly state: Stats | undefined;
+  /** Required by fx's trusted private profile. */
+  readonly requiredMode?: 0o600;
 }
 
 /** The exact staged file retained through publication, verification and recovery. */
@@ -119,6 +121,20 @@ export class ClientConfigurationPublication {
       staging.setFile(owner);
       await owner.handle.writeFile(contents, { encoding: "utf8" });
       await preserveConfigurationAttributes(owner, input, destination);
+      if (selection?.requiredMode !== undefined) {
+        await owner.handle.chmod(selection.requiredMode);
+        if (
+          process.platform !== "win32" &&
+          ((await owner.handle.stat()).mode & 0o777) !== selection.requiredMode
+        )
+          throw new ClientConfigurationWriteError(
+            destination,
+            "preserve_mode",
+            new Error(
+              "The required private profile mode could not be verified",
+            ),
+          );
+      }
       await owner.handle.sync();
       if ((await owner.handle.stat()).ino === 0)
         throw new RegularFileChangedError(stagedPath);

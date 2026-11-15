@@ -205,29 +205,6 @@ export const adaptCliOutputArgumentsForIncur = (
   return adapted;
 };
 
-/**
- * Expand equals-form `mcp add` valued options into spaced forms. Single
- * owner: the project-scope guard and the `mcp add` dispatch in `cli.ts`
- * both consume this, so `--agent=amp` and `--agent amp` select the same
- * agent in both places. An empty `--flag=` form is left intact for the
- * caller's missing-value handling.
- */
-export const expandMcpAddEqualsArguments = (
-  arguments_: readonly string[],
-): string[] =>
-  arguments_.flatMap((token) => {
-    if (
-      token.startsWith("--agent=") ||
-      token.startsWith("--command=") ||
-      token.startsWith("-c=")
-    ) {
-      const separator = token.indexOf("=");
-      const value = token.slice(separator + 1);
-      return value === "" ? [token] : [token.slice(0, separator), value];
-    }
-    return [token];
-  });
-
 type McpAddArgumentError =
   | {
       readonly kind: "missing_value";
@@ -237,7 +214,7 @@ type McpAddArgumentError =
   | { readonly kind: "unexpected_argument"; readonly token: string };
 
 /**
- * Own token consumption for the pinned registration builtin. Agent selection
+ * Own token consumption for the REA registration operation. Agent selection
  * remains observable even for invalid input so the launcher's scope refusal
  * and dispatch cannot interpret a command value as an agent selector.
  */
@@ -245,9 +222,13 @@ export const readMcpAddArguments = (
   command: IncurBuiltinArgumentSplit["command"],
 ): {
   readonly agents: readonly string[];
+  readonly commandText: string | undefined;
+  readonly global: boolean;
   readonly validation: Result<void, McpAddArgumentError>;
 } => {
   const agents: string[] = [];
+  let commandText: string | undefined;
+  let global = true;
   let missing: McpAddArgumentError | undefined;
   let unexpected: McpAddArgumentError | undefined;
   for (let index = 0; index < command.length; index += 1) {
@@ -257,7 +238,7 @@ export const readMcpAddArguments = (
       const equals = token.indexOf("=");
       const value = equals < 0 ? command[++index] : token.slice(equals + 1);
       // Spaced flags cannot satisfy another option's missing value. Equals
-      // values retain Incur's existing expansion/discovery behavior.
+      // values remain caller-selected data, including a leading dash.
       if (
         value === undefined ||
         value === "" ||
@@ -269,33 +250,19 @@ export const readMcpAddArguments = (
           field: flag === "--agent" ? "agent" : "command",
         };
       if (flag === "--agent" && value) agents.push(value);
-    } else if (token !== "--no-global")
-      unexpected ??= { kind: "unexpected_argument", token };
+      if (flag === "--command" || flag === "-c") commandText = value;
+    } else if (token === "--no-global") global = false;
+    else unexpected ??= { kind: "unexpected_argument", token };
   }
   const failure = missing ?? unexpected;
   return {
     agents,
+    commandText,
+    global,
     validation: failure === undefined ? ok(undefined) : err(failure),
   };
 };
 
-/**
- * Detect a project-scoped Amp registration before Incur dispatches it.
- * Incur's `mcp add` parses `--no-global` into `global: false` and honors it
- * for its package-runner agents, but its Amp writer always writes the global
- * settings file and ignores the flag. The guard reads the agent selection
- * dispatch reads: equals forms expand to spaced forms first through
- * `expandMcpAddEqualsArguments`, `--command`/`-c` consumes its value, and
- * Amp registers by default when no agent is given, so a bare project-scoped
- * request would still write global Amp settings. Discovery requests are not
- * registrations: `classifyMcpAddDiscovery` below is the single owner of the
- * discovery classification, so the guard cannot drift from the routing it
- * mirrors.
- */
-// ponytail: reject instead of implementing project-scoped Amp registration.
-// Ceiling: `mcp add --no-global` with Amp fails until Incur supports Amp
-// project scope. Upgrade: drop this guard and its rea.mjs wiring once the
-// dependency writes project Amp settings, and cover that path instead.
 /**
  * How `mcp add` answers a request instead of registering it. Single owner
  * for the discovery flags: the Amp-scope guard and the `mcp add` routing in
@@ -324,18 +291,16 @@ export const classifyMcpAddDiscovery = (
   return undefined;
 };
 
+/** The lightweight launcher and full dispatcher share the same parsed scope fact. */
 export const isProjectScopedAmpRegistration = (
   arguments_: readonly string[],
 ): boolean => {
-  const { command, flags } = splitIncurBuiltinArguments(
-    expandMcpAddEqualsArguments(arguments_),
-  );
+  const { command, flags } = splitIncurBuiltinArguments(arguments_);
   if (command[0] !== "mcp" || command[1] !== "add") return false;
   if (classifyMcpAddDiscovery(flags) !== undefined) return false;
   const rest = command.slice(2);
-  if (!rest.includes("--no-global")) return false;
-  const { agents } = readMcpAddArguments(rest);
-  return agents.length === 0 || agents.includes("amp");
+  const { agents, global } = readMcpAddArguments(rest);
+  return !global && (agents.length === 0 || agents.includes("amp"));
 };
 
 /** Select production doctor using the same normalized builtin argument owner as CLI dispatch. */

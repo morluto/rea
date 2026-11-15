@@ -10,7 +10,7 @@ import type { OnTestFinishedHandler } from "vitest";
 
 import { machoImage } from "../../../src/artifacts/apple/MachoImage.fixture.js";
 import { createArtifactBinarySession } from "../../../src/composition/binary.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { artifactInspectionResultSchema } from "../../../src/domain/artifactInspection.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createServer } from "../../../src/server/createServer.js";
@@ -71,7 +71,6 @@ describe.skipIf(process.platform === "win32")(
       },
     ] as const)(
       "derives inspection and summary coverage from inventory traversal (FIFO: $withFifo)",
-      { timeout: 30_000 },
       async ({ withFifo, status, sourceCoverage }, { mcp, onTestFinished }) => {
         const path = await writeBundle(withFifo);
         const { client, outputSchema } = await connect(mcp, onTestFinished);

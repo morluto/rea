@@ -12,11 +12,12 @@ afterEach(async () => {
     await rm(root, { recursive: true, force: true });
 });
 const queriesSchema = z.object({ queries: z.array(z.string()) });
-/** An uncapped page still cannot classify the call sites behind its edges. */
+/** An uncapped inventory still cannot establish every possible callee. */
 const uncappedCalleeCoverage = {
-  status: "partial",
-  limitations: [UNCLASSIFIED_CALL_SITE_LIMITATION],
-  limited_directions: ["callees"],
+  status: "complete",
+  discovery: {
+    callees: { status: "unknown", reason: UNCLASSIFIED_CALL_SITE_LIMITATION },
+  },
 };
 const addresses = Array.from(
   { length: 20 },
@@ -155,6 +156,7 @@ it("uses the batch through a modern session and preserves the observed callee Ev
       args: [],
       env: {},
       mode: "headless",
+      protocol: "modern",
       timeoutMs: 1000,
       workspaceRoot: root,
     },

@@ -9,7 +9,7 @@ export interface WxapkgMember {
   readonly size?: number;
 }
 
-export interface WxapkgOptions {
+interface WxapkgOptions {
   readonly firstMark?: number;
   readonly lastMark?: number;
   readonly info?: number;

@@ -12,8 +12,6 @@ import {
   type ArtifactFilePrimaryFacts,
 } from "../../artifacts/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
-import type { DwarfUnitsPort } from "../../application/binaryDiagnostics/DwarfUnitsPort.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
@@ -57,7 +55,11 @@ const NO_FILE_BACKED_DEBUG_INFO =
   "This file has no file-backed .debug_info section. That does not establish that a separate debug file is absent.";
 
 /** Portable parser over one bounded, identity-checked regular file. */
-export class DwarfUnitsProvider implements DwarfUnitsPort {
+/**
+ * Satisfies the application's DwarfUnitsPort structurally; composition
+ * checks the fit, so this provider does not import the application layer.
+ */
+export class DwarfUnitsProvider {
   readonly identity = DWARF_UNITS_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
@@ -73,7 +75,10 @@ export class DwarfUnitsProvider implements DwarfUnitsPort {
     }
   }
 
-  async inspect(input: InspectDwarfUnitsInput, options?: ExecutionOptions) {
+  async inspect(
+    input: InspectDwarfUnitsInput,
+    options?: { readonly signal?: AbortSignal },
+  ) {
     try {
       return await this.#resources.run(async () => {
         const snapshot = await readStableArtifact(

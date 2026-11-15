@@ -74,10 +74,13 @@ const textSpellings = (value: string): readonly string[] => {
   const form = new URLSearchParams([["value", value]])
     .toString()
     .slice("value=".length);
+  const escapedXml = xmlEscaped(value);
   const xml = [
     value,
-    xmlEscaped(value),
-    xmlEscaped(value).replaceAll('"', "&quot;"),
+    ...[escapedXml, escapedXml.replaceAll(">", "&gt;")].flatMap((text) => [
+      text,
+      text.replaceAll('"', "&quot;"),
+    ]),
   ];
   return [
     ...new Set([

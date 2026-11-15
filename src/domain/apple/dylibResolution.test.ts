@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  dylibResolutionInputSchema,
   machoImageSlices,
   traceDylibLoading,
   type DylibTreeEntry,
@@ -222,9 +223,9 @@ it.each(["@loader_path_suffix", "@executable_path_suffix", "@loader_path\n"])(
       }),
       { roots: [MAIN] },
     );
-    expect(edgeFor(trace, MAIN, name).resolution).toEqual({
-      status: "undetermined",
-      image: null,
+    expect(edgeFor(trace, MAIN, name)).toMatchObject({
+      candidates: [{ source: "literal", path: name }],
+      resolution: { status: "undetermined", image: null },
     });
   },
 );
@@ -454,7 +455,7 @@ describe("dyld resolution outcomes: deriving path and weak-load outcomes", () =>
     );
   });
 
-  it("derives unresolved and earlier-candidate findings separately for weak loads", async () => {
+  it("reports earlier-rpath misses under environment uncertainty", async () => {
     const trace = await traceDylibLoading(
       memoryView({
         [MAIN]: executable({
@@ -462,14 +463,7 @@ describe("dyld resolution outcomes: deriving path and weak-load outcomes", () =>
             "@executable_path/../Overrides",
             "@executable_path/../Frameworks",
           ],
-          dependencies: [
-            dependency("@rpath/libfound.dylib"),
-            dependency("@rpath/libgone.dylib", {
-              command: "LC_LOAD_WEAK_DYLIB",
-              weak: true,
-            }),
-            dependency("@rpath/libmissing.dylib"),
-          ],
+          dependencies: [dependency("@rpath/libfound.dylib")],
           dyld_environment: ["DYLD_LIBRARY_PATH=/tmp"],
         }),
         "Contents/Frameworks/libfound.dylib": parsed(slice()),
@@ -1027,6 +1021,12 @@ describe("dyld slice compatibility and coverage", () => {
       ],
       resolution: { status: "undetermined", image: null },
     });
+    expect(trace.coverage.status).toBe("partial");
+    expect(trace.limitations).toContainEqual(
+      expect.stringContaining(
+        "Contents/MacOS/libarm.dylib have unknown architecture compatibility",
+      ),
+    );
   });
 
   it("lets an x86_64h process load generic x86_64 but not arm64e load arm64", async () => {
@@ -1276,7 +1276,9 @@ describe("conditional loads", () => {
     ])
       expect(
         trace.findings.find((finding) => finding.kind === kind)?.explanation,
-      ).toContain(`${VENDOR} loads only conditionally; if it loads,`);
+      ).toContain(
+        `The dependency-expansion chain for ${VENDOR} is conditional; if that chain is used,`,
+      );
   });
 });
 
@@ -1793,3 +1795,28 @@ it.each([
     }
   },
 );
+
+describe("caller-selected dylib roots", () => {
+  const admits = (root: string) =>
+    dylibResolutionInputSchema.safeParse({ roots: [root] }).success;
+
+  it.each(["a", "a/b", ".a", "..a", "a.", "a/.b/..c", "Contents/MacOS/App"])(
+    "admits the normalized relative root %j",
+    (root) => expect(admits(root)).toBe(true),
+  );
+
+  it.each([
+    "",
+    "/a",
+    "a/",
+    "a//b",
+    ".",
+    "..",
+    "./a",
+    "a/./b",
+    "a/../b",
+    "a/..",
+    "a\\b",
+    "a\u0000b",
+  ])("refuses the root %j", (root) => expect(admits(root)).toBe(false));
+});

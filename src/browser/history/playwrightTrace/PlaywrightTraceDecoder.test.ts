@@ -1,3 +1,4 @@
+import { projectAnalysisError } from "../../../domain/analysisErrorProjection.js";
 import { createHash } from "node:crypto";
 import { readFile, writeFile, open } from "node:fs/promises";
 import { expect, it } from "vitest";
@@ -380,6 +381,30 @@ it("bounds JSON node expansion even when many tokens fit inside a small physical
     );
     if (result.ok) throw new Error("Expected node admission refusal");
     expect(result.error._tag).toBe("AnalysisResourceConstraintError");
+    expect(projectAnalysisError(result.error).details).toMatchObject({
+      refusal: { limit: 131072, unit: "parser nodes" },
+    });
+    expect(resources.hasPending).toBe(false);
+  } finally {
+    await resources.close();
+  }
+});
+
+it("names the nesting allowance, not the node allowance, for a deeply nested small record", async () => {
+  const trace =
+    header +
+    `{"type":"console","args":${"[".repeat(80)}${"]".repeat(80)},"time":1}\n`;
+  const fixture = await playwrightTraceFixture({ trace, network: "" });
+  const resources = new ArtifactResourceScope();
+  try {
+    const result = await new PlaywrightTraceDecoder(resources).inspect(
+      fixture.path,
+    );
+    if (result.ok) throw new Error("Expected nesting refusal");
+    expect(result.error._tag).toBe("AnalysisResourceConstraintError");
+    expect(projectAnalysisError(result.error).details).toMatchObject({
+      refusal: { limit: 64, unit: "nesting levels" },
+    });
     expect(resources.hasPending).toBe(false);
   } finally {
     await resources.close();

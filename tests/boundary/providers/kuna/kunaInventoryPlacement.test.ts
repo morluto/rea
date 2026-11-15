@@ -2,8 +2,9 @@ import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { expect, it } from "vitest";
+import { expect, it, onTestFinished } from "vitest";
 
+import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
 import { copyAndHash } from "../../../../src/kuna/KunaCommand.js";
 import {
   MACHO_LOAD_COMMAND_PREFIX,
@@ -62,12 +63,13 @@ it("keeps load commands that span stream chunks from the hashed copy", async () 
   const root = await createTestTempDirectory("rea-kuna-input-prefix-");
   const source = join(root, "program");
   await writeFile(source, image);
-  const copied = await copyAndHash(
-    source,
-    join(root, "copy"),
-    new AbortController().signal,
-    MACHO_LOAD_COMMAND_PREFIX,
-  );
+  const resources = new ArtifactResourceScope();
+  onTestFinished(() => resources.close());
+  const copied = await copyAndHash(source, join(root, "copy"), {
+    signal: new AbortController().signal,
+    resources,
+    keep: MACHO_LOAD_COMMAND_PREFIX,
+  });
   expect(copied.sha256).toBe(createHash("sha256").update(image).digest("hex"));
   expect(copied.bytes).toBe(image.length);
   expect(copied.prefix).toEqual(image.subarray(0, 32 + image.readUInt32LE(20)));
@@ -83,22 +85,20 @@ it("keeps load commands that span stream chunks from the hashed copy", async () 
   // keeps what it has.
   expect(
     (
-      await copyAndHash(
-        source,
-        join(root, "plain"),
-        new AbortController().signal,
-      )
+      await copyAndHash(source, join(root, "plain"), {
+        signal: new AbortController().signal,
+        resources,
+      })
     ).prefix,
   ).toHaveLength(0);
   await writeFile(join(root, "short"), image.subarray(0, 12));
   expect(
     await readKunaMachoLayout(
-      await copyAndHash(
-        join(root, "short"),
-        join(root, "short-copy"),
-        new AbortController().signal,
-        MACHO_LOAD_COMMAND_PREFIX,
-      ),
+      await copyAndHash(join(root, "short"), join(root, "short-copy"), {
+        signal: new AbortController().signal,
+        resources,
+        keep: MACHO_LOAD_COMMAND_PREFIX,
+      }),
     ),
   ).toMatchObject({
     status: "unavailable",

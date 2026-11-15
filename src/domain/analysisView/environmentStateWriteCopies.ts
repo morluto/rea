@@ -1,14 +1,19 @@
+import { jsonPointerTokens } from "../jsonPointer.js";
 import type { JsonValue } from "../jsonValue.js";
 import {
   ownMember,
-  pointerTokens,
   scalarText,
   type JsonObject,
   type StateEntity,
 } from "./environmentStateRules.js";
 import { GENERATED } from "./environmentStateWriteGenerated.js";
 import type { FieldRule } from "./environmentStateWriteRules.js";
-import { delimitedOffsets, readClock } from "./environmentStateWriteValues.js";
+import {
+  delimitedOffsets,
+  joinsAfter,
+  joinsBefore,
+  readClock,
+} from "./environmentStateWriteValues.js";
 
 /** Shorter body strings are too common to show that a field copied one. */
 export const COPY_MIN_LENGTH = 8;
@@ -44,19 +49,13 @@ export const storedMembers = (
     rules.flatMap((rule) => {
       if (rule.rule === "echo") return [rule.field];
       if (rule.rule === "reference") return [rule.member];
-      const tokens = rule.rule === "copy" ? pointerTokens(rule.from) : [];
+      const tokens = rule.rule === "copy" ? jsonPointerTokens(rule.from) : [];
       // A member also stored otherwise under its own name is not stored as sent.
       return tokens.length === 1 && !Object.hasOwn(entity, tokens[0]!)
         ? tokens
         : [];
     }),
   );
-
-/** A letter or digit, which joins a token to the text around it. */
-const WORD = /[\p{L}\p{N}]/u;
-
-const joins = (character: string | undefined): boolean =>
-  character !== undefined && WORD.test(character);
 
 /**
  * The texts that hold each token delimited, read in one pass per text: from each start after a
@@ -72,10 +71,10 @@ const holdersOf = (
   const holders = new Map<string, Set<string>>();
   for (const [field, text] of texts)
     for (let at = 0; at < text.length; at += 1) {
-      if (joins(text[at - 1])) continue;
+      if (joinsBefore(text, at)) continue;
       for (const length of lengths) {
         if (at + length > text.length) break;
-        if (joins(text[at + length])) continue;
+        if (joinsAfter(text, at + length)) continue;
         const token = text.slice(at, at + length);
         if (tokens.has(token))
           holders.set(token, (holders.get(token) ?? new Set()).add(field));

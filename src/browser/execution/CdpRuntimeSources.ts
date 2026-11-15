@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
 import { z } from "zod";
+import { webTextFacts } from "../../domain/webContentArtifact.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { sanitizeBrowserUrl } from "../../domain/browserObservation.js";
@@ -247,42 +247,38 @@ export class CdpRuntimeSources {
   }
 
   private async capture(scriptId: string): Promise<WebRuntimeSource["source"]> {
-    let raw: unknown;
+    let text: string;
     try {
-      raw = await this.session.command("Debugger.getScriptSource", {
-        scriptId,
-      });
+      ({ scriptSource: text } = await this.session.command(
+        "Debugger.getScriptSource",
+        { scriptId },
+      ));
     } catch (cause: unknown) {
       if (
         this.session.options.signal?.aborted ||
         !(cause instanceof AnalysisError)
       )
         throw cause;
+      // A failed or malformed reply limits only this script. The reason is the
+      // boundary's own failure text, which names a malformed reply's pointer.
       return {
         state: "unavailable",
         reason: cause.userMessage ?? cause.message,
       };
     }
-    const source = z.object({ scriptSource: z.string() }).safeParse(raw);
-    if (!source.success)
-      throw new AnalysisOutputError(
-        this.session.operation,
-        "Debugger.getScriptSource returned malformed source text.",
-      );
-    const text = source.data.scriptSource;
-    const bytes = Buffer.byteLength(text);
-    this.#sourceBytes += bytes;
+    this.#sourceBytes += Buffer.byteLength(text);
     assertRuntimeRetention(
       this.session.operation,
       "sources",
       this.#sourceBytes,
     );
+    const facts = webTextFacts(text);
     return {
       state: "captured",
       text,
-      sha256: createHash("sha256").update(text).digest("hex"),
-      utf8_bytes: bytes,
-      utf16_units: text.length,
+      sha256: facts.sha256,
+      utf8_bytes: facts.utf8Bytes,
+      utf16_units: facts.utf16Units,
     };
   }
 }

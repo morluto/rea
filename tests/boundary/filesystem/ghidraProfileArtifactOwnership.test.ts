@@ -6,8 +6,9 @@ import { GhidraHeadlessLauncher } from "../../../src/ghidra/GhidraLauncher.js";
 import { GhidraProvider } from "../../../src/ghidra/GhidraProvider.js";
 import { ghidraProfileInstallationHost } from "../../../src/ghidra/GhidraInstallation.fixture.js";
 import { silentLogger } from "../../../src/logger.js";
+import { OwnerCancellation } from "../../../src/domain/analysisErrorCore.js";
 import { createDeferred } from "../../fixtures/binarySession.js";
-import { STARTUP_OWNER_CLOSED } from "../../../src/process/SharedStartupAttempt.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import {
   readFile,
   rename,
@@ -391,15 +392,21 @@ it("joins whole provider resolution before shutdown and gates the next admission
     opens++;
   };
   const resolving = provider.resolveAnalysisProfile(target);
-  await entered.promise;
-  const count = opens;
-  let closed = false;
-  const closing = provider.closeOwnedResources().then((result) => {
-    closed = true;
-    return result;
-  });
-  const next = provider.resolveAnalysisProfile(target);
+  let closing: ReturnType<typeof provider.closeOwnedResources> | undefined;
+  let next: ReturnType<typeof provider.resolveAnalysisProfile> | undefined;
   try {
+    await awaitAcknowledgement(
+      entered.promise,
+      resolving,
+      "profile resolution",
+    );
+    const count = opens;
+    let closed = false;
+    closing = provider.closeOwnedResources().then((result) => {
+      closed = true;
+      return result;
+    });
+    next = provider.resolveAnalysisProfile(target);
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(closed).toBe(false);
     expect(opens).toBe(count);
@@ -407,13 +414,13 @@ it("joins whole provider resolution before shutdown and gates the next admission
     release.resolve();
     const stopped = await resolving;
     if (stopped.ok) throw new Error("Expected owned resolution cancellation");
-    expect(stopped.error.cause).toBe(STARTUP_OWNER_CLOSED);
+    expect(stopped.error.cause).toBe(OwnerCancellation.startupOwnerClosed);
     expect(stopped).toMatchObject({
       ok: false,
       error: {
         _tag: "AnalysisCancelledError",
         operation: "open_binary",
-        cause: STARTUP_OWNER_CLOSED,
+        cause: OwnerCancellation.startupOwnerClosed,
       },
     });
     expect(await closing).toEqual({ ok: true, value: null });
@@ -421,7 +428,11 @@ it("joins whole provider resolution before shutdown and gates the next admission
     expect(provider.hasPendingOwnedResources()).toBe(false);
   } finally {
     release.resolve();
-    await Promise.all([resolving, closing, next]);
+    await Promise.allSettled([
+      resolving,
+      ...(closing ? [closing] : []),
+      ...(next ? [next] : []),
+    ]);
     await provider.closeOwnedResources();
   }
 });

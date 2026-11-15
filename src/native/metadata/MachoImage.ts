@@ -1,3 +1,8 @@
+import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
+import type {
+  FileMapping,
+  ZeroFillMapping,
+} from "../../domain/virtualFileMapping.js";
 import { decodeMachoFixedName } from "../AppleMachoNames.js";
 import {
   isMachoZeroFillSection,
@@ -13,10 +18,8 @@ import {
   BinaryFormatFailure,
   BinaryReader,
   type BinaryContainer,
-  type FileMapping,
   type ImageSection,
   type LoadRegion,
-  type ZeroFillMapping,
 } from "./BinaryContainer.js";
 import {
   MachoLoadCommandCursor,
@@ -34,7 +37,7 @@ export const readMachoImage = (
   const table = parsed.value;
   const { headerSize, commandBytes, littleEndian: little } = table;
   const bits = table.wide ? 64 : 32;
-  const reader = new BinaryReader(bytes, little);
+  const reader = new BinaryReader(bytes, little, "macho");
   const commandStart = reader.table(
     BigInt(headerSize),
     commandBytes,
@@ -53,9 +56,9 @@ export const readMachoImage = (
     const frame = commands.read(bytes.subarray(offset, offset + 8));
     if (!frame.ok) throw new BinaryFormatFailure("malformed", frame.error);
     const { command, size } = frame.value;
-    if (command === 0x80000034) chainedFixups = true;
-    if (command === 1 || command === 0x19) {
-      const wide = command === 0x19;
+    if (command === LC.DYLD_CHAINED_FIXUPS) chainedFixups = true;
+    if (command === LC.SEGMENT || command === LC.SEGMENT_64) {
+      const wide = command === LC.SEGMENT_64;
       if (wide !== (bits === 64))
         throw new BinaryFormatFailure(
           "malformed",

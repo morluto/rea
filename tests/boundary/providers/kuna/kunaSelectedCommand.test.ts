@@ -49,7 +49,7 @@ const runInstallation = (
     workspace,
     operation: "kuna:selection-fixture",
     timeoutMs: 5_000,
-    deadline: { setting: "REA_KUNA_TIMEOUT_MS", ms: 5_000 },
+    deadline: { setting: "REA_KUNA_TIMEOUT_MS", source: "setting", ms: 5_000 },
     outputBytes: 4096,
     signal: new AbortController().signal,
     retainFailedFileClose: (owner, path) => resources.retain(owner, path),

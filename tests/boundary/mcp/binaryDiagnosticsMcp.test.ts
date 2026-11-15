@@ -28,10 +28,67 @@ import {
   binaryLayoutFixture,
   BINARY_LAYOUT_TEST_PROVIDER,
 } from "../../fixtures/binaryDiagnostics/layout.js";
-import { elfExportImage } from "../../fixtures/binaryDiagnostics/nativeExports.js";
+import {
+  elfExportImage,
+  peStoredExportTableImage,
+  peRepeatedExportNamesImage,
+} from "../../fixtures/binaryDiagnostics/nativeExports.js";
 import { parseNativeExports } from "../../../src/native/exports/NativeExportParser.js";
 import { createNativeExportsService } from "../../../src/composition/binaryDiagnostics.js";
 import { registerNativeExportsTool } from "../../../src/server/registerNativeExportsTool.js";
+
+it("reports the exhausted native export allowance through MCP", async () => {
+  const root = await createTestTempDirectory("rea-native-export-mcp-limits-");
+  const session = createTestBinarySession(() => {
+    throw new Error("deep provider must not start");
+  });
+  const server = createServer({ kind: "session", session });
+  const client = new Client({ name: "native-export-limits", version: "1" });
+  onTestFinished(async () => {
+    await client.close();
+    await server.close();
+    await session.close();
+  });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+
+  const cases = [
+    {
+      filename: "byte-limit.dll",
+      bytes: peRepeatedExportNamesImage(0x3000),
+      maximum: 16777216,
+      expected: "fixed byte allowance",
+      excluded: "fixed count",
+    },
+    {
+      filename: "count-limit.dll",
+      bytes: peStoredExportTableImage(0x40001),
+      maximum: 262144,
+      expected: "fixed count",
+      excluded: "fixed byte allowance",
+    },
+  ];
+  for (const fixture of cases) {
+    const path = join(root, fixture.filename);
+    await writeFile(path, fixture.bytes);
+    const response = await client.callTool({
+      name: "inspect_native_exports",
+      arguments: { path },
+    });
+    const { error } = parseMcpToolError(response);
+    expect(error).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        reported_limits: { boundary: "structure", maximum: fixture.maximum },
+      },
+    });
+    expect(error.remediation.action).toContain(fixture.expected);
+    expect(error.remediation.action).not.toContain(fixture.excluded);
+  }
+});
 
 it.each(["inspect_native_exports", "inspect_byte_entropy"] as const)(
   "refuses %s summary before file admission when retention is unavailable",
@@ -261,14 +318,13 @@ it("records inline layout with compact schemas and canonical path checks", async
       approval: true,
     }),
   ).toBe(false);
-  const response = await client.callTool({
-    name: "inspect_binary_layout",
-    arguments: { path: value.artifact.path },
-  });
+  const response = await client.callTool(
+    { name: "inspect_binary_layout", arguments: { path: value.artifact.path } },
+    { toolDefinition: schemas.toolDefinition },
+  );
   const evidence = assertRecordedMcpEvidence(
     response,
     "inspect_binary_layout",
-    schemas,
     session,
     value,
     "observed",
@@ -326,20 +382,16 @@ it("profiles real bytes with exact offsets, valid advertised schemas and read-on
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   await client.connect(clientTransport);
-  const { ajv, inputSchema, outputSchema } = await advertisedMcpToolSchemas(
+  const { ajv, inputSchema, toolDefinition } = await advertisedMcpToolSchemas(
     client,
     "inspect_byte_entropy",
   );
   expect(ajv.validate(inputSchema, { path, surprise: true })).toBe(false);
-  const response = await client.callTool({
-    name: "inspect_byte_entropy",
-    arguments: { path },
-  });
+  const response = await client.callTool(
+    { name: "inspect_byte_entropy", arguments: { path } },
+    { toolDefinition },
+  );
   expect(response.isError).not.toBe(true);
-  expect(
-    ajv.validate(outputSchema, response.structuredContent),
-    JSON.stringify(ajv.errors),
-  ).toBe(true);
   const evidence = parseEvidence(response.structuredContent);
   const report = byteEntropySchema.parse(evidence.normalized_result);
   expect(report.runs).toEqual([
@@ -402,10 +454,10 @@ it("records a portable export inventory through MCP without a binary target", as
     "inspect_native_exports",
   );
   expect(schemas.ajv.validate(schemas.inputSchema, { path })).toBe(true);
-  const response = await client.callTool({
-    name: "inspect_native_exports",
-    arguments: { path },
-  });
+  const response = await client.callTool(
+    { name: "inspect_native_exports", arguments: { path } },
+    { toolDefinition: schemas.toolDefinition },
+  );
   expect(
     parseEvidence(response.structuredContent).normalized_result,
   ).toMatchObject({
@@ -425,7 +477,6 @@ it("records a portable export inventory through MCP without a binary target", as
   assertRecordedMcpEvidence(
     response,
     "inspect_native_exports",
-    schemas,
     session,
     parseNativeExports(bytes, {
       path,

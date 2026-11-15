@@ -11,7 +11,6 @@ import {
 } from "../../../src/application/desktop/desktopCapture.fixture.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import type { DesktopApplicationCapture } from "../../../src/domain/desktop/desktopCapture.js";
-import { seedWording } from "../../../src/domain/desktop/appExport.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { LINUX_ARGUMENT_VECTOR_BYTES } from "../../../src/desktop/BuildComputerController.js";
 import {
@@ -121,7 +120,7 @@ it("captures the app inside the computer, acknowledges checkpoints, drafts the t
     (
       await callOk(client, "export_build_environment", {
         computer_id: id,
-        task: TASK,
+        tasks: [{ task: TASK }],
         directory,
       })
     ).structuredContent,
@@ -139,7 +138,7 @@ it("captures the app inside the computer, acknowledges checkpoints, drafts the t
     environment: "notes",
     files: (await files(directory)).length,
     seed_files: [".config/notes/settings.ini", "Documents/today.txt"],
-    task: { name: "add-eggs", failing_on_seed: [expect.any(String)] },
+    tasks: [{ name: "add-eggs", failing_on_seed: [expect.any(String)] }],
   });
   expect(await rea.notes("tasks.jsonl")).toEqual([TASK]);
 
@@ -191,11 +190,7 @@ it("captures the app inside the computer, acknowledges checkpoints, drafts the t
       .parameters,
   ).toMatchObject({ synthetic_seed: true });
   expect(await readFile(join(directory, "README.md"), "utf8")).toContain(
-    seedWording({
-      name: exported.environment,
-      seedCheckpoint: "seed",
-      syntheticSeed: true,
-    }).notice,
+    `The seed was made for this task, not taken from a user's own data; read \`envs/${exported.environment}/seed/\` before publishing the bundle.`,
   );
   expectNoToken(computer, [started, seed, stopped, exported]);
 });
@@ -209,7 +204,7 @@ it("keeps a screenshot of each checkpoint in the computer, which the export take
   await callOk(client, "stop_build_capture", { computer_id: id });
   await callOk(client, "export_build_environment", {
     computer_id: id,
-    task: TASK,
+    tasks: [{ task: TASK }],
     directory: join(await createTestTempDirectory("build-screens-"), "out"),
   });
 
@@ -350,6 +345,26 @@ it("refuses an older build runtime before capturing the app", async () => {
   );
 });
 
+it("refuses a build runtime whose export takes no task ends before capturing the app", async () => {
+  const { rea, client } = await fakes({
+    env: { FAKE_REA_EXPORT_WITHOUT: "taskEnd" },
+  });
+  const id = await startBuildComputer(client, REQUEST);
+  const { error } = parseMcpToolError(
+    await client.callTool({
+      name: "start_build_capture",
+      arguments: { computer_id: id },
+    }),
+  );
+  expect(error.message).toContain("does not support task ends");
+  expect(error.message).not.toContain("synthetic seeds");
+  expect(JSON.stringify(error)).toContain("pack:build-computer-runtime");
+  const calls = (await rea.notes("calls.jsonl")) as { argv: string[] }[];
+  expect(calls.map(({ argv }) => argv[0])).not.toContain(
+    "capture-desktop-application",
+  );
+});
+
 it("reports an unsuccessful runtime schema command without diagnosing its cause", async () => {
   const { rea, client } = await fakes({
     env: { FAKE_REA_SCHEMA_FAILURE: "1" },
@@ -406,12 +421,14 @@ it("exports a task larger than the old 96 KiB refusal and keeps its prompt", asy
     (
       await callOk(client, "export_build_environment", {
         computer_id: id,
-        task,
+        tasks: [{ task }],
         directory: join(await createTestTempDirectory("build-out-"), "b"),
       })
     ).structuredContent,
   );
-  expect(exported.task).toMatchObject({ name: task.name });
+  expect(exported.tasks).toEqual([
+    expect.objectContaining({ name: task.name }),
+  ]);
   expect(await rea.notes("tasks.jsonl")).toEqual([task]);
   const calls = (await rea.notes("calls.jsonl")) as { argv: string[] }[];
   expect(calls.map(({ argv }) => argv[0])).toContain(
@@ -421,7 +438,9 @@ it("exports a task larger than the old 96 KiB refusal and keeps its prompt", asy
     name: "export_build_environment",
     arguments: {
       computer_id: id,
-      task: { ...task, prompt: "a".repeat(LINUX_ARGUMENT_VECTOR_BYTES) },
+      tasks: [
+        { task: { ...task, prompt: "a".repeat(LINUX_ARGUMENT_VECTOR_BYTES) } },
+      ],
       directory: join(await createTestTempDirectory("build-out-"), "b"),
     },
   });
@@ -466,7 +485,7 @@ it("refuses capture steps out of order and a capture of a bundle's computer", as
     (
       await call("export_build_environment", {
         computer_id: id,
-        task: TASK,
+        tasks: [{ task: TASK }],
         directory: join(await createTestTempDirectory("build-out-"), "b"),
       })
     ).error.message,

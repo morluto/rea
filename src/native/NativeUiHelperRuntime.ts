@@ -1,4 +1,5 @@
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
@@ -16,8 +17,7 @@ export interface NativeUiHelperRuntime {
   readonly invoke: NativeUiHelper;
   readonly cleanupLease: AnalysisCleanupLease;
   readonly signal: AbortSignal;
-  /** Omitted by test doubles; production runtimes always set the selected deadline. */
-  readonly deadlineMs?: number;
+  readonly deadlineMs: number;
   close(): Promise<void>;
   resources(): readonly string[];
 }
@@ -27,7 +27,10 @@ export const createNativeUiHelperRuntime = (
   environment: Readonly<NodeJS.ProcessEnv>,
   deadlineMs = DEFAULT_NATIVE_UI_DEADLINE_MS,
 ): NativeUiHelperRuntime => {
-  const selectedEnvironment = snapshotEnvironment(environment);
+  const selectedEnvironment = snapshotEnvironment(
+    environment,
+    HOST_PLATFORM.platform,
+  );
   const deadlineSignal = AbortSignal.timeout(deadlineMs);
   const operations = new ArtifactResourceScope();
   // Both helper stages share the selected deadline. A shorter fixed exec

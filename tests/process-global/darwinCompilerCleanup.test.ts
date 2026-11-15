@@ -43,14 +43,17 @@ import {
 } from "../../src/process/DarwinProcessRunTokenReader.js";
 import { NativeMacOSProvider } from "../../src/native/NativeMacOSProvider.js";
 import { XcrunCommandRunner } from "../../src/native/CommandRunner.js";
-import { nativeMachoTarget } from "../fixtures/nativeCommands.js";
+import { nativeMachoTargetForFile } from "../fixtures/nativeCommands.js";
 import { GhidraClient } from "../../src/ghidra/GhidraClient.js";
 import { GhidraHeadlessLauncher } from "../../src/ghidra/GhidraLauncher.js";
 import { captureProcessScenario } from "../../src/process/capture/ProcessHarness.js";
+import { ProcessCaptureResourceScope } from "../../src/process/capture/ProcessCaptureLifecycle.js";
 import { processScenarioSchema } from "../../src/domain/process/processScenario.js";
+import { primaryAnalysisError } from "../../src/domain/analysisErrorBase.js";
 import { systemProcessOwnershipHost } from "../../src/process/ProcessOwnershipObservation.js";
 import { ghidraFixturePath } from "../boundary/providers/ghidra/ghidraClient.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { waitFor } from "../support/testWait.js";
 let releaseCleanup: (() => void) | undefined;
 const clients: GhidraClient[] = [];
 const readers: ReturnType<typeof createDarwinProcessRunTokenReader>[] = [];
@@ -110,14 +113,11 @@ const waitForCompilerReady = async (
       settled = { value };
     },
   );
-  const outcome = await vi.waitFor(
-    async () => {
-      if (settled !== undefined) return settled;
-      expect(await readFile(readyPath, "utf8")).toBe("ready");
-      return undefined;
-    },
-    { timeout: 10_000 },
-  );
+  const outcome = await waitFor(async () => {
+    if (settled !== undefined) return settled;
+    expect(await readFile(readyPath, "utf8")).toBe("ready");
+    return undefined;
+  });
   if (outcome !== undefined)
     throw new Error("Compiler operation settled before its ready marker", {
       cause: outcome.value,
@@ -184,7 +184,7 @@ it
       mode === "two retries"
         ? reader.prepare().catch((cause: unknown) => cause)
         : reader.close();
-    await vi.waitFor(() => expect(fault.attempts).toBe(before + 1));
+    await waitFor(() => expect(fault.attempts).toBe(before + 1));
     await new Promise((resolve) => setImmediate(resolve));
     expect(fault.attempts).toBe(before + 1);
     release?.();
@@ -280,7 +280,7 @@ it.skipIf(process.platform === "win32")(
     await client.close();
     expect(result.error.cleanupFailure?.cleanupIncomplete).toBe(true);
     fault.blocked = false;
-    await reader.close();
+    await client.close();
     expect(result.error.cleanupFailure?.cleanupIncomplete).toBe(false);
   },
 );
@@ -289,6 +289,7 @@ it.skipIf(process.platform === "win32")(
   "capture boundary retains compiler output and follows the actual helper cleanup retry",
   async () => {
     const { reader } = await fixture();
+    const resources = new ProcessCaptureResourceScope();
     vi.spyOn(systemProcessOwnershipHost, "prepare").mockImplementation(
       async (signal) => {
         await reader.prepare(signal);
@@ -299,6 +300,10 @@ it.skipIf(process.platform === "win32")(
       undefined,
       "linux",
       {},
+      undefined,
+      undefined,
+      undefined,
+      resources,
     );
     expect(result).toMatchObject({
       ok: false,
@@ -315,7 +320,7 @@ it.skipIf(process.platform === "win32")(
     });
     if (result.ok) throw new Error("Expected capture preparation failure");
     fault.blocked = false;
-    await reader.close();
+    await resources.close();
     expect(result.error.cleanupIncomplete).toBe(false);
     expect(result.error.capturedOutput?.exit_code).toBe(7);
   },
@@ -336,11 +341,11 @@ it.skipIf(process.platform !== "darwin").each([false, true])(
       {},
       new XcrunCommandRunner({}),
       "darwin",
-    ).createClient(nativeMachoTarget(ghidraFixturePath));
+    ).createClient(await nativeMachoTargetForFile(ghidraFixturePath));
     try {
       const result = await client.execute(
-        "list_architectures",
-        {},
+        "demangle_swift",
+        { symbols: ["fixture"] },
         { signal: controller.signal },
       );
       if (result.ok) throw new Error("Expected failed process preparation");
@@ -354,13 +359,16 @@ it.skipIf(process.platform !== "darwin").each([false, true])(
           stderr_bytes: 28,
           exit_code: 7,
         },
-        diagnostics: { phase: "process-preparation", tool: "lipo" },
+      });
+      expect(primaryAnalysisError(result.error).diagnostics).toMatchObject({
+        phase: "process-preparation",
+        tool: "swift-demangle",
       });
       expect(result.error.cleanupResources).toEqual([...fault.roots]);
-      expect((await client.close()).ok).toBe(true);
+      expect((await client.close()).ok).toBe(false);
       expect(result.error.cleanupIncomplete).toBe(true);
       fault.blocked = false;
-      await reader.close();
+      expect((await client.close()).ok).toBe(true);
       expect(result.error.cleanupIncomplete).toBe(false);
       expect(result.error.capturedOutput?.exit_code).toBe(7);
     } finally {
@@ -389,10 +397,10 @@ it
       {},
       new XcrunCommandRunner({}),
       "darwin",
-    ).createClient(nativeMachoTarget(ghidraFixturePath));
+    ).createClient(await nativeMachoTargetForFile(ghidraFixturePath));
     const pending = client.execute(
-      "list_architectures",
-      {},
+      "demangle_swift",
+      { symbols: ["fixture"] },
       { signal: controller.signal },
     );
     try {
@@ -400,16 +408,18 @@ it
       controller.abort(reason);
       const result = await pending;
       if (result.ok) throw new Error("Expected cancelled preparation");
-      expect(result.error).toMatchObject({
+      expect(result.error.cleanupIncomplete).toBe(true);
+      const primary = primaryAnalysisError(result.error);
+      expect(primary).toMatchObject({
         _tag: "AnalysisCancelledError",
-        cleanupIncomplete: true,
-        diagnostics: { phase: "process-preparation", reason: "cancelled" },
+        operation: "demangle_swift",
+        inspectionFailure: { cancellation: { reason } },
       });
-      expect(result.error.cause).toBe(reason);
-      expect((await client.close()).ok).toBe(true);
+      expect(primary.cause).toBe(reason);
+      expect((await client.close()).ok).toBe(false);
       expect(result.error.cleanupIncomplete).toBe(true);
       fault.blocked = false;
-      await reader.close();
+      expect((await client.close()).ok).toBe(true);
       expect(result.error.cleanupIncomplete).toBe(false);
     } finally {
       controller.abort(reason);
