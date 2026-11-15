@@ -14,7 +14,7 @@ import {
   AnalysisInputError,
 } from "../../domain/analysisErrorCore.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import {
   desktopApplicationCaptureSchema,
@@ -163,11 +163,7 @@ export const readDesktopCapture = async (
         primary,
         new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
       );
-    throw analysisErrorWithCleanupFailure(
-      primary,
-      cleanup,
-      OPERATION,
-    ).bindCleanupDependencies([primary, cleanup]);
+    throw analysisErrorWithCleanupDependencies(primary, cleanup, OPERATION);
   }
   if (!outcome.ok) {
     if (!signal?.aborted) throw outcome.error;
