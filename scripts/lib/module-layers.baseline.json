@@ -9,7 +9,6 @@
     "config -> native": 1,
     "desktop -> application": 4,
     "dotnet -> application": 1,
-    "il2cpp -> application": 1,
     "native -> application": 2
   },
   "cycles": [
