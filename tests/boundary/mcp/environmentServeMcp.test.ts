@@ -21,6 +21,7 @@ import {
   processTest,
   type TestProcesses,
 } from "../../support/process/processFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const CARD_PATH = "/.well-known/agent-env.json";
 /** SHA-256 of the 14,519-byte card served for the fixture named "renamed", its descriptions naming each tool's recorded responses; pure replay must serve these bytes. */
@@ -53,7 +54,10 @@ const serveReplayOnly = async (
 
 const connect = async (url: URL) => {
   const transport = new StreamableHTTPClientTransport(url);
-  const client = new Client({ name: "environment-boundary", version: "1" });
+  const client = new Client(
+    { name: "environment-boundary", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   await client.connect(transport);
   return client;
 };

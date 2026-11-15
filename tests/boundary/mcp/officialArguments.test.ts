@@ -20,10 +20,14 @@ import {
   createBinarySessionTargets,
   createTestBinarySession,
 } from "../../fixtures/binarySession.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const connect = async (analysis: AnalysisOperationPort) => {
   const server = createServer({ kind: "fixed", analysis });
-  const client = new Client({ name: "argument-parity", version: "1.0.0" });
+  const client = new Client(
+    { name: "argument-parity", version: "1.0.0" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();

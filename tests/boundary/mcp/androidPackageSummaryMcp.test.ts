@@ -40,6 +40,7 @@ import {
   createJadxProtocolFixture,
   verifyJadxFixtureCleanup,
 } from "../../fixtures/android/jadx.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 async function assertAndroidPackageSelectedFacetContract(options: {
   client: Pick<Client, "callTool">;
@@ -562,7 +563,10 @@ it("rejects unavailable retention, invalid selectors and cancellation before pro
     { kind: "fixed", analysis: session },
     { androidAnalysis: provider },
   );
-  const client = new Client({ name: "android-fixed-summary", version: "1" });
+  const client = new Client(
+    { name: "android-fixed-summary", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();

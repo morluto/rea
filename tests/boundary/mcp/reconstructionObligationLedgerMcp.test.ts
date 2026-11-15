@@ -30,6 +30,7 @@ import {
   reviewedObligation,
 } from "../../../src/application/ReconstructionObligationLedger.fixture.js";
 import { observed } from "../../fixtures/analysisExecution.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 type LedgerRequest = (
   evidenceBundle: unknown,
@@ -45,7 +46,10 @@ const withLedgerClient = async (
     close: () => Promise.resolve(resultOk(null)),
   }));
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "obligation-ledger-test", version: "1" });
+  const client = new Client(
+    { name: "obligation-ledger-test", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -291,7 +295,10 @@ describe("reconstruction obligation ledger MCP parity", () => {
       close: () => Promise.resolve(resultOk(null)),
     }));
     const server = createServer({ kind: "session", session });
-    const client = new Client({ name: "obligation-ledger-test", version: "1" });
+    const client = new Client(
+      { name: "obligation-ledger-test", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -383,7 +390,10 @@ describe("reconstruction obligation ledger MCP parity", () => {
       close: () => Promise.resolve(resultOk(null)),
     }));
     const server = createServer({ kind: "session", session });
-    const client = new Client({ name: "obligation-ledger-test", version: "1" });
+    const client = new Client(
+      { name: "obligation-ledger-test", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {

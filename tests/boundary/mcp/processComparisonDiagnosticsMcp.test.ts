@@ -30,6 +30,7 @@ import { digestProcessCommitment } from "../../../src/domain/process/processScen
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const captureEvidence = (
   side: "left" | "right",
@@ -77,7 +78,10 @@ const connect = async (
       },
     },
   );
-  const client = new Client({ name: "process-comparison-test", version: "1" });
+  const client = new Client(
+    { name: "process-comparison-test", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await Promise.allSettled([client.close(), server.close(), session.close()]);
   });

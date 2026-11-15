@@ -21,6 +21,7 @@ import { ghidraFunctionDossier } from "../../../src/domain/ghidraValues.fixture.
 import { parseGhidraFunctionInput } from "../../../src/ghidra/GhidraFunctionValues.js";
 import { EvidenceLedger } from "../../../src/application/investigation/EvidenceLedger.js";
 import { registerAnalysisViewTool } from "../../../src/server/registerAnalysisViewTool.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
 const partialCallees = {
@@ -94,7 +95,10 @@ const connect = async (
     retain ? lookup : undefined,
     retain ? record : undefined,
   );
-  const client = new Client({ name: "fn-detail-client", version: "1" });
+  const client = new Client(
+    { name: "fn-detail-client", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();

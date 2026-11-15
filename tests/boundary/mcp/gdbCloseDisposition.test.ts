@@ -7,6 +7,7 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { McpServer } from "@modelcontextprotocol/server";
 import { expect, it, onTestFinished } from "vitest";
 
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { GdbSessionManager } from "../../../src/gdb/GdbSessionManager.js";
@@ -68,7 +69,10 @@ createInterface({ input: process.stdin }).on('line', line => {
       silentLogger,
       createToolResultDelivery(undefined),
     );
-    const client = new Client({ name: "gdb-disposition-test", version: "1" });
+    const client = new Client(
+      { name: "gdb-disposition-test", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     onTestFinished(() => client.close());
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();

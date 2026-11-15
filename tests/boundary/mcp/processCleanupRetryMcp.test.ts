@@ -23,6 +23,7 @@ import {
 import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { ToolResultDelivery } from "../../../src/server/ToolResultDelivery.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const createTemporaryRoot = (): Promise<string> =>
   mkdtemp(join(tmpdir(), "rea-mcp-process-cleanup-retry-"));
@@ -54,7 +55,10 @@ const connectSession = async () => {
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const client = new Client({ name: "process-cleanup-retry", version: "1" });
+  const client = new Client(
+    { name: "process-cleanup-retry", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   onTestFinished(() => closeSession({ client, server, session }));

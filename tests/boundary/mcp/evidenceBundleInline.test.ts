@@ -16,6 +16,7 @@ import { ANALYSIS_SNAPSHOT_TARGET } from "../../../src/domain/analysisSnapshot.f
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it("exports and imports GameCube DOL Evidence without losing its subject identity", async () => {
   const root = await createTestTempDirectory("rea-dol-bundle-mcp-");
@@ -124,7 +125,10 @@ it("returns the complete session Evidence bundle in the tool result", async () =
   }));
   expect(session.recordEvidence(evidence).ok).toBe(true);
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "inline-evidence-bundle", version: "1" });
+  const client = new Client(
+    { name: "inline-evidence-bundle", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
 
@@ -349,7 +353,10 @@ const connectEvidenceMcp = async (
   session: ReturnType<typeof createTestBinarySession>,
 ) => {
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name, version: "1" });
+  const client = new Client(
+    { name, version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
