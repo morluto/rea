@@ -20,13 +20,23 @@ export interface PublishedEvidenceFileObservation {
 export class EvidenceIntegrityError extends AnalysisError {
   readonly _tag = "EvidenceIntegrityError";
   override readonly userMessage: string | undefined;
+  /** For a two-sided comparison input, the side whose Evidence failed. */
+  readonly side: "left" | "right" | undefined;
+  /** The first failing location inside that Evidence or its result, when schema-located. */
+  readonly issuePath: readonly (string | number)[] | undefined;
 
   constructor(
     message: string,
-    options?: AnalysisErrorOptions & { readonly userMessage?: string },
+    options?: AnalysisErrorOptions & {
+      readonly userMessage?: string;
+      readonly side?: "left" | "right";
+      readonly issuePath?: readonly (string | number)[];
+    },
   ) {
     super(message, options);
     this.userMessage = options?.userMessage;
+    this.side = options?.side;
+    this.issuePath = options?.issuePath;
   }
 }
 

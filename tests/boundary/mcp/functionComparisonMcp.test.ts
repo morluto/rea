@@ -420,6 +420,7 @@ describe("function comparison input-kind diagnostics", () => {
     expect(parseMcpToolError(result).error).toMatchObject({
       code: "evidence_integrity_mismatch",
       category: "integrity_mismatch",
+      details: { side: "left", issue_path: ["evidence_id"] },
     });
   });
 });
