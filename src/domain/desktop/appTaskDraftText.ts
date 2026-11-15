@@ -293,6 +293,7 @@ const outsideRuns = (pointer: string, ends: Ends): readonly Candidate[] => {
             identifier: false,
           }));
       }
+      // generation-cap: ancestor tags climbed to name an element
       return [current, ...[...passed.slice(1), named].slice(0, MAX_TAG_CLIMB)]
         .filter((element, index, all) => all.indexOf(element) === index)
         .map((element) => ({ element, pointer: element, identifier: false }));

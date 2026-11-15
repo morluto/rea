@@ -336,6 +336,7 @@ const referencesOf = (
       ...attributeReferences(resolve, value),
       ...recordListsOf(value)
         .flatMap(({ records }) => records)
+        // generation-cap: nested records read for references
         .slice(0, MAX_NESTED_RECORDS)
         .flatMap((record) => attributeReferences(resolve, record)),
       // A field holding another element's id as its text, as a split's `<split:account>`.
