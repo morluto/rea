@@ -251,8 +251,10 @@ export class IsolatedWebBundleAnalyzer {
                   ? `${error.userMessage ?? error.reason} Reported limits: ${JSON.stringify(error.reportedLimits)}`
                   : (error.userMessage ?? error.message),
               // A setting-bound refusal keeps its structured recovery.
+              // Only a registered setting's limit facts are parsed here.
               ...(error instanceof AnalysisResourceConstraintError &&
-              error.limit !== undefined
+              error.limit !== undefined &&
+              "setting" in error.limit
                 ? {
                     limit: error.limit,
                     ...(error.remediationAction === undefined
