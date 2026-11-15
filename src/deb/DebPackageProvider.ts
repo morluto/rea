@@ -1,16 +1,6 @@
 import { DEB_PACKAGE_PROVIDER_IDENTITY } from "./DebPackageProviderIdentity.js";
-import {
-  projectSelectedArtifactFileFailure,
-  projectOwnedArtifactIdentityFailure,
-  projectStableArtifactFailure,
-  stableArtifactInputFailure,
-  projectArtifactCloseFailure,
-} from "../artifacts/StableArtifactFailure.js";
-import {
-  artifactFilePrimaryFacts,
-  type ArtifactFilePrimaryFacts,
-} from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { projectArtifactCloseFailure } from "../artifacts/StableArtifactFailure.js";
+import { completedStableArtifactObservation } from "../artifacts/StableArtifactObservation.js";
 import {
   type StableArtifactSnapshot,
   readStableArtifact,
@@ -18,7 +8,6 @@ import {
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import type { DebPackagePort } from "../application/deb/DebPackagePort.js";
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import {
   DEB_PACKAGE_LIMIT_MAXIMA,
@@ -28,6 +17,10 @@ import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.j
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok } from "../domain/result.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import {
+  classifyProviderFailure,
+  type ProviderFailureDialect,
+} from "../providers/classifyProviderFailure.js";
 import {
   DebPackageCapacityFailure,
   DebPackageFormatFailure,
@@ -66,88 +59,64 @@ const partialDiagnostics = (cause: unknown) => {
   return { diagnostics: { partial: partial satisfies JsonValue } };
 };
 
-const failureForPrimary = (
-  facts: ArtifactFilePrimaryFacts,
+/**
+ * Debian's dialect for the shared provider failure classifier. Parser limit
+ * and format refusals, and the recovery text for those limits, are the only
+ * cases this provider names.
+ */
+const failureDialect = (
   input: InspectDebPackageInput,
-) => {
-  const { cause, origin } = facts;
-  if (origin === "owned-or-classified" && cause instanceof AnalysisError)
-    return cause;
-  const identityFailure = projectOwnedArtifactIdentityFailure(
-    facts,
-    OPERATION,
-    input.path,
-  );
-  if (identityFailure !== undefined) return identityFailure;
-  if (cause instanceof DebPackageCapacityFailure)
-    return new AnalysisResourceConstraintError(
-      OPERATION,
-      cause.resource === "max_file_bytes" ? "file-size" : "capacity",
-      cause.message,
-      { [cause.resource]: cause.maximum },
-      {
-        cause,
-        ...parserLimitRecovery(cause.resource, cause.maximum),
-        ...partialDiagnostics(cause),
-      },
-    );
-  const formatFailure = parseFailureAnalysisError(
-    OPERATION,
-    input.path,
-    cause,
-    "path",
-    partialDiagnostics(cause),
-  );
-  if (formatFailure !== undefined) return formatFailure;
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure
-  ) {
-    if (cause.reason === "limit")
+): ProviderFailureDialect => ({
+  providerId: DEB_PACKAGE_PROVIDER_IDENTITY.id,
+  operation: OPERATION,
+  recognise: (cause, details) => {
+    if (cause instanceof DebPackageCapacityFailure)
       return new AnalysisResourceConstraintError(
         OPERATION,
-        "file-size",
+        cause.resource === "max_file_bytes" ? "file-size" : "capacity",
         cause.message,
-        { max_file_bytes: input.max_file_bytes },
+        { [cause.resource]: cause.maximum },
         {
+          ...details,
           cause,
-          ...parserLimitRecovery("max_file_bytes", input.max_file_bytes),
+          ...parserLimitRecovery(cause.resource, cause.maximum),
+          ...partialDiagnostics(cause),
         },
       );
-    if (cause.reason === "path" || cause.reason === "format")
-      return stableArtifactInputFailure(cause, OPERATION);
-  }
-  const fileFailure = projectSelectedArtifactFileFailure(
-    cause,
-    OPERATION,
-    input.path,
-    "deb",
-  );
-  if (fileFailure !== undefined) return fileFailure;
-  return new ProviderAdapterError(DEB_PACKAGE_PROVIDER_IDENTITY.id, OPERATION, {
-    cause,
-    diagnostics: {
-      path: input.path,
-      reason: cause instanceof Error ? cause.message : String(cause),
-    },
-  });
-};
-
-const failureFor = (
-  cause: unknown,
-  input: InspectDebPackageInput,
-  snapshot?: StableArtifactSnapshot,
-) => {
-  const primary = failureForPrimary(artifactFilePrimaryFacts(cause), input);
-  return projectStableArtifactFailure(
-    cause,
-    primary,
-    input.path,
-    DEB_PACKAGE_PROVIDER_IDENTITY.id,
-    OPERATION,
-    snapshot,
-  );
-};
+    return parseFailureAnalysisError(
+      OPERATION,
+      input.path,
+      cause,
+      "path",
+      partialDiagnostics(cause),
+    );
+  },
+  file: {
+    path: input.path,
+    description: "deb",
+    retainCompletedIdentity: true,
+    fileSize: (limit, details) =>
+      new AnalysisResourceConstraintError(
+        OPERATION,
+        "file-size",
+        limit.message,
+        { max_file_bytes: input.max_file_bytes },
+        {
+          ...details,
+          ...parserLimitRecovery("max_file_bytes", input.max_file_bytes),
+        },
+      ),
+  },
+  unclassified: (cause, details) =>
+    new ProviderAdapterError(DEB_PACKAGE_PROVIDER_IDENTITY.id, OPERATION, {
+      ...details,
+      cause,
+      diagnostics: {
+        path: input.path,
+        reason: cause instanceof Error ? cause.message : String(cause),
+      },
+    }),
+});
 
 /** Portable parser over one bounded, identity-checked regular file. */
 export class DebPackageProvider implements DebPackagePort {
@@ -191,7 +160,18 @@ export class DebPackageProvider implements DebPackagePort {
         ),
       );
     } catch (cause) {
-      return err(failureFor(cause, input, snapshot));
+      const failure = classifyProviderFailure(cause, failureDialect(input));
+      // The read already completed; its byte identity stays on the parser refusal.
+      if (snapshot !== undefined) {
+        const observation = completedStableArtifactObservation(
+          cause,
+          input.path,
+          snapshot,
+        );
+        if (observation !== undefined)
+          failure.retainPartialObservation(observation);
+      }
+      return err(failure);
     }
   }
 }
