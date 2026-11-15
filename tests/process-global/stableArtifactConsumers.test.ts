@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { PeLoadConfigProvider } from "../../src/native/pe/PeLoadConfigProvider.js";
 import { createArtifactAnalysisResources } from "../../src/providers/artifactResourceFailure.js";
 import { ReleaseExposureReader } from "../../src/artifacts/ReleaseExposureReader.js";
@@ -533,7 +534,7 @@ it.each([
       if (result.ok) throw new Error("Expected finalization failure");
       const evidence = parseEvidence(result.error.partialObservation);
       expect(evidence.operation).toBe("inspect_model_artifact");
-      expect(evidence.subject).toBeNull();
+      expect(evidence.subject.identity.kind).toBe("unknown");
       expect(evidence.normalized_result).toMatchObject({
         artifact: { path, sha256: null, read_scope: "header" },
         tensors: [{ name: "weight" }, { name: "quant" }],
@@ -879,7 +880,7 @@ it.each([
       foreignPath,
     );
     const foreignPartial = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "foreign", name: "foreign owner", version: null },
       {
         operation: "inspect_artifact",

@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../tests/fixtures/evidenceSubject.js";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -97,8 +98,8 @@ const assertArchitecture = async (
     new ElectronFuseProvider(),
   ).inspect({ path });
   if (!result.ok) throw result.error;
-  expect(result.value.subject?.identity.architecture).toBe(architecture);
-  expect(result.value.subject?.identity.sha256).toBe(
+  expect(fileIdentity(result.value.subject).architecture).toBe(architecture);
+  expect(fileIdentity(result.value.subject).sha256).toBe(
     createHash("sha256").update(image.bytes).digest("hex"),
   );
   expect(result.value.normalized_result).toMatchObject({

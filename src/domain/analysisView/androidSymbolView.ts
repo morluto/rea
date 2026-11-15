@@ -82,7 +82,7 @@ export const projectAndroidSymbolSummary = (
       ]),
     );
   // The engine artifact digest is the JAR; it cannot identify the APK.
-  const subject = evidenceSubjectTarget(parent.subject ?? null);
+  const subject = evidenceSubjectTarget(parent.subject);
   if (subject === undefined)
     return err(
       analysisViewInputError([

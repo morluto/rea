@@ -151,7 +151,7 @@ export async function verifyGhidraLargeResults({
     assert.ok(originalError);
     assert.equal(originalError.operation, "mcp_tool_error");
     assert.equal(originalError.provider.id, "rea-mcp");
-    assert.equal(originalError.subject, null);
+    assert.equal(originalError.subject.identity.kind, "unknown");
     assert.equal(originalError.parameters.tool_name, "procedure_address");
     assert.equal(originalError.normalized_result.error.code, "invalid_request");
     assert.equal(originalError.raw_result.isError, true);

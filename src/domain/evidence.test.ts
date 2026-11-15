@@ -1,3 +1,5 @@
+import { displayedEvidenceSubject } from "../../tests/fixtures/evidenceSubject.js";
+import { unknownTarget } from "./targetIdentity.js";
 import { PRE_66_NULL_COVERAGE_EVIDENCE } from "./evidenceLegacy.fixture.js";
 import { fc, it } from "@fast-check/vitest";
 import { describe, expect } from "vitest";
@@ -795,10 +797,10 @@ it("rejects a subject local path containing NUL while admitting an empty path", 
     parameters: {},
     result: true,
   });
-  expect(evidence.subject).not.toBeNull();
+  expect(evidence.subject.identity.kind).toBe("file");
   const withPath = (path: string) => ({
     ...evidence,
-    subject: { ...evidence.subject, local_path: path },
+    subject: displayedEvidenceSubject(evidence.subject, { local_path: path }),
   });
   expect(evidenceSchema.safeParse(withPath("/tmp/fixture")).success).toBe(true);
   expect(evidenceSchema.safeParse(withPath("")).success).toBe(true);
@@ -806,18 +808,27 @@ it("rejects a subject local path containing NUL while admitting an empty path", 
 });
 
 it("binds an explicit unknown-subject reason into the semantic Evidence identity", () => {
-  const reason = "Caller excluded the observed digest.";
   const observation = { operation: "health", parameters: {}, result: true };
-  const explicit = createEvidence(undefined, PROVIDER, {
-    ...observation,
-    subjectUnavailableReason: reason,
+  const explicit = createEvidence(
+    unknownTarget("derived-from-linked-evidence"),
+    PROVIDER,
+    observation,
+  );
+  const defaulted = createEvidence(
+    unknownTarget("not-observed"),
+    PROVIDER,
+    observation,
+  );
+  expect(explicit.subject).toEqual({
+    identity: { kind: "unknown", reason: "derived-from-linked-evidence" },
+    name: null,
+    local_path: null,
   });
-  const defaulted = createEvidence(undefined, PROVIDER, observation);
-  expect(explicit.subject).toBeNull();
-  expect(explicit.limitations).toEqual([reason]);
-  expect(defaulted.limitations).toEqual([
-    expect.stringMatching(/artifact identity.*unavailable/iu),
-  ]);
+  expect(evidenceFileTarget(explicit)).toBeUndefined();
+  expect(evidenceSubjectDisplay(explicit)).toBeUndefined();
+  // The closed reason replaces the generic missing-subject limitation.
+  expect(explicit.limitations).toEqual([]);
+  expect(defaulted.limitations).toEqual([]);
   expect(explicit.evidence_id).not.toBe(defaulted.evidence_id);
   expect(parseEvidence(explicit)).toEqual(explicit);
 });
@@ -829,7 +840,7 @@ it("derives byte-stable bundle manifests independent of record order", () => {
     result: true,
   });
   const captureEvidence = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "process", name: "Process capture", version: "1" },
     {
       predicateType: "rea.process-capture",
@@ -1020,11 +1031,15 @@ it("refuses a record from an earlier format without admitting or rewriting its I
     /Evidence record format 1 is not format 2/u,
   );
   expect(historical).toEqual(PRE_66_NULL_COVERAGE_EVIDENCE);
-  const current = createEvidence(undefined, historical.provider, {
-    operation: "inspect",
-    parameters: {},
-    result: { observed: true },
-  });
+  const current = createEvidence(
+    unknownTarget("not-observed"),
+    historical.provider,
+    {
+      operation: "inspect",
+      parameters: {},
+      result: { observed: true },
+    },
+  );
   expect(parseEvidence(current)).toEqual(current);
 });
 

@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import pino from "pino";
 import { expect, it, onTestFinished, vi } from "vitest";
@@ -110,7 +111,7 @@ it.each(["analyze_function", "decompile_all"] as const)(
   "retains plain-port source records before delivering %s links",
   async (operation) => {
     const source = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "ghidra", name: "Ghidra", version: "12.1.4" },
       {
         operation: "health",
@@ -145,7 +146,7 @@ it.each(["analyze_function", "decompile_all"] as const)(
 
 it("refuses source links when a plain-port adapter has no retention owner", async () => {
   const source = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     {
       operation: "health",

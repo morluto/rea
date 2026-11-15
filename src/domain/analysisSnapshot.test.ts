@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../tests/fixtures/evidenceSubject.js";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -320,9 +321,9 @@ describe("analysis snapshot contract", () => {
         architecture,
       });
       expect(parsed.entries[0]?.execution.subject?.format).toBe(format);
-      expect(parsed.evidence_bundle.records[0]?.subject?.identity.format).toBe(
-        format,
-      );
+      expect(
+        fileIdentity(parsed.evidence_bundle.records[0]?.subject).format,
+      ).toBe(format);
     },
   );
 

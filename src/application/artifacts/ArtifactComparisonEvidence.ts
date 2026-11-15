@@ -29,7 +29,10 @@ import {
 import { readEvidence } from "../../domain/evidenceValidation.js";
 import { RECREATE_EVIDENCE_GUIDANCE } from "../../domain/evidenceFormat.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { sameTargetIdentity } from "../../domain/targetIdentity.js";
+import {
+  sameTargetIdentity,
+  unknownTarget,
+} from "../../domain/targetIdentity.js";
 
 const OPERATION = "compare_artifacts";
 
@@ -95,19 +98,23 @@ export const compareArtifactEvidence = ({
   const rightEvidenceIds = [right.evidence_id];
   return ok({
     comparison,
-    evidence: createEvidence(undefined, ARTIFACT_COMPARISON_PROVIDER, {
-      predicateType: "rea.artifact-comparison",
-      operation: OPERATION,
-      parameters: {
-        left_evidence_ids: leftEvidenceIds,
-        right_evidence_ids: rightEvidenceIds,
+    evidence: createEvidence(
+      unknownTarget("derived-from-linked-evidence"),
+      ARTIFACT_COMPARISON_PROVIDER,
+      {
+        predicateType: "rea.artifact-comparison",
+        operation: OPERATION,
+        parameters: {
+          left_evidence_ids: leftEvidenceIds,
+          right_evidence_ids: rightEvidenceIds,
+        },
+        result: comparison,
+        confidence: "derived",
+        authority: "analyst-inference",
+        limitations: comparison.limitations,
+        evidenceLinks: [...leftEvidenceIds, ...rightEvidenceIds],
       },
-      result: comparison,
-      confidence: "derived",
-      authority: "analyst-inference",
-      limitations: comparison.limitations,
-      evidenceLinks: [...leftEvidenceIds, ...rightEvidenceIds],
-    }),
+    ),
   });
 };
 

@@ -1,3 +1,4 @@
+import { fileSubjectTarget } from "../fixtures/evidenceSubject.js";
 import { canonicalOutputSchema } from "../fixtures/canonicalOutputSchema.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -53,16 +54,8 @@ it("reports invalid nested semantic graph Evidence as caller input through CLI a
   semanticGraph.graph_id = SEMANTIC_GRAPH_ID;
 
   const subject = sourceEvidence.subject;
-  if (subject === null) throw new Error("CLI Evidence must include a subject");
   const malformedEvidence = createEvidence(
-    {
-      path: subject.local_path,
-      sha256: subject.identity.sha256,
-      format: subject.identity.format,
-      ...(subject.identity.architecture === null
-        ? {}
-        : { architecture: subject.identity.architecture }),
-    },
+    fileSubjectTarget(subject),
     sourceEvidence.provider,
     {
       predicateType: sourceEvidence.predicate_type,

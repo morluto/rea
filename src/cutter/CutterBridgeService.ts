@@ -1,3 +1,4 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -164,7 +165,7 @@ export class CutterBridgeService {
       });
       const normalizedOutput = jsonValueSchema.parse(output.output);
       const evidence = createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         {
           ...CUTTER_PROVIDER_IDENTITY,
           version: output.cutterVersion,
@@ -191,9 +192,8 @@ export class CutterBridgeService {
             identity_status: output.identityStatus,
           },
           rawResult: normalizedOutput,
-          subjectUnavailableReason:
-            "Cutter exposes no verified stable identity for the active unsaved document or tab.",
           limitations: [
+            "Cutter exposes no verified stable identity for the active unsaved document or tab.",
             "Document identity is partial: the bridge uses a plugin instance UUID and observed generation; a same-path tab switch or reload may not be distinguishable.",
             "Cutter command effects depend on the Rizin command and active plugins.",
             "The local IPC protocol is implemented by REA and is not an upstream Cutter API.",

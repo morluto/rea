@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { changedEvidenceSubject } from "../../../tests/fixtures/evidenceSubject.js";
+import {
+  changedEvidenceSubject,
+  UNKNOWN_EVIDENCE_SUBJECT,
+} from "../../../tests/fixtures/evidenceSubject.js";
 import { interfaceBuilderAnalysisSchema } from "../apple/interfaceBuilderGraph.js";
 import { freezeJsonSnapshot } from "../immutableJson.js";
 
@@ -215,7 +218,7 @@ describe("Interface Builder analysis views", () => {
   it("keeps resource-root provenance in both summary and detail views without a subject", () => {
     const source: AnalysisViewParent = {
       ...parent(resourceReport()),
-      subject: null,
+      subject: UNKNOWN_EVIDENCE_SUBJECT,
     };
     const summary = projectAnalysisView(source, { kind: "summary" });
     const detail = projectAnalysisView(source, {

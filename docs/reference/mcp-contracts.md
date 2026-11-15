@@ -352,7 +352,8 @@ Omit `fields` for complete records; a selected field list always retains
 remain distinguishable. Search tools apply their existing filters before retention.
 Follow `coverage.next_offset`; exhaustion describes the retained list, not
 complete discovery of all code or strings. An unbound source keeps
-`artifact: null` and the derived Evidence keeps `subject: null`.
+`artifact: null`, and the derived Evidence names an unknown subject
+(`subject.identity.kind: "unknown"`).
 
 The CLI uses the same projector. For an original complete Evidence JSON file,
 write `{"source":{"kind":"evidence-file","path":"/absolute/source.json"},"view":{"kind":"native-inventory","limit":32}}`
@@ -1026,7 +1027,12 @@ by its target identity, `subject.identity` (`kind: "file"`, `sha256`, `format`,
 offsets that select what was analysed, otherwise `null`), and the Evidence ID
 commits to that identity; `subject.name` and `subject.local_path` are display
 facts outside the ID. The subject has no separate `digest`, `format` or
-`architecture` members; read them from `subject.identity`. Retention has no
+`architecture` members; read them from `subject.identity`. Every record has a
+subject: one whose target REA did not identify names
+`{ "kind": "unknown", "reason": … }`, where the reason is
+`derived-from-linked-evidence` (comparisons and workflows, whose sources are
+committed through `evidence_links`), `not-observed` or `unsupported-subject`,
+and its `name` and `local_path` are `null`. Retention has no
 automatic persistence or silent eviction.
 `binary_session.investigation` reports record/revision/head counts, estimated
 retained representation bytes and the fixed allowance derived from initial V8

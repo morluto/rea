@@ -58,14 +58,13 @@ export const applicationGraphSubjectTarget = (
           ({ evidence }) => evidence.extractor.operation === "inventory-root",
         ),
     );
-  return evidenceSubjectTarget(
-    staticRootObserved ||
-      (source.kind === "managed-application" &&
-        subject?.identity.format === "pe" &&
-        subject.identity.sha256 === source.rootArtifactSha256)
-      ? subject
-      : null,
-  );
+  const file = evidenceFileTarget({ subject });
+  return staticRootObserved ||
+    (source.kind === "managed-application" &&
+      file?.format === "pe" &&
+      file.sha256 === source.rootArtifactSha256)
+    ? evidenceSubjectTarget(subject)
+    : undefined;
 };
 
 /** Caller-owned Evidence failed validation at the application graph boundary. */
@@ -364,7 +363,9 @@ export const parseNativeApplicationEvidence = (
 > =>
   captureInputValidation(() => {
     const parsed = inputs.map((input) => parseEvidenceInput(input));
-    const withoutSubject = parsed.findIndex(({ subject }) => subject === null);
+    const withoutSubject = parsed.findIndex(
+      (evidence) => evidenceFileTarget(evidence) === undefined,
+    );
     if (withoutSubject !== -1)
       throw invalidEvidence(
         [...path, withoutSubject],

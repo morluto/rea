@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { projectAnalysisErrorWithoutCapturedOutput } from "../../domain/analysisErrorProjection.js";
 import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
@@ -386,7 +387,7 @@ const createAnalysisViewEvidence = (
     (result.kind === "summary" &&
       isNativeObservationOperation(result.parent_operation));
   return createEvidence(
-    target,
+    target ?? unknownTarget("derived-from-linked-evidence"),
     ANALYSIS_VIEW_PROVIDER,
     {
       predicateType: "rea.analysis-view",

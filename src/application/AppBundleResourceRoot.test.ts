@@ -213,6 +213,6 @@ it("distinguishes default target binding from an explicitly unbound observation"
   expect(preserved.ok && preserved.value.subject).toBeNull();
   expect(
     createAnalysisExecutionEvidence("inspect_plist", {}, unbound, "observed")
-      .subject,
-  ).toBeNull();
+      .subject.identity.kind,
+  ).toBe("unknown");
 });

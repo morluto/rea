@@ -817,9 +817,6 @@ it("uses an owned APK snapshot and framework cache and resolves regional locales
     local_path: apk.path,
     identity: { format: "apk", sha256: apk.sha256 },
   });
-  expect(observation.value.limitations).not.toContainEqual(
-    expect.stringMatching(/artifact identity.*unavailable/iu),
-  );
   expect(await readFile(apk.path, "utf8")).toBe("changed original");
   const result = apktoolResultSchemas.decode_android_resources.parse(
     observation.value.normalized_result,

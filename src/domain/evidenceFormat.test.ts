@@ -1,3 +1,4 @@
+import { unknownTarget } from "./targetIdentity.js";
 import { expect, it } from "vitest";
 
 import { createEvidence, parseEvidence } from "./evidence.js";
@@ -15,7 +16,7 @@ import { EvidenceIntegrityError } from "./evidenceErrors.js";
 import { readEvidence, readImmutableEvidence } from "./evidenceValidation.js";
 
 const record = createEvidence(
-  undefined,
+  unknownTarget("not-observed"),
   { id: "fixture", name: "Fixture", version: "1" },
   { operation: "observe", parameters: {}, result: { observed: true } },
 );

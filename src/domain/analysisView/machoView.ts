@@ -177,7 +177,7 @@ export const projectMachoView = (
   const incomplete = MACHO_COLLECTIONS.filter(
     (name) => !report[name].exhaustive,
   );
-  const subject = evidenceSubjectTarget(parent.subject ?? null);
+  const subject = evidenceSubjectTarget(parent.subject);
   const shared = {
     parent_evidence_id: parent.evidenceId,
     parent_operation: "inspect_macho" as const,
@@ -192,7 +192,7 @@ export const projectMachoView = (
         : [
             `Inspection did not establish exhaustive ${incomplete.join(", ")}; page exhaustion does not establish absence of unreturned rows.`,
           ]),
-      ...(parent.subject == null
+      ...(evidenceFileTarget(parent) === undefined
         ? [
             "The parent has no recorded subject, so the inspected artifact path and SHA-256 are unknown.",
           ]

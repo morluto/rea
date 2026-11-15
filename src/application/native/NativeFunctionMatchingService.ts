@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { NativeMatchingAdmission } from "./NativeMatchingAdmission.js";
 import { loadNativeMatchingBundleSources } from "./NativeMatchingBundleSources.js";
 import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
@@ -187,22 +188,26 @@ const matchWithAdmission = async (
     limitations,
   });
   await checkpoint();
-  const evidence = createEvidence(undefined, FUNCTION_COMPARISON_PROVIDER, {
-    operation: OPERATION,
-    predicateType: NATIVE_FUNCTION_MATCHING_PREDICATE,
-    confidence: "derived",
-    authority: "analyst-inference",
-    parameters: {
-      left_evidence_id: left.evidence_id,
-      right_evidence_id: right.evidence_id,
-      left_observation_ids: leftObservations.map((x) => x.evidence_id),
-      right_observation_ids: rightObservations.map((x) => x.evidence_id),
-      algorithm: "exact-symbol-body-bytes-and-structural-candidates-v1",
+  const evidence = createEvidence(
+    unknownTarget("derived-from-linked-evidence"),
+    FUNCTION_COMPARISON_PROVIDER,
+    {
+      operation: OPERATION,
+      predicateType: NATIVE_FUNCTION_MATCHING_PREDICATE,
+      confidence: "derived",
+      authority: "analyst-inference",
+      parameters: {
+        left_evidence_id: left.evidence_id,
+        right_evidence_id: right.evidence_id,
+        left_observation_ids: leftObservations.map((x) => x.evidence_id),
+        right_observation_ids: rightObservations.map((x) => x.evidence_id),
+        algorithm: "exact-symbol-body-bytes-and-structural-candidates-v1",
+      },
+      result: report,
+      limitations,
+      evidenceLinks: directLinks,
     },
-    result: report,
-    limitations,
-    evidenceLinks: directLinks,
-  });
+  );
   await checkpoint();
   return { evidence, sources, detail: input.detail };
 };

@@ -89,13 +89,10 @@ const parent = (normalizedResult: unknown): AnalysisViewParent => ({
   predicateType: carrier.predicate_type,
   evidenceId: carrier.evidence_id,
   operation: "inventory_artifact",
-  subject:
-    carrier.subject === null
-      ? null
-      : changedEvidenceSubject(carrier.subject, {
-          format: "zip",
-          architecture: null,
-        }),
+  subject: changedEvidenceSubject(carrier.subject, {
+    format: "zip",
+    architecture: null,
+  }),
   normalizedResult,
   sealedResult: true,
   limitations: [],
@@ -331,7 +328,7 @@ it("binds reused facts to the current Evidence ID and validates its subject on e
       .inventory_evidence_ids,
   ).toEqual([next.evidenceId]);
   const subject = next.subject;
-  if (subject === null || subject === undefined)
+  if (subject === undefined || subject.identity.kind !== "file")
     throw new Error("Expected a subject");
   expect(() =>
     page(

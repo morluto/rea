@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import {
   joinCoverageStatus,
   type CoverageStatus,
@@ -274,7 +275,7 @@ export const compareWasmInterfaces = async (
     };
     const admission = requireAuthenticationHeadroom(
       evidenceEnvelopeForAdmission(
-        undefined,
+        unknownTarget("derived-from-linked-evidence"),
         ARTIFACT_COMPARISON_PROVIDER,
         observation,
       ),
@@ -287,10 +288,14 @@ export const compareWasmInterfaces = async (
     );
     if (!admission.ok) return admission;
     const report = wasmInterfaceComparisonSchema.parse(observedReport);
-    const evidence = createEvidence(undefined, ARTIFACT_COMPARISON_PROVIDER, {
-      ...observation,
-      result: report,
-    });
+    const evidence = createEvidence(
+      unknownTarget("derived-from-linked-evidence"),
+      ARTIFACT_COMPARISON_PROVIDER,
+      {
+        ...observation,
+        result: report,
+      },
+    );
     await setImmediate();
     const completed = completeProviderEvidence(evidence, options?.signal);
     const sources = [left.evidence, right.evidence];
