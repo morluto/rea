@@ -1,0 +1,22 @@
+{
+  "src/application/WorkflowEvidence.ts": 4,
+  "src/application/analysisView/AnalysisViewService.ts": 1,
+  "src/application/artifacts/ArtifactComparisonEvidence.ts": 3,
+  "src/application/evm/EvmInterfaceService.ts": 1,
+  "src/application/investigation/EvidenceLedger.ts": 2,
+  "src/application/javascript/JavaScriptApplicationEvidenceGraph.ts": 2,
+  "src/application/native/NativeDispatchMetadataInspection.ts": 1,
+  "src/application/native/NativeFunctionMatchingService.ts": 5,
+  "src/application/releaseExposure/ReleaseExposureService.ts": 1,
+  "src/application/wasm/WasmInterfaceComparisonService.ts": 2,
+  "src/domain/analysisSnapshot.ts": 10,
+  "src/domain/callPath.ts": 6,
+  "src/domain/evidenceBundle.ts": 2,
+  "src/domain/evidenceRecordSummary.ts": 1,
+  "src/domain/functionComparison.ts": 2,
+  "src/domain/functionDossierEvidence.ts": 7,
+  "src/domain/javascript/javascriptRuntimeReconciliationParsing.ts": 2,
+  "src/domain/managed/managedInspectionEvidence.ts": 1,
+  "src/domain/managed/managedNativeVerificationSource.ts": 1,
+  "src/domain/native/functionStructuralCandidate.ts": 2
+}

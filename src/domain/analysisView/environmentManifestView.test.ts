@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { changedEvidenceSubject } from "../../../tests/fixtures/evidenceSubject.js";
 import {
   analysisViewCaptureEvidence,
   analysisViewLayoutEvidence,
@@ -1181,10 +1182,9 @@ it("refuses a parent whose subject is absent or names another digest", () => {
     projectAnalysisView(
       {
         ...parent,
-        subject: {
-          ...subject,
-          digest: { ...subject.digest, sha256: "0".repeat(64) },
-        },
+        subject: changedEvidenceSubject(subject, {
+          digest: { sha256: "0".repeat(64) },
+        }),
       },
       view(),
     ),

@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { changedEvidenceSubject } from "../../../tests/fixtures/evidenceSubject.js";
 import { createEvidence } from "../evidence.js";
 import { freezeJsonSnapshot } from "../immutableJson.js";
 import type { RustBinary } from "../rust/rustBinary.js";
@@ -117,7 +118,10 @@ it("checks exact artifact identity and subject architecture for every Rust view"
     const source = parent();
     if (source.subject == null || source.subject.format !== "elf")
       throw new Error("Missing ELF source");
-    const input = { ...source, subject: { ...source.subject, ...changed } };
+    const input = {
+      ...source,
+      subject: changedEvidenceSubject(source.subject, changed),
+    };
     expect(projectAnalysisView(input, { kind: "summary" }).ok).toBe(false);
     expect(
       projectAnalysisView(input, {
