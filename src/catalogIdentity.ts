@@ -91,12 +91,15 @@ const sortByName = (
     compareUnicodeCodePoints(left.name, right.name),
   );
 
-const digest = (value: unknown): string => {
+const canonicalJson = (value: unknown): string => {
   const encoded = canonicalize(value);
   if (encoded === undefined)
     throw new TypeError("Catalog is not canonical JSON");
-  return createHash("sha256").update(encoded).digest("hex");
+  return encoded;
 };
+
+const sha256 = (encoded: string): string =>
+  createHash("sha256").update(encoded).digest("hex");
 
 const digestCatalogs = (
   catalog: ReturnType<typeof createToolCatalog>,
@@ -104,21 +107,22 @@ const digestCatalogs = (
   compactPresentation: CompactInputSchemaPresentation,
   outputSchemaProfile: McpOutputSchemaProfile,
 ) => {
-  const tools = {
+  const tools = canonicalJson({
     output_schema_profile: outputSchemaProfile,
     catalog: presentToolCatalog(
       catalog,
       advertisedToolPresentation(outputSchemaProfile, compactPresentation),
     ),
-  };
+  });
+  const promptCatalog = canonicalJson(prompts);
+  // RFC 8785 writes an object as its members in key order, each value in its
+  // own canonical form, so the combined document reuses the canonical tool and
+  // prompt texts instead of canonicalizing the whole catalog a second time.
+  const combined = `{"cli":${canonicalJson(CLI_COMMAND_NAMES)},"prompts":${promptCatalog},"tools":${tools}}`;
   return {
-    tools_sha256: digest(tools),
-    prompts_sha256: digest(prompts),
-    combined_sha256: digest({
-      cli: CLI_COMMAND_NAMES,
-      tools,
-      prompts,
-    }),
+    tools_sha256: sha256(tools),
+    prompts_sha256: sha256(promptCatalog),
+    combined_sha256: sha256(combined),
   } as const;
 };
 
