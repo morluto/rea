@@ -22,6 +22,11 @@ import { describeSystemPs, resolveSystemPs } from "../process/systemPs.js";
 import { agentEnvInterpreter } from "./AgentEnvComputerHelper.js";
 import { ArtifactFileCleanupFailure } from "../artifacts/ArtifactFileOperation.js";
 import {
+  AnalysisCleanupLeaseGroup,
+  type AnalysisCleanupLease,
+} from "../artifacts/AnalysisCleanupLease.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import {
   agentEnvReportedVersion,
   defaultBuildComputerArchive,
   programOnPath,
@@ -89,7 +94,8 @@ export const readDesktopBuildFacts = async (
           "desktop_build_doctor",
           input.resources,
         ).catch((cause: unknown) => {
-          if (cause instanceof ArtifactFileCleanupFailure) throw cause;
+          if (cause instanceof ArtifactFileCleanupFailure)
+            throw runnerCleanupFailure(cause);
           return "python3";
         })
       : "python3",
@@ -446,7 +452,7 @@ const registrationFacts = async (
                     input.resources,
                   ).catch((cause: unknown) => {
                     if (cause instanceof ArtifactFileCleanupFailure)
-                      throw cause;
+                      throw runnerCleanupFailure(cause);
                     return undefined;
                   }),
           );
@@ -537,6 +543,38 @@ const solveEndpoint = async (
     : (selected ?? "agentenv model configuration");
 };
 
+/**
+ * A doctor file whose close failed stays owned by `input.resources`, which the
+ * doctor host retries on close. Report it as the doctor's typed cleanup
+ * failure, bound to that owner's lease, so the error document keeps the
+ * retained file and its recovery.
+ */
+const doctorFileCleanupFailure = (
+  lease: AnalysisCleanupLease,
+  resources: readonly string[],
+  reason: string,
+  cause: unknown,
+): ProviderCleanupError => {
+  const failure = new ProviderCleanupError(
+    "rea",
+    resources,
+    { reason },
+    { operation: "doctor", cause },
+  );
+  new AnalysisCleanupLeaseGroup(failure, [lease]);
+  return failure;
+};
+
+const runnerCleanupFailure = (
+  cause: ArtifactFileCleanupFailure,
+): ProviderCleanupError =>
+  doctorFileCleanupFailure(
+    cause.cleanupLease,
+    cause.cleanup?.resources ?? cause.cleanupLease.cleanupResources ?? [],
+    cause.cleanup?.reason ?? cause.message,
+    cause,
+  );
+
 const canReadModelConfig = async (
   path: string,
   input: DesktopBuildFactsInput,
@@ -565,7 +603,12 @@ const canReadModelConfig = async (
   } catch (cause: unknown) {
     if (cause instanceof RetainedRegularFileCleanupFailure) {
       input.resources.retain(cause.cleanupOwner);
-      throw cause;
+      throw doctorFileCleanupFailure(
+        cause.cleanupLease,
+        [cause.path],
+        cause.message,
+        cause,
+      );
     }
     if (cause instanceof AnalysisCancelledError) throw cause;
     if (input.signal.aborted)

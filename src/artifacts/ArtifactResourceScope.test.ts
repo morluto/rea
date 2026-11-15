@@ -767,3 +767,59 @@ it("tracks diagnostic work outside admission and joins it before a cleanup retry
     await scope.close();
   }
 });
+
+it("joins diagnostic work admitted while a cleanup retry releases an earlier owner", async () => {
+  const scope = new ArtifactResourceScope();
+  const releasing = deferred<void>();
+  const allowRelease = deferred<void>();
+  scope.retain({
+    kind: "lease",
+    resource: "earlier",
+    lease: {
+      release: async () => {
+        releasing.resolve();
+        await allowRelease.promise;
+      },
+    },
+  });
+  let lateReleases = 0;
+  const started = deferred<void>();
+  const finish = deferred<void>();
+  let retried = false;
+  const retry = scope.retryCleanup().then(() => {
+    retried = true;
+  });
+  let sample: Promise<string> | undefined;
+  try {
+    await awaitAcknowledgement(releasing.promise, retry, "earlier release");
+    // Admitted after the drain already found no active work.
+    sample = scope.track(async () => {
+      started.resolve();
+      await finish.promise;
+      scope.retain({
+        kind: "lease",
+        resource: "sampled",
+        lease: {
+          release: async () => {
+            lateReleases += 1;
+          },
+        },
+      });
+      return "sample";
+    });
+    await awaitAcknowledgement(started.promise, sample, "tracked work");
+    allowRelease.resolve();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(retried).toBe(false);
+    finish.resolve();
+    await expect(sample).resolves.toBe("sample");
+    await retry;
+    expect(lateReleases).toBe(1);
+    expect(scope.hasPending).toBe(false);
+  } finally {
+    allowRelease.resolve();
+    finish.resolve();
+    await Promise.allSettled(sample === undefined ? [retry] : [retry, sample]);
+    await scope.close();
+  }
+});

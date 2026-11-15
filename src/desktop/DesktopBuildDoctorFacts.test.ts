@@ -22,6 +22,8 @@ import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import type { ClientRegistrationStatus } from "../application/ClientRegistrationStatus.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import {
   defaultBuildComputerArchive,
@@ -840,9 +842,10 @@ it.skipIf(process.platform === "win32")(
         command: [process.execPath, "rea.mjs", "mcp"],
         provider_settings: { differing, unrecorded: [], unresolved: [] },
       }) as unknown as ClientRegistrationStatus;
+    let outcome: Promise<unknown> = Promise.resolve();
     try {
       let settled = false;
-      const outcome = readDesktopBuildFacts({
+      outcome = readDesktopBuildFacts({
         environment: { HOME: root, PATH: "" },
         platform: process.platform,
         resources,
@@ -880,16 +883,29 @@ it.skipIf(process.platform === "win32")(
           return cause;
         },
       );
-      await Promise.all([slowReached, closeFailed]);
+      await awaitAcknowledgement(
+        Promise.all([slowReached, closeFailed]).then(() => undefined),
+        outcome,
+        "slow client probe and failed runner close",
+      );
       for (let turn = 0; turn < 5; turn += 1)
         await new Promise((resolve) => setImmediate(resolve));
       // The failed close must not report while client b is still inspecting.
       expect(settled).toBe(false);
       releaseSlow();
-      expect(await outcome).toBeInstanceOf(ArtifactFileCleanupFailure);
+      // The doctor reports a typed cleanup failure naming the retained runner
+      // file, so the CLI and MCP error documents keep it and its recovery.
+      const failure = await outcome;
+      expect(failure).toBeInstanceOf(ProviderCleanupError);
+      const cleanup = failure as ProviderCleanupError;
+      expect(cleanup.operation).toBe("doctor");
+      expect(cleanup.cause).toBeInstanceOf(ArtifactFileCleanupFailure);
       expect(resources.cleanupResources).toHaveLength(1);
+      expect(cleanup.cleanupResources).toEqual(resources.cleanupResources);
     } finally {
       releaseSlow();
+      // Join the inspection before restoring the close it observes.
+      await outcome;
       close.mockRestore();
       await resources.retryCleanup();
       await resources.close();
