@@ -2,15 +2,15 @@ graph TD
     %% Selected layer owners and dependency/wiring paths, not a directory or import inventory.
     %% Current deep-provider candidates are wired in src/composition/binary.ts.
     %% Layers, innermost first: domain, contracts, foundation, ports (src/ports/:
-    %% interfaces providers implement), providers, application, composition,
-    %% adapters. An import may point to the same or an
+    %% interfaces providers implement), providerCore (src/providers/: the shared
+    %% provider core), providers, application, composition, adapters. An import may point to the same or an
     %% inner layer. scripts/lib/module-layers.mjs declares the layer of every
     %% top-level src/ directory and root file; verify:module-boundaries fails on
     %% an undeclared unit and ratchets the recorded outward imports and mutual
     %% imports in scripts/lib/module-layers.baseline.json.
     %% Provider boundary: a provider folder (src/ghidra/, src/native/, ...)
-    %% imports inner layers, the shared provider core (src/providers/) and its
-    %% own files. Importing another provider folder is a recorded exception
+    %% imports inner layers, including the shared provider core (src/providers/,
+    %% which may not import a provider folder), and its own files. Importing another provider folder is a recorded exception
     %% (for example inspector -> browser CDP helpers); shared pieces belong in
     %% ports, foundation or the provider core. Application, composition and
     %% adapters reach a provider through its entry file src/<provider>/index.ts.
