@@ -26,6 +26,7 @@ import {
   PYTHON_39_MAGIC,
 } from "./pyinstaller/CArchive.fixture.js";
 import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { asarHeaderBytes } from "../../tests/fixtures/asarHeader.js";
 import { binaryPlistObjectTable } from "../../tests/fixtures/binaryPlistObjectTable.js";
 import { javaClassFile } from "../../tests/fixtures/javaClassFile.js";
@@ -788,9 +789,11 @@ describe("ReleaseExposureReader unpacked ASAR members", () => {
       );
       if (result.ok) throw new Error("Expected a failed audit.");
       expect(result.error).toBeInstanceOf(AnalysisArtifactChangedError);
-      expect(result.error.message).toContain(
-        "ASAR member changed before interpretation: dist/notes.txt",
-      );
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "artifact_changed",
+        details: { integrity_check: "member-identity" },
+      });
+      expect(result.error.message).toContain("dist/notes.txt");
     } finally {
       inventoryRead.impl = undefined;
       await reader.close();

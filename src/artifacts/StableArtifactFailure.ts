@@ -36,6 +36,9 @@ export const projectOwnedArtifactIdentityFailure = (
   if (cause.reason === "integrity")
     return new AnalysisArtifactChangedError(operation, path, cause.message, {
       cause,
+      ...(cause.integrityCheck === undefined
+        ? {}
+        : { integrityCheck: cause.integrityCheck }),
     });
   if (cause.reason === "cancelled")
     return cancelledBy(
