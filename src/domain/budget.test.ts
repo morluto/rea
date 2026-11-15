@@ -37,6 +37,22 @@ describe("Budget", () => {
     }).toThrow(/refund/u);
   });
 
+  it("records an over-committing charge and refuses ordinary charges until refunded", () => {
+    const budget = new Budget(10);
+    expect(budget.chargeOverCommitting(6)).toBe(0);
+    expect(budget.chargeOverCommitting(7)).toBe(3);
+    expect(budget.used).toBe(13);
+    expect(budget.overCommitted).toBe(3);
+    expect(budget.remaining).toBe(0);
+    expect(budget.tryCharge(0)).toBe(true);
+    expect(budget.tryCharge(1)).toBe(false);
+    budget.refund(5);
+    expect(budget.overCommitted).toBe(0);
+    expect(budget.remaining).toBe(2);
+    expect(() => budget.chargeOverCommitting(1.5)).toThrow(/charge/u);
+    expect(budget.used).toBe(8);
+  });
+
   it("evicts the oldest entries until a charge fits", () => {
     const budget = new Budget(10);
     const entries = [4, 3, 2];
