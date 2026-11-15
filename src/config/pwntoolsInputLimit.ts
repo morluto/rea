@@ -1,7 +1,7 @@
 import { z } from "zod";
 
-import { currentAnalysisOperationSnapshot } from "../../domain/analysisOperationSnapshot.js";
-import { PWNTOOLS_LIMITS } from "../../domain/native/pwntoolsResourceLimits.js";
+import { currentAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
+import { PWNTOOLS_LIMITS } from "../domain/native/pwntoolsResourceLimits.js";
 
 // The artifact is read into one in-memory buffer and staged again as a private
 // snapshot before the owned bridge parses it under a 3 GiB address-space

@@ -1,14 +1,16 @@
 import { analysisClientFailureForOperation } from "./AnalysisClientFailure.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import {
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+  bindArtifactFileCleanup,
+  AnalysisCleanupLease,
+} from "../resources/index.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type {
   AnalysisClient,
   RetainedResourceScope,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
@@ -22,7 +24,7 @@ import {
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
-import { closeAnalysisClient } from "../application/AnalysisClientCleanup.js";
+import { closeAnalysisClient } from "./AnalysisClientCleanup.js";
 
 /** Own deferred client creation while callers wait independently and close joins it. */
 export class AnalysisClientCreation {

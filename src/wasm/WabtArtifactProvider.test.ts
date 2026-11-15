@@ -10,7 +10,7 @@ import {
   WASM_RESOURCE_DEFAULTS,
 } from "../domain/wasm/wasmArtifact.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
-import { PrivateRuntimeRootUnavailableError } from "../process/PrivateRuntimeRootUnavailableError.js";
+import { PrivateRuntimeRootUnavailableError } from "../domain/privateRuntimeRootUnavailableError.js";
 import { spawnOwnedProviderProcess } from "../process/ProviderProcess.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";

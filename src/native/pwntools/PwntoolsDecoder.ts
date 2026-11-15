@@ -10,11 +10,13 @@ import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../../artifacts/AnalysisCleanupLease.js";
-import {
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
-} from "../../artifacts/ArtifactFileOperation.js";
+  completedStableArtifact,
+  readStableArtifact,
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+} from "../../resources/index.js";
 import {
   pwntoolsFailureDialect,
   pwntoolsUnavailable,
@@ -29,17 +31,11 @@ import { z } from "zod";
 import type {
   ExecutionOptions,
   ProviderIdentity,
-} from "../../application/AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import type {
   AnalysisCapturedOutput,
   AnalysisPartialObservation,
 } from "../../domain/analysisErrorBase.js";
-import {
-  completedStableArtifact,
-  readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCapabilityUnavailableError,
@@ -82,7 +78,7 @@ import {
 } from "../../domain/native/pwntoolsResourceLimits.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { PWNTOOLS_PROVIDER_IDENTITY } from "./PwntoolsProviderIdentity.js";
-import { pwntoolsInputBytes } from "./PwntoolsInputLimit.js";
+import { pwntoolsInputBytes } from "../../config/pwntoolsInputLimit.js";
 
 /** Names the detected host so a host refusal is not read as a target refusal. */
 const pwntoolsHostRequirement = (

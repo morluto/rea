@@ -1,6 +1,6 @@
 import { IDA_COMPATIBILITY_PROFILES } from "../../../../src/ida/IdaConfiguration.js";
 import { expect, it } from "vitest";
-import type { CapabilityDescriptor } from "../../../../src/application/AnalysisProvider.js";
+import type { CapabilityDescriptor } from "../../../../src/ports/AnalysisProvider.js";
 import { buildCapabilityInventory } from "../../../../src/application/CapabilityInventory.js";
 import { providerCapabilitySets } from "../../../../src/application/binary/BinarySessionStatus.js";
 import { idaCapabilities } from "../../../../src/ida/IdaProviderCapabilities.js";

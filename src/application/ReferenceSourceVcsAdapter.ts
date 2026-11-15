@@ -6,8 +6,10 @@ import {
   ReferenceSourceGitDirectoryCancelled,
 } from "./ReferenceSourceGitDirectory.js";
 import { err, ok, type Result } from "../domain/result.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  type ArtifactResourceScope,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import {
   RegularFileCleanupFailure,
   regularFileCancellation,
@@ -16,7 +18,7 @@ import {
   readRegularFile,
   RegularFileReadFailure,
   retryRegularFileCleanup,
-} from "./RegularFileRead.js";
+} from "../process/RegularFileRead.js";
 import { referenceSourceResourceFailure } from "../reference/ReferenceSourceReaderErrors.js";
 import type { ReferenceSourceReaderError } from "../reference/ReferenceSourceReaderTypes.js";
 

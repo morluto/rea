@@ -1,8 +1,11 @@
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import {
+  bindArtifactFileCleanup,
+  ArtifactResourceScope,
+  AnalysisCleanupLease,
+} from "../resources/index.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { translateNativeCommandFailure } from "./NativeCommandAnalysisError.js";
 import { DEFAULT_NATIVE_COMMAND_TIMEOUT_MS } from "../domain/native/nativeDeadlines.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
@@ -66,7 +69,6 @@ import {
 } from "./CommandRunner.js";
 import { projectPartialNativeCalls } from "./NativeCallObservation.js";
 import { LldbReadbackFiles } from "./LldbReadbackFiles.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { resolvedAnalysisError } from "../domain/analysisErrorBase.js";
 import { runOwned } from "../providers/runOwned.js";

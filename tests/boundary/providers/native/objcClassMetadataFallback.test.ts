@@ -7,8 +7,8 @@ import { describe, expect, it } from "vitest";
 import type {
   AnalysisOperation,
   AnalysisOperationPort,
-} from "../../../../src/application/AnalysisProvider.js";
-import { createAnalysisExecution } from "../../../../src/application/AnalysisProvider.js";
+} from "../../../../src/ports/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../../src/ports/AnalysisProvider.js";
 import { EnhancedTools } from "../../../../src/application/EnhancedTools.js";
 import { layoutFor } from "../../../../src/native/AppleMachoSelection.fixture.js";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";

@@ -14,15 +14,15 @@ import { err, ok, type Result } from "../domain/result.js";
 import type { GhidraInstallationInspection } from "./GhidraInstallation.js";
 import { parseGhidraJavaProperties } from "./GhidraJavaProperties.js";
 
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import { OwnedDirectoryHandle } from "../filesystem/OwnedDirectoryHandle.js";
 import {
+  type ArtifactResourceScope,
+  ArtifactReaderFailure,
+  AnalysisCleanupLease,
   assertArtifactReadActive,
   artifactFilePrimaryFacts,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/index.js";
+import { OwnedDirectoryHandle } from "../filesystem/OwnedDirectoryHandle.js";
 
 /** Installed processor code and data, distinct from REA's analysis-extension ABI. */
 export const ghidraPspExtensionSchema = z.strictObject({

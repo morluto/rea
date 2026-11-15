@@ -2,7 +2,7 @@ import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
 
 import { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";
-import type { FridaInstrumentationPort } from "../application/frida/FridaInstrumentationPort.js";
+import type { FridaInstrumentationPort } from "../ports/frida/FridaInstrumentationPort.js";
 import { createFridaInstrumentationProvider } from "../composition/frida.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";

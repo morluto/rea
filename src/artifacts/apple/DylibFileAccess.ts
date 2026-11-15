@@ -12,15 +12,13 @@ import {
   ArtifactReaderFailure,
   sameArtifactSourceIdentity,
   type ArtifactEntry,
-} from "../ArtifactReader.js";
-import {
   assertArtifactReadActive,
   mapArtifactFileFailure,
   withArtifactRegularFile,
-} from "../ArtifactFileOperation.js";
+  type ArtifactResourceScope,
+} from "../../resources/index.js";
 import type { ArtifactIntegrityCheck } from "../../domain/artifactOperationError.js";
-import type { ArtifactResourceScope } from "../ArtifactResourceScope.js";
-import { readArtifactFileChunks } from "../readArtifactFileChunks.js";
+import { readArtifactFileChunks } from "../../resources/index.js";
 import { hasMachoMagic } from "../../domain/apple/machoContainer.js";
 import { readMachoImage } from "./MachoLoadCommandReader.js";
 import { readFileHandleRange } from "../../filesystem/readFileHandleRange.js";

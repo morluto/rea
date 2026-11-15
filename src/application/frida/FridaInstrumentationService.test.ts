@@ -4,8 +4,8 @@ import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
-import { FridaScriptLoadCancelledError } from "./FridaInstrumentationPort.js";
-import type { FridaInstrumentationPort } from "./FridaInstrumentationPort.js";
+import { FridaScriptLoadCancelledError } from "../../ports/frida/FridaInstrumentationPort.js";
+import type { FridaInstrumentationPort } from "../../ports/frida/FridaInstrumentationPort.js";
 import { FridaInstrumentationService } from "./FridaInstrumentationService.js";
 import {
   AnalysisCancelledError,

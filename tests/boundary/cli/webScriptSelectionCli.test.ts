@@ -9,7 +9,7 @@ import * as webScriptExport from "../../../src/application/WebScriptExportServic
 import { cliCommandFor } from "../../../src/cliCommandNames.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { err, ok } from "../../../src/domain/result.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   scriptCaptureEvidenceFixture,

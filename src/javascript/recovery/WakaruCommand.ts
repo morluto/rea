@@ -11,8 +11,10 @@ import {
   AnalysisOutputError,
   cancelledBy,
 } from "../../domain/analysisErrorCore.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import {
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+} from "../../resources/index.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";

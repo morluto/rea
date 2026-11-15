@@ -73,7 +73,7 @@ check(
 
 // Prerequisite inspection lifetime is an application contract shared by adapters.
 check(
-  "provider-owned inspection lifetime (use src/application/ProviderInspectionScope)",
+  "provider-owned inspection lifetime (use src/ports/ProviderInspectionScope)",
   files,
   /providers\/ProviderInspectionScope\.js/,
 );

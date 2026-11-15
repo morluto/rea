@@ -1,5 +1,5 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";

@@ -1,7 +1,7 @@
 import { z } from "incur";
 import type { Logger } from "pino";
 import { matchNativeFunctionsFromBundles } from "../application/native/NativeFunctionMatchingService.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/index.js";
 import { SESSION_TOOL_CONTRACTS } from "../contracts/sessionToolContracts.js";
 import { FUNCTION_COMPARISON_PROVIDER } from "../domain/comparisonEvidenceIdentity.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";

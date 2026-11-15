@@ -3,7 +3,7 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { inspectAnalysisViewInputSchema } from "../../../src/domain/analysisView/analysisViewRequest.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";

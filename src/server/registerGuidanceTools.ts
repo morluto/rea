@@ -2,7 +2,7 @@ import {
   readGuidanceSection,
   searchGuidance,
 } from "../application/GuidanceAccess.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";

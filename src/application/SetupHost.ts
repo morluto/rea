@@ -5,8 +5,12 @@ import {
 } from "./ClientConfigurationCleanup.js";
 import { access } from "node:fs/promises";
 
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+  AnalysisCleanupLeaseGroup,
+  type AnalysisCleanupLease,
+} from "../resources/index.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { currentClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import {
@@ -62,11 +66,7 @@ import type {
   SetupProviderEnvironment,
 } from "./SetupTypes.js";
 import { SetupCleanupOwner } from "./SetupCleanupOwner.js";
-import {
-  AnalysisCleanupLeaseGroup,
-  type AnalysisCleanupLease,
-} from "../artifacts/AnalysisCleanupLease.js";
-import { bindRegularFileCleanup } from "./RegularFileRead.js";
+import { bindRegularFileCleanup } from "../process/RegularFileRead.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 import { analysisProviderSelectorSchema } from "../domain/providerSelection.js";
 import { systemDesktopBuildSetupHost } from "../desktop/DesktopBuildSetupHost.js";

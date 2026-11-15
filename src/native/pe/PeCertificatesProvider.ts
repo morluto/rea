@@ -5,19 +5,15 @@ import {
   projectStableArtifactFailure,
   stableArtifactInputFailure,
   projectArtifactCloseFailure,
-} from "../../artifacts/StableArtifactFailure.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import {
+  ArtifactReaderFailure,
   type StableArtifactSnapshot,
   readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
-import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import type { PeCertificatesPort } from "../../application/binaryDiagnostics/PeCertificatesPort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+  ArtifactResourceScope,
+} from "../../resources/index.js";
+import type { PeCertificatesPort } from "../../ports/binaryDiagnostics/PeCertificatesPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import {
   AnalysisInputError,

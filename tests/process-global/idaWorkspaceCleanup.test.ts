@@ -3,8 +3,8 @@ import { access, readFile, writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 
-import { ArtifactFileCleanupFailure } from "../../src/artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../../src/artifacts/ArtifactReader.js";
+import { ArtifactFileCleanupFailure } from "../../src/resources/ArtifactFileOperation.js";
+import { ArtifactReaderFailure } from "../../src/resources/ArtifactReader.js";
 import { parseBinaryTarget } from "../../src/application/BinaryTargetResolver.js";
 import { elf } from "../../src/domain/binaryTarget.fixture.js";
 import { AnalysisProtocolError } from "../../src/domain/analysisErrorCore.js";

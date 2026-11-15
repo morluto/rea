@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { expect } from "vitest";
 import { z } from "zod";
 
-import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import {
   createEvidence,

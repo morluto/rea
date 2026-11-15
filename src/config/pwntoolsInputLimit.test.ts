@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { pwntoolsInputBytes } from "./PwntoolsInputLimit.js";
-import { pwntoolsUnavailable } from "./PwntoolsFailures.js";
-import { PWNTOOLS_LIMITS } from "../../domain/native/pwntoolsResourceLimits.js";
-import { PWNTOOLS_PROVIDER_IDENTITY } from "./PwntoolsProviderIdentity.js";
+import { pwntoolsInputBytes } from "./pwntoolsInputLimit.js";
+import { pwntoolsUnavailable } from "../native/pwntools/PwntoolsFailures.js";
+import { PWNTOOLS_LIMITS } from "../domain/native/pwntoolsResourceLimits.js";
+import { PWNTOOLS_PROVIDER_IDENTITY } from "../native/pwntools/PwntoolsProviderIdentity.js";
 
 const CONSTRAINT =
   "REA_PWNTOOLS_MAX_INPUT_BYTES must be a decimal integer from 1 to " +

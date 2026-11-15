@@ -32,8 +32,8 @@ import {
 import { prepareProcessOwnershipInspection } from "../../src/process/ProcessOwnershipObservation.js";
 import { spawnOwnedProviderProcess } from "../../src/process/ProviderProcess.js";
 import { PrivateRuntimeRoot } from "../../src/process/PrivateRuntimeRoot.js";
-import { ArtifactFileCleanupFailure } from "../../src/artifacts/ArtifactFileOperation.js";
-import * as artifacts from "../../src/artifacts/readStableArtifact.js";
+import { ArtifactFileCleanupFailure } from "../../src/resources/ArtifactFileOperation.js";
+import * as artifacts from "../../src/resources/readStableArtifact.js";
 import {
   recordedCrashFixture,
   recordedCrashFixtureBytes,

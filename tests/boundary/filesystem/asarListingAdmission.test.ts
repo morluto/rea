@@ -16,7 +16,7 @@ import {
   nestedAsarHeader,
 } from "../../fixtures/asarHeader.js";
 import { inventoryArtifact } from "../../fixtures/artifactInventory.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { extractArtifact } from "../../../src/artifacts/extraction/ArtifactExtraction.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 

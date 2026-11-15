@@ -7,8 +7,10 @@ import { readElfProgramHeader } from "../../domain/elfProgramHeader.js";
 import { validateElfSectionTablePresence } from "../../domain/elfDeclaredRanges.js";
 import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
 import { createHash } from "node:crypto";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import {
+  ArtifactReaderFailure,
+  assertArtifactReadActive,
+} from "../../resources/index.js";
 import {
   readElfFixedHeader,
   type ElfFixedHeader,

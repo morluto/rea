@@ -6,7 +6,7 @@ import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory
 import { openRegularFile } from "../filesystem/RegularFile.js";
 import { assertArtifactFileSelectedSource } from "./ArtifactFileSource.js";
 import { assertArtifactSelectedSource } from "./ArtifactSelectedSource.js";
-import { readStableArtifact } from "./readStableArtifact.js";
+import { readStableArtifact } from "../resources/readStableArtifact.js";
 import { DirectoryArtifactReader } from "./DirectoryArtifactReader.js";
 import { createDesktopApplicationService } from "../composition/desktop.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";

@@ -1,7 +1,7 @@
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { expect, it } from "vitest";
 
-import { createAnalysisExecution } from "../AnalysisProvider.js";
+import { createAnalysisExecution } from "../../ports/AnalysisProvider.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { parseEvidence } from "../../domain/evidence.js";
 import { pcapResultSchemas } from "../../domain/pcap/pcapAnalysis.js";

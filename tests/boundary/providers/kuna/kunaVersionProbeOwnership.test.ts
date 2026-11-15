@@ -6,14 +6,14 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { expect, it } from "vitest";
 
-import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../../src/resources/ArtifactResourceScope.js";
 import {
   createKunaResourceScope,
   inspectKunaInstallation,
   kunaInstallationCancellation,
 } from "../../../../src/kuna/KunaInstallation.js";
 import { KunaProvider } from "../../../../src/kuna/KunaProvider.js";
-import type { RetainedResourceScope } from "../../../../src/application/AnalysisProvider.js";
+import type { RetainedResourceScope } from "../../../../src/ports/AnalysisProvider.js";
 import { ProviderAdapterError } from "../../../../src/domain/providerAdapterError.js";
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import { RegularFileCleanupFailure } from "../../../../src/filesystem/OwnedRegularFile.js";

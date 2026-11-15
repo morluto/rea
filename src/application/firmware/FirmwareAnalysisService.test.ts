@@ -2,7 +2,7 @@ import { expect, it, vi } from "vitest";
 import { ZodError } from "zod";
 
 import { FirmwareAnalysisService } from "./FirmwareAnalysisService.js";
-import { createAnalysisExecution } from "../AnalysisProvider.js";
+import { createAnalysisExecution } from "../../ports/AnalysisProvider.js";
 import {
   firmwareResultSchemas,
   type FirmwareOperation,

@@ -56,7 +56,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 import { ApkSignatureProvider } from "../../src/apkSignature/ApkSignatureProvider.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { createCli } from "../../src/cli.js";
 import { cliCommandFor } from "../../src/cliCommandNames.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";

@@ -8,7 +8,7 @@ import { createTestProviderRouter } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import { InvestigationRecords } from "../../../src/application/investigation/InvestigationRecords.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
 import { err, ok } from "../../../src/domain/result.js";

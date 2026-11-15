@@ -5,7 +5,7 @@ import { expect } from "vitest";
 import { parse as parseYaml } from "yaml";
 
 import { buildManagedPeFixture } from "../../src/dotnet/ManagedPe.fixture.js";
-import { analysisErrorProjectionSchema } from "../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../src/domain/analysisErrorProjectionSchema.js";
 import { workspaceCliTest } from "../support/cli/workspaceCliFixture.js";
 
 // Exercise the real dispatcher and pinned formatter with an authored capacity

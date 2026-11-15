@@ -16,16 +16,14 @@ import {
   OwnedRegularFileOperationFailure,
   type RegularFileOperationOutcome,
 } from "../filesystem/OwnedRegularFile.js";
-import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
+import { readBoundedFileBytes } from "./BoundedFileBytes.js";
 import {
   AnalysisCleanupLeaseGroup,
   AnalysisCleanupLease,
-} from "../artifacts/AnalysisCleanupLease.js";
-import type {
-  ArtifactResourceOwner,
-  ArtifactResourceScope,
-} from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+  type ArtifactResourceOwner,
+  type ArtifactResourceScope,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import type {
   AnalysisCleanupObservation,
   AnalysisError,

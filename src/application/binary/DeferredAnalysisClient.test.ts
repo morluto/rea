@@ -5,7 +5,7 @@ import { DeferredAnalysisClient } from "../../providers/DeferredAnalysisClient.j
 import {
   createAnalysisExecution,
   type AnalysisClient,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import {
   AnalysisCancelledError,
   AnalysisAccessDeniedError,

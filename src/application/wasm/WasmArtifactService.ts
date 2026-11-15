@@ -1,12 +1,12 @@
 import type { AnalysisSettingsReader } from "../../domain/analysisSettings.js";
 import { selectedAnalysisSetting } from "../../domain/analysisSettingDefinitions.js";
 import { constants as bufferConstants } from "node:buffer";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import {
   analysisExecutionEnvelopeForAdmission,
   createAnalysisExecutionEvidence,
 } from "../../domain/analysisObservation.js";
-import type { WasmArtifactPort } from "./WasmArtifactPort.js";
+import type { WasmArtifactPort } from "../../ports/wasm/WasmArtifactPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisOutputError,

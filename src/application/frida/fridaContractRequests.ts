@@ -7,7 +7,7 @@ import type {
   FridaRemoteConnection,
   FridaScriptSource,
   StartFridaSessionInput,
-} from "./FridaInstrumentationPort.js";
+} from "../../ports/frida/FridaInstrumentationPort.js";
 
 /** A Frida contract's `remote` member, as its input schema admits it. */
 export interface FridaRemoteInput {

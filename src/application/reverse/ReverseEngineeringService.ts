@@ -1,8 +1,10 @@
 import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { MAX_NODE_TIMER_DELAY_MS } from "../../domain/analysisResourceLimits.js";
 import { Budget } from "../../domain/budget.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
+import {
+  ArtifactResourceScope,
+  bindArtifactFileCleanup,
+} from "../../resources/index.js";
 import {
   ProcessOwnershipInspectionCancelled,
   ProcessOwnershipIdentityBatchFailure,
@@ -76,7 +78,7 @@ import {
 } from "../../process/ProcessOwnershipObservation.js";
 import { ProcessAdmissionError } from "../../process/ProcessAdmissionError.js";
 import type { ProviderProcessSupervisor } from "../../process/ProviderProcess.js";
-import { RuntimeControlUnavailableError } from "../../process/RuntimeControlUnavailableError.js";
+import { RuntimeControlUnavailableError } from "../../domain/runtimeControlUnavailableError.js";
 import { WindowsNativeAuthorityUnavailableError } from "../../windows/WindowsNativeLoader.js";
 import {
   WindowsNativeSpawnControlError,
