@@ -1234,22 +1234,6 @@ const admitDocumentDelivery = (
   const detail =
     (values.detail as "complete" | "summary" | undefined) ??
     (view === undefined ? "complete" : "summary");
-  if (view !== undefined && detail !== "summary")
-    return err(
-      analysisInputErrorFromIssues(
-        operation,
-        [
-          {
-            code: "custom",
-            path: ["view"],
-            message:
-              "A selected page requires --detail summary and --evidence_output.",
-            input: values.view,
-          },
-        ],
-        { detail, view },
-      ),
-    );
   const delivery: CliEvidenceDeliveryChoice = {
     detail,
     evidenceOutput: values.evidence_output as string | undefined,
