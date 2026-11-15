@@ -537,14 +537,17 @@ const devinDirectory = ({ home, platform, env }: ClientPathContext): string =>
     ? join(windowsAppDataRoots(home, env).roaming, "devin")
     : join(xdgConfigHomeOrDefault({ home, env }), "devin");
 
-/** The Cline VS Code extension's settings in VS Code's global storage. */
-const clineVscodeSettingsDirectory = (context: ClientPathContext): string =>
-  join(
-    vscodeUserDirectory(context),
-    "globalStorage",
-    "saoudrizwan.claude-dev",
-    "settings",
-  );
+/** The Cline extension's settings in one editor's global storage. */
+const clineSettingsDirectory =
+  (dataFolder: string) =>
+  (context: ClientPathContext): string =>
+    join(
+      vscodeUserDirectory(context, dataFolder),
+      "globalStorage",
+      "saoudrizwan.claude-dev",
+      "settings",
+    );
+const clineVscodeSettingsDirectory = clineSettingsDirectory("Code");
 
 /**
  * Zed's paths::config_dir. On Windows it reads the RoamingAppData known
@@ -1127,6 +1130,54 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     configPath: (context: ClientPathContext) =>
       join(clineVscodeSettingsDirectory(context), "cline_mcp_settings.json"),
     markerPath: clineVscodeSettingsDirectory,
+    format: "json",
+  }),
+  defineClient({
+    name: "cline_vscode_insiders",
+    registrationConnection: { kind: "cline" },
+    displayName: "Cline in VS Code Insiders",
+    configPath: (context: ClientPathContext) =>
+      join(
+        clineSettingsDirectory("Code - Insiders")(context),
+        "cline_mcp_settings.json",
+      ),
+    markerPath: clineSettingsDirectory("Code - Insiders"),
+    format: "json",
+  }),
+  defineClient({
+    name: "cline_vscodium",
+    registrationConnection: { kind: "cline" },
+    displayName: "Cline in VSCodium",
+    configPath: (context: ClientPathContext) =>
+      join(
+        clineSettingsDirectory("VSCodium")(context),
+        "cline_mcp_settings.json",
+      ),
+    markerPath: clineSettingsDirectory("VSCodium"),
+    format: "json",
+  }),
+  defineClient({
+    name: "cline_cursor",
+    registrationConnection: { kind: "cline" },
+    displayName: "Cline in Cursor",
+    configPath: (context: ClientPathContext) =>
+      join(
+        clineSettingsDirectory("Cursor")(context),
+        "cline_mcp_settings.json",
+      ),
+    markerPath: clineSettingsDirectory("Cursor"),
+    format: "json",
+  }),
+  defineClient({
+    name: "cline_windsurf",
+    registrationConnection: { kind: "cline" },
+    displayName: "Cline in Windsurf",
+    configPath: (context: ClientPathContext) =>
+      join(
+        clineSettingsDirectory("Windsurf")(context),
+        "cline_mcp_settings.json",
+      ),
+    markerPath: clineSettingsDirectory("Windsurf"),
     format: "json",
   }),
   defineClient({

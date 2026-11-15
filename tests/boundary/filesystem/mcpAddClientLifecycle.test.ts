@@ -12,6 +12,7 @@ import {
   inspectClientConfiguration,
 } from "../../../src/application/SetupClientConfiguration.js";
 import { supportedClients } from "../../../src/application/SupportedClients.js";
+import { detectClients } from "../../../src/application/SetupHost.js";
 import {
   runUninstall,
   systemUninstallHost,
@@ -162,3 +163,77 @@ it("registers Amp in settings.jsonc when that is Amp's only settings file", asyn
   );
   expect(ambiguous.ok).toBe(false);
 });
+
+it.each([
+  { client: "cline_vscode_insiders", folder: "Code - Insiders" },
+  { client: "cline_vscodium", folder: "VSCodium" },
+  { client: "cline_cursor", folder: "Cursor" },
+  { client: "cline_windsurf", folder: "Windsurf" },
+])(
+  "manages Cline's registration in $folder's global storage",
+  async ({ client, folder }) => {
+    const home = await createTestTempDirectory(`rea-${client}-`);
+    const row = supportedClients(home, "linux", {}).find(
+      ({ name }) => name === client,
+    );
+    if (row === undefined) throw new Error(`${client} has no table row`);
+    const settings = join(
+      home,
+      ".config",
+      folder,
+      "User",
+      "globalStorage",
+      "saoudrizwan.claude-dev",
+      "settings",
+    );
+    expect(row.configPath).toBe(join(settings, "cline_mcp_settings.json"));
+    // VSCODE_PORTABLE names VS Code's own portable data, not this editor's.
+    expect(
+      supportedClients(home, "linux", {
+        VSCODE_PORTABLE: join(home, "portable"),
+      }).find(({ name }) => name === client)?.configPath,
+    ).toBe(row.configPath);
+    expect(
+      supportedClients(home, "linux", {
+        VSCODE_PORTABLE: join(home, "portable"),
+      }).find(({ name }) => name === "cline_vscode")?.configPath,
+    ).toBe(
+      join(
+        home,
+        "portable",
+        "user-data",
+        "User",
+        "globalStorage",
+        "saoudrizwan.claude-dev",
+        "settings",
+        "cline_mcp_settings.json",
+      ),
+    );
+    // Detected only where that editor's Cline extension has run.
+    expect(
+      (await detectClients(home, "linux", {})).map(({ name }) => name),
+    ).not.toContain(client);
+    await mkdir(settings, { recursive: true });
+    expect(
+      (await detectClients(home, "linux", {})).map(({ name }) => name),
+    ).toContain(client);
+
+    await expect(
+      configureClientConfiguration(row, {}, command),
+    ).resolves.toMatchObject({ status: "configured" });
+    const status = (
+      await readClientRegistrationStatuses(home, command[1], {
+        platform: "linux",
+        environment: {},
+      })
+    ).find(({ client: name }) => name === client);
+    expect(status).toMatchObject({ command_identity: "owned" });
+    const uninstall = await runUninstall(
+      false,
+      systemUninstallHost(home, undefined, {}, "linux"),
+    );
+    expect(uninstall.items).toContainEqual(
+      expect.objectContaining({ name: client, status: "removed" }),
+    );
+  },
+);
