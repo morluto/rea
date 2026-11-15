@@ -1,3 +1,4 @@
+import { javaScriptSemanticWorkAllowance } from "../../domain/javascript/javascriptSemanticWorkAllowance.js";
 import { MAX_NODE_TIMER_DELAY_MS } from "../../domain/analysisResourceLimits.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
@@ -1323,12 +1324,16 @@ export class JavaScriptAnalysisWorker {
         (parentBudget
           ? JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION
           : undefined);
+      // A fixed work allowance refuses the same source again; worker limits
+      // and other remediation do not raise it.
+      const fixed = javaScriptSemanticWorkAllowance(reported);
       return new AnalysisResourceConstraintError(
         OPERATION,
         response.resource ?? "memory",
         response.message,
         limits,
-        remediationAction === undefined ? undefined : { remediationAction },
+        fixed ??
+          (remediationAction === undefined ? undefined : { remediationAction }),
       );
     }
     return new AnalysisOutputError(
