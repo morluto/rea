@@ -87,3 +87,18 @@ it.skipIf(process.platform === "win32")(
     ).toHaveLength(1);
   },
 );
+
+it.skipIf(process.platform === "win32")(
+  "checks the ESP lanes' RISC-V Clang and ld.lld through the shared variables",
+  async () => {
+    const directory = await createTestTempDirectory("rea-fixture-toolchain-");
+    vi.stubEnv("REA_RISCV_CLANG", await command(directory, "clang", "clang"));
+    vi.stubEnv("REA_RISCV_LLD", await command(directory, "ld.lld", "LLD 19"));
+    await expect(requireLaneToolchain("esp")).resolves.toBeUndefined();
+
+    const linker = join(directory, "missing-ld.lld");
+    vi.stubEnv("REA_RISCV_LLD", linker);
+    const [missing] = await refusalFor("esp", `REA_RISCV_LLD=${linker}`);
+    expect(missing).toContain("command not found");
+  },
+);
