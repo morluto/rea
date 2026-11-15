@@ -40,6 +40,34 @@ const oracle = z
     ),
   );
 
+// Keep coverage independent of the rows used to construct the ELF carrier.
+// Missing producer variants or symbols must fail before tests are registered.
+expect(
+  oracle.variants.map(({ name, symbols }) => ({
+    name,
+    symbols: symbols.map(({ name, type, binding }) => ({
+      name,
+      type,
+      binding,
+    })),
+  })),
+).toEqual([
+  {
+    name: "gnu_unique",
+    symbols: [
+      { name: "process_value", type: "object", binding: "unique" },
+      { name: "thread_value", type: "tls", binding: "unique" },
+    ],
+  },
+  {
+    name: "weak",
+    symbols: [
+      { name: "process_value", type: "object", binding: "weak" },
+      { name: "thread_value", type: "tls", binding: "weak" },
+    ],
+  },
+]);
+
 for (const variant of oracle.variants) {
   cliTest(
     `preserves GCC ${variant.name} object and TLS bindings through native export Evidence`,
