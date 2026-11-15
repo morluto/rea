@@ -30,7 +30,7 @@ import { utcDateTimeSchema } from "../domain/offsetDateTime.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisResourceConstraintError,
@@ -1042,11 +1042,11 @@ export class KunaProjectCache {
       return err(
         built.result.ok
           ? new KunaPublishedProjectCleanupError(built.result.value, retired)
-          : analysisErrorWithCleanupFailure(
+          : analysisErrorWithCleanupDependencies(
               built.result.error,
               retired,
               KUNA_EXPORT_OPERATION,
-            ).bindCleanupDependencies([built.result.error, retired]),
+            ),
       );
     if (built.result.ok)
       // The entry is published either way; a failed eviction retries on the next publish.

@@ -22,7 +22,7 @@ import type { AppConfig } from "../config/types.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "pino";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import { err, ok } from "../domain/result.js";
@@ -573,11 +573,11 @@ export class HopperProvider implements AnalysisProviderCandidate {
         return closed.ok
           ? err(descriptors)
           : err(
-              analysisErrorWithCleanupFailure(
+              analysisErrorWithCleanupDependencies(
                 closed.error,
                 descriptors,
                 "close_binary",
-              ).bindCleanupDependencies([closed.error, descriptors]),
+              ),
             );
       },
     };
