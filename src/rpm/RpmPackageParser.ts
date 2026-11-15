@@ -80,8 +80,12 @@ export const RPM_PACKAGE_LIMITATIONS = [
 ] as const;
 
 type HeaderValue =
-  | { readonly kind: "string"; readonly value: string }
-  | { readonly kind: "strings"; readonly values: readonly string[] }
+  | { readonly kind: "string"; readonly value: string; readonly bytes: number }
+  | {
+      readonly kind: "strings";
+      readonly values: readonly string[];
+      readonly bytes: readonly number[];
+    }
   | { readonly kind: "ints"; readonly values: readonly number[] }
   | { readonly kind: "bin"; readonly value: Buffer };
 
@@ -207,12 +211,19 @@ const readCString = (
   store: Buffer,
   offset: number,
   message: string,
-): { readonly value: string; readonly next: number } => {
+): {
+  readonly value: string;
+  readonly bytes: number;
+  readonly next: number;
+} => {
   if (offset >= store.length) fail(message, { field: "data store" });
   const nul = store.indexOf(0, offset);
   if (nul === -1) fail(message, { field: "data store" });
+  // RPM header text is UTF-8; the stored byte length is kept separately so
+  // byte counts stay exact even when decoding replaces invalid sequences.
   return {
-    value: store.subarray(offset, nul).toString("binary"),
+    value: store.subarray(offset, nul).toString("utf8"),
+    bytes: nul - offset,
     next: nul + 1,
   };
 };
@@ -222,15 +233,20 @@ const readStrings = (
   offset: number,
   count: number,
   message: string,
-): readonly string[] => {
+): {
+  readonly values: readonly string[];
+  readonly bytes: readonly number[];
+} => {
   const values: string[] = [];
+  const bytes: number[] = [];
   let cursor = offset;
   for (let index = 0; index < count; index += 1) {
     const read = readCString(store, cursor, message);
     values.push(read.value);
+    bytes.push(read.bytes);
     cursor = read.next;
   }
-  return values;
+  return { values, bytes };
 };
 
 const readInts = (
@@ -299,20 +315,19 @@ const decodeEntry = (store: BinaryReader, entry: IndexEntry): HeaderValue => {
           size as 1 | 2 | 4 | 8,
         ),
       };
-    case RPM_TYPE.string:
+    case RPM_TYPE.string: {
       if (entry.count !== 1)
         fail(
           `RPM STRING tag ${String(entry.tag)} count ${String(entry.count)} is not 1.`,
           { field },
         );
-      return {
-        kind: "string",
-        value: readCString(
-          store.bytes,
-          entry.offset,
-          `RPM STRING tag ${String(entry.tag)} is not NUL-terminated in the data store.`,
-        ).value,
-      };
+      const read = readCString(
+        store.bytes,
+        entry.offset,
+        `RPM STRING tag ${String(entry.tag)} is not NUL-terminated in the data store.`,
+      );
+      return { kind: "string", value: read.value, bytes: read.bytes };
+    }
     case RPM_TYPE.bin: {
       if (entry.count > store.bytes.length - entry.offset)
         fail(`RPM BIN tag ${String(entry.tag)} leaves the data store.`, {
@@ -327,7 +342,7 @@ const decodeEntry = (store: BinaryReader, entry: IndexEntry): HeaderValue => {
     case RPM_TYPE.i18nString:
       return {
         kind: "strings",
-        values: readStrings(
+        ...readStrings(
           store.bytes,
           entry.offset,
           entry.count,
@@ -423,6 +438,39 @@ const stringValue = (
   const value = header.values.get(tag);
   if (value?.kind === "string") return value.value;
   if (value?.kind === "strings") return value.values[0];
+  return undefined;
+};
+
+/** Decoded text plus its stored UTF-8 byte length, for byte-count reporting. */
+interface StoredString {
+  readonly text: string;
+  readonly bytes: number;
+}
+
+const storedString = (
+  header: DecodedHeader,
+  tag: number,
+): StoredString | undefined => {
+  const value = header.values.get(tag);
+  if (value?.kind === "string")
+    return { text: value.value, bytes: value.bytes };
+  if (value?.kind === "strings" && value.values.length > 0)
+    return { text: value.values[0]!, bytes: value.bytes[0]! };
+  return undefined;
+};
+
+const storedStrings = (
+  header: DecodedHeader,
+  tag: number,
+): readonly StoredString[] | undefined => {
+  const value = header.values.get(tag);
+  if (value?.kind === "strings")
+    return value.values.map((text, index) => ({
+      text,
+      bytes: value.bytes[index]!,
+    }));
+  if (value?.kind === "string")
+    return [{ text: value.value, bytes: value.bytes }];
   return undefined;
 };
 
@@ -682,20 +730,19 @@ const files = (
 };
 
 const scriptText = (
-  source: string | undefined,
+  source: StoredString | undefined,
   include: boolean,
   maxBytes: number,
   kind: RpmScriptletKind,
 ): { readonly bytes: number; readonly text: string | null } | undefined => {
   if (source === undefined) return undefined;
-  const encoded = Buffer.from(source, "binary");
-  if (include && encoded.length > maxBytes)
+  if (include && source.bytes > maxBytes)
     throw new RpmPackageCapacityFailure(
       "max_script_bytes",
       maxBytes,
-      `RPM ${kind} scriptlet is ${String(encoded.length)} bytes, above the ${String(maxBytes)}-byte script budget.`,
+      `RPM ${kind} scriptlet is ${String(source.bytes)} bytes, above the ${String(maxBytes)}-byte script budget.`,
     );
-  return { bytes: encoded.length, text: include ? source : null };
+  return { bytes: source.bytes, text: include ? source.text : null };
 };
 
 const scriptlets = (
@@ -718,7 +765,7 @@ const scriptlets = (
   ];
   for (const item of kinds) {
     const body = scriptText(
-      stringValue(header, item.text),
+      storedString(header, item.text),
       includeText,
       maxBytes,
       item.kind,
@@ -732,7 +779,7 @@ const scriptlets = (
       trigger_name: null,
     });
   }
-  const triggerScripts = stringArray(header, RPM_TAG.triggerScripts);
+  const triggerScripts = storedStrings(header, RPM_TAG.triggerScripts);
   if (triggerScripts !== undefined) {
     const programs = stringArray(header, RPM_TAG.triggerScriptProg) ?? [];
     const names = stringArray(header, RPM_TAG.triggerName) ?? [];

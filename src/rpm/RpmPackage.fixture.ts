@@ -65,9 +65,9 @@ const padTo = (store: Buffer, align: number): Buffer => {
 };
 
 const encodeTagData = (tag: RpmFixtureTag): Buffer => {
-  if (tag.string !== undefined) return Buffer.from(`${tag.string}\0`, "binary");
+  if (tag.string !== undefined) return Buffer.from(`${tag.string}\0`, "utf8");
   if (tag.strings !== undefined)
-    return Buffer.from(`${tag.strings.join("\0")}\0`, "binary");
+    return Buffer.from(`${tag.strings.join("\0")}\0`, "utf8");
   if (tag.int16 !== undefined) return concat(...tag.int16.map(u16));
   if (tag.int32 !== undefined) return concat(...tag.int32.map(u32));
   if (tag.int64 !== undefined) return concat(...tag.int64.map(u64));
@@ -411,6 +411,40 @@ export const rpmSparsePackageFixture = (): Buffer =>
       { tag: RPM_TAG.arch, type: RPM_TYPE.string, string: "noarch" },
       { tag: RPM_TAG.payloadFormat, type: RPM_TYPE.string, string: "cpio" },
       { tag: RPM_TAG.payloadCompressor, type: RPM_TYPE.string, string: "zstd" },
+    ],
+  });
+
+/** Binary RPM whose summary, file path, and scriptlet carry UTF-8 text. */
+export const rpmUtf8PackageFixture = (): Buffer =>
+  encodeRpmPackage({
+    headerTags: [
+      { tag: RPM_TAG.name, type: RPM_TYPE.string, string: "cafe" },
+      { tag: RPM_TAG.version, type: RPM_TYPE.string, string: "1.0" },
+      { tag: RPM_TAG.release, type: RPM_TYPE.string, string: "1" },
+      {
+        tag: RPM_TAG.summary,
+        type: RPM_TYPE.i18nString,
+        strings: ["Café résumé tool"],
+      },
+      { tag: RPM_TAG.arch, type: RPM_TYPE.string, string: "noarch" },
+      { tag: RPM_TAG.prein, type: RPM_TYPE.string, string: "echo é\n" },
+      {
+        tag: RPM_TAG.preinProg,
+        type: RPM_TYPE.stringArray,
+        strings: ["/bin/sh"],
+      },
+      {
+        tag: RPM_TAG.dirNames,
+        type: RPM_TYPE.stringArray,
+        strings: ["/usr/share/café/"],
+      },
+      {
+        tag: RPM_TAG.baseNames,
+        type: RPM_TYPE.stringArray,
+        strings: ["naïve.txt"],
+      },
+      { tag: RPM_TAG.dirIndexes, type: RPM_TYPE.int32, int32: [0] },
+      { tag: RPM_TAG.payloadFormat, type: RPM_TYPE.string, string: "cpio" },
     ],
   });
 

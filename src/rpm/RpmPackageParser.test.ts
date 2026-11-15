@@ -13,6 +13,7 @@ import {
   rpmSourcePackageFixture,
   rpmSparsePackageFixture,
   rpmTruncatedHeaderFixture,
+  rpmUtf8PackageFixture,
   RPM_SIG_TAG,
   RPM_TAG,
   RPM_TYPE,
@@ -134,6 +135,26 @@ it("returns scriptlet text only when the caller opts in", () => {
     interpreter: "/bin/sh",
     text: "echo prein\n",
   });
+});
+
+it("decodes UTF-8 header text and reports stored byte lengths", () => {
+  const bytes = rpmUtf8PackageFixture();
+  expect(bytes.includes(Buffer.from("Café résumé tool", "utf8"))).toBe(true);
+  const report = parse(
+    bytes,
+    inspectRpmPackageInputSchema.parse({
+      path: defaults.path,
+      include_script_text: true,
+    }),
+  );
+  expect(report.package.summary).toBe("Café résumé tool");
+  expect(report.files?.map((row) => row.path)).toEqual([
+    "/usr/share/café/naïve.txt",
+  ]);
+  const prein = report.scriptlets?.find((row) => row.kind === "prein");
+  expect(prein?.text).toBe("echo é\n");
+  // "echo é\n" is 7 characters but 8 UTF-8 bytes in the data store.
+  expect(prein?.bytes).toBe(8);
 });
 
 it("keeps source RPMs distinct from binary packages", () => {
