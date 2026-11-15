@@ -333,8 +333,7 @@ runner's Go and a virtual environment cached by the requirements file's
 digest, so every code change runs every engine. The pre-push hook does not
 run the check, because it needs a current build. `--package-root=DIR` lists
 an installed package instead of the checkout's build; the release guide uses
-it to [check the packed catalog](releasing.md#check-the-packed-catalog-with-client-engines)
-before publication.
+it to [check the qualified archive](releasing.md#check-the-packed-catalog-with-client-engines).
 
 The same run compares the listings with
 `scripts/verify/advertised-schemas/summary.json`, which records each advertised
