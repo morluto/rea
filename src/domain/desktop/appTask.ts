@@ -292,6 +292,8 @@ const pointerProblem = (check: PointerCheck): string | undefined => {
       : "the empty pointer names the whole file; point at the value that changed";
   if (!check.pointer.startsWith("/"))
     return `pointer ${JSON.stringify(check.pointer)} must start with /`;
+  if (/~(?![01])/u.test(check.pointer))
+    return `pointer ${JSON.stringify(check.pointer)} uses an invalid escape; use ~0 or ~1 for ~ or /`;
   return check.kind === "text_contains" &&
     check.normalize_whitespace === true &&
     collapseWhitespace(check.value) === ""

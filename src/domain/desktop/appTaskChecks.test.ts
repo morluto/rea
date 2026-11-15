@@ -1065,6 +1065,27 @@ describe("evaluateTaskChecks whole text", () => {
 });
 
 describe("parseDesktopTask", () => {
+  it.each(["/value~2", "/tail~", "/[name=London~Bridge]/value"])(
+    "rejects an invalid JSON pointer escape in %s",
+    (pointer) => {
+      expect(
+        task([{ kind: "value_absent", file: "a", pointer }]),
+      ).toMatchObject({
+        ok: false,
+        error: expect.stringContaining("~0 or ~1"),
+      });
+    },
+  );
+
+  it.each(["/value~02", "/tail~0", "/[name=London~0Bridge]/a~1b"])(
+    "accepts a valid JSON pointer escape in %s",
+    (pointer) => {
+      expect(
+        task([{ kind: "value_absent", file: "a", pointer }]),
+      ).toMatchObject({ ok: true });
+    },
+  );
+
   it("settles ids and keeps the prompt trimmed", () => {
     const parsed = parseDesktopTask({
       name: "add-milk",
