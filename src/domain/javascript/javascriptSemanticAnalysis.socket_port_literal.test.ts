@@ -18,7 +18,9 @@ import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
  *   net.connect(-0n, { port: 443 })   -> THREW ERR_INVALID_ARG_TYPE (no merge)
  *   tls.connect(-0n) / ~0n            -> THREW ERR_INVALID_ARG_TYPE
  *   tls.connect(+0n, { port: 443 })   -> THREW TypeError (before the call)
+ *   tls.connect(-0n, () => {}) / undefined / {} / "host" / "host", {} -> THREW
  *   tls.connect(-0n, { port: 443 })   -> Socket created (later options win)
+ *   tls.connect(-0n, undefined, { port: 443 }) -> Socket created
  *   tls.connect(~0n, { port: 443 })   -> Socket created (later options win)
  *   net.connect("")                   -> THREW ERR_SOCKET_BAD_PORT
  *   net.connect("/tmp/x.sock")        -> Socket created (Unix socket path)
@@ -48,6 +50,10 @@ it.each([
     `tls.connect(+0n, { port: 443 })`,
   ],
   ["a tls negated BigInt port", `tls.connect(-0n)`],
+  ["a tls negated BigInt port with a callback", `tls.connect(-0n, () => {})`],
+  ["a tls negated BigInt port with undefined", `tls.connect(-0n, undefined)`],
+  ["a tls negated BigInt port with empty options", `tls.connect(-0n, {})`],
+  ["a tls negated BigInt port with a host", `tls.connect(-0n, "host", {})`],
   ["a net negated BigInt port with options", `net.connect(-0n, { port: 443 })`],
   ["a boolean port", `net.connect(true)`],
   ["a null port", `net.connect(null)`],
@@ -85,6 +91,16 @@ it.each([
   [
     "a tls bitwise-not BigInt port that later options replace",
     `tls.connect(~0n, { port: 443 })`,
+    "connect",
+  ],
+  [
+    "a tls negated BigInt port that a third argument replaces",
+    `tls.connect(-0n, undefined, { port: 443 })`,
+    "connect",
+  ],
+  [
+    "a tls negated BigInt port with a computed later argument",
+    `tls.connect(-0n, p)`,
     "connect",
   ],
   ["a tls port", `tls.connect(80)`, "connect"],

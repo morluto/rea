@@ -638,6 +638,29 @@ const bigIntUnaryChain = (
 };
 
 /**
+ * Whether a later `tls.connect` argument cannot replace the port. Measured on Node
+ * 24.22.1, `tls.connect(-0n, () => {})`, `(-0n, undefined)`, `(-0n, {})`,
+ * `(-0n, "host")` and `(-0n, "host", {})` throw, while `(-0n, "host", { port: 443 })`
+ * and `(-0n, undefined, { port: 443 })` connect. A spread, a computed value or an
+ * object with members stays undecided.
+ */
+const cannotSupplyTlsPort = (
+  argument: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (t.isSpreadElement(argument)) return false;
+  const value = unwrapJavaScriptExpression(argument).node;
+  return (
+    t.isFunctionExpression(value) ||
+    t.isArrowFunctionExpression(value) ||
+    t.isClassExpression(value) ||
+    primitiveOwnKeys(value, (child) => isNullishPlaceholder(child, state)) !==
+      null ||
+    (t.isObjectExpression(value) && value.properties.length === 0)
+  );
+};
+
+/**
  * `net` and `tls` validate a numeric port before creating a socket, so a
  * literal port outside `[0, 65535]`, a fractional, non-finite, BigInt, boolean
  * or `null` first argument throws synchronously and no socket exists. A string
@@ -688,10 +711,17 @@ const rejectsSocketLiteralArguments = (
     if (value.operator === "!" || value.operator === "delete") return true;
     // `+0n` throws before the call, so no socket exists. `-0n` and `~0n` are
     // BigInts, which Node rejects as a port, but `tls` merges later options
-    // first, so `tls.connect(-0n, { port: 443 })` still returns a socket.
+    // first, so `tls.connect(-0n, { port: 443 })` still returns a socket. Only
+    // later arguments that cannot carry a port leave the call rejected.
     const bigInt = bigIntUnaryChain(value, 0);
     if (bigInt !== undefined)
-      return bigInt.plus || specifier !== "tls" || node.arguments.length === 1;
+      return (
+        bigInt.plus ||
+        specifier !== "tls" ||
+        node.arguments
+          .slice(1)
+          .every((later) => cannotSupplyTlsPort(later, context.state))
+      );
     const number = unaryOperandNumber(value, context, 0);
     return (
       number !== undefined &&
