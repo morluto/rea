@@ -12,6 +12,7 @@ const RETAINED_EXAMPLE_ID = `ev_${"a".repeat(64)}`;
 export const ANALYSIS_VIEW_TOOL_CONTRACTS = [
   {
     name: "inspect_analysis_view",
+    cli: true,
     ...toolContractMetadata("inspect_analysis_view"),
     kind: "application",
     description:

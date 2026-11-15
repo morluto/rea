@@ -21,6 +21,11 @@ export const functionWorkflowInputSchemas = {
   inspect_native_api: enhancedInputSchemas.inspect_native_api,
 } as const;
 
+/** The contracts below that the CLI exposes as commands. */
+const FUNCTION_WORKFLOW_CLI_CONTRACTS: ReadonlySet<string> = new Set([
+  "inspect_native_api",
+]);
+
 const functionWorkflow = <Name extends FunctionWorkflowName>(
   name: Name,
   description: string,
@@ -32,6 +37,9 @@ const functionWorkflow = <Name extends FunctionWorkflowName>(
     ...toolContractMetadata(name),
     description,
     kind: "enhanced",
+    ...(FUNCTION_WORKFLOW_CLI_CONTRACTS.has(name)
+      ? { cli: true as const }
+      : {}),
     requiresActiveTarget: true,
     inputSchema,
     outputSchema,

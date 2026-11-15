@@ -2,7 +2,6 @@ import { ApktoolResourceAnalysisService } from "../application/apktool/ApktoolRe
 import type { ApktoolResourceAnalysisPort } from "../application/apktool/ApktoolResourceAnalysisPort.js";
 import { createApktoolResourceAnalysisProvider } from "../composition/apktool.js";
 import { APKTOOL_TOOL_CONTRACTS } from "../contracts/apktool/apktoolToolContracts.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import type { ApktoolOperation } from "../domain/apktool/apktoolResourceAnalysis.js";
 import type { Logger } from "pino";
 import { contractNamed } from "./contractCliDescription.js";
@@ -37,7 +36,6 @@ export const registerApktoolCommands = (
     logger,
     contractNamed(APKTOOL_TOOL_CONTRACTS, "inspect_apktool_client"),
     {
-      command: CLI_COMMANDS.inspectApktoolClient,
       description:
         "Inspect the caller-selected apktool launcher without decoding anything",
     },
@@ -48,7 +46,6 @@ export const registerApktoolCommands = (
     logger,
     contractNamed(APKTOOL_TOOL_CONTRACTS, "decode_android_resources"),
     {
-      command: CLI_COMMANDS.decodeAndroidResources,
       description:
         "Decode one APK's manifest, metadata, and string resources with apktool",
       // The contract admits a relative path, resolved by the provider from

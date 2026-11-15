@@ -73,6 +73,7 @@ const scriptOutput = z.strictObject({
 export const FRIDA_TOOL_CONTRACTS = [
   {
     name: "list_frida_devices",
+    cli: true,
     ...toolContractMetadata("list_frida_devices"),
     kind: "native-provider",
     description:
@@ -83,6 +84,7 @@ export const FRIDA_TOOL_CONTRACTS = [
   },
   {
     name: "list_frida_processes",
+    cli: true,
     ...toolContractMetadata("list_frida_processes"),
     kind: "native-provider",
     description:
@@ -244,6 +246,7 @@ export const FRIDA_TOOL_CONTRACTS = [
   },
   {
     name: "instrument_with_frida",
+    cli: true,
     ...toolContractMetadata("instrument_with_frida"),
     kind: "native-provider",
     description:

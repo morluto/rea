@@ -3,8 +3,8 @@ import pino from "pino";
 import { expect, it } from "vitest";
 
 import {
-  registerTargetRoutedCommand,
-  targetRoute,
+  registerRoutedCommand,
+  commandRoute,
 } from "../../../src/cli/contractCommand.js";
 import type { CliInstance } from "../../../src/cli/types.js";
 import { absoluteLocalPathStringSchema } from "../../../src/domain/localPath.js";
@@ -14,23 +14,27 @@ const harness = () => {
   const calls: { route: string; cliOptions: unknown; input: unknown }[] = [];
   const cli = Cli.create("rea-routed-test", { version: "1", sync: false });
   const command = { command: "probe", description: "Probe" };
-  registerTargetRoutedCommand(
+  registerRoutedCommand(
     cli as unknown as CliInstance,
     pino({ enabled: false }),
     command,
     [
-      targetRoute(
+      commandRoute(
         {
           name: "archive_probe",
           inputSchema: z.object({
             input_path: absoluteLocalPathStringSchema,
             mode: z.enum(["fast", "full"]).default("fast"),
+            policy: z
+              .object({ rules: z.array(z.string()) })
+              .default({ rules: [] }),
           }),
         },
         {
           ...command,
           positionals: ["input_path"],
           callerPaths: ["input_path"],
+          jsonInputs: { policy: "policy must be JSON" },
           fields: { input_path: { name: "path", description: "Target" } },
           cliOptions: {
             report: z.enum(["text", "json"]).default("text"),
@@ -41,11 +45,11 @@ const harness = () => {
           return {};
         },
         {
-          takesTarget: async (target) => target.endsWith(".asar"),
+          takes: async ({ path }) => String(path).endsWith(".asar"),
           requirement: "an archive target",
         },
       ),
-      targetRoute(
+      commandRoute(
         { name: "program_probe", inputSchema: z.object({}) },
         { ...command, sessionTarget: { description: "Target" } },
         async (input, { cliOptions }) => {
@@ -80,7 +84,8 @@ const harness = () => {
       process.exitCode = exitCode;
     }
   };
-  return { calls, invoke };
+  const options = Reflect.get(registered, "options") as z.ZodType;
+  return { calls, invoke, options };
 };
 
 it("gives the chosen route its CLI-only defaults after routing without them", async () => {
@@ -109,9 +114,64 @@ it("refuses an option the chosen route does not own by its CLI key", async () =>
         {
           path: ["report"],
           message:
-            "--report requires an archive target; this target runs program_probe, which does not take it.",
+            "--report requires an archive target; the given input selects a program target, which does not take it.",
         },
       ],
     },
   });
+});
+
+it("advertises each option's default without supplying it to routing", async () => {
+  const { calls, invoke, options } = harness();
+  const schema = z.toJSONSchema(options) as {
+    readonly properties: Readonly<Record<string, unknown>>;
+  };
+  expect(schema.properties).toMatchObject({
+    mode: {
+      default: "fast",
+      description: "Default: fast",
+    },
+    policy: { default: JSON.stringify({ rules: [] }) },
+    report: { default: "text" },
+  });
+  // A given option routes the input even when it spells the default.
+  const refused = await invoke("/x/program", { report: "text" });
+  expect(calls).toEqual([]);
+  expect(refused).toMatchObject({
+    code: "invalid_request",
+    details: { issues: [{ path: ["report"] }] },
+  });
+});
+
+it("refuses routes that check a shared JSON input differently", () => {
+  const cli = Cli.create("rea-routed-check-test", {
+    version: "1",
+    sync: false,
+  });
+  const command = { command: "probe", description: "Probe" };
+  const route = (name: string, check: () => { ok: true; value: string }) =>
+    commandRoute(
+      {
+        name,
+        inputSchema: z.object({ policy: z.object({}).optional() }),
+      },
+      {
+        ...command,
+        jsonInputs: { policy: "policy must be JSON" },
+        jsonInputChecks: { policy: check },
+      },
+      async () => ({}),
+      { takes: async () => true, requirement: name },
+    );
+  expect(() =>
+    registerRoutedCommand(
+      cli as unknown as CliInstance,
+      pino({ enabled: false }),
+      command,
+      [
+        route("first_probe", () => ({ ok: true, value: "first" })),
+        route("second_probe", () => ({ ok: true, value: "second" })),
+      ],
+    ),
+  ).toThrow("probe routes check --policy differently");
 });

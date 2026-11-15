@@ -7,7 +7,6 @@ import { FlutterBuildAnalysisService } from "../application/flutter/FlutterBuild
 import type { FlutterBuildAnalysisPort } from "../application/flutter/FlutterBuildAnalysisPort.js";
 import { createFlutterBuildAnalysisProvider } from "../composition/flutter.js";
 import { FLUTTER_TOOL_CONTRACTS } from "../contracts/flutter/flutterToolContracts.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import type { FlutterOperation } from "../domain/flutter/flutterBuildAnalysis.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
@@ -60,7 +59,6 @@ export const registerFlutterCommands = (
     logger,
     contractNamed(FLUTTER_TOOL_CONTRACTS, "identify_flutter_build"),
     {
-      command: CLI_COMMANDS.identifyFlutterBuild,
       description:
         "Identify a Flutter build's Dart snapshot hash and engine facts by pure APK parsing",
       positionals: ["path"],
@@ -72,7 +70,6 @@ export const registerFlutterCommands = (
     logger,
     contractNamed(FLUTTER_TOOL_CONTRACTS, "inspect_dart_aot"),
     {
-      command: CLI_COMMANDS.inspectDartAot,
       description:
         "Inspect one ABI's Dart AOT snapshot: sections, headers, and the string pool",
       positionals: ["path"],

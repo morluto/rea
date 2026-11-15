@@ -50,6 +50,12 @@ export interface ToolContract<
   readonly kind: ToolKind;
   /** What the tool needs before it can run; see ToolAvailabilityDeclaration. */
   readonly availability?: ToolAvailabilityDeclaration;
+  /**
+   * The CLI exposes this contract as the one-shot command named by its
+   * kebab-case name (`inspect_pe_imports` is `rea inspect-pe-imports`). The
+   * CLI command inventory is derived from this declaration.
+   */
+  readonly cli?: true;
   /** This handler dispatches through the active binary-analysis session. */
   readonly requiresActiveTarget?: boolean;
   /** Adapter delivery of a retained summary; detail never reaches analysis. */

@@ -21,6 +21,7 @@ const evmInterfaceInspectionInputSchema = inspectEvmInterfaceInputSchema.extend(
 export const INSPECT_EVM_INTERFACE_CONTRACT = {
   name: "inspect_evm_interface",
   availability: { host: "evmInterface" },
+  cli: true,
   ...toolContractMetadata("inspect_evm_interface"),
   kind: "artifact-provider",
   requiresActiveTarget: true,
