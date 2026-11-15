@@ -128,6 +128,31 @@ describe("nullable values", () => {
   });
 });
 
+it("reports patternProperties keys as advertised patterns", () => {
+  const schema = {
+    type: "object",
+    properties: {
+      names: {
+        type: "object",
+        patternProperties: { "^[^\\uD800-\\uDFFF]*$": { type: "string" } },
+      },
+    },
+  };
+  expect(advertisedSchemaPatterns(schema)).toEqual([
+    {
+      path: '$.properties.names.patternProperties["^[^\\\\uD800-\\\\uDFFF]*$"]',
+      pattern: "^[^\\uD800-\\uDFFF]*$",
+    },
+  ]);
+  expect(
+    advertisedOutputPatternViolations({
+      name: "tool",
+      inputSchema: {},
+      outputSchema: schema,
+    }).map(({ detail }) => detail),
+  ).toContain("unicode-escape");
+});
+
 const listTools = async (environment: Readonly<NodeJS.ProcessEnv>) => {
   const session = createTestBinarySession(() => {
     throw new Error("No deep provider may start for a schema projection");
