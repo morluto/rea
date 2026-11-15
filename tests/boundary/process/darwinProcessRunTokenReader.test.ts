@@ -3,6 +3,7 @@ import {
   rethrowProcessOwnershipInspectionFailure,
 } from "../../../src/process/ProcessInspectionCancellation.js";
 import { primaryAnalysisError } from "../../../src/domain/analysisErrorBase.js";
+import { OwnerCancellation } from "../../../src/domain/analysisErrorCore.js";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import {
@@ -1066,10 +1067,8 @@ it.skipIf(process.platform === "win32")(
       );
       if (!isProcessOwnershipInspectionCancellation(outcome.cause))
         throw new Error("Expected producer-owned inspection cancellation");
-      expect(outcome.cause.reason).toBeInstanceOf(DOMException);
-      if (!(outcome.cause.reason instanceof DOMException))
-        throw new Error("Expected the reader's default abort reason");
-      expect(outcome.cause.reason.name).toBe("AbortError");
+      // Closing the reader is owner-initiated, so it carries the typed reason.
+      expect(outcome.cause.reason).toBe(OwnerCancellation.ownerClosed);
       await expect(access(state.root)).rejects.toThrow();
       await expect(reader.prepare()).rejects.toMatchObject({
         _tag: "ProcessAdmissionError",

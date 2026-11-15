@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 
+import { isRecord } from "../domain/isRecord.js";
 import {
   ADVERTISED_BOUND_LIMIT,
   ADVERTISED_DESCRIPTION_MAX_CHARACTERS,
@@ -22,9 +23,6 @@ export interface AdvertisedDialectProjection {
   /** The root description, then sentences for constraints the schema omits. */
   readonly guidance: readonly string[];
 }
-
-const isRecord = (value: unknown): value is Schema =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const isStringList = (value: unknown): value is readonly string[] =>
   Array.isArray(value) && value.every((item) => typeof item === "string");

@@ -93,9 +93,12 @@ it("publishes valid SDK schemas and records the named module trace without a bin
 
 it("preserves missing Linux ps capability and recovery through source-map tracing", async () => {
   const directory = await createTestTempDirectory("source-map-missing-ps-");
-  const prepare = createSystemProcessOwnershipHost("linux", {
-    PATH: directory,
-  }).prepare;
+  // A Linux host with no ps at a fixed system location or on REA's PATH.
+  const prepare = createSystemProcessOwnershipHost(
+    "linux",
+    { PATH: directory },
+    { linuxPsLocations: [] },
+  ).prepare;
   if (prepare === undefined)
     throw new Error("Ownership preparation is required");
   const createRuntime = vi.fn(async () => {

@@ -7,6 +7,7 @@ import {
   AnalysisTimeoutError,
   AnalysisCapabilityUnavailableError,
   AnalysisResourceConstraintError,
+  OwnerCancellation,
 } from "../../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import { createHash } from "node:crypto";
@@ -103,7 +104,7 @@ export const analyzeAppleAssetCatalogs = async (input: {
       collectAssetCatalogs({ ...input, resources }),
     ));
   } catch (cause: unknown) {
-    interfaceBuilderCancel.abort();
+    interfaceBuilderCancel.abort(OwnerCancellation.noLongerNeeded);
     const joined = await interfaceBuilderAnalysis;
     if (
       !joined.ok &&

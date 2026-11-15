@@ -25,6 +25,7 @@ const native = (format: NativeFormat, path: string, decorated: boolean) => {
           items: [
             {
               name: symbolTableName,
+              runtime_name: name,
               address: "0x1000",
               weak: false,
               reexport: false,

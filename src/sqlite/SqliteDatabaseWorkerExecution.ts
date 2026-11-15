@@ -15,11 +15,12 @@ import type {
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import {
   sqliteDatabaseSchema,
@@ -291,19 +292,20 @@ const sqliteReplyReadFailure = (
   cause: unknown,
   capturedOutput: AnalysisCapturedOutput,
 ): AnalysisError => {
-  const options = {
-    cause,
+  const optionsWithoutCause = {
     capturedOutput,
     ...(cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined
       ? { cleanup: cause.cleanup }
       : {}),
   };
+  const options = { cause, ...optionsWithoutCause };
   const error =
     cause instanceof ArtifactReaderFailure && cause.reason === "cancelled"
-      ? new AnalysisCancelledError(operation, {
-          ...options,
-          cause: artifactFileCancellationCause(cause),
-        })
+      ? cancelledBy(
+          operation,
+          carriedReason(artifactFileCancellationCause(cause)),
+          optionsWithoutCause,
+        )
       : new AnalysisOutputError(
           operation,
           `Owned SQLite worker reply is missing or malformed: ${cause instanceof Error ? cause.message : String(cause)}`,
@@ -328,10 +330,11 @@ const sqliteReplyCompletionFailure = (
   );
   bindArtifactFileCleanup(cause, cleanup);
   if (cause.reason !== "cancelled") return cleanup;
-  const cancellation = new AnalysisCancelledError(operation, {
-    cause: artifactFileCancellationCause(cause),
-    capturedOutput,
-  });
+  const cancellation = cancelledBy(
+    operation,
+    carriedReason(artifactFileCancellationCause(cause)),
+    { capturedOutput },
+  );
   return analysisErrorWithCleanupFailure(
     cancellation,
     cleanup,

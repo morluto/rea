@@ -6,6 +6,9 @@ import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
 import {
   AnalysisCancelledError,
   AnalysisResourceConstraintError,
+  isAborted,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import {
   AnalysisError,
@@ -106,12 +109,7 @@ export const fetchWebSourceMaps = async (
   signal?: AbortSignal,
   host: SourceMapFetchHost = { fetch: globalThis.fetch },
 ): Promise<Result<WebSourceMaps, AnalysisError>> => {
-  if (signalIsAborted(signal))
-    return err(
-      new AnalysisCancelledError("analyze_web_bundle", {
-        cause: signal?.reason,
-      }),
-    );
+  if (isAborted(signal)) return err(cancelledBy("analyze_web_bundle", signal));
   if (requests.length === 0)
     return ok(
       webSourceMapsSchema.parse({
@@ -232,13 +230,7 @@ export const fetchWebSourceMaps = async (
       signal?.aborted === true &&
       (cause === signal.reason || cause === callerAbort)
     )
-      return err(
-        retainCompleted(
-          new AnalysisCancelledError("analyze_web_bundle", {
-            cause: signal.reason,
-          }),
-        ),
-      );
+      return err(retainCompleted(cancelledBy("analyze_web_bundle", signal)));
     if (cause instanceof AnalysisError) {
       if (
         signal?.aborted === true &&
@@ -249,11 +241,7 @@ export const fetchWebSourceMaps = async (
             failure.cause === signal.reason,
         )
       )
-        cause.retainSecondaryFailure(
-          new AnalysisCancelledError("analyze_web_bundle", {
-            cause: signal.reason,
-          }),
-        );
+        cause.retainSecondaryFailure(cancelledBy("analyze_web_bundle", signal));
       return err(retainCompleted(cause));
     }
     if (signal?.aborted === true)
@@ -261,11 +249,7 @@ export const fetchWebSourceMaps = async (
         retainCompleted(
           new ProviderAdapterError("rea-cdp-browser", "analyze_web_bundle", {
             cause,
-          }).retainSecondaryFailure(
-            new AnalysisCancelledError("analyze_web_bundle", {
-              cause: signal.reason,
-            }),
-          ),
+          }).retainSecondaryFailure(cancelledBy("analyze_web_bundle", signal)),
         ),
       );
     if (isSourceMapLimit(cause))
@@ -279,13 +263,7 @@ export const fetchWebSourceMaps = async (
     signal?.removeEventListener("abort", abortFromCaller);
   }
   if (signal?.aborted === true)
-    return err(
-      retainCompleted(
-        new AnalysisCancelledError("analyze_web_bundle", {
-          cause: signal.reason,
-        }),
-      ),
-    );
+    return err(retainCompleted(cancelledBy("analyze_web_bundle", signal)));
   return ok(
     webSourceMapsSchema.parse({
       status: sourceMapsStatus(items, limitation !== undefined),
@@ -382,26 +360,22 @@ class SourceMapResponseCleanup extends Error {
     super("Source-map response cleanup", { cause: primary });
     this.#resource = { url: resource, body };
     let reason = "Source-map response cancellation is pending.";
-    const options = {
-      cause: sourceMapCallerReason(primary),
-      cleanup: {
-        get reason() {
-          return reason;
-        },
-        resources: [resource],
+    const cause = sourceMapCallerReason(primary);
+    const cleanup = {
+      get reason() {
+        return reason;
       },
+      resources: [resource],
     };
     this.failure =
       signal?.aborted === true &&
       primary === signal.reason &&
       !(primary instanceof SourceMapDeadlineError)
-        ? new AnalysisCancelledError("analyze_web_bundle", options)
+        ? cancelledBy("analyze_web_bundle", carriedReason(cause), { cleanup })
         : new ProviderAdapterError("rea-cdp-browser", "analyze_web_bundle", {
-            ...options,
-            userMessage:
-              sourceMapCallerReason(primary) instanceof Error
-                ? (sourceMapCallerReason(primary) as Error).message
-                : String(sourceMapCallerReason(primary)),
+            cause,
+            cleanup,
+            userMessage: cause instanceof Error ? cause.message : String(cause),
           });
     this.failure.bindCleanupResourceOwner(this);
     const failed = (cause: unknown): void => {
@@ -474,21 +448,21 @@ class SourceMapPendingFetch extends Error {
     const reason = signal.reason;
     super("Source-map fetch is settling after cancellation", { cause: reason });
     this.#resource = { url: resource };
-    const options = {
-      cause: sourceMapCallerReason(reason),
-      cleanup: {
-        reason: "Source-map fetch is still settling after cancellation.",
-        resources: [resource],
-      },
+    const cleanup = {
+      reason: "Source-map fetch is still settling after cancellation.",
+      resources: [resource],
     };
     this.failure =
       reason instanceof SourceMapDeadlineError
-        ? new ProviderAdapterError(
-            "rea-cdp-browser",
+        ? new ProviderAdapterError("rea-cdp-browser", "analyze_web_bundle", {
+            cause: reason,
+            cleanup,
+          })
+        : cancelledBy(
             "analyze_web_bundle",
-            options,
-          )
-        : new AnalysisCancelledError("analyze_web_bundle", options);
+            carriedReason(sourceMapCallerReason(reason)),
+            { cleanup },
+          );
     this.failure.bindCleanupResourceOwner(this);
     const finished = (): void => {
       this.#resource = undefined;
@@ -572,9 +546,10 @@ const cancelUnreadResponse = async (
       primary !== cause
     )
       cleanup.failure.retainSecondaryFailure(
-        new AnalysisCancelledError("analyze_web_bundle", {
-          cause: sourceMapCallerReason(cause),
-        }),
+        cancelledBy(
+          "analyze_web_bundle",
+          carriedReason(sourceMapCallerReason(cause)),
+        ),
       );
     throw cleanup;
   }
@@ -803,7 +778,7 @@ const fetchFollowingApprovedRedirects = async (
       current,
     );
     observeResponse(current);
-    if (signal !== undefined && signalIsAborted(signal)) {
+    if (signal !== undefined && isAborted(signal)) {
       await cancelUnreadResponse(
         response,
         current,
@@ -911,9 +886,10 @@ const readBoundedText = async (
           !(completionFailure instanceof SourceMapDeadlineError)
         )
           cleanup.failure.retainSecondaryFailure(
-            new AnalysisCancelledError("analyze_web_bundle", {
-              cause: sourceMapCallerReason(signal.reason),
-            }),
+            cancelledBy(
+              "analyze_web_bundle",
+              carriedReason(sourceMapCallerReason(signal.reason)),
+            ),
           );
       }
     }
@@ -977,9 +953,6 @@ const awaitWithAbort = <T>(
     );
   });
 };
-
-const signalIsAborted = (signal: AbortSignal | undefined): boolean =>
-  signal?.aborted === true;
 
 const promiseWithAbort = (
   promise: Promise<Response>,

@@ -2,9 +2,17 @@ import { spawn } from "node:child_process";
 import { expect, it } from "vitest";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { wabtFailure } from "./WabtFailures.js";
+import { wabtFailureDialect } from "./WabtFailures.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
+
 import { WASM_RESOURCE_DEFAULTS } from "../domain/wasm/wasmArtifact.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
+
+/** Classify a raw failure the way the provider does, through WABT's dialect. */
+const wabtFailure = (
+  cause: unknown,
+  ...dialect: Parameters<typeof wabtFailureDialect>
+) => classifyProviderFailure(cause, wabtFailureDialect(...dialect));
 
 it.each(["configuration", "artifact"] as const)(
   "keeps host allocation failure distinct from %s readiness and byte admission",
@@ -336,3 +344,24 @@ it("keeps setup guidance when a version probe's output cannot be collected", () 
   expect(projected).toMatchObject({ code: "capability_unavailable" });
   expect(projected.remediation.action).toContain("REA_WABT_BIN_DIRECTORY");
 });
+
+it.each(["configuration", "artifact", "producer"] as const)(
+  "reports a cancelled %s-phase read as the caller's cancellation with the earlier command output",
+  (phase) => {
+    const reason = { stopped: "caller" };
+    const observedOutput = { stdout: "earlier", stderr: "", truncated: false };
+    const failure = wabtFailure(
+      new ArtifactReaderFailure("cancelled", "Artifact read cancelled", {
+        cause: reason,
+      }),
+      phase,
+      "/selected.wasm",
+      { commandTimeoutMs: 1234, observedOutput },
+    );
+    expect(failure).toMatchObject({
+      _tag: "AnalysisCancelledError",
+      cause: reason,
+      capturedOutput: observedOutput,
+    });
+  },
+);
