@@ -501,10 +501,26 @@ const collectOwnedCommand = async (
     (callerSignal?.aborted ? { reason: callerSignal.reason } : undefined);
   if (stopped.status === "incomplete" && retainCleanup !== undefined)
     retainCleanup(supervisor, stopped);
-  else if (stopped.status === "incomplete")
+  else if (stopped.status === "incomplete") {
+    // A completed run interrupted during final cleanup is reported as that
+    // interruption, as when the cleanup succeeds (below); only the retry
+    // owner differs.
+    const interruption =
+      failure !== undefined
+        ? undefined
+        : callerSignal?.aborted
+          ? ("cancelled" as const)
+          : deadline.interruption === "timeout"
+            ? ("timeout" as const)
+            : undefined;
     throw new OwnedCommandFailure(
-      failure?.reason ?? "process",
-      failure?.message ?? "Command cleanup failed.",
+      failure?.reason ?? interruption ?? "process",
+      failure?.message ??
+        (interruption === "cancelled"
+          ? "Command cancelled during final cleanup."
+          : interruption === "timeout"
+            ? "Command deadline elapsed during final cleanup."
+            : "Command cleanup failed."),
       snapshot,
       stopped.reason,
       {
@@ -525,6 +541,7 @@ const collectOwnedCommand = async (
       ownedCommandResources(launched.ownership, spawn.cwd),
       supervisor,
     );
+  }
   if (failure !== undefined)
     throw new OwnedCommandFailure(
       failure.reason,

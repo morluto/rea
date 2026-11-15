@@ -12,7 +12,11 @@ import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js"
 import { encodeNibArchiveFixture } from "./NibArchive.fixture.js";
 import type { analyzeInterfaceBuilderBundle } from "./InterfaceBuilderAnalysis.js";
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
-import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import {
+  AnalysisError,
+  primaryAnalysisError,
+} from "../../domain/analysisErrorBase.js";
+import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import {
   analyzeAppleAssetCatalogs,
@@ -578,7 +582,7 @@ describe("assetutil process cleanup", () => {
    * A stand-in assetutil that completes, while its process-group cleanup
    * proof is withheld until `allowCleanup`.
    */
-  const withheldCleanup = async () => {
+  const withheldCleanup = async (onRefusedCleanup?: () => void) => {
     const bundle = await createTestTempDirectory("rea-assetutil-cleanup-");
     await writeFile(join(bundle, "Assets.car"), "catalog");
     let mayClean = false;
@@ -589,8 +593,9 @@ describe("assetutil process cleanup", () => {
       mayClean = true;
       await resources.close();
     });
-    const inspect = () =>
+    const inspect = (signal?: AbortSignal) =>
       analyzeAppleAssetCatalogs({
+        ...(signal === undefined ? {} : { signal }),
         environment: {},
         bundlePath: bundle,
         targetSha256: "a".repeat(64),
@@ -606,13 +611,14 @@ describe("assetutil process cleanup", () => {
           const spawned = await standIn(options);
           return {
             ...spawned,
-            cleanup: async () =>
-              mayClean
-                ? cleanupOwnedProcessGroup(spawned.ownership)
-                : {
-                    cleaned: false,
-                    reason: "assetutil process owner remains unverified",
-                  },
+            cleanup: async () => {
+              if (mayClean) return cleanupOwnedProcessGroup(spawned.ownership);
+              onRefusedCleanup?.();
+              return {
+                cleaned: false,
+                reason: "assetutil process owner remains unverified",
+              };
+            },
           };
         },
         platform: "darwin",
@@ -653,6 +659,35 @@ describe("assetutil process cleanup", () => {
       );
       expect(f.resources.hasPending).toBe(true);
       expect(f.resources.cleanupResources).toEqual(failure.cleanupResources);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "keeps a cancellation during refused assetutil cleanup through the retry",
+    async () => {
+      const controller = new AbortController();
+      const reason = { caller: "stop during assetutil cleanup" };
+      const f = await withheldCleanup(() => controller.abort(reason));
+      const failure = await f
+        .inspect(controller.signal)
+        .catch((cause: unknown) => cause);
+      if (!(failure instanceof AnalysisError)) throw failure;
+      // The caller's cancellation is the outcome; the unproven cleanup is
+      // retained beside it rather than replacing it.
+      const cancelled = primaryAnalysisError(failure);
+      expect(cancelled).toBeInstanceOf(AnalysisCancelledError);
+      expect(cancelled.cause).toBe(reason);
+      expect(projectAnalysisError(failure)).toMatchObject({
+        category: "cancelled",
+        details: { cleanup: "incomplete" },
+      });
+      expect(failure.cleanupIncomplete).toBe(true);
+      expect(f.resources.hasPending).toBe(true);
+      f.allowCleanup();
+      await f.resources.close();
+      expect(failure.cleanupIncomplete).toBe(false);
+      expect(f.resources.hasPending).toBe(false);
+      expect(primaryAnalysisError(failure)).toBe(cancelled);
     },
   );
 
