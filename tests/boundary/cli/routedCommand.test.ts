@@ -25,12 +25,16 @@ const harness = () => {
           inputSchema: z.object({
             input_path: absoluteLocalPathStringSchema,
             mode: z.enum(["fast", "full"]).default("fast"),
+            policy: z
+              .object({ rules: z.array(z.string()) })
+              .default({ rules: [] }),
           }),
         },
         {
           ...command,
           positionals: ["input_path"],
           callerPaths: ["input_path"],
+          jsonInputs: { policy: "policy must be JSON" },
           fields: { input_path: { name: "path", description: "Target" } },
           cliOptions: {
             report: z.enum(["text", "json"]).default("text"),
@@ -80,7 +84,8 @@ const harness = () => {
       process.exitCode = exitCode;
     }
   };
-  return { calls, invoke };
+  const options = Reflect.get(registered, "options") as z.ZodType;
+  return { calls, invoke, options };
 };
 
 it("gives the chosen route its CLI-only defaults after routing without them", async () => {
@@ -114,4 +119,18 @@ it("refuses an option the chosen route does not own by its CLI key", async () =>
       ],
     },
   });
+});
+
+it("advertises each option's default but routes as if it were omitted", async () => {
+  const { calls, invoke, options } = harness();
+  const schema = z.toJSONSchema(options) as {
+    readonly properties: Readonly<Record<string, unknown>>;
+  };
+  expect(schema.properties).toMatchObject({
+    mode: { default: "fast" },
+    policy: { default: '{"rules":[]}' },
+    report: { default: "text" },
+  });
+  await invoke("/x/program", { report: "text", policy: '{"rules":[]}' });
+  expect(calls).toEqual([{ route: "program", cliOptions: {}, input: {} }]);
 });
