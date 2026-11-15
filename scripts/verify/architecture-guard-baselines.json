@@ -401,7 +401,6 @@
     "src/application/desktop/DesktopBuildComputers.ts": 1,
     "src/application/desktop/DesktopRemoteTaskReaders.ts": 1,
     "src/application/desktop/DesktopTaskReaderCleanup.ts": 1,
-    "src/application/reverse/ReverseEngineeringService.ts": 1,
     "src/browser/WebSourceMapFetcher.ts": 2,
     "src/desktop/AgentEnvSolveHelper.ts": 2,
     "src/desktop/BuildComputerLongRuns.ts": 1,
