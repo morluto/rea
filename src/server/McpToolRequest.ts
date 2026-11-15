@@ -5,7 +5,7 @@ import type { z } from "zod";
 import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { cancelledBy } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 const currentRequest = new AsyncLocalStorage<McpToolRequest>();
@@ -81,11 +81,7 @@ export class McpToolRequest {
         const cancellation =
           signal?.aborted === true ? signal : this.cancellation.signal;
         if (cancellation.aborted)
-          return err(
-            new AnalysisCancelledError(operationName, {
-              cause: cancellation.reason,
-            }),
-          );
+          return err(cancelledBy(operationName, cancellation));
         return ok(await operation(binding.value));
       });
 
