@@ -113,7 +113,8 @@ type TestMode =
         | "resource-failure"
         | "final-frame-held-pipe"
         | "zero-exit-held-pipe"
-        | "heap-exit";
+        | "heap-exit"
+        | "heap-exit-after-noise";
     };
 
 const protocolWorkerProgram = (
@@ -131,7 +132,8 @@ const protocolWorkerProgram = (
     | "resource-failure"
     | "final-frame-held-pipe"
     | "zero-exit-held-pipe"
-    | "heap-exit",
+    | "heap-exit"
+    | "heap-exit-after-noise",
 ): string => `
   import { createInterface } from "node:readline";
   import { spawn } from "node:child_process";
@@ -142,8 +144,9 @@ const protocolWorkerProgram = (
   input.once("line", (line) => {
     const request = JSON.parse(line);
     ${
-      failure === "heap-exit"
-        ? `process.stderr.write("FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory\\n", () => process.exit(7));`
+      failure === "heap-exit" || failure === "heap-exit-after-noise"
+        ? // The 256 KiB retention budget keeps only the head of stderr.
+          `process.stderr.write(${failure === "heap-exit" ? '""' : '"x".repeat(300 * 1024) + "\\n"'} + "FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory\\n", () => process.exit(7));`
         : failure === "zero-exit-held-pipe"
           ? `const program = "setTimeout(() => process.exit(0), 300);";
            spawn(process.execPath, ["-e", program], { stdio: ["ignore", "inherit", "inherit"] });
@@ -875,36 +878,39 @@ it("consumes a final frame before an inherited descendant pipe closes", async ()
   }
 });
 
-it("projects a heap-marker exit with the runtime's exhausted resource", async () => {
-  const heapMb = 256;
-  const worker = new WebBundleAnalysisWorker(
-    heapMb,
-    launcherFor({ kind: "protocol", failure: "heap-exit" }),
-  );
-  try {
-    const error = failureOf(
-      await worker.analyze(makeScript("report heap exit"), 15_000),
-    );
-    expect(error).toBeInstanceOf(AnalysisResourceConstraintError);
-    const exhaustion = webBundleMemoryExhaustion({
-      runtime: javaScriptRuntime(process.versions).id,
+it.each(["heap-exit", "heap-exit-after-noise"] as const)(
+  "projects a heap-marker exit with the runtime's exhausted resource (%s)",
+  async (failure) => {
+    const heapMb = 256;
+    const worker = new WebBundleAnalysisWorker(
       heapMb,
-      memoryLimitReached: false,
-      processMemoryLimitBytes: javaScriptWorkerMemoryLimitBytes(heapMb),
-    });
-    expect(error.message).toContain(webBundleHeapExhaustedReason(exhaustion));
-    expect(error).toMatchObject({
-      remediationAction: webBundleHeapExhaustedRemediation(exhaustion),
-      reportedLimits: {
-        max_heap_mb: heapMb,
-        worker_process_memory_limit_bytes:
-          javaScriptWorkerMemoryLimitBytes(heapMb),
-      },
-    });
-  } finally {
-    await worker.close();
-  }
-});
+      launcherFor({ kind: "protocol", failure }),
+    );
+    try {
+      const error = failureOf(
+        await worker.analyze(makeScript("report heap exit"), 15_000),
+      );
+      expect(error).toBeInstanceOf(AnalysisResourceConstraintError);
+      const exhaustion = webBundleMemoryExhaustion({
+        runtime: javaScriptRuntime(process.versions).id,
+        heapMb,
+        memoryLimitReached: false,
+        processMemoryLimitBytes: javaScriptWorkerMemoryLimitBytes(heapMb),
+      });
+      expect(error.message).toContain(webBundleHeapExhaustedReason(exhaustion));
+      expect(error).toMatchObject({
+        remediationAction: webBundleHeapExhaustedRemediation(exhaustion),
+        reportedLimits: {
+          max_heap_mb: heapMb,
+          worker_process_memory_limit_bytes:
+            javaScriptWorkerMemoryLimitBytes(heapMb),
+        },
+      });
+    } finally {
+      await worker.close();
+    }
+  },
+);
 
 it("does not classify heap-marker stderr from a healthy worker as exhaustion", async () => {
   const worker = new WebBundleAnalysisWorker(
