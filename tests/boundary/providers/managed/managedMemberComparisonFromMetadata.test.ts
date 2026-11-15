@@ -1347,10 +1347,11 @@ describe("managed member comparison limitation reasons", () => {
       { evidenceId: left.evidenceId, result: left.result },
       { evidenceId: right.evidenceId, result: right.result },
     );
-    for (const item of [...result.methods, ...result.fields])
-      for (const { code, message } of item.limitations)
-        expect(message.startsWith(`${code}:`)).toBe(false);
-    expect(result.methods[0]?.limitations.length).toBeGreaterThan(0);
+    expect(managedMemberComparisonResultSchema.parse(result)).toEqual(result);
+    expect(result.methods[0]?.limitations).toEqual([
+      { code: "call-target-unavailable", message: expect.any(String) },
+      { code: "field-target-unavailable", message: expect.any(String) },
+    ]);
     // A limitation recorded as bare text has no reason and is refused.
     expect(
       managedMemberComparisonResultSchema.safeParse({
