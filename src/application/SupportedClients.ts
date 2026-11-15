@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import type {
   ClientRegistrationConnectionProfile,
   ClientRegistrationProfile,
@@ -2098,7 +2099,7 @@ export const supportedClients = (
  */
 export const resolveSupportedClients = async (
   home: string,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
   env: ClientPathContext["env"] = process.env,
   systemPaths: ClientSystemPaths = {},
 ): Promise<readonly SetupClient[]> => {
