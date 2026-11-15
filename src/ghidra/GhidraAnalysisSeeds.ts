@@ -16,6 +16,7 @@ import {
 } from "./GhidraFileArtifacts.js";
 import { NonRegularFileReadError } from "../filesystem/RegularFile.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 
 /** Seed file format admitted by this adapter. */
 export const GHIDRA_SEED_FORMAT = "rea-ghidra-seeds-v1";
@@ -170,7 +171,8 @@ const readSeeds = (
     (bytes) => {
       let text: string;
       try {
-        text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+        // A user-authored seed file may start with a BOM signature.
+        text = decodeStrictUtf8(bytes, "strip-signature");
       } catch {
         throw seedLineError(0, "file is not valid UTF-8");
       }

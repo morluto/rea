@@ -179,8 +179,10 @@ it("fails closed on a foreign magic", () => {
   const foreign = withHeaderWord(real, 0, 0xdeadbeef);
   expect(() => parse(foreign)).toThrow(
     expect.objectContaining({
-      name: "V8CodeCacheFormatFailure",
-      kind: "unsupported",
+      failure: expect.objectContaining({
+        kind: "unsupported",
+        format: "v8-code-cache",
+      }),
       message: expect.stringContaining("not a V8 code cache"),
     }),
   );

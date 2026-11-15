@@ -35,13 +35,24 @@ describe("Linux process table prerequisite discovery", () => {
       expect(failure).toBeInstanceOf(LinuxOwnedProcessPrerequisiteError);
       expect(failure).toMatchObject({
         cause,
-        diagnostics: { system_code: code },
+        // The refusal records which ps ran: a fixed system path or PATH.
+        message: expect.stringMatching(/\(ran ps (?:at \/|from REA's PATH)/u),
+        diagnostics: {
+          system_code: code,
+          ps_command: expect.stringMatching(/(?:^|\/)ps$/u),
+          ps_source: expect.stringMatching(/^(?:system|path)$/u),
+        },
       });
       const availability = ownedProcessPrerequisiteAvailability(failure);
       expect(availability).toMatchObject({
         status: "unavailable",
         reason: expect.stringContaining(code),
-        diagnostics: { system_code: code },
+        // Provider status keeps which ps ran, not only the system code.
+        diagnostics: {
+          system_code: code,
+          ps_command: expect.stringMatching(/(?:^|\/)ps$/u),
+          ps_source: expect.stringMatching(/^(?:system|path)$/u),
+        },
       });
       if (availability?.status !== "unavailable")
         throw new Error("expected unavailability");

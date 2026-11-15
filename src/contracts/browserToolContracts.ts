@@ -42,15 +42,17 @@ import {
 } from "../domain/webScreenshot.js";
 import { toolContractMetadata } from "./toolEffects.js";
 import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
+import { presentRootDiscriminator } from "../domain/schemaAnnotations.js";
 
 const listOutputSchema = evidenceResultOf(browserTargetListSchema);
 const inspectionOutputSchema = evidenceResultOf(webPageInspectionSchema);
-export const analyzeWebBundleRequestSchema = z
-  .discriminatedUnion("detail", [
+export const analyzeWebBundleRequestSchema = presentRootDiscriminator(
+  z.discriminatedUnion("detail", [
     analyzeWebBundleInputSchema.extend(javaScriptRoutesCompleteDeliveryShape),
     analyzeWebBundleInputSchema.extend(webRoutesSummaryDeliveryShape),
-  ])
-  .meta({ "x-rea-root-discriminator": "detail" });
+  ]),
+  "detail",
+);
 const bundleOutputSchema = evidenceResultOf(
   z.union([
     webBundleAnalysisSchema,

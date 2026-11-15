@@ -3,6 +3,8 @@ import { expect, it } from "vitest";
 import { inspectWebPageInputSchema } from "../domain/browserObservation.js";
 import { WEB_RUNTIME_LIMITS } from "../domain/webRuntime.js";
 import { CdpCaptureEvents } from "./CdpCaptureEvents.js";
+import { CdpTargetDocument } from "./CdpTargetDocument.js";
+import { receiveCdpEvent } from "./CdpConnection.js";
 
 const origin = "http://127.0.0.1:43127";
 const deep = (depth: number) => '{"a":'.repeat(depth) + "0" + "}".repeat(depth);
@@ -24,42 +26,46 @@ const request = (
   body: string,
   redirect = false,
 ) => {
-  events.ingest({
-    method: "Network.requestWillBeSent",
-    params: {
-      requestId: id,
-      timestamp: redirect ? 2 : 1,
-      initiator: { type: "other" },
-      request: {
-        url: `${origin}/${redirect ? "next" : "first"}`,
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        postData: body,
+  events.ingest(
+    receiveCdpEvent({
+      method: "Network.requestWillBeSent",
+      params: {
+        requestId: id,
+        timestamp: redirect ? 2 : 1,
+        initiator: { type: "other" },
+        request: {
+          url: `${origin}/${redirect ? "next" : "first"}`,
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          postData: body,
+        },
+        ...(redirect
+          ? {
+              redirectResponse: {
+                url: `${origin}/first`,
+                status: 302,
+                encodedDataLength: 0,
+              },
+            }
+          : {}),
       },
-      ...(redirect
-        ? {
-            redirectResponse: {
-              url: `${origin}/first`,
-              status: 302,
-              encodedDataLength: 0,
-            },
-          }
-        : {}),
-    },
-  });
+    }),
+  );
 };
 const response = (events: CdpCaptureEvents, id: string, body: string) => {
-  events.ingest({
-    method: "Network.responseReceived",
-    params: {
-      requestId: id,
-      response: {
-        url: `${origin}/first`,
-        status: 200,
-        mimeType: "application/json",
+  events.ingest(
+    receiveCdpEvent({
+      method: "Network.responseReceived",
+      params: {
+        requestId: id,
+        response: {
+          url: `${origin}/first`,
+          status: 200,
+          mimeType: "application/json",
+        },
       },
-    },
-  });
+    }),
+  );
   const candidate = events
     .responseBodyRequests()
     .find(({ requestId }) => requestId === id);
@@ -69,15 +75,19 @@ const response = (events: CdpCaptureEvents, id: string, body: string) => {
   return candidate;
 };
 const openSocket = (events: CdpCaptureEvents) =>
-  events.ingest({
-    method: "Network.webSocketCreated",
-    params: { requestId: "socket", url: `ws://${origin.slice(7)}/live` },
-  });
+  events.ingest(
+    receiveCdpEvent({
+      method: "Network.webSocketCreated",
+      params: { requestId: "socket", url: `ws://${origin.slice(7)}/live` },
+    }),
+  );
 const frame = (events: CdpCaptureEvents, payloadData: string) =>
-  events.ingest({
-    method: "Network.webSocketFrameReceived",
-    params: { requestId: "socket", response: { opcode: 1, payloadData } },
-  });
+  events.ingest(
+    receiveCdpEvent({
+      method: "Network.webSocketFrameReceived",
+      params: { requestId: "socket", response: { opcode: 1, payloadData } },
+    }),
+  );
 
 it.each([
   ["\tAPPLICATION/JSON ; charset=utf-8\t", true],
@@ -93,34 +103,38 @@ it.each([
   "admits shapes only from valid media types while preserving %j",
   (mediaType, selected) => {
     const events = createEvents();
-    events.ingest({
-      method: "Network.requestWillBeSent",
-      params: {
-        requestId: "typed",
-        timestamp: 1,
-        initiator: { type: "other" },
-        request: {
-          url: `${origin}/typed`,
-          method: "POST",
-          headers: { "Content-Type": mediaType },
-          postData: '{"count":1}',
+    events.ingest(
+      receiveCdpEvent({
+        method: "Network.requestWillBeSent",
+        params: {
+          requestId: "typed",
+          timestamp: 1,
+          initiator: { type: "other" },
+          request: {
+            url: `${origin}/typed`,
+            method: "POST",
+            headers: { "Content-Type": mediaType },
+            postData: '{"count":1}',
+          },
         },
-      },
-    });
+      }),
+    );
     expect(events.network.get("typed")?.body_shapes.request !== null).toBe(
       selected,
     );
-    events.ingest({
-      method: "Network.responseReceived",
-      params: {
-        requestId: "typed",
-        response: {
-          url: `${origin}/typed`,
-          status: 200,
-          mimeType: mediaType,
+    events.ingest(
+      receiveCdpEvent({
+        method: "Network.responseReceived",
+        params: {
+          requestId: "typed",
+          response: {
+            url: `${origin}/typed`,
+            status: 200,
+            mimeType: mediaType,
+          },
         },
-      },
-    });
+      }),
+    );
     expect(events.responseBodyRequests().length).toBe(selected ? 1 : 0);
     expect(events.network.get("typed")?.mime_type).toBe(mediaType);
   },
@@ -201,18 +215,20 @@ it("refunds replaced and removed request records while ignoring stale response o
   events.ingestResponseBody(stale, { body: deep(760), base64Encoded: false });
   expect(events.retainedEventBytes).toBe(retained);
   expect(events.network.get("redirect")?.body_shapes.response).toBeNull();
-  events.ingest({
-    method: "Network.responseReceived",
-    params: {
-      requestId: "redirect",
-      response: { url: "https://excluded.invalid/next", status: 200 },
-    },
-  });
+  events.ingest(
+    receiveCdpEvent({
+      method: "Network.responseReceived",
+      params: {
+        requestId: "redirect",
+        response: { url: "https://excluded.invalid/next", status: 200 },
+      },
+    }),
+  );
   expect(events.network.has("redirect")).toBe(false);
   expect(events.retainedEventBytes).toBe(0);
   request(events, "fresh", deep(600));
   expect(events.network.get("fresh")?.body_shapes.status).toBe("included");
-  events.beginAuthorizedFrame("frame");
+  events.beginAuthorizedFrame(new CdpTargetDocument({ frameId: "frame" }));
   expect(events.retainedEventBytes).toBe(0);
   request(events, "after-reset", deep(600));
   expect(events.network.get("after-reset")?.body_shapes.status).toBe(
@@ -222,19 +238,21 @@ it("refunds replaced and removed request records while ignoring stale response o
 
 it("shares the remaining allowance across console entries, body shapes and websocket shapes", () => {
   const events = createEvents();
-  events.ingest({
-    method: "Runtime.consoleAPICalled",
-    params: {
-      type: "log",
-      timestamp: 1,
-      args: [{ type: "string", value: "x".repeat(1024 * 1024) }],
-      stackTrace: {
-        callFrames: [
-          { url: `${origin}/app.js`, lineNumber: 0, columnNumber: 0 },
-        ],
+  events.ingest(
+    receiveCdpEvent({
+      method: "Runtime.consoleAPICalled",
+      params: {
+        type: "log",
+        timestamp: 1,
+        args: [{ type: "string", value: "x".repeat(1024 * 1024) }],
+        stackTrace: {
+          callFrames: [
+            { url: `${origin}/app.js`, lineNumber: 0, columnNumber: 0 },
+          ],
+        },
       },
-    },
-  });
+    }),
+  );
   request(events, "body", deep(600));
   expect(events.console).toHaveLength(1);
   expect(events.network.get("body")?.body_shapes.status).toBe("included");

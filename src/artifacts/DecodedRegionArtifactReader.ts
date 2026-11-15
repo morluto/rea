@@ -12,7 +12,7 @@ import type {
 import {
   ArtifactReaderFailure,
   copyArtifactEntry,
-  sameArtifactEntry,
+  assertProducedEntry,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactReaderTraversal,
@@ -37,8 +37,8 @@ export interface DecodedRegion {
 export interface DecodedRegions {
   readonly metadata: ArtifactFormatMetadata;
   readonly regions: readonly DecodedRegion[];
-  /** Omitted when every byte was examined and no limitation applies. */
-  readonly coverage?: ArtifactReaderTraversal;
+  /** What the decoder examined, including complete coverage. */
+  readonly coverage: ArtifactReaderTraversal;
   readonly containerIntegrity?: ArtifactContainerIntegrityPair;
 }
 
@@ -65,8 +65,10 @@ export const regionFileName = (start: number, end: number): string =>
  */
 export class DecodedRegionArtifactReader<Image> implements ArtifactReader {
   readonly #scope = new ArtifactResourceScope();
-  #entries = new Map<string, ArtifactEntry>();
-  #regions = new Map<string, Uint8Array>();
+  #regions = new Map<
+    string,
+    { readonly entry: ArtifactEntry; readonly bytes: Uint8Array }
+  >();
   readonly #streams = new Set<Readable>();
   readonly #source: ArtifactFileSource;
   readonly #decoding: RegionDecoding<Image>;
@@ -126,7 +128,7 @@ export class DecodedRegionArtifactReader<Image> implements ArtifactReader {
         limitations: [...coverage.limitations],
       });
     let index = 0;
-    for (const entry of this.#entries.values()) {
+    for (const { entry } of this.#regions.values()) {
       if (index % 256 === 0) await setImmediate();
       index += 1;
       this.#assertOpen(signal);
@@ -138,21 +140,16 @@ export class DecodedRegionArtifactReader<Image> implements ArtifactReader {
   async open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {
     return this.#scope.run(async () => {
       this.#assertOpen(signal);
-      const stored = this.#entries.get(entry.adapterKey);
-      const bytes = this.#regions.get(entry.adapterKey);
-      if (
-        stored === undefined ||
-        bytes === undefined ||
-        !sameArtifactEntry(entry, stored)
-      )
-        throw new ArtifactReaderFailure(
-          "integrity",
-          `${this.#decoding.label} entry does not match its owning inventory`,
-        );
+      const region = this.#regions.get(entry.adapterKey);
+      assertProducedEntry(
+        entry,
+        region?.entry,
+        `${this.#decoding.label} entry does not match its owning inventory`,
+      );
       // Decoded bytes are retained, so only the carrier identity is rechecked.
       await this.#source.read(signal);
       this.#assertOpen(signal);
-      const output = Readable.from(this.#regionChunks(bytes, signal), {
+      const output = Readable.from(this.#regionChunks(region.bytes, signal), {
         objectMode: false,
       });
       const onAbort = (): void => {
@@ -217,7 +214,6 @@ export class DecodedRegionArtifactReader<Image> implements ArtifactReader {
       );
     await this.#scope.close();
     await this.#source.close();
-    this.#entries.clear();
     this.#regions.clear();
   }
 
@@ -236,8 +232,10 @@ export class DecodedRegionArtifactReader<Image> implements ArtifactReader {
 
   async #prepare(signal?: AbortSignal): Promise<void> {
     const described = this.#decoding.describe(await this.#decode(signal));
-    const entries = new Map<string, ArtifactEntry>();
-    const regions = new Map<string, Uint8Array>();
+    const regions = new Map<
+      string,
+      { readonly entry: ArtifactEntry; readonly bytes: Uint8Array }
+    >();
     let index = 0;
     for (const region of described.regions) {
       if (index % 256 === 0) await setImmediate();
@@ -256,14 +254,12 @@ export class DecodedRegionArtifactReader<Image> implements ArtifactReader {
         adapterKey: `${this.#decoding.keyPrefix}:${String(index)}`,
         formatMetadata: region.formatMetadata,
       } satisfies ArtifactEntry;
-      entries.set(entry.adapterKey, entry);
-      regions.set(entry.adapterKey, region.bytes);
+      regions.set(entry.adapterKey, { entry, bytes: region.bytes });
       index += 1;
     }
     const { regions: _regions, ...facts } = described;
     await this.#source.read(signal);
     this.#assertOpen(signal);
-    this.#entries = entries;
     this.#regions = regions;
     this.#described = facts;
   }

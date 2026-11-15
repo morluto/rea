@@ -1,3 +1,4 @@
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 import { decode } from "@msgpack/msgpack";
 import {
   BinaryResourceFailure,
@@ -12,7 +13,7 @@ const AMD_METADATA_CONTAINER_ENTRIES = 65536;
 const AMD_METADATA_VALUE_BYTES = 65536;
 
 /** Validate allocation and nesting costs before the standard decoder allocates containers. */
-const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const utf8 = strictUtf8Decoder("preserve");
 const preflight = (bytes: Buffer): Set<string> => {
   const strings = new Set<string>();
   let at = 0,

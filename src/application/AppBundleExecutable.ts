@@ -4,7 +4,7 @@ import { extname, join, sep } from "node:path";
 import { z } from "zod";
 
 import { preflightPropertyListDecode } from "../artifacts/apple/PropertyListDecodeBudget.js";
-import { decodeBinaryPlistValue } from "../artifacts/apple/BinaryPlistMaterializer.js";
+import { decodeBinaryPropertyList } from "../artifacts/apple/BinaryPlistMaterializer.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
 import { isPathWithinRoot } from "../domain/localPath.js";
 import { parseXmlPropertyList } from "../domain/propertyListKeys.js";
@@ -451,7 +451,7 @@ const resolveLayoutExecutable = async (
 
   let name: string;
   try {
-    name = executableName(decodeInfoPlistValue(plist));
+    name = executableName(decodeInfoPlistValue(plist, ["CFBundleExecutable"]));
   } catch (cause: unknown) {
     return err(
       new BinaryTargetError(
@@ -533,14 +533,31 @@ const resolveLayoutExecutable = async (
  * Decode one Info.plist's top-level value in-process, binary or XML, so no
  * host plist tool is required. Values are read with format-aware parsers, not
  * patterns; an unrelated `__proto__` entry must not make the bundle unreadable.
+ *
+ * `keys` are the entries the caller reads. A plist that may declare one of
+ * them more than once is refused: the decoder keeps the last declaration and
+ * the system's bundle readers are not shown to agree. A repeat is attributed
+ * to a key by name only, so a repeat inside a nested dictionary, or one whose
+ * name was not retained, also refuses.
  */
-export const decodeInfoPlistValue = (plist: Buffer): unknown =>
-  hasBinaryPlistSignature(plist)
-    ? decodeBinaryPlistValue(
+export const decodeInfoPlistValue = (
+  plist: Buffer,
+  keys: readonly string[],
+): unknown => {
+  const decoded = hasBinaryPlistSignature(plist)
+    ? decodeBinaryPropertyList(
         plist,
         preflightPropertyListDecode(plist, BINARY_PLIST_DECODE_BYTES),
       )
-    : parseXmlPropertyList(decodeXmlPlistText(plist)).value;
+    : parseXmlPropertyList(decodeXmlPlistText(plist));
+  const { names, namesOmitted } = decoded.duplicateKeys;
+  const repeated = keys.filter((key) => namesOmitted || names.includes(key));
+  if (repeated.length > 0)
+    throw new TypeError(
+      `Info.plist may declare ${repeated.join(", ")} more than once; which declaration applies is ambiguous`,
+    );
+  return decoded.value;
+};
 
 /** The Info.plist decoded but declares no string CFBundleExecutable. */
 class UndeclaredBundleExecutable extends Error {}

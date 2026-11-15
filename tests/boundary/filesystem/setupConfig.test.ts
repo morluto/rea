@@ -790,7 +790,7 @@ it("keeps setup and registration diagnostics blocked for an unrecognized Claude 
       })
     ).find((status) => status.client === "claude_desktop"),
   ).toMatchObject({
-    state: "invalid",
+    state: "unknown",
     command: [],
     remediation: expect.stringContaining("does not fall back"),
   });

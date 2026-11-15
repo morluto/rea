@@ -14,7 +14,7 @@ import { webCaptureDiffSchema } from "../../../src/domain/webCaptureDiffSchemas.
 
 for (const electron of [false, true])
   cliTest(
-    `declares ${electron ? "Electron UTF-8" : "web UTF-16"} DOM value lengths through CLI and MCP without reinterpreting historical captures`,
+    `declares ${electron ? "Electron UTF-8" : "web UTF-16"} DOM value lengths through CLI and MCP and refuses snapshots without a unit`,
     async ({ cli, onTestFinished }) => {
       const root = await createTestTempDirectory("rea-dom-value-units-");
       const path = join(root, "index.html");
@@ -92,19 +92,15 @@ for (const electron of [false, true])
           "node_value_length_unit",
         );
         expect(JSON.stringify(report.dom)).not.toContain("ééé😀");
-        const legacyDom = {
+        const unmarked = {
           total_nodes: report.dom.total_nodes,
           nodes: report.dom.nodes,
         };
-        expect(schema.parse({ ...report, dom: legacyDom }).dom).toEqual(
-          legacyDom,
-        );
-        expect(
-          schema.safeParse({
-            ...report,
-            dom: { ...legacyDom, node_value_length_unit: "characters" },
-          }).success,
-        ).toBe(false);
+        for (const dom of [
+          unmarked,
+          { ...unmarked, node_value_length_unit: "characters" },
+        ])
+          expect(schema.safeParse({ ...report, dom }).success).toBe(false);
       };
       check(result.json);
       const call = await cli.sharedMcpCall!();
@@ -141,20 +137,16 @@ cliTest(
     for (const [beforeUnit, afterUnit, length, variation, status] of [
       ["utf16-code-units", "utf16-code-units", 5, "none", "unchanged"],
       ["utf8-bytes", "utf8-bytes", 10, "none", "changed"],
-      [undefined, undefined, 5, "none", "unknown"],
-      [undefined, "utf16-code-units", 10, "none", "unknown"],
       ["utf16-code-units", "utf8-bytes", 5, "none", "unknown"],
       ["utf16-code-units", "utf8-bytes", 10, "none", "unknown"],
-      [undefined, undefined, 5, "node", "changed"],
+      ["utf16-code-units", "utf8-bytes", 5, "node", "changed"],
       ["utf16-code-units", "utf8-bytes", 10, "frame", "changed"],
-      [undefined, undefined, 5, "empty", "unchanged"],
+      ["utf16-code-units", "utf8-bytes", 5, "empty", "unchanged"],
     ] as const) {
       const before = passiveNetworkCapture();
       before.dom = {
         total_nodes: 2,
-        ...(beforeUnit === undefined
-          ? {}
-          : { node_value_length_unit: beforeUnit }),
+        node_value_length_unit: beforeUnit,
         nodes: [
           {
             index: 0,
@@ -175,8 +167,7 @@ cliTest(
         ],
       };
       const after = structuredClone(before);
-      if (afterUnit === undefined) delete after.dom.node_value_length_unit;
-      else after.dom.node_value_length_unit = afterUnit;
+      after.dom.node_value_length_unit = afterUnit;
       after.dom.nodes[1]!.node_value_length = length;
       if (variation === "node") {
         after.dom.nodes[1]!.node_type = 8;
@@ -190,8 +181,16 @@ cliTest(
           origin: "https://app.example.test",
         });
       if (variation === "empty") {
-        before.dom = { total_nodes: 0, nodes: [] };
-        after.dom = { total_nodes: 0, nodes: [] };
+        before.dom = {
+          total_nodes: 0,
+          node_value_length_unit: beforeUnit,
+          nodes: [],
+        };
+        after.dom = {
+          total_nodes: 0,
+          node_value_length_unit: afterUnit,
+          nodes: [],
+        };
       }
       const result = await cli.run({
         arguments: [
@@ -222,5 +221,17 @@ cliTest(
           expect(diff.dimensions.dom_structure.reason).toContain("unit");
       }
     }
+    const unmarked = passiveNetworkCapture();
+    const { node_value_length_unit: _unit, ...dom } = unmarked.dom;
+    const refused = await cli.run({
+      arguments: [
+        "compare-web-captures",
+        JSON.stringify({ inspection: { ...unmarked, dom } }),
+        JSON.stringify({ inspection: unmarked }),
+        "--json",
+      ],
+    });
+    expect(refused.exitCode).not.toBe(0);
+    expect(refused.stderr + refused.stdout).toContain("node_value_length_unit");
   },
 );
