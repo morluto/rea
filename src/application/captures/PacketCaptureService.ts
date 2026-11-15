@@ -19,19 +19,7 @@ import {
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
-
-export interface PacketCapturePort {
-  /** Release per-call resources before returning, or retain failed cleanup for close/retry. */
-  inspect(
-    input: InspectPacketCaptureInput,
-    options?: ExecutionOptions,
-  ): Promise<Result<AnalysisExecution, AnalysisError>>;
-  inspectFields(
-    input: InspectPacketFieldsInput,
-    options?: ExecutionOptions,
-  ): Promise<Result<AnalysisExecution, AnalysisError>>;
-  close(): Promise<void>;
-}
+import type { PacketCapturePort } from "../../ports/captures/PacketCapturePort.js";
 
 /** One shared validation and Evidence owner for CLI and MCP. */
 export class PacketCaptureService {

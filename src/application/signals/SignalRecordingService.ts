@@ -19,19 +19,7 @@ import {
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
-
-export interface SignalRecordingPort {
-  /** Release per-call resources before returning, or retain failed cleanup for close/retry. */
-  decode(
-    input: DecodeSignalRecordingInput,
-    options?: ExecutionOptions,
-  ): Promise<Result<AnalysisExecution, AnalysisError>>;
-  inspectDecoders(
-    input: InspectSignalDecodersInput,
-    options?: ExecutionOptions,
-  ): Promise<Result<AnalysisExecution, AnalysisError>>;
-  close(): Promise<void>;
-}
+import type { SignalRecordingPort } from "../../ports/signals/SignalRecordingPort.js";
 
 /** One shared validation and Evidence owner for CLI and MCP. */
 export class SignalRecordingService {
