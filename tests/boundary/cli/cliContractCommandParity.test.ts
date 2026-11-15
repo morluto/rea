@@ -365,7 +365,19 @@ const MIGRATED_COMMANDS = [
   "list-frida-devices",
   "list-frida-processes",
   "instrument-with-frida",
+  "list-browser-targets",
+  "inspect-web-page",
+  "observe-web-session",
+  "discover-webmcp-tools",
+  "capture-web-screenshot",
 ];
+
+// An argv fixture is enrolled, so it cannot outlive its registration.
+it("enrolls every command with an argv fixture as migrated", () => {
+  expect(MIGRATED_COMMANDS).toEqual(
+    expect.arrayContaining(Object.keys(ARGV_SATISFYING_RULES)),
+  );
+});
 
 describe("CLI commands projected from tool contracts", () => {
   it("registers the migrated commands", () => {
