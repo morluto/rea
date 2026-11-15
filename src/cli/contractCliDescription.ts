@@ -2317,7 +2317,15 @@ export const describeContractCommand = <
     fields: shape,
     optionConstraints: projectObjectConstraints(
       contract,
-      rename,
+      // A grouped field is a JSON member, not an option, so an object rule
+      // naming it has no CLI projection.
+      (field) => {
+        if (groupedFields.has(field))
+          throw new Error(
+            `${contract.name}.${field} is grouped but named by an input rule`,
+          );
+        return rename(field);
+      },
       new Set([...unprojectedFields, ...selectors]),
       cliOptionDependencies,
       nullFlagLimits,
