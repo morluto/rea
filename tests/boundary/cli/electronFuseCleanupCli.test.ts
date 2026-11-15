@@ -57,7 +57,7 @@ cliTest.for([
       expect(
         toolContract("inspect_electron_fuses").outputSchema.parse(
           JSON.parse(result.stdout),
-        ).subject?.architecture,
+        ).subject?.identity.architecture,
       ).toBe("arm64");
     } else {
       expect(result.exitCode, result.stderr).toBe(1);
@@ -87,7 +87,7 @@ cliTest.for([
       }
       if (mode === "close-once")
         expect(parseEvidence(details.partial_observation)).toMatchObject({
-          subject: { local_path: path, architecture: "arm64" },
+          subject: { local_path: path, identity: { architecture: "arm64" } },
           normalized_result: { slices: [{ sentinel_count: 1 }] },
         });
     }

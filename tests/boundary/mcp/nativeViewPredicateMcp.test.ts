@@ -24,8 +24,8 @@ if (fixture.subject === null)
   throw new Error("Expected artifact-bound fixture");
 const subject = {
   path: fixture.subject.local_path,
-  sha256: fixture.subject.digest.sha256,
-  format: fixture.subject.format,
+  sha256: fixture.subject.identity.sha256,
+  format: fixture.subject.identity.format,
 };
 const selected = (
   operation: string,

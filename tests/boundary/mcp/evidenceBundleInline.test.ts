@@ -317,8 +317,8 @@ const unsupportedBundleFields = (
   ["provider manifest", ["providers", 0, "future_field"]],
   ["record subject", ["records", evidenceIndex, "subject", "future_field"]],
   [
-    "subject digest",
-    ["records", evidenceIndex, "subject", "digest", "future_field"],
+    "subject identity",
+    ["records", evidenceIndex, "subject", "identity", "future_field"],
   ],
   ["artifact manifest", ["artifacts", 0, "future_field"]],
   [

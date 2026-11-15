@@ -1,7 +1,0 @@
-{
-  "src/application/WorkflowEvidence.ts": 4,
-  "src/application/evm/EvmInterfaceService.ts": 1,
-  "src/application/native/NativeDispatchMetadataInspection.ts": 1,
-  "src/application/releaseExposure/ReleaseExposureService.ts": 1,
-  "src/domain/analysisSnapshot.ts": 8
-}

@@ -373,7 +373,7 @@ await withVerifierFixture(workspaceFixture, async () => {
             { env, timeout: 360000, maxBuffer: 16 * 1024 * 1024 },
           );
           const evidence = parseEvidence(JSON.parse(stdout));
-          assert.equal(evidence.subject.digest.sha256, sha256);
+          assert.equal(evidence.subject.identity.sha256, sha256);
           assert.deepEqual(
             evidence.normalized_result.metadata_recovery,
             metadata,
@@ -424,6 +424,6 @@ async function call(name, args = {}) {
   );
   if (name === "close_binary") return requireMcpLifecycleResult(response, name);
   const evidence = parseEvidence(requireMcpOutput(response, name));
-  assert.equal(evidence.subject.digest.sha256, sha256);
+  assert.equal(evidence.subject.identity.sha256, sha256);
   return evidence.normalized_result;
 }

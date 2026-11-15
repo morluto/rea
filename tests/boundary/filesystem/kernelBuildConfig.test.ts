@@ -78,7 +78,7 @@ describe("kernel build config stable filesystem boundary", () => {
     try {
       const result = await service.inspect({ path });
       if (!result.ok) throw result.error;
-      expect(result.value.subject?.format).toBe("elf");
+      expect(result.value.subject?.identity.format).toBe("elf");
       expect(result.value.normalized_result).toMatchObject({
         banner: { status: "present", version: "6.6.0" },
         config: { status: "absent", entries: [] },

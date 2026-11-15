@@ -124,17 +124,18 @@ export const createEvidenceBundle = (
   return {
     evidence_format: EVIDENCE_FORMAT_REVISION,
     artifacts: uniqueSorted(
-      sortedRecords.flatMap(({ subject }) =>
-        subject === null
+      sortedRecords.flatMap((record) => {
+        const file = evidenceFileTarget(record);
+        return file === undefined
           ? []
           : [
               artifactManifestSchema.parse({
-                digest: subject.digest,
-                format: subject.format,
-                architecture: subject.architecture,
+                digest: { sha256: file.sha256 },
+                format: file.format,
+                architecture: file.architecture,
               }),
-            ],
-      ),
+            ];
+      }),
     ),
     providers: uniqueSorted(sortedRecords.map(({ provider }) => provider)),
     environments: uniqueSorted(

@@ -146,11 +146,11 @@ const invalidFunctionOperationEvidence = () => {
   return createEvidence(
     {
       path: "/tmp/wrong-function-operation",
-      sha256: left.subject.digest.sha256,
-      format: left.subject.format,
-      ...(left.subject.architecture === null
+      sha256: left.subject.identity.sha256,
+      format: left.subject.identity.format,
+      ...(left.subject.identity.architecture === null
         ? {}
-        : { architecture: left.subject.architecture }),
+        : { architecture: left.subject.identity.architecture }),
     },
     left.provider,
     {
@@ -173,11 +173,11 @@ const malformedFunctionResultEvidence = () => {
   return createEvidence(
     {
       path: "/tmp/malformed-function-result",
-      sha256: left.subject.digest.sha256,
-      format: left.subject.format,
-      ...(left.subject.architecture === null
+      sha256: left.subject.identity.sha256,
+      format: left.subject.identity.format,
+      ...(left.subject.identity.architecture === null
         ? {}
-        : { architecture: left.subject.architecture }),
+        : { architecture: left.subject.identity.architecture }),
     },
     left.provider,
     {

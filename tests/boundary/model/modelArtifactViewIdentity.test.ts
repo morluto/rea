@@ -36,7 +36,7 @@ it("checks each model parent digest independently of cached declarations and dis
           limitations: original.limitations,
         },
       );
-    const digest = original.subject.digest.sha256;
+    const digest = original.subject.identity.sha256;
     const valid = parent("valid", path, digest);
     const aliasPath = join(root, "other.gguf");
     const rebound = parent("rebound-path", aliasPath, digest);

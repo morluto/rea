@@ -121,9 +121,9 @@ it.each(cases)(
       JSON.parse(serializeAnalysisSnapshot(snapshot)),
     );
     expect(restored.target.architecture).toBe(architecture);
-    expect(restored.evidence_bundle.records[0]?.subject?.architecture).toBe(
-      architecture,
-    );
+    expect(
+      restored.evidence_bundle.records[0]?.subject?.identity.architecture,
+    ).toBe(architecture);
     expect(restored.entries[0]?.execution.subject?.architecture).toBe(
       architecture,
     );

@@ -285,8 +285,8 @@ describe("historical native comparison projections", () => {
       return createEvidence(
         {
           path: source.subject!.local_path,
-          sha256: source.subject!.digest.sha256,
-          format: source.subject!.format,
+          sha256: source.subject!.identity.sha256,
+          format: source.subject!.identity.format,
         },
         source.provider,
         {
@@ -571,8 +571,8 @@ describe("JavaScript application workflow error diagnostics", () => {
     const malformedEvidence = createEvidence(
       {
         path: subject.local_path,
-        sha256: subject.digest.sha256,
-        format: subject.format,
+        sha256: subject.identity.sha256,
+        format: subject.identity.format,
       },
       JAVASCRIPT_APPLICATION_PROVIDER,
       {

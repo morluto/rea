@@ -166,7 +166,7 @@ it("preserves fuse inspection after a short DOS header with a confirmed PE signa
     const inspected = await service.inspect({ path });
     expect(inspected).toMatchObject({
       ok: true,
-      value: { subject: { architecture: "x86_64" } },
+      value: { subject: { identity: { architecture: "x86_64" } } },
     });
   } finally {
     await service.close();

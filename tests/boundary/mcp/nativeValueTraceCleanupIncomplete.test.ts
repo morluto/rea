@@ -368,7 +368,7 @@ it("retains the admitted trace and its completed sources as session Evidence", a
   const retained = session.evidenceForAnalysis(reference.evidence_id);
   expect(retained).toMatchObject({
     operation: "trace_native_values",
-    subject: { format: "dos-com" },
+    subject: { identity: { format: "dos-com" } },
   });
   expect(
     nativeValueTraceSchema.parse(retained?.normalized_result).traversal,

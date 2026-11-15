@@ -55,7 +55,7 @@ cliTest
       ],
     });
     expect(projection.exitCode, projection.stdout + projection.stderr).toBe(0);
-    expect(parseEvidence(projection.json).subject?.format).toBe("apk");
+    expect(parseEvidence(projection.json).subject?.identity.format).toBe("apk");
     const extracted = await cli.run({
       arguments: ["extract-artifact", selected, "--json"],
     });

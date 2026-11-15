@@ -132,7 +132,7 @@ describe("investigation record ownership", () => {
     const bundle = records.exportEvidenceBundle();
     expect(
       bundle.records.find(({ operation }) => operation === "update_unknown")
-        ?.subject?.digest.sha256,
+        ?.subject?.identity.sha256,
     ).toBe(target.sha256);
     expect(
       bundle.records.find(({ operation }) => operation === "update_unknown")

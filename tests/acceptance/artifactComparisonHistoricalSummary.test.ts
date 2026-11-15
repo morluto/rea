@@ -52,8 +52,8 @@ it("refuses a historical alias summary with recreate guidance and rejects reseal
   const alias = join(root, "caller-selected-alias.plist");
   const aliasedParent = rebindEvidenceToTargetPath(parent, {
     path: alias,
-    sha256: parent.subject!.digest.sha256,
-    format: parent.subject!.format,
+    sha256: parent.subject!.identity.sha256,
+    format: parent.subject!.identity.format,
   });
   expect(aliasedParent.evidence_id).toBe(parent.evidence_id);
   const projected = await call("inspect_analysis_view", {

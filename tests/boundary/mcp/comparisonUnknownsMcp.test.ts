@@ -37,8 +37,8 @@ const observeAgain = (
       ? undefined
       : {
           path: `/tmp/fixture-${observation}`,
-          sha256: source.subject.digest.sha256,
-          format: source.subject.format,
+          sha256: source.subject.identity.sha256,
+          format: source.subject.identity.format,
         },
     source.provider,
     {

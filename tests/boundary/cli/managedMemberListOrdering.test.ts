@@ -41,7 +41,7 @@ cliTest.for(["decreasing", "ordered"] as const)(
     );
     if (parent === undefined)
       throw new Error("Missing complete member Evidence");
-    expect(parent.subject?.digest.sha256).toBe(sha256);
+    expect(parent.subject?.identity.sha256).toBe(sha256);
     const report = managedMemberInspectionSchema.parse(
       parent.normalized_result,
     );

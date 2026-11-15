@@ -51,7 +51,7 @@ cliTest(
             ? goBinarySchema.parse(cliEvidence.normalized_result)
             : rustBinarySchema.parse(cliEvidence.normalized_result);
         expect(cliReport.architecture).toBe(item.architecture);
-        expect(cliEvidence.subject?.architecture).toBe(item.subject);
+        expect(cliEvidence.subject?.identity.architecture).toBe(item.subject);
 
         const mcpResponse = await call(operation, { path });
         expect(mcpResponse.isError, JSON.stringify(mcpResponse)).not.toBe(true);
@@ -63,7 +63,7 @@ cliTest(
             ? goBinarySchema.parse(mcpEvidence.normalized_result)
             : rustBinarySchema.parse(mcpEvidence.normalized_result);
         expect(mcpReport.architecture).toBe(item.architecture);
-        expect(mcpEvidence.subject?.architecture).toBe(item.subject);
+        expect(mcpEvidence.subject?.identity.architecture).toBe(item.subject);
       }
 
       const malformed =

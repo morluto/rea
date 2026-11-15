@@ -81,8 +81,8 @@ async function runUnicodeSourceMapComparison(
   const unicodeApplication = createEvidence(
     {
       path: baseResult.input_path,
-      sha256: subject.digest.sha256,
-      format: subject.format,
+      sha256: subject.identity.sha256,
+      format: subject.identity.format,
     },
     baseApplication.provider,
     {

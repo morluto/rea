@@ -75,7 +75,9 @@ it.each([
     });
     const result = await service.inspect({ path: layout.artifact.path });
     if (!result.ok) throw result.error;
-    expect(parseEvidence(result.value).subject?.architecture).toBe(expected);
+    expect(parseEvidence(result.value).subject?.identity.architecture).toBe(
+      expected,
+    );
   },
 );
 

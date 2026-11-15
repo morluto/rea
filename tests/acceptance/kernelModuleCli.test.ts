@@ -165,6 +165,6 @@ cliTest(
       next_probe: { operation: "external_decompression" },
       modinfo: null,
     });
-    expect(evidence.subject?.format).toBe("file");
+    expect(evidence.subject?.identity.format).toBe("file");
   },
 );

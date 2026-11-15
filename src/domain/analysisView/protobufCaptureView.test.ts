@@ -212,7 +212,7 @@ it("omits large values by default, returns requested text inline and preserves p
     {
       ...parent,
       subject: changedEvidenceSubject(parent.subject!, {
-        digest: { sha256: "e".repeat(64) },
+        sha256: "e".repeat(64),
       }),
     },
     { kind: "protobuf", collection: "bodies", offset: 0, limit: 1 },

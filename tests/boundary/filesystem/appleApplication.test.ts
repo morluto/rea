@@ -421,7 +421,7 @@ describe("macOS application projection", () => {
     const projection = appleApplicationProjectionResultSchema.parse(
       requireSuccessfulProjection(result).normalized_result,
     );
-    expect(requireSuccessfulProjection(result).subject?.format).toBe(
+    expect(requireSuccessfulProjection(result).subject?.identity.format).toBe(
       "directory",
     );
     expect(projection).toMatchObject({

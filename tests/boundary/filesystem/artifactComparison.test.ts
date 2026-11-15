@@ -137,8 +137,8 @@ describe("leaf artifact comparison", () => {
     const malformed = createEvidence(
       {
         path: left.subject!.local_path,
-        sha256: left.subject!.digest.sha256,
-        format: left.subject!.format,
+        sha256: left.subject!.identity.sha256,
+        format: left.subject!.identity.format,
       },
       PROVIDER,
       {
@@ -299,8 +299,8 @@ describe("artifact inventory coverage", () => {
     const unknownCoverage = createEvidence(
       {
         path: complete.subject!.local_path,
-        sha256: complete.subject!.digest.sha256,
-        format: complete.subject!.format,
+        sha256: complete.subject!.identity.sha256,
+        format: complete.subject!.identity.format,
       },
       PROVIDER,
       {
@@ -341,8 +341,8 @@ describe("artifact inventory coverage", () => {
     const mixed = createEvidence(
       {
         path: fragment.subject!.local_path,
-        sha256: fragment.subject!.digest.sha256,
-        format: fragment.subject!.format,
+        sha256: fragment.subject!.identity.sha256,
+        format: fragment.subject!.identity.format,
       },
       PROVIDER,
       {
@@ -441,7 +441,7 @@ describe("artifact comparison", () => {
     const incomplete = createEvidence(
       {
         path: root,
-        sha256: complete.subject?.digest.sha256 ?? "0".repeat(64),
+        sha256: complete.subject?.identity.sha256 ?? "0".repeat(64),
         format: "directory",
       },
       PROVIDER,
@@ -949,7 +949,7 @@ describe("artifact comparison fragment integrity", () => {
     const conflictingScope = createEvidence(
       {
         path: leftPath,
-        sha256: left.subject?.digest.sha256 ?? "",
+        sha256: left.subject?.identity.sha256 ?? "",
         format: "directory",
       },
       PROVIDER,

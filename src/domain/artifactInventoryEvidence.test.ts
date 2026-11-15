@@ -26,8 +26,8 @@ const inspectionEvidence = (result: unknown, subject = target) =>
   createEvidence(
     {
       path: subject.local_path,
-      sha256: subject.digest.sha256,
-      format: subject.format,
+      sha256: subject.identity.sha256,
+      format: subject.identity.format,
     },
     inventoryEvidence.provider,
     {
@@ -54,8 +54,8 @@ it.each([
   const carrier = createEvidence(
     {
       path: target.local_path,
-      sha256: target.digest.sha256,
-      format: target.format,
+      sha256: target.identity.sha256,
+      format: target.identity.format,
     },
     inventoryEvidence.provider,
     {
@@ -84,7 +84,7 @@ it("accepts an inspection whose carrier, declaration, and substep identities agr
 it("rejects an inspection carrier whose Evidence subject disagrees with its nested inventory", () => {
   const carrier = inspectionEvidence(inspection, {
     ...target,
-    digest: { sha256: "a".repeat(64) },
+    identity: { ...target.identity, sha256: "a".repeat(64) },
   });
   try {
     parseArtifactInventoryEvidence(carrier);
@@ -180,8 +180,8 @@ it("keeps a commitment failure discovered across individually incomplete pages a
     createEvidence(
       {
         path: target.local_path,
-        sha256: target.digest.sha256,
-        format: target.format,
+        sha256: target.identity.sha256,
+        format: target.identity.format,
       },
       inventoryEvidence.provider,
       {
@@ -260,8 +260,8 @@ it.each(
       createEvidence(
         {
           path: target.local_path,
-          sha256: target.digest.sha256,
-          format: target.format,
+          sha256: target.identity.sha256,
+          format: target.identity.format,
         },
         inventoryEvidence.provider,
         {

@@ -92,7 +92,29 @@ describe("subject target identity", () => {
     ).toBe(original);
   });
 
-  it("refuses a subject whose identity disagrees with its declaration or format", () => {
+  it("names the subject only by its identity and display facts", () => {
+    const record = observe(raw("0x0"));
+    expect(Object.keys(record.subject ?? {}).sort()).toEqual([
+      "identity",
+      "local_path",
+      "name",
+    ]);
+    const serialized = JSON.parse(JSON.stringify(record));
+    // A record that still declares the removed duplicate members is refused.
+    expect(() =>
+      parseEvidence({
+        ...serialized,
+        subject: {
+          ...serialized.subject,
+          digest: { sha256: "b".repeat(64) },
+          format: "raw-binary",
+          architecture: "arm",
+        },
+      }),
+    ).toThrow(/digest|format|architecture/u);
+  });
+
+  it("refuses a subject identity that its format does not admit", () => {
     const record = JSON.parse(JSON.stringify(observe(raw("0x0"))));
     const forged = (identity: Record<string, unknown>) => ({
       ...record,
@@ -101,9 +123,15 @@ describe("subject target identity", () => {
         identity: { ...record.subject.identity, ...identity },
       },
     });
-    expect(() => parseEvidence(forged({ sha256: "c".repeat(64) }))).toThrow(
-      /identity does not match/u,
-    );
+    expect(() =>
+      parseEvidence(
+        forged({
+          format: "gamecube-dol",
+          architecture: "arm",
+          selection: null,
+        }),
+      ),
+    ).toThrow();
     expect(() =>
       parseEvidence(
         forged({
@@ -140,7 +168,7 @@ it.each(RAW_ONLY_ARCHITECTURES)(
         parameters: {},
         result: null,
       }).subject,
-    ).toMatchObject({ format: "raw-binary", architecture });
+    ).toMatchObject({ identity: { format: "raw-binary", architecture } });
     const malformed = {
       ...selected,
       format: "pe" as const,
@@ -168,7 +196,7 @@ it("keeps 6502 confined to explicit raw Evidence subjects alongside iNES", () =>
       parameters: {},
       result: null,
     }).subject,
-  ).toMatchObject({ format: "raw-binary", architecture: "6502" });
+  ).toMatchObject({ identity: { format: "raw-binary", architecture: "6502" } });
   expect(
     createEvidence(
       {
@@ -179,7 +207,7 @@ it("keeps 6502 confined to explicit raw Evidence subjects alongside iNES", () =>
       PROVIDER,
       { operation: "inspect", parameters: {}, result: null },
     ).subject,
-  ).toMatchObject({ format: "ines", architecture: null });
+  ).toMatchObject({ identity: { format: "ines", architecture: null } });
   for (const format of ["pe", "ines"] as const) {
     expect(() =>
       createEvidence({ ...selected, format }, PROVIDER, {
@@ -676,7 +704,7 @@ describe("analysis evidence identity", () => {
     expect(parseEvidence(evidence)).toEqual(evidence);
     expect(evidence).toMatchObject({
       provider: PROVIDER,
-      subject: { digest: { sha256: "a".repeat(64) } },
+      subject: { identity: { sha256: "a".repeat(64) } },
       confidence: "observed",
       authority: "shipped-artifact",
       raw_result: { token: "<redacted:token>" },
@@ -832,8 +860,7 @@ describe("DOS analysis evidence identity", () => {
     const observation = { operation: "health", parameters: {}, result: true };
     const evidence = createEvidence(target, PROVIDER, observation);
     expect(parseEvidence(evidence).subject).toMatchObject({
-      format: "dos-mz",
-      architecture: "x86",
+      identity: { format: "dos-mz", architecture: "x86" },
     });
     expect(evidence.evidence_id).not.toBe(
       createEvidence({ ...target, format: "pe" }, PROVIDER, observation)

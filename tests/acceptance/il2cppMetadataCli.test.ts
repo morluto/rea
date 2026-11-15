@@ -768,7 +768,7 @@ it("imports historical metadata Evidence with unavailable member collections wit
   const historical = createEvidence(
     {
       path,
-      sha256: original.subject!.digest.sha256,
+      sha256: original.subject!.identity.sha256,
       format: "file",
     },
     original.provider,

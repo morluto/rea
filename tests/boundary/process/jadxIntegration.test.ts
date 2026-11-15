@@ -100,8 +100,8 @@ it.each(["alias/../bin", ""])(
         path: apk,
       });
       if (!second.ok) throw second.error;
-      expect(second.value.subject?.digest.sha256).toBe(
-        first.value.subject?.digest.sha256,
+      expect(second.value.subject?.identity.sha256).toBe(
+        first.value.subject?.identity.sha256,
       );
       const secondStarts = (await readFile(logPath(directories[1]!), "utf8"))
         .trim()
@@ -445,9 +445,11 @@ it("retire sessions when APK bytes, engine bytes or JVM options change", async (
     Buffer.concat([await readFile(apk), Buffer.from("new artifact bytes")]),
   );
   const changed = await inspect();
-  expect(first.subject?.digest.sha256).toEqual(expect.any(String));
-  expect(changed.subject?.digest.sha256).toEqual(expect.any(String));
-  expect(changed.subject?.digest.sha256).not.toBe(first.subject?.digest.sha256);
+  expect(first.subject?.identity.sha256).toEqual(expect.any(String));
+  expect(changed.subject?.identity.sha256).toEqual(expect.any(String));
+  expect(changed.subject?.identity.sha256).not.toBe(
+    first.subject?.identity.sha256,
+  );
   await verifyCleanup(launches.slice(0, 1));
   await writeJadxJarInventory(jar, ["fixture/NewEngineMarker.class"]);
   await inspect();

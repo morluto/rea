@@ -47,11 +47,11 @@ const recreateSummary = (
   return createEvidence(
     {
       path: summary.subject.local_path,
-      sha256: summary.subject.digest.sha256,
-      format: summary.subject.format,
-      ...(summary.subject.architecture === null
+      sha256: summary.subject.identity.sha256,
+      format: summary.subject.identity.format,
+      ...(summary.subject.identity.architecture === null
         ? {}
-        : { architecture: summary.subject.architecture }),
+        : { architecture: summary.subject.identity.architecture }),
     },
     summary.provider,
     {
@@ -246,8 +246,8 @@ const summaryAtEra = async (era: SummaryEra, aliasPath?: string) => {
       ? parent
       : rebindEvidenceToTargetPath(parent, {
           path: aliasPath,
-          sha256: parent.subject!.digest.sha256,
-          format: parent.subject!.format,
+          sha256: parent.subject!.identity.sha256,
+          format: parent.subject!.identity.format,
         });
   const projected = await inspectAnalysisView({
     source: { kind: "inline", evidence: selectedParent },
@@ -326,8 +326,8 @@ it.each<SummaryEra>(["current"])(
     const { parent, summary } = await summaryAtEra(era);
     const rebound = rebindEvidenceToTargetPath(parent, {
       path: "/selected/alias.bin",
-      sha256: parent.subject!.digest.sha256,
-      format: parent.subject!.format,
+      sha256: parent.subject!.identity.sha256,
+      format: parent.subject!.identity.format,
     });
     expect(rebound.evidence_id).toBe(parent.evidence_id);
     expect(resolveArtifactComparisonEvidence(summary, () => rebound)).toEqual({

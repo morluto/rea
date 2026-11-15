@@ -57,11 +57,11 @@ it("reports invalid nested semantic graph Evidence as caller input through CLI a
   const malformedEvidence = createEvidence(
     {
       path: subject.local_path,
-      sha256: subject.digest.sha256,
-      format: subject.format,
-      ...(subject.architecture === null
+      sha256: subject.identity.sha256,
+      format: subject.identity.format,
+      ...(subject.identity.architecture === null
         ? {}
-        : { architecture: subject.architecture }),
+        : { architecture: subject.identity.architecture }),
     },
     sourceEvidence.provider,
     {

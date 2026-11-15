@@ -1546,7 +1546,7 @@ it("retains explicit scoped identity through shared service and preserves caller
     detail: "complete",
   });
   if (!full.ok) throw full.error;
-  expect(full.value.subject?.digest.sha256).toBe(hash(fixture.bytes));
+  expect(full.value.subject?.identity.sha256).toBe(hash(fixture.bytes));
   const controller = new AbortController();
   const reason = new Error("selected caller stop");
   controller.abort(reason);

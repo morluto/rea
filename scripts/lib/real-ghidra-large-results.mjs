@@ -142,7 +142,7 @@ export async function verifyGhidraLargeResults({
       );
       assert.ok(record, `Missing exported retained record ${id}`);
       assert.equal(record.provider.id, "ghidra");
-      assert.equal(record.subject.digest.sha256, sha256);
+      assert.equal(record.subject.identity.sha256, sha256);
       return record;
     };
     const originalError = bundle.records.find(

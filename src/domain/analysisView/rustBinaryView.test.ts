@@ -113,10 +113,10 @@ it("checks exact artifact identity and subject architecture for every Rust view"
   for (const changed of [
     { format: "pe" as const },
     { architecture: "arm64" as const },
-    { digest: { sha256: "b".repeat(64) } },
+    { sha256: "b".repeat(64) },
   ]) {
     const source = parent();
-    if (source.subject == null || source.subject.format !== "elf")
+    if (source.subject == null || source.subject.identity.format !== "elf")
       throw new Error("Missing ELF source");
     const input = {
       ...source,

@@ -825,7 +825,7 @@ describe("compare-managed-members source failures", () => {
                   operation: "inspect_managed_members",
                   subject: {
                     local_path: leftPath,
-                    digest: {
+                    identity: {
                       sha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
                     },
                   },

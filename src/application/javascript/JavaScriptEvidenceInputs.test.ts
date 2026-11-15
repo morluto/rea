@@ -57,8 +57,8 @@ it("keeps a static trace subject unknown when legacy graph root evidence is omit
   const legacy = createEvidence(
     {
       path: original.subject.local_path,
-      sha256: original.subject.digest.sha256,
-      format: original.subject.format,
+      sha256: original.subject.identity.sha256,
+      format: original.subject.identity.format,
     },
     original.provider,
     {
@@ -91,8 +91,8 @@ it("preserves the verified application subject in both trace workflows", async (
   const application = createEvidence(
     {
       path: original.subject.local_path,
-      sha256: original.subject.digest.sha256,
-      format: original.subject.format,
+      sha256: original.subject.identity.sha256,
+      format: original.subject.identity.format,
       architecture: "x86_64",
       name: "caller-selected-name",
     },
@@ -149,7 +149,7 @@ it("preserves the verified application subject in both trace workflows", async (
     rebindEvidenceToTargetPath(feature.value.evidence, {
       path: application.subject!.local_path,
       sha256: "f".repeat(64),
-      format: application.subject!.format,
+      format: application.subject!.identity.format,
       architecture: "x86_64",
       name: "wrong artifact",
     }),

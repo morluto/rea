@@ -30,7 +30,9 @@ cliTest.skipIf(process.platform === "win32")(
     expect(observed.parameters).toMatchObject({ input_path: alias });
     expect(observed.subject?.local_path).toBe(join(root, alias));
     expect(direct.subject?.local_path).toBe(target);
-    expect(observed.subject?.digest.sha256).toBe(direct.subject?.digest.sha256);
+    expect(observed.subject?.identity.sha256).toBe(
+      direct.subject?.identity.sha256,
+    );
     const selectedInspection = artifactInspectionResultSchema.parse(
       observed.normalized_result,
     );

@@ -127,7 +127,7 @@ describe("Interface Builder immutable interpretation", () => {
       const changed = {
         ...source,
         subject: changedEvidenceSubject(source.subject!, {
-          digest: { sha256: "d".repeat(64) },
+          sha256: "d".repeat(64),
         }),
       };
       const rejected = projectAnalysisView(changed, { kind: "summary" });

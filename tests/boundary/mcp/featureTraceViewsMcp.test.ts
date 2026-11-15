@@ -146,7 +146,7 @@ it.each(["compact"] as const)(
           ? null
           : {
               path: parent.subject.local_path,
-              sha256: parent.subject.digest.sha256,
+              sha256: parent.subject.identity.sha256,
             },
       summary: {
         trace_id: full.trace_id,

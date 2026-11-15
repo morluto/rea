@@ -218,11 +218,11 @@ const rehashedComparison = (
       ? undefined
       : {
           path: subject.local_path,
-          sha256: subject.digest.sha256,
-          format: subject.format,
-          ...(subject.architecture === null
+          sha256: subject.identity.sha256,
+          format: subject.identity.format,
+          ...(subject.identity.architecture === null
             ? {}
-            : { architecture: subject.architecture }),
+            : { architecture: subject.identity.architecture }),
         },
     next.provider,
     {

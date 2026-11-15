@@ -662,18 +662,6 @@ checkCounted(
   [],
 );
 
-// The Evidence ID commits to `subject.identity` (docs/adr/evidence/
-// target-identity.md); the subject's digest, format and architecture members
-// duplicate it until they are removed. Readers use evidenceFileTarget,
-// evidenceSubjectTarget or evidenceSubjectDisplay from src/domain/evidence.
-checkCounted(
-  "Evidence subject declaration read (use evidenceFileTarget, evidenceSubjectTarget or evidenceSubjectDisplay from src/domain/evidence)",
-  "evidence-subject-declaration-read",
-  files,
-  /\.subject[?!]?\.(?:digest|format|architecture)\b/gu,
-  ["src/domain/evidence.ts"],
-);
-
 // Raw JSON Schema keywords and `x-rea-*` markers in `.meta()` bypass the
 // canonical Zod checks and reach every JSON Schema projection, including the
 // advertised one. Presentation facts are typed annotations

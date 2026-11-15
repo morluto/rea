@@ -220,7 +220,7 @@ describe("HarmonyOS application projection", () => {
       stageHapEntries,
     );
     const inventory = await inventoryApplicationPackage(path);
-    expect(inventory.subject?.format).toBe("hap");
+    expect(inventory.subject?.identity.format).toBe("hap");
     const left = requireDeterministicProjection(
       projectHarmonyApplicationEvidence,
       inventory,
@@ -286,7 +286,7 @@ describe("HarmonyOS application projection", () => {
       },
     ]);
     const inventory = await inventoryApplicationPackage(path);
-    expect(inventory.subject?.format).toBe("app-pack");
+    expect(inventory.subject?.identity.format).toBe("app-pack");
     const projection = requireDeterministicProjection(
       projectHarmonyApplicationEvidence,
       inventory,
@@ -322,7 +322,7 @@ describe("HarmonyOS packaging boundaries", () => {
       },
     ]);
     const inventory = await inventoryApplicationPackage(path);
-    expect(inventory.subject?.format).toBe("ipa");
+    expect(inventory.subject?.identity.format).toBe("ipa");
     const occurrences = (
       inventory.normalized_result as {
         occurrences: Array<{
@@ -441,8 +441,8 @@ describe("HarmonyOS partial inventory classification", () => {
     const partial = createEvidence(
       {
         path: inventory.subject.local_path,
-        sha256: inventory.subject.digest.sha256,
-        format: inventory.subject.format,
+        sha256: inventory.subject.identity.sha256,
+        format: inventory.subject.identity.format,
       },
       inventory.provider,
       {

@@ -25,6 +25,7 @@ import {
   createEvidence,
   MISSING_EVIDENCE_SUBJECT_LIMITATION,
   evidenceEnvelopeForAdmission,
+  evidenceSubjectTarget,
   type Evidence,
   type EvidenceLocation,
 } from "../domain/evidence.js";
@@ -482,17 +483,7 @@ export const workflowSnapshotRecord = (
       analysisProfile: analysisProfileSchema.parse(evidence.analysis_profile),
       limitations: evidence.limitations,
       locations: evidence.locations,
-      subject:
-        evidence.subject === null
-          ? null
-          : {
-              path: evidence.subject.local_path,
-              sha256: evidence.subject.digest.sha256,
-              format: evidence.subject.format,
-              ...(evidence.subject.architecture === null
-                ? {}
-                : { architecture: evidence.subject.architecture }),
-            },
+      subject: evidenceSubjectTarget(evidence.subject) ?? null,
     },
   };
 };
