@@ -36,6 +36,7 @@ import {
   AnalysisError,
   type AnalysisCleanupObservation,
 } from "../../domain/analysisErrorBase.js";
+import { AnalysisCleanupRelease } from "../../domain/analysisCleanupRelease.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
@@ -233,7 +234,8 @@ export class ReverseEngineeringService {
     ProviderProcessSupervisor,
     {
       readonly observation: AnalysisCleanupObservation;
-      readonly failures: Set<AnalysisError>;
+      /** Confirmed by a later verified stop; retry failures read it. */
+      readonly release: AnalysisCleanupRelease;
       readonly retryFailure?: AnalysisError;
     }
   >();
@@ -260,7 +262,9 @@ export class ReverseEngineeringService {
         (owner, cleanup) =>
           this.#pendingCleanup.set(owner, {
             observation: cleanup,
-            failures: this.#pendingCleanup.get(owner)?.failures ?? new Set(),
+            release:
+              this.#pendingCleanup.get(owner)?.release ??
+              new AnalysisCleanupRelease(),
           }),
       );
     this.#digest = options.digest ?? digestFile;
@@ -305,21 +309,22 @@ export class ReverseEngineeringService {
         };
         let retryFailure = retained.retryFailure;
         if (retryFailure === undefined) {
-          retryFailure = new AnalysisOutputError(
-            operation,
-            "A previous provider process still requires cleanup.",
-            { cleanup: observation },
+          retryFailure = retained.release.bind(
+            new AnalysisOutputError(
+              operation,
+              "A previous provider process still requires cleanup.",
+              { cleanup: observation },
+            ),
           );
-          retained.failures.add(retryFailure);
         }
         this.#pendingCleanup.set(owner, {
           observation,
-          failures: retained.failures,
+          release: retained.release,
           retryFailure,
         });
         if (failure === undefined) failure = retryFailure;
       } else {
-        for (const previous of retained.failures) previous.resolveCleanup();
+        retained.release.confirm();
         this.#pendingCleanup.delete(owner);
       }
     }
@@ -1293,7 +1298,7 @@ export class ReverseEngineeringService {
     cleanupOwner: ProviderProcessSupervisor | undefined,
   ): AnalysisError {
     if (cleanupOwner !== undefined && failure.cleanupIncomplete)
-      this.#pendingCleanup.get(cleanupOwner)?.failures.add(failure);
+      this.#pendingCleanup.get(cleanupOwner)?.release.bind(failure);
     return failure;
   }
 }

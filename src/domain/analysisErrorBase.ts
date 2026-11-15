@@ -199,7 +199,7 @@ export abstract class AnalysisError extends Error {
   #ownedCleanupResources: readonly string[];
   #cleanupResourceOwner: AnalysisCleanupResourceOwner | undefined;
   #cleanupCompletionOwner: AnalysisCleanupResourceOwner | undefined;
-  readonly #cleanupReleaseClaims: AnalysisCleanupReleaseClaim[] = [];
+  readonly #cleanupReleaseClaims = new Set<AnalysisCleanupReleaseClaim>();
   #cleanupRetry: AnalysisCleanupRetry | undefined;
   #secondaryFailures: AnalysisError[] = [];
   constructor(message: string, options?: AnalysisErrorOptions) {
@@ -260,21 +260,29 @@ export abstract class AnalysisError extends Error {
     if (!this.#cleanupIncomplete) return false;
     const dependencies = this.#cleanupDependencies;
     if (dependencies === undefined) {
-      if (!this.#cleanupReleaseClaims.some((claim) => claim.cleanupReleased))
-        return true;
+      if (!this.#anyClaimReleased()) return true;
     } else
       for (const dependency of dependencies)
         if (dependency.cleanupIncomplete) return true;
     this.#cleanupIncomplete = false;
     dependencies?.clear();
-    this.#cleanupReleaseClaims.length = 0;
+    this.#cleanupReleaseClaims.clear();
     return false;
   }
 
-  /** Read completion from a lease owner instead of having it pushed here. */
+  #anyClaimReleased(): boolean {
+    for (const claim of this.#cleanupReleaseClaims)
+      if (claim.cleanupReleased) return true;
+    return false;
+  }
+
+  /**
+   * Read completion from a lease owner instead of having it pushed here.
+   * Binding the same claim again is a no-op, so retries do not grow it.
+   */
   bindCleanupReleaseClaim(claim: AnalysisCleanupReleaseClaim): this {
     this.#carriesCleanup = true;
-    this.#cleanupReleaseClaims.push(claim);
+    this.#cleanupReleaseClaims.add(claim);
     return this;
   }
 

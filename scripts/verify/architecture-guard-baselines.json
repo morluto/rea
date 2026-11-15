@@ -180,24 +180,16 @@
     "src/browser/PlaywrightScenarioRequest.ts": 1
   },
   "cleanup-resolve-push": {
-    "src/android/JadxProvider.ts": 2,
-    "src/application/binary/AnalysisProviderRegistry.ts": 1,
-    "src/application/binary/BinarySession.ts": 1,
     "src/application/desktop/DesktopBuildComputers.ts": 1,
     "src/application/desktop/DesktopRemoteTaskReaders.ts": 1,
     "src/application/desktop/DesktopTaskReaderCleanup.ts": 1,
-    "src/application/reverse/ReverseEngineeringService.ts": 1,
     "src/browser/WebSourceMapFetcher.ts": 2,
-    "src/cutter/CutterBridgeService.ts": 1,
     "src/desktop/AgentEnvSolveHelper.ts": 2,
     "src/desktop/BuildComputerLongRuns.ts": 1,
-    "src/ida/IdaSessionClient.ts": 1,
-    "src/javascript/sourceMaps/SourceMapCommand.ts": 1,
     "src/kuna/KunaProjectCache.ts": 1,
     "src/native/CommandRunner.ts": 1,
     "src/native/LldbCallTracer.ts": 1,
-    "src/providers/AnalysisClientFailure.ts": 1,
-    "src/sqlite/SqliteDatabaseProvider.ts": 2
+    "src/providers/AnalysisClientFailure.ts": 1
   },
   "cleanup-dependency-binding": {
     "src/android/JadxConfiguration.ts": 1,
@@ -285,7 +277,7 @@
     "src/ida/IdaSessionClient.ts": 2,
     "src/inspector/V8InspectorProvider.ts": 1,
     "src/javascript/analysis/JavaScriptAnalysisWorker.ts": 1,
-    "src/javascript/sourceMaps/SourceMapCommand.ts": 5,
+    "src/javascript/sourceMaps/SourceMapCommand.ts": 4,
     "src/jeb/JebMcpConnectionOwner.ts": 1,
     "src/jeb/JebProvider.ts": 2,
     "src/kuna/KunaProjectCache.ts": 2,
