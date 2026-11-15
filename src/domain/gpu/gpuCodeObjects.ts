@@ -53,8 +53,7 @@ export const gpuObjectSchema = z.strictObject({
         }),
       ),
     })
-    .nullable()
-    .default(null),
+    .nullable(),
   target_consistency: z.enum([
     "unexamined",
     "single-source",

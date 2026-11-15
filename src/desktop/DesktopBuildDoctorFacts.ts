@@ -200,7 +200,7 @@ const settingCommand = async (
 const psFact = async (
   input: DesktopBuildFactsInput,
 ): Promise<DesktopBuildFacts["ps"]> => {
-  const selected = await resolveSystemPs(process.platform);
+  const selected = await resolveSystemPs(input.platform);
   const ps =
     selected.source === "system"
       ? selected.command

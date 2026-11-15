@@ -786,6 +786,12 @@ controlled production seam for interleavings that cannot be reproduced reliably.
 | Cleanup owners recover after an error was returned                                      | Retain the original child and aggregate errors and project them after each owner releases. A successful peer stays released; the aggregate remains incomplete until all owners release. Preserve the first cause even when rejection is `undefined`.                                      |
 | Target exits without an acknowledgement, or transport disappears while it stays alive   | Positive owned exit proof resolves target lifetime; other resources still need cleanup. Lost transport alone does not prove exit. Verify unrelated/attached targets survive and same-connection recovery works when supported.                                                            |
 
+Owners that finalize through `runOwned` inherit the precedence rows above from
+`src/providers/runOwned.lifecycle.test.ts`, which runs each scenario over a
+table of adopter shapes (partial or diagnostics record, publication, lease).
+Add a shape to that table instead of repeating those cases per provider; a
+provider's own tests cover how its work and close reach `runOwned`.
+
 Shared process-supervision controls separate leader exit from output closure.
 Cover output during held or failed cleanup, bounded retention and drain timeout,
 retry, and borrowed stream authority. The POSIX inherited-stderr control uses a
