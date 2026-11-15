@@ -293,8 +293,8 @@ const sourceMapMappingSchema = z.object({
 const sourceMapContextShape = {
   script_key: z.string(),
   declared_url: z.string(),
-  // Older saved observations omit this field; current fetches emit string/null.
-  effective_url: z.string().nullable().optional(),
+  // Null when no response was observed within the approved origins.
+  effective_url: z.string().nullable(),
 };
 const parsedSourceMapShape = {
   artifact: webTextArtifactSchema,
@@ -326,7 +326,7 @@ const sourceMapSchema = z.union([
     ...parsedSourceMapShape,
     status: z.enum(["fetch_failed", "invalid"]),
     artifact: z.null(),
-    /** Older observations omit this; completed bytes need it only when text is absent. */
+    /** Present only when the complete response body was read. */
     response_identity: responseIdentitySchema.exactOptional(),
     original_sources: emptyArraySchema,
     original_module_edges: emptyArraySchema,
@@ -481,9 +481,8 @@ export const webBundleAnalysisSchema = z.object({
           ),
         schema_property_names_coverage: z
           .enum(["complete", "partial", "unknown", "not_present"])
-          .optional()
           .describe(
-            "Coverage of the schema property-name projection. Missing means unknown for historical observations. Not a schema-validity result.",
+            "Coverage of the schema property-name projection. Not a schema-validity result.",
           ),
         trust: z.literal("page-declared-untrusted"),
         location: sourceLocationSchema,

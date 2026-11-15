@@ -264,6 +264,15 @@ const browserSafeMetadataSchema = z.object({
 });
 
 /** Provider-neutral normalized result for one passive web-page observation. */
+const storageFingerprintShape = {
+  identity_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  value_sha256: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/u)
+    .nullable(),
+  complete: z.boolean(),
+};
+
 export const webPageInspectionSchema = z.object({
   browser: browserVersionSchema,
   target: browserTargetSchema,
@@ -312,28 +321,27 @@ export const webPageInspectionSchema = z.object({
     cache_names: z.array(z.string()),
     content_fingerprints: z
       .array(
-        z.object({
-          scope: z.enum([
-            "cookie",
-            "local_storage",
-            "session_storage",
-            "indexed_db_schema",
-            "indexed_db_record",
-            "cache_entry",
-          ]),
-          identity_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-          value_sha256: z
-            .string()
-            .regex(/^[a-f0-9]{64}$/u)
-            .nullable(),
-          projection_version: z
-            .literal(2)
-            .optional()
-            .describe(
-              "IndexedDB schema projection including database version; absent on historical store-only fingerprints.",
-            ),
-          complete: z.boolean(),
-        }),
+        z.discriminatedUnion("scope", [
+          z.object({
+            ...storageFingerprintShape,
+            scope: z.enum([
+              "cookie",
+              "local_storage",
+              "session_storage",
+              "indexed_db_record",
+              "cache_entry",
+            ]),
+          }),
+          z.object({
+            ...storageFingerprintShape,
+            scope: z.literal("indexed_db_schema"),
+            projection_version: z
+              .literal(2)
+              .describe(
+                "IndexedDB schema projection including database version.",
+              ),
+          }),
+        ]),
       )
       .default([]),
     fingerprint_algorithm: z.literal("sha256").default("sha256"),
