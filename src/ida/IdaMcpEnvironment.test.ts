@@ -2,7 +2,6 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { DEFAULT_INHERITED_ENV_VARS } from "@modelcontextprotocol/client/stdio";
 import { createIdaMcpConnection } from "./IdaMcpConnection.js";
 
 const roots: string[] = [];
@@ -12,7 +11,7 @@ afterEach(async () => {
     await rm(root, { recursive: true, force: true });
 });
 
-it("launches the upstream SDK transport with the selected snapshot and suppresses ambient SDK defaults", async () => {
+it("launches the owned stdio server with only the selected snapshot, never ambient variables", async () => {
   const root = await mkdtemp(join(tmpdir(), "rea-ida-environment-"));
   roots.push(root);
   const script = join(root, "producer.mjs");
@@ -36,7 +35,8 @@ input.on('line', (line) => {
   vi.stubEnv("REA_SELECTED_CONTEXT", "ambient");
   vi.stubEnv("REA_AMBIENT_CONTEXT", "ambient-only");
   vi.stubEnv("HOME", "/ambient-home");
-  vi.stubEnv("PATH", "/ambient-path");
+  // REA's own PATH stays real: owned process cleanup inspects the process
+  // table through it. The child must still see only the selected PATH.
   const environment = {
     REA_SELECTED_CONTEXT: "selected",
     REA_REGISTRATION_CONTEXT: "selected-base",
@@ -72,16 +72,101 @@ input.on('line', (line) => {
         selected: selected === environment ? "selected" : null,
         registration: "registration",
         ambient: null,
-        home:
-          selected === environment
-            ? "/selected-home"
-            : DEFAULT_INHERITED_ENV_VARS.includes("HOME")
-              ? ""
-              : null,
-        path: selected === environment ? "/selected-path" : "",
+        home: selected === environment ? "/selected-home" : null,
+        path: selected === environment ? "/selected-path" : null,
       });
     } finally {
       await connection.close();
     }
+  }
+});
+
+it("refuses a stdio reply over the owned frame limit as a fixed transport allowance", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rea-ida-frame-limit-"));
+  roots.push(root);
+  const script = join(root, "producer.mjs");
+  await writeFile(
+    script,
+    `
+import { createInterface } from 'node:readline';
+const input = createInterface({ input: process.stdin });
+input.on('line', (line) => {
+  const request = JSON.parse(line);
+  if (request.id === undefined) return;
+  const result = request.method === 'initialize'
+    ? { protocolVersion: request.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'large-reply', version: '1' } }
+    : request.method === 'tools/list'
+      ? { tools: [{ name: 'large', inputSchema: { type: 'object' } }] }
+      : { content: [], structuredContent: { result: 'x'.repeat(8192) } };
+  process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result }) + '\\n');
+});
+`,
+  );
+  const connection = createIdaMcpConnection(
+    {
+      command: process.execPath,
+      args: [script],
+      env: {},
+      mode: "attached",
+      timeoutMs: 5000,
+    },
+    {},
+    { maxStdioMessageBytes: 4096 },
+  );
+  try {
+    expect(await connection.connect()).toEqual(["large"]);
+    const failure: unknown = await connection.call("large", {}).then(
+      () => undefined,
+      (cause: unknown) => cause,
+    );
+    expect(failure).toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      operation: "large",
+      resource: "transport",
+      reportedLimits: { max_response_bytes: 4096 },
+    });
+  } finally {
+    await connection.close();
+  }
+});
+
+it("launches a Windows batch registration through the shared cmd.exe invocation", async () => {
+  const launches: unknown[] = [];
+  const connection = createIdaMcpConnection(
+    {
+      command: "C:\\Tools\\ida-mcp.cmd",
+      args: ["--stdio"],
+      env: {},
+      mode: "attached",
+      timeoutMs: 5000,
+    },
+    { SYSTEMROOT: "C:\\Windows" },
+    {
+      platform: "win32",
+      launcher: async (options) => {
+        launches.push(options);
+        throw new Error("launch observed");
+      },
+    },
+  );
+  try {
+    await expect(connection.connect()).rejects.toThrow("launch observed");
+    expect(launches).toEqual([
+      expect.objectContaining({
+        command: "C:\\Windows\\System32\\cmd.exe",
+        arguments: [
+          "/d",
+          "/e:on",
+          "/v:off",
+          "/s",
+          "/c",
+          '""C:\\Tools\\ida-mcp.cmd" "--stdio""',
+        ],
+        windowsVerbatimArguments: true,
+        stdin: "pipe",
+      }),
+    ]);
+  } finally {
+    await connection.close();
   }
 });

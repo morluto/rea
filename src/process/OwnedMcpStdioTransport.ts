@@ -35,6 +35,18 @@ export type OwnedMcpTransportFailure =
   | { readonly kind: "protocol"; readonly cause: Error }
   | { readonly kind: "interrupted"; readonly reason: unknown };
 
+/** A frame or per-operation byte budget the protocol process exceeded. */
+export class OwnedMcpOutputLimitError extends Error {
+  constructor(
+    readonly scope: "frame" | "operation",
+    readonly limitBytes: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "OwnedMcpOutputLimitError";
+  }
+}
+
 /** SDK-framed stdio with REA-owned process cleanup rather than an unowned child. */
 export class OwnedMcpStdioTransport implements Transport {
   onclose: Transport["onclose"];
@@ -63,7 +75,8 @@ export class OwnedMcpStdioTransport implements Transport {
       readonly operation?: string;
       readonly label: string;
       readonly maxFrameBytes: number;
-      readonly maxOperationBytes: number;
+      /** Bytes one serialized operation may produce; omit when only frames are bounded. */
+      readonly maxOperationBytes?: number;
       readonly gracefulInputCloseMs?: number;
       readonly maxDiagnosticBytes?: ProcessDiagnosticBudget;
       /** Observe the owned child's stderr from acquisition onward, including when it closes early. */
@@ -186,6 +199,14 @@ export class OwnedMcpStdioTransport implements Transport {
     return this.#failure;
   }
 
+  /**
+   * Stop the retained process from holding the host's event loop after its
+   * cleanup failed; a later close restores the references for the retry.
+   */
+  detach(): void {
+    this.#supervisor?.unref();
+  }
+
   /** Scope both the byte budget and diagnostic retention to the next serialized request. */
   beginOperation(): void {
     this.#bytes = 0;
@@ -260,26 +281,27 @@ export class OwnedMcpStdioTransport implements Transport {
     if (this.settings.notifyOnExit !== true) this.onclose?.();
   };
   readonly #countStderr = (chunk: Buffer | string): void => {
-    this.#bytes += Buffer.byteLength(chunk);
-    if (this.#bytes > this.settings.maxOperationBytes)
-      this.#fail(
-        new Error(
-          `${this.settings.label} operation output exceeds ${this.settings.maxOperationBytes} bytes; no complete result is available`,
-        ),
-      );
+    this.#countOperationBytes(Buffer.byteLength(chunk));
   };
+  /** Charge output to the operation budget; false once it is exceeded. */
+  #countOperationBytes(bytes: number): boolean {
+    const limit = this.settings.maxOperationBytes;
+    if (limit === undefined) return true;
+    this.#bytes += bytes;
+    if (this.#bytes <= limit) return true;
+    this.#fail(
+      new OwnedMcpOutputLimitError(
+        "operation",
+        limit,
+        `${this.settings.label} operation output exceeds ${limit} bytes; no complete result is available`,
+      ),
+    );
+    return false;
+  }
   readonly #read = (chunk: Buffer | string): void => {
     if (this.#closed) return;
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    this.#bytes += bytes.length;
-    if (this.#bytes > this.settings.maxOperationBytes) {
-      this.#fail(
-        new Error(
-          `${this.settings.label} operation output exceeds ${this.settings.maxOperationBytes} bytes; no complete result is available`,
-        ),
-      );
-      return;
-    }
+    if (!this.#countOperationBytes(bytes.length)) return;
     try {
       let offset = 0;
       while (offset < bytes.length) {
@@ -288,7 +310,9 @@ export class OwnedMcpStdioTransport implements Transport {
         const fragment = bytes.subarray(offset, end);
         const frameBytes = this.#frameLength + fragment.length;
         if (frameBytes > this.settings.maxFrameBytes)
-          throw new Error(
+          throw new OwnedMcpOutputLimitError(
+            "frame",
+            this.settings.maxFrameBytes,
             `${this.settings.label} MCP frame exceeds ${this.settings.maxFrameBytes} bytes`,
           );
         this.#appendFrame(fragment, frameBytes);
