@@ -546,7 +546,6 @@
     "src/process/capture/ProcessHarness.ts": 1,
     "src/process/capture/ProcessScenarioRuntimeValidation.ts": 1,
     "src/process/ownedDebuggerSession.ts": 2,
-    "src/process/snapshotEnvironment.ts": 2,
     "src/rizin/RizinDebugSessionManager.ts": 1,
     "src/server/createServer.ts": 1,
     "src/server/registerSessionTools.ts": 3,

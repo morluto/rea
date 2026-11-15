@@ -1,4 +1,5 @@
 import { ADB_PROVIDER_IDENTITY } from "./AdbProviderIdentity.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   absoluteCallerPath,
   appendCallerPath,
@@ -839,7 +840,10 @@ export class AdbProvider {
   #outputCleanupPromise: Promise<void> | undefined;
 
   constructor(options: AdbProviderOptions = {}) {
-    this.environment = snapshotEnvironment(options.environment ?? process.env);
+    this.environment = snapshotEnvironment(
+      options.environment ?? process.env,
+      HOST_PLATFORM.platform,
+    );
     this.#createRuntimeRoot =
       options.createRuntimeRoot ??
       ((rootOptions) => PrivateRuntimeRoot.create(rootOptions));
