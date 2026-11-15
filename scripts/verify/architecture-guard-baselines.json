@@ -441,8 +441,6 @@
     "src/jeb/JebMcpConnectionOwner.ts": 1,
     "src/jeb/JebProvider.ts": 2,
     "src/kuna/KunaProjectCache.ts": 1,
-    "src/kuna/KunaProjectExport.ts": 1,
-    "src/kuna/KunaProjectReader.ts": 1,
     "src/kuna/KunaSessionClient.ts": 1,
     "src/kuna/KunaTargetCommands.ts": 1,
     "src/native/LldbCallTracer.ts": 3,
