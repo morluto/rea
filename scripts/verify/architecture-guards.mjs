@@ -11,6 +11,10 @@ import { localCompletenessEnumCount } from "./completeness-enum-guard.mjs";
 import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
 import { budgetArithmeticCount } from "./budget-arithmetic-guard.mjs";
 import { localLimitErrorClassCount } from "./limit-class-guard.mjs";
+import {
+  cliTextGuardSelects,
+  cliTextOutsideCliCount,
+} from "./cli-text-guard.mjs";
 
 // Architecture guards for the strict-identity / best-effort-inference split.
 // - Composite dedup keys must not NUL-join variable-length or free-form
@@ -509,25 +513,14 @@ checkCounted(
   ["src/gdb/GdbMiRecord.ts"],
 );
 
-// Services name the contract field they refuse or ask the caller to change,
-// and a failure binds its per-call control as `limit`; the CLI layer owns
-// option and command spellings (projectCliInputFields adds `cli_flag`). A
-// `--flag`, "on the CLI" or `rea <command>` written outside src/cli copies
-// that mapping into output MCP clients also receive, including text built
-// from a template such as `--${name}` or `rea inspect-... <path>`.
+// src/cli owns option and command spellings; cli-text-guard.mjs states the
+// rule and its written exemptions (host-only commands, CLI-only files).
 checkCounted(
   "REA CLI option or command named outside the CLI layer (name the contract field or operation; src/cli owns option and command spellings)",
   "cli-option-text-outside-cli",
-  files.filter(
-    ({ path }) =>
-      !path.startsWith("src/cli/") && !/^src\/cli[^/]*\.ts$/u.test(path),
-  ),
-  /\(CLI\b[^)\n]*|\bon the CLI\b|\bor (?:use|pass) (?:--|rea )[a-z]|\bcli(?:Flag|Total|PerFile)?:\s*"--[a-z]|(?:message|userMessage):\s*["`]--[a-z]|`rea [a-z][a-z-]*/gu,
-  [
-    // Setup and doctor run only through the CLI, so their recovery may name
-    // CLI options such as --skill=false.
-    "src/application/Doctor.ts",
-  ],
+  files.filter(({ path }) => cliTextGuardSelects(path)),
+  cliTextOutsideCliCount,
+  [],
 );
 
 // A runtime setting view throws the ConfigurationError of a malformed launch
