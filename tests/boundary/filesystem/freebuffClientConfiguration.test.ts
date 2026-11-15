@@ -149,7 +149,9 @@ describe("FreeBuff configuration paths", () => {
   });
 
   it("resolves the personal skills directory FreeBuff discovers", () => {
-    expect(skillDestinations("/home/a", ["freebuff"])).toEqual([
+    expect(
+      skillDestinations("/home/a", ["freebuff"], {}, process.platform),
+    ).toEqual([
       {
         client: "shared",
         path: join("/home/a", ".agents", "skills", "reverse-engineer-anything"),

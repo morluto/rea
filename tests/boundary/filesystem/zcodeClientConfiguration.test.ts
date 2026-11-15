@@ -59,7 +59,9 @@ describe("ZCode configuration paths", () => {
 
   it("resolves the personal skills directory beside the config root", () => {
     expect(
-      skillDestinations("/home/a", ["zcode"]).map(({ path }) => path),
+      skillDestinations("/home/a", ["zcode"], {}, process.platform).map(
+        ({ path }) => path,
+      ),
     ).toEqual([
       join("/home/a", ".zcode", "skills", "reverse-engineer-anything"),
     ]);
