@@ -51,6 +51,62 @@ it("names the requesting operation and the bridge method in a contract failure",
   });
 });
 
+it("names each failing field without echoing reported text", () => {
+  const region = {
+    name: "secret-name",
+    start: "0x0",
+    end: "0x10",
+    readable: null,
+    writable: null,
+    executable: null,
+    permissions: { available: false, reason: "unavailable" },
+    provenance: "hopper-public-python-api",
+  };
+
+  const parsed = parseHopperReply("list_segments", [
+    { ...region, sections: [{ ...region, name: null }] },
+  ]);
+
+  const error = parsed.ok ? undefined : parsed.error;
+  expect(error?.diagnostics).toEqual({
+    contract_issue_count: 1,
+    contract_issues: [
+      {
+        path: [0, "sections", 0, "name"],
+        code: "invalid_type",
+        expected: "string",
+        received: "null",
+      },
+    ],
+  });
+  expect(JSON.stringify(error?.diagnostics)).not.toContain("secret-name");
+});
+
+it("names the nested field of each option a failed union tried", () => {
+  const parsed = parseHopperReply("list_segments", [
+    {
+      name: "segment",
+      start: "0x0",
+      end: "0x10",
+      readable: null,
+      writable: null,
+      executable: null,
+      permissions: { available: false, reason: null },
+      provenance: "hopper-public-python-api",
+      sections: [],
+    },
+  ]);
+
+  const diagnostics = parsed.ok ? undefined : parsed.error.diagnostics;
+  expect(diagnostics?.["contract_issues"]).toContainEqual({
+    path: [0, "permissions", "reason"],
+    code: "invalid_type",
+    union_branches: [0],
+    expected: "string",
+    received: "null",
+  });
+});
+
 const providerClient = () => {
   const config = parseConfig({});
   if (!config.ok) throw config.error;

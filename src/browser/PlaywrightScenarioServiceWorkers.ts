@@ -27,7 +27,11 @@ import {
   type CdpTargetSession,
 } from "./CdpTargetSession.js";
 import { withPlaywrightExecutionBoundary } from "./PlaywrightExecutionBoundary.js";
-import type { CdpSendParams, CdpSendResult } from "./protocol/CdpCommands.js";
+import type {
+  CdpCommand,
+  CdpCommandParams,
+  CdpCommandResult,
+} from "./protocol/CdpCommands.js";
 
 const OPERATION = "capture_browser_scenario" as const;
 // Restoration performs several sequential CDP mutations before the transport's
@@ -50,9 +54,6 @@ const serviceWorkerPolicyCheckTimeout = (): AnalysisTimeoutError => {
   });
 };
 
-const restorationResponse = z.object({
-  result: z.object({ value: z.literal("policy_owned").nullable() }),
-});
 const attachedEvent = z.object({
   sessionId: z.string(),
   targetInfo: z.object({ type: z.string() }),
@@ -266,11 +267,11 @@ export class PlaywrightScenarioServiceWorkers {
     }
   }
 
-  private send<M extends string>(
+  private send<M extends CdpCommand>(
     id: string,
     method: M,
-    params: CdpSendParams<M> = {} as CdpSendParams<M>,
-  ): Promise<CdpSendResult<M>> {
+    params: CdpCommandParams<M> = {} as CdpCommandParams<M>,
+  ): Promise<CdpCommandResult<M>> {
     if (this.#session === undefined)
       throw new BrowserObservationError(OPERATION, "disconnected");
     return this.#session.connection.send(method, params, id);
@@ -318,16 +319,18 @@ export class PlaywrightScenarioServiceWorkers {
   }
 
   private async restoreMainFrame(id: string): Promise<void> {
-    const { result } = restorationResponse.parse(
-      await this.send(id, "Runtime.evaluate", {
-        expression: this.restorationScript(),
-        returnByValue: true,
-      }),
-    );
+    const { result } = await this.send(id, "Runtime.evaluate", {
+      expression: this.restorationScript(),
+      returnByValue: true,
+    });
     if (result.value === "policy_owned")
       throw new Error(
         "service-worker policy restoration could not be confirmed",
       );
+    // The script returns null once restored; anything else, including a
+    // thrown evaluation, is a protocol failure as in the Playwright frame path.
+    if (result.value !== null)
+      throw new BrowserObservationError(OPERATION, "protocol_error");
   }
 
   private async restorePlaywrightFrame(frame: Frame): Promise<void> {

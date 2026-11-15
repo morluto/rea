@@ -20,7 +20,6 @@ import {
   isHttpUrl,
   numberValue,
   recordValue,
-  recordsValue,
   cdpStringValue,
   type UnknownRecord,
 } from "./CdpCaptureValues.js";
@@ -32,6 +31,7 @@ import {
   selectCdpFrameIdentity,
   cdpFrameEventFacts,
 } from "./CdpFrameIdentity.js";
+import type { CdpCommandResult } from "./protocol/CdpCommands.js";
 import { observedFrameUrl } from "./protocol/CdpFrameTree.js";
 import { cdpTargetEventMatches } from "./CdpTargetEvents.js";
 
@@ -739,12 +739,12 @@ class TimelineCapture {
   }
 }
 
-const performanceTimestamp = (value: unknown): number => {
-  const metrics = recordsValue(recordValue(value)?.metrics).filter(
-    ({ name }) => name === "Timestamp",
-  );
-  const timestamp = numberValue(metrics[0]?.value);
-  if (metrics.length !== 1 || timestamp === undefined || timestamp < 0)
+const performanceTimestamp = ({
+  metrics,
+}: CdpCommandResult<"Performance.getMetrics">): number => {
+  const timestamps = metrics.filter(({ name }) => name === "Timestamp");
+  const timestamp = timestamps[0]?.value;
+  if (timestamps.length !== 1 || timestamp === undefined || timestamp < 0)
     throw new BrowserObservationError("observe_web_session", "protocol_error", {
       detail:
         "Performance.getMetrics returned no valid monotonic Timestamp metric.",

@@ -111,10 +111,6 @@ export const erlangBeamSummaryDeliveryShape = {
   detail: z.literal("summary"),
   view: erlangBeamViewRequestSchema.exactOptional(),
 };
-export const erlangBeamDeliverySchema = z.discriminatedUnion("detail", [
-  z.strictObject(erlangBeamCompleteDeliveryShape),
-  z.strictObject(erlangBeamSummaryDeliveryShape),
-]);
 const readReport = createAnalysisViewResultReader(erlangBeamSchema);
 type Table = "atoms" | "exports" | "imports" | "lambdas" | "chunks";
 type Row = NonNullable<ErlangBeam[Table]>[number];

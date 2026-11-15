@@ -4,7 +4,7 @@ import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
 
 /** Project the command owner's bounded output without losing examined byte counts. */
-const capturedApktoolCommandOutput = (
+export const capturedApktoolCommandOutput = (
   output: ProviderProcessSnapshot,
 ): AnalysisCapturedOutput => ({
   stdout: output.stdout.text,
