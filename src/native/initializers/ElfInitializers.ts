@@ -8,13 +8,13 @@ import {
   type NativeInitializerInspection,
   type NativeInitializerKind,
 } from "../../domain/native/nativeInitializers.js";
-import type { ElfPointerWrite } from "../metadata/ElfPointerRelocations.js";
+import type { ElfPointerWrite } from "../../domain/native/elfPointerRelocations.js";
 import {
   ElfPointerRelocationFailure,
   elfRelativeRelocationType,
   readElfRelocationWritesSteps,
-} from "../metadata/ElfPointerRelocations.js";
-import { readElfImage } from "../metadata/ElfImage.js";
+} from "../../domain/native/elfPointerRelocations.js";
+import { readElfImage } from "../../domain/native/elfImage.js";
 import {
   BinaryFormatFailure,
   BinaryMappingFailure,

@@ -1,16 +1,16 @@
 import {
   BinaryFormatFailure,
   type BinaryContainer,
-} from "../../domain/binaryContainer.js";
+} from "../binaryContainer.js";
 import {
   classifyFatContainerIdentity,
   readFatContainerHeader,
   readFatHeaderPrefix,
   readMachoHeaderPrefixFacts,
-} from "../../domain/apple/machoContainer.js";
-import { readElfImage } from "./ElfImage.js";
-import { readPeImage } from "./PeImage.js";
-import { readMachoImage } from "./MachoImage.js";
+} from "../apple/machoContainer.js";
+import { readElfImage } from "./elfImage.js";
+import { readPeImage } from "./peImage.js";
+import { readMachoImage } from "../apple/machoImage.js";
 
 /** Identify an ELF, PE, or thin Mach-O image and its file sections. */
 export const readBinaryContainer = (bytes: Buffer): BinaryContainer => {

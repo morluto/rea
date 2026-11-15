@@ -5,7 +5,7 @@ import {
 } from "../domain/binaryContainer.js";
 import { malformedInput, unsupportedInput } from "../domain/parseFailure.js";
 import { keyedBy, uniqueKeyed } from "../domain/keyedCollection.js";
-import { readBinaryContainer } from "../native/metadata/readBinaryContainer.js";
+import { readBinaryContainer } from "../domain/native/readBinaryContainer.js";
 import type {
   RustAuditableMetadata,
   RustBinary,
