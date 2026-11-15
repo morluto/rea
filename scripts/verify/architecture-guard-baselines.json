@@ -167,7 +167,7 @@
     "src/server/registerSessionRecordTools.ts": 1,
     "src/server/runDerivedOperation.ts": 2,
     "src/signals/SigrokRecordingProvider.ts": 1,
-    "src/sqlite/SqliteDatabaseFailures.ts": 2,
+    "src/sqlite/SqliteDatabaseFailures.ts": 1,
     "src/sqlite/SqliteDatabaseProvider.ts": 4,
     "src/sqlite/SqliteDatabaseWorkerExecution.ts": 1
   },
