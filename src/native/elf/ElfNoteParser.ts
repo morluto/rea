@@ -29,8 +29,8 @@ import {
   gnuNoteTypeName,
 } from "../../domain/native/elfNotes.js";
 import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
-import { readElfTableDeclarationsFromBuffer } from "../metadata/NativeSectionDirectory.js";
 import { decodeLimit, ParseFailureError } from "../../domain/parseFailure.js";
+import { readElfTableDeclarationsFromBuffer } from "../metadata/NativeSectionDirectory.js";
 import {
   decodeElfSectionNameTable,
   readElfSectionNameTableHeader,
