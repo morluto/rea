@@ -421,6 +421,11 @@ export class DesktopBuildComputers {
     this.#shared = { settle, secrets: this.#secrets };
   }
 
+  /** How often a computer's start, and a tool call waiting on one, reports progress. */
+  get progressMs(): number {
+    return this.startTiming.progressMs;
+  }
+
   /** How results show the secrets typed on this server's computers. */
   get redaction(): Pick<DesktopBuildSecrets, "redact" | "redactJson"> {
     return this.#secrets;

@@ -48,17 +48,32 @@ it("retains an explicitly selected missing Hermes profile as unresolved without 
       },
     ],
   });
-  expect(() => skillDestinations(home, ["hermes"], environment)).toThrow(
-    "missing",
-  );
-  expect(await canonicalSkillNeedsInstall(home, ["hermes"], environment)).toBe(
-    true,
-  );
+  expect(() =>
+    skillDestinations(home, ["hermes"], environment, process.platform),
+  ).toThrow("missing");
   expect(
-    await validateCanonicalSkillDirectories(home, ["hermes"], environment),
+    await canonicalSkillNeedsInstall(
+      home,
+      ["hermes"],
+      environment,
+      process.platform,
+    ),
+  ).toBe(true);
+  expect(
+    await validateCanonicalSkillDirectories(
+      home,
+      ["hermes"],
+      environment,
+      process.platform,
+    ),
   ).toMatchObject({ ok: false });
   expect(
-    await readInstalledSkillIdentity(home, ["hermes"], environment),
+    await readInstalledSkillIdentity(
+      home,
+      ["hermes"],
+      environment,
+      process.platform,
+    ),
   ).toMatchObject({
     canonical: false,
     issues: [
@@ -85,10 +100,12 @@ it("retains freshness for each selected personal and shared skill copy", async (
     await mkdir(root, { recursive: true });
     await writeFile(join(root, "SKILL.md"), "stale local copy\n");
   }
-  const identity = await readInstalledSkillIdentity(home, [
-    "claude_code",
-    "shared",
-  ]);
+  const identity = await readInstalledSkillIdentity(
+    home,
+    ["claude_code", "shared"],
+    {},
+    process.platform,
+  );
   expect(identity).toMatchObject({
     canonical: false,
     issues: expect.arrayContaining([

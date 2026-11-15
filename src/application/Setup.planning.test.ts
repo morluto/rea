@@ -1,15 +1,17 @@
-import { join } from "node:path";
+import { posix } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
 import { runSetup } from "./Setup.js";
-import { manualRegistrationRemediation } from "./SupportedClients.js";
+import {
+  manualRegistrationRemediation,
+  supportedClientRegistrationProfile,
+} from "./SupportedClients.js";
 import type { SetupProgressEvent } from "./SetupTypes.js";
 import { FakeSetupHost, options } from "./Setup.fixture.js";
 import { SetupSkillInstallError } from "./SetupSkill.js";
 import { err, ok } from "../domain/result.js";
 import { HopperReleaseError } from "./HopperReleaseFeed.js";
-import { supportedClientRegistrationProfile } from "./SupportedClients.js";
 
 const linkedSkillFailure = () =>
   new SetupSkillInstallError({
@@ -153,7 +155,7 @@ describe("selected skill admission", () => {
       ).toEqual([
         {
           id: "install_skill",
-          target: join(
+          target: posix.join(
             "/fixture/home",
             ".agents",
             "skills",
@@ -230,7 +232,12 @@ describe("skill plan destinations", () => {
         .filter(({ kind }) => kind === "install_skill")
         .map(({ target }) => target),
     ).toEqual([
-      join("/fixture/home", ".claude", "skills", "reverse-engineer-anything"),
+      posix.join(
+        "/fixture/home",
+        ".claude",
+        "skills",
+        "reverse-engineer-anything",
+      ),
     ]);
   });
 
@@ -260,8 +267,18 @@ describe("skill plan destinations", () => {
         .filter(({ kind }) => kind === "install_skill")
         .map(({ target }) => target),
     ).toEqual([
-      join("/fixture/home", ".agents", "skills", "reverse-engineer-anything"),
-      join("/fixture/home", ".claude", "skills", "reverse-engineer-anything"),
+      posix.join(
+        "/fixture/home",
+        ".agents",
+        "skills",
+        "reverse-engineer-anything",
+      ),
+      posix.join(
+        "/fixture/home",
+        ".claude",
+        "skills",
+        "reverse-engineer-anything",
+      ),
     ]);
   });
 });
