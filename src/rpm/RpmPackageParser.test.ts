@@ -246,6 +246,56 @@ it("keeps missing optional tags null rather than empty or zero", () => {
   expect(report.package.payload_compressor).toBe("zstd");
 });
 
+it("keeps dependency and file flags null when their flags tags are absent", () => {
+  const bytes = rpmBinaryPackageFixture({
+    headerTags: [
+      { tag: RPM_TAG.name, type: RPM_TYPE.string, string: "noflags" },
+      { tag: RPM_TAG.version, type: RPM_TYPE.string, string: "0.1" },
+      { tag: RPM_TAG.release, type: RPM_TYPE.string, string: "1" },
+      { tag: RPM_TAG.arch, type: RPM_TYPE.string, string: "noarch" },
+      {
+        tag: RPM_TAG.requireName,
+        type: RPM_TYPE.stringArray,
+        strings: ["rpmlib(CompressedFileNames)", "libc.so.6"],
+      },
+      { tag: RPM_TAG.dirNames, type: RPM_TYPE.stringArray, strings: ["/etc/"] },
+      {
+        tag: RPM_TAG.baseNames,
+        type: RPM_TYPE.stringArray,
+        strings: ["noflags.conf"],
+      },
+      { tag: RPM_TAG.dirIndexes, type: RPM_TYPE.int32, int32: [0] },
+      { tag: RPM_TAG.payloadFormat, type: RPM_TYPE.string, string: "cpio" },
+      { tag: RPM_TAG.payloadCompressor, type: RPM_TYPE.string, string: "gzip" },
+    ],
+  });
+  const report = parse(bytes);
+  expect(report.requires).toEqual([
+    {
+      name: "rpmlib(CompressedFileNames)",
+      version: null,
+      flags: null,
+      comparison: null,
+      rpmlib: true,
+      scriptlet_only: null,
+    },
+    {
+      name: "libc.so.6",
+      version: null,
+      flags: null,
+      comparison: null,
+      rpmlib: false,
+      scriptlet_only: null,
+    },
+  ]);
+  expect(report.files?.[0]).toMatchObject({
+    path: "/etc/noflags.conf",
+    flags: null,
+    config: null,
+    doc: null,
+  });
+});
+
 it("preserves epoch zero when the tag is present", () => {
   const bytes = encodeRpmPackage({
     headerTags: [

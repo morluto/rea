@@ -45,15 +45,17 @@ tags stay `null`. Epoch `0` is reported when that tag is present.
 (`recommends`, `suggests`, `supplements`, `enhances`) include each name,
 version text, raw flags, a rendered comparison (`>=`, `=`, `<`, and siblings),
 and whether the row is `rpmlib(...)` or scriptlet-only (interpreter,
-pre/post install or erase, or pretrans/posttrans sense flags). A missing set is
-`null`, not an empty list.
+pre/post install or erase, or pretrans/posttrans sense flags). When the flags
+tag is absent, `flags`, `comparison`, and `scriptlet_only` are `null` rather than
+`0`, unbounded, or `false`. A missing set is `null`, not an empty list.
 
 `scriptlets` lists PREIN/POSTIN/PREUN/POSTUN/PRETRANS/POSTTRANS and triggers
 with interpreter and byte length. Each trigger row lists every `TRIGGERNAME`
 condition that `TRIGGERINDEX` assigns to it in `trigger_names`; other rows
 report `null`. Source text is omitted unless `include_script_text` is true, and
 is never executed. `files` lists header inventory rows with sizes, modes,
-digests, `FILEDIGESTALGO`, config/doc flags, and owners.
+digests, `FILEDIGESTALGO`, config/doc flags, and owners. Without `FILEFLAGS`,
+a row reports `flags`, `config`, and `doc` as `null`.
 
 `payload.listing_source` is always `header`. The cpio payload is not
 decompressed.

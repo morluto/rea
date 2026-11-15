@@ -120,10 +120,10 @@ export type RpmFileDigestAlgorithm =
 const dependencySchema = z.strictObject({
   name: z.string().min(1),
   version: nullableText,
-  flags: uint,
+  flags: uint.nullable(),
   comparison: z.enum(RPM_DEPENDENCY_COMPARISONS).nullable(),
   rpmlib: z.boolean(),
-  scriptlet_only: z.boolean(),
+  scriptlet_only: z.boolean().nullable(),
 });
 
 const signatureBlobSchema = z.strictObject({
@@ -156,8 +156,8 @@ const fileSchema = z.strictObject({
   digest_algorithm: z.enum(RPM_FILE_DIGEST_ALGORITHMS).nullable(),
   digest_algorithm_id: uint.nullable(),
   flags: uint.nullable(),
-  config: z.boolean(),
-  doc: z.boolean(),
+  config: z.boolean().nullable(),
+  doc: z.boolean().nullable(),
   user: nullableText,
   group: nullableText,
 });

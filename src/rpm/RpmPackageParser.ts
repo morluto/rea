@@ -527,10 +527,12 @@ const dependencies = (
 ): RpmDependency[] | null => {
   const names = stringArray(header, namesTag);
   if (names === undefined) return null;
-  const flags = intArray(header, flagsTag) ?? [];
+  const flags = intArray(header, flagsTag);
   const versions = stringArray(header, versionsTag) ?? [];
   if (
-    (flags.length !== 0 && flags.length !== names.length) ||
+    (flags !== undefined &&
+      flags.length !== 0 &&
+      flags.length !== names.length) ||
     (versions.length !== 0 && versions.length !== names.length)
   )
     fail(
@@ -538,14 +540,17 @@ const dependencies = (
       { field: `tag ${String(namesTag)}` },
     );
   return names.map((name, index) => {
-    const flag = flags[index] ?? 0;
+    const flag = flags?.[index];
     return {
       name,
       version: text(versions[index]),
-      flags: flag,
-      comparison: comparison(flag),
-      rpmlib: (flag & RPM_SENSE.rpmlib) !== 0 || name.startsWith("rpmlib("),
-      scriptlet_only: (flag & SCRIPTLET_SENSE) !== 0,
+      flags: flag ?? null,
+      comparison: flag === undefined ? null : comparison(flag),
+      rpmlib:
+        name.startsWith("rpmlib(") ||
+        (flag !== undefined && (flag & RPM_SENSE.rpmlib) !== 0),
+      scriptlet_only:
+        flag === undefined ? null : (flag & SCRIPTLET_SENSE) !== 0,
     };
   });
 };
@@ -723,8 +728,8 @@ const files = (
       digest_algorithm: algorithm.name,
       digest_algorithm_id: algorithm.id,
       flags: flag ?? null,
-      config: flag !== undefined && (flag & RPM_FILE_FLAG.config) !== 0,
-      doc: flag !== undefined && (flag & RPM_FILE_FLAG.doc) !== 0,
+      config: flag === undefined ? null : (flag & RPM_FILE_FLAG.config) !== 0,
+      doc: flag === undefined ? null : (flag & RPM_FILE_FLAG.doc) !== 0,
       user: text(users?.[index]),
       group: text(groups?.[index]),
     };
