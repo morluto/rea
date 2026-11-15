@@ -36,7 +36,7 @@ import {
   mergeEnvironmentOverrides,
   snapshotEnvironment,
 } from "./process/snapshotEnvironment.js";
-import { supportedClients } from "./application/SupportedClients.js";
+import { resolveSupportedClients } from "./application/SupportedClients.js";
 import { homeDirectoryFromEnvironment } from "./config/homeDirectory.js";
 import {
   inspectLinuxHopperPythonRuntime,
@@ -71,10 +71,8 @@ const selectedRegistrationEnvironment = async (
     processEnvironment,
     process.platform,
   );
-  const client = supportedClients(
-    home,
-    process.platform,
-    processEnvironment,
+  const client = (
+    await resolveSupportedClients(home, process.platform, processEnvironment)
   ).find(({ name }) => name === selected);
   if (client === undefined || client.format === "unsupported")
     return { environment: {}, unresolved: new Set(), unknown: true };
