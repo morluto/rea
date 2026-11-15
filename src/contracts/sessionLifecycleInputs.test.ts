@@ -82,6 +82,26 @@ describe("open_binary raw-binary input contract", () => {
         ],
       },
     });
+    expect(
+      openBinaryInputSchema.safeParse({
+        path: "/tmp/ecu.bin",
+        format: "raw-binary",
+        dsym_path: "/tmp/app.dSYM",
+      }),
+    ).toMatchObject({
+      success: false,
+      error: {
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            path: ["dsym_path"],
+            message: expect.stringContaining("detected Mach-O"),
+          }),
+          expect.objectContaining({
+            path: ["architecture"],
+          }),
+        ]),
+      },
+    });
   });
   it("forwards dsym_path to target selection only when provided", () => {
     expect(openBinaryTargetSelection({})).toEqual({});
