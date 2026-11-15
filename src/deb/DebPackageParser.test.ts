@@ -851,6 +851,30 @@ it("charges a global PAX value repeated into every row to the data byte budget",
   ).toBe(true);
 });
 
+it("parses a long global PAX owner once rather than per entry", () => {
+  const uid = `${"0".repeat(4 * 1024 * 1024)}7`;
+  const bytes = debPackageFixture({
+    dataEntries: [
+      {
+        name: "./pax_global_header",
+        type: "g",
+        content: Buffer.concat([paxRecord("uid", uid), paxRecord("gid", uid)]),
+      },
+      ...Array.from({ length: 2048 }, (_, index) => ({
+        name: `./usr/share/doc/${String(index)}`,
+      })),
+    ],
+  });
+  const started = performance.now();
+  const report = parse(bytes, { max_data_bytes: 32 * 1024 * 1024 });
+  expect(performance.now() - started).toBeLessThan(2000);
+  const docs = report.data_entries.filter((entry) =>
+    entry.path.startsWith("usr/share/doc/"),
+  );
+  expect(docs).toHaveLength(2048);
+  expect(docs.every((entry) => entry.uid === 7 && entry.gid === 7)).toBe(true);
+});
+
 it("restores header owners when a later global PAX record clears the override", () => {
   const report = parse(
     debPackageFixture({

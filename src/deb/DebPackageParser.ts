@@ -440,6 +440,10 @@ const parseTar = (
   // to the next one, and override global values for it.
   const globalPax: Partial<Record<(typeof PAX_KEYS)[number], string>> = {};
   const globalUndecodable = new Set<string>();
+  // Global numeric owners are parsed once per global record, not per entry:
+  // a long global value would otherwise be rescanned for every later row.
+  let globalUid: number | undefined;
+  let globalGid: number | undefined;
   // A global value is stored once but copied into every later row, so each
   // reuse is charged to the member's byte budget alongside its expanded bytes.
   let charged = bytes.length;
@@ -563,6 +567,10 @@ const parseTar = (
         if (parsed.undecodable.has(key)) targetUndecodable.add(key);
         else targetUndecodable.delete(key);
       }
+      if (typeFlag === 103) {
+        globalUid = paxId(globalPax.uid);
+        globalGid = paxId(globalPax.gid);
+      }
       offset = dataStart + pad512(size);
       continue;
     }
@@ -620,9 +628,11 @@ const parseTar = (
     // PAX owner records override the fixed fields, which can hold shortened
     // or fallback values.
     const uid =
-      paxId(fileFields.uid) ?? parseTarNumber(header.subarray(108, 116));
+      (pax.uid === undefined ? globalUid : paxId(pax.uid)) ??
+      parseTarNumber(header.subarray(108, 116));
     const gid =
-      paxId(fileFields.gid) ?? parseTarNumber(header.subarray(116, 124));
+      (pax.gid === undefined ? globalGid : paxId(pax.gid)) ??
+      parseTarNumber(header.subarray(116, 124));
     const user = nonempty(
       fileFields.uname ?? trimField(ascii(header.subarray(265, 297))),
     );
