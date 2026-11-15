@@ -396,6 +396,7 @@ export const createSystemDoctorHost = (
           (await inspectJadxProvider(
             inspectionEnvironment,
             resourceScope,
+            host,
             inspectionSignal,
           )),
         unresolvedProvider("kuna", selected, inspectionEnvironment, platform) ??

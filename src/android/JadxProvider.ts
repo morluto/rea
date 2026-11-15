@@ -1,5 +1,5 @@
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
-import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { HOST_PLATFORM, type HostPlatform } from "../platform/HostPlatform.js";
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
@@ -311,15 +311,18 @@ export class JadxProvider implements AndroidAnalysisPort {
     readonly environment: Readonly<Record<string, string | undefined>>,
     readonly launcher?: JadxLauncher,
     readonly settings?: AnalysisSettingsReader,
+    /** The host JADX runs on; tests select another host's admission rules. */
+    readonly host: HostPlatform = HOST_PLATFORM,
   ) {}
 
   /** Report actual local prerequisites without starting JADX or opening a target. */
   inspectAvailability(signal?: AbortSignal) {
     const environment = snapshotEnvironment(
       this.environment,
-      HOST_PLATFORM.platform,
+      this.host.platform,
     );
     const pending = inspectJadxAvailability(environment, {
+      host: this.host,
       operationTimeoutMs:
         this.settings?.().overrides["jadx.operation_timeout_ms"],
       resourceOwner: this.#prerequisiteOwner,
@@ -513,7 +516,7 @@ export class JadxProvider implements AndroidAnalysisPort {
   ): Promise<Outcome> {
     const environment = snapshotEnvironment(
       this.environment,
-      HOST_PLATFORM.platform,
+      this.host.platform,
     );
     // Resolve the accepted operation's override before acquiring any resource.
     // An unusable launch value is refused without starting the engine.
@@ -554,6 +557,7 @@ export class JadxProvider implements AndroidAnalysisPort {
       const configuration = await resolveJadxConfigurationInputs(
         environment,
         request.operation,
+        this.host,
         signal,
       );
       throwIfJadxInterrupted(signal);
@@ -627,7 +631,7 @@ export class JadxProvider implements AndroidAnalysisPort {
             operationDeadline: { signal: timeout, timeoutMs: timeoutMs.value },
           },
         );
-        root = await createJadxWorkspaceRoot();
+        root = await createJadxWorkspaceRoot(this.host.platform);
         const workspaceSignal =
           root.failureSignal === undefined
             ? signal

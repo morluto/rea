@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { inspectJadxProvider } from "../../../src/android/JadxDoctor.js";
 import { createInspectionResources } from "../../fixtures/inspectionResources.js";
 import { stat, writeFile } from "node:fs/promises";
@@ -275,9 +276,11 @@ it("joins independent doctor archive finalization and retries its exact failed c
       }
       await original.call(this);
     });
-  const inspection = inspectJadxProvider(f.environment, resources.owner).catch(
-    (cause: unknown) => cause,
-  );
+  const inspection = inspectJadxProvider(
+    f.environment,
+    resources.owner,
+    HOST_PLATFORM,
+  ).catch((cause: unknown) => cause);
   let settled = false;
   let shutdown: Promise<unknown> | undefined;
   try {
