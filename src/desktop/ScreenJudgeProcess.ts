@@ -6,7 +6,7 @@ import { z } from "zod";
 
 import type { ScreenJudge } from "../domain/desktop/appTaskScreen.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { cancelledBy, carriedReason } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { RetainedCommandCleanup } from "../process/RetainedCommandCleanup.js";
@@ -83,10 +83,7 @@ export class ScreenJudgeProcess {
         },
       ).bindCleanupDependencies(pending);
     }
-    if (signal.aborted)
-      throw new AnalysisCancelledError("check_build_task", {
-        cause: signal.reason,
-      });
+    if (signal.aborted) throw cancelledBy("check_build_task", signal);
     const python = await agentEnvInterpreter(
       this.environment,
       "check_build_task",
@@ -129,9 +126,10 @@ export class ScreenJudgeProcess {
         primary = {
           cause:
             cause.reason === "cancelled"
-              ? new AnalysisCancelledError("check_build_task", {
-                  cause: cause.cancellation?.reason,
-                })
+              ? cancelledBy(
+                  "check_build_task",
+                  carriedReason(cause.cancellation?.reason),
+                )
               : new ProviderAdapterError(
                   AGENTENV_PROVIDER,
                   "check_build_task",
@@ -195,9 +193,10 @@ export class ScreenJudgeProcess {
     const completed = completedAnswer(cause);
     const original =
       cause instanceof OwnedCommandFailure && cause.reason === "cancelled"
-        ? new AnalysisCancelledError("check_build_task", {
-            cause: cause.cancellation?.reason,
-          })
+        ? cancelledBy(
+            "check_build_task",
+            carriedReason(cause.cancellation?.reason),
+          )
         : new ProviderAdapterError(AGENTENV_PROVIDER, "check_build_task", {
             cause,
           });

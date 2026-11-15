@@ -20,6 +20,8 @@ import {
   type ValueKeepingContracts,
   type HopperContractReply,
   type HopperReplyContracts,
+  parseHopperServerInfo,
+  type HopperServerInfo,
 } from "./HopperReplyContracts.js";
 import {
   hopperCancelledBySignal,
@@ -76,11 +78,7 @@ import {
   confirmExternalApplicationExit,
   type HopperOwnedResources,
 } from "./HopperCleanup.js";
-import {
-  parseHopperServerInfo,
-  HOPPER_SHUTDOWN_TIMEOUT_MS,
-  type HopperServerInfo,
-} from "./HopperSessionValues.js";
+import { HOPPER_SHUTDOWN_TIMEOUT_MS } from "./HopperSessionValues.js";
 import { connectHopperSocketOnce } from "./HopperSocketConnection.js";
 import {
   hopperLauncherFailureDiagnostic,

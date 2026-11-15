@@ -275,6 +275,9 @@ REA's packaged `bridge/cutter/rea_bridge.py`, `modified` when it differs, and
 `unknown` when the plugin predates this field. `cutter_command` refuses a
 `modified` session before sending anything and names the packaged plugin to
 copy into Cutter's `plugins/python` directory. An `unknown` session still runs.
+For `modified` and `unknown` sessions, discovery also returns
+`bridge_source_recovery`, which names the packaged plugin to copy before
+restarting Cutter.
 
 The client and plugin must support the current v2 handshake; older peers are
 rejected before dispatch because they cannot preserve cross-caller recovery proof.

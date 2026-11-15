@@ -638,7 +638,7 @@ export const createIdaMcpConnection = (
           if (cause instanceof AnalysisCancelledError) throw cause;
           return transportFailure(cause, name, requestTimeoutMs);
         }),
-        config.protocol,
+        config.protocol === "native" ? "native" : undefined,
         redactor,
         options?.reply,
       );

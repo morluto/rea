@@ -5,6 +5,7 @@ import { safeParseJson } from "./safeJson.js";
 import { jsonStringByteLength } from "./jsonStringByteLength.js";
 import { jsonValueByteLength } from "./jsonValueByteLength.js";
 import { err, ok, type Result } from "./result.js";
+import { isRecord } from "./isRecord.js";
 
 const jsonValueTypeSchema = z.enum([
   "object",
@@ -277,9 +278,6 @@ export const jsonValueType = (value: unknown): JsonValueType => {
       return "object";
   }
 };
-
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** Reverse sibling order for the traversal stack; array elements sort first. */
 const orderedChildren = (node: ShapeNode): ShapeNode[] =>

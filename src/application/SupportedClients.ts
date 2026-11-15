@@ -5,7 +5,7 @@ import type {
 import type { ClientConfigurationFormat } from "./ClientConfigurationDocument.js";
 import { dirname, isAbsolute, join, posix, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
-import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, statSync } from "node:fs";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   HermesClientPathError,
@@ -14,6 +14,7 @@ import {
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { appendCallerPath } from "../filesystem/callerPath.js";
 import {
+  absoluteXdgConfigHome,
   vscodeUserDirectory,
   xdgConfigHomeOrDefault,
 } from "./ClientConfigRoots.js";
@@ -75,6 +76,8 @@ export interface SetupClient {
     | "zcode_fallback"
     | "zcode"
     | "dsh"
+    | "zed"
+    | "amp"
     | "unsupported";
 }
 
@@ -545,6 +548,144 @@ const devinDirectory = ({ home, platform, env }: ClientPathContext): string =>
   platform === "win32"
     ? join(windowsAppDataRoots(home, env).roaming, "devin")
     : join(xdgConfigHomeOrDefault({ home, env }), "devin");
+
+/** The Cline extension's settings in one editor's global storage. */
+const clineSettingsDirectory =
+  (dataFolder: string) =>
+  (context: ClientPathContext): string =>
+    join(
+      vscodeUserDirectory(context, dataFolder),
+      "globalStorage",
+      "saoudrizwan.claude-dev",
+      "settings",
+    );
+const clineVscodeSettingsDirectory = clineSettingsDirectory("Code");
+
+/** Flathub's Zed (`dev.zed.Zed`) gets this XDG_CONFIG_HOME inside its sandbox. */
+const ZED_FLATPAK_CONFIG = [".var", "app", "dev.zed.Zed", "config"] as const;
+
+const directoryPresent = (path: string): Result<boolean, ClientPathFailure> => {
+  try {
+    lstatSync(path);
+    return ok(true);
+  } catch (cause: unknown) {
+    if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
+      return ok(false);
+    return err({
+      path,
+      message: `Cannot determine whether ${path} exists: ${cause instanceof Error ? cause.message : String(cause)}. Repair its access before configuring Zed.`,
+    });
+  }
+};
+
+/** Whether two existing paths resolve to the same folder, by device and inode. */
+const sameDirectory = (
+  first: string,
+  second: string,
+): Result<boolean, ClientPathFailure> => {
+  const identities: { dev: bigint; ino: bigint }[] = [];
+  for (const path of [first, second]) {
+    try {
+      const { dev, ino } = statSync(path, { bigint: true });
+      identities.push({ dev, ino });
+    } catch (cause: unknown) {
+      return err({
+        path,
+        message: `Cannot resolve ${path}: ${cause instanceof Error ? cause.message : String(cause)}. Repair it before configuring Zed.`,
+      });
+    }
+  }
+  const [a, b] = identities;
+  return ok(
+    a !== undefined && b !== undefined && a.dev === b.dev && a.ino === b.ino,
+  );
+};
+
+/**
+ * Zed's `paths::config_dir`. On Windows it reads the RoamingAppData known
+ * folder, which APPDATA normally names. On Linux and FreeBSD,
+ * `FLATPAK_XDG_CONFIG_HOME` wins, then `dirs::config_dir`, which admits only an
+ * absolute XDG_CONFIG_HOME. A Flathub Zed reads its sandbox's config folder,
+ * so REA uses it when only that folder exists and refuses to guess when a
+ * native configuration exists too.
+ */
+const zedLocation = ({
+  home,
+  platform,
+  env,
+}: ClientPathContext): Result<ClientLocation, ClientPathFailure> => {
+  const at = (directory: string): ClientLocation => ({
+    configPath: join(directory, "settings.json"),
+    markerPath: directory,
+  });
+  if (platform === "darwin") return ok(at(join(home, ".config", "zed")));
+  if (platform === "win32")
+    return ok(at(join(windowsAppDataRoots(home, env).roaming, "Zed")));
+  const flatpakOverride = env.FLATPAK_XDG_CONFIG_HOME;
+  if (flatpakOverride)
+    return posix.isAbsolute(flatpakOverride)
+      ? ok(at(join(flatpakOverride, "zed")))
+      : err({
+          path: flatpakOverride,
+          message:
+            "FLATPAK_XDG_CONFIG_HOME is relative, so Zed's configuration folder depends on its working directory. Set an absolute path before configuring Zed.",
+        });
+  const native = join(absoluteXdgConfigHome({ home, env }), "zed");
+  const sandboxed = join(home, ...ZED_FLATPAK_CONFIG, "zed");
+  const flatpak = directoryPresent(sandboxed);
+  if (!flatpak.ok) return flatpak;
+  if (!flatpak.value) return ok(at(native));
+  const nativePresent = directoryPresent(native);
+  if (!nativePresent.ok) return nativePresent;
+  if (!nativePresent.value) return ok(at(sandboxed));
+  // XDG_CONFIG_HOME or a link may make both names one folder.
+  const same = sameDirectory(native, sandboxed);
+  if (!same.ok) return same;
+  return same.value
+    ? ok(at(native))
+    : err({
+        path: sandboxed,
+        message: `Both ${native} and the Flatpak Zed folder ${sandboxed} exist, so REA cannot tell which Zed you use. Remove the configuration of the Zed you no longer use, then configure Zed again.`,
+      });
+};
+
+/**
+ * Amp's user settings: `settings.json` or `settings.jsonc` in
+ * `~/.config/amp` on every platform. Amp does not document which one wins
+ * when both exist, so that case stays unresolved.
+ */
+const ampLocation = ({
+  home,
+}: ClientPathContext): Result<ClientLocation, ClientPathFailure> => {
+  const directory = join(home, ".config", "amp");
+  const candidates = ["settings.json", "settings.jsonc"].map((name) =>
+    join(directory, name),
+  );
+  const present: string[] = [];
+  for (const candidate of candidates) {
+    try {
+      lstatSync(candidate);
+      present.push(candidate);
+    } catch (cause: unknown) {
+      if (
+        !(cause instanceof Error && "code" in cause && cause.code === "ENOENT")
+      )
+        return err({
+          path: candidate,
+          message: `Cannot determine whether ${candidate} exists: ${cause instanceof Error ? cause.message : String(cause)}. Repair its access before configuring Amp.`,
+        });
+    }
+  }
+  if (present.length > 1)
+    return err({
+      path: directory,
+      message: `Both ${candidates[0]} and ${candidates[1]} exist, and Amp does not document which one it reads. Merge them into one file before configuring Amp.`,
+    });
+  return ok({
+    configPath: present[0] ?? join(directory, "settings.json"),
+    markerPath: directory,
+  });
+};
 
 /**
  * FreeBuff's own profile directory (its `state.json` root, fixed under
@@ -1068,6 +1209,118 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     // proves neither product is installed; see clientOwnershipEvidencePaths.
     sharedRegistration: true,
     format: "json",
+  }),
+  defineClient({
+    name: "cline_vscode",
+    mcpAdd: { aliases: ["cline-vscode"] },
+    registrationConnection: { kind: "cline" },
+    displayName: "Cline VS Code extension",
+    configPath: (context: ClientPathContext) =>
+      join(clineVscodeSettingsDirectory(context), "cline_mcp_settings.json"),
+    markerPath: clineVscodeSettingsDirectory,
+    format: "json",
+  }),
+  defineClient({
+    name: "cline_vscode_insiders",
+    registrationConnection: { kind: "cline" },
+    displayName: "Cline in VS Code Insiders",
+    configPath: (context: ClientPathContext) =>
+      join(
+        clineSettingsDirectory("Code - Insiders")(context),
+        "cline_mcp_settings.json",
+      ),
+    markerPath: clineSettingsDirectory("Code - Insiders"),
+    format: "json",
+  }),
+  defineClient({
+    name: "cline_vscodium",
+    registrationConnection: { kind: "cline" },
+    displayName: "Cline in VSCodium",
+    configPath: (context: ClientPathContext) =>
+      join(
+        clineSettingsDirectory("VSCodium")(context),
+        "cline_mcp_settings.json",
+      ),
+    markerPath: clineSettingsDirectory("VSCodium"),
+    format: "json",
+  }),
+  defineClient({
+    name: "cline_cursor",
+    registrationConnection: { kind: "cline" },
+    displayName: "Cline in Cursor",
+    configPath: (context: ClientPathContext) =>
+      join(
+        clineSettingsDirectory("Cursor")(context),
+        "cline_mcp_settings.json",
+      ),
+    markerPath: clineSettingsDirectory("Cursor"),
+    format: "json",
+  }),
+  defineClient({
+    name: "cline_windsurf",
+    registrationConnection: { kind: "cline" },
+    displayName: "Cline in Windsurf",
+    configPath: (context: ClientPathContext) =>
+      join(
+        clineSettingsDirectory("Windsurf")(context),
+        "cline_mcp_settings.json",
+      ),
+    markerPath: clineSettingsDirectory("Windsurf"),
+    format: "json",
+  }),
+  defineClient({
+    name: "kiro",
+    mcpAdd: { aliases: ["kiro"], projectPaths: [".kiro/settings/mcp.json"] },
+    registrationConnection: {
+      kind: "flat",
+      fields: ["type", "url"],
+      stdio: [
+        { kind: "optional-enum", field: "type", values: ["stdio"] },
+        { kind: "present", field: "url" },
+      ],
+    },
+    // The IDE, CLI and web clients share the user file.
+    displayName: "Kiro",
+    configPath: [".kiro", "settings", "mcp.json"],
+    markerPath: [".kiro"],
+    format: "json",
+  }),
+  defineClient({
+    name: "mastracode",
+    mcpAdd: { aliases: ["mastra"], projectPaths: [".mastracode/mcp.json"] },
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url"],
+      stdio: [{ kind: "string", field: "url" }],
+    },
+    displayName: "Mastra Code",
+    configPath: [".mastracode", "mcp.json"],
+    markerPath: [".mastracode"],
+    format: "json",
+  }),
+  defineClient({
+    name: "zed",
+    mcpAdd: { projectPaths: [".zed/settings.json"] },
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url"],
+      stdio: [{ kind: "present", field: "url" }],
+    },
+    displayName: "Zed",
+    location: zedLocation,
+    format: "zed",
+  }),
+  defineClient({
+    name: "amp",
+    mcpAdd: {},
+    registrationConnection: {
+      kind: "flat",
+      fields: ["url"],
+      stdio: [{ kind: "present", field: "url" }],
+    },
+    displayName: "Amp",
+    location: ampLocation,
+    format: "amp",
   }),
   defineClient({
     name: "grok_bot",

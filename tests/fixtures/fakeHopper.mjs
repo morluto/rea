@@ -32,7 +32,8 @@ if (process.send !== undefined)
 const shutdownResult = () => ({
   shutdown: true,
   analysis_stopped: true,
-  document_closed: shutdownMode !== "unconfirmed",
+  document_closed:
+    shutdownMode !== "unconfirmed" && shutdownMode !== "cleanup-required",
   ...(shutdownMode === "cleanup-required" ? { cleanup_required: true } : {}),
 });
 const emitDiagnosticOutput = () => {

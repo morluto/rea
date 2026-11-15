@@ -5,9 +5,10 @@ import {
   type TsharkPacketLayers,
 } from "./TsharkJsonPackets.js";
 import {
-  AnalysisCancelledError,
   AnalysisProtocolError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { parsePcapHttpUri } from "./PcapHttpUri.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
@@ -20,12 +21,8 @@ export const TSHARK_JSON_MAX_BYTES = 8 * 1024 * 1024;
 const MAX_RETAINED_BYTES = 16 * 1024 * 1024;
 const MAX_DECODED_BYTES = 128 * 1024 * 1024;
 
-const outputReadCancelled = (cause: unknown): never => {
-  throw new AnalysisCancelledError(OPERATION, { cause });
-};
-
 const assertOutputReadActive = (signal: AbortSignal | undefined): void => {
-  if (signal?.aborted) outputReadCancelled(signal.reason);
+  if (signal?.aborted) throw cancelledBy(OPERATION, signal);
 };
 
 const protocolFailure = (reason: string): never => {
@@ -184,7 +181,7 @@ const decodeTsharkPackets = async (
   const failure = read.error;
   switch (failure.kind) {
     case "cancelled":
-      return outputReadCancelled(failure.cause);
+      throw cancelledBy(OPERATION, carriedReason(failure.cause));
     case "json-bytes":
       throw new AnalysisResourceConstraintError(
         OPERATION,

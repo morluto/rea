@@ -5,7 +5,7 @@ import {
   mappedFileOffset,
   type BinaryContainer,
 } from "../native/metadata/BinaryContainer.js";
-import { keyedBy, uniqueKeyed } from "../domain/keyedCollection.js";
+import { firstKeyed, keyedBy, uniqueKeyed } from "../domain/keyedCollection.js";
 
 export interface GoBuildInfoSearchRange extends FileMapping {
   /** Native file mapping containing inline strings after a named Mach-O header. */
@@ -30,12 +30,17 @@ const fallbackSearchRanges = (
       .slice(0, 1)
       .map((region) => region.mapping);
   if (container.image_base === undefined) return [];
-  const section = container.sections.find(
-    (candidate) =>
+  const section = firstKeyed(
+    keyedBy(container.sections, (candidate) =>
       candidate.format === "pe" &&
       candidate.virtual_address !== 0 &&
       candidate.raw_size !== 0 &&
-      (candidate.characteristics & ~0x00600000) >>> 0 === 0xc0000040,
+      (candidate.characteristics & ~0x00600000) >>> 0 === 0xc0000040
+        ? "writable-initialized-data"
+        : undefined,
+    ),
+    "writable-initialized-data",
+    "Go's debug/buildinfo (peExe.DataStart) searches the first writable initialized-data section.",
   );
   return section?.format === "pe"
     ? [
