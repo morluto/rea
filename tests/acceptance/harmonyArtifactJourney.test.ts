@@ -16,6 +16,7 @@ import {
   type HarmonyApplicationProjectionResult,
 } from "../../src/domain/harmony/harmonyApplication.js";
 import { workspaceCliTest as test } from "../support/cli/workspaceCliFixture.js";
+import { schemaVerifierEnvironment } from "../../scripts/lib/mcp-verification-environment.mjs";
 
 const expectProjectionParity = (
   graph: HarmonyApplicationProjectionResult,
@@ -125,7 +126,7 @@ test("preserves Harmony archive formats through the public CLI/MCP lifecycle", a
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [resolve("scripts/rea.mjs"), "mcp"],
-    env: environment,
+    env: schemaVerifierEnvironment(environment),
     stderr: "pipe",
   });
   try {

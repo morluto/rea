@@ -186,7 +186,8 @@ REA_MCP_TOOL_CATALOG_PROFILE=full
 
 This advertises all tools without requiring catalog refresh. Compact output
 schemas widen client-side validation; REA still validates complete results
-against the canonical contracts. See [output schemas](../reference/mcp-contracts.md#output-schemas).
+against the canonical contracts. The default output profile, `off`, omits
+output schemas and is smaller still. See [output schemas](../reference/mcp-contracts.md#output-schemas).
 
 On main `3e0599a94`, a real FastMCP 4.1.6 / Python MCP 2.3.0 HTTP client with
 the default 1 MiB SSE event limit rejected the 4,108,975-byte full catalog.
@@ -370,11 +371,12 @@ and Claude Code reports that autocompact is thrashing. To avoid this:
 The sizes above come from REA's own `tools/list`. A live Claude Code session
 against DeepSeek's API is unverified.
 
-For a client whose stdio reader rejects the complete catalog frame, set
-`"REA_MCP_OUTPUT_SCHEMA_PROFILE": "compact"` to bound every advertised output
-schema, or `"off"` to omit them, in REA's `env` object, then restart the client.
-Both keep canonical result validation and complete structured results; `compact`
-keeps a widened root shape and `off` advertises nothing. On catalogs large
+Output schemas are omitted by default (`"REA_MCP_OUTPUT_SCHEMA_PROFILE": "off"`).
+If you selected `"full"` and a client's stdio reader rejects the complete
+catalog frame, return to the default or select `"compact"`, which bounds every
+advertised output schema, in REA's `env` object, then restart the client.
+Every profile keeps canonical result validation and complete structured
+results; `compact` keeps a widened root shape and `off` advertises nothing. On catalogs large
 enough that full input schemas alone approach the frame limit, also keep the
 input profile at its `compact` default. See [MCP output schema
 profiles](../reference/mcp-contracts.md#output-schemas).
