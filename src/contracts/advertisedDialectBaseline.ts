@@ -3,6 +3,8 @@
 // definition the server can list (all catalog and output profiles). Counts may
 // only shrink: the catalog test requires an exact match, so removing a
 // construct lowers its count here, and any key not listed is enforced at zero.
+// One exception grows them: each runtime analysis setting adds a branch to
+// update_analysis_settings with two `const` members (`setting`, `action`).
 
 /** Input-side counts, keyed by `REA_MCP_INPUT_SCHEMA_PROFILE`. */
 export const ADVERTISED_INPUT_DIALECT_BASELINE: Readonly<
@@ -13,7 +15,7 @@ export const ADVERTISED_INPUT_DIALECT_BASELINE: Readonly<
     "input bound maxLength": 13,
     "input keyword $schema": 256,
     "input keyword allOf": 10,
-    "input keyword const": 81,
+    "input keyword const": 83,
     "input keyword default": 2,
     "input keyword exclusiveMinimum": 61,
     "input keyword format": 20,
@@ -41,7 +43,7 @@ export const ADVERTISED_INPUT_DIALECT_BASELINE: Readonly<
     "input input-depth": 33,
     "input keyword $schema": 256,
     "input keyword allOf": 99,
-    "input keyword const": 1855,
+    "input keyword const": 1857,
     "input keyword default": 803,
     "input keyword else": 6,
     "input keyword examples": 253,
