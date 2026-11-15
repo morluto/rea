@@ -13,7 +13,6 @@ import {
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
-import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { ProviderSelectionError } from "../../domain/providerSelectionError.js";
 import type { ProviderOutcomeContext } from "../../process/classifyProviderOutcome.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
@@ -129,26 +128,6 @@ export const pwntoolsFailureDialect = (
     providerId: context.providerId,
     operation: context.operation,
     command: () => pwntoolsCommandContext(state, limits),
-    commandCleanup: (failure) => {
-      const output = combinedPwntoolsOutput(failure.snapshot, context);
-      return new ProviderCleanupError(
-        context.providerId,
-        failure.resources,
-        {
-          reason: failure.cleanupFailure,
-          ...(output === undefined ? {} : { captured_output: { ...output } }),
-          previous_error: {
-            failure_kind: failure.reason,
-            message: failure.message,
-            exit_code: failure.snapshot?.exitCode ?? null,
-            signal: failure.snapshot?.signal ?? null,
-            stdout: failure.snapshot?.stdout.text ?? null,
-            stderr: failure.snapshot?.stderr.text ?? null,
-          },
-        },
-        { operation: context.operation, cause: failure },
-      );
-    },
     // Only the configuration phase checks the selected Python by path.
     recognise: (cause) =>
       phase === "configuration" && cause instanceof Error && "code" in cause
