@@ -18,6 +18,7 @@ import {
   IPS_METADATA_SHAPE,
 } from "./AppleIpsJsonShape.js";
 import type { LosslessJson } from "./losslessJson.js";
+import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 
 type Artifact = AppleIps["artifact"];
 
@@ -30,7 +31,7 @@ const IPS_LIMITATIONS = [
   "Symbol names printed inside the report are recorded claims and are not verified.",
 ];
 
-const utf8 = new TextDecoder("utf-8", { fatal: true });
+const utf8 = strictUtf8Decoder("preserve");
 
 const canonicalUuid = (
   raw: string | null,

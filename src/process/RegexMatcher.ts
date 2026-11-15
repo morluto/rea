@@ -30,6 +30,7 @@ import {
   regexWorkerHeapRequestRecovery,
   type RegexWorkerHeapRequest,
 } from "../config/regexWorkerHeapRequest.js";
+import { decodeStrictUtf8, strictUtf8Decoder } from "../domain/strictUtf8.js";
 /**
  * Node's Worker `resourceLimits.maxOldGenerationSizeMb` request.
  * `REA_REGEX_WORKER_HEAP_REQUEST_MIB` is that request (default 128 MiB). A positive
@@ -230,8 +231,9 @@ const nodeOptionsFromEnviron = (
       entry.subarray(0, nodeOptionsKey.length).equals(nodeOptionsKey)
     ) {
       try {
-        return new TextDecoder("utf-8", { fatal: true }).decode(
+        return decodeStrictUtf8(
           entry.subarray(nodeOptionsKey.length),
+          "preserve",
         );
       } catch {
         return "invalid";
@@ -284,7 +286,7 @@ const commandLineTokens = (raw: Buffer): readonly string[] | "invalid" => {
   if (raw.length === 0) return "invalid";
   const end = raw[raw.length - 1] === 0 ? raw.length - 1 : raw.length;
   const tokens: string[] = [];
-  const decoder = new TextDecoder("utf-8", { fatal: true });
+  const decoder = strictUtf8Decoder("preserve");
   let offset = 0;
   while (offset < end) {
     const next = raw.indexOf(0, offset);
