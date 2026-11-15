@@ -523,10 +523,14 @@ export const systemUninstallHost = (
   // REA's registration that only read-only lower layers define: uninstall
   // cannot remove it, so it is reported instead of being treated as absent.
   const retainedLowerOnly = new WeakMap<UninstallClient, UninstallItem>();
-  /** The effective REA entry across the read-only lower layers alone. */
+  /**
+   * The effective REA entry across the read-only lower layers, and the user
+   * layer above them when given.
+   */
   const lowerLayerRegistration = async (
     client: UninstallClient,
     ownershipEstablished: boolean,
+    upper?: ClientConfigurationSource,
   ): Promise<
     | { readonly kind: "item"; readonly item: UninstallItem }
     | { readonly kind: "entry"; readonly entry: unknown }
@@ -547,6 +551,7 @@ export const systemUninstallHost = (
       }
       lowerLayers.push({ ...layer.parsed, sourcePath: configPath });
     }
+    if (upper !== undefined) lowerLayers.push(upper);
     return {
       kind: "entry",
       entry:
@@ -555,17 +560,24 @@ export const systemUninstallHost = (
         ],
     };
   };
-  /** Record an enabled REA entry the user layer does not override. */
+  /**
+   * Record REA's enabled registration that a read-only layer keeps in effect
+   * when uninstall removes nothing from the user layer: absent there, or a
+   * partial user entry inheriting REA's launcher. An unreadable layer leaves
+   * that unknown, so it stops uninstall before any removal.
+   */
   const retainLowerOnlyRegistration = async (
     client: UninstallClient,
     ownershipEstablished: boolean,
-  ): Promise<void> => {
-    if (client.readOnlyLowerLayers !== true) return;
-    const lower = await lowerLayerRegistration(client, ownershipEstablished);
-    if (lower.kind === "item") {
-      retainedLowerOnly.set(client, lower.item);
-      return;
-    }
+    upper?: ClientConfigurationSource,
+  ): Promise<UninstallItem | undefined> => {
+    if (client.readOnlyLowerLayers !== true) return undefined;
+    const lower = await lowerLayerRegistration(
+      client,
+      ownershipEstablished,
+      upper,
+    );
+    if (lower.kind === "item") return lower.item;
     if (
       enabledRegistration(lower.entry) &&
       clientRegistrationOwnership(lower.entry, client) === "owned"
@@ -575,9 +587,10 @@ export const systemUninstallHost = (
         item(
           client.name,
           "failed",
-          "REA's enabled registration is defined only in a read-only configuration layer REA does not change, so it stays in effect after uninstall. Remove it with that layer's owner.",
+          "REA's enabled registration is defined in a read-only configuration layer REA does not change, so it stays in effect after uninstall. Remove it with that layer's owner.",
         ),
       );
+    return undefined;
   };
   // Set with the client list: the package view that redirects this
   // process's AppData writes, if any.
@@ -669,9 +682,9 @@ export const systemUninstallHost = (
         );
         if (read.kind === "item") {
           if (read.item.status === "failed") return read.item;
-          if (read.item.status === "skipped")
-            await retainLowerOnlyRegistration(client, ownershipEstablished);
-          return undefined;
+          return read.item.status === "skipped"
+            ? retainLowerOnlyRegistration(client, ownershipEstablished)
+            : undefined;
         }
         const removal = clientRegistrationRemoval(
           read.parsed,
@@ -680,8 +693,14 @@ export const systemUninstallHost = (
         );
         if (!removal.ok)
           return item(client.name, "failed", removal.error.detail);
-        if (!Object.hasOwn(read.parsed.servers, PRODUCT_IDENTITY.mcpServerKey))
-          await retainLowerOnlyRegistration(client, ownershipEstablished);
+        if (!removal.value.removeNative) {
+          const unknown = await retainLowerOnlyRegistration(
+            client,
+            ownershipEstablished,
+            { ...read.parsed, sourcePath: client.configPath },
+          );
+          if (unknown !== undefined) return unknown;
+        }
         // ZCode switches the entire server table to its shared fallback once
         // the last native server disappears. Inspect the table it would load,
         // not just the REA row: unrelated servers may otherwise become active.
