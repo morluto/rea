@@ -38,7 +38,7 @@ const exists = async (path: string): Promise<boolean> => {
 
 const expectedRegistration = (
   launcher: readonly string[],
-  profile?: "full" | "compact",
+  profile?: "compact",
   toolTimeoutMs = 450_000,
 ) => ({
   command: launcher[0],
@@ -236,59 +236,44 @@ describe("Kimi Code input-schema profile selection", () => {
     return { home, client };
   };
 
-  it("preserves an explicitly stored full profile", async () => {
-    const { home, client } = await kimiClient();
-    await writeFile(
-      client.configPath,
-      JSON.stringify({
-        mcpServers: {
-          rea: {
-            command: "rea",
-            args: ["mcp"],
-            env: { REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
-          },
+  it("refuses to preserve a stored removed full profile", async () => {
+    const { client } = await kimiClient();
+    const stored = JSON.stringify({
+      mcpServers: {
+        rea: {
+          command: "rea",
+          args: ["mcp"],
+          env: { REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
         },
-      }),
-    );
+      },
+    });
+    await writeFile(client.configPath, stored);
 
+    // The removed value would fail at server startup, so setup fails closed
+    // instead of rewriting a registration that cannot start.
     expect(
       (await configureClientConfiguration(client, {}, command)).status,
+    ).toBe("failed");
+    expect(await readFile(client.configPath, "utf8")).toBe(stored);
+  });
+
+  it("uses the caller's explicit compact profile", async () => {
+    const { client } = await kimiClient();
+    expect(
+      (
+        await configureClientConfiguration(
+          client,
+          { REA_MCP_INPUT_SCHEMA_PROFILE: "compact" },
+          command,
+        )
+      ).status,
     ).toBe("configured");
     expect(
       JSON.parse(await readFile(client.configPath, "utf8")).mcpServers.rea,
-    ).toEqual(expectedRegistration(command, "full"));
-    expect(
-      (
-        await readClientRegistrationStatuses(home, undefined, {
-          environment: {},
-        })
-      ).find(({ client: name }) => name === "kimi"),
-    ).toMatchObject({ state: "aligned", command });
+    ).toEqual(expectedRegistration(command, "compact"));
   });
 
-  it.each(["full", "compact"] as const)(
-    "uses the caller's explicit %s profile",
-    async (profile) => {
-      const { client } = await kimiClient();
-      expect(
-        (
-          await configureClientConfiguration(
-            client,
-            { REA_MCP_INPUT_SCHEMA_PROFILE: profile },
-            command,
-          )
-        ).status,
-      ).toBe("configured");
-      expect(
-        JSON.parse(await readFile(client.configPath, "utf8")).mcpServers.rea,
-      ).toEqual(expectedRegistration(command, profile));
-    },
-  );
-
-  it.each([
-    ["full", "compact"],
-    ["compact", "full"],
-  ] as const)(
+  it.each([["compact", "full"]] as const)(
     "lets explicit setup %s replace stored %s",
     async (overrideProfile, storedProfile) => {
       const { client } = await kimiClient();

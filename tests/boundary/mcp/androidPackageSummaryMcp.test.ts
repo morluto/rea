@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { unlink } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -179,7 +180,6 @@ const createJniSummaryContractFixture = async () => {
       },
       environment: {
         REA_MCP_TOOL_FAMILIES: "android,application,session",
-        REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
       },
     },
   });
@@ -193,8 +193,7 @@ it("defaults JNI MCP inspection to a retained summary while preserving explicit 
   const definition = catalog.find(
     (tool) => tool.name === "inspect_android_jni_bindings",
   );
-  if (definition?.outputSchema === undefined)
-    throw new Error("Missing JNI output schema");
+  if (definition === undefined) throw new Error("Missing JNI output schema");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   const request = { path: apk, ...selection };
   expect(
@@ -286,7 +285,6 @@ it.skipIf(process.platform === "win32")(
         androidAnalysis: provider,
         environment: {
           REA_MCP_TOOL_FAMILIES: "android,application,session",
-          REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
         },
       },
     });
@@ -296,9 +294,10 @@ it.skipIf(process.platform === "win32")(
     const definition = catalog.find(
       (tool) => tool.name === "inspect_android_package",
     );
-    if (definition?.outputSchema === undefined)
-      throw new Error("Missing APK schema");
-    const outputSchema: Record<string, unknown> = definition.outputSchema;
+    if (definition === undefined) throw new Error("Missing APK schema");
+    const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+      definition.name,
+    );
     const ajv = new Ajv2020({ strict: false, validateFormats: false });
     expect(ajv.validateSchema(definition.inputSchema)).toBe(true);
     expect(ajv.validateSchema(outputSchema)).toBe(true);

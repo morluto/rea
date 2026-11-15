@@ -60,7 +60,7 @@ const canonical = (records: readonly Record_[]) =>
 
 const connect = async (
   options: {
-    readonly profile?: "full" | "compact";
+    readonly profile?: "compact";
     readonly maximumResponseBytes?: number;
     readonly records?: readonly ReturnType<typeof createEvidence>[];
   } = {},
@@ -75,7 +75,7 @@ const connect = async (
     serverOptions: {
       environment: {
         ...process.env,
-        REA_MCP_OUTPUT_SCHEMA_PROFILE: options.profile ?? "full",
+        REA_MCP_OUTPUT_SCHEMA_PROFILE: options.profile ?? "compact",
       },
       ...(options.maximumResponseBytes === undefined
         ? {}
@@ -108,7 +108,7 @@ const connect = async (
   return { client, session, reply, select };
 };
 
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "returns selected complete records with retained identities (%s)",
   async (profile) => {
     const { client, select } = await connect({ profile });

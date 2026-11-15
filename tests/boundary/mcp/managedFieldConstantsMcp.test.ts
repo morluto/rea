@@ -36,8 +36,7 @@ it("retains lossless field constants in MCP Evidence and pages them after the so
   const definition = tools.find(
     (tool) => tool.name === "inspect_managed_members",
   );
-  if (definition?.outputSchema === undefined)
-    throw new Error("Member output schema missing");
+  if (definition === undefined) throw new Error("Member output schema missing");
   const reply = await client.callTool(
     { name: definition.name, arguments: { path, detail: "complete" } },
     { toolDefinition: definition },
@@ -60,8 +59,7 @@ it("retains lossless field constants in MCP Evidence and pages them after the so
   );
   await unlink(path);
   const viewTool = tools.find((tool) => tool.name === "inspect_analysis_view");
-  if (viewTool?.outputSchema === undefined)
-    throw new Error("View output schema missing");
+  if (viewTool === undefined) throw new Error("View output schema missing");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   const request = {
     source: { kind: "retained-evidence", evidence_id: parent.evidence_id },

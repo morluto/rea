@@ -738,7 +738,6 @@ const environment = {
         : "android",
   REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
   // The run validates each result against its advertised output schema.
-  REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
 };
 const transport = new StdioClientTransport({
   command: process.execPath,

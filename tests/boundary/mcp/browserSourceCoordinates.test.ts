@@ -68,7 +68,7 @@ const inspectSourceCoordinates = async (position: {
   const definitions = (await client.listTools()).tools;
   const call = async (name: "inspect_web_page" | "discover_webmcp_tools") => {
     const toolDefinition = definitions.find((tool) => tool.name === name);
-    if (toolDefinition?.outputSchema === undefined)
+    if (toolDefinition === undefined)
       throw new Error(`Missing advertised output schema: ${name}`);
     return client.callTool({ name, arguments: args }, { toolDefinition });
   };

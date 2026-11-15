@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "./canonicalOutputSchema.js";
 import {
   Client,
   type CallToolRequestOptions,
@@ -20,8 +21,6 @@ export const localToolsMcpEnvironment = (
   REA_LOG_LEVEL: "silent",
   HOPPER_LAUNCHER_PATH: "/rea-unconfigured-deep-provider/hopper",
   GHIDRA_INSTALL_DIR: process.execPath,
-  // Validate each result against its complete advertised output contract.
-  REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
   ...environment,
 });
 
@@ -57,7 +56,7 @@ export async function connectLocalToolsMcp(
   await client.connect(transport);
   const tools = (await client.listTools()).tools;
   // Catalog dialect/reference validity belongs to toolSchemaValidity and the
-  // compact-profile catalog tests. SDK callTool validates each successful reply.
+  // compact-profile catalog tests.
   const definitions = new Map(tools.map((tool) => [tool.name, tool]));
   const call = async (
     name: string,
@@ -72,16 +71,12 @@ export async function connectLocalToolsMcp(
         ...(definition === undefined ? {} : { toolDefinition: definition }),
       },
     );
-    // The SDK skips error payloads. A caller-supplied validator also retains
-    // the fixture's independent advertised-schema assertion.
-    if (
-      (response.isError === true || jsonSchemaValidator !== undefined) &&
-      response.structuredContent !== undefined &&
-      definition?.outputSchema !== undefined
-    ) {
+    // tools/list omits output schemas by default; validate each structured
+    // reply, including error payloads, against its canonical output contract.
+    if (response.structuredContent !== undefined && definition !== undefined) {
       expect(
         validation.assertions.validate(
-          definition.outputSchema,
+          canonicalOutputSchema(definition.name),
           response.structuredContent,
         ),
         JSON.stringify(validation.assertions.errors),

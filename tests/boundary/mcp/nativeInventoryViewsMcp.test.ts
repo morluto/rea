@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished } from "vitest";
@@ -98,19 +99,21 @@ it("shares complete/summary source identity and advertised contracts across all 
   const tools = (await harness.mcp.listTools()).tools;
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   const viewTool = tools.find((tool) => tool.name === "inspect_analysis_view");
-  if (viewTool?.outputSchema === undefined)
-    throw new Error("Missing view schema");
+  if (viewTool === undefined) throw new Error("Missing view schema");
   const viewInputSchema: Record<string, unknown> = viewTool.inputSchema;
-  const viewOutputSchema: Record<string, unknown> = viewTool.outputSchema;
+  const viewOutputSchema: Record<string, unknown> = canonicalOutputSchema(
+    viewTool.name,
+  );
   expect(ajv.validateSchema(viewInputSchema)).toBe(true);
   expect(ajv.validateSchema(viewOutputSchema)).toBe(true);
   for (const operation of NATIVE_INVENTORY_OPERATIONS) {
     const contract = toolContract(operation);
     const advertised = tools.find((tool) => tool.name === operation);
-    if (advertised?.outputSchema === undefined)
-      throw new Error("Missing operation schema");
+    if (advertised === undefined) throw new Error("Missing operation schema");
     const inputSchema: Record<string, unknown> = advertised.inputSchema;
-    const outputSchema: Record<string, unknown> = advertised.outputSchema;
+    const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+      advertised.name,
+    );
     expect(ajv.validateSchema(inputSchema)).toBe(true);
     expect(ajv.validateSchema(outputSchema)).toBe(true);
     const parameters = operation.startsWith("search_")

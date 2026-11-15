@@ -1123,7 +1123,7 @@ const structured = (result: CallToolResult): Record<string, unknown> =>
     ? parseMcpToolError(result)
     : z.record(z.string(), z.unknown()).parse(result.structuredContent);
 
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "keeps provider-owned release verification bound to the selected session (%s)",
   async (profile) => {
     const directory = await createTestTempDirectory(

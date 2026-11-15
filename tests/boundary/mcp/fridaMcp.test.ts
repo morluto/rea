@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema } from "ajv";
@@ -200,10 +201,12 @@ it("delivers Frida status summaries with complete retained Evidence for both tru
   );
   const tools = (await client.listTools()).tools;
   const tool = tools.find((t) => t.name === "frida_session_status");
-  if (!tool?.outputSchema) throw new Error("Missing Frida status schema");
+  if (tool === undefined) throw new Error("Missing Frida status schema");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   expect(ajv.validateSchema(tool.inputSchema)).toBe(true);
-  const outputSchema: Record<string, unknown> = tool.outputSchema;
+  const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+    tool.name,
+  );
   expect(ajv.validateSchema(outputSchema)).toBe(true);
   for (const truncated of [false, true]) {
     statusTruncated = truncated;
@@ -418,12 +421,14 @@ it("advertises Frida MCP schemas and keeps remote credentials out of results", a
   const advertised = tools.find((tool) => tool.name === "list_frida_devices");
   if (
     advertised?.inputSchema === undefined ||
-    advertised.outputSchema === undefined
+    canonicalOutputSchema(advertised.name) === undefined
   )
     throw new Error("Missing advertised Frida schemas");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   const inputSchema: Record<string, unknown> = advertised.inputSchema;
-  const outputSchema: Record<string, unknown> = advertised.outputSchema;
+  const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+    advertised.name,
+  );
   expect(ajv.validateSchema(inputSchema)).toBe(true);
   expect(ajv.validateSchema(outputSchema)).toBe(true);
   const response = await client.callTool(

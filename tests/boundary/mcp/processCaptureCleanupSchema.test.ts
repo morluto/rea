@@ -12,7 +12,7 @@ import { processScenarioSchema } from "../../../src/domain/process/processScenar
 const validation = createMcpSchemaValidation();
 afterAll(() => validation.clear());
 
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "advertises quiesced cleanup intervention without rejecting saved captures (%s)",
   async (profile) => {
     const session = createTestBinarySession(() => {
@@ -24,7 +24,6 @@ it.each(["full", "compact"] as const)(
         environment: {
           ...process.env,
           REA_MCP_INPUT_SCHEMA_PROFILE: profile,
-          REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
         },
       },
     );

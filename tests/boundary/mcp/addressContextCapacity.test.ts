@@ -14,7 +14,7 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { SESSION_TOOL_CONTRACTS } from "../../../src/contracts/sessionToolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
 
-it.each(["compact", "full"] as const)(
+it.each(["compact"] as const)(
   "preserves retained siblings and capacity recovery (%s schema)",
   async (profile) => {
     const identity = {

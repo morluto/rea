@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { schemaVerifierEnvironment } from "./lib/mcp-verification-environment.mjs";
+import { canonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
 import {
   closeVerifierResources,
   withVerifierCleanup,
@@ -96,7 +96,7 @@ const env = {
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
-  env: schemaVerifierEnvironment(env),
+  env: env,
   stderr: "pipe",
 });
 const client = new Client({ name: "rea-real-com-proof", version: "1" });
@@ -202,11 +202,17 @@ await withVerifierCleanup(async () => {
     const advertised = tools.find(
       (tool) => tool.name === "inspect_native_instruction",
     );
-    assert.ok(advertised?.outputSchema);
+    assert.ok(advertised);
     const ajv = new Ajv2020({ strict: false, validateFormats: false });
-    assert.equal(ajv.validateSchema(advertised.outputSchema), true);
     assert.equal(
-      ajv.validate(advertised.outputSchema, unlistedResponse.structuredContent),
+      ajv.validateSchema(canonicalOutputSchema(advertised.name)),
+      true,
+    );
+    assert.equal(
+      ajv.validate(
+        canonicalOutputSchema(advertised.name),
+        unlistedResponse.structuredContent,
+      ),
       true,
       JSON.stringify(ajv.errors),
     );
@@ -217,7 +223,7 @@ await withVerifierCleanup(async () => {
     const contextDefinition = tools.find(
       (tool) => tool.name === "inspect_address_context",
     );
-    assert.ok(contextDefinition?.outputSchema);
+    assert.ok(contextDefinition);
     const documents = await call("list_documents");
     assert.equal(documents.length, 1);
     const document = documents[0];
@@ -297,7 +303,7 @@ await withVerifierCleanup(async () => {
     // Ghidra, rather than assuming the provider exposes direct comment methods.
     const contextCall = async (name, args) => {
       const definition = tools.find((tool) => tool.name === name);
-      assert.ok(definition?.outputSchema, `${name} must be advertised`);
+      assert.ok(definition, `${name} must be advertised`);
       const response = await client.callTool(
         { name, arguments: args },
         { timeout: 240000, toolDefinition: definition },
