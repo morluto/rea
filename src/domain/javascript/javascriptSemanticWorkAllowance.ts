@@ -98,6 +98,13 @@ export const javaScriptMemberMutationRefusal = (
   );
 };
 
+/** Whether a thrown value is this allowance's refusal. */
+export const isJavaScriptMemberMutationRefusal = (
+  cause: unknown,
+): cause is AnalysisResourceConstraintError =>
+  cause instanceof AnalysisResourceConstraintError &&
+  reportsJavaScriptMemberMutationRefusal(cause.reportedLimits);
+
 /** Whether a worker reported this allowance as the limit it reached. */
 export const reportsJavaScriptMemberMutationRefusal = (
   limits: Readonly<Record<string, unknown>> | null | undefined,

@@ -34,6 +34,11 @@ export const javaScriptStaticCoverageSchema = z.strictObject({
     semantic_resource_limits: z.array(javaScriptSemanticResourceLimitSchema),
     semantic_precision: javaScriptSemanticPrecisionSchema.optional(),
     electron_call_paths_limited: z.boolean(),
+    /**
+     * The analysis phase whose work allowance refused this source. Facts that
+     * depend on it were not examined; syntax facts remain.
+     */
+    refused_phase: z.literal("member-mutations").exactOptional(),
   }),
   applicability: z.strictObject({ electron: z.enum(["observed", "unknown"]) }),
   unexamined_reason: z.string().min(1).exactOptional(),
@@ -51,6 +56,7 @@ export const javaScriptStaticParseStatus = (
   coverage.syntax.status === "not-examined"
     ? "failed"
     : coverage.syntax.status === "recovered" ||
+        coverage.examination.status === "not-examined" ||
         (coverage.semantics.unknown_findings ?? 0) > 0 ||
         coverage.examination.semantic_resource_limits.includes(
           "alias-selections",

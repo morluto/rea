@@ -46,6 +46,21 @@ const sourceFailure = (value: unknown): Record<string, unknown> | undefined => {
   return undefined;
 };
 
+/** The static coverage of the one source whose member-mutation phase was refused. */
+const refusedCoverage = (value: unknown): unknown => {
+  if (value === null || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  const coverage = record.analysis_coverage as
+    | { readonly examination?: { readonly refused_phase?: string } }
+    | undefined;
+  if (coverage?.examination?.refused_phase !== undefined) return record;
+  for (const child of Object.values(record)) {
+    const found = refusedCoverage(child);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+};
+
 it("applies the selected member-mutation allowance and reports it on refusal", async () => {
   const app = await createApplication();
   const admitted = await analyzeJavaScriptApplication({ input_path: app });
@@ -97,6 +112,25 @@ it("applies the selected member-mutation allowance and reports it on refusal", a
       },
       remediation: { action: owner.remediationAction },
     });
+    // The refused source keeps its syntax-level facts, marked with the phase.
+    expect(refusedCoverage(refused.value), source).toMatchObject({
+      path: "main.js",
+      parse_status: "partial",
+      analysis_coverage: {
+        syntax: { status: "complete", error_count: 0 },
+        examination: {
+          status: "not-examined",
+          refused_phase: "member-mutations",
+        },
+      },
+    });
+    expect(
+      (
+        refused.value.normalized_result as {
+          readonly statistics: { readonly parsed_javascript_files: number };
+        }
+      ).statistics.parsed_javascript_files,
+    ).toBe(1);
   }
   const raised = await analyzeJavaScriptApplication(
     { input_path: app },
@@ -104,6 +138,7 @@ it("applies the selected member-mutation allowance and reports it on refusal", a
   );
   if (!raised.ok) throw raised.error;
   expect(sourceFailure(raised.value)).toBeUndefined();
+  expect(refusedCoverage(raised.value)).toBeUndefined();
 });
 
 it("refuses a malformed launch seed before analysis", async () => {

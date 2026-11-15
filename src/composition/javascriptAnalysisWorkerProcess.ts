@@ -1,6 +1,11 @@
 import { moduleResolutionModeForJavaScriptReference } from "../domain/javascript/javascriptModuleResolutionMode.js";
 import { parseJavaScriptSource } from "../domain/javascript/javascriptSourceParser.js";
-import { analyzeParsedJavaScriptStaticSourceSteps } from "../domain/javascript/javascriptStaticAnalysis.js";
+import {
+  analyzeParsedJavaScriptStaticSourceSteps,
+  memberMutationRefusedJavaScriptStaticAnalysis,
+} from "../domain/javascript/javascriptStaticAnalysis.js";
+import type { JavaScriptStaticAnalysis } from "../domain/javascript/javascriptStaticAnalysisTypes.js";
+import { isJavaScriptMemberMutationRefusal } from "../domain/javascript/javascriptSemanticWorkAllowance.js";
 import { analyzeParsedJavaScriptSemanticsSteps } from "../domain/javascript/javascriptSemanticAnalysis.js";
 import { failedJavaScriptStaticAnalysis } from "../domain/javascript/javascriptStaticAnalysisHelpers.js";
 import { projectJavaScriptModuleSemantics } from "../domain/javascript/javascriptModuleSemanticIr.js";
@@ -34,14 +39,29 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
     return null;
   }
   await callbacks.phase("static");
-  const facts = await completeJavaScriptAnalysisSteps(
-    analyzeParsedJavaScriptStaticSourceSteps(
-      file.text.value,
-      parsed,
-      precision,
-      memberMutationAllowance,
-    ),
-  );
+  let facts: JavaScriptStaticAnalysis;
+  try {
+    facts = await completeJavaScriptAnalysisSteps(
+      analyzeParsedJavaScriptStaticSourceSteps(
+        file.text.value,
+        parsed,
+        precision,
+        memberMutationAllowance,
+      ),
+    );
+  } catch (cause: unknown) {
+    // The semantic phase indexes the same mutations under the same
+    // allowance, so it is not started; the syntax facts cross first.
+    if (purpose === "analysis" && isJavaScriptMemberMutationRefusal(cause))
+      await callbacks.checkpoint(
+        memberMutationRefusedJavaScriptStaticAnalysis(
+          file.text.value,
+          parsed,
+          cause,
+        ),
+      );
+    throw cause;
+  }
   if (purpose === "preload-discovery") {
     // Only declarations cross this preliminary pass. The normal pass owns
     // full static/semantic facts and their result reservations.
