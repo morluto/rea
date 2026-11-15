@@ -111,3 +111,18 @@ it.each([
 ])("reads the correlation header of %s", (line, header) => {
   expect(gdbMiResultHeader(line)).toEqual(header);
 });
+
+it("keeps byte order across interleaved runs and escapes", () => {
+  const parsed = parseGdbMiResultRecord(
+    '1^done,a="ab\\x41z\u{1F680}\\101\\n",b="\uD83D"',
+  );
+  expect(parsed).toMatchObject({
+    ok: false,
+    error: { reason: "lone surrogate in C-string" },
+  });
+  const valid = parseGdbMiResultRecord('1^done,a="ab\\x41z\u{1F680}\\101\\n"');
+  if (!valid.ok) throw new Error(valid.error.reason);
+  expect(gdbMiConstText(valid.value.results[0]!.value)).toBe(
+    "abAz\u{1F680}A\n",
+  );
+});
