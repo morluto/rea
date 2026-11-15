@@ -182,6 +182,45 @@ it("refuses execution on the hosts that discovery reports unsupported", async ()
   }
 });
 
+it("gates execution of the default providers by the server's selected host", async () => {
+  // One of the two hosts differs from the runner's, so each provider refuses
+  // differently under them only if composition forwards the selected host.
+  const unsupported = await connect("darwin", "arm64");
+  const supported = await connect("linux", "x64");
+  try {
+    for (const name of [
+      "inspect_firmware_regions",
+      "recover_javascript_sources",
+      "inspect_packet_fields",
+      "inspect_signal_decoders",
+      "inspect_evm_interface",
+    ] as const) {
+      const args = (harness: typeof supported) =>
+        name === "inspect_packet_fields" || name === "inspect_signal_decoders"
+          ? {}
+          : name === "recover_javascript_sources"
+            ? {
+                path: harness.path("input.js"),
+                output_directory: harness.path("recovered"),
+              }
+            : name === "inspect_evm_interface"
+              ? { path: harness.path("runtime.hex"), encoding: "hex" }
+              : { path: harness.path("firmware.bin") };
+      const refused = await unsupported.call(name, args(unsupported));
+      expect(refused, name).toMatchObject({
+        error: { code: "capability_unavailable", retryable: false },
+      });
+      const admitted = await supported.call(name, args(supported));
+      expect(
+        (admitted as { error?: { message?: unknown } }).error?.message,
+        name,
+      ).not.toBe((refused as { error: { message: unknown } }).error.message);
+    }
+  } finally {
+    await Promise.all([unsupported.close(), supported.close()]);
+  }
+});
+
 it.each([
   ["win32", false],
   ["linux", true],
