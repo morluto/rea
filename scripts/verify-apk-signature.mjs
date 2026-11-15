@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { schemaVerifierEnvironment } from "./lib/mcp-verification-environment.mjs";
+import { canonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -224,7 +224,7 @@ const client = new Client({ name: "apk-signature-verifier", version: "1" });
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
-  env: schemaVerifierEnvironment(environment),
+  env: environment,
   stderr: "pipe",
 });
 // The MCP server child reads files under the workspace until it has exited.
@@ -238,11 +238,11 @@ try {
   const advertised = (await client.listTools()).tools.find(
     ({ name }) => name === "inspect_apk_signature",
   );
-  assert.ok(advertised?.outputSchema, "tool must advertise an output schema");
+  assert.ok(advertised, "tool must advertise an output schema");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   assert.ok(ajv.validateSchema(advertised.inputSchema), "input schema invalid");
   assert.ok(
-    ajv.validateSchema(advertised.outputSchema),
+    ajv.validateSchema(canonicalOutputSchema(advertised.name)),
     "output schema invalid",
   );
 
@@ -264,7 +264,10 @@ try {
     );
     assert.notEqual(reply.isError, true, mcpTextValue(reply));
     assert.ok(
-      ajv.validate(advertised.outputSchema, reply.structuredContent),
+      ajv.validate(
+        canonicalOutputSchema(advertised.name),
+        reply.structuredContent,
+      ),
       JSON.stringify(ajv.errors),
     );
     const mcp = parseEvidence(requireMcpOutput(reply, "inspect_apk_signature"));

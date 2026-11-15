@@ -15,7 +15,7 @@ const SEED_KINDS = [
 ];
 
 const advertisedSeed = async (
-  profile: "full" | "compact",
+  profile: "compact",
   parentEnvironment: NodeJS.ProcessEnv = process.env,
 ) => {
   const environment: NodeJS.ProcessEnv = {
@@ -47,9 +47,7 @@ const advertisedSeed = async (
 // the seed union and its kind enums. The field description must still name
 // every accepted kind so an agent can form a valid seed without the source.
 it.each([
-  ["full", false],
   ["compact", false],
-  ["full", true],
   ["compact", true],
 ] as const)(
   "names every trace seed kind (%s schema, restricted parent: %s)",

@@ -1,3 +1,7 @@
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -133,12 +137,12 @@ it("advertises the complete currently available inventory with a session", async
   );
   if (sessionTool === undefined)
     throw new Error("Missing advertised binary_session tool");
-  // Validate this reply with its current advertised schema. The SDK otherwise
+  // Validate this reply with its canonical output schema. The SDK otherwise
   // builds output validators for the entire catalog on the first cached call.
   const status = structured(
     await client.callTool(
       { name: "binary_session", arguments: {} },
-      { toolDefinition: sessionTool },
+      { toolDefinition: withCanonicalOutputSchema(sessionTool) },
     ),
   );
   const inventory = expandToolAvailability(
@@ -182,6 +186,6 @@ it("advertises the complete currently available inventory with a session", async
     );
     expect(tool.annotations, tool.name).toEqual(contract?.annotations);
     expect(tool.inputSchema, tool.name).toBeDefined();
-    expect(tool.outputSchema, tool.name).toBeDefined();
+    expect(canonicalOutputSchema(tool.name), tool.name).toBeDefined();
   }
 });

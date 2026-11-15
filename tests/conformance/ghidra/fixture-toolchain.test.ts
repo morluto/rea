@@ -21,6 +21,29 @@ const command = async (directory: string, name: string, banner: string) => {
   return path;
 };
 
+/**
+ * A stand-in Clang that compiles (`-c`) only for `--target=riscv32-unknown-elf`
+ * when `riscv` is true, and otherwise refuses that target as a host-only Clang
+ * does. Any other invocation, such as `--version`, succeeds.
+ */
+const riscvCompiler = async (directory: string, name: string, riscv = true) => {
+  const path = join(directory, name);
+  await writeFile(
+    path,
+    `#!${process.execPath}
+const args = process.argv.slice(2);
+const compiles = args.includes("--target=riscv32-unknown-elf") && args.includes("-c");
+if (compiles && !${String(riscv)}) {
+  process.stderr.write("error: unable to create target\\n");
+  process.exit(1);
+}
+process.stdout.write(compiles ? "" : "clang version 19\\n");
+`,
+  );
+  await chmod(path, 0o700);
+  return path;
+};
+
 /** The refusal's lines that name `selected` (a `VARIABLE=command` pair). */
 const refusalFor = async (lane: string, selected: string) => {
   const refusal = await requireLaneToolchain(lane).catch(
@@ -85,5 +108,28 @@ it.skipIf(process.platform === "win32")(
     expect(
       await refusalFor("mips-shared", `REA_MIPS_LD=${join(native, "ld")}`),
     ).toHaveLength(1);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "checks the ESP lanes' RISC-V Clang and ld.lld through the shared variables",
+  async () => {
+    const directory = await createTestTempDirectory("rea-fixture-toolchain-");
+    vi.stubEnv("REA_RISCV_CLANG", await riscvCompiler(directory, "clang"));
+    vi.stubEnv("REA_RISCV_LLD", await command(directory, "ld.lld", "LLD 19"));
+    await expect(requireLaneToolchain("esp")).resolves.toBeUndefined();
+
+    // A Clang that answers --version but cannot generate RISC-V code.
+    const host = await riscvCompiler(directory, "host-clang", false);
+    vi.stubEnv("REA_RISCV_CLANG", host);
+    const [compiler] = await refusalFor("esp", `REA_RISCV_CLANG=${host}`);
+    expect(compiler).toContain("riscv32-unknown-elf");
+    expect(compiler).toContain("unable to create target");
+
+    vi.stubEnv("REA_RISCV_CLANG", await riscvCompiler(directory, "clang"));
+    const linker = join(directory, "missing-ld.lld");
+    vi.stubEnv("REA_RISCV_LLD", linker);
+    const [missing] = await refusalFor("esp", `REA_RISCV_LLD=${linker}`);
+    expect(missing).toContain("command not found");
   },
 );

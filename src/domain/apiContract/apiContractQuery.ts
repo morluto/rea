@@ -7,6 +7,7 @@ import {
   apiContractOperationSchema,
   apiContractPathReferenceSchema,
 } from "./apiContract.js";
+import { presentRootDiscriminator } from "../schemaAnnotations.js";
 
 const page = {
   kind: z.literal("api-contract"),
@@ -67,8 +68,8 @@ const commonInput = {
 };
 const selectionDescription =
   "Return this selected page immediately; complete Evidence is retained and view takes precedence over detail";
-export const inspectApiContractInputSchema = z
-  .union([
+export const inspectApiContractInputSchema = presentRootDiscriminator(
+  z.union([
     z.strictObject({
       ...commonInput,
       format: z.literal("openapi-json").default("openapi-json"),
@@ -88,8 +89,9 @@ export const inspectApiContractInputSchema = z
         .optional()
         .describe(selectionDescription),
     }),
-  ])
-  .meta({ "x-rea-root-discriminator": "format" });
+  ]),
+  "format",
+);
 export type InspectApiContractInput = z.output<
   typeof inspectApiContractInputSchema
 >;

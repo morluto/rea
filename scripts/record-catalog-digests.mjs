@@ -13,16 +13,11 @@ const { createCatalogDigestProfiles } = await import(
   pathToFileURL(join(compiledRoot, "catalogIdentity.js")).href
 );
 // Retain only hashes, with every shared record frozen. Schemas remain owned by
-// the compiled contracts and are converted once for all six identities.
+// the compiled contracts and are converted once for both identities.
 const profiles = Object.entries(createCatalogDigestProfiles())
   .map(
-    ([input, outputs]) =>
-      `${JSON.stringify(input)}: Object.freeze({${Object.entries(outputs)
-        .map(
-          ([output, digests]) =>
-            `${JSON.stringify(output)}: Object.freeze(${JSON.stringify(digests)})`,
-        )
-        .join(",")}})`,
+    ([output, digests]) =>
+      `${JSON.stringify(output)}: Object.freeze(${JSON.stringify(digests)})`,
   )
   .join(",");
 await writeFile(

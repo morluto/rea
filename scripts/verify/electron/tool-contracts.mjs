@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../lib/canonical-output-schema.mjs";
 import { withVerifierCleanup } from "../../lib/verifier-cleanup.mjs";
 import {
   VerifierFixture,
@@ -5,7 +6,6 @@ import {
   withVerifierFixture,
 } from "../../lib/verifier-fixture.mjs";
 import { requireMcpToolError } from "../../lib/mcp-verifier-results.mjs";
-import { schemaVerifierEnvironment } from "../../lib/mcp-verification-environment.mjs";
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -83,7 +83,7 @@ bridge.exposeInMainWorld("fixture", {
     command: process.execPath,
     args: [entrypoint, "mcp"],
     // Results are validated against the listed complete output contracts.
-    env: schemaVerifierEnvironment({
+    env: {
       ...Object.fromEntries(
         ["DISPLAY", "XAUTHORITY", "WAYLAND_DISPLAY"].flatMap((name) =>
           process.env[name] === undefined ? [] : [[name, process.env[name]]],
@@ -92,7 +92,7 @@ bridge.exposeInMainWorld("fixture", {
       PATH: process.env.PATH,
       REA_LOG_LEVEL: "silent",
       HOPPER_LAUNCHER_PATH: "/rea-unconfigured/hopper",
-    }),
+    },
     stderr: "pipe",
   });
   const client = new Client({ name: "electron-real-e2e", version: "1" });
@@ -146,10 +146,10 @@ bridge.exposeInMainWorld("fixture", {
           ajv.compile(tool.inputSchema);
           return [
             tool.name,
-            tool.outputSchema
-              ? (tool.outputSchema.$id &&
-                  ajv.getSchema(tool.outputSchema.$id)) ||
-                ajv.compile(tool.outputSchema)
+            canonicalOutputSchema(tool.name)
+              ? (canonicalOutputSchema(tool.name).$id &&
+                  ajv.getSchema(canonicalOutputSchema(tool.name).$id)) ||
+                ajv.compile(canonicalOutputSchema(tool.name))
               : undefined,
           ];
         }),
