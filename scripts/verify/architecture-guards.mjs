@@ -367,6 +367,17 @@ checkCounted(
   [],
 );
 
+// A provider failure's captured output comes from one owner,
+// capturedProviderOutput in src/process; local copies drift on byte counts
+// (retained or written) and on how output loss marks truncation.
+checkCounted(
+  "captured output copied from a process snapshot (use capturedProviderOutput from src/process/capturedProviderOutput)",
+  "captured-output-copy",
+  files,
+  /\bstdout: [\w.]+\.stdout\.text\b/gu,
+  ["src/process/capturedProviderOutput.ts"],
+);
+
 // Pushed effect invalidation (docs/adr/javascript/pushed-effect-invalidation.md).
 // Recorded effects belong to the effect log. A reader that reads an effect
 // index itself decides on its own which effect kinds and proofs apply; new
@@ -534,7 +545,7 @@ checkCounted(
 );
 
 // Byte-format parsers read untrusted input. Bounds, truncation and failure
-// kind belong to BinaryReader (src/native/metadata/BinaryContainer.ts) and
+// kind belong to BinaryReader (src/domain/binaryContainer.ts) and
 // the ParseFailure algebra (src/domain/parseFailure.ts), not to each parser.
 const PARSER_FOLDERS = [
   "src/android/",
@@ -584,11 +595,11 @@ const parserFiles = files.filter((file) =>
 // An unchecked Buffer or DataView read throws a bare RangeError past the end,
 // which a catch site cannot tell from a host stack or string limit.
 checkCounted(
-  "raw Buffer or DataView numeric read (use BinaryReader from src/native/metadata/BinaryContainer)",
+  "raw Buffer or DataView numeric read (use BinaryReader from src/domain/binaryContainer)",
   "raw-buffer-read",
   files,
   /\.(?:read(?:Big)?U?Int(?:8|16|32|64)?(?:LE|BE)?|readBigUint64(?:LE|BE)|readUint(?:8|16|32)(?:LE|BE)?|read(?:Float|Double)(?:LE|BE)|get(?:Big)?(?:Uint|Int)(?:8|16|32|64)|getFloat(?:32|64))\(/gu,
-  ["src/native/metadata/BinaryContainer.ts"],
+  ["src/domain/binaryContainer.ts"],
 );
 
 // An input fault is a ParseFailureError; a broken internal assumption is a

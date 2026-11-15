@@ -10,6 +10,7 @@ import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 export const SQLITE_TOOL_CONTRACTS = [
   {
     name: "inspect_sqlite_database",
+    cli: true,
     ...toolContractMetadata("inspect_sqlite_database"),
     kind: "artifact-provider",
     requiresActiveTarget: true,

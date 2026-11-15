@@ -37,6 +37,7 @@ import {
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { isValidFridaRemoteAddress } from "../domain/fridaRemoteAddress.js";
 import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
+import { explicitValueSpans } from "../domain/explicitSensitiveValues.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -1392,59 +1393,45 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
   }
 }
 
+/** Redact declared values, then keep what fits `maximumBytes` of JSON string body. */
 const boundedRedactedString = (
   input: string,
   maximumBytes: number,
   secrets: readonly string[],
 ): { readonly value: string; readonly truncated: boolean } => {
+  const replacement = "[redacted]";
+  const replacementBytes = jsonStringByteLength(replacement) - 2;
   const chunks: string[] = [];
   let outputBytes = 0;
   let cursor = 0;
-  let segmentStart = 0;
-  let truncated = false;
-  while (cursor < input.length) {
-    let nextSecretStart = input.length;
-    let nextSecret: string | undefined;
-    for (const secret of secrets) {
-      const match = input.indexOf(secret, cursor);
-      if (match !== -1 && match < nextSecretStart) {
-        nextSecretStart = match;
-        nextSecret = secret;
-      }
-    }
-    if (nextSecretStart === cursor && nextSecret !== undefined) {
-      const replacement = "[redacted]";
-      const replacementBytes = jsonStringByteLength(replacement) - 2;
-      if (outputBytes + replacementBytes > maximumBytes) {
-        truncated = true;
-        break;
-      }
-      chunks.push(input.slice(segmentStart, cursor), replacement);
-      outputBytes += replacementBytes;
-      cursor += nextSecret.length;
-      segmentStart = cursor;
-      continue;
-    }
-    while (cursor < nextSecretStart) {
+  const keep = (end: number): boolean => {
+    const start = cursor;
+    while (cursor < end) {
       const codePoint = input.codePointAt(cursor);
       if (codePoint === undefined) break;
       const character = String.fromCodePoint(codePoint);
       const characterBytes = jsonStringByteLength(character) - 2;
       if (
-        cursor + character.length > nextSecretStart ||
+        cursor + character.length > end ||
         outputBytes + characterBytes > maximumBytes
-      ) {
-        truncated = true;
+      )
         break;
-      }
       outputBytes += characterBytes;
       cursor += character.length;
     }
-    if (truncated) break;
+    chunks.push(input.slice(start, cursor));
+    return cursor === end;
+  };
+  for (const span of explicitValueSpans(input, secrets)) {
+    if (!keep(span.start)) return { value: chunks.join(""), truncated: true };
+    if (outputBytes + replacementBytes > maximumBytes)
+      return { value: chunks.join(""), truncated: true };
+    chunks.push(replacement);
+    outputBytes += replacementBytes;
+    cursor = span.end;
   }
-  chunks.push(input.slice(segmentStart, cursor));
-  if (cursor < input.length) truncated = true;
-  return { value: chunks.join(""), truncated };
+  const complete = keep(input.length);
+  return { value: chunks.join(""), truncated: !complete };
 };
 
 type BoundedJson = {

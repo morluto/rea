@@ -1,35 +1,25 @@
-export interface TestSelectionPlan {
-  readonly version: 1;
-  readonly mode: "full" | "candidate";
-  readonly owners: readonly string[];
-  readonly changedTests: readonly string[];
-  readonly changedPaths: readonly string[];
-  readonly reason: string;
-}
-export function planTestSelection(
-  files: readonly string[],
-  event: string,
-  tier: string,
-): TestSelectionPlan;
-export function compareTestSelection(
-  plan: unknown,
-  inventory: readonly string[],
-  results: readonly {
-    readonly name: string;
-    readonly durationMs: number;
-    readonly state?: string;
-  }[],
-): {
-  readonly version: 1;
-  readonly observational: true;
-  readonly plan: TestSelectionPlan;
-  readonly selected: readonly string[];
-  readonly omitted: readonly string[];
-  readonly missing: readonly string[];
-  readonly unexpected: readonly string[];
-  readonly duplicateFiles: number;
-  readonly unobserved: readonly string[];
-  readonly missedFailures: readonly string[];
-  readonly complete: boolean;
-  readonly omittedDurationMs: number;
-};
+export type TestSelectionPlan =
+  | {
+      readonly version: 2;
+      readonly mode: "full";
+      readonly reason: string;
+      readonly groups: readonly [];
+    }
+  | {
+      readonly version: 2;
+      readonly mode: "selected";
+      readonly reason: string;
+      readonly groups: readonly (readonly string[])[];
+    };
+export function planTestSelection(request: {
+  readonly files: readonly string[];
+  readonly event: string;
+  readonly tier: string;
+  readonly code: boolean;
+  readonly snapshot: {
+    readonly list: () => readonly string[];
+    readonly read: (paths: readonly string[]) => ReadonlyMap<string, string>;
+  };
+}): TestSelectionPlan;
+export function parseTestSelection(value: unknown): TestSelectionPlan;
+export function testShards(tier: string, plan: TestSelectionPlan): string[];

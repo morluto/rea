@@ -12,6 +12,7 @@ export const GO_TOOL_CONTRACTS = [
   {
     name: "inspect_go_binary",
     availability: "standalone",
+    cli: true,
     ...toolContractMetadata("inspect_go_binary"),
     kind: "artifact-provider",
     requiresActiveTarget: true,

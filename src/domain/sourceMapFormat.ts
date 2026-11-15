@@ -4,20 +4,20 @@ import {
   sourceMapLimitRecovery,
   type SourceMapLimitSelection,
   type SourceMapLimits,
-} from "../../domain/sourceMapLimits.js";
+} from "./sourceMapLimits.js";
 import {
   malformedInput,
   ParseFailureError,
   type ParseFailureKind,
   unsupportedInput,
-} from "../../domain/parseFailure.js";
+} from "./parseFailure.js";
 import {
   classifySourceMapSection,
   classifySourceMapSections,
   sourceMapJsonText,
   sourceMapMappingsSchema,
-} from "../../domain/sourceMapEnvelope.js";
-import type { SourceMapSection } from "../../domain/sourceMapEnvelope.js";
+} from "./sourceMapEnvelope.js";
+import type { SourceMapSection } from "./sourceMapEnvelope.js";
 import type { EncodedSourceMapXInput } from "@jridgewell/trace-mapping";
 
 const leafSchema = z.object({

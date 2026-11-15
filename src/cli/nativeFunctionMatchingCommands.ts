@@ -2,11 +2,8 @@ import { z } from "incur";
 import type { Logger } from "pino";
 import { matchNativeFunctionsFromBundles } from "../application/native/NativeFunctionMatchingService.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { matchNativeFunctionsInputSchema } from "../contracts/native/functionMatchingContracts.js";
 import { SESSION_TOOL_CONTRACTS } from "../contracts/sessionToolContracts.js";
 import { FUNCTION_COMPARISON_PROVIDER } from "../domain/comparisonEvidenceIdentity.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
-import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { Evidence } from "../domain/evidence.js";
 import {
@@ -14,7 +11,10 @@ import {
   publishCliAnalysisEvidence,
 } from "./analysisEvidenceDelivery.js";
 import { contractNamed } from "./contractCliDescription.js";
-import { registerContractDocumentCommand } from "./contractCommand.js";
+import {
+  admittedContractInput,
+  registerContractDocumentCommand,
+} from "./contractCommand.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import type { CliInstance } from "./types.js";
 import { parseNativeMatchingAllowance } from "../config/nativeMatchingAllowance.js";
@@ -31,7 +31,6 @@ export const registerNativeFunctionMatchingCommands = (
     logger,
     contractNamed(SESSION_TOOL_CONTRACTS, "match_native_functions"),
     {
-      command: CLI_COMMANDS.matchNativeFunctions,
       description:
         "Match two observed native function inventories without executing targets",
       document:
@@ -50,21 +49,16 @@ export const registerNativeFunctionMatchingCommands = (
           ),
       },
     },
-    async (document, { signal, operation, cliOptions }) => {
-      const parsed = matchNativeFunctionsInputSchema.safeParse(document);
-      if (!parsed.success)
-        return projectAnalysisError(
-          analysisInputErrorFromIssues(
-            operation,
-            parsed.error.issues,
-            document,
-          ),
-        );
+    async (_document, context) => {
+      const { signal, operation, cliOptions } = context;
+      const admitted = admittedContractInput(context);
+      if (!admitted.ok) return projectAnalysisError(admitted.error);
+      const input = admitted.value;
       const delivery = {
         providerId: FUNCTION_COMPARISON_PROVIDER.id,
         operation,
         signal,
-        detail: parsed.data.detail,
+        detail: input.detail,
         evidenceOutput: cliOptions.evidence_output,
       };
       const invalid = cliEvidenceDeliveryInputError(delivery);
@@ -76,7 +70,7 @@ export const registerNativeFunctionMatchingCommands = (
       const complete = await finishAnalysisCommand(
         async () => {
           const result = await matchNativeFunctionsFromBundles(
-            parsed.data,
+            input,
             cliOptions.source_bundle,
             resources,
             { signal, representationAllowance: allowance.value },

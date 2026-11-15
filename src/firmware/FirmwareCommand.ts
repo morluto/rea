@@ -1,3 +1,4 @@
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import {
   processInspectionCancellationError,
   retainProcessInspectionCleanup,
@@ -56,19 +57,6 @@ import {
 export type FirmwareLauncher = (
   options: OwnedProviderProcessSpawnOptions,
 ) => Promise<SpawnedOwnedProviderProcess>;
-
-/** Captured tool output for one finished firmware command, including byte coverage. */
-const capturedFirmwareOutput = (
-  snapshot: ProviderProcessSnapshot,
-): AnalysisCapturedOutput => ({
-  stdout: snapshot.stdout.text,
-  stderr: snapshot.stderr.text,
-  stdout_bytes: snapshot.stdout.bytes,
-  stderr_bytes: snapshot.stderr.bytes,
-  exit_code: snapshot.exitCode ?? null,
-  signal: snapshot.signal ?? null,
-  truncated: snapshot.diagnosticTruncated === true,
-});
 
 /** Refuse an unmet host or tool requirement, which another target cannot satisfy. */
 export const firmwareToolUnavailable = (
@@ -326,7 +314,7 @@ export const runFirmwareCommand = async (context: {
         snapshot.signal,
         fileSizeBytes,
         fileSizeAdjustable,
-        capturedFirmwareOutput(snapshot),
+        capturedProviderOutput(snapshot),
       );
       if (signalLimit !== undefined) return signalLimit;
       return new ProviderAdapterError(engine, operation, {
@@ -440,7 +428,7 @@ export const runFirmwareCommand = async (context: {
       {
         operation,
         cleanupPrimary: failure,
-        capturedOutput: capturedFirmwareOutput(snapshot),
+        capturedOutput: capturedProviderOutput(snapshot),
       },
     );
   }

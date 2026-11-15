@@ -3,14 +3,14 @@ import { createHash } from "node:crypto";
 import {
   devicetreeSchema,
   inspectDevicetreeInputSchema,
-} from "../../domain/firmware/devicetree.js";
-import { DevicetreeLimitFailure, parseDevicetree } from "./DevicetreeParser.js";
+} from "./devicetree.js";
+import { DevicetreeLimitFailure, parseDevicetree } from "./devicetreeParser.js";
 import {
   cells,
   devicetreeFixture,
   emptyStringsAtReservationBoundaryFixture,
   type FixtureNode,
-} from "./Devicetree.fixture.js";
+} from "./devicetree.fixture.js";
 const parse = (b: Buffer, limits = {}) =>
   parseDevicetree(
     b,

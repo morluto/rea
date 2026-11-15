@@ -30,6 +30,7 @@ export const PYTHON_PYC_TOOL_CONTRACTS = [
   {
     name: "inspect_python_pyc",
     availability: "standalone",
+    cli: true,
     ...toolContractMetadata("inspect_python_pyc"),
     kind: "artifact-provider",
     requiresActiveTarget: true,

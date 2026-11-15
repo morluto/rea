@@ -11,7 +11,7 @@ import {
   type ElfDynamicSegment,
   type ImageSection,
   type LoadRegion,
-} from "./BinaryContainer.js";
+} from "../../domain/binaryContainer.js";
 import { elfArchitecture } from "../../domain/elfFixedHeader.js";
 import { readElfDirectoryFromBuffer } from "./NativeSectionDirectory.js";
 

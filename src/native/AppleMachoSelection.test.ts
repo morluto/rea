@@ -18,7 +18,7 @@ import {
 } from "../artifacts/apple/MachoImage.fixture.js";
 import { readMachoImage } from "../artifacts/apple/MachoLoadCommandReader.js";
 import { readMachoImage as readMachoMetadataImage } from "./metadata/MachoImage.js";
-import { BinaryFormatFailure } from "./metadata/BinaryContainer.js";
+import { BinaryFormatFailure } from "../domain/binaryContainer.js";
 import { layoutFor, MachoSliceRefused } from "./AppleMachoSelection.fixture.js";
 import {
   selectMachoSlice,

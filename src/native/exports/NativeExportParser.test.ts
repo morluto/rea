@@ -7,7 +7,7 @@ import {
   peExportImage,
 } from "../../../tests/fixtures/binaryDiagnostics/nativeExports.js";
 import * as nativeExportContracts from "../../domain/native/nativeExports.js";
-import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
+import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
 import {
   parseNativeExports,
   parseNativeExportsSteps,

@@ -14,6 +14,7 @@ export const GPU_TOOL_CONTRACTS = [
   {
     name: "inspect_gpu_code_objects",
     availability: "standalone",
+    cli: true,
     ...toolContractMetadata("inspect_gpu_code_objects"),
     kind: "artifact-provider",
     requiresActiveTarget: true,

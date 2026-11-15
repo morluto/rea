@@ -427,7 +427,6 @@ const sharedNetworkMetadata = (
     for (const request of inspection.network.requests) {
       const identity = networkIdentity(request);
       retainKnownFields(identity, request, networkResponseFields);
-      if (request.redirects === undefined) continue;
       for (const [index, redirect] of request.redirects.entries())
         retainKnownFields(
           redirectNetworkIdentity(identity, index),
@@ -437,16 +436,6 @@ const sharedNetworkMetadata = (
     }
   return { fields: shared, complete };
 };
-
-/**
- * The CDP producer records every request's redirect chain, empty when there was
- * none; a request without one comes from a capture made before redirect hops
- * were recorded, so its redirects are unknown, not absent.
- */
-const redirectsRecorded = (inspection: WebPageInspection): boolean =>
-  inspection.network.requests.every(
-    (request) => request.redirects !== undefined,
-  );
 
 const redirectNetworkIdentity = (identity: string, index: number): string =>
   compositeKey([identity, "redirect", index]);
@@ -515,7 +504,6 @@ const networkDimension = (
     initiatorsComplete: [before, after].every((inspection) =>
       sectionsComplete(inspection, ["network_initiators"]),
     ),
-    redirectsRecorded: redirectsRecorded(before) && redirectsRecorded(after),
   };
   const sources = new Map<string, BodyShapeSources>();
   if (selected) {
@@ -599,15 +587,12 @@ const networkDimension = (
     requestsComplete &&
       requestIdentities.complete &&
       projection.initiatorsComplete &&
-      projection.redirectsRecorded &&
       webSocketInventoryComplete &&
       shapesComplete &&
       webSocketPayloadBytesComplete &&
       webSocketShapesComplete,
     requestIdentities.complete
-      ? projection.redirectsRecorded
-        ? "Network capture or selected HTTP/WebSocket payload-shape coverage is limited, unavailable, incomplete, or includes dropped network events."
-        : "A capture recorded before redirect hops were captured cannot show whether HTTP redirect chains changed."
+      ? "Network capture or selected HTTP/WebSocket payload-shape coverage is limited, unavailable, incomplete, or includes dropped network events."
       : "HTTP request identity is incomplete because a resource type is unavailable; potentially matching type groups cannot establish membership/content changes or complete network equality.",
     // HTTP maps already retain only directionally proven membership/content
     // changes. WebSocket inventory uses its own coverage independently.
@@ -641,7 +626,6 @@ const networkMap = (
     >;
     readonly ambiguousIdentities: ReadonlySet<string>;
     readonly initiatorsComplete: boolean;
-    readonly redirectsRecorded: boolean;
   },
 ): ReadonlyMap<string, readonly string[]> => {
   const grouped = new Map<string, string[]>();
@@ -658,37 +642,30 @@ const networkMap = (
     values.push(
       digestCanonicalValue({
         ...response,
-        // Without both captures' redirect chains, redirects are not compared;
-        // the dimension is unknown rather than "no redirects".
-        ...(projection.redirectsRecorded && request.redirects !== undefined
-          ? {
-              redirects: request.redirects.map(
-                (
-                  {
-                    request_timestamp: _requestTimestamp,
-                    redirect_event_timestamp: _redirectEventTimestamp,
-                    ...redirect
-                  },
-                  index,
-                ) => {
-                  const response: Partial<
-                    Record<NetworkMetadataField, number | string>
-                  > = {};
-                  for (const field of projection.metadataFields.get(
-                    redirectNetworkIdentity(identity, index),
-                  ) ?? [])
-                    if (redirect[field] !== null)
-                      response[field] = redirect[field];
-                  return {
-                    url: redirect.url,
-                    response_url: redirect.response_url,
-                    method: redirect.method,
-                    ...response,
-                  };
-                },
-              ),
-            }
-          : {}),
+        redirects: request.redirects.map(
+          (
+            {
+              request_timestamp: _requestTimestamp,
+              redirect_event_timestamp: _redirectEventTimestamp,
+              ...redirect
+            },
+            index,
+          ) => {
+            const response: Partial<
+              Record<NetworkMetadataField, number | string>
+            > = {};
+            for (const field of projection.metadataFields.get(
+              redirectNetworkIdentity(identity, index),
+            ) ?? [])
+              if (redirect[field] !== null) response[field] = redirect[field];
+            return {
+              url: redirect.url,
+              response_url: redirect.response_url,
+              method: redirect.method,
+              ...response,
+            };
+          },
+        ),
         ...(projection.initiatorsComplete
           ? { initiator: request.initiator }
           : {}),

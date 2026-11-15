@@ -50,13 +50,28 @@ const redirectCapture = (resourceType: string | null): WebPageInspection => {
   return capture;
 };
 
+it("refuses a captured request without its redirect list", () => {
+  const capture = unselectedShapes(passiveNetworkCapture());
+  const { redirects: _redirects, ...request } = capture.network.requests[0]!;
+  const malformed = {
+    ...capture,
+    network: { ...capture.network, requests: [request] },
+  };
+  expect(
+    browserCaptureComparisonInputSchema.safeParse({
+      before: { inspection: malformed },
+      after: { inspection: capture },
+    }).success,
+  ).toBe(false);
+});
+
 describe("nullable redirect resource types", () => {
   it.each([true, false])(
     "retains uncertainty when a redirect type is omitted (reversed=%s)",
     (reversed) => {
       const before = redirectCapture("Document");
       const after = structuredClone(before);
-      after.network.requests[0]!.redirects![0]!.resource_type = null;
+      after.network.requests[0]!.redirects[0]!.resource_type = null;
       const [left, right] = reversed
         ? ([after, before] as const)
         : ([before, after] as const);
@@ -73,7 +88,7 @@ describe("nullable redirect resource types", () => {
     (resourceType) => {
       const before = redirectCapture("Document");
       const after = structuredClone(before);
-      after.network.requests[0]!.redirects![0]!.resource_type = resourceType;
+      after.network.requests[0]!.redirects[0]!.resource_type = resourceType;
       expect(compare(before, after)).toMatchObject({
         status: resourceType === "Document" ? "unchanged" : "changed",
         total_changes: resourceType === "Document" ? 0 : 1,
@@ -84,43 +99,6 @@ describe("nullable redirect resource types", () => {
   it("retains proven HTTP membership with incomplete redirect metadata", () => {
     const before = unselectedShapes(passiveNetworkCapture([]));
     const after = redirectCapture(null);
-    expect(compare(before, after)).toMatchObject({
-      status: "changed",
-      total_changes: 1,
-      changes: [{ change: "added" }],
-    });
-  });
-});
-
-describe("captures recorded before redirect hops", () => {
-  const legacy = (capture: WebPageInspection): WebPageInspection => {
-    for (const request of capture.network.requests) delete request.redirects;
-    return capture;
-  };
-
-  it.each([
-    ["no redirects", () => unselectedShapes(passiveNetworkCapture())],
-    ["a redirect chain", () => redirectCapture("Document")],
-  ])(
-    "reports redirects as unknown, not unchanged, against %s",
-    (_label, current) => {
-      const after = current();
-      for (const [left, right] of [
-        [legacy(structuredClone(after)), after],
-        [after, legacy(structuredClone(after))],
-      ] as const)
-        expect(compare(left, right)).toMatchObject({
-          status: "unknown",
-          total_changes: 0,
-          changes: [],
-          reason: expect.stringContaining("redirect chains") as unknown,
-        });
-    },
-  );
-
-  it("still reports proven request membership changes", () => {
-    const before = legacy(unselectedShapes(passiveNetworkCapture()));
-    const after = unselectedShapes(passiveNetworkCapture(["/a", "/b"]));
     expect(compare(before, after)).toMatchObject({
       status: "changed",
       total_changes: 1,

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect } from "vitest";
@@ -8,6 +8,36 @@ import { elf, thinMach } from "../../src/domain/binaryTarget.fixture.js";
 import { buildManagedPeFixture } from "../../src/dotnet/ManagedPe.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+
+cliTest(
+  "delivers a managed artifact summary beside its complete Evidence bundle",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-managed-cli-delivery-");
+    const path = join(root, "fixture.dll");
+    await writeFile(path, buildManagedPeFixture());
+    const destination = join(root, "artifact.json");
+    const result = await cli.run({
+      arguments: [
+        "inspect-managed-artifact",
+        path,
+        "--detail",
+        "summary",
+        "--evidence_output",
+        destination,
+        "--json",
+      ],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const bytes = await readFile(destination);
+    expect(result.json).toMatchObject({
+      evidence_bundle: { path: destination, bytes: bytes.length },
+      summary: { operation: "inspect_analysis_view" },
+    });
+    expect(JSON.parse(bytes.toString())).toMatchObject({
+      records: [{ operation: "inspect_managed_artifact" }],
+    });
+  },
+);
 
 cliTest(
   "recovers the same managed artifact through decimal CLI budgets and retains caller choices",
