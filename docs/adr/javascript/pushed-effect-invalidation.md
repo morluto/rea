@@ -69,11 +69,16 @@ separately whether a recorded effect applies to their read.
    and sloppy `eval`, and path disjointness. No reader evaluates these
    proofs.
 
-3. **Push invalidation to caches.** Recording an effect invalidates the
-   derived values cached for its target. This generalizes the current
-   whole-state `clearSemanticValueCaches` after global sites to
-   invalidation for each target. A value-engine read that consults a cache
-   therefore sees the effect without asking for it.
+3. **Push invalidation to caches.** Recording an effect invalidates every
+   cached value that depends on its target. Existing caches store a result
+   under the binding it was computed for (`bindingId`), even when it read
+   other bindings, and expression and capture caches have the same shape.
+   Invalidation must therefore reach dependents, not only the changed
+   target's own entry. Each cached value records the targets it read, and
+   the log invalidates through that reverse index. Until a slice adds that
+   dependency tracking for a cache, the current whole-state
+   `clearSemanticValueCaches` stays in place for it. A value-engine read that
+   consults a cache then sees the effect without asking for it.
 4. **Completeness is explicit.** The log records which producer phases are
    complete. Before the member-mutation phase completes, a member-path query
    answers "may observe", which is the current conservative
@@ -120,9 +125,11 @@ slice, because its one consumer should read values through the same log.
   about the value it reads.
 - Effect proofs have one owner. A precision fix, such as a new disjointness
   proof, applies to every reader at once.
-- Cache invalidation becomes per-target instead of clearing the whole state
-  after a global site. This should reduce recomputation on bundles that
-  contain `eval`. The effect is unmeasured until slice 1.
+- Once dependency tracking covers a cache, its invalidation follows its
+  dependents instead of clearing the whole state after a global site. This
+  should reduce recomputation on bundles that contain `eval`. The effect is
+  unmeasured until a slice adds that tracking, and caches without it keep the
+  whole-state clear.
 - The log retains effect entries until the source's analysis ends. They are
   already retained today in `bindingWrites`, `memberWrites`, `escapedPaths`,
   the ambient effect lists and `opaqueEffects`. The log replaces those
