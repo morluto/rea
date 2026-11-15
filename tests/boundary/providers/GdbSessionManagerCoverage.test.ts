@@ -2161,6 +2161,27 @@ it("reports an MI stream failure when the child has no stdin pipe", async () => 
   expect(fake.children[0]?.signalCode).toBe("SIGTERM");
 });
 
+it("keeps the stop code on a startup stream failure whose cleanup is incomplete", async () => {
+  const fake = createFakeSpawner(undefined, { stdinEnabled: false });
+  const manager = managerWithFakeSpawner(fake.spawnProcess, {
+    stopProcess: async () => ({
+      status: "incomplete",
+      reason: "simulated startup stop uncertainty",
+    }),
+  });
+
+  const started = await manager.start();
+
+  expect(started).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisCapabilityUnavailableError",
+      cleanupIncomplete: true,
+      diagnostics: { session_stop: "input-stream-failure" },
+    },
+  });
+});
+
 it("preserves the protocol failure when owned-process stop is confirmed", async () => {
   const fake = createFakeSpawner();
   const manager = managerWithFakeSpawner(fake.spawnProcess, {

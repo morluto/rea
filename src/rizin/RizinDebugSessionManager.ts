@@ -709,7 +709,11 @@ export class RizinDebugSessionManager {
           "rizin",
           "start_rizin_debug_session",
           protocolFailure.reason,
-          { cause: caught, capturedOutput },
+          {
+            cause: caught,
+            capturedOutput,
+            diagnostics: { session_stop: protocolFailure.code },
+          },
         );
       else if (caught instanceof RizinProcessExitError)
         primary = new AnalysisCapabilityUnavailableError(

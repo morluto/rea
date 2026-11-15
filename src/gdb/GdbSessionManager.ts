@@ -927,7 +927,12 @@ export class GdbSessionManager {
               "gdb",
               "start_gdb_session",
               `GDB startup failed (${startupFailureMessage}) and its owned process could not be confirmed stopped: ${stopped.reason}`,
-              details,
+              session.protocolError === undefined
+                ? details
+                : {
+                    ...details,
+                    diagnostics: { session_stop: session.protocolError.code },
+                  },
             ),
           ),
         );
