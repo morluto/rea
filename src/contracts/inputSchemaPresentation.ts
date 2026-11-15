@@ -12,6 +12,7 @@ import {
   schemaArrays,
   schemaChildren,
   schemaMaps,
+  schemaPointerSteps,
   schemaSubschemas,
 } from "./jsonSchemaKeywords.js";
 
@@ -251,9 +252,10 @@ const referencedDefaultPaths = (
   const kept = new Set<string>();
   for (const { target } of new JsonSchemaReferences(schema).references()) {
     if (target.kind !== "target") continue;
-    const defaultAt = target.path.indexOf("default");
-    if (defaultAt < 0) continue;
-    kept.add(JSON.stringify(target.path.slice(0, defaultAt + 1)));
+    const steps = schemaPointerSteps(target.path);
+    const last = steps.at(-1);
+    if (last?.kind !== "value" || last.keyword !== "default") continue;
+    kept.add(JSON.stringify(target.path.slice(0, steps.length)));
   }
   return kept;
 };
@@ -306,10 +308,8 @@ const REMOVABLE_KEYWORDS = new Set(["oneOf", "not", "if", "then", "else"]);
 
 /** Whether a pointer passes through a keyword normalization may remove. */
 const throughRemovableLocation = (path: readonly string[]): boolean =>
-  path.some(
-    (segment, index) =>
-      REMOVABLE_KEYWORDS.has(segment) &&
-      (index === 0 || !schemaMaps.has(path[index - 1]!)),
+  schemaPointerSteps(path).some(
+    (step) => step.kind === "keyword" && REMOVABLE_KEYWORDS.has(step.keyword),
   );
 
 const normalizationContext = (
