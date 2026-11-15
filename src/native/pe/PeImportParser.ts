@@ -15,7 +15,7 @@ import {
   createFileMappingIndex,
   imageFileMappings,
 } from "../../domain/binaryContainer.js";
-import { readPeImage } from "../metadata/PeImage.js";
+import { readPeImage } from "../../domain/native/peImage.js";
 import {
   MAX_INSPECT_PE_IMPORT_RETAINED_TEXT_BYTES,
   type InspectPeImportsInput,

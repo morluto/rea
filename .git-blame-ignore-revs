@@ -14,3 +14,6 @@
 
 # refactor(domain): move the Mach-O load command and binary plist readers into src/domain/apple (#11415)
 23eee86bd59e5d399c59280b24a746be8318b111
+
+# refactor(domain): move the native section directory and ELF string readers into domain (#11449)
+c935387f480d2195c2beb3d05f62270b25bad28c

@@ -45,7 +45,7 @@ import {
   accountZipMemberRegion,
   type ZipLocalRecord,
   type ZipMemberRegionAccount,
-} from "./ZipMemberRegion.js";
+} from "../domain/zip/zipMemberRegion.js";
 import type { ZipPackageFormat } from "../domain/zipPackageFormat.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
 import { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
@@ -53,6 +53,7 @@ import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import { strictUtf8Decoder } from "../domain/strictUtf8.js";
+import { decodeZipCp437 } from "../domain/zip/zipEntryText.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
 
 const ZIP_UTF8_DECODER = strictUtf8Decoder("preserve");
@@ -497,25 +498,8 @@ export const decodeZipEntryText = (
   if (type !== "filename") return undefined;
   if (encoding === "utf-8")
     return decodeStrictZipUtf8(bytes, "ZIP filename is not valid UTF-8");
-  return encoding === "cp437" ? decodeCp437(bytes) : undefined;
+  return encoding === "cp437" ? decodeZipCp437(bytes) : undefined;
 };
-
-/** CP437 characters for bytes 0x80-0xFF. */
-const CP437_HIGH_HALF =
-  "ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜ¢£¥₧ƒáíóúñÑªº¿⌐¬½¼¡«»░▒▓│┤╡╢╖╕╣║╗╝╜╛┐└┴┬├─┼╞╟╚╔╩╦╠═╬╧╨╤╥╙╘╒╓╫╪┘┌█▄▌▐▀αßΓπΣσµτΦΘΩδ∞φε∩≡±≥≤⌠⌡÷≈°∙·√ⁿ²■\u00A0";
-
-/**
- * Decode a legacy ZIP name with the Unicode CP437 mapping, which Python's
- * zipfile also uses: bytes below 0x80 are ASCII. zip.js shows 0x01-0x1F and
- * 0x7F as IBM PC display glyphs, which turns the macOS folder icon file
- * `Icon\r` into `Icon♪`.
- */
-const decodeCp437 = (bytes: Uint8Array): string =>
-  Array.from(bytes, (byte) =>
-    byte < 0x80
-      ? String.fromCharCode(byte)
-      : CP437_HIGH_HALF.charAt(byte - 0x80),
-  ).join("");
 
 /** An entry's name, from a valid Unicode Path extra field when it has one. */
 export const zipEntryPath = (entry: Entry): string => {

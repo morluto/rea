@@ -260,11 +260,13 @@ const searchedAgrees = (report: KernelBuildConfig): boolean => {
     if (report.banner.status === "unknown") return false;
     if (report.config.status === "present" || report.config.status === "absent")
       return report.coverage.status === "complete";
+    // A cut or budget-stopped config is a known gap; a malformed one is unreadable.
+    if (report.coverage.examined_entries !== 0) return false;
+    if (report.config.status === "incomplete")
+      return report.coverage.status === "partial";
     return (
-      (report.config.status === "incomplete" ||
-        report.config.status === "malformed") &&
-      report.coverage.status === "incomplete" &&
-      report.coverage.examined_entries === 0
+      report.config.status === "malformed" &&
+      report.coverage.status === "unknown"
     );
   }
   if (
@@ -279,7 +281,7 @@ const searchedAgrees = (report: KernelBuildConfig): boolean => {
       report.config.status === "unsupported"
     );
   return (
-    report.coverage.status === "incomplete" &&
+    report.coverage.status === "unknown" &&
     report.config.status === "incomplete"
   );
 };

@@ -13,7 +13,7 @@ import {
   elfCopyRelocationType,
   elfRelativeRelocationType,
   elfRelocationWidth,
-} from "../metadata/ElfPointerRelocations.js";
+} from "../../domain/native/elfPointerRelocations.js";
 import type { NativeSection } from "../../domain/native/nativeSectionDirectory.js";
 import type { InitializerNotes } from "./initializerNotes.js";
 

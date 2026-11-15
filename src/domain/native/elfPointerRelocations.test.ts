@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import type { FileMapping } from "../../domain/virtualFileMapping.js";
+import type { FileMapping } from "../virtualFileMapping.js";
 import {
   ElfPointerRelocationFailure,
   elfAbsoluteRelocationType,
@@ -8,7 +8,7 @@ import {
   readElfRelocationWritesSteps,
   readElfPointerValuesSteps,
   type ElfPointerWrite,
-} from "./ElfPointerRelocations.js";
+} from "./elfPointerRelocations.js";
 
 const EM_X86_64 = 62;
 

@@ -20,7 +20,7 @@ import type {
   ImageSection,
   BinaryContainer,
 } from "../../domain/binaryContainer.js";
-import { readElfImage } from "../metadata/ElfImage.js";
+import { readElfImage } from "../../domain/native/elfImage.js";
 import { kernelCompressionCodecAt } from "./KernelCompressionCodec.js";
 
 type ElfSection = Extract<ImageSection, { format: "elf" }>;

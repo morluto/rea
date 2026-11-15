@@ -50,10 +50,18 @@ import type { WebSourceLocationService } from "../application/WebSourceLocationS
 import { toolContract } from "../contracts/toolContracts.js";
 import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
-import { err, ok } from "../domain/result.js";
+import { err, ok, type Result } from "../domain/result.js";
+import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import {
+  readGuidanceSection,
+  searchGuidance,
+} from "../application/GuidanceAccess.js";
+import type { CutterBridgeService } from "../cutter/CutterBridgeService.js";
 import { captureSensitiveValues } from "../domain/webNetworkCapture.js";
 import type { WebNetworkCaptureService } from "../application/WebNetworkCaptureService.js";
 import type { WebRuntimeService } from "../application/WebRuntimeService.js";
+import { exportWebScriptsValidated } from "../application/WebScriptExportService.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import {
   contractServiceBindings,
   registerContractTools,
@@ -62,6 +70,16 @@ import {
 } from "./contractToolBindings.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import { retainedSummaryDelivery } from "./retainedSummaryDelivery.js";
+import {
+  readSessionStatus,
+  type SessionStatusToolOptions,
+} from "./sessionStatusTool.js";
+
+/** Deliver a workflow's typed output as the JSON value its contract declares. */
+const jsonValueResult = <Error>(
+  result: Result<unknown, Error>,
+): Result<JsonValue, Error> =>
+  result.ok ? ok(jsonValueSchema.parse(result.value)) : result;
 
 type Bind<Service> = (
   service: Service,
@@ -445,12 +463,48 @@ const SERVICE_TOOL_BINDINGS = {
       run: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<WebRuntimeService>,
+  webScripts: ((resources) => ({
+    export_web_scripts: {
+      admission: "sdk",
+      run: (input, options) =>
+        exportWebScriptsValidated(input, resources, options),
+    },
+  })) satisfies Bind<ArtifactResourceScope>,
   javascriptRecovery: ((service) => ({
     recover_javascript_sources: {
       admission: "sdk",
       run: (input, options) => service.recover(input, options),
     },
   })) satisfies Bind<JavaScriptRecoveryService>,
+  guidance: ((resources) => ({
+    search_guidance: {
+      admission: "application",
+      value: async (input) =>
+        jsonValueResult(await searchGuidance(input, resources)),
+    },
+    read_guidance_section: {
+      admission: "application",
+      value: async (input) =>
+        jsonValueResult(await readGuidanceSection(input, resources)),
+    },
+  })) satisfies Bind<ArtifactResourceScope>,
+  cutterSessions: ((service) => ({
+    list_cutter_sessions: {
+      admission: "sdk",
+      value: async (_input, { signal }) => {
+        const listed = await service.listSessions({ signal });
+        return listed.ok
+          ? ok({ ...listed.value, sessions: [...listed.value.sessions] })
+          : listed;
+      },
+    },
+  })) satisfies Bind<CutterBridgeService>,
+  sessionStatus: ((options) => ({
+    binary_session: {
+      admission: "sdk",
+      value: (input, { context }) => readSessionStatus(options, input, context),
+    },
+  })) satisfies Bind<SessionStatusToolOptions>,
 } as const;
 
 type ServiceBindings = typeof SERVICE_TOOL_BINDINGS;

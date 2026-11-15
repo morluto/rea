@@ -3,21 +3,21 @@ import { createHash } from "node:crypto";
 import {
   readUniversalMachoImage,
   readUniversalMachoSlice,
-} from "../../domain/apple/machoImageSelection.js";
+} from "./machoImageSelection.js";
 import {
   readMachoHeaderPrefixFacts,
   type FatSliceDeclaration,
-} from "../../domain/apple/machoContainer.js";
+} from "./machoContainer.js";
 import {
   MACHO_CPU_TYPES,
   machoSliceFamily,
   machoSliceSubtypeSelector,
   type MachoSliceArchitecture,
   type MachoTargetSelection,
-} from "../../domain/apple/machoTargetSelection.js";
-import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
-import { err, ok, type Result } from "../../domain/result.js";
-import { MACHO_ARCHITECTURE_POLICIES } from "../MachoArchitectureSelection.js";
+} from "./machoTargetSelection.js";
+import { AnalysisInputError } from "../analysisErrorCore.js";
+import { err, ok, type Result } from "../result.js";
+import { MACHO_ARCHITECTURE_POLICIES } from "./machoArchitectureSelection.js";
 
 const cpuName = (cpuType: number, cpuSubtype: number): string => {
   const name = Object.entries(MACHO_CPU_TYPES).find(

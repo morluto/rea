@@ -40,7 +40,7 @@ import {
   registerEvidenceTools,
   registerUnknownTools,
 } from "./registerSessionRecordTools.js";
-import { registerSessionStatusTool } from "./registerSessionStatusTool.js";
+import { registerServiceTools } from "./serviceToolBindings.js";
 import { sessionAvailabilityPolicy } from "./sessionAvailabilityPolicy.js";
 import type { AvailabilityPolicy } from "../application/CapabilityInventory.js";
 import { logToolExecution } from "./toolLogging.js";
@@ -194,7 +194,6 @@ export interface LifecycleToolRegistration extends CapabilityAvailabilityProbes 
   readonly logger: Logger;
   readonly openContract: ReturnType<typeof toolContract<"open_binary">>;
   readonly closeContract: ReturnType<typeof toolContract<"close_binary">>;
-  readonly statusContract: ReturnType<typeof toolContract<"binary_session">>;
   readonly startedAt: string;
   readonly availabilityPolicy: () => AvailabilityPolicy;
   readonly artifactResources: ArtifactResourceScope;
@@ -207,10 +206,11 @@ const registerLifecycleTools = (
   registerOpenLifecycleTool(registration);
   registerCloseLifecycleTool(registration);
   registerResetInvestigationTool(registration);
-  registerSessionStatusTool({
-    ...registration,
-    contract: registration.statusContract,
-  });
+  registerServiceTools(
+    registration.server,
+    { sessionStatus: registration },
+    { logger: registration.logger },
+  );
 };
 
 const registerOpenLifecycleTool = ({
@@ -344,7 +344,6 @@ export const registerSessionTools = (
   const openContract = toolContract("open_binary");
   const openBundleResourcesContract = toolContract("open_bundle_resources");
   const closeContract = toolContract("close_binary");
-  const statusContract = toolContract("binary_session");
   const exportContract = toolContract("export_evidence_bundle");
   const importContract = toolContract("import_evidence_bundle");
   const captureContract = toolContract("capture_process_scenario");
@@ -394,7 +393,6 @@ export const registerSessionTools = (
     logger,
     openContract,
     closeContract,
-    statusContract,
     startedAt: options.startedAt ?? new Date().toISOString(),
     availabilityPolicy: sessionAvailabilityPolicy(
       options.availabilityPolicy,
