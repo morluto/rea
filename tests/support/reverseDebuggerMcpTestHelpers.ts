@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../fixtures/canonicalOutputSchema.js";
 import { readFile, rm } from "node:fs/promises";
 
 import type { Client } from "@modelcontextprotocol/client";
@@ -27,7 +28,7 @@ export const validateDebuggerStatusResponse = async (
   const listed = (await client.listTools()).tools.find(
     (tool) => tool.name === name,
   );
-  if (listed?.outputSchema === undefined)
+  if (listed === undefined)
     throw new Error(`Missing advertised ${name} output schema`);
   const response = await client.callTool({
     name,
@@ -39,7 +40,7 @@ export const validateDebuggerStatusResponse = async (
   );
   expect(
     new Ajv2020({ strict: false, validateFormats: false }).validate(
-      z.record(z.string(), z.unknown()).parse(listed.outputSchema),
+      canonicalOutputSchema(listed.name),
       parsed,
     ),
   ).toBe(true);

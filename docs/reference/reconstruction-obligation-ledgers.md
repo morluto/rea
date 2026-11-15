@@ -36,6 +36,7 @@ never claims closure:
 rea build-reconstruction-obligation-ledger \
   '{
     "evidence_bundle": {
+      "evidence_format": 1,
       "artifacts": [],
       "providers": [],
       "environments": [],

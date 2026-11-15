@@ -248,8 +248,9 @@ profile are preserved.
 
 Browser `original_module_edges` carry a `declaration_index` joining each edge to
 its `original_sources` declaration, including repeated source URLs across indexed
-sections. Imports are deduplicated within each declaration. Older observations
-may omit the index; their edge declaration identity remains unknown.
+sections. Imports are deduplicated within each declaration. Each mapping row
+likewise carries its section-local `source_index` and the `declaration_index`
+of the original source it maps to.
 
 Browser collection defaults to 64 MiB of map responses per inspection and
 preflights indexed sections, sources, names, generated rows and mapping segments
@@ -272,10 +273,11 @@ Malformed UTF-8 map responses are reported as invalid rather than repaired with
 replacement characters.
 For browser fetching, an `invalid` map or structural or decoder capacity
 failure has `artifact: null`, empty decoded arrays, and an explicit limitation.
-When its bounded response body was read in full, optional `response_identity`
-records that body's SHA-256 digest and byte count after HTTP content decoding
-and before UTF-8 decoding. It is not a digest of partial reads or a claim that
-the map was valid; historical items may omit it. Malformed text is omitted so
+An `invalid` map was always read in full, so it always carries
+`response_identity`; a `fetch_failed` item carries it only when its bounded
+response body was read in full. It records that body's SHA-256 digest and byte
+count after HTTP content decoding and before UTF-8 decoding. It is not a digest
+of partial reads or a claim that the map was valid. Malformed text is omitted so
 it does not consume the 32 MiB inline budget needed by later valid maps. A
 response whose text cannot fit that budget is refused before JSON parsing and
 source-map decoding, and retains the same

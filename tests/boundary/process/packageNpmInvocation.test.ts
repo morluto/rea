@@ -39,7 +39,7 @@ processTest(
     const result = await processes.run(
       process.execPath,
       ["--input-type=module", "--eval", program],
-      { windowsHide: true, timeoutMs: 20_000 },
+      { windowsHide: true },
     );
     expect(result.exitCode, result.stderr).toBe(0);
     expect(result.signal, result.stderr).toBeNull();
@@ -95,7 +95,7 @@ windowsIt(
     const result = await processes.run(
       node,
       ["--input-type=module", "--eval", program],
-      { env: environment, windowsHide: true, timeoutMs: 20_000 },
+      { env: environment, windowsHide: true },
     );
     expect(result.exitCode, result.stderr).toBe(0);
     expect(result.signal, result.stderr).toBeNull();

@@ -1,3 +1,4 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -190,7 +191,7 @@ it("retains terminal-call qualifications across live dossiers and snapshot-backe
       expect(evidence.limitations, name).toContain(limitation);
       expect(evidence.analysis_profile?.parameters).toMatchObject({
         function_boundary_observations:
-          "ghidra-function-boundary-limitations-v4",
+          "ghidra-function-boundary-limitations-v5",
       });
       const replay = await harness.session.execute(name, evidence.parameters);
       if (!replay.ok) throw replay.error;
@@ -339,7 +340,7 @@ const connectNamingMcp = async (name: string) => {
     if (toolDefinition === undefined) throw new Error(`Missing ${tool}`);
     return harness.mcp.callTool(
       { name: tool, arguments: arguments_ },
-      { toolDefinition },
+      { toolDefinition: withCanonicalOutputSchema(toolDefinition) },
     );
   };
   return { harness, requests, bridge, call };

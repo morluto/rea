@@ -1,9 +1,14 @@
+import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import { z } from "zod";
 import {
   AnalysisOutputError,
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import {
+  malformedInput,
+  ParseFailureError,
+} from "../../domain/parseFailure.js";
 import {
   NATIVE_COMMAND_OUTPUT_BUDGET_BYTES,
   type NativeCommandCapture,
@@ -232,7 +237,10 @@ const parseLipoOutput = (output: string, operandPath?: string): LipoOutput => {
   }
   flush();
   if (architectures.length === 0)
-    throw new TypeError("lipo output contained no architectures");
+    throw malformedInput(
+      "lipo-output",
+      "lipo output contained no architectures",
+    );
   return {
     format: "fat",
     declaredArchitectureCount,
@@ -245,12 +253,15 @@ const parseLipoOutput = (output: string, operandPath?: string): LipoOutput => {
 export const parseLipoOutputResult = (
   output: string,
   operandPath?: string,
-): Result<LipoOutput, TypeError | z.ZodError | LipoFieldRetentionError> => {
+): Result<
+  LipoOutput,
+  ParseFailureError | z.ZodError | LipoFieldRetentionError
+> => {
   try {
     return ok(parseLipoOutput(output, operandPath));
   } catch (cause: unknown) {
     if (
-      !(cause instanceof TypeError) &&
+      !(cause instanceof ParseFailureError) &&
       !(cause instanceof z.ZodError) &&
       !(cause instanceof LipoFieldRetentionError)
     )
@@ -289,7 +300,15 @@ export const parseLipoCapture = (
           maximum_retained_bytes: NATIVE_COMMAND_OUTPUT_BUDGET_BYTES,
           required_retained_bytes: parsed.error.requiredBytes,
         },
-        { cause: parsed.error, retryable: false, capturedOutput },
+        {
+          cause: parsed.error,
+          capturedOutput,
+          ...fixedAllowanceOptions(
+            "The lipo field retention allowance",
+            "capture",
+            { limit: NATIVE_COMMAND_OUTPUT_BUDGET_BYTES, unit: "bytes" },
+          ),
+        },
       ),
     );
   return err(

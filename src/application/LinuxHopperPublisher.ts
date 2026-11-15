@@ -54,6 +54,7 @@ import {
   type LinuxPackageFamily,
 } from "./HopperReleaseFeed.js";
 import { withRegularFile } from "./RegularFileRead.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 
 /** Metadata/key inspection budget, independent of the compressed package budget. */
 const RELEASE_METADATA_BYTES = 1024 * 1024;
@@ -261,7 +262,7 @@ export class LinuxHopperPublisher {
       if (mainExeHash !== release.main_exe_hash)
         return err(
           new HopperReleaseError(
-            "integrity",
+            "launcher_digest_mismatch",
             `The signed ${family} package launcher SHA-256 ${mainExeHash} differs from the release main_exe_hash ${release.main_exe_hash}.`,
           ),
         );
@@ -1082,7 +1083,7 @@ export const retryLinuxHopperPublisherCleanup = async (): Promise<void> => {
 };
 
 const decodeUtf8 = (bytes: Uint8Array): string =>
-  new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  decodeStrictUtf8(bytes, "strip-signature");
 const releaseFailure = (
   cause: unknown,
   signal: AbortSignal | undefined,

@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createHash } from "node:crypto";
@@ -649,11 +650,9 @@ const createOutputAssertion = async (client: Client) => {
     ): void => {
       const contract = toolContract(name);
       const wire = tools.find((tool) => tool.name === name);
-      if (wire?.outputSchema === undefined)
+      if (wire === undefined)
         throw new Error(`Missing advertised output schema for ${name}`);
-      const valid = ajv.compile(
-        z.record(z.string(), z.unknown()).parse(wire.outputSchema),
-      );
+      const valid = ajv.compile(canonicalOutputSchema(wire.name));
       expect(valid(output), `${name} advertised output`).toBe(true);
       expect(contract.outputSchema.safeParse(output).success).toBe(true);
     },

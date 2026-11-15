@@ -11,6 +11,7 @@ import {
 import { join } from "node:path";
 import { expect, onTestFinished, test, vi } from "vitest";
 import { primaryAnalysisError } from "../domain/analysisErrorBase.js";
+import { OwnerCancellation } from "../domain/analysisErrorCore.js";
 
 const adbTestHooks = vi.hoisted(() => ({
   afterScreencap: undefined as (() => void) | undefined,
@@ -72,6 +73,7 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { parseEvidence } from "../domain/evidence.js";
 import type { AdbRequest } from "../domain/adb/adbDeviceAnalysis.js";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import { waitFor } from "../../tests/support/testWait.js";
 
 const it = test.skipIf(process.platform === "win32");
 
@@ -166,13 +168,11 @@ fi`,
   let closing: Promise<void> | undefined;
   try {
     await awaitAcknowledgement(
-      vi.waitFor(
-        async () => expect(await lstat(join(root, "started"))).toBeDefined(),
-        { timeout: 10_000 },
+      waitFor(async () =>
+        expect(await lstat(join(root, "started"))).toBeDefined(),
       ),
       inspection,
       "ADB version probe",
-      10_000,
     );
     let closed = false;
     closing = provider.close().then(() => {
@@ -185,6 +185,7 @@ fi`,
     await closing;
     await expect(provider.inspectAvailability()).rejects.toMatchObject({
       _tag: "AnalysisCancelledError",
+      cause: OwnerCancellation.ownerClosed,
     });
   } finally {
     await writeFile(join(root, "release"), "");

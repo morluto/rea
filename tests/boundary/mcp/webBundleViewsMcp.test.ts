@@ -6,7 +6,7 @@ import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import {
   webBundlePageViewResultSchema,
   webBundleSummaryViewResultSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+} from "../../../src/domain/analysisView/analysisViewResult.js";
 import { sampleWebBundleAnalysis } from "../../fixtures/webBundleAnalysis.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -34,7 +34,7 @@ const connect = async () => {
   const { client } = await createApplicationMcpHarness({
     session,
     serverOptions: {
-      environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
+      environment: { ...process.env },
     },
     clientIdentity: { name: "web-bundle-view-mcp", version: "1" },
     schemaValidator: schemaValidation,

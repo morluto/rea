@@ -161,15 +161,12 @@ setTimeout(() => process.exit(0), 10000);
         controller.signal,
       );
       await expect
-        .poll(
-          async () => {
-            started = readySchema.parse(
-              JSON.parse(await readFile(readyPath, "utf8")),
-            );
-            return started.run_id;
-          },
-          { timeout: 5_000 },
-        )
+        .poll(async () => {
+          started = readySchema.parse(
+            JSON.parse(await readFile(readyPath, "utf8")),
+          );
+          return started.run_id;
+        })
         .toEqual(expect.any(String));
       if (started === undefined) throw new Error("Wrapper did not start");
       const identity = await observeProcessStartIdentity(
@@ -199,9 +196,7 @@ setTimeout(() => process.exit(0), 10000);
         // fixture self-exits. Do not bypass ownership with an unverified PID kill.
         const pid = started.pid;
         await expect
-          .poll(async () => await observeProcessStartIdentity(pid), {
-            timeout: 12_000,
-          })
+          .poll(async () => await observeProcessStartIdentity(pid))
           .toBeUndefined();
         expect((await tracer.close()).ok).toBe(true);
       } else expect(closed.ok).toBe(true);

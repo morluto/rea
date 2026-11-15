@@ -24,6 +24,7 @@ import { snapshotRoots } from "../../../src/process/capture/FilesystemSnapshot.j
 import { ProcessCaptureError } from "../../../src/process/capture/ProcessCaptureError.js";
 import { expectUnverifiedHostCleanup } from "../../support/hostCleanup.js";
 import {
+  PROCESS_CAPTURE_CLEANUP_INTERVENTION_UNKNOWN,
   ProcessCaptureResourceScope,
   type ProcessCaptureCleanupHost,
   observeLaunchedExecutable,
@@ -154,6 +155,8 @@ itWithCaptureCapability(
         idle_timeout_ms: 5_000,
         settle_ms: 100,
       }),
+      undefined,
+      process.platform,
     );
     if (!result.ok) throw result.error;
     expect(result.value.exit).toMatchObject({ code: 0, reason: "exited" });
@@ -292,6 +295,8 @@ itWithCaptureCapability(
           idle_timeout_ms: 5_000,
           limits: { processes: 1 },
         }),
+        undefined,
+        process.platform,
       );
       const { capture, cleanupIncomplete } = captureObservations(result);
       const parsed: unknown = JSON.parse(await readFile(pidMarker, "utf8"));
@@ -313,10 +318,15 @@ itWithCaptureCapability(
       );
       if (cleanupIncomplete)
         expect(capture.settlement.cleanup_outcome).toBe("failed");
-      else
+      else {
         expect(result.ok && result.value.cleanup.owned_process_group).toBe(
           "verified",
         );
+        expect(capture.settlement.cleanup_outcome).toBe("cleaned");
+        expect(capture.residual_unknowns).toContainEqual(
+          PROCESS_CAPTURE_CLEANUP_INTERVENTION_UNKNOWN,
+        );
+      }
       await waitForProcessExit(ownedPid);
       const unownedState = await processState(unownedPid);
       expect(unownedState).toBeDefined();
@@ -512,6 +522,8 @@ itWithCaptureCapability(
           timeout_ms: 1_500,
           idle_timeout_ms: 5_000,
         }),
+        undefined,
+        process.platform,
       );
       const deadline = Date.now() + 2_000;
       let ready = false;
@@ -561,6 +573,8 @@ itWithCaptureCapability(
           working_directory: root,
           filesystem_observation_paths: [root],
         }),
+        undefined,
+        process.platform,
       );
       const { capture } = captureObservations(result);
       const escaped = capture.files_after.find((file) =>
@@ -600,6 +614,8 @@ itWithCaptureCapability(
         timeout_ms: 50,
         idle_timeout_ms: 5_000,
       }),
+      undefined,
+      process.platform,
     );
     const timedOutCapture = captureObservations(timedOut);
     expect(timedOutCapture.capture.exit.reason).toBe("timeout");
@@ -689,6 +705,7 @@ const captureFinalizationFixture = async (
       ...scenario,
     }),
     signal,
+    process.platform,
   );
   return { result, root };
 };
@@ -1166,6 +1183,8 @@ itWithCaptureCapability(
         timeout_ms: 20_000,
         idle_timeout_ms: 10_000,
       }),
+      undefined,
+      process.platform,
     );
     const { capture } = captureObservations(result);
     const output = capture.frames.map(({ data }) => data).join("");
@@ -1200,6 +1219,8 @@ itWithCaptureCapability(
         timeout_ms: 2_000,
         idle_timeout_ms: 2_000,
       }),
+      undefined,
+      process.platform,
     );
     const { capture } = captureObservations(result);
     expect(capture.interaction_events).toMatchObject([
@@ -1228,6 +1249,8 @@ itWithCaptureCapability(
         timeout_ms: 20_000,
         idle_timeout_ms: 20_000,
       }),
+      undefined,
+      process.platform,
     );
     const { capture } = captureObservations(result);
     expect(capture.frames.map(({ data }) => data).join("")).toContain(
@@ -1262,6 +1285,8 @@ itWithCaptureCapability(
         timeout_ms: 20_000,
         idle_timeout_ms: 20_000,
       }),
+      undefined,
+      process.platform,
     );
     const { capture } = captureObservations(result);
     expect(capture.exit).toMatchObject({ code: 0, reason: "exited" });

@@ -1,7 +1,7 @@
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
@@ -71,11 +71,7 @@ export class DesktopBuildSteps {
         .catch(() => undefined);
       if (turn.aborted) {
         steps.capture.abandon();
-        return err(
-          new AnalysisCancelledError("start_build_capture", {
-            cause: turn.reason,
-          }),
-        );
+        return err(cancelledBy("start_build_capture", turn));
       }
       return ok({
         value: {

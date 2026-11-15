@@ -44,7 +44,11 @@ itWithCaptureCapability(
       arguments: ["-e", 'process.stdout.write("selected executable")'],
       settle_ms: 100,
     });
-    const result = await captureProcessScenario(scenario);
+    const result = await captureProcessScenario(
+      scenario,
+      undefined,
+      process.platform,
+    );
     if (!result.ok) throw result.error;
     expect(result.value.frames.map(({ data }) => data).join("")).toBe(
       "selected executable",
@@ -75,7 +79,11 @@ itWithCaptureCapability(
       arguments: ["-e", `process.stdout.write(${JSON.stringify(original)})`],
       settle_ms: 100,
     });
-    const result = await captureProcessScenario(scenario);
+    const result = await captureProcessScenario(
+      scenario,
+      undefined,
+      process.platform,
+    );
     if (!result.ok) throw result.error;
     const capture = parseProcessCapture(
       createProcessCaptureEvidence(scenario, result.value).normalized_result,
@@ -131,7 +139,11 @@ itWithCaptureCapability.each([
       },
       settle_ms: 100,
     });
-    const result = await captureProcessScenario(scenario);
+    const result = await captureProcessScenario(
+      scenario,
+      undefined,
+      process.platform,
+    );
     if (!result.ok) throw result.error;
     const capture = parseProcessCapture(
       createProcessCaptureEvidence(scenario, result.value).normalized_result,
@@ -181,7 +193,11 @@ itWithLinuxCaptureCapability.each([false, true])(
       timeout_ms: 10_000,
       idle_timeout_ms: 10_000,
     });
-    const result = await captureProcessScenario(scenario);
+    const result = await captureProcessScenario(
+      scenario,
+      undefined,
+      process.platform,
+    );
     if (!result.ok) throw result.error;
     const capture = result.value;
     const identity = identitySchema.parse(
@@ -249,7 +265,11 @@ itWithCaptureCapability(
       normalization: { paths: true, pids: false, ports: false, patterns: [] },
       settle_ms: 100,
     });
-    const result = await captureProcessScenario(scenario);
+    const result = await captureProcessScenario(
+      scenario,
+      undefined,
+      process.platform,
+    );
     if (!result.ok) throw result.error;
     const capture = parseProcessCapture(
       createProcessCaptureEvidence(scenario, result.value).normalized_result,
@@ -324,7 +344,11 @@ itWithCaptureCapability(
       normalization: { paths: true, pids: false, ports: false, patterns: [] },
       settle_ms: 100,
     });
-    const result = await captureProcessScenario(scenario);
+    const result = await captureProcessScenario(
+      scenario,
+      undefined,
+      process.platform,
+    );
     if (!result.ok) throw result.error;
     const capture = parseProcessCapture(
       createProcessCaptureEvidence(scenario, result.value).normalized_result,
@@ -352,7 +376,11 @@ itWithCaptureCapability(
       normalization: { paths: true, pids: false, ports: false, patterns: [] },
       settle_ms: 100,
     });
-    const result = await captureProcessScenario(scenario);
+    const result = await captureProcessScenario(
+      scenario,
+      undefined,
+      process.platform,
+    );
     if (!result.ok) throw result.error;
     const capture = parseProcessCapture(
       createProcessCaptureEvidence(scenario, result.value).normalized_result,
@@ -384,7 +412,11 @@ itWithCaptureCapability.each([false, true])(
         patterns: [{ pattern: "<pid>", replacement: "<selected-pid>" }],
       },
     });
-    const result = await captureProcessScenario(scenario);
+    const result = await captureProcessScenario(
+      scenario,
+      undefined,
+      process.platform,
+    );
     if (!result.ok) throw result.error;
     const capture = result.value;
     const raw = capture.frames
