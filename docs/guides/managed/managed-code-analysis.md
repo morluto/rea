@@ -56,8 +56,7 @@ NaN and infinities are the strings `-0`, `NaN`, `Infinity` or `-Infinity`;
 NULs and unpaired surrogates, are preserved.
 
 `constant: null` means neither a Constant declaration nor `HasDefault` was
-observed. Historical Evidence can omit the field entirely; omission does not
-prove that the artifact has no default. Missing or duplicate declarations,
+observed. Missing or duplicate declarations,
 inconsistent flags, malformed values and unsupported element types return
 `state: "unavailable"`, a limitation and partial coverage while retaining other
 member facts. This decoding shares the existing metadata representation budget
@@ -396,9 +395,9 @@ inventories remain distinct scopes, and each source retains its exact request.
 The `method_rows` interval records the examined zero-based MethodDef offset, row
 count and full table total before type selection. A complete observation can
 cover only that interval. Comparison keeps omissions from a method page unknown:
-build-local row positions cannot prove member absence across builds. Historical
-Evidence without this interval also cannot establish method absence; observed
-pairs and field inventory comparisons remain available.
+build-local row positions cannot prove member absence across builds.
+`method_rows: null` (the row scope was not examined) also cannot establish
+method absence; observed pairs and field inventory comparisons remain available.
 
 For MCP callers, request `detail: "summary"` and page the `types` collection
 using the returned parent Evidence ID. Select one or more returned full names
@@ -431,8 +430,8 @@ under a `type_names` selection), because `ldstr` instructions there were not
 observed. Normalized CIL digests do not include decoded values.
 `compare_managed_members` does not decode or compare literals: an unchanged
 method does not establish unchanged strings, and the comparison says so in its
-limitations. Older member Evidence without `user_strings` reads as `null`: not
-examined.
+limitations. `user_strings: null` means the literals were not examined
+(member decoding exceeded capacity or CLI metadata was unavailable).
 
 ### Edge target declaring types
 
@@ -454,7 +453,6 @@ with as many type arguments as it declares. Malformed or unsupported rows and
 blobs, and arity mismatches, make coverage partial. A readable MethodSpec
 method column that names a method, or a TypeRef whose resolution scope is
 invalid, keeps its name.
-Older member Evidence without these fields reads them as `null`: unknown.
 
 ## Analysis objective
 
@@ -484,7 +482,7 @@ instruction sites rather than array positions and compares these identities;
 display labels alone cannot establish equal targets. Same-named nested types
 under different enclosing types and different overload signatures stay distinct.
 This is nominal metadata identity, not assembly resolution or runtime binding.
-Historical edges without a site or identity, unresolved/cyclic type scopes,
+Edges without a resolved identity, unresolved/cyclic type scopes,
 TypeSpec owners and unresolved MethodSpec instantiations retain unknown target
 equivalence. Valid MethodSpecs combine the base member identity with the
 resolved instantiation signature, preserving generic argument distinctions.
@@ -766,9 +764,9 @@ as .NET `System.Runtime.dll` provide their types this way: `forwarder: true`
 marks a type forwarder, and `implementation_token` names the AssemblyRef, File,
 or enclosing ExportedType row that implements it. REA does not load the
 implementing assembly to resolve the forwarded definition, and
-`compare_managed_members` does not compare exported types. Member Evidence
-recorded before this field existed reads back with `exported_types: null`,
-which means the table was not examined.
+`compare_managed_members` does not compare exported types. `exported_types:
+null` means the table was not examined. Member Evidence without this field is
+malformed; recreate the observation with the current release.
 
 CLI `#GUID` heap values retain their exact 16-byte GUID text. REA does not impose
 RFC 4122 UUID version or variant bits on MVID, EncId, or EncBaseId because
@@ -782,7 +780,7 @@ A fat method header's nonzero LocalVarSigTok must name an existing StandAloneSig
 row whose blob is a structurally valid LocalVarSig. REA validates its local
 types and exact blob coverage, retaining `local_var_signature` with the raw blob
 digest and whether named types, modifiers, or generic variables require metadata
-or declaring context. Historical Evidence defaults this field to null. An invalid
+or declaring context; it is null when the method has no locals signature. An invalid
 token or malformed signature leaves decoded CIL anchors intact but marks the
 body malformed and coverage partial. Unsupported local type encodings retain
 the readable body with partial coverage. Zero continues to mean no locals
