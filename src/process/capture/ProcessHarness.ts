@@ -31,6 +31,7 @@ import type {
   ProcessCaptureRootProcess,
 } from "../../domain/process/processCapture.js";
 import { startProcessSampler } from "./ProcessSampling.js";
+import { AbortedWait, waitForAbortable } from "../AbortablePromise.js";
 import {
   snapshotRoots,
   ProcessCaptureSnapshotFailure,
@@ -318,6 +319,7 @@ const startCaptureRuntime = async (
     | ReturnType<typeof createProcessTerminalFinalizer>
     | undefined;
   let stopSampler: ReturnType<typeof startProcessSampler> | undefined;
+  let rootIdentity: Promise<RetainedRootIdentity> | undefined;
   try {
     const privacy = createProcessSensitiveOutput(scenario);
     if (!privacy.ok) throw privacy.error;
@@ -410,7 +412,7 @@ const startCaptureRuntime = async (
       renderer,
       started,
     });
-    const rootIdentity = retainRootIdentity(
+    rootIdentity = retainRootIdentity(
       terminal.pid,
       options.runId,
       options.finalizationHost?.observe,
@@ -459,6 +461,7 @@ const startCaptureRuntime = async (
         options.inspectionFailures,
       );
     }
+    await rootIdentity;
     return cleanupFailedStartup({
       cause: failure,
       timers: options.timers,
@@ -560,6 +563,9 @@ const finishProcessRun = async (options: {
       options.inspectionFailures,
     );
   }
+  // Join the launch identity read on every exit; it never rejects and, like
+  // other cleanup reads, runs without the caller's signal so it can finish.
+  await options.runtime?.rootIdentity;
   const sampledProcessGroupIds =
     options.runtime === undefined
       ? undefined
@@ -759,6 +765,14 @@ const completeCapture = async (options: {
       truncated: after.truncated,
     },
   ];
+  // The launch identity read keeps running unsignalled for finalization
+  // signals; only this wait observes cancellation. finishProcessRun joins it.
+  const rootIdentity = await waitForAbortable(
+    runtime.rootIdentity,
+    options.signal,
+  );
+  if (rootIdentity instanceof AbortedWait)
+    throw processCaptureCancelled(rootIdentity.carried);
   let manifest: Awaited<ReturnType<typeof createRunManifest>>;
   try {
     manifest = await createRunManifest(
@@ -768,7 +782,7 @@ const completeCapture = async (options: {
       runtime.executableIdentity,
       capturedRootProcess(
         runtime.terminal.pid,
-        await runtime.rootIdentity,
+        rootIdentity,
         scenario.normalization.pids,
       ),
       {
