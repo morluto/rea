@@ -165,9 +165,16 @@ const registeredField = (
 const contractShape = (description: ContractCliDescription) =>
   description.fields;
 
-/** Contract fields the handler supplies from each Evidence target. */
-const targetFields = (description: ContractCliDescription): string[] =>
-  (description.evidenceTargets?.targets ?? []).map(({ field }) => field);
+/**
+ * Contract fields the handler supplies: each Evidence target's from its
+ * source, and each handler field from CLI-only values.
+ */
+const handlerSuppliedFields = (
+  description: ContractCliDescription,
+): string[] => [
+  ...(description.evidenceTargets?.targets ?? []).map(({ field }) => field),
+  ...description.handlerFields,
+];
 
 /** The contract schema one parameter supplies: a field, or a flattened member. */
 const suppliedField = (
@@ -181,6 +188,30 @@ const suppliedField = (
   return (
     (object as z.ZodObject).shape[parameter.member] as z.ZodType
   ).optional();
+};
+
+/**
+ * Argv takes a transformed field's inbound text, as tools/list advertises
+ * it; the contract transforms it on admission. CLI help may word the field
+ * differently, and the contract applies its own default.
+ */
+const expectInboundView = (
+  key: string,
+  cliField: z.ZodType,
+  contractField: z.ZodType,
+): void => {
+  const inbound = (schema: z.ZodType) => {
+    const {
+      default: _default,
+      description: _description,
+      ...view
+    } = z.toJSONSchema(schema, { io: "input" }) as Record<string, unknown>;
+    return view;
+  };
+  expect(inbound(cliField), key).toEqual(inbound(contractField));
+  expect(admits(cliField, undefined), key).toBe(
+    admits(contractField, undefined),
+  );
 };
 
 /** A caller-relative target, or the first probe the argument admits. */
@@ -257,6 +288,11 @@ const ARGV_SATISFYING_RULES: Readonly<
   },
   // The handler selects the local device when the caller selects none.
   "list-frida-processes": { deviceId: "local" },
+  // The contract transforms the endpoint text it admits.
+  "list-browser-targets": { endpoint: "http://127.0.0.1:9222" },
+  "observe-web-session": { endpoint: "http://127.0.0.1:9222" },
+  "discover-webmcp-tools": { endpoint: "http://127.0.0.1:9222" },
+  "capture-web-screenshot": { endpoint: "http://127.0.0.1:9222" },
 };
 
 const each = descriptions.map(
@@ -344,8 +380,7 @@ describe("CLI commands projected from tool contracts", () => {
         [
           ...new Set(description.parameters.map(({ field }) => field)),
           ...Object.keys(description.omitted),
-          ...targetFields(description),
-          ...description.handlerFields,
+          ...handlerSuppliedFields(description),
         ]
           .toSorted()
           .join(),
@@ -413,6 +448,10 @@ describe("CLI commands projected from tool contracts", () => {
             admits(contractField, spelled(absoluteCallerPath("rel/x"))),
           ).toBe(true);
         }
+        if (parameter.inbound) {
+          expectInboundView(parameter.key, cliField, contractField);
+          continue;
+        }
         if (parameter.runtimeJson !== undefined) {
           // JSON text decoded when the command runs; see below. Argv
           // requires the text of a required field.
@@ -463,12 +502,7 @@ describe("CLI commands projected from tool contracts", () => {
         if (runtimeJson !== undefined && typeof values[key] === "string")
           values[key] = JSON.parse(values[key]) as unknown;
       const input = description.toContractInput(values);
-      // The handler supplies each Evidence target's field from its source,
-      // and each handler field from CLI-only values.
-      const targets = new Set([
-        ...targetFields(description),
-        ...description.handlerFields,
-      ]);
+      const targets = new Set(handlerSuppliedFields(description));
       const admitted =
         targets.size === 0
           ? description.contract.inputSchema
