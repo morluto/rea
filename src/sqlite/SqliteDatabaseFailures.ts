@@ -30,6 +30,7 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
 import { providerOutcomeOf } from "../process/ProviderOutcome.js";
+import { runtimeExhaustionReport } from "../process/RuntimeExhaustion.js";
 import {
   DEFAULT_SQLITE_WORKER_TIMEOUT_MS,
   MAX_SQLITE_WORKER_TIMEOUT_MS,
@@ -288,7 +289,8 @@ const ownedCommandFailure = (
   if (timeout !== undefined) return timeout;
   // The supervisor observed V8's heap report as output streamed, so a
   // retention budget or a stack trace that overflowed it cannot hide it.
-  if (providerOutcomeOf(cause).kind === "runtime-exhausted")
+  const outcome = providerOutcomeOf(cause);
+  if (outcome.kind === "runtime-exhausted")
     return new AnalysisResourceConstraintError(
       operation,
       "memory",
@@ -296,7 +298,15 @@ const ownedCommandFailure = (
       {
         javascript_heap_bytes: 256 * 1024 * 1024,
       },
-      { ...options, diagnostics: { selected_path: selectedPath } },
+      {
+        ...options,
+        diagnostics: {
+          selected_path: selectedPath,
+          runtime_exhaustion_report: runtimeExhaustionReport(
+            outcome.exhaustion,
+          ),
+        },
+      },
     );
   if (cause.reason === "output-limit")
     return new AnalysisOutputError(operation, cause.message, {

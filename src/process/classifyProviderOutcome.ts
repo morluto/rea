@@ -14,7 +14,10 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import type { AnalysisSettingLimit } from "../domain/analysisSettings.js";
 import type { ProviderOutcome } from "./ProviderOutcome.js";
 import type { ProviderProcessSnapshot } from "./ProviderProcess.js";
-import type { RuntimeExhaustion } from "./RuntimeExhaustion.js";
+import {
+  runtimeExhaustionReport,
+  type RuntimeExhaustion,
+} from "./RuntimeExhaustion.js";
 
 const RUNTIME_NAMES = {
   jvm: "The provider's Java virtual machine",
@@ -152,15 +155,7 @@ export const classifyProviderOutcome = (
     }
     case "runtime-exhausted": {
       const reported = context.runtimeExhaustion?.(outcome.exhaustion);
-      const {
-        area,
-        runtime,
-        stream,
-        line,
-        lineComplete,
-        truncated,
-        invalidUtf8,
-      } = outcome.exhaustion;
+      const { area, runtime } = outcome.exhaustion;
       return new AnalysisResourceConstraintError(
         operation,
         area === "native-thread" ? "capacity" : "memory",
@@ -168,20 +163,11 @@ export const classifyProviderOutcome = (
         reported?.limits ?? null,
         {
           ...details,
-          // The report may lie beyond the retained output, so the claim keeps
-          // its own source line.
           diagnostics: {
             ...details.diagnostics,
-            runtime_exhaustion_report: {
-              runtime,
-              area: area ?? null,
-              stream,
-              line,
-              line_complete: lineComplete,
-              // The same omission flags as Ghidra's observed-marker projection.
-              ...(truncated ? { truncated: true } : {}),
-              ...(invalidUtf8 ? { invalid_utf8: true } : {}),
-            },
+            runtime_exhaustion_report: runtimeExhaustionReport(
+              outcome.exhaustion,
+            ),
           },
           ...(area === "native-thread"
             ? {
