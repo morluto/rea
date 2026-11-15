@@ -3,7 +3,10 @@ import { existsSync } from "node:fs";
 import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { compareCountedBaseline } from "./counted-baseline.mjs";
+import {
+  compareCountedBaseline,
+  recordLoweredBaseline,
+} from "./counted-baseline.mjs";
 
 // Architecture guards for the strict-identity / best-effort-inference split.
 // - Composite dedup keys must not NUL-join variable-length or free-form
@@ -205,10 +208,7 @@ const checkCounted = (label, key, selected, pattern, owners) => {
     failures.push(
       `${label}; new copies are not allowed:\n${lines(compared.grown)}`,
     );
-  if (compared.baseline !== (baselines[key] ?? {})) {
-    baselines[key] = compared.baseline;
-    baselinesShrunk = true;
-  }
+  if (recordLoweredBaseline(baselines, key, compared)) baselinesShrunk = true;
   if (compared.stale.length > 0)
     failures.push(
       `${label}; copies were removed, so lower the baseline with \`node scripts/verify/architecture-guards.mjs --shrink-baselines\`:\n${lines(compared.stale)}`,
