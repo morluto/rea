@@ -281,8 +281,6 @@
   },
   "ambient-host-platform": {
     "src/captures/TsharkCaptureProvider.ts": 1,
-    "src/cli/desktopCaptureCommands.ts": 1,
-    "src/cli/mcpRegistration.ts": 2,
     "src/composition/auxiliaryAnalysisProviders.ts": 1,
     "src/composition/binary.ts": 2,
     "src/composition/reverseEngineering.ts": 1,
