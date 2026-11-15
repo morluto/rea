@@ -19,7 +19,7 @@ export const captureWebEventListeners = async (
     sources.ingest(event),
   );
   try {
-    for (const domain of ["Page", "Runtime", "Debugger", "DOM"])
+    for (const domain of ["Page", "Runtime", "Debugger", "DOM"] as const)
       await session.enable(domain);
     await session.assertDocument();
     const document = await session.command("DOM.getDocument", { depth: 0 });
