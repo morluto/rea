@@ -617,7 +617,7 @@ it("keeps an unreadable dependency alternative as an issue and reports partial c
     member: "control.tar",
     field: "Depends",
     detail:
-      'Depends alternative "libbar (2.0)" is not a readable relationship.',
+      'Depends has 1 unreadable alternative(s); the first is "libbar (2.0)".',
     offset: null,
   });
   expect(report.coverage.status).toBe("partial");
@@ -643,4 +643,15 @@ it("reads a maintainer script interpreter when later bytes are not UTF-8", () =>
   expect(report.control?.maintainer_scripts).toEqual([
     { name: "postinst", interpreter: "/bin/sh", bytes: body.length },
   ]);
+});
+
+it("records one bounded issue for a field with many unreadable alternatives", () => {
+  const report = parse(
+    debPackageFixture({
+      controlText: `Package: hello\nVersion: 1.0\nArchitecture: all\nDepends: libc6${" | (".repeat(5000)}\n`,
+    }),
+  );
+  const depends = report.issues.filter((issue) => issue.field === "Depends");
+  expect(depends).toHaveLength(1);
+  expect(depends[0]?.detail).toContain("5000 unreadable alternative(s)");
 });

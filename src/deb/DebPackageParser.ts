@@ -664,14 +664,20 @@ const parseControl = (tar: TarParse, issues: DebPackageIssue[]): DebControl => {
       );
       if (raw === undefined) return [field, null];
       const parsed = parseDebianRelationshipField(raw);
-      for (const term of parsed.unread)
+      if (parsed.firstUnread !== null) {
+        const name = DEB_CONTROL_RELATIONSHIP_NAMES[field];
+        const first =
+          parsed.firstUnread.length > 120
+            ? `${parsed.firstUnread.slice(0, 120)}...`
+            : parsed.firstUnread;
         issues.push({
           kind: "malformed",
           member: "control.tar",
-          field: DEB_CONTROL_RELATIONSHIP_NAMES[field],
-          detail: `${DEB_CONTROL_RELATIONSHIP_NAMES[field]} alternative ${JSON.stringify(term)} is not a readable relationship.`,
+          field: name,
+          detail: `${name} has ${String(parsed.unreadCount)} unreadable alternative(s); the first is ${JSON.stringify(first)}.`,
           offset: null,
         });
+      }
       return [field, parsed.groups];
     }),
   ) as DebControl["relationships"];

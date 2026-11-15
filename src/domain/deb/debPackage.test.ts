@@ -152,6 +152,7 @@ it("returns relationship alternatives it cannot read, as written", () => {
         },
       ],
     ],
-    unread: ["libbar (2.0)"],
+    unreadCount: 1,
+    firstUnread: "libbar (2.0)",
   });
 });

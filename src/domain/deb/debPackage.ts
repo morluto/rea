@@ -232,11 +232,16 @@ export const parseDebianRelationshipField = (
   readonly groups: readonly (readonly NonNullable<
     ReturnType<typeof parseDebianDependency>
   >[])[];
-  /** Alternatives the parser could not read, as written. */
-  readonly unread: readonly string[];
+  /** How many alternatives the parser could not read. */
+  readonly unreadCount: number;
+  /** The first unreadable alternative, as written, or null. */
+  readonly firstUnread: string | null;
 } => {
   const groups: NonNullable<ReturnType<typeof parseDebianDependency>>[][] = [];
-  const unread: string[] = [];
+  // Count unreadable alternatives rather than collecting them, so a field of
+  // many `|` separators cannot grow the report with its input.
+  let unreadCount = 0;
+  let firstUnread: string | null = null;
   for (const group of value.split(",")) {
     const trimmed = group.trim();
     if (trimmed.length === 0) continue;
@@ -245,12 +250,14 @@ export const parseDebianRelationshipField = (
     >[] = [];
     for (const spec of trimmed.split("|")) {
       const parsed = parseDebianDependency(spec);
-      if (parsed === null) unread.push(spec.trim());
-      else alternatives.push(parsed);
+      if (parsed === null) {
+        unreadCount += 1;
+        firstUnread ??= spec.trim();
+      } else alternatives.push(parsed);
     }
     if (alternatives.length > 0) groups.push(alternatives);
   }
-  return { groups, unread };
+  return { groups, unreadCount, firstUnread };
 };
 
 /** Complete bounded inspection of one Debian .deb ar archive. */
