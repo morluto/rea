@@ -150,7 +150,7 @@ export function* semanticOpaqueBindingEffects(
   }
 }
 
-export const semanticBindingMayHaveOpaqueEffect = (
+const semanticBindingMayHaveOpaqueEffect = (
   binding: JavaScriptSemanticBindingState,
   state: JavaScriptSemanticAnalysisState,
   read?: t.Node,
@@ -255,14 +255,33 @@ export const semanticBindingCanBeRebound = (
       ({ node }) => t.isFunctionDeclaration(node) || t.isClassDeclaration(node),
     ));
 
-export const semanticOpaqueBindingReadMayHaveChanged = (
+/**
+ * Whether opaque code (a direct eval visible to the binding) may have rebound
+ * it. With a read, only effects that may precede that read count, and a sloppy
+ * direct eval may also have introduced a shadowing name visible from it.
+ * Without one, any visible direct eval counts.
+ */
+export const opaqueCodeMayRebindBinding = (
   binding: JavaScriptSemanticBindingState,
-  read: t.Node,
   state: JavaScriptSemanticAnalysisState,
+  read?: t.Node,
 ): boolean =>
   (semanticBindingCanBeRebound(binding) &&
     semanticBindingMayHaveOpaqueEffect(binding, state, read)) ||
-  semanticOpaqueNameMayHaveChanged(read, state, binding);
+  (read !== undefined &&
+    semanticOpaqueNameMayHaveChanged(read, state, binding));
+
+/**
+ * Whether opaque code may have mutated the object a binding references after
+ * it was captured; objects stay reachable through aliases where the name is
+ * shadowed or out of scope.
+ */
+export const opaqueCodeMayReachBindingReference = (
+  binding: JavaScriptSemanticBindingState,
+  state: JavaScriptSemanticAnalysisState,
+  capturePoint: t.Node | undefined,
+): boolean =>
+  semanticBindingMayHaveOpaqueEffect(binding, state, capturePoint, "reference");
 
 const activation = (
   scopeId: string,
