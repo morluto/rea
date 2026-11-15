@@ -1,3 +1,4 @@
+import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
 import {
   hashArtifactRange,
   readArtifactRange as readExact,
@@ -52,8 +53,6 @@ import {
   type NodeSeaFuseObservation,
 } from "./NodeSeaBlob.js";
 
-const LC_SEGMENT = 0x1;
-const LC_SEGMENT_64 = 0x19;
 const PT_NOTE = 4;
 const SHT_NOTE = 7;
 const RT_RCDATA = 10;
@@ -314,8 +313,8 @@ const locateThinMachO = async (
         throw formatFailure(NODE_SEA_MACHO_COMMANDS_TRUNCATED);
       return found;
     }
-    if (cmd === LC_SEGMENT || cmd === LC_SEGMENT_64) {
-      const segment64 = cmd === LC_SEGMENT_64;
+    if (cmd === LC.SEGMENT || cmd === LC.SEGMENT_64) {
+      const segment64 = cmd === LC.SEGMENT_64;
       const sectionSize = segment64 ? 80 : 68;
       const parsedSegment = readMachoSegmentHeader(
         commands.subarray(offset, offset + cmdsize),

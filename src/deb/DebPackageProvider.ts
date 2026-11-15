@@ -98,6 +98,7 @@ const failureForPrimary = (
     OPERATION,
     input.path,
     cause,
+    "path",
     partialDiagnostics(cause),
   );
   if (formatFailure !== undefined) return formatFailure;

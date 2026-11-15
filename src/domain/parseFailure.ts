@@ -60,26 +60,115 @@ export class ParseFailureError<
   }
 }
 
+/** Where the failure was found, and the failure that revealed it. */
+type ParseFailureSite = Pick<ParseFailureFacts, "offset" | "field"> & {
+  readonly cause?: unknown;
+};
+
+const failureWith = (
+  failure: ParseFailure,
+  cause: unknown,
+): ParseFailureError =>
+  new ParseFailureError(failure, cause === undefined ? undefined : { cause });
+
 /** The bytes violate the format's structure. */
 export const malformedInput = (
   format: string,
   detail: string,
-  facts?: Pick<ParseFailureFacts, "offset" | "field">,
-): ParseFailureError<"malformed"> =>
-  new ParseFailureError({ kind: "malformed", format, detail, ...facts });
+  { cause, ...at }: ParseFailureSite = {},
+): ParseFailureError =>
+  failureWith({ kind: "malformed", format, detail, ...at }, cause);
+
+/** A declared structure starts in the bytes but ends past them. */
+export const truncatedInput = (
+  format: string,
+  detail: string,
+  { cause, ...at }: ParseFailureSite = {},
+): ParseFailureError =>
+  failureWith({ kind: "truncated", format, detail, ...at }, cause);
 
 /** The bytes use a form outside this decoder's coverage. */
 export const unsupportedInput = (
   format: string,
   detail: string,
-  facts?: Pick<ParseFailureFacts, "offset" | "field"> & {
-    readonly undecodedContent?: boolean;
-  },
-): ParseFailureError<"unsupported"> =>
-  new ParseFailureError({
-    kind: "unsupported",
-    format,
-    detail,
-    ...facts,
-    undecodedContent: facts?.undecodedContent ?? false,
-  });
+  {
+    cause,
+    undecodedContent = false,
+    ...at
+  }: ParseFailureSite & { readonly undecodedContent?: boolean } = {},
+): ParseFailureError =>
+  failureWith(
+    { kind: "unsupported", format, detail, ...at, undecodedContent },
+    cause,
+  );
+
+/** A named decode budget stopped the parse before the input was shown invalid. */
+export const decodeLimit = (
+  format: string,
+  detail: string,
+  limit: { readonly name: string; readonly maximum: number },
+  { cause, ...at }: ParseFailureSite = {},
+): ParseFailureError =>
+  failureWith({ kind: "limit", format, detail, ...at, limit }, cause);
+
+/**
+ * What a JavaScript or Node `RangeError` says about the work that raised it.
+ *
+ * - `stack-overflow`: the call stack ran out. A REA defect or host limit,
+ *   never evidence about the input bytes.
+ * - `host-capacity`: a string, array or buffer exceeded what the runtime can
+ *   represent or allocate.
+ *
+ * Any other `RangeError` (including one REA code threw itself) returns
+ * `undefined`: its meaning belongs to whoever threw it.
+ */
+export type HostRangeErrorKind = "stack-overflow" | "host-capacity";
+
+const HOST_CAPACITY_MESSAGES = new Set([
+  "Invalid string length",
+  "Array buffer allocation failed",
+  "Invalid array length",
+]);
+const HOST_CAPACITY_CODES = new Set([
+  "ERR_STRING_TOO_LONG",
+  "ERR_BUFFER_TOO_LARGE",
+]);
+
+/** Classify a host `RangeError`; the one place that interprets one. */
+export const hostRangeErrorKind = (
+  cause: unknown,
+): HostRangeErrorKind | undefined => {
+  if (!(cause instanceof Error)) return undefined;
+  const code = "code" in cause ? String(cause.code) : undefined;
+  // Node raises an over-long string as a plain Error with this code.
+  if (code !== undefined && HOST_CAPACITY_CODES.has(code))
+    return "host-capacity";
+  if (!(cause instanceof RangeError)) return undefined;
+  if (cause.message === "Maximum call stack size exceeded")
+    return "stack-overflow";
+  if (
+    HOST_CAPACITY_MESSAGES.has(cause.message) ||
+    cause.message.startsWith("Invalid typed array length")
+  )
+    return "host-capacity";
+  return undefined;
+};
+
+/** A stack overflow or host capacity failure: never evidence about the input. */
+export const isHostLimitFailure = (cause: unknown): boolean => {
+  const kind = hostRangeErrorKind(cause);
+  return kind === "stack-overflow" || kind === "host-capacity";
+};
+
+/**
+ * The format failure a parse step established, or `undefined` when the cause
+ * says nothing about the input. Host errors do not identify the operation
+ * that failed: buffer reads, writes and allocations can share error codes.
+ * Readers must report their own bounds failures at the read boundary.
+ */
+export const parseFailureFromCause = (
+  cause: unknown,
+): ParseFailureError | undefined => {
+  if (cause instanceof ParseFailureError) return cause;
+  return undefined;
+};

@@ -3,7 +3,10 @@ import { existsSync } from "node:fs";
 import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { compareCountedBaseline } from "./counted-baseline.mjs";
+import {
+  compareCountedBaseline,
+  recordLoweredBaseline,
+} from "./counted-baseline.mjs";
 
 // Architecture guards for the strict-identity / best-effort-inference split.
 // - Composite dedup keys must not NUL-join variable-length or free-form
@@ -163,6 +166,14 @@ check(
   ],
 );
 
+// Mach-O load-command codes have one table; a local copy drifts from it.
+check(
+  "local Mach-O load-command code (import LC from src/domain/apple/machoLoadCommandCodes)",
+  files,
+  /\bLC_[A-Z0-9_]+\s*=\s*(?:0x[0-9a-f]+|\d+)\b/iu,
+  ["src/domain/apple/machoLoadCommandCodes.ts"],
+);
+
 // Counted baselines record the remaining copies of a pattern that has one
 // owner. A file may not gain copies and a baseline may not grow; when copies
 // are removed, `--shrink-baselines` lowers the recorded counts (and never
@@ -197,10 +208,7 @@ const checkCounted = (label, key, selected, pattern, owners) => {
     failures.push(
       `${label}; new copies are not allowed:\n${lines(compared.grown)}`,
     );
-  if (compared.baseline !== (baselines[key] ?? {})) {
-    baselines[key] = compared.baseline;
-    baselinesShrunk = true;
-  }
+  if (recordLoweredBaseline(baselines, key, compared)) baselinesShrunk = true;
   if (compared.stale.length > 0)
     failures.push(
       `${label}; copies were removed, so lower the baseline with \`node scripts/verify/architecture-guards.mjs --shrink-baselines\`:\n${lines(compared.stale)}`,
@@ -303,6 +311,17 @@ checkCounted(
   parserFiles,
   /JSON\.parse\(/gu,
   [],
+);
+
+// A RangeError can mean a stack overflow, a host string or buffer limit, a
+// raw read or write past a buffer, or whatever its thrower intended. Only
+// known host limits are classified; parsers throw a ParseFailureError.
+checkCounted(
+  "direct RangeError interpretation (use hostRangeErrorKind or parseFailureFromCause from src/domain/parseFailure)",
+  "range-error-interpretation",
+  files,
+  /instanceof RangeError/gu,
+  ["src/domain/parseFailure.ts"],
 );
 
 if (baselinesShrunk) {

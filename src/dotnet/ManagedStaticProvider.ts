@@ -20,9 +20,9 @@ import {
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisUnsupportedTargetError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -119,11 +119,7 @@ class ManagedStaticClient implements AnalysisClient {
           : { maxBytes: input.data.max_snapshot_bytes }),
       };
       if (options?.signal?.aborted === true)
-        return err(
-          new AnalysisCancelledError(operation, {
-            cause: options.signal.reason,
-          }),
-        );
+        return err(cancelledBy(operation, options.signal));
       const snapshot = this.#snapshotBytes;
       const observed =
         snapshot === undefined
@@ -166,11 +162,7 @@ class ManagedStaticClient implements AnalysisClient {
         return err(this.#cleanupError(operation, cause));
       if (cause instanceof AnalysisError) return err(cause);
       if (options?.signal?.aborted === true)
-        return err(
-          new AnalysisCancelledError(operation, {
-            cause: options.signal.reason,
-          }),
-        );
+        return err(cancelledBy(operation, options.signal));
       const inputFailure = managedInspectionInputFailure(
         operation,
         this.target.path,

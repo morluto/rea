@@ -73,6 +73,7 @@ import {
   javaScriptDefinitionKeyCoercions,
   javaScriptDefinitionTimeExpressions,
   javaScriptExecutions,
+  type JavaScriptExecution,
 } from "./javascriptSemanticExecutionPoints.js";
 import {
   semanticKnownArrayIteration,
@@ -405,84 +406,91 @@ const accessorEffectOperands = (
   const escape = (nodes: readonly t.Node[]): void => {
     for (const node of nodes) operands.push({ kind: "escape", node });
   };
+  const writeOnly = new WeakSet<t.Node>();
+  const apply = (execution: JavaScriptExecution): void => {
+    const { node } = execution;
+    switch (execution.kind) {
+      case "property-write":
+        if (!execution.readsFirst)
+          for (const target of semanticWriteTargets(execution.target))
+            writeOnly.add(target);
+        escape(execution.operands);
+        return;
+      case "property-read":
+        if (
+          (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) &&
+          !writeOnly.has(node)
+        )
+          operands.push({
+            kind: "read",
+            node: node.object,
+            path: [semanticStaticPropertyKey(node.property, node.computed)],
+            lookup: "prototype",
+          });
+        return;
+      case "call":
+      case "construction":
+      case "tagged-template":
+        if (t.isTaggedTemplateExpression(node))
+          operands.push({ kind: "invoke", node: node.tag });
+        else if (
+          t.isCallExpression(node) ||
+          t.isOptionalCallExpression(node) ||
+          t.isNewExpression(node)
+        )
+          operands.push({
+            kind: "invoke",
+            node: node.callee,
+            ...(t.isNewExpression(node) ? {} : { invocation: node }),
+          });
+        escape(execution.operands);
+        return;
+      // Projected getter and `then` reads belong to the read-source owner.
+      case "destructuring":
+      case "property-copy":
+      case "thenable":
+      // Static module evaluation finishes before this module's code runs.
+      case "module-evaluation":
+      // Ordinary objects enumerate without user code; Proxy traps escaped
+      // when the Proxy was constructed.
+      case "enumeration":
+        return;
+      // Without a narrower proof, code that may run receives its operands.
+      case "class-definition":
+      case "coercion":
+      case "disposal":
+      case "iteration":
+      case "suspension":
+      case "decorator":
+      case "dynamic-import":
+      case "dynamic-scope":
+      case "jsx-element":
+      case "unsupported-syntax":
+        escape(execution.operands);
+        return;
+      default:
+        execution satisfies never;
+    }
+  };
   const pending: { node: t.Node; parent: t.Node | null }[] = [
     { node: method.body, parent: method },
   ];
-  const writeOnly = new WeakSet<t.Node>();
   while (pending.length > 0) {
     const { node, parent } = pending.pop()!;
     // Defining a nested callable does not invoke it, but the definition itself
-    // evaluates heritage and computed keys against the enclosing receiver.
+    // evaluates heritage, decorators and computed keys against the enclosing
+    // receiver.
     if (t.isFunction(node) || t.isClass(node)) {
+      if (t.isClass(node))
+        for (const execution of javaScriptExecutions(node, parent))
+          apply(execution);
       escape(javaScriptDefinitionKeyCoercions(node));
       for (const child of javaScriptDefinitionTimeExpressions(node).reverse())
         pending.push({ node: child, parent: node });
       continue;
     }
     for (const execution of javaScriptExecutions(node, parent))
-      switch (execution.kind) {
-        case "property-write":
-          if (!execution.readsFirst)
-            for (const target of semanticWriteTargets(execution.target))
-              writeOnly.add(target);
-          escape(execution.operands);
-          break;
-        case "property-read":
-          if (
-            (t.isMemberExpression(node) ||
-              t.isOptionalMemberExpression(node)) &&
-            !writeOnly.has(node)
-          )
-            operands.push({
-              kind: "read",
-              node: node.object,
-              path: [semanticStaticPropertyKey(node.property, node.computed)],
-              lookup: "prototype",
-            });
-          break;
-        case "call":
-        case "construction":
-        case "tagged-template":
-          if (t.isTaggedTemplateExpression(node))
-            operands.push({ kind: "invoke", node: node.tag });
-          else if (
-            t.isCallExpression(node) ||
-            t.isOptionalCallExpression(node) ||
-            t.isNewExpression(node)
-          )
-            operands.push({
-              kind: "invoke",
-              node: node.callee,
-              ...(t.isNewExpression(node) ? {} : { invocation: node }),
-            });
-          escape(execution.operands);
-          break;
-        case "coercion":
-        case "disposal":
-          escape(execution.operands);
-          break;
-        // Projected getter and `then` reads belong to the read-source owner.
-        case "destructuring":
-        case "property-copy":
-        case "thenable":
-        // Definitions are handled above without entering deferred bodies.
-        case "class-definition":
-          break;
-        // Not applied yet: these may run code with their operands, but this
-        // collector has never modelled them. Listed so the gap is explicit.
-        case "iteration":
-        case "enumeration":
-        case "suspension":
-        case "decorator":
-        case "dynamic-import":
-        case "dynamic-scope":
-        case "jsx-element":
-        case "module-evaluation":
-        case "unsupported-syntax":
-          break;
-        default:
-          execution satisfies never;
-      }
+      apply(execution);
     for (const source of semanticPropertyReadSources(node, parent))
       operands.push({
         kind: "read",
@@ -1909,17 +1917,21 @@ export function* collectSemanticMemberMutationsSteps(
           case "thenable":
           // Definition-time code is traversed as ordinary code.
           case "class-definition":
-            break;
-          // Not applied yet: these may run code with their operands, but this
-          // collector has never modelled them. Listed so the gap is explicit.
-          case "suspension":
+          // Static module evaluation finishes before this module's code runs.
+          case "module-evaluation":
+          // Ordinary objects enumerate without user code; Proxy traps escaped
+          // when the Proxy was constructed.
           case "enumeration":
+            break;
+          // Without a narrower proof, code that may run receives its operands.
+          case "suspension":
           case "decorator":
           case "dynamic-import":
           case "dynamic-scope":
           case "jsx-element":
-          case "module-evaluation":
           case "unsupported-syntax":
+            for (const operand of execution.operands)
+              markEscaped(operand, node);
             break;
           default:
             execution satisfies never;

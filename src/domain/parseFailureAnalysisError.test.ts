@@ -38,6 +38,29 @@ it.each([
   });
 });
 
+it("names the input that selected the malformed artifact", () => {
+  const cause = malformedInput(
+    "apple-ips",
+    "IPS metadata is not a JSON object",
+  );
+  expect(
+    parseFailureAnalysisError(
+      "inspect_example",
+      "/tmp/join.dylib",
+      cause,
+      "join_path",
+    ),
+  ).toMatchObject({
+    issues: [
+      {
+        path: ["join_path"],
+        reason: "invalid_format",
+        message: `Selected artifact /tmp/join.dylib: ${cause.message}`,
+      },
+    ],
+  });
+});
+
 it("refuses an unsupported form as an unsupported target, keeping undecoded content", () => {
   const cause = unsupportedInput("go", "compressed build-info section", {
     undecodedContent: true,
