@@ -342,6 +342,15 @@ export const createJavaScriptSemanticGraphProjection = (
           ...(unknownCeilingCoverage?.limits ?? []),
           ...(nodeCeilingCoverage?.limits ?? []),
         ],
+        ...(unknownCeilingCoverage === undefined &&
+        nodeCeilingCoverage === undefined
+          ? {}
+          : {
+              controls: [
+                ...(unknownCeilingCoverage?.controls ?? []),
+                ...(nodeCeilingCoverage?.controls ?? []),
+              ],
+            }),
         families: JAVASCRIPT_SEMANTIC_RELATION_FAMILIES.map((family) => ({
           family,
           status: semanticFamilyStatus(family),

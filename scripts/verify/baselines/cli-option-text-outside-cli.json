@@ -3,7 +3,6 @@
   "src/application/decompileDirectory/decompileAll.ts": 1,
   "src/application/reverse/ReverseEngineeringService.ts": 1,
   "src/domain/analysisErrorPresentation.ts": 6,
-  "src/domain/javascript/javascriptAnalysisResourceControls.ts": 5,
   "src/domain/javascript/javascriptSemanticResourceLimits.ts": 2,
   "src/dotnet/ManagedMemberRecovery.ts": 1,
   "src/ghidra/GhidraFileOffsetFailure.ts": 1,
