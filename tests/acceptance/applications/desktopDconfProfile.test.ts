@@ -206,7 +206,7 @@ for (const searchPath of [
   "broken:denied",
   "failed:tools",
 ]) {
-  cliTest.skipIf(process.platform === "win32" || !hasPython)(
+  cliTest.skipIf(process.platform !== "linux" || !hasPython)(
     `capture and exported helper preserve ${JSON.stringify(searchPath)} PATH from a colon-containing cwd`,
     async ({ cli }) => {
       const root = await createTestTempDirectory("dconf-command-selection-");
