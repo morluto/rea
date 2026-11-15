@@ -63,6 +63,8 @@ export interface ProviderOutcomeContext {
     readonly reason?: string;
     readonly limits: ReportedLimits;
     readonly recovery: ResourceConstraintRecovery;
+    /** The per-call control that raises this allowance, when the caller selects it. */
+    readonly limit?: AnalysisLimit;
   };
   /** The enforced process-tree memory limit, when one was requested. */
   readonly memoryLimitBytes?: number | undefined;
@@ -137,7 +139,13 @@ export const classifyProviderOutcome = (
         "memory",
         context.outputLimit.reason ?? outcome.message,
         context.outputLimit.limits,
-        { ...details, ...context.outputLimit.recovery },
+        {
+          ...details,
+          ...context.outputLimit.recovery,
+          ...(context.outputLimit.limit === undefined
+            ? {}
+            : { limit: context.outputLimit.limit }),
+        },
       );
     case "memory-limit":
       return new AnalysisResourceConstraintError(
