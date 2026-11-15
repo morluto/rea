@@ -265,6 +265,8 @@ const PATH_SCOPES = {
     "src/contracts/sessionPathInputs.test.ts",
     "tests/boundary/filesystem/directAnalysisSnapshotReplay.test.ts",
     "tests/boundary/mcp/rawBinaryMcp.test.ts",
+    "src/contracts/advertisedDialect*.ts",
+    "tests/boundary/mcp/advertisedDialect.test.ts",
     "tests/boundary/filesystem/safeOutputTree.test.ts",
     "tests/boundary/providers/native/artifactProvider.archiveSafety.test.ts",
     "tests/boundary/providers/native/artifactProvider.extractionCompleteness.test.ts",

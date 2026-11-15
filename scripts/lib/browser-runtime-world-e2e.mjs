@@ -6,7 +6,7 @@ export const isolatedFixtureUrl = "rea-isolated-fixture.js";
 export async function createRuntimeIsolatedWorld(connection) {
   const tree = await connection.send("Page.getFrameTree");
   const world = await connection.send("Page.createIsolatedWorld", {
-    frameId: tree.frameTree.frame.id,
+    frameId: tree.root.facts.frameId,
     worldName: "rea-verifier-isolated",
   });
   const contextId = world.executionContextId;

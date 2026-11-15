@@ -47,6 +47,7 @@ import {
   AnalysisCancelledError,
   AnalysisProtocolError,
   AnalysisResourceConstraintError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -465,8 +466,7 @@ export const createIdaMcpConnection = (
       return await request(controller.signal);
     } catch (cause: unknown) {
       if (cause === cancellation)
-        throw new AnalysisCancelledError(operation, {
-          cause: signal.reason,
+        throw cancelledBy(operation, signal, {
           capturedOutput: capturedTransportOutput(),
         });
       throw cause;

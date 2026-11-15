@@ -1,3 +1,4 @@
+import { LC } from "../domain/apple/machoLoadCommandCodes.js";
 import type {
   FileMapping,
   ZeroFillMapping,
@@ -23,11 +24,7 @@ import {
 
 import type { FixupCommands } from "./AppleMachoFixups.js";
 import { decodeMachoFixedName, decodeMachoName } from "./AppleMachoNames.js";
-import {
-  MACHO_ARCHITECTURE_POLICIES,
-  machoSubtypeRank,
-} from "./MachoArchitectureSelection.js";
-import { machoCpuSubtypeBase } from "../domain/apple/machoCpuIdentity.js";
+import { MACHO_ARCHITECTURE_POLICIES } from "./MachoArchitectureSelection.js";
 import {
   readFatSliceDeclarations,
   readFatHeaderPrefix,
@@ -88,7 +85,11 @@ export interface AdmittedMachoSlice {
   readonly size: number;
 }
 
-/** Select the thin Mach-O slice for `architecture` inside a FAT or thin container. */
+/**
+ * Locate the thin Mach-O image to read. A thin image is read whole; a
+ * universal image only at the slice target admission selected, whose
+ * declaration and CPU family this reader validates.
+ */
 export const selectMachoSlice = (
   bytes: Buffer,
   architecture: string,
@@ -118,56 +119,30 @@ export const selectMachoSlice = (
     littleEndian,
   });
   if (declarations.status !== "parsed") throw malformed(declarations.reason);
-  if (admitted !== undefined) {
-    const match = declarations.slices.find(
-      (declaration) =>
-        declaration.offset === admitted.offset &&
-        declaration.size === admitted.size,
+  // Target admission owns slice choice; ranking here again could read a
+  // different slice than the one the session's Evidence names.
+  if (admitted === undefined)
+    throw invalid("Universal Mach-O metadata needs the admitted slice");
+  const matches = declarations.slices.filter(
+    (declaration) =>
+      declaration.offset === admitted.offset &&
+      declaration.size === admitted.size,
+  );
+  const [match] = matches;
+  if (match === undefined) throw invalid("Admitted FAT slice is not declared");
+  if (matches.length > 1)
+    throw malformed("Admitted FAT slice is declared more than once");
+  if (match.cpuType !== policy.cpuType)
+    throw invalid(
+      "Admitted FAT slice does not match the requested architecture",
     );
-    if (match === undefined)
-      throw invalid("Admitted FAT slice is not declared");
-    if (match.cpuType !== policy.cpuType)
-      throw invalid(
-        "Admitted FAT slice does not match the requested architecture",
-      );
-    const issue = validateFatSlice(match, bytes.length, headerEnd);
-    if (issue !== null) throw malformed(issue);
-    return {
-      slice: match.offset,
-      sliceEnd: match.offset + match.size,
-      fatDeclaration: { ...match, tableEnd: headerEnd },
-    };
-  }
-  let best: FatSliceDeclaration | undefined;
-  let bestRank = Number.POSITIVE_INFINITY;
-  let ambiguous = false;
-  for (const declaration of declarations.slices) {
-    const issue = validateFatSlice(declaration, bytes.length, headerEnd);
-    if (issue !== null) throw malformed(issue);
-    if (declaration.cpuType !== policy.cpuType) continue;
-    const rank = machoSubtypeRank(policy, declaration.cpuSubtype);
-    if (best !== undefined && rank >= bestRank) {
-      // Equal ranks keep FAT table order unless the slices share a subtype.
-      if (
-        rank === bestRank &&
-        machoCpuSubtypeBase(declaration.cpuSubtype) ===
-          machoCpuSubtypeBase(best.cpuSubtype)
-      )
-        ambiguous = true;
-      continue;
-    }
-    best = declaration;
-    bestRank = rank;
-    ambiguous = false;
-  }
-  if (best === undefined) throw invalid("Requested FAT architecture is absent");
-  if (ambiguous) throw invalid("Ambiguous FAT architecture slice");
-  const selected: MachoSlice = {
-    slice: best.offset,
-    sliceEnd: best.offset + best.size,
-    fatDeclaration: { ...best, tableEnd: headerEnd },
+  const issue = validateFatSlice(match, bytes.length, headerEnd);
+  if (issue !== null) throw malformed(issue);
+  return {
+    slice: match.offset,
+    sliceEnd: match.offset + match.size,
+    fatDeclaration: { ...match, tableEnd: headerEnd },
   };
-  return selected;
 };
 
 /** A recognized Mach-O class outside this metadata reader's supported formats. */
@@ -398,10 +373,6 @@ const collectSegment = (
   }
 };
 
-const LC_DYLD_INFO = 0x22;
-const LC_DYLD_INFO_ONLY = 0x80000022;
-const LC_DYLD_CHAINED_FIXUPS = 0x80000034;
-
 /** Record fixup data ranges and dylib install names from one load command. */
 const collectFixupCommand = (
   bytes: Buffer,
@@ -415,10 +386,10 @@ const collectFixupCommand = (
       throw new RangeError("Fixup data exceeds the Mach-O slice");
     return { offset, size: length };
   };
-  if (kind === LC_DYLD_CHAINED_FIXUPS) {
+  if (kind === LC.DYLD_CHAINED_FIXUPS) {
     if (size < 16) throw new RangeError("Truncated chained-fixups command");
     state.chained = range(cursor + 8);
-  } else if (kind === LC_DYLD_INFO || kind === LC_DYLD_INFO_ONLY) {
+  } else if (kind === LC.DYLD_INFO || kind === LC.DYLD_INFO_ONLY) {
     if (size < 48) throw new RangeError("Truncated dyld-info command");
     const rebase = range(cursor + 8);
     if (rebase.size > 0) state.rebases.push(rebase);

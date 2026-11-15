@@ -11,6 +11,7 @@ import {
 import { join } from "node:path";
 import { expect, onTestFinished, test, vi } from "vitest";
 import { primaryAnalysisError } from "../domain/analysisErrorBase.js";
+import { OwnerCancellation } from "../domain/analysisErrorCore.js";
 
 const adbTestHooks = vi.hoisted(() => ({
   afterScreencap: undefined as (() => void) | undefined,
@@ -184,6 +185,7 @@ fi`,
     await closing;
     await expect(provider.inspectAvailability()).rejects.toMatchObject({
       _tag: "AnalysisCancelledError",
+      cause: OwnerCancellation.ownerClosed,
     });
   } finally {
     await writeFile(join(root, "release"), "");
