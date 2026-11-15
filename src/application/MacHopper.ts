@@ -43,6 +43,18 @@ import {
 } from "../domain/macosVersion.js";
 
 const execFileAsync = promisify(execFile);
+/**
+ * macOS tools at their system paths. REA's PATH may hold wrappers or other
+ * installs, and the signature checks decide whether setup installs and opens a
+ * downloaded app, so they run Apple's codesign, as the launch-time publisher
+ * check does.
+ */
+const MACOS_TOOLS = {
+  hdiutil: "/usr/bin/hdiutil",
+  codesign: "/usr/bin/codesign",
+  ditto: "/usr/bin/ditto",
+  open: "/usr/bin/open",
+} as const;
 const HOPPER_PUBLISHER_REQUIREMENT = macDeveloperIdRequirement(
   HOPPER_PUBLISHER.bundleIdentifier,
   HOPPER_PUBLISHER.teamIdentifier,
@@ -96,11 +108,11 @@ export const macHopperInstallDisclosure = {
     "Download the official Hopper package, verify it, and install it. Before the download, and again from the signed app before copying, setup compares the release's minimum macOS version with this Mac's and stops if this Mac is older. Hopper may show its demo or license prompt when first opened.",
   networkOrigins: [HOPPER_RELEASES_URL, HOPPER_DOWNLOAD_PREFIX] as const,
   commands: [
-    "hdiutil attach -readonly -nobrowse -mountpoint <private-mount> <verified-hopper.dmg>",
-    "codesign --verify --deep --strict <mounted-hopper.app>",
-    `codesign --verify --strict '-R${HOPPER_PUBLISHER_REQUIREMENT}' <mounted-hopper.app>`,
-    "ditto <mounted-hopper.app> <user-Applications-stage>",
-    "open <installed-hopper.app>",
+    `${MACOS_TOOLS.hdiutil} attach -readonly -nobrowse -mountpoint <private-mount> <verified-hopper.dmg>`,
+    `${MACOS_TOOLS.codesign} --verify --deep --strict <mounted-hopper.app>`,
+    `${MACOS_TOOLS.codesign} --verify --strict '-R${HOPPER_PUBLISHER_REQUIREMENT}' <mounted-hopper.app>`,
+    `${MACOS_TOOLS.ditto} <mounted-hopper.app> <user-Applications-stage>`,
+    `${MACOS_TOOLS.open} <installed-hopper.app>`,
   ] as const,
 };
 
@@ -470,7 +482,7 @@ export const systemMacHopperInstallHost = (
     writePackage: (path, bytes) => writeFile(path, bytes, { mode: 0o600 }),
     async mount(packagePath, mountPath) {
       await execFileAsync(
-        "hdiutil",
+        MACOS_TOOLS.hdiutil,
         [
           "attach",
           "-readonly",
@@ -484,9 +496,13 @@ export const systemMacHopperInstallHost = (
       return true;
     },
     async unmount(mountPath) {
-      await execFileAsync("hdiutil", ["detach", mountPath, "-force"], {
-        env: environment,
-      });
+      await execFileAsync(
+        MACOS_TOOLS.hdiutil,
+        ["detach", mountPath, "-force"],
+        {
+          env: environment,
+        },
+      );
     },
     async appBundle(mountPath) {
       const entries = await readdir(mountPath, { withFileTypes: true });
@@ -498,7 +514,7 @@ export const systemMacHopperInstallHost = (
     async validBundle(appPath) {
       if (
         !(await commandSucceeds(
-          "codesign",
+          MACOS_TOOLS.codesign,
           ["--verify", "--deep", "--strict", appPath],
           environment,
         ))
@@ -506,7 +522,7 @@ export const systemMacHopperInstallHost = (
         return "invalid_signature";
       if (
         !(await commandSucceeds(
-          "codesign",
+          MACOS_TOOLS.codesign,
           [
             "--verify",
             "--strict",
@@ -553,7 +569,7 @@ export const systemMacHopperInstallHost = (
             );
           },
           copyBundle: async (bundle, staged) => {
-            await execFileAsync("ditto", [bundle, staged], {
+            await execFileAsync(MACOS_TOOLS.ditto, [bundle, staged], {
               env: environment,
             });
           },
@@ -565,7 +581,7 @@ export const systemMacHopperInstallHost = (
         (cleanup, resources) => pendingCleanup.set(cleanup, resources),
       ),
     async openApplication(path) {
-      await execFileAsync("open", [path], { env: environment });
+      await execFileAsync(MACOS_TOOLS.open, [path], { env: environment });
     },
     cleanup: (path) => rm(path, { recursive: true, force: true }),
     retainCleanup: (cleanup, resources) =>
