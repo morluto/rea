@@ -9,6 +9,8 @@ import {
   decodeLimit,
   malformedInput,
   ParseFailureError,
+  truncatedInput,
+  unsupportedInput,
 } from "../../domain/parseFailure.js";
 import {
   binaryPlistCloneOffsetWidth,
@@ -353,10 +355,10 @@ export const estimateBinaryPlistExpansion = (
   }: BinaryPlistExpansionOptions = {},
 ): PlistDecodePreflight => {
   if (bytes.length < 40)
-    throw new TypeError("binary plist trailer is truncated");
+    throw truncatedInput("plist", "binary plist trailer is truncated");
   const sourceLayoutResult = readBinaryPlistLayout(bytes);
   if (!sourceLayoutResult.ok)
-    throw new TypeError("binary plist trailer is truncated");
+    throw truncatedInput("plist", "binary plist trailer is truncated");
   const sourceLayout = sourceLayoutResult.value;
   const {
     trailerOffset: trailer,
@@ -364,7 +366,10 @@ export const estimateBinaryPlistExpansion = (
     referenceWidth: referenceSize,
   } = sourceLayout;
   if (offsetSize < 1 || referenceSize < 1)
-    throw new TypeError("binary plist trailer integer sizes are invalid");
+    throw malformedInput(
+      "plist",
+      "binary plist trailer integer sizes are invalid",
+    );
   const safeDeclaration = (value: bigint): number =>
     value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : -1;
   const readInteger = (offset: number, size: number): number => {
@@ -385,12 +390,18 @@ export const estimateBinaryPlistExpansion = (
     !Number.isSafeInteger(offsetTable + objectCount * offsetSize) ||
     offsetTable + objectCount * offsetSize > tableEnd
   )
-    throw new TypeError("binary plist trailer or object table is invalid");
+    throw malformedInput(
+      "plist",
+      "binary plist trailer or object table is invalid",
+    );
   if (
     (offsetSize < 8 && offsetTable >= 2 ** (offsetSize * 8)) ||
     (referenceSize < 8 && objectCount >= 2 ** (referenceSize * 8))
   )
-    throw new TypeError("binary plist table width cannot address its contents");
+    throw malformedInput(
+      "plist",
+      "binary plist table width cannot address its contents",
+    );
   const normalizedReferenceSize =
     [1, 2, 4, 8].includes(referenceSize) &&
     (referenceSize === 8 || objectCount < 2 ** (referenceSize * 8))
@@ -399,7 +410,10 @@ export const estimateBinaryPlistExpansion = (
           (width) => width === 8 || objectCount < 2 ** (width * 8),
         );
   if (normalizedReferenceSize === undefined)
-    throw new TypeError("binary plist object reference count is invalid");
+    throw malformedInput(
+      "plist",
+      "binary plist object reference count is invalid",
+    );
   // Reserve source container/reference facts, scalar indexing, and the scalar
   // array/table overhead; projection also retains numeric/UID source metadata.
   const objectBytes = numberProjection || uidProjection ? 512 : 256;
@@ -437,23 +451,29 @@ export const estimateBinaryPlistExpansion = (
     if (prior !== undefined) return prior;
     const offset = safeDeclaration(sourceLayout.objectOffset(object));
     if (offset < 8 || offset >= objectsEnd)
-      throw new TypeError("binary plist object offset is invalid");
+      throw malformedInput("plist", "binary plist object offset is invalid");
     const marker = bytes[offset] ?? 0;
     const type = marker >> 4;
     if (type !== 5 && type !== 6)
-      throw new TypeError("binary plist dictionary key is not a string");
+      throw malformedInput(
+        "plist",
+        "binary plist dictionary key is not a string",
+      );
     let size = marker & 0x0f;
     let cursor = offset + 1;
     if (size === 15) {
       const extended = bytes[cursor] ?? 0;
       if (extended >> 4 !== 1 || (extended & 15) > 3)
-        throw new TypeError("binary plist extended object size is invalid");
+        throw malformedInput(
+          "plist",
+          "binary plist extended object size is invalid",
+        );
       const width = 1 << (extended & 15);
       size = readInteger(cursor + 1, width);
       cursor += 1 + width;
     }
     if (size < 0 || cursor + size * (type === 6 ? 2 : 1) > objectsEnd)
-      throw new TypeError("binary plist scalar object is truncated");
+      throw truncatedInput("plist", "binary plist scalar object is truncated");
     let key = "";
     for (let index = 0; index < size; index += 1)
       key += String.fromCharCode(
@@ -502,7 +522,7 @@ export const estimateBinaryPlistExpansion = (
       );
     const offset = safeDeclaration(sourceLayout.objectOffset(entry.object));
     if (offset < 8 || offset >= objectsEnd)
-      throw new TypeError("binary plist object offset is invalid");
+      throw malformedInput("plist", "binary plist object offset is invalid");
     if (numberProjection) reachableObjectOffsets.add(offset);
     const marker = bytes[offset] ?? 0;
     const type = marker >> 4;
@@ -512,17 +532,21 @@ export const estimateBinaryPlistExpansion = (
         uid: type === 8,
       });
     if (entry.dictionaryKey && type !== 5 && type !== 6)
-      throw new TypeError("binary plist dictionary key is not a string");
+      throw malformedInput(
+        "plist",
+        "binary plist dictionary key is not a string",
+      );
     if (type === 3) {
       if (marker !== 0x33)
-        throw new TypeError(
+        throw malformedInput(
+          "plist",
           `binary plist date marker 0x${marker.toString(16)} is invalid`,
         );
       // The offset table and trailer are not part of an encoded object. Keep
       // this scalar boundary even when compatibility mode follows decoder
       // bounds for other object and reference checks.
       if (offset + 9 > offsetTable)
-        throw new TypeError("binary plist date object is truncated");
+        throw truncatedInput("plist", "binary plist date object is truncated");
       if (numberProjection) {
         reachableDateOffsets.add(offset);
         reachableDateOccurrences.push(offset);
@@ -532,7 +556,7 @@ export const estimateBinaryPlistExpansion = (
     if (type === 8) {
       const uidWidth = (marker & 0x0f) + 1;
       if (offset + 1 + uidWidth > objectsEnd)
-        throw new TypeError("binary plist UID object is truncated");
+        throw truncatedInput("plist", "binary plist UID object is truncated");
       const normalizedWidth = binaryPlistUidNormalizationWidth(bytes, offset);
       if (normalizedWidth !== undefined)
         uidWidthsToNormalize.set(offset, normalizedWidth);
@@ -541,12 +565,15 @@ export const estimateBinaryPlistExpansion = (
     if (type === 1 || type === 2) {
       const info = marker & 0x0f;
       if (type === 1 && info > 4)
-        throw new TypeError("binary plist integer width is invalid");
+        throw malformedInput("plist", "binary plist integer width is invalid");
       if (type === 2 && info !== 2 && info !== 3)
-        throw new TypeError("binary plist real width is invalid");
+        throw malformedInput("plist", "binary plist real width is invalid");
       const width = 1 << info;
       if (offset + 1 + width > offsetTable)
-        throw new TypeError("binary plist numeric scalar is truncated");
+        throw truncatedInput(
+          "plist",
+          "binary plist numeric scalar is truncated",
+        );
       if (numberProjection) {
         reachableNumericOffsets.add(offset);
         if (type === 1 && width === 16) reachableWideIntegerOffsets.add(offset);
@@ -558,18 +585,27 @@ export const estimateBinaryPlistExpansion = (
     if (size === 0x0f && type !== 0 && type !== 8) {
       const extMarker = bytes[cursor] ?? 0;
       if (extMarker >> 4 !== 1 || (extMarker & 0x0f) > 3)
-        throw new TypeError("binary plist extended object size is invalid");
+        throw malformedInput(
+          "plist",
+          "binary plist extended object size is invalid",
+        );
       cursor += 1;
       const integerSize = 1 << (extMarker & 0x0f);
       size = readInteger(cursor, integerSize);
       cursor += integerSize;
       if (size < 0 || cursor > objectsEnd)
-        throw new TypeError("binary plist extended object size is invalid");
+        throw malformedInput(
+          "plist",
+          "binary plist extended object size is invalid",
+        );
     }
     if (type === 4 || type === 5 || type === 6) {
       const byteLength = type === 6 ? size * 2 : size;
       if (cursor + byteLength > objectsEnd)
-        throw new TypeError("binary plist scalar object is truncated");
+        throw truncatedInput(
+          "plist",
+          "binary plist scalar object is truncated",
+        );
       estimate += type === 4 ? size + 4 * Math.ceil(size / 3) : byteLength * 2;
       if (estimate > maxBytes)
         throw decodeBudgetExceeded(
@@ -582,7 +618,10 @@ export const estimateBinaryPlistExpansion = (
     const childCount = type === 13 ? size * 2 : size;
     const refsEnd = cursor + childCount * referenceSize;
     if (!Number.isSafeInteger(refsEnd) || refsEnd > objectsEnd)
-      throw new TypeError("binary plist reference table is truncated");
+      throw truncatedInput(
+        "plist",
+        "binary plist reference table is truncated",
+      );
     const availableNodes = Math.floor(
       (maxBytes - estimate) / expandedNodeBytes,
     );
@@ -597,7 +636,7 @@ export const estimateBinaryPlistExpansion = (
         referenceSize,
       );
       if (reference < 0 || reference >= objectCount)
-        throw new TypeError("binary plist reference is invalid");
+        throw malformedInput("plist", "binary plist reference is invalid");
       return reference;
     });
     if (!sourceContainers.has(entry.object))
@@ -647,7 +686,10 @@ export const estimateBinaryPlistExpansion = (
       const cloneLength =
         headerLength + references.length * normalizedReferenceSize;
       if (!Number.isSafeInteger(cloneLength))
-        throw new TypeError("binary plist reference table is too large");
+        throw unsupportedInput(
+          "plist",
+          "binary plist reference table is too large",
+        );
       return cloneLength;
     },
   );
@@ -660,7 +702,10 @@ export const estimateBinaryPlistExpansion = (
       cloneLengths,
     );
     if (width === undefined)
-      throw new TypeError("binary plist object offset exceeds supported width");
+      throw unsupportedInput(
+        "plist",
+        "binary plist object offset exceeds supported width",
+      );
     return width;
   };
   if (!numberProjection) {

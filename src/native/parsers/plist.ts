@@ -23,6 +23,7 @@ import {
   PlistNestingLimitError,
 } from "../../domain/apple/plistValue.js";
 import { parseXmlPropertyList } from "../../domain/propertyListKeys.js";
+import { malformedInput } from "../../domain/parseFailure.js";
 import { err, ok, type Result } from "../../domain/result.js";
 
 import {
@@ -370,7 +371,10 @@ export const parsePlistBinary = (
 > => {
   try {
     if (!hasBinaryPlistSignature(bytes))
-      throw new TypeError("selected file does not have a binary plist header");
+      throw malformedInput(
+        "plist",
+        "selected file does not have a binary plist header",
+      );
     const expansion = estimateBinaryPlistExpansion(
       bytes,
       MAX_NATIVE_PLIST_DECODE_BYTES,

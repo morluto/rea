@@ -191,6 +191,9 @@ describe("binary plist scalar bounds", () => {
     expect(() => estimateBinaryPlistExpansion(malformed, 1024 * 1024)).toThrow(
       /date marker/u,
     );
+    expect(() => estimateBinaryPlistExpansion(malformed, 1024 * 1024)).toThrow(
+      expect.objectContaining({ kind: "malformed" }),
+    );
   });
 
   it.each([
@@ -310,6 +313,14 @@ describe("binary plist UID widths", () => {
     binaryPlistObjectTable(truncated, [8], 10);
     expect(() => estimateBinaryPlistExpansion(truncated, 1024)).toThrow(
       "binary plist UID object is truncated",
+    );
+    expect(() => estimateBinaryPlistExpansion(truncated, 1024)).toThrow(
+      expect.objectContaining({
+        failure: expect.objectContaining({
+          kind: "truncated",
+          format: "plist",
+        }),
+      }),
     );
 
     const inexact = binaryPlistWithUid(8, BigInt(Number.MAX_SAFE_INTEGER) + 1n);

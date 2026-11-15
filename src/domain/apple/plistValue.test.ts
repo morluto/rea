@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { InternalInvariantError } from "../internalInvariant.js";
 import { parseBinary } from "plist";
 
 import { PlistNestingLimitError, projectPlistValue } from "./plistValue.js";
@@ -108,7 +109,7 @@ it("rejects accessors, proxies, holes and symbol keys without invoking user code
     Array(1),
     { [Symbol("key")]: "value" },
   ])
-    expect(() => projectPlistValue(value)).toThrow(TypeError);
+    expect(() => projectPlistValue(value)).toThrow(InternalInvariantError);
   expect(accessed).toBe(0);
 });
 
