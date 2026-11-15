@@ -65,7 +65,7 @@ it("parses relationship alternatives, operators, and architecture qualifiers", (
   expect(
     parseDebianRelationshipField(
       "libc6 (>= 2.34), python3:any | python3-minimal (>= 3.11)",
-    ),
+    ).groups,
   ).toEqual([
     [
       {
@@ -119,4 +119,39 @@ it("requires an absolute path and rejects extra inspection arguments", () => {
   expect(
     inspectDebPackageInputSchema.parse({ path: "/artifacts/hello.deb" }).path,
   ).toBe("/artifacts/hello.deb");
+});
+
+it("reads hyphenated architecture qualifiers", () => {
+  expect(parseDebianDependency("libfoo:kfreebsd-amd64")).toMatchObject({
+    name: "libfoo",
+    arch_qualifier: "kfreebsd-amd64",
+  });
+});
+
+it("returns relationship alternatives it cannot read, as written", () => {
+  expect(
+    parseDebianRelationshipField("libc6 (>= 2.34), libbar (2.0) | libbaz"),
+  ).toEqual({
+    groups: [
+      [
+        {
+          name: "libc6",
+          arch_qualifier: null,
+          operator: ">=",
+          version: "2.34",
+          arch_restriction: null,
+        },
+      ],
+      [
+        {
+          name: "libbaz",
+          arch_qualifier: null,
+          operator: null,
+          version: null,
+          arch_restriction: null,
+        },
+      ],
+    ],
+    unread: ["libbar (2.0)"],
+  });
 });

@@ -660,7 +660,16 @@ const parseControl = (tar: TarParse, issues: DebPackageIssue[]): DebControl => {
         DEB_CONTROL_RELATIONSHIP_NAMES[field].toLowerCase(),
       );
       if (raw === undefined) return [field, null];
-      return [field, parseDebianRelationshipField(raw)];
+      const parsed = parseDebianRelationshipField(raw);
+      for (const term of parsed.unread)
+        issues.push({
+          kind: "malformed",
+          member: "control.tar",
+          field: DEB_CONTROL_RELATIONSHIP_NAMES[field],
+          detail: `${DEB_CONTROL_RELATIONSHIP_NAMES[field]} alternative ${JSON.stringify(term)} is not a readable relationship.`,
+          offset: null,
+        });
+      return [field, parsed.groups];
     }),
   ) as DebControl["relationships"];
   const conffiles = listedFile(tar.files, "conffiles");

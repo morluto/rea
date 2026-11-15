@@ -584,3 +584,41 @@ it("summarizes retained Debian package facts without reopening the archive", () 
     issue_count: 0,
   });
 });
+
+it("keeps an unreadable dependency alternative as an issue and reports partial coverage", () => {
+  const report = parse(
+    debPackageFixture({
+      controlText:
+        "Package: hello\nVersion: 1.0\nArchitecture: all\nDepends: libc6 (>= 2.34), libbar (2.0) | libfoo:kfreebsd-amd64\n",
+    }),
+  );
+  expect(report.control?.relationships.depends).toEqual([
+    [
+      {
+        name: "libc6",
+        arch_qualifier: null,
+        operator: ">=",
+        version: "2.34",
+        arch_restriction: null,
+      },
+    ],
+    [
+      {
+        name: "libfoo",
+        arch_qualifier: "kfreebsd-amd64",
+        operator: null,
+        version: null,
+        arch_restriction: null,
+      },
+    ],
+  ]);
+  expect(report.issues).toContainEqual({
+    kind: "malformed",
+    member: "control.tar",
+    field: "Depends",
+    detail:
+      'Depends alternative "libbar (2.0)" is not a readable relationship.',
+    offset: null,
+  });
+  expect(report.coverage.status).toBe("partial");
+});

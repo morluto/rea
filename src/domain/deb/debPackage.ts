@@ -176,7 +176,10 @@ export const parseDebianDependency = (
   } | null;
 } | null => {
   let rest = spec.trim();
-  const nameMatch = /^([a-z0-9][a-z0-9+.\-]*)(?::([a-z0-9]+))?/iu.exec(rest);
+  // Architecture qualifiers may be hyphenated, as in `kfreebsd-amd64`.
+  const nameMatch = /^([a-z0-9][a-z0-9+.\-]*)(?::([a-z0-9][a-z0-9-]*))?/iu.exec(
+    rest,
+  );
   if (nameMatch?.[1] === undefined) return null;
   const name = nameMatch[1];
   const arch_qualifier = nameMatch[2] ?? null;
@@ -225,10 +228,15 @@ export const parseDebianDependency = (
 /** Comma-separated relationship groups, each a list of `|` alternatives. */
 export const parseDebianRelationshipField = (
   value: string,
-): readonly (readonly NonNullable<
-  ReturnType<typeof parseDebianDependency>
->[])[] => {
+): {
+  readonly groups: readonly (readonly NonNullable<
+    ReturnType<typeof parseDebianDependency>
+  >[])[];
+  /** Alternatives the parser could not read, as written. */
+  readonly unread: readonly string[];
+} => {
   const groups: NonNullable<ReturnType<typeof parseDebianDependency>>[][] = [];
+  const unread: string[] = [];
   for (const group of value.split(",")) {
     const trimmed = group.trim();
     if (trimmed.length === 0) continue;
@@ -237,12 +245,12 @@ export const parseDebianRelationshipField = (
     >[] = [];
     for (const spec of trimmed.split("|")) {
       const parsed = parseDebianDependency(spec);
-      if (parsed === null) continue;
-      alternatives.push(parsed);
+      if (parsed === null) unread.push(spec.trim());
+      else alternatives.push(parsed);
     }
     if (alternatives.length > 0) groups.push(alternatives);
   }
-  return groups;
+  return { groups, unread };
 };
 
 /** Complete bounded inspection of one Debian .deb ar archive. */
