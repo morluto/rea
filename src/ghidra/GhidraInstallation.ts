@@ -1,4 +1,5 @@
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   AnalysisCancelledError,
   cancelledBy,
@@ -353,8 +354,8 @@ export const inspectGhidraInstallation = async (
 ): Promise<GhidraInstallationInspection> => {
   if (options.signal?.aborted)
     throw cancelledBy("ghidra:installation", options.signal);
-  const platform = options.platform ?? process.platform;
-  const architecture = options.architecture ?? process.arch;
+  const platform = options.platform ?? HOST_PLATFORM.platform;
+  const architecture = options.architecture ?? HOST_PLATFORM.architecture;
   const coordinates = await installationCoordinates(
     options,
     platform,
@@ -843,7 +844,7 @@ export const ghidraInstallationDiagnostics = (
 export const ghidraJavaEnvironment = (
   javaHome: string | undefined,
   environment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): NodeJS.ProcessEnv => {
   const selectedEnvironment = snapshotEnvironment(environment, platform);
   const boundedEnvironment = {
@@ -1132,7 +1133,7 @@ export const discoverGhidraInstallationOnPath = (
   environment: Readonly<NodeJS.ProcessEnv>,
   platform: NodeJS.Platform,
 ): string | undefined => {
-  if (platform !== process.platform) return undefined;
+  if (platform !== HOST_PLATFORM.platform) return undefined;
   const path = platform === "win32" ? win32 : posix;
   if (platform !== "win32" && environment.PATH === undefined) return undefined;
   // Each PATH entry is tried for every launcher name before the next entry.
@@ -1222,7 +1223,7 @@ const stableJavaHome = (
   platform: NodeJS.Platform,
 ): string => {
   // Compare paths only with the matching host filesystem semantics.
-  if (platform !== process.platform) return observedHome;
+  if (platform !== HOST_PLATFORM.platform) return observedHome;
   const sameHome = (candidate: string): boolean => {
     try {
       return (
