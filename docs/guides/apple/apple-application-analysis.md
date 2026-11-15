@@ -221,12 +221,14 @@ tell iOS, tvOS, watchOS, and visionOS apart. The standalone-dylib and
 nested-framework rules need the bundle platform from target content, such as
 the main executable's build-platform load command, and the standalone-dylib
 rule also needs each image's Mach-O file type. The projection reads only
-inventory paths and content formats, so both rules are `not-evaluated`. Their
-missing findings are unknown, not compliance.
+inventory paths and content formats, so neither rule is evaluated: each reports
+`unknown` with a limitation that starts "Not evaluated". Their missing findings
+are unknown, not compliance.
 
 `rules` reports each rule's Apple statement, `status`, `evaluated_bundles`, and
-`limitations`. A rule is `not-evaluated`, `partial`, or `complete`. It is
-`partial` when source inventory coverage is partial, or when an examined file
+`limitations`. A rule's `status` is the shared coverage status: `complete`,
+`partial`, or `unknown` for a rule that is not evaluated. It is `partial` when
+source inventory coverage is partial, or when an examined file
 has an `unknown` format, unavailable content, a node outside the supplied
 pages, or a path the inventory repeats. An empty findings list then does not establish a clean bundle.
 `evaluated_bundles: 0` means that no bundle has a layout the rule covers.

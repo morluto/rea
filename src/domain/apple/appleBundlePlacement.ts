@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { coverageStatusSchema } from "../coverage.js";
 import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js";
 import {
   anatomyNameIs,
@@ -76,7 +77,7 @@ export const appleBundlePlacementSchema = z.strictObject({
     z.strictObject({
       rule: z.enum(PLACEMENT_RULES),
       apple_rule: z.string().min(1),
-      status: z.enum(["complete", "partial", "not-evaluated"]),
+      status: coverageStatusSchema,
       evaluated_bundles: z.int().min(0),
       limitations: z.array(z.string()),
     }),
@@ -315,7 +316,7 @@ const ruleCoverage =
       return {
         rule,
         apple_rule: APPLE_RULES[rule],
-        status: "not-evaluated",
+        status: "unknown",
         evaluated_bundles: 0,
         limitations: [skipped],
       };

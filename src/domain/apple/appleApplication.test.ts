@@ -1234,8 +1234,8 @@ describe("Apple bundle placement findings", () => {
     ]);
     expect(ruleCoverage(result)).toEqual({
       "code-in-resource-location": ["complete", 7],
-      "standalone-dynamic-library": ["not-evaluated", 0],
-      "framework-in-nested-bundle": ["not-evaluated", 0],
+      "standalone-dynamic-library": ["unknown", 0],
+      "framework-in-nested-bundle": ["unknown", 0],
       "framework-root-content": ["complete", 1],
       "grouping-directory-in-code-location": ["complete", 7],
       "dotted-directory-name": ["complete", 7],
@@ -1425,8 +1425,8 @@ describe("Apple bundle placement coverage", () => {
     ]);
     expect(ruleCoverage(result)).toEqual({
       "code-in-resource-location": ["complete", 0],
-      "standalone-dynamic-library": ["not-evaluated", 0],
-      "framework-in-nested-bundle": ["not-evaluated", 0],
+      "standalone-dynamic-library": ["unknown", 0],
+      "framework-in-nested-bundle": ["unknown", 0],
       "framework-root-content": ["complete", 0],
       "grouping-directory-in-code-location": ["complete", 2],
       "dotted-directory-name": ["complete", 2],
