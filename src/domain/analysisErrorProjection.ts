@@ -742,6 +742,9 @@ const requestErrorDetails = (
       resource: error.resource,
       reason: error.reason,
       reported_limits: error.reportedLimits,
+      ...(error.requestSent === undefined
+        ? {}
+        : { request_sent: error.requestSent }),
     };
   if (error instanceof AnalysisArtifactChangedError)
     return {

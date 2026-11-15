@@ -9,6 +9,7 @@ import {
 } from "./counted-baseline.mjs";
 import { localCompletenessEnumCount } from "./completeness-enum-guard.mjs";
 import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
+import { localLimitErrorClassCount } from "./limit-class-guard.mjs";
 
 // Architecture guards for the strict-identity / best-effort-inference split.
 // - Composite dedup keys must not NUL-join variable-length or free-form
@@ -326,6 +327,17 @@ checkCounted(
   files,
   /new AnalysisCancelledError\(/gu,
   ["src/domain/analysisErrorCore.ts"],
+);
+
+// A limit a parser stopped at is a ParseFailureError<"limit"> (decodeLimit in
+// src/domain/parseFailure); a refusal is an AnalysisRefusal. A local limit
+// class on plain Error hides the limit's name and maximum from both.
+checkCounted(
+  "local limit class extending plain Error (use decodeLimit from src/domain/parseFailure or an AnalysisRefusal)",
+  "local-limit-error-class",
+  files,
+  localLimitErrorClassCount,
+  [],
 );
 
 // A deadline is a monotonic budget owned by `Deadline` in src/domain/deadline;
