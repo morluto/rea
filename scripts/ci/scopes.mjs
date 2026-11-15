@@ -253,9 +253,11 @@ const PATH_SCOPES = {
     "scripts/lib/runtime-admission.d.mts",
     "install.sh",
     "src/config/**",
-    // The darwin package baseline is the only CI run of the real Hopper
-    // bridge. Its reply contracts and the domain schemas they are built from
-    // must be checked against real replies before merge, not after.
+    // The darwin package baseline runs packaged Hopper commands against the
+    // fake bridge, through the reply contracts and the domain schemas they
+    // are built from. Check a change to either side before merge, not after.
+    "tests/fixtures/fakeLauncher.mjs",
+    "tests/fixtures/fakeHopper*.mjs",
     "bridge/hopper_bridge.py",
     "src/hopper/HopperReplyContracts.ts",
     "src/hopper/HopperProvider.ts",

@@ -692,6 +692,24 @@ it.each([
     "tests/module/example.test.ts",
     { code: true, runtime: false, browser: false, package: false },
   ],
+  // The darwin package baseline is the CI run of packaged Hopper commands
+  // against the fake bridge and the reply contracts.
+  [
+    "tests/fixtures/fakeHopper.mjs",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "tests/fixtures/fakeHopperReplies.mjs",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "src/hopper/HopperReplyContracts.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "src/domain/native/nativeSegments.ts",
+    { code: true, runtime: true, package: true },
+  ],
   ["scripts/lib/release-proposal.mjs", { code: true, package: true }],
   ["scripts/lib/release-proposal.d.mts", { code: true, package: true }],
   ["scripts/lib/release-pull-request.mjs", { code: true, package: true }],
