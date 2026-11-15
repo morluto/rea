@@ -1,4 +1,5 @@
 import { validateRegistrationEnvironment } from "./RegistrationEnvironmentValidation.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { isMap, isSeq, type Node, type YAMLMap } from "yaml";
 import type { Environment } from "../config/environment.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
@@ -271,6 +272,7 @@ export class DshCordisDocument {
     const env = mergeEnvironmentOverrides<unknown>(
       isPatchRecord(this.config?.env) ? this.config.env : {},
       overrides,
+      HOST_PLATFORM.platform,
     );
     const desired = { ...this.config, ...dshClientRegistrationEntry(command) };
     delete desired.env;

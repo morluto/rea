@@ -26,7 +26,7 @@ import { awaitHttpReply, type HttpReply } from "./HttpReply.js";
 const READY_TIMEOUT_MS = 180_000;
 const REQUEST_TIMEOUT_MS = 120_000;
 
-/** How long a computer's first screenshot waits for the desktop to draw, and how often its start reports progress. */
+/** How long a computer's first screenshot waits for the desktop to draw, and how often its start and the tool calls waiting on it report progress. */
 export interface ComputerStartTiming {
   readonly drawnWaitMs: number;
   readonly progressMs: number;

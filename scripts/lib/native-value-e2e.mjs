@@ -1,3 +1,4 @@
+import { schemaVerifierEnvironment } from "./mcp-verification-environment.mjs";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -236,7 +237,7 @@ async function verifyNativeValueAdapters(
   const transport = await createOwnedMcpStdioTransport({
     command: process.execPath,
     arguments: [entrypoint, "mcp"],
-    hostEnvironment: env,
+    hostEnvironment: schemaVerifierEnvironment(env),
     cwd: process.cwd(),
     expectedCommand: null,
     sweepTokenOwnedProcesses: true,

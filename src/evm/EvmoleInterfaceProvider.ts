@@ -1,4 +1,5 @@
 import { EvmAdmissionError } from "./EvmAdmissionError.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -449,7 +450,10 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
     if (this.#closing) return Promise.resolve(err(this.#closedError()));
     const operation = this.#tail.then(async () => {
       if (this.#closing) return err(this.#closedError());
-      const environment = snapshotEnvironment(this.environment);
+      const environment = snapshotEnvironment(
+        this.environment,
+        HOST_PLATFORM.platform,
+      );
       try {
         return await this.#resources.run(() =>
           this.#inspect(input, environment, options),

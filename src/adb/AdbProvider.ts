@@ -1,4 +1,5 @@
 import { ADB_PROVIDER_IDENTITY } from "./AdbProviderIdentity.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   absoluteCallerPath,
   appendCallerPath,
@@ -851,8 +852,11 @@ export class AdbProvider {
   #outputCleanupPromise: Promise<void> | undefined;
 
   constructor(options: AdbProviderOptions = {}) {
-    this.platform = options.platform ?? process.platform;
-    this.environment = snapshotEnvironment(options.environment ?? process.env);
+    this.platform = options.platform ?? HOST_PLATFORM.platform;
+    this.environment = snapshotEnvironment(
+      options.environment ?? process.env,
+      this.platform,
+    );
     this.#ui = new AdbUiRunner(
       this.environment,
       undefined,

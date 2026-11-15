@@ -1,4 +1,5 @@
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
@@ -295,7 +296,10 @@ export class JadxProvider implements AndroidAnalysisPort {
 
   /** Report actual local prerequisites without starting JADX or opening a target. */
   inspectAvailability(signal?: AbortSignal) {
-    const environment = snapshotEnvironment(this.environment);
+    const environment = snapshotEnvironment(
+      this.environment,
+      HOST_PLATFORM.platform,
+    );
     const pending = inspectJadxAvailability(environment, {
       operationTimeoutMs:
         this.settings?.().overrides["jadx.operation_timeout_ms"],
@@ -496,7 +500,10 @@ export class JadxProvider implements AndroidAnalysisPort {
     request: AndroidRequest,
     options: ExecutionOptions,
   ): Promise<Outcome> {
-    const environment = snapshotEnvironment(this.environment);
+    const environment = snapshotEnvironment(
+      this.environment,
+      HOST_PLATFORM.platform,
+    );
     // Resolve the accepted operation's override before acquiring any resource.
     // An unusable launch value is refused without starting the engine.
     const timeoutMs = resolveJadxOperationTimeout(

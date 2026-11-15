@@ -6,8 +6,9 @@ import { isDeepStrictEqual } from "node:util";
 
 import {
   advertisedSchemaPatterns,
-  PORTABLE_SCHEMA_BOUND_EXCLUSIVE_LIMIT,
+  ADVERTISED_BOUND_LIMIT,
 } from "./advertisedDialect.js";
+import { dependencyGuidance } from "./advertisedDialectProjection.js";
 import { projectPortablePattern } from "./portablePattern.js";
 import {
   schemaArrays,
@@ -325,7 +326,7 @@ const hasPortableInputConstraint = (
 ) =>
   typeof schema.format === "string" ||
   (typeof schema.maxLength === "number" &&
-    schema.maxLength >= PORTABLE_SCHEMA_BOUND_EXCLUSIVE_LIMIT);
+    schema.maxLength >= ADVERTISED_BOUND_LIMIT);
 
 /** One projection owns actual rewrite sites and their scoped validation dependencies. */
 /**
@@ -642,7 +643,7 @@ const normalizeAdvertisedSchema = (
     if (typeof node.format === "string") delete node.format;
     if (
       typeof node.maxLength === "number" &&
-      node.maxLength >= PORTABLE_SCHEMA_BOUND_EXCLUSIVE_LIMIT
+      node.maxLength >= ADVERTISED_BOUND_LIMIT
     )
       delete node.maxLength;
   }
@@ -1061,29 +1062,14 @@ export const presentInputJsonSchema = (
     dependentRequired: _dependentRequired,
     ...presentation
   } = described;
-  const rootDependencies = isObject(described.dependentRequired)
-    ? described.dependentRequired
-    : isObject(described.dependencies)
-      ? described.dependencies
-      : undefined;
-  const dependencyGuidance =
-    rootDependencies === undefined
-      ? []
-      : Object.entries(rootDependencies).flatMap(([property, partners]) =>
-          Array.isArray(partners) &&
-          partners.every((partner) => typeof partner === "string")
-            ? [
-                `When ${property} is provided, also provide ${partners.join(" and ")}.`,
-              ]
-            : [],
-        );
-  if (dependencyGuidance.length === 0)
+  const dependencies = dependencyGuidance(described);
+  if (dependencies.length === 0)
     return normalizeInputRoot(presentation, portableDialect);
   const description = [
     typeof presentation.description === "string"
       ? presentation.description
       : undefined,
-    ...dependencyGuidance,
+    ...dependencies,
   ].filter((text) => text !== undefined);
   return normalizeInputRoot(
     { ...presentation, description: description.join(" ") },
