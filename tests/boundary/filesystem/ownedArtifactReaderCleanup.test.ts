@@ -11,7 +11,7 @@ import { DenoStandaloneArtifactReader } from "../../../src/artifacts/DenoStandal
 import { DotnetBundleArtifactReader } from "../../../src/artifacts/DotnetBundleArtifactReader.js";
 import { MachOSliceArtifactReader } from "../../../src/artifacts/MachOSliceArtifactReader.js";
 import { ok } from "../../../src/domain/result.js";
-import type { NativeCommandRunner } from "../../../src/native/CommandRunner.js";
+import type { NativeCommandRunner } from "../../../src/providers/NativeCommandRunner.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { ZipArtifactReader } from "../../../src/resources/index.js";
 

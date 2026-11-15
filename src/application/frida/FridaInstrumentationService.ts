@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { constants } from "node:fs";
 import { access, stat } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
@@ -454,7 +455,7 @@ const fridaEvidence = (
   script?: FridaScriptObservation,
 ): Evidence =>
   createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "frida", name: "Frida", version: null },
     {
       predicateType: "rea.frida.instrumentation-observation",

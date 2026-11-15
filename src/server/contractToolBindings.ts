@@ -14,7 +14,10 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
 import type { Result } from "../domain/result.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
+import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
+import type { InvestigationWorkflowExecution } from "../application/investigation/InvestigationWorkflows.js";
 import {
+  createDerivedToolHandler,
   createEvidenceToolHandler,
   createRetainedSummaryToolHandler,
   createValueToolHandler,
@@ -59,19 +62,28 @@ type EvidenceOperation<Input> = (
  * declared Evidence inputs still unchecked); an application-admitted workflow
  * receives the raw request and validates it itself.
  */
-type EvidenceBinding<Input = unknown> =
+type EvidenceBinding<Input = unknown> = (
   | {
       readonly admission: "sdk";
       readonly run: EvidenceOperation<Input>;
       readonly summary?: never;
       readonly value?: never;
+      readonly derive?: never;
     }
   | {
       readonly admission: "application";
       readonly run: EvidenceOperation<unknown>;
       readonly summary?: never;
       readonly value?: never;
-    };
+      readonly derive?: never;
+    }
+) & {
+  /**
+   * The source a view's response-overflow recovery may name again, read from
+   * the raw request, when the operation projects a view of other Evidence.
+   */
+  readonly viewSource?: (input: unknown) => JsonValue | undefined;
+};
 
 type ValueOperation<Input> = (
   input: Input,
@@ -90,13 +102,36 @@ type ValueBinding<Input = unknown> =
       readonly value: ValueOperation<Input>;
       readonly run?: never;
       readonly summary?: never;
+      readonly derive?: never;
     }
   | {
       readonly admission: "application";
       readonly value: ValueOperation<unknown>;
       readonly run?: never;
       readonly summary?: never;
+      readonly derive?: never;
     };
+
+/**
+ * Derive Evidence from Evidence the session holds (a comparison or an
+ * investigation workflow). The session owner admits the call and resolves
+ * each session-held input; the sources read are retained and the derived
+ * Evidence is recorded with its unknowns, as for every session workflow.
+ * The workflow validates its own request, so it receives the input as the
+ * selected admission delivers it.
+ */
+interface DerivedBinding {
+  readonly admission: ContractInputAdmission;
+  readonly session: BinarySessionPort;
+  readonly derive: (
+    input: unknown,
+    evidenceForAnalysis: BinarySessionPort["evidenceForAnalysis"],
+    signal: AbortSignal,
+  ) => Result<InvestigationWorkflowExecution, AnalysisError>;
+  readonly run?: never;
+  readonly summary?: never;
+  readonly value?: never;
+}
 
 /**
  * Admit `detail`/`view` in the adapter, run the workflow on the remaining
@@ -107,6 +142,7 @@ interface RetainedSummaryBinding<Input> {
   readonly summary: EvidenceOperation<Omit<Input, "detail" | "view">>;
   readonly run?: never;
   readonly value?: never;
+  readonly derive?: never;
 }
 
 /** How one named contract runs over MCP; only summary-capable contracts take `summary`. */
@@ -115,6 +151,7 @@ export type ContractToolBinding<Name extends CatalogToolName> =
   // unchecked until the workflow resolves them.
   | EvidenceBinding<EvidenceRequestFrameInput<ContractInput<Name>>>
   | ValueBinding<EvidenceRequestFrameInput<ContractInput<Name>>>
+  | DerivedBinding
   | (ContractInput<Name> extends { readonly detail: "complete" | "summary" }
       ? RetainedSummaryBinding<ContractInput<Name>>
       : never);
@@ -177,6 +214,7 @@ export const registerContractTools = (
       string,
       | EvidenceBinding
       | ValueBinding
+      | DerivedBinding
       | RetainedSummaryBinding<Readonly<Record<string, unknown>>>
       | undefined
     >
@@ -194,22 +232,30 @@ export const registerContractTools = (
     const handler =
       binding.value !== undefined
         ? createValueToolHandler(server, binding.value, logger)(contract)
-        : binding.run !== undefined
-          ? createEvidenceToolHandler(
+        : binding.derive !== undefined
+          ? createDerivedToolHandler(
               server,
-              binding.run,
+              binding.session,
+              binding.derive,
               logger,
-              recordEvidence,
-              withAdmittedAnalysis,
             )(contract)
-          : createRetainedSummaryToolHandler(
-              server,
-              contract as SummaryContract,
-              binding.summary,
-              logger,
-              retention,
-              withAdmittedAnalysis,
-            );
+          : binding.run !== undefined
+            ? createEvidenceToolHandler(
+                server,
+                binding.run,
+                logger,
+                recordEvidence,
+                withAdmittedAnalysis,
+                binding.viewSource,
+              )(contract)
+            : createRetainedSummaryToolHandler(
+                server,
+                contract as SummaryContract,
+                binding.summary,
+                logger,
+                retention,
+                withAdmittedAnalysis,
+              );
     server.registerTool(contract.name, registration, handler);
   }
   if (unbound.size > 0)

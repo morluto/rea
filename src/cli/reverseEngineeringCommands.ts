@@ -10,7 +10,8 @@ import {
   AnalysisInputError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
-import { evidenceSchema, type Evidence } from "../domain/evidence.js";
+import type { Evidence } from "../domain/evidence.js";
+import { recognizeEvidence } from "../domain/evidenceValidation.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
 import { ok } from "../domain/result.js";
@@ -74,14 +75,15 @@ const cleanupOnlyCompleteEvidence = (
     error.partialObservation === undefined
   )
     return undefined;
-  const parsed = evidenceSchema.safeParse(error.partialObservation);
-  if (!parsed.success) return undefined;
-  const normalized = parsed.data.normalized_result;
+  // Only authenticated Evidence is recovered; otherwise the error stands.
+  const parsed = recognizeEvidence(error.partialObservation);
+  if (!parsed.ok || parsed.value === undefined) return undefined;
+  const normalized = parsed.value.normalized_result;
   return typeof normalized === "object" &&
     normalized !== null &&
     !Array.isArray(normalized) &&
     normalized.completion_status !== "unknown"
-    ? parsed.data
+    ? parsed.value
     : undefined;
 };
 

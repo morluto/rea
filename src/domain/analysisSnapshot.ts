@@ -11,6 +11,7 @@ import {
 } from "./unicodeCodePointOrder.js";
 import { localPathStringSchema } from "./localPath.js";
 import {
+  binaryTargetIdentity,
   sameTargetIdentity,
   type FileTargetIdentity,
 } from "./targetIdentity.js";
@@ -35,7 +36,9 @@ import {
   parseImmutableEvidenceBundle,
 } from "./evidenceBundle.js";
 import {
+  evidenceFileTarget,
   evidenceLocationSchema,
+  evidenceSubjectTarget,
   rebindEvidenceToTargetPath,
   type Evidence,
   type EvidenceLocation,
@@ -372,15 +375,7 @@ const snapshotContentDigest = (
   const metadata = jsonObjectSchema.parse({
     limitations: execution.limitations,
     locations: execution.locations,
-    subject:
-      execution.subject === null
-        ? null
-        : {
-            local_path: execution.subject.path,
-            sha256: execution.subject.sha256,
-            format: execution.subject.format,
-            architecture: execution.subject.architecture,
-          },
+    subject: executionSubjectContent(execution.subject ?? undefined),
     relationship_coverage: execution.relationship_coverage,
   });
   return contentDigest({
@@ -389,6 +384,26 @@ const snapshotContentDigest = (
     raw_result: rawResult,
   });
 };
+
+/** The execution subject facts a snapshot content digest commits to. */
+const executionSubjectContent = (
+  subject:
+    | {
+        readonly path: string;
+        readonly sha256: string;
+        readonly format: string;
+        readonly architecture?: string | null;
+      }
+    | undefined,
+) =>
+  subject === undefined
+    ? null
+    : {
+        local_path: subject.path,
+        sha256: subject.sha256,
+        format: subject.format,
+        architecture: subject.architecture ?? null,
+      };
 
 const evidenceContentDigest = (evidence: Evidence): string => {
   return contentDigest({
@@ -523,7 +538,7 @@ export const snapshotMatchesTarget = (
 ): boolean =>
   sameTargetIdentity(
     snapshotTargetIdentity(snapshot),
-    snapshotTargetIdentity(snapshotTarget(target)),
+    binaryTargetIdentity(target),
   );
 
 /** Compare a snapshot binding with the selected concrete analysis profile. */
@@ -641,7 +656,7 @@ export const snapshotEvidenceForQuery = (
   for (const record of snapshot.evidence_bundle.records) {
     if (
       !(
-        record.subject?.digest.sha256 === target.sha256 &&
+        evidenceFileTarget(record)?.sha256 === target.sha256 &&
         record.operation === operation &&
         committedProvidersEqual(record.provider, provider) &&
         record.analysis_profile !== null &&
@@ -828,7 +843,7 @@ const restoreSnapshot = (
     if (
       evidence.predicate_type !== "rea.analysis" ||
       evidence.authority !== "shipped-artifact" ||
-      evidence.subject?.digest.sha256 !== header.target.sha256 ||
+      evidenceFileTarget(evidence)?.sha256 !== header.target.sha256 ||
       evidence.analysis_profile === null ||
       (evidence.confidence !== "observed" && evidence.confidence !== "derived")
     )
@@ -952,6 +967,21 @@ const hasCanonicalQueryOrder = (
   return true;
 };
 
+/**
+ * Whether Evidence is about the snapshot target's bytes. A subject in the
+ * target's own format is the target, so its whole identity, including the
+ * selection that the query IDs commit to, must agree with the header.
+ */
+const subjectNamesSnapshotTarget = (
+  evidence: Evidence,
+  target: AnalysisSnapshotTarget,
+): boolean => {
+  const file = evidenceFileTarget(evidence);
+  if (file === undefined || file.sha256 !== target.sha256) return false;
+  const expected = snapshotTargetIdentity(target);
+  return file.format !== expected.format || sameTargetIdentity(file, expected);
+};
+
 const isCorrespondingEvidence = (
   evidence: Evidence,
   snapshot: Pick<AnalysisSnapshot, "target" | "binding">,
@@ -959,7 +989,7 @@ const isCorrespondingEvidence = (
   evidence.predicate_type === "rea.analysis" &&
   evidence.confidence === "observed" &&
   evidence.authority === "shipped-artifact" &&
-  evidence.subject?.digest.sha256 === snapshot.target.sha256 &&
+  subjectNamesSnapshotTarget(evidence, snapshot.target) &&
   evidence.analysis_profile !== null &&
   analysisProfilesEqual(
     evidence.analysis_profile,
@@ -1035,7 +1065,7 @@ const isWorkflowEvidence = (
   evidence.predicate_type === "rea.analysis" &&
   evidence.confidence === "derived" &&
   evidence.authority === "shipped-artifact" &&
-  evidence.subject?.digest.sha256 === snapshot.target.sha256 &&
+  subjectNamesSnapshotTarget(evidence, snapshot.target) &&
   evidence.analysis_profile !== null &&
   analysisProfilesEqual(
     evidence.analysis_profile,
@@ -1060,15 +1090,7 @@ const evidenceContentMetadata = (evidence: Evidence) => {
     limitations: evidence.limitations,
     relationship_coverage: evidence.relationship_coverage,
     locations: evidence.locations,
-    subject:
-      evidence.subject === null
-        ? null
-        : {
-            local_path: evidence.subject.local_path,
-            sha256: evidence.subject.digest.sha256,
-            format: evidence.subject.format,
-            architecture: evidence.subject.architecture,
-          },
+    subject: executionSubjectContent(evidenceSubjectTarget(evidence.subject)),
   };
 };
 
