@@ -375,6 +375,77 @@ it.each(cases)(
   },
 );
 
+it("retains both source identities at a shared indexed boundary", async () => {
+  const origin = "https://example.test";
+  const url = `${origin}/app.js.map`;
+  const text = JSON.stringify({
+    version: 3,
+    sections: [
+      {
+        offset: { line: 0, column: 0 },
+        map: {
+          version: 3,
+          sources: ["same.ts"],
+          sourcesContent: ["export const first=1;"],
+          names: ["firstName"],
+          mappings: "AAAAA,KAAAA",
+        },
+      },
+      {
+        offset: { line: 0, column: 5 },
+        map: {
+          version: 3,
+          sources: ["same.ts"],
+          sourcesContent: ["export const second=2;"],
+          names: ["secondName"],
+          mappings: "AAAAA",
+        },
+      },
+    ],
+  });
+  const result = await fetchWebSourceMapsOk(
+    [{ scriptKey: "scr_" + "1".repeat(64), declaredUrl: url, fetchUrl: url }],
+    analyzeWebBundleInputSchema.parse({
+      cdp_endpoint: "http://127.0.0.1:9222",
+      allowed_origins: [origin],
+      target_id: "page-1",
+      fetch_source_maps: true,
+    }),
+    undefined,
+    { fetch: () => Promise.resolve(new Response(text, { status: 200 })) },
+  );
+  const item = result.items[0];
+  expect(item?.status).toBe("included");
+  expect(item?.mappings).toMatchObject([
+    {
+      generated_line: 1,
+      generated_column: 0,
+      declaration_index: 0,
+      name: "firstName",
+    },
+    {
+      generated_line: 1,
+      generated_column: 5,
+      declaration_index: 0,
+      name: "firstName",
+    },
+    {
+      generated_line: 1,
+      generated_column: 5,
+      declaration_index: 1,
+      name: "secondName",
+    },
+  ]);
+  expect(item?.mappings).toHaveLength(3);
+  expect(item?.artifact).toMatchObject({
+    sha256: createHash("sha256").update(text).digest("hex"),
+    bytes: Buffer.byteLength(text),
+  });
+  expect(
+    item?.original_sources.map(({ declaration_index }) => declaration_index),
+  ).toEqual([0, 1]);
+});
+
 it("rejects a source mapping that crosses an indexed section boundary", async () => {
   const origin = "https://example.test";
   const url = `${origin}/app.js.map`;

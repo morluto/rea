@@ -460,7 +460,7 @@ cliTest(
 );
 
 cliTest(
-  "traces empty equal-offset sections while rejecting decreasing offsets and represented overlaps",
+  "traces equal-offset sections and shared boundary mappings while rejecting decreasing offsets and overlaps",
   { tags: ["long-running"] },
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-empty-indexed-map-");
@@ -476,11 +476,32 @@ cliTest(
       version: 3,
       sections: [{ offset: { line: 0, column: 0 }, map: empty }],
     };
+    const boundaryLeaf = {
+      version: 3,
+      sources: ["earlier.ts"],
+      sourcesContent: ["earlier"],
+      names: ["earlierName"],
+      mappings: "AAAAA,CAAAA",
+    };
     for (const [index, sample] of [
       { first: empty, firstColumn: 0, nextColumn: 0, succeeds: true },
       { first: nestedEmpty, firstColumn: 0, nextColumn: 0, succeeds: true },
       { first: empty, firstColumn: 0, nextColumn: 1, succeeds: true },
-      { first: leaf, firstColumn: 0, nextColumn: 0, succeeds: false },
+      {
+        first: leaf,
+        firstColumn: 0,
+        nextColumn: 0,
+        succeeds: true,
+        shared: true,
+      },
+      {
+        first: boundaryLeaf,
+        firstColumn: 0,
+        nextColumn: 1,
+        succeeds: true,
+        shared: true,
+      },
+      { first: boundaryLeaf, firstColumn: 0, nextColumn: 0, succeeds: false },
       { first: empty, firstColumn: 1, nextColumn: 0, succeeds: false },
     ].entries()) {
       const path = join(root, `empty-${index}.map`);
@@ -527,6 +548,19 @@ cliTest(
               },
             },
             matches: [
+              ...("shared" in sample
+                ? [
+                    {
+                      state: "mapped",
+                      section_path: [0],
+                      flattened_source_index: 0,
+                      content: {
+                        text: sample.first === leaf ? "original" : "earlier",
+                      },
+                      name: sample.first === leaf ? null : "earlierName",
+                    },
+                  ]
+                : []),
               {
                 state: "mapped",
                 section_path: [1],
@@ -535,6 +569,10 @@ cliTest(
             ],
           },
         });
+        const matches = (
+          result.json as { normalized_result: { matches: unknown[] } }
+        ).normalized_result.matches;
+        expect(matches).toHaveLength("shared" in sample ? 2 : 1);
         expect(response.isError, JSON.stringify(response)).not.toBe(true);
         expect(response.structuredContent).toEqual(result.json);
       } else {
