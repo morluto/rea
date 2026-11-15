@@ -1,4 +1,5 @@
 import { readProcessInspectionFile } from "./ProcessInspectionFile.js";
+import { systemPsCommand } from "./systemPs.js";
 import {
   assertProcessOwnershipInspectionActive,
   ProcessOwnershipIdentityBatchFailure,
@@ -1224,7 +1225,7 @@ export const createSystemProcessOwnershipHost = (
     let stdout: string;
     try {
       ({ stdout } = await execFileOutput(
-        "ps",
+        systemPsCommand(platform),
         ["-axo", "pid=,ppid=,pgid=,uid=,stat=,command="],
         {
           env: hostEnvironment,
@@ -1635,7 +1636,7 @@ export const createSystemProcessOwnershipHost = (
         return environment;
       }
       const { stdout } = await execFileOutput(
-        "ps",
+        systemPsCommand(platform),
         ["eww", "-p", String(pid)],
         {
           env: hostEnvironment,
