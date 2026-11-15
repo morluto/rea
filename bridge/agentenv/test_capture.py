@@ -156,7 +156,11 @@ class LongRunTest(unittest.TestCase):
         pid = int(pid_path.read_text())
         # The test holds no live handle to this descendant, so a pid alone does
         # not prove it is still ours; report a survivor rather than signal it.
-        if not self.wait_until(lambda: not self.process_exists(pid), seconds=2):
+        # An unreaped zombie has exited too (a container init may not reap it).
+        exited = lambda: not self.process_exists(pid) or (  # noqa: E731
+            PROC_AVAILABLE and self.leader_has_exited(pid)
+        )
+        if not self.wait_until(exited, seconds=2):
             self.fail(f"descendant pid {pid} did not exit after its release file appeared")
 
     @staticmethod
