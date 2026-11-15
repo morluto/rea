@@ -538,13 +538,21 @@ it.each([
 );
 
 // Without a subframe in the initial tree, discovery starts with full
-// coverage, so only the unverified navigation can mark it limited.
+// coverage, so only the unverified navigation can mark it limited. A frame
+// first seen through a same-document navigation has no known loader, so a
+// later commit cannot prove its tools belong to the new document.
 it.each([
-  ["no loader", {}, true],
-  ["a known loader", { loaderId: "loader-A" }, false],
+  ["no loader", {}, true, "committed"],
+  ["a known loader", { loaderId: "loader-A" }, false, "committed"],
+  [
+    "a known loader after a first same-document event",
+    { loaderId: "loader-B" },
+    true,
+    "within_document",
+  ],
 ] as const)(
   "limits coverage for a live subframe's tools after a navigation with %s",
-  async (_label, loader, limited) => {
+  async (_label, loader, limited, first) => {
     const browser = await startFakeCdpBrowser({
       webMcpTools: true,
       eventsBeforeReply: ["WebMCP.enable"],
@@ -576,7 +584,13 @@ it.each([
           },
         });
         return [
-          child({ loaderId: "loader-A" }),
+          first === "committed"
+            ? child({ loaderId: "loader-A" })
+            : {
+                method: "Page.navigatedWithinDocument",
+                ...scope,
+                params: { frameId: "child", url: origin + "/child" },
+              },
           {
             method: "WebMCP.toolsAdded",
             ...scope,

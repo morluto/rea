@@ -202,13 +202,20 @@ export class CdpTargetDocument {
     }
     const url = observedFrameUrl(frame.url);
     if (identity.selection === "other" && !identity.isRootReplacement) {
-      // A same-document navigation keeps the subframe's document.
       if (facts.kind === "navigated")
         this.#observeFrame({
           frameId: identity.frameId,
           loaderId: facts.loaderIssue === null ? facts.loaderId : undefined,
           url,
         });
+      // A same-document navigation keeps a known subframe's document. A
+      // subframe first seen this way starts with an unknown loader, so a
+      // later commit cannot prove what it registered meanwhile is stale.
+      else if (!this.#frames.has(identity.frameId))
+        this.#frames.set(
+          identity.frameId,
+          new CdpDocumentTracker({ frameId: identity.frameId, url }),
+        );
       return;
     }
     if (facts.loaderIssue !== null) {
