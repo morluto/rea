@@ -28,30 +28,14 @@ type UnmatchedComparison = Extract<
   { readonly status: "unmatched" }
 >;
 
-type LimitationReason = NonNullable<MethodItem["limitation_reasons"]>[number];
-
-/** One limitation's text and the structured reason it states. */
-interface Limitation {
-  readonly reason: LimitationReason;
-  readonly text: string;
-}
+type Limitation = MethodItem["limitations"][number];
 
 const limitation = (
-  code: LimitationReason["code"],
-  text: string,
+  code: Limitation["code"],
+  message: string,
   side?: "left" | "right",
-): Limitation => ({
-  reason: side === undefined ? { code } : { code, side },
-  text,
-});
-
-/** Project limitations as parallel text and reason lists. */
-const limitationFields = (
-  list: readonly Limitation[],
-): Pick<MethodItem, "limitations" | "limitation_reasons"> => ({
-  limitations: list.map(({ text }) => text),
-  limitation_reasons: list.map(({ reason }) => reason),
-});
+): Limitation =>
+  side === undefined ? { code, message } : { code, side, message };
 
 type OneSided<Item> =
   | { readonly left: Item; readonly right?: never }
@@ -511,7 +495,7 @@ const methodOnlyItem = (
       match: unmatchedComparison(),
       dimensions: ["availability"],
       evidence_links: [context.leftEvidenceId, context.rightEvidenceId],
-      ...limitationFields(limitations),
+      limitations,
     };
   }
 
@@ -534,7 +518,7 @@ const methodOnlyItem = (
     match: unmatchedComparison(),
     dimensions: ["availability"],
     evidence_links: [context.leftEvidenceId, context.rightEvidenceId],
-    ...limitationFields(limitations),
+    limitations,
   };
 };
 
@@ -563,7 +547,7 @@ const absenceLimitations = (
     ? [
         limitation(
           "declaring-type-name-not-resolved",
-          "declaring-type-name-not-resolved: Declared type identity could not be resolved; a bare display name cannot establish a counterpart or absence.",
+          "Declared type identity could not be resolved; a bare display name cannot establish a counterpart or absence.",
         ),
       ]
     : []),
@@ -571,7 +555,7 @@ const absenceLimitations = (
     ? [
         limitation(
           "counterpart-declaring-type-name-not-resolved",
-          `counterpart-declaring-type-name-not-resolved: The ${opposite.opposite} ${opposite.inventory} inventory has an unpaired same-named member with unresolved enclosing-name identity, so absence was not established.`,
+          `The ${opposite.opposite} ${opposite.inventory} inventory has an unpaired same-named member with unresolved enclosing-name identity, so absence was not established.`,
           opposite.opposite,
         ),
       ]
@@ -581,7 +565,7 @@ const absenceLimitations = (
     : [
         limitation(
           "unknown-within-incomplete-metadata",
-          `unknown-within-incomplete-metadata: The ${opposite.opposite} ${opposite.inventory} inventory is incomplete, so absence was not observed.`,
+          `The ${opposite.opposite} ${opposite.inventory} inventory is incomplete, so absence was not observed.`,
           opposite.opposite,
         ),
       ]),
@@ -590,7 +574,7 @@ const absenceLimitations = (
     : [
         limitation(
           "signature-not-decoded",
-          `signature-not-decoded: The member's ${member.signature.parse_status} signature was compared only by exact declared type, name, and signature bytes, so a changed or renamed counterpart could not be sought.`,
+          `The member's ${member.signature.parse_status} signature was compared only by exact declared type, name, and signature bytes, so a changed or renamed counterpart could not be sought.`,
         ),
       ]),
   ...(member.signature.parse_status === "decoded" &&
@@ -598,7 +582,7 @@ const absenceLimitations = (
     ? [
         limitation(
           "counterpart-signature-not-decoded",
-          `counterpart-signature-not-decoded: The ${opposite.opposite} ${opposite.inventory} inventory has an unpaired member with the same declared type and name whose signature was not decoded, so it may be this member with a changed signature.`,
+          `The ${opposite.opposite} ${opposite.inventory} inventory has an unpaired member with the same declared type and name whose signature was not decoded, so it may be this member with a changed signature.`,
           opposite.opposite,
         ),
       ]
@@ -607,7 +591,7 @@ const absenceLimitations = (
     ? [
         limitation(
           "signature-not-resolved",
-          `signature-not-resolved: The member's signature names a type REA could not name, so it was compared by raw bytes, which name types by build-local metadata row; a counterpart whose referenced type moved rows could not be found.`,
+          `The member's signature names a type REA could not name, so it was compared by raw bytes, which name types by build-local metadata row; a counterpart whose referenced type moved rows could not be found.`,
         ),
       ]
     : []),
@@ -617,7 +601,7 @@ const absenceLimitations = (
     ? [
         limitation(
           "counterpart-signature-not-resolved",
-          `counterpart-signature-not-resolved: The ${opposite.opposite} ${opposite.inventory} inventory has an unpaired member with the same declared type and name whose signature names a type REA could not name, so it may be this member.`,
+          `The ${opposite.opposite} ${opposite.inventory} inventory has an unpaired member with the same declared type and name whose signature names a type REA could not name, so it may be this member.`,
           opposite.opposite,
         ),
       ]
@@ -641,14 +625,14 @@ const pairedSignatureLimitations = (
     return [
       limitation(
         "signature-malformed",
-        "signature-malformed: At least one signature is malformed; equal signature bytes do not establish an unchanged member signature.",
+        "At least one signature is malformed; equal signature bytes do not establish an unchanged member signature.",
       ),
     ];
   return unresolved(left) || unresolved(right)
     ? [
         limitation(
           "signature-not-resolved",
-          "signature-not-resolved: At least one signature names a type REA could not resolve; equal build-local row bytes do not establish equivalent signature types.",
+          "At least one signature names a type REA could not resolve; equal build-local row bytes do not establish equivalent signature types.",
         ),
       ]
     : [];
@@ -739,7 +723,7 @@ const fieldOnlyItem = (
       right: null,
       match: unmatchedComparison(),
       evidence_links: [context.leftEvidenceId, context.rightEvidenceId],
-      ...limitationFields(limitations),
+      limitations,
     };
   }
 
@@ -761,7 +745,7 @@ const fieldOnlyItem = (
     right: fieldIdentity(member.right),
     match: unmatchedComparison(),
     evidence_links: [context.leftEvidenceId, context.rightEvidenceId],
-    ...limitationFields(limitations),
+    limitations,
   };
 };
 
@@ -777,7 +761,7 @@ const ambiguityLimitation = (
   identityUnavailable
     ? limitation(
         "declaring-type-name-not-resolved",
-        "declaring-type-name-not-resolved: Declared type identity remains unresolved; REA did not guess a counterpart from display names, signatures or CIL.",
+        "Declared type identity remains unresolved; REA did not guess a counterpart from display names, signatures or CIL.",
       )
     : basis === "exact-signature"
       ? limitation(
@@ -898,7 +882,7 @@ export const buildMethodItems = (
       },
       dimensions,
       evidence_links: [context.leftEvidenceId, context.rightEvidenceId],
-      ...limitationFields([
+      limitations: [
         ...signatureLimitations,
         ...(locals.unknown
           ? [
@@ -948,7 +932,7 @@ export const buildMethodItems = (
               ),
             ]
           : []),
-      ]),
+      ],
     });
   }
   for (const ambiguous of matches.ambiguous) {
@@ -973,14 +957,14 @@ export const buildMethodItems = (
       },
       dimensions: ["availability"],
       evidence_links: [context.leftEvidenceId, context.rightEvidenceId],
-      ...limitationFields([
+      limitations: [
         ambiguityLimitation(
           "methods",
           ambiguous.basis,
           ambiguous.left.some((item) => item.identityUnavailable) ||
             ambiguous.right.some((item) => item.identityUnavailable),
         ),
-      ]),
+      ],
     });
   }
   const undecoded = undecodedOneSidedNames(matches);
@@ -1044,7 +1028,7 @@ export const buildFieldItems = (
         candidate_right_tokens: [],
       },
       evidence_links: [context.leftEvidenceId, context.rightEvidenceId],
-      ...limitationFields(signatureLimitations),
+      limitations: signatureLimitations,
     });
   }
   for (const ambiguous of matches.ambiguous)
@@ -1067,14 +1051,14 @@ export const buildFieldItems = (
         candidate_right_tokens: ambiguous.right.map(({ item }) => item.token),
       },
       evidence_links: [context.leftEvidenceId, context.rightEvidenceId],
-      ...limitationFields([
+      limitations: [
         ambiguityLimitation(
           "fields",
           ambiguous.basis,
           ambiguous.left.some((item) => item.identityUnavailable) ||
             ambiguous.right.some((item) => item.identityUnavailable),
         ),
-      ]),
+      ],
     });
   const undecoded = undecodedOneSidedNames(matches);
   for (const item of matches.leftOnly)

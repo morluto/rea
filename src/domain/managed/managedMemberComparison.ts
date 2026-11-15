@@ -153,25 +153,21 @@ export const MANAGED_MEMBER_COMPARISON_LIMITATION_CODES = [
   "catch-type-unavailable",
 ] as const;
 
-const comparisonItemContextShape = {
-  evidence_links: z.array(evidenceIdSchema).length(2),
-  limitations: z.array(nonEmptyTextSchema),
-  limitation_reasons: z
-    .array(
-      z.strictObject({
-        code: z.enum(MANAGED_MEMBER_COMPARISON_LIMITATION_CODES),
-        side: z
-          .enum(["left", "right"])
-          .optional()
-          .describe(
-            "The inventory this reason concerns when it is the other side's, such as an incomplete or ambiguous counterpart inventory.",
-          ),
-      }),
-    )
+/** One reason a comparison item's facts stayed limited, with its explanation. */
+const comparisonItemLimitationSchema = z.strictObject({
+  code: z.enum(MANAGED_MEMBER_COMPARISON_LIMITATION_CODES),
+  side: z
+    .enum(["left", "right"])
     .optional()
     .describe(
-      "One structured reason per limitations entry, in the same order. Absent in Evidence recorded before this field: the reasons are unknown, not none.",
+      "The inventory this limitation concerns when it is the other side's, such as an incomplete or ambiguous counterpart inventory.",
     ),
+  message: nonEmptyTextSchema,
+});
+
+const comparisonItemContextShape = {
+  evidence_links: z.array(evidenceIdSchema).length(2),
+  limitations: z.array(comparisonItemLimitationSchema),
 };
 
 const methodComparisonItemSchema = comparisonItemSchema(

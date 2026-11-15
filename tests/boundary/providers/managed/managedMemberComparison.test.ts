@@ -446,15 +446,13 @@ describe("managed nested type names", () => {
           })),
       }),
     });
-    const warned = comparison.methods.map(
-      ({ left, right, limitation_reasons: reasons }) => [
-        left?.token ?? null,
-        right?.token ?? null,
-        reasons?.some(
-          ({ code }) => code === "counterpart-signature-not-decoded",
-        ),
-      ],
-    );
+    const warned = comparison.methods.map(({ left, right, limitations }) => [
+      left?.token ?? null,
+      right?.token ?? null,
+      limitations.some(
+        ({ code }) => code === "counterpart-signature-not-decoded",
+      ),
+    ]);
 
     expect(warned).toContainEqual(["0x06000001", null, false]);
     expect(warned).toContainEqual(["0x06000002", null, true]);
@@ -602,7 +600,9 @@ describe("managed call-target comparison", () => {
     expect(report.methods[0]).toMatchObject({
       status: "changed",
       dimensions: expect.arrayContaining(["call-target", "availability"]),
-      limitation_reasons: [{ code: "call-target-unavailable" }],
+      limitations: [
+        expect.objectContaining({ code: "call-target-unavailable" }),
+      ],
     });
 
     const unavailableEdges = observe(
