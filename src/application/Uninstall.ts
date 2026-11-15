@@ -57,6 +57,7 @@ import {
   preserveCurrentRecoveryBackup,
   type RecoveryBackupPreservationOptions,
 } from "./SetupRecoveryBackup.js";
+import { preservePrivateRecoveryBackup } from "./ClientRegistrationBackup.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import {
   InvalidUtf8FileError,
@@ -71,7 +72,8 @@ import {
   clientSharedRegistrationPaths,
   manualRegistrationRemediation,
   registrationWriteBlocker,
-  supportedClients,
+  resolveSupportedClients,
+  type ClientSystemPaths,
   type SetupClient,
 } from "./SupportedClients.js";
 import {
@@ -501,6 +503,7 @@ export const systemUninstallHost = (
   selectedFileSystem: UninstallFileSystem | undefined = undefined,
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
   platform: NodeJS.Platform = process.platform,
+  systemPaths: ClientSystemPaths = {},
 ): UninstallHost => {
   const home =
     selectedHome ?? homeDirectoryFromEnvironment(environment, platform);
@@ -510,6 +513,109 @@ export const systemUninstallHost = (
   const configurationOperations = new ArtifactResourceScope();
   const fileSystem = selectedFileSystem ?? systemFileSystem(resources);
   const preflightOwnedClients = new WeakSet<UninstallClient>();
+  // REA's registration that only layers REA does not edit define: uninstall
+  // cannot remove it, so it is reported instead of being treated as absent.
+  const retainedLowerOnly = new WeakMap<UninstallClient, UninstallItem>();
+  // One report per client although uninstall visits each of its files.
+  const inlineReported = new Set<string>();
+  /**
+   * The effective REA entry across the read-only lower layers, and the user
+   * layer above them when given.
+   */
+  const lowerLayerRegistration = async (
+    client: UninstallClient,
+    ownershipEstablished: boolean,
+    upper?: ClientConfigurationSource,
+  ): Promise<
+    | { readonly kind: "item"; readonly item: UninstallItem }
+    | { readonly kind: "entry"; readonly entry: unknown }
+  > => {
+    const lowerLayers: ClientConfigurationSource[] = [];
+    for (const configPath of client.configPaths ?? []) {
+      if (configPath === client.configPath) continue;
+      const layer = await readClientConfiguration(
+        { ...client, configPath },
+        fileSystem,
+        resources,
+        ownershipEstablished,
+        "read_only",
+      );
+      if (layer.kind === "item") {
+        if (layer.item.status !== "skipped") return layer;
+        continue;
+      }
+      lowerLayers.push({ ...layer.parsed, sourcePath: configPath });
+    }
+    if (upper !== undefined) lowerLayers.push(upper);
+    return {
+      kind: "entry",
+      entry:
+        effectiveClientConfiguration(lowerLayers)?.servers[
+          PRODUCT_IDENTITY.mcpServerKey
+        ],
+    };
+  };
+  /**
+   * Record REA's enabled registration that a read-only layer keeps in effect
+   * when uninstall removes nothing from the user layer: absent there, or a
+   * partial user entry inheriting REA's launcher. An unreadable layer leaves
+   * that unknown, so it stops uninstall before any removal.
+   */
+  const retainLowerOnlyRegistration = async (
+    client: UninstallClient,
+    ownershipEstablished: boolean,
+    upper?: ClientConfigurationSource,
+  ): Promise<UninstallItem | undefined> => {
+    // An inline layer (KILO_CONFIG_CONTENT) that alone sets REA's enabled
+    // entry keeps it in effect whatever uninstall removes from the files, as
+    // doctor reports; any file entry is refused by the layered check instead.
+    const inline = client.inlineConfiguration;
+    const inlineEntry =
+      inline === undefined
+        ? undefined
+        : effectiveClientConfiguration([
+            { ...inline.parsed, inlineOrigin: inline.origin },
+          ])?.servers[PRODUCT_IDENTITY.mcpServerKey];
+    if (
+      inline !== undefined &&
+      enabledRegistration(inlineEntry) &&
+      clientRegistrationOwnership(inlineEntry, client) === "owned"
+    ) {
+      if (!inlineReported.has(client.name)) {
+        inlineReported.add(client.name);
+        const name = client.displayName ?? client.name;
+        retainedLowerOnly.set(
+          client,
+          item(
+            client.name,
+            "failed",
+            `${inline.origin} sets REA's enabled ${name} registration, and REA does not edit it, so the registration stays in effect after uninstall. Remove the ${PRODUCT_IDENTITY.mcpServerKey} entry from ${inline.origin}, then restart ${name}.`,
+          ),
+        );
+      }
+      return undefined;
+    }
+    if (client.readOnlyLowerLayers !== true) return undefined;
+    const lower = await lowerLayerRegistration(
+      client,
+      ownershipEstablished,
+      upper,
+    );
+    if (lower.kind === "item") return lower.item;
+    if (
+      enabledRegistration(lower.entry) &&
+      clientRegistrationOwnership(lower.entry, client) === "owned"
+    )
+      retainedLowerOnly.set(
+        client,
+        item(
+          client.name,
+          "failed",
+          "REA's enabled registration is defined in a read-only configuration layer REA does not change, so it stays in effect after uninstall. Remove it with that layer's owner.",
+        ),
+      );
+    return undefined;
+  };
   // Set with the client list: the package view that redirects this
   // process's AppData writes, if any.
   let redirection: MsixPackageView | undefined;
@@ -520,7 +626,12 @@ export const systemUninstallHost = (
     redirectedWriteBlocker(redirection, [path], "uninstall");
   return {
     clients: async () => {
-      const supported = supportedClients(home, platform, environment);
+      const supported = await resolveSupportedClients(
+        home,
+        platform,
+        environment,
+        systemPaths,
+      );
       redirection = appDataRedirection(supported);
       // Shared configuration alone cannot establish product applicability.
       // Definitive absence leaves the shared paths unverified while owned
@@ -593,8 +704,12 @@ export const systemUninstallHost = (
           resources,
           ownershipEstablished,
         );
-        if (read.kind === "item")
-          return read.item.status === "failed" ? read.item : undefined;
+        if (read.kind === "item") {
+          if (read.item.status === "failed") return read.item;
+          return read.item.status === "skipped"
+            ? retainLowerOnlyRegistration(client, ownershipEstablished)
+            : undefined;
+        }
         const removal = clientRegistrationRemoval(
           read.parsed,
           read.original,
@@ -602,6 +717,14 @@ export const systemUninstallHost = (
         );
         if (!removal.ok)
           return item(client.name, "failed", removal.error.detail);
+        if (!removal.value.removeNative) {
+          const unknown = await retainLowerOnlyRegistration(
+            client,
+            ownershipEstablished,
+            { ...read.parsed, sourcePath: client.configPath },
+          );
+          if (unknown !== undefined) return unknown;
+        }
         // ZCode switches the entire server table to its shared fallback once
         // the last native server disappears. Inspect the table it would load,
         // not just the REA row: unrelated servers may otherwise become active.
@@ -646,8 +769,10 @@ export const systemUninstallHost = (
               );
           }
         }
+        // OpenCode and Kilo merge every layer, so removing REA's entries can
+        // expose or change an entry another layer keeps.
         if (
-          client.format === "opencode" &&
+          (client.format === "opencode" || client.format === "kilo") &&
           (removal.value.removeNative || removal.value.legacyPath !== undefined)
         ) {
           const originalLayers: ClientConfigurationSource[] = [];
@@ -687,6 +812,13 @@ export const systemUninstallHost = (
               sourcePath: configPath,
             });
           }
+          // REA never edits the inline layer, so it survives removal.
+          const inline = client.inlineConfiguration;
+          if (inline !== undefined) {
+            const layer = { ...inline.parsed, inlineOrigin: inline.origin };
+            originalLayers.push(layer);
+            remainingLayers.push(layer);
+          }
           const selected =
             effectiveClientConfiguration(originalLayers)?.servers[
               PRODUCT_IDENTITY.mcpServerKey
@@ -703,7 +835,25 @@ export const systemUninstallHost = (
             return item(
               client.name,
               "failed",
-              "Removing REA's registration would activate or change an unowned OpenCode registration in another configuration layer, including a possible V1 fallback; no change was made. Remove or replace that registration manually, then rerun uninstall.",
+              client.format === "opencode"
+                ? "Removing REA's registration would activate or change an unowned OpenCode registration in another configuration layer, including a possible V1 fallback; no change was made. Remove or replace that registration manually, then rerun uninstall."
+                : `Removing REA's registration would activate or change a registration that another Kilo configuration layer${inline === undefined ? "" : ` or ${inline.origin}, which REA does not edit,`} keeps in effect; no change was made. Remove or replace that registration manually, then rerun uninstall.`,
+            );
+        }
+        // REA writes only the user layer. If the read-only lower layers alone
+        // still define an entry that is not disabled, removal would leave it
+        // (or expose it) in effect, so nothing changes.
+        if (client.readOnlyLowerLayers === true && removal.value.removeNative) {
+          const lower = await lowerLayerRegistration(
+            client,
+            ownershipEstablished,
+          );
+          if (lower.kind === "item") return lower.item;
+          if (enabledRegistration(lower.entry))
+            return item(
+              client.name,
+              "failed",
+              "A read-only configuration layer REA does not change also defines an enabled REA registration, which would stay in effect after removal; no change was made. Remove that registration with its owner, then rerun uninstall.",
             );
         }
         if (
@@ -720,14 +870,16 @@ export const systemUninstallHost = (
           : item(client.name, "failed", blocker);
       }),
     removeClient: (client) =>
-      configurationOperations.run(() =>
-        removeClient(
-          client,
-          fileSystem,
-          resources,
-          () => clientWriteBlocker(client),
-          preflightOwnedClients.has(client),
-        ),
+      configurationOperations.run(
+        async () =>
+          retainedLowerOnly.get(client) ??
+          removeClient(
+            client,
+            fileSystem,
+            resources,
+            () => clientWriteBlocker(client),
+            preflightOwnedClients.has(client),
+          ),
       ),
     inspectSkill: async () => {
       const selection = skillDestinationSelection(
@@ -785,7 +937,9 @@ export const systemUninstallHost = (
  */
 const uninstallConfigPaths = (client: SetupClient): readonly string[] => [
   ...new Set([
-    ...(client.configPaths ?? [client.configPath]),
+    ...(client.readOnlyLowerLayers === true
+      ? [client.configPath]
+      : (client.configPaths ?? [client.configPath])),
     ...(client.msixPackage === undefined
       ? []
       : [
@@ -794,6 +948,16 @@ const uninstallConfigPaths = (client: SetupClient): readonly string[] => [
         ]),
   ]),
 ];
+
+/** Whether a client loads this entry: present and not disabled. */
+const enabledRegistration = (entry: unknown): boolean =>
+  entry !== undefined &&
+  !(
+    typeof entry === "object" &&
+    entry !== null &&
+    "enabled" in entry &&
+    entry.enabled === false
+  );
 
 /** Whether removal would change this configuration. */
 const registrationPresent = (parsed: ClientConfigurationDocument): boolean => {
@@ -867,6 +1031,11 @@ const readClientConfiguration = async (
   fileSystem: UninstallFileSystem,
   resources: ArtifactResourceScope,
   ownershipEstablished: boolean,
+  /**
+   * `read_only` is a lower layer REA never changes: it is read where the
+   * client reads it, without the write target's ownership check.
+   */
+  access: "write_target" | "read_only" = "write_target",
 ): Promise<ClientConfigurationRead> => {
   const applicabilityUnverified =
     client.applicability === "unverified" && !ownershipEstablished;
@@ -892,7 +1061,10 @@ const readClientConfiguration = async (
           "This client has no documented local MCP configuration boundary.",
       ),
     );
-  const resolved = await resolveUninstallConfigPath(client, fileSystem);
+  const resolved =
+    access === "read_only"
+      ? client.configPath
+      : await resolveUninstallConfigPath(client, fileSystem);
   if (typeof resolved !== "string")
     return resolved.status === "failed"
       ? configurationFailure(resolved.detail)
@@ -1008,12 +1180,21 @@ const backupClientConfiguration = async (
       `Configuration could not be backed up, so no change was made. ${detail}`,
     );
   try {
-    const preserved = await preserveCurrentRecoveryBackup(
-      `${client.configPath}.rea.backup`,
-      transactionPath,
-      original,
-      options,
-    );
+    const preserved =
+      client.privateProfile === undefined
+        ? await preserveCurrentRecoveryBackup(
+            `${client.configPath}.rea.backup`,
+            transactionPath,
+            original,
+            options,
+          )
+        : // A private profile's backup stays owner-only (0600).
+          await preservePrivateRecoveryBackup(
+            `${client.configPath}.rea.backup`,
+            transactionPath,
+            original,
+            options.resources,
+          );
     if (preserved.ok) return preserved.value;
     if (preserved.error.kind === "occupied")
       return failed(

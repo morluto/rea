@@ -307,7 +307,7 @@ it("summarizes selected members and pages every original collection after the fi
 });
 
 it("keeps collections that member Evidence never examined unknown", async () => {
-  const directory = await createTestTempDirectory("rea-member-historical-");
+  const directory = await createTestTempDirectory("rea-member-unexamined-");
   const path = join(directory, "fixture.dll");
   await writeFile(path, buildManagedPeFixture());
   const { client } = await createHarness();
@@ -325,8 +325,13 @@ it("keeps collections that member Evidence never examined unknown", async () => 
     user_strings: null,
     selection: null,
     signature_resolution: null,
+    fields: [],
+    methods: [],
+    member_refs: [],
+    call_edges: [],
+    field_accesses: [],
   };
-  const historical = createEvidence(undefined, parent.provider, {
+  const unexamined = createEvidence(undefined, parent.provider, {
     operation: parent.operation,
     parameters: parent.parameters,
     result: recorded,
@@ -334,7 +339,7 @@ it("keeps collections that member Evidence never examined unknown", async () => 
     authority: parent.authority,
   });
   const summary = await inspectAnalysisView({
-    source: { kind: "inline", evidence: historical },
+    source: { kind: "inline", evidence: unexamined },
     view: { kind: "summary" },
   });
   if (!summary.ok) throw summary.error;
@@ -350,13 +355,13 @@ it("keeps collections that member Evidence never examined unknown", async () => 
   for (const collection of ["exported_types", "user_strings"] as const)
     expect(
       await inspectAnalysisView({
-        source: { kind: "inline", evidence: historical },
+        source: { kind: "inline", evidence: unexamined },
         view: { kind: "managed-members", collection, offset: 0, limit: 1 },
       }),
     ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
   expect(
     await inspectAnalysisView({
-      source: { kind: "inline", evidence: historical },
+      source: { kind: "inline", evidence: unexamined },
       view: { kind: "managed", collection: "attributes", offset: 0, limit: 1 },
     }),
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });

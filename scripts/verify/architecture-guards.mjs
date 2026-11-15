@@ -364,6 +364,22 @@ checkCounted(
   ["src/gdb/GdbMiRecord.ts"],
 );
 
+// CDP event payloads are parsed once at the connection by the registered
+// schema in src/browser/protocol/CdpEvents.ts; a subscriber reads
+// `event.registered`, not the raw payload, so malformed members cannot be
+// reinterpreted, dropped or defaulted differently by each subscriber.
+checkCounted(
+  "raw CDP event payload read (register the event in src/browser/protocol/CdpEvents and read event.registered)",
+  "cdp-raw-event-params",
+  files.filter(
+    (file) =>
+      file.path.startsWith("src/browser/") ||
+      file.path.startsWith("src/inspector/"),
+  ),
+  /\bevent\.params\b/gu,
+  ["src/browser/CdpConnection.ts"],
+);
+
 // Byte-format parsers read untrusted input. Bounds, truncation and failure
 // kind belong to BinaryReader (src/native/metadata/BinaryContainer.ts) and
 // the ParseFailure algebra (src/domain/parseFailure.ts), not to each parser.

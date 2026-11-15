@@ -1610,30 +1610,21 @@ it.each([
     expect(side.result.fields[0]?.signature.parse_status).toBe("malformed");
     expect(side.result.coverage.state).toBe("partial");
 
-    for (const signature_resolution of [
-      side.result.signature_resolution,
-      null,
-    ]) {
-      const observation = {
-        ...side,
-        result: { ...side.result, signature_resolution },
-      };
-      const comparison = compareManagedMembers(observation, observation);
-      expect(comparison.coverage.status).toBe("partial");
-      expect(comparison.summary).toMatchObject({
-        unchanged: 0,
-        changed: 0,
-        added: 0,
-        removed: 0,
-        unknown: 2,
+    const comparison = compareManagedMembers(side, side);
+    expect(comparison.coverage.status).toBe("partial");
+    expect(comparison.summary).toMatchObject({
+      unchanged: 0,
+      changed: 0,
+      added: 0,
+      removed: 0,
+      unknown: 2,
+    });
+    for (const item of [...comparison.methods, ...comparison.fields])
+      expect(item).toMatchObject({
+        status: "unknown",
+        match: { status: "matched", confidence: "exact" },
+        limitations: [expect.stringMatching(/^signature-malformed:/)],
       });
-      for (const item of [...comparison.methods, ...comparison.fields])
-        expect(item).toMatchObject({
-          status: "unknown",
-          match: { status: "matched", confidence: "exact" },
-          limitations: [expect.stringMatching(/^signature-malformed:/)],
-        });
-    }
   },
 );
 
@@ -3035,51 +3026,17 @@ describe("managed member comparison of resolved signatures", () => {
     ).toEqual([]);
   });
 
-  it("compares raw signatures against Evidence without resolution attestation", () => {
-    // Both signatures name Program, TypeDef row 1, in the same build.
-    const build = () =>
-      buildManagedPeFixture({
-        fieldSignature: Buffer.from([0x06, 0x12, leftTypes.program]),
-        methodSignature: Buffer.from([
-          0x00,
-          0x01,
-          0x01,
-          0x12,
-          leftTypes.program,
-        ]),
-      });
-    const left = inspect(build(), "/tmp/left-recorded.dll");
-    const right = inspect(build(), "/tmp/right-current.dll");
-    const withoutResolution = <Member extends { signature: object }>(
-      members: readonly Member[],
-    ) =>
-      members.map((member) => ({
-        ...member,
-        signature: { ...member.signature, resolved_sha256: null },
-      }));
-    const recorded = managedMemberInspectionSchema.parse({
-      ...left.result,
-      signature_resolution: null,
-      methods: withoutResolution(left.result.methods),
-      fields: withoutResolution(left.result.fields),
-      member_refs: withoutResolution(left.result.member_refs),
-    });
-    expect(recorded.methods[0]?.signature.resolved_sha256).toBeNull();
-
-    const result = compareManagedMembers(
-      { evidenceId: left.evidenceId, result: recorded },
-      { evidenceId: right.evidenceId, result: right.result },
+  it("refuses members beside a null signature resolution", () => {
+    const side = inspect(
+      buildManagedPeFixture(),
+      "/tmp/unattested-resolution.dll",
     );
-
-    expect(result.methods).toEqual([
-      expect.objectContaining({ status: "unchanged" }),
-    ]);
-    expect(result.fields).toEqual([
-      expect.objectContaining({ status: "unchanged" }),
-    ]);
-    expect(result.limitations).toContainEqual(
-      expect.stringMatching(/signature type.name resolution.*raw bytes/iu),
-    );
+    expect(side.result.methods.length).toBeGreaterThan(0);
+    expect(
+      managedMemberInspectionSchema
+        .safeParse({ ...side.result, signature_resolution: null })
+        .error?.issues.map(({ path }) => path),
+    ).toEqual(expect.arrayContaining([["methods"], ["fields"]]));
   });
 });
 
@@ -3238,13 +3195,6 @@ describe("managed member comparison of unresolved signatures", () => {
     expect(
       [...result.methods, ...result.fields].map(({ status }) => status),
     ).toEqual(["unknown", "unknown", "unknown", "unknown"]);
-    expect(result.limitations).not.toEqual(
-      expect.arrayContaining([
-        expect.stringContaining(
-          "does not attest signature type-name resolution",
-        ),
-      ]),
-    );
   });
 
   it("keeps an unmatched unresolved method unknown in a resolved comparison", () => {
@@ -3295,21 +3245,6 @@ describe("managed member comparison of unresolved signatures", () => {
         ]),
       );
     }
-  });
-});
-
-describe("managed member comparison limitations for resolved signatures", () => {
-  it("does not report missing resolved digests for observations without signatures", () => {
-    const base = inspect(buildManagedPeFixture(), "/tmp/no-members.dll");
-    const empty = {
-      ...base,
-      result: { ...base.result, methods: [], fields: [] },
-    };
-    const result = compareManagedMembers(empty, empty);
-
-    expect(result.limitations).not.toContainEqual(
-      expect.stringMatching(/does not attest signature type.name resolution/iu),
-    );
   });
 });
 
