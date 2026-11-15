@@ -30,6 +30,7 @@ export const ERLANG_BEAM_TOOL_CONTRACTS = [
   {
     name: "inspect_erlang_beam",
     availability: "standalone",
+    cli: true,
     ...toolContractMetadata("inspect_erlang_beam"),
     kind: "artifact-provider",
     requiresActiveTarget: true,

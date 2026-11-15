@@ -11,6 +11,7 @@ export const RELEASE_EXPOSURE_TOOL_CONTRACTS = [
   {
     name: "audit_release_exposure",
     availability: "standalone",
+    cli: true,
     ...toolContractMetadata("audit_release_exposure"),
     kind: "artifact-provider",
     description:

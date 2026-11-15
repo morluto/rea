@@ -14,6 +14,7 @@ export const RUST_TOOL_CONTRACTS = [
   {
     name: "inspect_rust_binary",
     availability: "standalone",
+    cli: true,
     ...toolContractMetadata("inspect_rust_binary"),
     kind: "artifact-provider",
     requiresActiveTarget: true,

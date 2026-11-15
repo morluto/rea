@@ -7,14 +7,14 @@
 //    by hand (`+=`, `-=`, `++`, `--`) and compared with `<` or `>`: that is a
 //    limit check, whatever the field is called (`#bytes`, `#visits`).
 //
-// Write cursors (`#arenaWriteOffset`) and observation tallies are not
-// allowances; outside a `…Budget` class they are not counted unless named as
-// one.
+// 3. Anywhere else, a field adjusted by hand and compared with `<` or `>`
+//    (or `<=`/`>=`) against a value named as a limit (`…max…`, `…limit…`,
+//    `…allowance…`, `…budget…`, `…capacity…`): a hand-written allowance.
+//
+// Write cursors (`#arenaWriteOffset`) and observation tallies that are never
+// compared with a limit are not allowances and are not counted.
 const namedAllowance =
   /this\.#?\w*(?:[Rr]emaining|[Rr]etained|[Uu]sed)\w*\s*[-+]=/gu;
-
-const budgetClass =
-  /^(?:export\s+)?class\s+\w*Budget\b[^\n]*\{\n([\s\S]*?)^\}/gmu;
 
 const adjusted = /(?:\+\+|--)this\.(#?\w+)|this\.(#?\w+)\s*(?:[-+]=|\+\+|--)/gu;
 
@@ -30,16 +30,53 @@ const comparedIn = (body, name) => {
   ).test(body);
 };
 
+// Limit names in any case: `maxBytes`, `MAX_BYTES`, `FACT_BUDGET`, `capacity`.
+const limitName =
+  "\\b\\w*(?:[Mm][Aa][Xx]|[Ll][Ii][Mm][Ii][Tt]|[Aa][Ll][Ll][Oo][Ww][Aa][Nn][Cc][Ee]|[Bb][Uu][Dd][Gg][Ee][Tt]|[Cc][Aa][Pp][Aa][Cc][Ii][Tt][Yy])\\w*";
+
+// `<`, `>`, `<=` or `>=` between the field and a limit-named value, one line.
+const comparedWithLimit = (scope, name) => {
+  const field = `this\\.${escape(name)}\\b`;
+  const comparison = "(?<![=<>])[<>]=?(?![<>])";
+  return new RegExp(
+    `${field}[^;\\n]*${comparison}[^;\\n]*${limitName}|${limitName}[^;\\n]*${comparison}[^;\\n]*${field}`,
+    "u",
+  ).test(scope);
+};
+
+const isNamedAllowance = (text) =>
+  new RegExp(`^${namedAllowance.source}$`, "u").test(text);
+
+// Top-level classes (declaration and closing brace at column 0). A field
+// belongs to its class, so each class is its own scope; code outside any
+// class is one more scope.
+const topLevelClass =
+  /^(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+(\w+)[^\n]*\{\n([\s\S]*?)^\}/gmu;
+
+/** Distinct limit-compared fields adjusted by hand within one scope. */
+const limitedFields = (scope) => {
+  const limited = new Set();
+  for (const match of scope.matchAll(adjusted)) {
+    const name = match[1] ?? match[2];
+    if (isNamedAllowance(match[0]) || limited.has(name)) continue;
+    if (comparedWithLimit(scope, name)) limited.add(name);
+  }
+  return limited.size;
+};
+
 /** @param {string} content comment-stripped source */
 export const budgetArithmeticCount = (content) => {
   let count = content.match(namedAllowance)?.length ?? 0;
-  for (const [, body] of content.matchAll(budgetClass)) {
-    for (const match of body.matchAll(adjusted)) {
-      // Already counted as a named allowance.
-      if (new RegExp(`^${namedAllowance.source}$`, "u").test(match[0]))
-        continue;
-      if (comparedIn(body, match[1] ?? match[2])) count += 1;
-    }
+  let outside = content;
+  for (const [whole, name, body] of content.matchAll(topLevelClass)) {
+    outside = outside.replace(whole, "");
+    if (name.endsWith("Budget")) {
+      for (const match of body.matchAll(adjusted)) {
+        // Already counted as a named allowance.
+        if (isNamedAllowance(match[0])) continue;
+        if (comparedIn(body, match[1] ?? match[2])) count += 1;
+      }
+    } else count += limitedFields(body);
   }
-  return count;
+  return count + limitedFields(outside);
 };

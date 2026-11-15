@@ -13,6 +13,7 @@ import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 export const INSPECT_APK_SIGNATURE_CONTRACT = {
   name: "inspect_apk_signature",
   availability: "standalone",
+  cli: true,
   ...toolContractMetadata("inspect_apk_signature"),
   kind: "artifact-provider",
   requiresActiveTarget: true,

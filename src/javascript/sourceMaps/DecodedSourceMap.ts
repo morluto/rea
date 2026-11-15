@@ -4,7 +4,7 @@ import {
   SOURCE_MAP_FORMAT,
   sourceMapSectionOverlap,
   type SourceMapLeaf,
-} from "./SourceMapFormat.js";
+} from "../../domain/sourceMapFormat.js";
 
 /** Determine whether a leaf-local mapping falls before its enclosing boundary. */
 const isBeforeSourceMapLeafStop = (

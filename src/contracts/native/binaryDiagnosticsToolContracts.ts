@@ -93,6 +93,7 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
   {
     name: "inspect_devicetree",
     availability: "standalone",
+    cli: true,
     ...toolContractMetadata("inspect_devicetree"),
     kind: "native-provider",
     description:
@@ -114,6 +115,7 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
   {
     name: "inspect_pe_load_config",
     availability: "standalone",
+    cli: true,
     ...toolContractMetadata("inspect_pe_load_config"),
     kind: "native-provider",
     description:
@@ -130,6 +132,7 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
   {
     name: "inspect_binary_hardening",
     availability: "standalone",
+    cli: true,
     ...toolContractMetadata("inspect_binary_hardening"),
     kind: "native-provider",
     description:
@@ -147,6 +150,7 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
   {
     name: "inspect_native_initializers",
     availability: "standalone",
+    cli: true,
     ...toolContractMetadata("inspect_native_initializers"),
     kind: "native-provider",
     description:
@@ -164,6 +168,7 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
   {
     name: "inspect_elf_notes",
     availability: "standalone",
+    cli: true,
     ...toolContractMetadata("inspect_elf_notes"),
     kind: "native-provider",
     description:
@@ -180,6 +185,7 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
   {
     name: "inspect_elf_unwind_ranges",
     availability: "standalone",
+    cli: true,
     ...toolContractMetadata("inspect_elf_unwind_ranges"),
     kind: "native-provider",
     description:
@@ -196,6 +202,7 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
   {
     name: "inspect_apple_ips",
     availability: "standalone",
+    cli: true,
     ...toolContractMetadata("inspect_apple_ips"),
     kind: "native-provider",
     description:
@@ -219,6 +226,7 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
   {
     name: "inspect_kernel_module",
     availability: "standalone",
+    cli: true,
     ...toolContractMetadata("inspect_kernel_module"),
     kind: "native-provider",
     description:
@@ -236,6 +244,7 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
   {
     name: "inspect_kernel_build_config",
     availability: "standalone",
+    cli: true,
     ...toolContractMetadata("inspect_kernel_build_config"),
     kind: "native-provider",
     description:
@@ -259,6 +268,7 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
   {
     name: "inspect_byte_entropy",
     availability: "standalone",
+    cli: true,
     ...toolContractMetadata("inspect_byte_entropy"),
     kind: "native-provider",
     description:
@@ -285,6 +295,7 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
   {
     name: "inspect_pe_certificates",
     availability: "standalone",
+    cli: true,
     ...toolContractMetadata("inspect_pe_certificates"),
     kind: "native-provider",
     description:
@@ -301,6 +312,7 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
   {
     name: "inspect_pe_imports",
     availability: "standalone",
+    cli: true,
     ...toolContractMetadata("inspect_pe_imports"),
     kind: "native-provider",
     description:
@@ -317,6 +329,7 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
   {
     name: "inspect_windows_shortcut",
     availability: "standalone",
+    cli: true,
     ...toolContractMetadata("inspect_windows_shortcut"),
     kind: "native-provider",
     description:
@@ -333,6 +346,7 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
   {
     name: "inspect_pe_resources",
     availability: "standalone",
+    cli: true,
     ...toolContractMetadata("inspect_pe_resources"),
     kind: "native-provider",
     description:
@@ -349,6 +363,7 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
   {
     name: "inspect_native_exports",
     availability: "standalone",
+    cli: true,
     ...toolContractMetadata("inspect_native_exports"),
     kind: "native-provider",
     description:
@@ -368,6 +383,7 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
   {
     name: "inspect_binary_layout",
     availability: { host: "binaryLayout" },
+    cli: true,
     ...toolContractMetadata("inspect_binary_layout"),
     kind: "native-provider",
     description:
@@ -391,6 +407,7 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
   {
     name: "inspect_recorded_crash",
     availability: { host: "recordedCrash" },
+    cli: true,
     ...toolContractMetadata("inspect_recorded_crash"),
     kind: "native-provider",
     description:

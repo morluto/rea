@@ -13,6 +13,7 @@ export const IL2CPP_TOOL_CONTRACTS = [
   {
     name: "inspect_il2cpp_metadata",
     availability: "standalone",
+    cli: true,
     ...toolContractMetadata("inspect_il2cpp_metadata"),
     kind: "artifact-provider",
     requiresActiveTarget: true,

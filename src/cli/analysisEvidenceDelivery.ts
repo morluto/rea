@@ -18,7 +18,6 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
-import { parseCliJsonOption } from "./cliJsonOption.js";
 import {
   createEvidenceBundle,
   createImmutableEvidenceBundle,
@@ -35,8 +34,6 @@ import {
   isObject,
   projectCliAnalysisResult,
 } from "./projectCliAnalysisResult.js";
-import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
-import type { ZodSafeParseResult } from "zod";
 import { bindCliEvidenceCallerPath } from "./cliEvidenceCallerPath.js";
 import type { AnalysisResultWithSources } from "../application/investigation/recordEvidenceSources.js";
 
@@ -52,9 +49,9 @@ export const analysisEvidenceDeliveryOptions = {
     ),
 };
 
-interface CliEvidenceDelivery {
+/** How one CLI invocation publishes its Evidence. */
+interface CliEvidencePublication {
   readonly view?: AnalysisViewRequest;
-  readonly providerId: string;
   readonly operation: string;
   readonly signal: AbortSignal;
   readonly detail: "complete" | "summary";
@@ -69,10 +66,33 @@ interface CliEvidenceDelivery {
   readonly sensitiveValues?: readonly string[];
 }
 
+/** A one-shot run whose provider cleanup the delivery finishes before publishing. */
+interface CliEvidenceDelivery extends CliEvidencePublication {
+  readonly providerId: string;
+}
+
+/**
+ * Refuse a delivery that cannot keep complete source Evidence available: a
+ * summary needs a bundle, and a selected page is cut from a retained summary.
+ */
 export const cliEvidenceDeliveryInputError = (
-  input: Pick<CliEvidenceDelivery, "detail" | "evidenceOutput" | "operation">,
-): AnalysisInputError | undefined =>
-  input.detail === "summary" && input.evidenceOutput === undefined
+  input: Pick<
+    CliEvidencePublication,
+    "detail" | "evidenceOutput" | "operation"
+  > & {
+    readonly view?: AnalysisViewRequest | undefined;
+  },
+): AnalysisInputError | undefined => {
+  if (input.view !== undefined && input.detail !== "summary")
+    return new AnalysisInputError(input.operation, undefined, [
+      {
+        path: ["view"],
+        reason: "invalid_value",
+        message:
+          "A selected page requires --detail summary and --evidence_output.",
+      },
+    ]);
+  return input.detail === "summary" && input.evidenceOutput === undefined
     ? new AnalysisInputError(input.operation, undefined, [
         {
           path: ["evidence_output"],
@@ -82,47 +102,6 @@ export const cliEvidenceDeliveryInputError = (
         },
       ])
     : undefined;
-
-/** Parse delivery JSON once and enforce its owning schema before opening a target. */
-export const parseCliAnalysisEvidenceDelivery = <
-  Delivery extends {
-    readonly detail: "complete" | "summary";
-    readonly view?: AnalysisViewRequest | undefined;
-  },
->(
-  operation: string,
-  options: {
-    readonly detail: "complete" | "summary";
-    readonly evidence_output?: string | undefined;
-    readonly view?: string | undefined;
-  },
-  schema: {
-    readonly safeParse: (input: unknown) => ZodSafeParseResult<Delivery>;
-  },
-): Result<
-  Delivery & { readonly evidenceOutput: string | undefined },
-  AnalysisError
-> => {
-  const decoded = parseCliJsonOption(
-    operation,
-    "view",
-    options.view,
-    "view must be valid JSON",
-  );
-  if (!decoded.ok) return decoded;
-  const view = decoded.value;
-  const raw = {
-    detail: options.detail,
-    ...(view === undefined ? {} : { view }),
-  };
-  const parsed = schema.safeParse(raw);
-  if (!parsed.success)
-    return err(
-      analysisInputErrorFromIssues(operation, parsed.error.issues, raw),
-    );
-  const value = { ...parsed.data, evidenceOutput: options.evidence_output };
-  const invalid = cliEvidenceDeliveryInputError({ ...value, operation });
-  return invalid === undefined ? ok(value) : err(invalid);
 };
 
 /** One-shot delivery owns report publication; analysis keeps its own cleanup owner. */
@@ -170,7 +149,6 @@ export const deliverCliAnalysisEvidence = async (
     { redactFailure },
   );
   return publishCliAnalysisEvidence(complete, {
-    providerId,
     operation,
     signal,
     detail,
@@ -191,7 +169,7 @@ export const deliverCliAnalysisEvidence = async (
  */
 const withUndeliveredSourceClosure = (
   failure: JsonValue,
-  input: CliEvidenceDelivery,
+  input: CliEvidencePublication,
 ): JsonValue => {
   if (input.evidenceOutput === undefined || !isObject(failure)) return failure;
   const { details } = failure;
@@ -211,7 +189,7 @@ const withUndeliveredSourceClosure = (
 /** Publish already finalized CLI analysis without opening a second provider/session. */
 export const publishCliAnalysisEvidence = async (
   result: AnalysisResultWithSources<Evidence, JsonValue>,
-  input: CliEvidenceDelivery,
+  input: CliEvidencePublication,
 ): Promise<JsonValue> => {
   const { detail, evidenceOutput } = input;
   // A composed result can retain source records separately from its parent.
@@ -270,7 +248,7 @@ export const publishCliAnalysisEvidence = async (
 const publishDeliveredEvidence = async (
   complete: Evidence,
   evidenceOutput: string,
-  input: CliEvidenceDelivery,
+  input: CliEvidencePublication,
 ): Promise<
   Result<
     { readonly delivered: Evidence; readonly receipt: JsonValue },
@@ -337,7 +315,7 @@ const publishDeliveredEvidence = async (
 const bundleReceipt = <Bytes extends JsonValue>(
   path: string | undefined,
   bytes: Bytes,
-  input: Pick<CliEvidenceDelivery, "sensitiveValues">,
+  input: Pick<CliEvidencePublication, "sensitiveValues">,
 ): { readonly path?: string; readonly bytes: Bytes } => ({
   ...(path === undefined ||
   input.sensitiveValues?.some(
@@ -361,7 +339,7 @@ const bundleReceipt = <Bytes extends JsonValue>(
 const publishFailurePartialEvidence = async (
   failure: JsonValue,
   evidenceOutput: string,
-  input: CliEvidenceDelivery,
+  input: CliEvidencePublication,
 ): Promise<JsonValue> => {
   if (
     input.signal.aborted ||
@@ -421,7 +399,7 @@ const refusedPartialPublication = (
   failure: JsonObject,
   details: JsonObject,
   refused: { readonly error: AnalysisError; readonly delivered?: Evidence },
-  input: CliEvidenceDelivery,
+  input: CliEvidencePublication,
 ): JsonValue => {
   const diagnostics = isObject(details.diagnostics) ? details.diagnostics : {};
   const refusal = projectAnalysisError(
@@ -473,7 +451,7 @@ const refusedPartialPublication = (
 /** Either committed receipt form, as {path, bytes}. */
 const committedReceipt = (
   refusalDetails: JsonObject,
-  input: CliEvidenceDelivery,
+  input: CliEvidencePublication,
 ): JsonValue | undefined => {
   if (refusalDetails.published === true && refusalDetails.bytes !== undefined)
     return bundleReceipt(
