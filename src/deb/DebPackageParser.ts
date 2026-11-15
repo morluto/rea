@@ -167,6 +167,12 @@ export const undecodableTarNamesLimitation = (count: number): string =>
  * archives use at most a few; a longer run is refused before it costs work.
  */
 const MAX_TAR_EXTENSION_HEADERS = 8;
+/**
+ * Fixed allowance for relationship alternatives across a control file. Each
+ * `|` or `,` can become a report object, so a two-byte separator grows into
+ * far more report; real packages list at most a few hundred.
+ */
+const MAX_RELATIONSHIP_ALTERNATIVES = 65_536;
 
 /** The PAX record keys this reader applies to the following entry. */
 const PAX_KEYS = [
@@ -356,6 +362,8 @@ type PaxFields = {
   readonly fields: Readonly<Record<string, string>>;
   /** Keys whose value is not UTF-8 and carries U+FFFD replacements. */
   readonly undecodable: ReadonlySet<string>;
+  /** Offset of the first record that could not be read, if any. */
+  readonly incompleteAt: number | undefined;
 };
 
 const parsePax = (bytes: Uint8Array): PaxFields => {
@@ -363,17 +371,24 @@ const parsePax = (bytes: Uint8Array): PaxFields => {
   // so walk the bytes and decode each record on its own.
   const fields: Record<string, string> = {};
   const undecodable = new Set<string>();
+  // A record that cannot be read leaves the extended header's facts unknown.
+  const incomplete = (at: number): PaxFields => ({
+    fields,
+    undecodable,
+    incompleteAt: at,
+  });
   let index = 0;
   while (index < bytes.length) {
     const space = bytes.indexOf(0x20, index);
-    if (space === -1) break;
+    if (space === -1) return incomplete(index);
     const lengthText = Buffer.from(bytes.subarray(index, space)).toString(
       "latin1",
     );
-    if (!/^[0-9]+$/u.test(lengthText)) break;
+    if (!/^[0-9]+$/u.test(lengthText)) return incomplete(index);
     const length = Number(lengthText);
-    if (!Number.isSafeInteger(length) || length <= space - index + 1) break;
-    if (index + length > bytes.length) break;
+    if (!Number.isSafeInteger(length) || length <= space - index + 1)
+      return incomplete(index);
+    if (index + length > bytes.length) return incomplete(index);
     const record = tarText(bytes.subarray(space + 1, index + length));
     const eq = record.text.indexOf("=");
     if (eq !== -1) {
@@ -384,7 +399,7 @@ const parsePax = (bytes: Uint8Array): PaxFields => {
     }
     index += length;
   }
-  return { fields, undecodable };
+  return { fields, undecodable, incompleteAt: undefined };
 };
 
 const parseTar = (
@@ -405,6 +420,10 @@ const parseTar = (
   const pax: Partial<Record<(typeof PAX_KEYS)[number], string>> = {};
   let extensionHeaders = 0;
   const paxUndecodable = new Set<string>();
+  // Global (g) records apply to every later entry; per-file (x) records only
+  // to the next one, and override global values for it.
+  const globalPax: Partial<Record<(typeof PAX_KEYS)[number], string>> = {};
+  const globalUndecodable = new Set<string>();
   while (offset + TAR_BLOCK <= bytes.length) {
     const header = bytes.subarray(offset, offset + TAR_BLOCK);
     if (isZeroBlock(header)) return { entries, files, undecodableNames };
@@ -498,12 +517,25 @@ const parseTar = (
     }
     if (typeFlag === 120 || typeFlag === 103) {
       const parsed = parsePax(payload);
+      if (parsed.incompleteAt !== undefined)
+        return {
+          entries,
+          files,
+          undecodableNames,
+          error: new DebPackageFormatFailure(
+            "malformed",
+            `PAX extended header in ${memberName} at offset ${String(offset)} has an unreadable record at byte ${String(parsed.incompleteAt)}.`,
+          ),
+        };
+      const target = typeFlag === 103 ? globalPax : pax;
+      const targetUndecodable =
+        typeFlag === 103 ? globalUndecodable : paxUndecodable;
       for (const key of PAX_KEYS) {
         const value = parsed.fields[key];
         if (value === undefined) continue;
-        pax[key] = value;
-        if (parsed.undecodable.has(key)) paxUndecodable.add(key);
-        else paxUndecodable.delete(key);
+        target[key] = value;
+        if (parsed.undecodable.has(key)) targetUndecodable.add(key);
+        else targetUndecodable.delete(key);
       }
       offset = dataStart + pad512(size);
       continue;
@@ -521,19 +553,24 @@ const parseTar = (
           `tar entry count in ${memberName} exceeds the selected budget of ${String(maxEntries)}.`,
         ),
       };
-    const path = logicalTarPath(pax.path ?? longname ?? headerName);
+    const fileFields = { ...globalPax, ...pax };
+    const undecodableField = (key: string) =>
+      pax[key as keyof typeof pax] !== undefined
+        ? paxUndecodable.has(key)
+        : globalUndecodable.has(key);
+    const path = logicalTarPath(fileFields.path ?? longname ?? headerName);
     const headerLink = tarText(header.subarray(157, 257));
-    const linkText = pax.linkpath ?? longlink ?? headerLink.text;
+    const linkText = fileFields.linkpath ?? longlink ?? headerLink.text;
     const link = linkText.length === 0 ? null : linkText;
     const nameUndecodable =
-      pax.path !== undefined
-        ? paxUndecodable.has("path")
+      fileFields.path !== undefined
+        ? undecodableField("path")
         : longname === null
           ? rawName.undecodable || prefix.undecodable
           : longnameUndecodable;
     const linkUndecodable =
-      pax.linkpath !== undefined
-        ? paxUndecodable.has("linkpath")
+      fileFields.linkpath !== undefined
+        ? undecodableField("linkpath")
         : longlink === null
           ? headerLink.undecodable
           : longlinkUndecodable;
@@ -541,13 +578,15 @@ const parseTar = (
     const mode = parseOctal(ascii(header.subarray(100, 108)));
     // PAX owner records override the fixed fields, which can hold shortened
     // or fallback values.
-    const uid = paxId(pax.uid) ?? parseTarNumber(header.subarray(108, 116));
-    const gid = paxId(pax.gid) ?? parseTarNumber(header.subarray(116, 124));
+    const uid =
+      paxId(fileFields.uid) ?? parseTarNumber(header.subarray(108, 116));
+    const gid =
+      paxId(fileFields.gid) ?? parseTarNumber(header.subarray(116, 124));
     const user = nonempty(
-      pax.uname ?? trimField(ascii(header.subarray(265, 297))),
+      fileFields.uname ?? trimField(ascii(header.subarray(265, 297))),
     );
     const group = nonempty(
-      pax.gname ?? trimField(ascii(header.subarray(297, 329))),
+      fileFields.gname ?? trimField(ascii(header.subarray(297, 329))),
     );
     const type = tarType(typeFlag);
     entries.push({
@@ -751,6 +790,25 @@ const parseControl = (tar: TarParse, issues: DebPackageIssue[]): DebControl => {
   const description = textField("description");
   const description_summary =
     description === null ? null : (description.split("\n")[0]?.trim() ?? "");
+  // Count alternatives before building any, so the separators alone cannot
+  // expand the report past its allowance.
+  let alternatives = 0;
+  for (const field of DEB_RELATIONSHIP_FIELDS) {
+    const raw = fields?.get(
+      DEB_CONTROL_RELATIONSHIP_NAMES[field].toLowerCase(),
+    );
+    if (raw === undefined) continue;
+    alternatives += 1;
+    for (let index = 0; index < raw.length; index += 1) {
+      const code = raw.charCodeAt(index);
+      if (code === 0x2c || code === 0x7c) alternatives += 1;
+    }
+    if (alternatives > MAX_RELATIONSHIP_ALTERNATIVES)
+      throw new DebPackageFormatFailure(
+        "malformed",
+        `control relationship fields declare more than ${String(MAX_RELATIONSHIP_ALTERNATIVES)} alternatives.`,
+      );
+  }
   const relationships = Object.fromEntries(
     DEB_RELATIONSHIP_FIELDS.map((field) => {
       const raw = fields?.get(

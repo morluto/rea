@@ -801,3 +801,54 @@ it("compares md5sums lines whose names GNU md5sum escaped", () => {
     "1 md5sums line(s) are not md5sum digest lines and were not compared.",
   );
 });
+
+it("applies a global PAX record to every later entry", () => {
+  const report = parse(
+    debPackageFixture({
+      dataEntries: [
+        {
+          name: "./pax_global_header",
+          type: "g",
+          content: paxRecord("uid", "3000000"),
+        },
+        { name: "./usr/share/doc/one", content: "1" },
+        { name: "./usr/share/doc/two", content: "2" },
+      ],
+    }),
+  );
+  const uids = report.data_entries
+    .filter((entry) => entry.path.startsWith("usr/share/doc/"))
+    .map((entry) => entry.uid);
+  expect(uids).toEqual([3_000_000, 3_000_000]);
+});
+
+it("refuses a PAX extended header whose record cannot be read", () => {
+  const error = expectFailure(
+    () =>
+      parse(
+        debPackageFixture({
+          dataEntries: [
+            { name: "./PaxHeaders/file", type: "x", content: "99 path=abc\n" },
+            { name: "./usr/share/doc/file", content: "x" },
+          ],
+        }),
+      ),
+    DebPackageFormatFailure,
+  );
+  expect(error.kind).toBe("malformed");
+  expect(error.message).toMatch(/unreadable record/u);
+});
+
+it("refuses relationship fields past the alternatives allowance before building them", () => {
+  const error = expectFailure(
+    () =>
+      parse(
+        debPackageFixture({
+          controlText: `${DEFAULT_CONTROL_TEXT}Depends: ${Array(65_537).fill("a").join("|")}\n`,
+        }),
+      ),
+    DebPackageFormatFailure,
+  );
+  expect(error.kind).toBe("malformed");
+  expect(error.message).toMatch(/more than 65536 alternatives/u);
+});
