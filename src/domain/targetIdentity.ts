@@ -163,6 +163,30 @@ export interface ProcessTargetIdentity {
   readonly executable_sha256: string | null;
 }
 
+/** Debugger sessions REA mints and can bind to a launch target. */
+export const debuggerSessionKindSchema = z.enum(["rizin", "gdb"]);
+
+/**
+ * A debugger session REA minted, bound to the target it launched: the launch
+ * file hashed when the session started, or an explicit unknown when REA did
+ * not observe it (an attach, or a launch file that could not be hashed).
+ * Later debugger commands do not rebind the session.
+ */
+export const sessionTargetIdentitySchema = z.strictObject({
+  kind: z.literal("session"),
+  session_kind: debuggerSessionKindSchema,
+  id: z.string().min(1),
+  target: z.union([fileTargetIdentitySchema, unknownTargetIdentitySchema]),
+});
+
+/** A debugger session REA minted, bound to the target it launched. */
+export interface SessionTargetIdentity {
+  readonly kind: "session";
+  readonly session_kind: z.infer<typeof debuggerSessionKindSchema>;
+  readonly id: string;
+  readonly target: FileTargetIdentity | UnknownTargetIdentity;
+}
+
 /**
  * What an observation or cache entry is about. Tagged by `kind`; see
  * docs/adr/evidence/target-identity.md for the kinds later slices add.
@@ -171,12 +195,17 @@ export type TargetIdentity =
   | FileTargetIdentity
   | UrlTargetIdentity
   | ProcessTargetIdentity
+  | SessionTargetIdentity
   | UnknownTargetIdentity;
 
 /** A target identity that names no file, and so has no file display facts. */
 export type NonFileTargetIdentity = Exclude<TargetIdentity, FileTargetIdentity>;
 
-/** The identities a subject without file display facts can commit to. */
+/**
+ * The identities without a nested target that a subject without file display
+ * facts can commit to. A session identity nests its target, so a persistence
+ * format validates it with its own file declaration.
+ */
 export const nonFileTargetIdentitySchema = z.union([
   unknownTargetIdentitySchema,
   urlTargetIdentitySchema,

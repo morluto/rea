@@ -58,9 +58,11 @@ bundle) does not declare its format today.
      the start time is required: a producer that did not read it names an
      `unknown` (`not-observed`) target rather than claiming an identity it
      does not have.
-   - `session`: the session `kind` (for example `gdb`, `rizin`,
-     `browser-scenario`), the session `id` REA minted, and the `target` the
-     session was opened on (a `TargetIdentity`, possibly `unknown`).
+   - `session`: the `session_kind` (`rizin`, `gdb`; later kinds such as
+     `browser-scenario` are added when a producer needs them), the session
+     `id` REA minted, and the `target` the session was opened on: the launch
+     file hashed when the session started, or `unknown`. Later debugger
+     commands do not rebind the session.
    - `unknown`: a `reason` from a closed set:
      `derived-from-linked-evidence` (comparisons and workflows; their sources
      are already committed through `evidence_links`), `not-observed`,
