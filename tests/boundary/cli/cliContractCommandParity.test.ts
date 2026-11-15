@@ -378,7 +378,6 @@ const HAND_REGISTERED_CONTRACT_COMMANDS = [
   "guided-workflows",
   "inspect-android-jni-bindings",
   "inspect-api-contract",
-  "inspect-ntfs-journal",
   "inspect-pcap-capture",
   "inspect-pcap-client",
   "inspect-playwright-trace",

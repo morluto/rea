@@ -125,30 +125,41 @@ export const callerTargetPath = ({
 };
 
 /**
- * The caller's spelling of `path`, and of each other caller-path field keyed
- * by its contract field name.
+ * The caller's spelling of the primary caller-path field (`path` unless the
+ * command names another), and of each other caller-path field keyed by its
+ * contract field name.
  */
 const callerSpellings = (
   context: ContractCommandContext,
+  primary = "path",
 ): {
   readonly path: string;
   readonly others: CallerInputPaths | undefined;
 } => {
-  const { path: _path, ...others } = context.callerInputs;
+  const { [primary]: path, ...others } = context.callerInputs;
+  if (typeof path !== "string")
+    throw new Error(
+      `${context.operation} has no caller path field named ${primary}`,
+    );
   return {
-    path: callerTargetPath(context),
+    path,
     others: Object.keys(others).length === 0 ? undefined : others,
   };
 };
 
 /**
  * Inspect through a closeable service, finish its cleanup, and record the
- * caller's spelling of each selected path in the Evidence.
+ * caller's spelling of each selected path in the Evidence; `primary` names
+ * the contract field recorded as the Evidence's caller input path.
  */
 export const inspectWithService =
-  (service: () => EvidenceInspectionService, providerId: string) =>
+  (
+    service: () => EvidenceInspectionService,
+    providerId: string,
+    primary = "path",
+  ) =>
   (input: unknown, context: ContractCommandContext) => {
-    const spellings = callerSpellings(context);
+    const spellings = callerSpellings(context, primary);
     const owned = service();
     return finishCliEvidenceCommand(
       spellings.path,
