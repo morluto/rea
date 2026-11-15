@@ -1,4 +1,5 @@
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { parseClientConfiguration } from "../../../src/application/ClientConfigurationDocument.js";
@@ -111,3 +112,53 @@ it.each([
     expect(remaining.servers).not.toHaveProperty("rea");
   },
 );
+
+it("registers Amp in settings.jsonc when that is Amp's only settings file", async () => {
+  const home = await createTestTempDirectory("rea-amp-jsonc-");
+  const directory = join(home, ".config", "amp");
+  const jsonc = join(directory, "settings.jsonc");
+  await mkdir(directory, { recursive: true });
+  await writeFile(jsonc, '{\n  // keep\n  "amp.theme": "dark"\n}\n');
+  const resources = new ArtifactResourceScope();
+  const selected = await resolveMcpRegistrationClients(
+    {
+      agents: ["amp"],
+      global: true,
+      cwd: home,
+      home,
+      platform,
+      environment: {},
+    },
+    resources,
+  );
+  if (!selected.ok) throw selected.error;
+  expect(selected.value[0]?.configPath).toBe(jsonc);
+  await registerMcpClients(
+    selected.value,
+    { command: command[0] ?? "", args: command.slice(1) },
+    undefined,
+    resources,
+  );
+  const text = await readFile(jsonc, "utf8");
+  expect(text).toContain("// keep");
+  expect(parseClientConfiguration(text, "amp").servers).toHaveProperty("rea");
+
+  // With both files present, which one Amp reads is unknown.
+  await writeFile(join(directory, "settings.json"), "{}\n");
+  const row = supportedClients(home, platform, {}).find(
+    ({ name }) => name === "amp",
+  );
+  expect(row?.configPathError).toContain("Both");
+  const ambiguous = await resolveMcpRegistrationClients(
+    {
+      agents: ["amp"],
+      global: true,
+      cwd: home,
+      home,
+      platform,
+      environment: {},
+    },
+    resources,
+  );
+  expect(ambiguous.ok).toBe(false);
+});
