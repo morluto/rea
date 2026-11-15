@@ -11,7 +11,10 @@ import {
   type LeaseAcquisition,
   type LeaseFailure,
 } from "../process/OwnedLease.js";
-import { acquireHopperLease, hopperLeaseMessage } from "../process/HopperLease.js";
+import {
+  acquireHopperLease,
+  hopperLeaseMessage,
+} from "../process/HopperLease.js";
 
 /** Keep two REA processes from opening duplicate Hopper documents for one target/profile. */
 export const acquireHopperTargetLease = async (input: {
