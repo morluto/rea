@@ -249,7 +249,9 @@ test("keeps each queued request's independent analysis and publication budgets",
   await assertFirmwareCleanup(fixture.launches);
 });
 
-test("uses the selected phase deadline inside an owned command beyond the former 120-second cap", async () => {
+// A selected analysis_timeout_ms governs the owned command, not the default:
+// time past the default elapses inside the command and analysis completes.
+test("uses a selected analysis deadline above the default inside an owned command", async () => {
   const fixture = await firmwareFixture();
   const advance = phaseClock();
   const wait = ProviderProcessSupervisor.prototype.waitForOutputClose;
@@ -264,18 +266,18 @@ test("uses the selected phase deadline inside an owned command beyond the former
     const closed = await wait.apply(this, args);
     if (!advanced) {
       advanced = true;
-      advance(120_001);
+      advance(DEFAULT_FIRMWARE_ANALYSIS_TIMEOUT_MS + 1);
       return false;
     }
     return closed;
   });
   const result = await fixture.service.execute("inspect_firmware_regions", {
     path: fixture.path,
-    analysis_timeout_ms: 240_000,
+    analysis_timeout_ms: 2 * DEFAULT_FIRMWARE_ANALYSIS_TIMEOUT_MS,
   });
   if (!result.ok) throw result.error;
   expect(result.value.normalized_result).toMatchObject({
-    analysis_timeout_ms: 240_000,
+    analysis_timeout_ms: 2 * DEFAULT_FIRMWARE_ANALYSIS_TIMEOUT_MS,
   });
   expect(fixture.launches).toHaveLength(2);
   expect(

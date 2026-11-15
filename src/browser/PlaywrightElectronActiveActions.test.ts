@@ -406,7 +406,7 @@ it("runs an untargeted deep-link without requiring a BrowserWindow", async () =>
   ]);
 });
 
-it("honors caller-selected Electron waits beyond the former action timeout", async () => {
+it("honors a caller-selected Electron wait duration exactly", async () => {
   const input = electronActiveObservationInputSchema.parse({
     executable_path: "/opt/electron",
     application_path: "/opt/app/main.js",
