@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { constants as bufferConstants } from "node:buffer";
 
 const kind = z.enum(["func", "table", "memory", "global", "tag", "unknown"]);
 const valueType = z.enum([
@@ -87,7 +88,18 @@ export type WasmInterfaceSignature = NonNullable<
 export type WasmInterfaceValueType = z.infer<typeof valueType>;
 
 /** Bound eager typed output and repeated signature expansion independently of WAT bytes. */
-export const WASM_INTERFACE_REPRESENTATION_BYTES = 32 * 1024 * 1024;
+export const DEFAULT_WASM_INTERFACE_REPRESENTATION_BYTES = 32 * 1024 * 1024;
+export const MAX_WASM_INTERFACE_REPRESENTATION_BYTES =
+  bufferConstants.MAX_STRING_LENGTH;
+export const wasmInterfaceByteBudgetSchema = z
+  .number()
+  .int()
+  .min(1)
+  .max(MAX_WASM_INTERFACE_REPRESENTATION_BYTES)
+  .exactOptional()
+  .describe(
+    `Typed interface representation admission in bytes (default ${String(DEFAULT_WASM_INTERFACE_REPRESENTATION_BYTES)}, range 1..${String(MAX_WASM_INTERFACE_REPRESENTATION_BYTES)}; maximum follows the runtime string ceiling). Applies on the next inspection or comparison without restart. Raising this does not restore facts omitted from previously produced partial Evidence; inspect again with a larger producer budget first.`,
+  );
 
 /** Conservative JSON/retention charge; shared arrays still expand at every occurrence. */
 export const wasmInterfaceEntryRepresentationBytes = (

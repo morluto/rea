@@ -38,7 +38,6 @@ import {
 const PT_NOTE = 4;
 const SHT_NOTE = 7;
 const SHT_STRTAB = 3;
-const SHF_COMPRESSED = 0x800n;
 const HEX_DESCRIPTOR_LIMIT = 64;
 
 /** The existing Linux note layouts do not establish another declared ABI. */
@@ -508,6 +507,13 @@ const decodeCoreFile = (
     totalPathBytes += nullIdx - strPos;
     strPos = nullIdx + 1;
   }
+  if (
+    cachedScan === undefined &&
+    descriptor.subarray(strPos).some((byte) => byte !== 0)
+  ) {
+    text.scans.set(scanKey, -1);
+    return null;
+  }
   text.scans.set(scanKey, count);
 
   const pathBytes = totalPathBytes * 3;
@@ -928,7 +934,7 @@ export const parseElfNotes = (
       const fileOffset = Number(section.offset);
       const fileSize = Number(section.size);
       reader.require(fileOffset, fileSize);
-      if ((section.flags & SHF_COMPRESSED) !== 0n)
+      if (section.compressed)
         throw new BinaryFormatFailure(
           "unsupported",
           "Compressed ELF note sections are unsupported; descriptor file offsets require uncompressed note storage.",

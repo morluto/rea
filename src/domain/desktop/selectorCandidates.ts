@@ -10,11 +10,7 @@ import {
   rankAttributes,
 } from "./attributeRank.js";
 import { selectorOf, spellCondition, type Condition } from "./viewSelector.js";
-
-const isRecord = (
-  value: JsonValue | null | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+import { isRecord } from "../isRecord.js";
 
 const own = (record: Record<string, JsonValue>, key: string) =>
   Object.hasOwn(record, key) ? record[key] : undefined;
@@ -94,7 +90,9 @@ const stepTag = (tag: JsonValue | undefined): tag is string =>
 /** The element children of a member, none for any other value. */
 const elementsOf = (member: JsonValue): Record<string, JsonValue>[] => {
   const children = isRecord(member) ? own(member, "children") : undefined;
-  return (Array.isArray(children) ? children : []).filter(isRecord);
+  return (Array.isArray(children) ? children : []).filter(
+    (child): child is Record<string, JsonValue> => isRecord(child),
+  );
 };
 
 /** A child's text a condition could name an element by, and whether the child joins it from elements of its own. */

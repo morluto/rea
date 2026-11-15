@@ -43,7 +43,7 @@ public class ReaJadxMetadataRegression {
     return ((TextContent) response.getContent().get(0)).getText();
   }
 
-  private static void verifyManifestSummary() {
+  private static void verifyManifestSummary() throws Exception {
     for (String prefix : List.of("android", "a")) {
       for (String encoded : List.of("one &amp; beta", "one &amp;amp; beta")) {
         String xml = "<manifest xmlns:" + prefix + "=\"http://schemas.android.com/apk/res/android\""
@@ -51,8 +51,14 @@ public class ReaJadxMetadataRegression {
             + prefix + ":versionName=\"" + encoded + "\" " + prefix + ":versionCode=\"7\""
             + " other:versionName=\"decoy\"><uses-sdk " + prefix + ":minSdkVersion=\"23\" "
             + prefix + ":targetSdkVersion=\"35\"/><uses-permission " + prefix
-            + ":name=\"org.example.MARKER\"/><application><uses-permission " + prefix
-            + ":name=\"nested.decoy\"/></application></manifest>";
+            + ":name=\"org.example.MARKER\"/><uses-permission-sdk-23 " + prefix
+            + ":name=\"org.example.SDK23\"/><uses-permission-sdk-m " + prefix
+            + ":name=\"org.example.SDKM\"/><other:uses-permission-sdk-23 " + prefix
+            + ":name=\"foreign.element\"/><uses-permission-sdk-23 other:name=\"foreign.attribute\"/>"
+            + "<uses-permission-sdk-230 " + prefix + ":name=\"unknown.tag\"/>"
+            + "<application><uses-permission " + prefix + ":name=\"nested.decoy\"/>"
+            + "<uses-permission-sdk-23 " + prefix + ":name=\"nested.sdk23\"/>"
+            + "<uses-permission-sdk-m " + prefix + ":name=\"nested.sdkm\"/></application></manifest>";
         Map<String, Object> summary = ReaJadxBridge.manifestSummary(xml);
         require(summary.get("package").equals("org.example.root"), "Wrong manifest package");
         require(summary.get("version_name").equals(
@@ -60,8 +66,9 @@ public class ReaJadxMetadataRegression {
             "Version name lost XML entity identity: " + summary);
         require(summary.get("version_code").equals("7") && summary.get("min_sdk").equals("23")
             && summary.get("target_sdk").equals("35"), "Namespace prefix changed summary values");
-        require(summary.get("permissions").equals(List.of("org.example.MARKER")),
-            "Permission summary included a nested or unrelated declaration");
+        require(summary.get("permissions").equals(
+            List.of("org.example.MARKER", "org.example.SDK23", "org.example.SDKM")),
+            "Permission summary lost SDK-gated declarations or included unrelated declarations");
       }
     }
     for (String xml : List.of("<other/>", "<manifest><application></manifest>",
@@ -71,7 +78,96 @@ public class ReaJadxMetadataRegression {
       catch (IllegalArgumentException expected) { refused = true; }
       require(refused, "Malformed or externally described XML was accepted");
     }
+    verifyManifestSplitFacts();
   }
+
+  private static void verifyManifestSplitFacts() throws Exception {
+    String android = "xmlns:a=\"http://schemas.android.com/apk/res/android\"";
+    Map<String, Object> split = ReaJadxBridge.manifestSplitFacts("<manifest " + android
+        + " a:requiredSplitTypes=\"base__abi, base__density\"><application a:isSplitRequired=\"true\"/>"
+        + "<other a:isSplitRequired=\"true\"/></manifest>");
+    require(split.get("required_split_types").equals(List.of("base__abi", "base__density"))
+        && split.get("split_required").equals(true), "Required split facts were lost: " + split);
+    Map<String, Object> plain = ReaJadxBridge.manifestSplitFacts("<manifest " + android
+        + " requiredSplitTypes=\"unnamespaced\"><application a:isSplitRequired=\"false\"/></manifest>");
+    require(plain.get("required_split_types").equals(List.of())
+        && plain.get("split_required").equals(false),
+        "Split facts came from an unnamespaced or false declaration: " + plain);    boolean refused = false;
+    try {
+      ReaJadxBridge.manifestSplitFacts("<manifest " + android + " a:requiredSplitTypes=\""
+          + String.join(",", Collections.nCopies(65, "s")) + "\"/>");
+    } catch (IllegalArgumentException expected) { refused = true; }
+    require(refused, "An unbounded requiredSplitTypes list was admitted");
+    // The bridge decodes the binary manifest itself, without a session; framework
+    // attribute names must resolve through their resource IDs when names are stripped.
+    for (boolean named : List.of(true, false)) {
+      Path apk = Files.createTempFile("rea-split-manifest-", ".apk");
+      try {
+        try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(apk))) {
+          zip.putNextEntry(new ZipEntry("AndroidManifest.xml"));
+          zip.write(splitManifest(named));
+          zip.closeEntry();
+        }
+        Object facts = ReaJadxBridge.nativeDeclarations(apk).get("manifest_splits");
+        require(facts.equals(Map.of("status", "observed",
+            "required_split_types", List.of("base__abi", "base__density"), "split_required", true)),
+            "Binary manifest split facts were lost (named=" + named + "): " + facts);
+      } finally {
+        Files.deleteIfExists(apk);
+      }
+    }
+  }
+
+  /** A binary manifest: requiredSplitTypes on <manifest>, isSplitRequired on <application>. */
+  private static byte[] splitManifest(boolean namedAttributes) {
+    List<String> strings = List.of("http://schemas.android.com/apk/res/android", "manifest",
+        namedAttributes ? "requiredSplitTypes" : "", "base__abi,base__density", "application",
+        namedAttributes ? "isSplitRequired" : "x");
+    java.io.ByteArrayOutputStream data = new java.io.ByteArrayOutputStream();
+    java.nio.ByteBuffer offsets = littleEndian(4 * strings.size());
+    for (String value : strings) {
+      offsets.putInt(data.size());
+      byte[] utf16 = value.getBytes(StandardCharsets.UTF_16LE);
+      data.writeBytes(littleEndian(2).putShort((short) value.length()).array());
+      data.writeBytes(utf16);
+      data.writeBytes(new byte[2]);
+    }
+    byte[] pool = chunk(0x0001, 28, littleEndian(20 + offsets.capacity() + data.size())
+        .putInt(strings.size()).putInt(0).putInt(0).putInt(28 + offsets.capacity()).putInt(0)
+        .put(offsets.array()).put(data.toByteArray()).array());
+    java.nio.ByteBuffer ids = littleEndian(4 * 6);
+    for (int id : new int[] {0, 0, 0x0101064e, 0, 0, 0x01010591}) ids.putInt(id);
+    byte[] resources = chunk(0x0180, 8, ids.array());
+    byte[] manifest = startElement(1, 2, 3, 0x03, 3);
+    byte[] application = startElement(4, 5, -1, 0x12, -1);
+    java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream();
+    for (byte[] part : List.of(pool, resources, manifest, application, endElement(4), endElement(1)))
+      body.writeBytes(part);
+    return chunk(0x0003, 8, body.toByteArray());
+  }
+
+  private static java.nio.ByteBuffer littleEndian(int size) {
+    return java.nio.ByteBuffer.allocate(size).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+  }
+
+  private static byte[] chunk(int type, int headerSize, byte[] body) {
+    return littleEndian(8 + body.length).putShort((short) type).putShort((short) headerSize)
+        .putInt(8 + body.length).put(body).array();
+  }
+
+  /** One element with one android-namespaced attribute row. */
+  private static byte[] startElement(int name, int attribute, int raw, int type, int value) {
+    return chunk(0x0102, 16, littleEndian(48).putInt(-1).putInt(-1).putInt(-1).putInt(name)
+        .putShort((short) 20).putShort((short) 20).putShort((short) 1).putShort((short) 0)
+        .putShort((short) 0).putShort((short) 0)
+        .putInt(0).putInt(attribute).putInt(raw).putShort((short) 8).put((byte) 0)
+        .put((byte) type).putInt(value).array());
+  }
+
+  private static byte[] endElement(int name) {
+    return chunk(0x0103, 16, littleEndian(16).putInt(-1).putInt(-1).putInt(-1).putInt(name).array());
+  }
+
 
   private static void verifyRootManifests(SessionHolder holder, SessionConfig config,
       Constructor<?> constructor, Method handle, Path output) throws Exception {
@@ -80,7 +176,9 @@ public class ReaJadxMetadataRegression {
     for (boolean assetFirst : List.of(true, false)) {
       String pkg = assetFirst ? "org.example.first" : "org.example.second";
       String root = "<manifest xmlns:a=\"http://schemas.android.com/apk/res/android\" package=\""
-          + pkg + "\" a:versionName=\"one &amp; beta\" a:versionCode=\"7\"/>";
+          + pkg + "\" a:versionName=\"one &amp; beta\" a:versionCode=\"7\">"
+          + "<uses-permission-sdk-23 a:name=\"org.example.SDK23\"/>"
+          + "<uses-permission-sdk-m a:name=\"org.example.SDKM\"/></manifest>";
       String asset = "<manifest package=\"org.example.asset\"/>";
       Path apk = output.resolve(assetFirst ? "manifest-asset-first.apk" : "manifest-root-first.apk");
       try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(apk))) {
@@ -99,6 +197,9 @@ public class ReaJadxMetadataRegression {
       JsonObject summary = call(handle, bridge, "get_app_info", new JsonObject());
       require(summary.get("package").getAsString().equals(pkg), "Asset or previous session supplied package facts");
       require(summary.get("version_name").getAsString().equals("one & beta"), "Wrong root version value");
+      require(summary.getAsJsonArray("permissions").equals(JsonParser.parseString(
+          "[\"org.example.SDK23\",\"org.example.SDKM\"]")),
+          "Root manifest SDK-gated permissions were omitted");
       String raw = holder.current().getResources().stream()
           .filter(resource -> resource.getOriginalName().equals("AndroidManifest.xml"))
           .findFirst().orElseThrow().loadContent().getText().getCodeStr();

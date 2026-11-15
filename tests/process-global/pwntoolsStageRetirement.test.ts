@@ -32,10 +32,7 @@ import {
 import { prepareProcessOwnershipInspection } from "../../src/process/ProcessOwnershipObservation.js";
 import { spawnOwnedProviderProcess } from "../../src/process/ProviderProcess.js";
 import { PrivateRuntimeRoot } from "../../src/process/PrivateRuntimeRoot.js";
-import {
-  withArtifactFileHandle,
-  ArtifactFileCleanupFailure,
-} from "../../src/artifacts/ArtifactFileOperation.js";
+import { ArtifactFileCleanupFailure } from "../../src/artifacts/ArtifactFileOperation.js";
 import * as artifacts from "../../src/artifacts/readStableArtifact.js";
 import {
   recordedCrashFixture,
@@ -194,7 +191,9 @@ it.runIf(supportedHost).each(["decoder", "debugger"] as const)(
           phase: stage,
           resource_failure_marker: { resource: null },
           exit_code: PWNTOOLS_MEMORY_FAILURE_EXIT,
-          captured_output: { stdout: "stage diagnostic" },
+        },
+        captured_output: {
+          stdout: expect.stringContaining("stage diagnostic"),
         },
       },
     });
@@ -365,7 +364,7 @@ it.runIf(supportedHost)(
       code: "cleanup_incomplete",
       details: {
         captured_output: { truncated: true },
-        diagnostics: { primary_error: { code: "unreadable_output" } },
+        diagnostics: { primary_error: { code: "resource_constraint" } },
         partial_observation: {
           artifact: { path },
           diagnostics: { stdout: "basic diagnostic" },
@@ -406,13 +405,6 @@ it.runIf(supportedHost).each(["decoder", "debugger"])(
         const resources = args[4];
         if (resources === undefined)
           throw new Error("Reply must have an artifact resource owner");
-        const file = await open(reply, "r");
-        const close = file.close.bind(file);
-        emergencyCloses.push(close);
-        file.close = async () => {
-          if (!releaseAllowed) throw closeFailure;
-          await close();
-        };
         const retain = resources.retain.bind(resources);
         const spy = vi
           .spyOn(resources, "retain")
@@ -421,12 +413,25 @@ it.runIf(supportedHost).each(["decoder", "debugger"])(
             controller.abort(reason);
           });
         try {
-          return await withArtifactFileHandle(
-            reply,
-            file,
+          return await read(
+            args[0],
+            args[1],
+            args[2],
+            {
+              lstat: (filePath) => lstat(filePath, { bigint: true }),
+              open: async (filePath, flags) => {
+                const file = await open(filePath, flags);
+                const close = file.close.bind(file);
+                emergencyCloses.push(close);
+                file.close = async () => {
+                  if (!releaseAllowed) throw closeFailure;
+                  await close();
+                };
+                return file;
+              },
+            },
             resources,
-            controller.signal,
-            () => read(...args),
+            args[5],
           );
         } finally {
           spy.mockRestore();

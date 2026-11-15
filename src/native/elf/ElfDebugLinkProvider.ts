@@ -17,8 +17,6 @@ import {
   artifactFileCancellationCause,
 } from "../../artifacts/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import type { ElfDebugLinkPort } from "../../application/binaryDiagnostics/ElfDebugLinkPort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import {
   AnalysisAccessDeniedError,
@@ -58,7 +56,11 @@ const OPERATION = "inspect_elf_debug_link";
 type SelectedField = "path" | "candidate_path";
 
 /** Portable parser over one bounded ELF and an optional caller-selected candidate. */
-export class ElfDebugLinkProvider implements ElfDebugLinkPort {
+/**
+ * Satisfies the application's ElfDebugLinkPort structurally; composition
+ * checks the fit, so this provider does not import the application layer.
+ */
+export class ElfDebugLinkProvider {
   readonly identity = ELF_DEBUG_LINK_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
@@ -74,7 +76,10 @@ export class ElfDebugLinkProvider implements ElfDebugLinkPort {
     }
   }
 
-  async inspect(input: InspectElfDebugLinkInput, options?: ExecutionOptions) {
+  async inspect(
+    input: InspectElfDebugLinkInput,
+    options?: { readonly signal?: AbortSignal },
+  ) {
     let field: SelectedField = "path";
     let candidatePhase: CandidatePhase | undefined;
     let crc32 = 0;

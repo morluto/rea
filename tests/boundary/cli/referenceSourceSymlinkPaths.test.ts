@@ -7,6 +7,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
+import { z } from "zod";
 import { expect } from "vitest";
 
 import { historicalSourceGraphSchema } from "../../../src/domain/referenceSourceGraph.js";
@@ -132,3 +133,40 @@ cliTest.skipIf(process.platform === "win32")(
     );
   },
 );
+
+for (const target of ["sub/missing", "sub/missing/", "sub/"]) {
+  cliTest.skipIf(process.platform === "win32")(
+    `retains relocated source commitments for ${target}`,
+    async ({ cli }) => {
+      const work = await createTestTempDirectory("rea-reference-relocation-");
+      const commitments = [];
+      for (const side of ["left", "right"]) {
+        const root = join(work, side);
+        await mkdir(join(root, "sub"), { recursive: true });
+        await writeFile(join(root, "sub", "keep.txt"), "keep\n");
+        await symlink(target, join(root, "link"));
+        const reply = await cli.run({
+          arguments: [
+            "import-reference-source",
+            root,
+            "--detail=summary",
+            "--json",
+          ],
+        });
+        expect(reply.exitCode, reply.stderr).toBe(0);
+        const parsed = z
+          .object({
+            manifest: z.object({
+              root_sha256: z.string(),
+              graph_sha256: z.string(),
+              manifest_id: z.string(),
+            }),
+          })
+          .parse(reply.json);
+        commitments.push(parsed.manifest);
+        expect(await readlink(join(root, "link"))).toBe(target);
+      }
+      expect(commitments[0]).toEqual(commitments[1]);
+    },
+  );
+}

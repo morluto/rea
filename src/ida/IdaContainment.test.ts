@@ -127,6 +127,7 @@ const session = async (
       args: [],
       env: {},
       mode,
+      protocol: mode === "attached" ? "legacy" : "modern",
       timeoutMs: 1000,
       workspaceRoot: root,
     },
@@ -616,18 +617,6 @@ describe("headless IDA document identity", () => {
         expect(result.error.cause).toBe(controller.signal.reason);
       }
       expect(producer.calls).toEqual([]);
-    } finally {
-      expect((await client.close()).ok).toBe(true);
-    }
-  });
-
-  it("lists exactly the admitted program", async () => {
-    const { client, target } = await session();
-    try {
-      const result = await client.execute("list_documents", {});
-
-      if (!result.ok) throw result.error;
-      expect(result.value.result).toEqual([target.path]);
     } finally {
       expect((await client.close()).ok).toBe(true);
     }

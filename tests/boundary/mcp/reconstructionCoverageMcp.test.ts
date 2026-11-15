@@ -15,9 +15,54 @@ import {
   updateResidualUnknown,
 } from "../../../src/domain/residualUnknown.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
+import { RECREATE_EVIDENCE_GUIDANCE } from "../../../src/domain/evidenceFormat.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
+
+it("rejects malformed boundary identifiers at the MCP request boundary", async () => {
+  await withCoverageMcp(async ({ client }) => {
+    const result = await client.callTool({
+      name: "evaluate_reconstruction_coverage",
+      arguments: {
+        coverage: currentFixtureCoverage(),
+        boundary_id: "replacement cli",
+      },
+    });
+    expect(result.isError).toBe(true);
+    expect(parseMcpToolError(result)).toMatchObject({
+      error: {
+        code: "invalid_request",
+        details: {
+          issues: [{ path: ["boundary_id"], reason: "invalid_format" }],
+        },
+      },
+    });
+  });
+});
+
+it("refuses an unmarked Evidence bundle through the format owner, not the SDK", async () => {
+  await withCoverageMcp(async ({ client }) => {
+    const coverage = currentFixtureCoverage();
+    const { evidence_format: _current, ...unmarked } = coverage.evidence_bundle;
+    const result = await client.callTool({
+      name: "evaluate_reconstruction_coverage",
+      arguments: {
+        coverage: { ...coverage, evidence_bundle: unmarked },
+        boundary_id: "replacement.cli",
+      },
+    });
+    expect(result.isError).toBe(true);
+    expect(parseMcpToolError(result)).toMatchObject({
+      error: {
+        code: "evidence_integrity_mismatch",
+        details: {
+          reason: expect.stringContaining(RECREATE_EVIDENCE_GUIDANCE),
+        },
+      },
+    });
+  });
+});
 
 it("uses the latest listed unknown revision when evaluating a boundary", async () => {
   await withCoverageMcp(async ({ client }) => {

@@ -1,5 +1,7 @@
 import type { ArtifactReaderAdmission } from "../ArtifactReaderAdmission.js";
+import type { ArtifactReaderLimits } from "../../domain/artifactReaderLimits.js";
 import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
+import type { ArtifactIntegrityPolicyName } from "../../domain/artifactIntegrityPolicy.js";
 import type {
   ArtifactReader,
   ArtifactReaderTraversal,
@@ -21,6 +23,8 @@ export const createReader = (
   readerAdmission?: ArtifactReaderAdmission,
   asarHeaderAdmission?: AsarHeaderAdmission,
   selectedPath?: string,
+  readerLimits?: ArtifactReaderLimits,
+  integrity?: ArtifactIntegrityPolicyName,
 ): ArtifactReader | undefined => {
   if (
     artifactFormatDescriptor(format)?.requiresDarwin === true &&
@@ -33,6 +37,8 @@ export const createReader = (
     admission: readerAdmission,
     asarHeaderAdmission,
     selectedPath,
+    readerLimits,
+    integrity,
   });
 };
 

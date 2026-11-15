@@ -103,13 +103,18 @@ const afterValidation = async <T>(
   }
 };
 
-/** Read one bounded regular file and reject replacement or in-place changes. */
+/**
+ * Read one bounded regular file and reject replacement or in-place changes.
+ * The optional observer receives verified state before descriptor finalization;
+ * callers may reuse it only after this promise resolves successfully.
+ */
 export const readStableArtifact = (
   path: string,
   maximumBytes: number,
   signal?: AbortSignal,
   fileSystem: StableArtifactFileSystem = FILE_SYSTEM,
   resourceScope?: ArtifactResourceScope,
+  onValidatedState?: (state: BigIntStats) => void,
 ): Promise<StableArtifactSnapshot> =>
   readStableArtifactChunks(
     path,
@@ -119,7 +124,10 @@ export const readStableArtifact = (
     resourceScope,
     (size) => size,
     undefined,
-    (bytes, sha256) => ({ bytes, sha256 }),
+    (bytes, sha256, _size, state) => {
+      onValidatedState?.(state);
+      return { bytes, sha256 };
+    },
   );
 
 /** Whole-file identity of one streamed stable read and its retained prefix. */
@@ -173,7 +181,12 @@ const readStableArtifactChunks = async <Value>(
   resourceScope: ArtifactResourceScope | undefined,
   retainBytes: (size: number) => number,
   onChunk: ((chunk: Buffer) => void) | undefined,
-  complete: (retained: Buffer, sha256: string, size: number) => Value,
+  complete: (
+    retained: Buffer,
+    sha256: string,
+    size: number,
+    state: BigIntStats,
+  ) => Value,
 ): Promise<Value> => {
   assertArtifactReadActive(signal);
   const before = await fileSystem.lstat(path);
@@ -273,7 +286,25 @@ const readStableArtifactChunks = async <Value>(
           `Artifact changed during read: ${path}`,
         );
       assertArtifactReadActive(signal);
-      return complete(bytes, hash.digest("hex"), count);
+      return complete(bytes, hash.digest("hex"), count, initial);
     },
   );
+};
+
+/** Revalidate a completed snapshot's selected file state without reading its bytes again. */
+export const assertStableArtifactState = async (
+  path: string,
+  expected: BigIntStats,
+  signal?: AbortSignal,
+): Promise<void> => {
+  assertArtifactReadActive(signal);
+  const current = await afterValidation(path, "before cached inspection", () =>
+    lstat(path, { bigint: true }),
+  );
+  if (!sameRegularFileState(expected, current))
+    throw new ArtifactReaderFailure(
+      "integrity",
+      `Artifact changed since acquisition: ${path}`,
+    );
+  assertArtifactReadActive(signal);
 };

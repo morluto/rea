@@ -9,9 +9,10 @@ import {
   AnalysisOutputError,
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import {
   createEvidence,
@@ -44,7 +45,7 @@ import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 
 /** Bound retained result rows before constructing the Evidence representation. */
-export const MAX_BYTE_ENTROPY_BLOCKS = 32_768;
+const MAX_BYTE_ENTROPY_BLOCKS = 32_768;
 
 /** Generated files such as Linux /proc entries report size 0 but still hold bytes. */
 const ZERO_SIZE_LIMITATION =
@@ -349,20 +350,24 @@ export class ByteEntropyService {
           outcome.cause instanceof ArtifactReaderFailure &&
           outcome.cause.reason === "cancelled"
         ) {
-          const cancelled = new AnalysisCancelledError(OPERATION, {
-            cause: artifactFileCancellationCause(outcome.cause),
-            cleanup: cause.cleanup,
-          }).retainSecondaryFailure(cleanup);
+          const cancelled = cancelledBy(
+            OPERATION,
+            carriedReason(artifactFileCancellationCause(outcome.cause)),
+            { cleanup: cause.cleanup },
+          ).retainSecondaryFailure(cleanup);
           bindArtifactFileCleanup(cause, cancelled);
           return err(cancelled);
         }
         const cancellation = completion?.cancellation;
         if (cancellation !== undefined) {
-          const cancelled = new AnalysisCancelledError(OPERATION, {
-            cause: cancellation.reason,
-            partialObservation: cleanup.partialObservation,
-            cleanup: cause.cleanup,
-          }).retainSecondaryFailure(cleanup);
+          const cancelled = cancelledBy(
+            OPERATION,
+            carriedReason(cancellation.reason),
+            {
+              partialObservation: cleanup.partialObservation,
+              cleanup: cause.cleanup,
+            },
+          ).retainSecondaryFailure(cleanup);
           bindArtifactFileCleanup(cause, cancelled);
           return err(cancelled);
         }
@@ -380,12 +385,15 @@ export class ByteEntropyService {
       }
       if (cause instanceof ArtifactReaderFailure) {
         if (cause.reason === "cancelled") {
-          const cancelled = new AnalysisCancelledError(OPERATION, {
-            cause: artifactFileCancellationCause(cause),
-            ...(completion === undefined
+          const cancelled = cancelledBy(
+            OPERATION,
+            carriedReason(artifactFileCancellationCause(cause)),
+            completion === undefined
               ? {}
-              : { partialObservation: completedObservation(completion.value) }),
-          });
+              : {
+                  partialObservation: completedObservation(completion.value),
+                },
+          );
           bindArtifactFileCleanup(cause, cancelled);
           return err(cancelled);
         }

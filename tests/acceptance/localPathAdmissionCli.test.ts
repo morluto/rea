@@ -6,7 +6,7 @@ import { expect } from "vitest";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { pythonPycFixture } from "../../src/python/PythonPyc.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { cliTest, runFileCli } from "../support/cli/cliFixture.js";
+import { cliTest } from "../support/cli/cliFixture.js";
 
 const fileCommands = [
   "inspect-sqlite-database",
@@ -52,7 +52,7 @@ cliTest(
       },
     ];
     for (const selection of selections) {
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: [...selection.arguments, "--json"],
         cwd,
       });
@@ -166,7 +166,7 @@ cliTest(
       },
     ];
     for (const selection of selections) {
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: [...selection.arguments, "--json"],
         cwd,
       });
@@ -188,7 +188,7 @@ cliTest(
     const bytes = pythonPycFixture();
     const path = join(cwd, "selected.pyc");
     await writeFile(path, bytes);
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: ["inspect-python-pyc", "./selected.pyc", "--json"],
       cwd,
     });

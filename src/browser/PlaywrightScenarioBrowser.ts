@@ -16,7 +16,6 @@ import { join } from "node:path";
 import type {
   Browser,
   BrowserContext,
-  CDPSession,
   ConnectOverCDPOptions,
   Page,
   chromium,
@@ -37,6 +36,11 @@ import {
   settleScenarioCommand,
   withScenarioCommandDeadline,
 } from "./ScenarioCommandDeadline.js";
+import {
+  newPlaywrightCdpSession,
+  type PlaywrightCdpSession,
+} from "./PlaywrightCdpSession.js";
+import { CdpMalformedReply } from "./protocol/CdpCommands.js";
 
 const OPERATION = "capture_browser_scenario" as const;
 
@@ -403,10 +407,10 @@ const findConnectedPage = async (
 ): Promise<{ readonly context: BrowserContext; readonly page: Page }> => {
   for (const context of browser.contexts())
     for (const page of context.pages()) {
-      let session: CDPSession;
+      let session: PlaywrightCdpSession;
       try {
         session = await withScenarioCommandDeadline(
-          () => context.newCDPSession(page),
+          () => newPlaywrightCdpSession(context, page, OPERATION),
           commandTimeoutMs,
           "command",
           "Target.attachToTarget",
@@ -450,7 +454,7 @@ class AttachedScenarioEnvironmentOwner {
 
   private constructor(
     private readonly page: Page,
-    private readonly session: CDPSession,
+    private readonly session: PlaywrightCdpSession,
     private readonly commandTimeoutMs: number,
   ) {}
 
@@ -460,10 +464,10 @@ class AttachedScenarioEnvironmentOwner {
     commandTimeoutMs: number,
     retainCleanup: ((lease: AnalysisCleanupLease) => void) | undefined,
   ): Promise<AttachedScenarioEnvironmentOwner> {
-    let session: CDPSession;
+    let session: PlaywrightCdpSession;
     try {
       session = await withScenarioCommandDeadline(
-        () => context.newCDPSession(page),
+        () => newPlaywrightCdpSession(context, page, OPERATION),
         commandTimeoutMs,
         "command",
         "Target.attachToTarget",
@@ -512,6 +516,18 @@ class AttachedScenarioEnvironmentOwner {
     );
   }
 
+  /**
+   * Record a restore obligation once the browser answered the override. A
+   * success whose result fails its schema was still applied by the browser,
+   * so it keeps the obligation; only a rejected or unanswered command does not.
+   */
+  #override(command: Promise<unknown>, applied: () => void): Promise<void> {
+    return command.then(applied, (cause: unknown) => {
+      if (cause instanceof CdpMalformedReply) applied();
+      throw cause;
+    });
+  }
+
   async #applyEnvironment(
     environment: BrowserScenario["environment"],
     signal: AbortSignal | undefined,
@@ -532,41 +548,44 @@ class AttachedScenarioEnvironmentOwner {
     // setViewportSize also resizes the external browser window. CDP metrics
     // provide the scenario viewport without changing that caller-owned window.
     await this.#command(
-      this.session
-        .send("Emulation.setDeviceMetricsOverride", {
+      this.#override(
+        this.session.send("Emulation.setDeviceMetricsOverride", {
           width: environment.viewport.width,
           height: environment.viewport.height,
           deviceScaleFactor: environment.viewport.device_scale_factor,
           mobile: false,
           dontSetVisibleSize: true,
-        })
-        .then(() => {
-          this.#deviceMetricsOverride = true;
         }),
+        () => {
+          this.#deviceMetricsOverride = true;
+        },
+      ),
       "Emulation.setDeviceMetricsOverride",
     );
     throwIfScenarioCancelled(signal);
 
     await this.#command(
-      this.session
-        .send("Emulation.setLocaleOverride", {
+      this.#override(
+        this.session.send("Emulation.setLocaleOverride", {
           locale: environment.locale,
-        })
-        .then(() => {
-          this.#localeOverride = true;
         }),
+        () => {
+          this.#localeOverride = true;
+        },
+      ),
       "Emulation.setLocaleOverride",
     );
     throwIfScenarioCancelled(signal);
 
     await this.#command(
-      this.session
-        .send("Emulation.setTimezoneOverride", {
+      this.#override(
+        this.session.send("Emulation.setTimezoneOverride", {
           timezoneId: environment.timezone,
-        })
-        .then(() => {
-          this.#timezoneOverride = true;
         }),
+        () => {
+          this.#timezoneOverride = true;
+        },
+      ),
       "Emulation.setTimezoneOverride",
     );
     throwIfScenarioCancelled(signal);
@@ -574,11 +593,14 @@ class AttachedScenarioEnvironmentOwner {
     // Keep scenario actions usable in the selected background page without
     // Playwright's connection-wide focus override on unrelated pages.
     await this.#command(
-      this.session
-        .send("Emulation.setFocusEmulationEnabled", { enabled: true })
-        .then(() => {
-          this.#focusOverride = true;
+      this.#override(
+        this.session.send("Emulation.setFocusEmulationEnabled", {
+          enabled: true,
         }),
+        () => {
+          this.#focusOverride = true;
+        },
+      ),
       "Emulation.setFocusEmulationEnabled",
     );
     throwIfScenarioCancelled(signal);
@@ -855,6 +877,7 @@ export const openPlaywrightScenarioBrowser = async (
     readonly retainCleanup?: (lease: AnalysisCleanupLease) => void;
   } = {},
 ): Promise<OpenedScenarioBrowser> => {
+  throwIfScenarioCancelled(options.signal);
   // Load Playwright only when a scenario opens; MCP startup stays off its module graph.
   const launcher =
     options.launcher ?? (await import("playwright-core")).chromium;
@@ -869,6 +892,7 @@ export const openPlaywrightScenarioBrowser = async (
       commandTimeoutMs,
     );
 
+  throwIfScenarioCancelled(options.signal);
   const profilePath = await mkdtemp(join(tmpdir(), "rea-browser-scenario-"));
   let context: BrowserContext;
   const executablePath = scenario.browser.executable_path;
@@ -877,6 +901,7 @@ export const openPlaywrightScenarioBrowser = async (
   let launchStarted = false;
   try {
     await chmod(profilePath, 0o700);
+    throwIfScenarioCancelled(options.signal);
     launchStarted = true;
     context = await withScenarioCommandDeadline(
       () =>
@@ -950,10 +975,12 @@ export const openPlaywrightScenarioBrowser = async (
       rm(profilePath, { recursive: true, force: true, maxRetries: 3 }),
   });
   try {
+    throwIfScenarioCancelled(options.signal);
     const browser = context.browser();
     if (browser === null)
       throw new BrowserObservationError(OPERATION, "protocol_error");
     const page = context.pages()[0] ?? (await context.newPage());
+    throwIfScenarioCancelled(options.signal);
     return {
       context,
       page,

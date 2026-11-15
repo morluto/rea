@@ -1,3 +1,4 @@
+import { createTestArtifactResourceScope } from "../../tests/fixtures/artifactResourceScope.js";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -71,6 +72,7 @@ describe("Ghidra launch failure diagnostics", () => {
     try {
       const launched = await probeLauncher(javaHome, runtimeRoot).launch(
         launchSession(runtimeRoot),
+        { resourceScope: createTestArtifactResourceScope() },
       );
       if (launched.ok) throw new Error("expected the launch to fail");
       expect(launched.error).toBeInstanceOf(GhidraLaunchError);
@@ -104,6 +106,7 @@ describe("Ghidra launch failure diagnostics", () => {
     try {
       const launched = await probeLauncher(javaHome, runtimeRoot).launch(
         launchSession(runtimeRoot),
+        { resourceScope: createTestArtifactResourceScope() },
       );
       if (launched.ok) throw new Error("expected the launch to fail");
       const outcome = launchOutcomeOf(launched.error);
@@ -131,7 +134,9 @@ describe("Ghidra launch failure diagnostics", () => {
         configurationDirectoryName: "ghidra_test_PUBLIC",
         bridgeScriptPath: join(runtimeRoot, "bridge", "ReaGhidraBridge.java"),
       });
-      const launched = await launcher.launch(launchSession(runtimeRoot));
+      const launched = await launcher.launch(launchSession(runtimeRoot), {
+        resourceScope: createTestArtifactResourceScope(),
+      });
       if (launched.ok) throw new Error("expected the launch to fail");
       expect(launched.error).toBeInstanceOf(GhidraLaunchError);
       expect(launched.error.message).toBe("Ghidra headless launch failed");

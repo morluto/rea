@@ -329,6 +329,7 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
   ): Promise<PlaywrightScenarioSession> {
     let events: PlaywrightScenarioEvents | undefined;
     let storage: PlaywrightScenarioStorage | undefined;
+    let pageInitialization: Promise<void> | undefined;
     const serviceWorkers =
       scenario.browser.mode === "connect" &&
       scenario.environment.service_workers === "block"
@@ -341,10 +342,19 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
         : undefined;
     try {
       await withPlaywrightExecutionBoundary(
-        async () => {
-          await serviceWorkers?.initialize();
-          await initializePage(opened.context, scenario, secrets);
-        },
+        () => serviceWorkers?.initialize() ?? Promise.resolve(),
+        undefined,
+        options.signal,
+      );
+      throwIfScenarioCancelled(options.signal);
+      const initializingPage = initializePage(
+        opened.context,
+        scenario,
+        secrets,
+      );
+      pageInitialization = initializingPage;
+      await withPlaywrightExecutionBoundary(
+        () => initializingPage,
         undefined,
         options.signal,
       );
@@ -386,6 +396,9 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
         storage !== undefined && options.signal?.aborted === true;
       let policyStopsLoading = !storageStopsLoading;
       const cleanup = async () => {
+        // Cancelling the wait cannot revoke an already-sent cookie mutation.
+        // Join its acknowledgement before releasing the browser transport.
+        await pageInitialization?.catch(() => undefined);
         let storageFailure: { readonly cause: unknown } | undefined;
         let policyFailure: { readonly cause: unknown } | undefined;
         let browserFailure: { readonly cause: unknown } | undefined;

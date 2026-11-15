@@ -10,7 +10,10 @@ import {
   compactPresentationForMcpInputSchemaProfile,
   parseMcpInputSchemaProfile,
 } from "../dist/config/mcpInputSchemaProfile.js";
-import { parseMcpOutputSchemaProfile } from "../dist/config/mcpOutputSchemaProfile.js";
+import {
+  parseMcpOutputSchemaProfile,
+  resolveMcpOutputSchemaProfile,
+} from "../dist/config/mcpOutputSchemaProfile.js";
 import {
   TOOL_CONTRACTS,
   toolContract,
@@ -201,7 +204,9 @@ await withVerifierCleanup(async () => {
                   compactPresentationForMcpInputSchemaProfile(
                     inputProfile.value,
                   ),
-                outputSchemaProfile: outputProfile.value ?? "full",
+                outputSchemaProfile: resolveMcpOutputSchemaProfile(
+                  outputProfile.value,
+                ),
               }),
               "binary_session must return the selected input/output profile's catalog identity",
             );

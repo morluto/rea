@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { createPackageVerifierCommands } from "../../lib/verify-package-commands.mjs";
+import { withVerifierCleanup } from "../../lib/verifier-cleanup.mjs";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { promisify } from "node:util";
 
 import { toolContract } from "../../../dist/contracts/toolContracts.js";
 import {
@@ -13,8 +12,7 @@ import {
   withArtifactMcp,
   withBundleResourcesMcp,
 } from "../../lib/artifact-e2e.mjs";
-
-const exec = promisify(execFile);
+import { VerifierFixture } from "../../lib/verifier-fixture.mjs";
 
 // dyld_info abbreviates a terminal .dylib suffix; padding is part of the name.
 const INSTALL_NAME_CASES = [
@@ -180,9 +178,23 @@ export async function verifyNativeProvenance(app, executable) {
 
 /** Compile independent inputs; their unusual loader paths are never executed. */
 async function verifyInstallNames() {
-  const root = await mkdtemp(join(tmpdir(), "rea-macho-install-names-"));
+  const rootFixture = await VerifierFixture.open({
+    prefix: "rea-macho-install-names-",
+  });
+  const root = rootFixture.path;
   const observations = [];
-  try {
+  const commands = await createPackageVerifierCommands({
+    workspace: {
+      path: root,
+      close: () => rootFixture.release(),
+    },
+  });
+  const exec = (command, args) =>
+    commands.exec(command, args, {
+      timeout: 120_000,
+      maxBuffer: 16 * 1024 * 1024,
+    });
+  return withVerifierCleanup(async () => {
     const librarySource = join(root, "library.c");
     const consumerSource = join(root, "consumer.c");
     await writeFile(librarySource, "int exported_value(void) { return 42; }\n");
@@ -279,7 +291,5 @@ async function verifyInstallNames() {
       });
     }
     return observations;
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  }, [() => commands.close()]);
 }

@@ -1,7 +1,7 @@
 import { access, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { CLAUDE_DESKTOP_PACKAGE_FAMILY } from "../../../src/application/ClaudeDesktopConfigLocation.js";
+import { CLAUDE_DESKTOP_PACKAGE_FAMILY } from "../../fixtures/claudeDesktop.js";
 import {
   runUninstall,
   systemUninstallHost,

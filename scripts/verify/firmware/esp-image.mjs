@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { withVerifierCleanup } from "../../lib/verifier-cleanup.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "../../lib/verifier-fixture.mjs";
 import {
   assertAgrees,
   buildElf,
@@ -24,12 +26,14 @@ import {
   xtensa,
 } from "./esp-image-tools.mjs";
 
-let workspace;
+// The verifier's commands may use files under the workspace until they close.
+const fixture = await VerifierFixture.open({ prefix: "rea-esp-image-proof-" });
+fixture.releaseAfter(() => commands.close());
+const workspace = fixture.path;
 const path = (name) => join(workspace, name);
 
-await withVerifierCleanup(async () => {
+const verify = async () => {
   const { compilerVersion, esptoolVersion, xtensaVersion } = await checkTools();
-  workspace = await mkdtemp(join(tmpdir(), "rea-esp-image-proof-"));
   const report = {
     esptool: esptoolVersion,
     compiler: compilerVersion,
@@ -407,12 +411,6 @@ await withVerifierCleanup(async () => {
   );
   report.images.push({ name: "esp8266-0x00000.bin", refused: true });
   console.log(JSON.stringify(report, null, 2));
-}, [
-  // Remove outputs only after every owned command tree has stopped; a failed
-  // close keeps the workspace for inspection.
-  async () => {
-    await commands.close();
-    if (workspace !== undefined)
-      await rm(workspace, { recursive: true, force: true });
-  },
-]);
+};
+
+await withVerifierFixture(fixture, verify);

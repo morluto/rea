@@ -7,18 +7,14 @@ import { z } from "zod";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js";
-import {
-  cliTest,
-  runFileCli,
-  type TestCli,
-} from "../../support/cli/cliFixture.js";
+import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { applicationFeatureTraceResultSchema } from "../../../src/domain/javascript/javascriptFeatureTraceSchemas.js";
 import { analyzeJavaScriptDirectory } from "../../support/cli/javascriptApplication.js";
 import {
   analysisViewResultSchema,
   javascriptApplicationSummaryViewResultSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+} from "../../../src/domain/analysisView/analysisViewResult.js";
 
 const sourcePositionSchema = z.object({ line: z.number(), column: z.number() });
 const callPathConditionSchema = z.object({
@@ -223,7 +219,7 @@ cliTest(
         direction: "outgoing",
       }),
     );
-    const traced = await runFileCli(cli, {
+    const traced = await cli.run({
       arguments: ["trace-application-feature", input, "--json"],
     });
     expect(traced.exitCode).toBe(0);
@@ -425,7 +421,7 @@ cliTest(
       "main.cjs": `const { ipcMain, clipboard } = require("electron");
         ipcMain.handle("nested:write", (event, value) => clipboard.writeText(value));`,
     });
-    const output = await runFileCli(cli, {
+    const output = await cli.run({
       arguments: ["analyze-javascript-application", root, "--json"],
     });
     expect(output.exitCode, output.stderr).toBe(0);
@@ -467,7 +463,7 @@ cliTest(
         direction: "outgoing",
       }),
     );
-    const traced = await runFileCli(cli, {
+    const traced = await cli.run({
       arguments: ["trace-application-feature", traceInput, "--json"],
     });
     expect(traced.exitCode).toBe(0);
@@ -495,7 +491,7 @@ cliTest(
       "main.js": `const { ipcMain } = require("electron");
         ipcMain.on("write", (event) => event.sender.copy());`,
     });
-    const output = await runFileCli(cli, {
+    const output = await cli.run({
       arguments: ["analyze-javascript-application", root, "--json"],
     });
     expect(output.exitCode).toBe(0);
@@ -552,7 +548,7 @@ cliTest(
       "main.js": `const { ipcMain } = require("electron");
         ipcMain.handle("nested:write", (event, value) => value);`,
     });
-    const output = await runFileCli(cli, {
+    const output = await cli.run({
       arguments: ["analyze-javascript-application", root, "--json"],
     });
     expect(output.exitCode).toBe(0);
@@ -585,7 +581,7 @@ cliTest(
         direction: "outgoing",
       }),
     );
-    const traced = await runFileCli(cli, {
+    const traced = await cli.run({
       arguments: ["trace-application-feature", traceInput, "--json"],
     });
     expect(traced.exitCode).toBe(0);
@@ -855,7 +851,7 @@ cliTest(
         e.ipcMain.on("shallow:run", event => event.sender.copy());
         e.ipcMain.on("deep:run", event => event.sender.copy());`,
     });
-    const output = await runFileCli(cli, {
+    const output = await cli.run({
       arguments: ["analyze-javascript-application", root, "--json"],
     });
     expect(output.exitCode).toBe(0);
@@ -909,7 +905,7 @@ cliTest(
       "main.cjs": `const e=require("electron");
         e.ipcMain.on("shared:run", event => event.sender.copy());`,
     });
-    const output = await runFileCli(cli, {
+    const output = await cli.run({
       arguments: ["analyze-javascript-application", root, "--json"],
     });
     expect(output.exitCode, output.stderr).toBe(0);
@@ -944,7 +940,7 @@ cliTest(
       join(root, "main.cjs"),
       'const e=require("electron"); e.ipcMain.on("shared:run", () => {}); e.ipcMain.on("shared:run", () => {});',
     );
-    const competing = await runFileCli(cli, {
+    const competing = await cli.run({
       arguments: ["analyze-javascript-application", root, "--json"],
     });
     expect(competing.exitCode, competing.stderr).toBe(0);
@@ -975,7 +971,7 @@ cliTest(
       "main.cjs": `const { ipcMain } = require("electron");
         ipcMain.on("empty:key", event => event.sender.copy());`,
     });
-    const output = await runFileCli(cli, {
+    const output = await cli.run({
       arguments: ["analyze-javascript-application", root, "--json"],
     });
     expect(output.exitCode).toBe(0);

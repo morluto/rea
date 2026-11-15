@@ -17,8 +17,8 @@ import * as prompts from "./verify-package-prompts.mjs";
 import { verifyCompleteToolCatalog } from "./lib/verify-package-core.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 
-const verifyMcpToolsAndPrompts = async (client, mcpOptions) => {
-  await verifyCompleteToolCatalog(client, mcpOptions);
+const verifyMcpToolsAndPrompts = async (client, mcpOptions, environment) => {
+  await verifyCompleteToolCatalog(client, mcpOptions, environment);
   await prompts.verifyPromptCatalog(client, mcpOptions, prompts.names);
   await prompts.verifyPromptCompletion(client, mcpOptions, []);
 };
@@ -283,7 +283,7 @@ export async function verifyPackageMcp({
     try {
       await client.connect(transport);
       const mcpOptions = { timeout: 15_000 };
-      await verifyMcpToolsAndPrompts(client, mcpOptions);
+      await verifyMcpToolsAndPrompts(client, mcpOptions, environment);
       await verifyMcpTargetFree(client, mcpOptions);
       await verifyMcpUnknownProvider(client, mcpOptions);
       await verifyMcpBinaryLifecycle(client, mcpOptions);

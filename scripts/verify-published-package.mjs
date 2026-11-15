@@ -1,8 +1,8 @@
-import { execFile } from "node:child_process";
+import { createPackageVerifierCommands } from "./lib/verify-package-commands.mjs";
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
 
 import { lt, prerelease, rcompare, valid } from "semver";
@@ -15,7 +15,7 @@ import {
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 
 const verifierRun = createVerifierRun();
-const execFileAsync = promisify(execFile);
+
 const version = process.argv[2];
 if (
   typeof version !== "string" ||
@@ -30,28 +30,33 @@ const serverEnvironment = {
   npm_config_cache: join(canaryRoot, "npm-cache"),
 };
 delete serverEnvironment.HOPPER_TARGET_PATH;
+const commands = await createPackageVerifierCommands({
+  workspace: {
+    path: canaryRoot,
+    close: () => rm(canaryRoot, { recursive: true, force: true }),
+  },
+});
 let surface;
 let update;
-try {
+await withVerifierCleanup(async () => {
   const publishedRoot = await installCanaryPackage(
     `rea-agents@${version}`,
     canaryRoot,
     serverEnvironment,
+    commands,
   );
   surface = await verifyInstalledCanaryPackage(
     publishedRoot,
     version,
     canaryRoot,
-    serverEnvironment,
+    { environment: serverEnvironment, commands },
   );
   update = await verifyPublishedUpdate({
     version,
     canaryRoot,
     updaterRoot: publishedRoot,
   });
-} finally {
-  await rm(canaryRoot, { recursive: true, force: true });
-}
+}, [() => commands.close()]);
 process.stdout.write(
   `${JSON.stringify({ verifier_run: await completeVerifierRun(verifierRun), package: "rea-agents", version, ...surface, update })}\n`,
 );
@@ -94,8 +99,7 @@ async function verifyPublishedUpdate({
     environment,
   );
 
-  await execFileAsync(
-    "npm",
+  await commands.execNpm(
     [
       "install",
       "--global",
@@ -104,13 +108,20 @@ async function verifyPublishedUpdate({
       prefix,
       `rea-agents@${previousVersion}`,
     ],
-    { cwd: canaryRoot, env: environment, maxBuffer: 16 * 1024 * 1024 },
+    {
+      cwd: canaryRoot,
+      env: environment,
+      timeout: 600000,
+      maxBuffer: 16 * 1024 * 1024,
+    },
   );
 
   const npmRoot = (
-    await execFileAsync("npm", ["root", "--global"], {
+    await commands.execNpm(["root", "--global"], {
       cwd: canaryRoot,
       env: environment,
+      timeout: 30000,
+      maxBuffer: 16 * 1024 * 1024,
     })
   ).stdout.trim();
   // Older releases may predate the update command. Exercise the new published
@@ -126,9 +137,10 @@ process.stdout.write(JSON.stringify(result));
 if (result.status === "failed") process.exitCode = 1;
 `,
   );
-  const { stdout } = await execFileAsync(process.execPath, [harness], {
+  const { stdout } = await commands.exec(process.execPath, [harness], {
     cwd: canaryRoot,
     env: environment,
+    timeout: 600000,
     maxBuffer: 16 * 1024 * 1024,
   });
   const result = JSON.parse(stdout);
@@ -152,9 +164,11 @@ if (result.status === "failed") process.exitCode = 1;
     );
 
   const help = (
-    await execFileAsync(join(prefix, "bin", "rea-agents"), ["--help"], {
+    await commands.exec(join(prefix, "bin", "rea-agents"), ["--help"], {
       cwd: canaryRoot,
       env: environment,
+      timeout: 30000,
+      maxBuffer: 16 * 1024 * 1024,
     })
   ).stdout;
   if (!/^\s{2}update\s/mu.test(help) || /^\s{2}upgrade\s/mu.test(help))
@@ -171,10 +185,9 @@ if (result.status === "failed") process.exitCode = 1;
 }
 
 async function findPreviousPublishedVersion(targetVersion, cwd, environment) {
-  const { stdout } = await execFileAsync(
-    "npm",
+  const { stdout } = await commands.execNpm(
     ["view", "rea-agents", "versions", "--json"],
-    { cwd, env: environment, maxBuffer: 16 * 1024 * 1024 },
+    { cwd, env: environment, timeout: 30000, maxBuffer: 16 * 1024 * 1024 },
   );
   const versions = JSON.parse(stdout);
   const previous = versions

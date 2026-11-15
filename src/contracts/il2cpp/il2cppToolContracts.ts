@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { il2cppMetadataSummaryViewResultSchema } from "../../domain/analysisView/analysisView.js";
+import { il2cppMetadataSummaryViewResultSchema } from "../../domain/analysisView/analysisViewResult.js";
 import {
   il2cppMetadataSchema,
   inspectIl2cppMetadataInputSchema,
@@ -16,7 +16,7 @@ export const IL2CPP_TOOL_CONTRACTS = [
     kind: "artifact-provider",
     requiresActiveTarget: true,
     description:
-      "Inspect local Unity IL2CPP metadata (24/27/29/31/39), optionally linking a caller-selected 64-bit little-endian Mach-O, PE or ELF binary. Static reading only. Default summary retains complete Evidence; use parent_evidence_id with inspect_analysis_view kind il2cpp-metadata for named collections, indices, fields and paging. Parameters accept method_indices; method_addresses accept addresses and states. Stable row indices are scoped to the metadata digest; native pages also identify the binary. Native states distinguish executable code, observed zero slots (no-body), and unknown owners/relocations. Shared addresses preserve all methods. code_gen_modules pages accept image_indices; summaries omit that table. Type names are C#-like; version27 retains indices with unknown names. generic_instances adds genericMethodTable rows with Il2CppDumper-style names (versions 27/29/31, static CodeRegistration and MetadataRegistration); generic_method_instances pages accept method_indices, addresses and states; summaries count issues, paged as generic_method_issues. Unrequested native counts are null. Static-table links are derived; the x86-64/arm64 executable-byte fallback is inferred and does not verify instruction boundaries. Input guards:256MiB metadata/1GiB binary;64MiB encoded report; one active inspection. Unsupported layouts, pointer encodings and resource limits have typed reasons. Full Evidence remains available with detail complete. Neither static linking nor structural agreement proves runtime behavior or a same-build pair.",
+      "Inspect Unity IL2CPP metadata versions 24/27/29/31/39, optionally linking a selected 64-bit little-endian Mach-O/PE/ELF binary without execution. Returns metadata tables and derived native method links; shared addresses retain every method, zero slots mean no-body, and unknown ownership/relocations stay unknown. Default summary retains complete Evidence for inspect_analysis_view kind il2cpp-metadata using parent_evidence_id, named collections, original indices, fields and pages. Unrequested native counts are null; version27 names may be unknown. generic_instances adds supported static registration-table matches for versions 27/29/31. Executable-byte fallback is inferred and does not verify instruction boundaries. Full detail remains available; static agreement proves neither same-build pairing nor runtime behavior. Resource/unsupported-layout failures name their reasons.",
     inputSchema: inspectIl2cppMetadataInputSchema,
     outputSchema: evidenceResultOf(
       z.union([il2cppMetadataSchema, il2cppMetadataSummaryViewResultSchema]),

@@ -1,24 +1,57 @@
-import { execFile } from "node:child_process";
 import {
   copyFile,
+  cp,
   mkdir,
   readFile,
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
-import { promisify } from "node:util";
-import { expect, it } from "vitest";
+import { join, resolve } from "node:path";
+import { expect } from "vitest";
 import { z } from "zod";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { processTest } from "../../support/process/processFixture.js";
+import { resolveSwiftcCompileTimeoutMs } from "../../../src/process/DarwinProcessRunTokenReader.js";
 
-const execute = promisify(execFile);
+const preparationBudget =
+  process.platform === "darwin" ? resolveSwiftcCompileTimeoutMs() : 0;
+
+async function prepareController(controller: string, version: string) {
+  // The verifier loads its production-owned TypeScript source graph at runtime.
+  // Keep that graph in the isolated controller so imports cannot drift from a hand-maintained list.
+  await mkdir(join(controller, "scripts"), { recursive: true });
+  await copyFile(
+    "scripts/verify-release-artifact.mjs",
+    join(controller, "scripts/verify-release-artifact.mjs"),
+  );
+  await cp("scripts/lib", join(controller, "scripts/lib"), {
+    recursive: true,
+  });
+  await mkdir(join(controller, "bridge"), { recursive: true });
+  await cp("bridge/process", join(controller, "bridge/process"), {
+    recursive: true,
+  });
+  await cp("src", join(controller, "src"), {
+    recursive: true,
+    filter: (source) => !/\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(source),
+  });
+  await writeFile(
+    join(controller, "package.json"),
+    JSON.stringify({ name: "rea-agents", version, type: "module" }),
+  );
+  await symlink(
+    resolve("node_modules"),
+    join(controller, "node_modules"),
+    process.platform === "win32" ? "junction" : "dir",
+  );
+}
 
 // Release rehearsal runs on Linux; the npm process adapter is also exercised on macOS.
-it.skipIf(process.platform === "win32")(
+processTest.skipIf(process.platform === "win32")(
   "fails without declared runtime, then rehearses an installed tarball and rejects catalog drift",
-  async () => {
+  { timeout: Math.min(2_147_483_647, 3 * preparationBudget + 210_000) },
+  async ({ processes }) => {
     const root = await createTestTempDirectory("rea-release-canary-");
     const candidate = join(root, "candidate");
     const controller = join(root, "controller");
@@ -76,56 +109,46 @@ if (process.argv[2] === "mcp") {
 } else { process.exitCode = 1; }
 `,
     );
-    const packed = await execute(
-      "npm",
-      ["pack", "--ignore-scripts", "--json"],
-      {
-        cwd: candidate,
-      },
-    );
+    const pack = async () => {
+      const result = await processes.run(
+        "npm",
+        ["pack", "--ignore-scripts", "--json"],
+        { cwd: candidate },
+      );
+      expect(result.exitCode, result.stderr).toBe(0);
+      return result;
+    };
+    const packed = await pack();
     const [{ filename }] = z
       .tuple([z.object({ filename: z.string() })])
       .parse(JSON.parse(packed.stdout));
     const tarball = join(candidate, filename);
-    for (const file of [
-      "scripts/verify-release-artifact.mjs",
-      "scripts/lib/release-package-canary.mjs",
-      "scripts/lib/verify-package-core.mjs",
-      "scripts/lib/mcp-verifier-results.mjs",
-      "scripts/lib/verifier-run.mjs",
-    ]) {
-      const target = join(controller, file);
-      await mkdir(dirname(target), { recursive: true });
-      await copyFile(file, target);
-    }
-    await writeFile(
-      join(controller, "package.json"),
-      JSON.stringify({ name: "rea-agents", version, type: "module" }),
-    );
-    await symlink(
-      resolve("node_modules"),
-      join(controller, "node_modules"),
-      process.platform === "win32" ? "junction" : "dir",
-    );
+    await prepareController(controller, version);
     const invoke = (selected = tarball) =>
-      execute(
+      processes.run(
         process.execPath,
         [
           join(controller, "scripts/verify-release-artifact.mjs"),
           selected,
           version,
         ],
-        { cwd: controller, maxBuffer: 16 * 1024 * 1024 },
+        {
+          cwd: controller,
+          timeoutMs: Math.min(2_147_483_647, preparationBudget + 30_000),
+        },
       );
-    await expect(invoke()).rejects.toMatchObject({
-      stderr: expect.stringContaining("ERR_MODULE_NOT_FOUND"),
-    });
+    const missing = await invoke();
+    expect(missing.exitCode).toBe(1);
+    expect(missing.stderr).toContain("ERR_MODULE_NOT_FOUND");
+    expect(missing.stderr).toMatch(/dist[/\\]catalogIdentity\.js/u);
     await symlink(
       resolve("dist"),
       join(controller, "dist"),
       process.platform === "win32" ? "junction" : "dir",
     );
-    const result = JSON.parse((await invoke()).stdout);
+    const successful = await invoke();
+    expect(successful.exitCode, successful.stderr).toBe(0);
+    const result = JSON.parse(successful.stdout);
     expect(result).toMatchObject({
       package: "rea-agents",
       version,
@@ -144,12 +167,10 @@ if (process.argv[2] === "mcp") {
       join(candidate, "scripts/reply.json"),
       JSON.stringify(snapshot),
     );
-    await execute("npm", ["pack", "--ignore-scripts", "--json"], {
-      cwd: candidate,
-    });
-    await expect(invoke()).rejects.toMatchObject({
-      stderr: expect.stringContaining("invalid canonical tool catalog"),
-    });
+    await pack();
+    const drifted = await invoke();
+    expect(drifted.exitCode).toBe(1);
+    expect(drifted.stderr).toContain("invalid canonical tool catalog");
     await writeFile(
       join(candidate, "package.json"),
       JSON.stringify({
@@ -159,15 +180,12 @@ if (process.argv[2] === "mcp") {
         files: ["scripts"],
       }),
     );
-    const wrong = await execute("npm", ["pack", "--ignore-scripts", "--json"], {
-      cwd: candidate,
-    });
+    const wrong = await pack();
     const [{ filename: wrongFilename }] = z
       .tuple([z.object({ filename: z.string() })])
       .parse(JSON.parse(wrong.stdout));
-    await expect(invoke(join(candidate, wrongFilename))).rejects.toMatchObject({
-      stderr: expect.stringContaining("Installed package identity"),
-    });
+    const mismatched = await invoke(join(candidate, wrongFilename));
+    expect(mismatched.exitCode).toBe(1);
+    expect(mismatched.stderr).toContain("Installed package identity");
   },
-  30_000,
 );

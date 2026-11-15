@@ -1,3 +1,7 @@
+import type {
+  FileMapping,
+  ZeroFillMapping,
+} from "../../domain/virtualFileMapping.js";
 import { readPeCoffHeader } from "../../domain/peCoffHeader.js";
 import { readPeOptionalHeader } from "../../domain/peMachine.js";
 import { readPeSectionHeader } from "../../domain/peSectionHeader.js";
@@ -10,9 +14,7 @@ import {
   BinaryFormatFailure,
   BinaryReader,
   type BinaryContainer,
-  type FileMapping,
   type ImageSection,
-  type ZeroFillMapping,
 } from "./BinaryContainer.js";
 
 const peHeaderOffset = (reader: BinaryReader): number => {
@@ -77,7 +79,7 @@ export type PeImage = BinaryContainer & {
 
 /** Read PE32/PE32+ native image mappings and section facts. */
 export const readPeImage = (bytes: Buffer): PeImage => {
-  const reader = new BinaryReader(bytes, true);
+  const reader = new BinaryReader(bytes, true, "pe");
   const pe = peHeaderOffset(reader);
   const optional = pe + 24;
   const coff = readPeCoffHeader(bytes.subarray(pe + 4, pe + 24));

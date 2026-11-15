@@ -6,8 +6,8 @@ import {
 import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
 import type { BuildSource } from "../../domain/desktop/appBuild.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import {
   buildSecretHandleSchema,
@@ -169,7 +169,7 @@ export class DesktopBuildSecrets {
 
   /** Every secret no bundle may hold: each value typed or kept here, then each the folder holds now, readable by others or not. */
   async all(signal?: AbortSignal): Promise<KnownSecret[]> {
-    signal?.throwIfAborted();
+    if (signal?.aborted) throw cancelledBy("export_build_environment", signal);
     let handles: string[];
     try {
       handles = await listBuildSecretHandles(this.directory);
@@ -196,7 +196,7 @@ export class DesktopBuildSecrets {
           }),
         ),
       });
-    signal?.throwIfAborted();
+    if (signal?.aborted) throw cancelledBy("export_build_environment", signal);
     const refused = read.find(({ file }) => !file.ok);
     if (refused !== undefined && !refused.file.ok)
       throw new AnalysisInputError("export_build_environment", {
@@ -224,7 +224,7 @@ export class DesktopBuildSecrets {
 /** Why a secret was not typed, in REA's words and without its cause: the computer's own could quote the secret. */
 const notTyped = (handle: string, signal: AbortSignal): AnalysisError =>
   signal.aborted
-    ? new AnalysisCancelledError(ACT, { cause: signal.reason })
+    ? cancelledBy(ACT, signal)
     : new ProviderAdapterError(AGENTENV_PROVIDER, ACT, {
         userMessage: `The computer did not type the secret ${handle}; REA does not show its answer, which could quote the secret.`,
         remediationAction:

@@ -1,14 +1,22 @@
 import { vi } from "vitest";
 
 /** Environment variables that redirect where supported clients keep config. */
-export const CLIENT_LOCATION_ENVIRONMENT = [
+const CLIENT_LOCATION_ENVIRONMENT = [
+  "HOME",
+  "USERPROFILE",
+  "HOMEDRIVE",
+  "HOMEPATH",
   "APPDATA",
+  "CLINE_MCP_SETTINGS_PATH",
+  "CLINE_DATA_DIR",
+  "CLINE_DIR",
   "CLAUDE_CONFIG_DIR",
   "CODEX_HOME",
   "DSH_HOME",
   "DSH_AGENTS_HOME",
   "COPILOT_HOME",
   "FACTORY_HOME_OVERRIDE",
+  "FLATPAK_XDG_CONFIG_HOME",
   "GROK_HOME",
   "GEMINI_CLI_HOME",
   "GEMINI_CLI_TRUST_WORKSPACE",

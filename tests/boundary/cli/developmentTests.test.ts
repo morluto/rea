@@ -163,6 +163,74 @@ describe("development test runner symlink aliases", () => {
   });
 });
 
+describe("development test runner prerequisite ownership", () => {
+  it("prepares artifacts for filesystem aliases without folding distinct filenames", async () => {
+    const root = await fixture();
+    const canonical = "tests/boundary/mcp/deferredRuntime.test.ts";
+    const selected = "tests/boundary/mcp/DEFERREDRuntime.test.ts";
+    await mkdir(join(root, "tests/boundary/mcp"), { recursive: true });
+    await writeFile(
+      join(root, canonical),
+      "// Artifact-consuming test fixture\n",
+    );
+    let sameFile = true;
+    try {
+      await lstat(join(root, selected));
+    } catch (cause) {
+      if (
+        !(cause instanceof Error) ||
+        !("code" in cause) ||
+        cause.code !== "ENOENT"
+      )
+        throw cause;
+      sameFile = false;
+      await writeFile(join(root, selected), "// Distinct test fixture\n");
+    }
+    for (const path of [canonical, selected]) {
+      const result = await testCommand(root, "focused", path, "--dry-run");
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        paths: [path],
+        needsBuild: true,
+        artifactTasks:
+          path === canonical || sameFile ? ["artifacts:mcp-catalog"] : [],
+        vitestArguments: ["run", path],
+      });
+    }
+  });
+
+  it("retains built-project admission for an aliased provider conformance test", async ({
+    skip,
+  }) => {
+    const root = await fixture();
+    const directory = "tests/conformance/providers/hopper";
+    const canonical = `${directory}/realHopperSearch.test.ts`;
+    const selected = `${directory}/REALHopperSearch.test.ts`;
+    await mkdir(join(root, directory), { recursive: true });
+    await writeFile(join(root, canonical), "// Built conformance fixture\n");
+    try {
+      await lstat(join(root, selected));
+    } catch (cause) {
+      if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
+        skip("The host distinguishes the selected filename casing");
+      throw cause;
+    }
+    const result = await testCommand(root, "focused", selected, "--dry-run");
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      paths: [selected],
+      needsBuild: true,
+      vitestArguments: ["run", selected],
+    });
+    await expect(
+      testCommand(root, "local", selected, "--dry-run"),
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining(
+        `Use test:focused for built test projects: ${selected}`,
+      ),
+    });
+  });
+});
+
 describe("development test runner exact selection", () => {
   it("matches selected path casing to the host filesystem", async () => {
     const root = await fixture();
@@ -366,7 +434,6 @@ describe("development test runner cancellation", () => {
         await closed;
       }
     },
-    20_000,
   );
 });
 
@@ -442,7 +509,7 @@ describe("development test runner public CLI", () => {
     expect(changed.stdout).toContain("1 passed");
     const focused = await testCommand(root, "focused", "src/value.test.ts");
     expect(focused.stdout).toContain("1 passed");
-  }, 60_000);
+  });
 
   it("reports a missing comparison base and rejects missing or compiled-boundary paths", async () => {
     const root = await fixture();

@@ -45,7 +45,10 @@ export interface NativeSection {
   readonly entry_size: bigint;
   /** `sh_addralign` for ELF. PE sections have no note alignment and use 1. */
   readonly alignment: bigint;
+  /** Declared stored bytes are present; compressed bytes are not decoded content. */
   readonly file_backed: boolean;
+  /** ELF SHF_COMPRESSED storage encoding; always false for PE sections. */
+  readonly compressed: boolean;
 }
 /** Program header types retained for load, dynamic, hardening, and unwind consumers. */
 export const ELF_PT_NOTE = 4 as const;
@@ -308,6 +311,7 @@ export function* readElfSectionDirectory(
         alignment: section.alignment,
         file_backed:
           type !== 8 && declaredFileRange(fileSize, offset, size).file_backed,
+        compressed: section.compressed,
       });
     }
   }
@@ -330,7 +334,7 @@ export function* readElfSectionDirectory(
 export function* readPeSectionDirectory(
   fileSize: number,
 ): Generator<NativeReadRequest, NativeSectionDirectory, Buffer> {
-  const dos = new BinaryReader(yield request(fileSize, 0n, 64n), true);
+  const dos = new BinaryReader(yield request(fileSize, 0n, 64n), true, "pe");
   if (dos.u16(0) !== 0x5a4d) reject("Missing DOS MZ header");
   const evidence = parseMzHeaderEvidence(dos.bytes, fileSize);
   const observed = evidence.windowsHeader;
@@ -344,7 +348,11 @@ export function* readPeSectionDirectory(
       throw new BinaryFormatFailure("unsupported", limitation);
   }
   const pe = observed.offset;
-  const coff = new BinaryReader(yield request(fileSize, BigInt(pe), 24n), true);
+  const coff = new BinaryReader(
+    yield request(fileSize, BigInt(pe), 24n),
+    true,
+    "pe",
+  );
   const confirmed = withMzWindowsHeaderSignature(
     dos.bytes,
     fileSize,
@@ -410,6 +418,7 @@ export function* readPeSectionDirectory(
         BigInt(row.offset),
         BigInt(row.size),
       ).file_backed,
+      compressed: false,
     });
   }
   return {

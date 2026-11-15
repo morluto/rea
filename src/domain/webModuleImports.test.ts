@@ -63,6 +63,34 @@ describe("native module syntax observations", () => {
       column: 7,
     });
   });
+  it.each([
+    ['"./dep.js" as const', "./dep.js"],
+    ['"./dep.js" satisfies string', "./dep.js"],
+    ['"./dep.js"!', "./dep.js"],
+    ["`./dep.js` as const", "./dep.js"],
+    ["`./${name}.js` as const", null],
+  ] as const)(
+    "retains exact import identity through erased syntax: %s",
+    (expression, specifier) => {
+      const source = `import(${expression});`;
+      const result = collectWebModuleImports(source, "main.ts");
+      expect(result.state).toBe("parsed");
+      expect(result.diagnostics).toEqual([]);
+      expect(result.imports).toEqual([
+        {
+          kind: "dynamic-import",
+          specifier,
+          expression,
+          start: { offset: 7, line: 1, column: 7 },
+          end: {
+            offset: 7 + expression.length,
+            line: 1,
+            column: 7 + expression.length,
+          },
+        },
+      ]);
+    },
+  );
   it("reports unparseable input without asserting an empty complete graph", () => {
     const result = collectWebModuleImports(
       'import "./ok.js"; function {',

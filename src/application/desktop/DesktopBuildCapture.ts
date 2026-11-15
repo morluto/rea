@@ -2,7 +2,7 @@ import type { DownloadInstall } from "../../domain/desktop/appDownloadInstall.js
 import { z } from "zod";
 
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { cancelledBy } from "../../domain/analysisErrorCore.js";
 import type { BuildRequest } from "../../domain/desktop/appBuild.js";
 import {
   SIGN_IN_END,
@@ -28,7 +28,11 @@ import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
 import type { AgentEnvComputer } from "../../desktop/AgentEnvComputer.js";
-import type { ControlledComputer } from "../../desktop/BuildComputerController.js";
+import {
+  controller,
+  type Answer,
+  type ControlledComputer,
+} from "../../desktop/BuildComputerController.js";
 import { BuildComputerLongRuns } from "../../desktop/BuildComputerLongRuns.js";
 import {
   endedCapture,
@@ -37,12 +41,10 @@ import {
 } from "./DesktopBuildCaptureFailure.js";
 import {
   adapterError,
-  controller,
   errorText,
   refused,
   runRea,
   WORK,
-  type Answer,
 } from "./DesktopBuildCommands.js";
 import {
   exportBuild,
@@ -132,6 +134,12 @@ const schemaCommandError = (exitCode: number | null, detail: string) =>
     remediationAction: `Inspect the command error. If the runtime is outdated, ${repackRuntime}`,
   });
 
+/** Export options a build passes, as the runtime's schema names them, with what each supports. */
+const BUILD_EXPORT_OPTIONS = {
+  syntheticSeed: "synthetic seeds",
+  taskEnd: "task ends",
+} as const;
+
 /** Check the installed runtime's advertised export contract before capturing the user's work. */
 const checkExportRuntime = async (
   computer: ControlledComputer,
@@ -193,18 +201,20 @@ const checkExportRuntime = async (
           "The build computer's REA returned an invalid export schema.",
         ),
       );
-    if (!("syntheticSeed" in schema.data.options.properties))
+    const unsupported = Object.entries(BUILD_EXPORT_OPTIONS)
+      .filter(([name]) => !(name in schema.data.options.properties))
+      .map(([, what]) => what);
+    if (unsupported.length > 0)
       return err(
         refused(
           START,
-          "The REA runtime in this build computer does not support synthetic seeds required by build export.",
+          `The REA runtime in this build computer does not support ${unsupported.join(" or ")} required by build export.`,
           repackRuntime,
         ),
       );
     return ok(undefined);
   } catch (cause: unknown) {
-    if (signal.aborted)
-      return err(new AnalysisCancelledError(START, { cause: signal.reason }));
+    if (signal.aborted) return err(cancelledBy(START, signal));
     const message = errorText(cause);
     const redacted = computer.redacted(message);
     return err(
@@ -225,10 +235,6 @@ type CheckpointTaken = Omit<
   readonly changed_files: string[] | null;
   readonly more_changed_files: number | null;
 };
-
-/** The capture's progress event in a line the controller waited for. */
-const eventOf = (line: string): DesktopCaptureEvent | undefined =>
-  captureProgressEvent(line);
 
 /**
  * One capture in the computer. `unreleased` is a capture that may be
@@ -432,7 +438,8 @@ export class DesktopBuildCapture {
         ),
         answer,
       });
-    const event = answer.line === undefined ? undefined : eventOf(answer.line);
+    const event =
+      answer.line === undefined ? undefined : captureProgressEvent(answer.line);
     if (event?.kind !== "window_open")
       return err({
         failure: await endedCapture(
@@ -492,7 +499,9 @@ export class DesktopBuildCapture {
         { timeoutS: 600, signal },
       );
       const event =
-        answer.line === undefined ? undefined : eventOf(answer.line);
+        answer.line === undefined
+          ? undefined
+          : captureProgressEvent(answer.line);
       if (event?.kind === "checkpoint_refused")
         return err(refused(MARK, event.reason, "Use another checkpoint name."));
       if (event?.kind !== "checkpoint")
@@ -614,6 +623,9 @@ export class DesktopBuildCapture {
     signal: AbortSignal,
   ): Promise<Result<ExportedBuild, AnalysisError>> {
     const run = this.#run;
+    const ends = input.tasks.map(
+      ({ end_checkpoint: end }) => end ?? END_CHECKPOINT,
+    );
     if (
       run?.stopped === undefined ||
       !run.checkpoints.has(SEED_CHECKPOINT) ||
@@ -624,6 +636,15 @@ export class DesktopBuildCapture {
           EXPORT,
           `Export needs a stopped capture with ${SEED_CHECKPOINT} and ${END_CHECKPOINT} checkpoints; capture with start_build_capture, mark both and stop it.`,
           "Capture with start_build_capture, mark seed and end, then call stop_build_capture.",
+        ),
+      );
+    const untaken = ends.filter((end) => !run.checkpoints.has(end));
+    if (untaken.length > 0)
+      return err(
+        refused(
+          EXPORT,
+          `The capture took no checkpoint named ${untaken.join(" or ")}; its checkpoints are ${[...run.checkpoints].join(", ")}.`,
+          "Give each task the end checkpoint marked once its change was saved.",
         ),
       );
     const signIn = [SIGN_IN_START, SIGN_IN_END].filter((name) =>
@@ -657,7 +678,7 @@ export class DesktopBuildCapture {
         cause instanceof AnalysisError
           ? cause
           : signal.aborted
-            ? new AnalysisCancelledError(EXPORT, { cause: signal.reason })
+            ? cancelledBy(EXPORT, signal)
             : adapterError(EXPORT, errorText(cause), cause),
       );
     }
@@ -677,6 +698,7 @@ export class DesktopBuildCapture {
         keep: this.secrets.keep,
         signIn: signIn.length === 2,
         consents: [...this.#consents],
+        checkpoints: run.checkpoints,
       },
       input,
       signal,

@@ -40,6 +40,19 @@ signer identifier facts. A signer identified by subject key identifier reports
 that value as `subject_key_identifier_hex`. Other certificate types keep
 `pkcs7` null.
 
+Each name attribute reports `rdn_index`, the zero-based position of its relative
+distinguished name (RDN) in the encoded name. Attributes in the same RDN share
+an index. Older retained Evidence may omit the index.
+
+A distinguished name's `text` joins those attributes in encoded order.
+Attributes in one RDN are joined with `+`
+(`commonName=A+organizationName=B`). Separate RDNs are joined with `, `
+(`commonName=A, organizationName=B`). The separators follow
+[RFC 4514](https://www.rfc-editor.org/rfc/rfc4514) multi-valued RDN notation.
+Encoded order is kept, and values are copied as decoded, without RFC 4514
+escaping or RDN reversal, so a name of only single-valued RDNs still places
+`, ` between attributes.
+
 Each signer reports `unsigned_attribute_oids`: null means the field was absent,
 and an array lists the types when present. Older retained Evidence may omit the
 field. Unsigned attribute contents, including nested signatures and timestamp
@@ -50,6 +63,12 @@ A missing table is observed absence of that directory. It is not proof the
 image is unsigned in every catalog or overlay sense.
 
 ## Limits and failures
+
+Confirmed DOS-only MZ files and declared NE, LE, or LX signatures are outside
+this PE32/PE32+ workflow and return `unsupported_target` with target-selection
+recovery. A recognized non-PE signature does not need a PE COFF header to be
+classified. Unrecognized signatures and truncated PE headers remain malformed
+input. `inspect-pe-resources` uses the same header admission and classifications.
 
 The selected file is limited to 64 MiB by default (512 MiB maximum). At most
 eight `WIN_CERTIFICATE` entries are examined by default. Malformed PE headers,

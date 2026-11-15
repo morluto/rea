@@ -1,9 +1,17 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import WebSocket, { type RawData } from "ws";
+import { isUtf8 } from "node:buffer";
 
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { cancelledBy, carriedReason } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { CdpCommandRejection } from "./CdpCommandRejection.js";
+import {
+  admitCdpReply,
+  type CdpCommand,
+  type CdpCommandParams,
+  type CdpCommandResult,
+} from "./protocol/CdpCommands.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import {
   cdpCleanupGraceExpired,
@@ -11,11 +19,11 @@ import {
   cdpCommandTimeoutIsSelectable,
   cdpCommandTimeoutUnrelatedControl,
   DEFAULT_CDP_COMMAND_TIMEOUT_MS,
-  MAX_BROWSER_DEADLINE_MS,
   noRuntimeOverrideSentence,
 } from "../domain/browserDeadline.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import { WEB_RUNTIME_LIMITS } from "../domain/webRuntime.js";
+import { isRecord } from "../domain/isRecord.js";
 
 // ws currently stores maxPayload as a signed 32-bit integer. Larger values can
 // wrap to a negative number, which disables its limit check.
@@ -136,10 +144,7 @@ class CdpTransportCore {
       throw new BrowserObservationError(operation, "protocol_error");
     if (this.#closed || this.socket.readyState !== WebSocket.OPEN)
       throw this.transportError(this.#transportFailure, operation);
-    if (signal?.aborted === true)
-      throw new AnalysisCancelledError(operation, {
-        cause: signal.reason,
-      });
+    if (signal?.aborted === true) throw cancelledBy(operation, signal);
     const id = this.#nextId;
     this.#nextId += 1;
     const message = JSON.stringify({
@@ -153,11 +158,7 @@ class CdpTransportCore {
         const pending = this.#pending.get(id);
         if (pending === undefined) return;
         this.#complete(id, pending);
-        reject(
-          new AnalysisCancelledError(operation, {
-            cause: signal?.reason,
-          }),
-        );
+        reject(cancelledBy(operation, carriedReason(signal?.reason)));
       };
       const failTimeout = (): void => {
         const pending = this.#pending.get(id);
@@ -295,7 +296,14 @@ class CdpTransportCore {
 
   #receive(data: RawData): void {
     if (this.#closed || this.#protocolFailed) return;
-    const parsed = safeParseJson(rawText(data));
+    const bytes = rawBytes(data);
+    // Binary WebSocket messages bypass ws's text-frame UTF-8 validation.
+    // Never replacement-decode protocol facts into a different accepted value.
+    if (!isUtf8(bytes)) {
+      this.#failPending("protocol_error");
+      return;
+    }
+    const parsed = safeParseJson(bytes.toString("utf8"));
     if (!parsed.ok) {
       this.#failPending("protocol_error");
       return;
@@ -326,7 +334,7 @@ class CdpTransportCore {
       this.#failPending("protocol_error");
       return;
     }
-    const wireBytes = rawByteLength(data);
+    const wireBytes = bytes.byteLength;
     const event: CdpTransportEvent = {
       method: message.method,
       params: "params" in message ? message.params : {},
@@ -486,8 +494,7 @@ export class CdpConnection {
     },
     onConnected?: (connection: CdpConnection) => void,
   ): Promise<CdpConnection> {
-    if (signal?.aborted === true)
-      throw new AnalysisCancelledError(operation, { cause: signal.reason });
+    if (signal?.aborted === true) throw cancelledBy(operation, signal);
     const maxPayloadBytes =
       limits?.maxPayloadBytes ?? WEB_RUNTIME_LIMITS.protocolBytes;
     const commandTimeoutMs =
@@ -569,19 +576,30 @@ export class CdpConnection {
     this.core.reschedulePending(this.#scopedPendingIds, timeoutMs);
   }
 
-  /** Bound each response separately from the caller-selected observation window. */
-  async send(
-    method: string,
-    params: Readonly<Record<string, unknown>> = {},
+  /**
+   * Bound each response separately from the caller-selected observation
+   * window. A registered command's reply is parsed by its result schema; a
+   * mismatch rejects that command with `CdpMalformedReply`.
+   */
+  async send<M extends CdpCommand>(
+    method: M,
+    params?: CdpCommandParams<M>,
     sessionId?: string,
     signal?: AbortSignal,
-  ): Promise<unknown> {
-    return await this.core.send(method, params, sessionId, signal, {
-      operation: this.operation,
-      commandTimeoutMs: () => this.#commandTimeoutMs,
-      deadlineKind: () => this.#deadlineKind,
-      scopedIds: this.#scopedPendingIds,
-    });
+  ): Promise<CdpCommandResult<M>> {
+    const reply = await this.core.send(
+      method,
+      params ?? {},
+      sessionId,
+      signal,
+      {
+        operation: this.operation,
+        commandTimeoutMs: () => this.#commandTimeoutMs,
+        deadlineKind: () => this.#deadlineKind,
+        scopedIds: this.#scopedPendingIds,
+      },
+    );
+    return admitCdpReply(method, reply, this.operation);
   }
 
   /** Close only REA's socket; never close the browser or selected page. */
@@ -593,26 +611,18 @@ export class CdpConnection {
 const socketIsClosed = (socket: WebSocket): boolean =>
   socket.readyState === WebSocket.CLOSED;
 
-const rawText = (data: RawData): string =>
+const rawBytes = (data: RawData): Buffer =>
   Array.isArray(data)
-    ? Buffer.concat(data).toString("utf8")
+    ? Buffer.concat(data)
     : Buffer.isBuffer(data)
-      ? data.toString("utf8")
-      : Buffer.from(data).toString("utf8");
-
-const rawByteLength = (data: RawData): number =>
-  Array.isArray(data)
-    ? data.reduce((bytes, chunk) => bytes + chunk.byteLength, 0)
-    : data.byteLength;
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+      ? data
+      : Buffer.from(data);
 
 const waitForOpen = async (
   socket: WebSocket,
   operation: BrowserObservationOperation,
-  signal?: AbortSignal,
-  commandTimeoutMs: number = DEFAULT_CDP_COMMAND_TIMEOUT_MS,
+  signal: AbortSignal | undefined,
+  handshakeTimeoutMs: number,
 ): Promise<void> =>
   await new Promise((resolve, reject) => {
     const onOpen = (): void => {
@@ -637,7 +647,7 @@ const waitForOpen = async (
     const onAbort = (): void => {
       cleanup();
       terminateSocket(socket);
-      reject(new AnalysisCancelledError(operation, { cause: signal?.reason }));
+      reject(cancelledBy(operation, carriedReason(signal?.reason)));
     };
     const cleanup = (): void => {
       clearTimeout(timer);
@@ -647,8 +657,8 @@ const waitForOpen = async (
       signal?.removeEventListener("abort", onAbort);
     };
     const boundedTimeoutMs = Math.min(
-      MAX_BROWSER_DEADLINE_MS,
-      commandTimeoutMs,
+      MAX_NODE_TIMER_DELAY_MS,
+      handshakeTimeoutMs,
     );
     const timer = setTimeout(() => {
       terminateSocket(socket);

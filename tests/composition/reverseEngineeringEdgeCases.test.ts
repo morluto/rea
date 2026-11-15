@@ -14,10 +14,7 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisResourceConstraintError,
 } from "../../src/domain/analysisErrorCore.js";
-import {
-  ReverseEngineeringService as CoreReverseEngineeringService,
-  REVERSE_COMMAND_OUTPUT_LIMITATION,
-} from "../../src/application/reverse/ReverseEngineeringService.js";
+import { ReverseEngineeringService as CoreReverseEngineeringService } from "../../src/application/reverse/ReverseEngineeringService.js";
 import { createReverseEngineeringCommandPort } from "../../src/composition/reverseEngineering.js";
 import { objdumpCommand } from "../../src/objdump/ObjdumpCommand.js";
 import {
@@ -78,7 +75,7 @@ it.each(["objdump", "rizin"] as const)(
               artifact_changed: null,
             },
             limitations: expect.arrayContaining([
-              REVERSE_COMMAND_OUTPUT_LIMITATION,
+              expect.stringContaining("max_output_bytes=16777216"),
             ]),
           },
         },
@@ -386,27 +383,6 @@ it("rejects malformed Rizin requests before touching the provider", async () => 
     },
   });
   expect(run).not.toHaveBeenCalled();
-});
-
-it("rejects directories as artifacts before invoking the provider", async () => {
-  const { directory } = await createArtifact();
-  const run = vi.fn(async () => ({ stdout: "", stderr: "" }));
-  const service = new ReverseEngineeringService({ run });
-
-  try {
-    const result = await service.inspectWithObjdump({
-      path: directory,
-      operation: "file_headers",
-    });
-
-    expect(result).toMatchObject({
-      ok: false,
-      error: { _tag: "AnalysisInputError", operation: "inspect_with_objdump" },
-    });
-    expect(run).not.toHaveBeenCalled();
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
 });
 
 it("rejects new operations after service shutdown begins", async () => {

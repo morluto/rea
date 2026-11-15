@@ -82,7 +82,7 @@ describe("CDP execution-context retention", () => {
       request,
       new Set(["https://app.example.test"]),
     );
-    browser.beginAuthorizedFrame("frame-old");
+    browser.beginAuthorizedFrame({ frameId: "frame-old" });
     browser.ingest({
       method: "Runtime.executionContextCreated",
       params: { context: { id: 7, auxData: { frameId: "frame-old" } } },
@@ -136,8 +136,8 @@ describe("CDP execution-context retention", () => {
       request,
       new Set(["https://app.example.test"]),
     );
-    browser.beginAuthorizedFrame("frame-old");
-    browser.beginAuthorizedFrame("frame-new");
+    browser.beginAuthorizedFrame({ frameId: "frame-old" });
+    browser.beginAuthorizedFrame({ frameId: "frame-new" });
     browser.ingest({
       method: "Runtime.executionContextCreated",
       params: { context: { id: 7, auxData: { frameId: "frame-old" } } },
@@ -204,7 +204,7 @@ it.each([
       }),
       new Set(["https://app.example.test"]),
     );
-    browser.beginAuthorizedFrame("frame-old");
+    browser.beginAuthorizedFrame({ frameId: "frame-old" });
     const scripts: ElectronScriptDraft[] = [];
     const executionContextFrames = new Map<string, CdpContextFrameClaim>();
     const completeness = new CdpCaptureCompleteness();

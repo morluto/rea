@@ -6,7 +6,7 @@ import type { ApplicationNode } from "./javascriptApplicationGraphSchemas.js";
 
 type Observation = ApplicationNode["observations"][number];
 
-/** Read member facts without changing historical observations or their identifiers. */
+/** Read source-owned member facts without interpreting display labels. */
 export const nativeExportObservationFacts = (observation: Observation) => {
   const requested = observation.properties.requested_members;
   const members = observation.properties.members;
@@ -29,9 +29,6 @@ export const nativeExportObservationFacts = (observation: Observation) => {
       (!membersPresent || validList(members)),
     requested: strings(requested),
     members: strings(members),
-    // Labels were the historical fallback, but current labels summarize names
-    // or namespace access and must not become requested native symbols.
-    label: Array.isArray(requested) ? null : observation.label,
   };
 };
 
@@ -43,12 +40,7 @@ export const nativeExportCorrespondenceKey = (
     const facts = nativeExportObservationFacts(observation);
     if (!facts.valid) return null;
     const specifier = observation.properties.specifier;
-    if (typeof specifier !== "string" || specifier === "")
-      return observation.label === null ||
-        facts.requestedPresent ||
-        facts.membersPresent
-        ? null
-        : compositeKey(["label", observation.label]);
+    if (typeof specifier !== "string" || specifier === "") return null;
     const flag = (name: string) => {
       const value = observation.properties[name];
       return typeof value === "boolean" ? value : null;
@@ -61,7 +53,6 @@ export const nativeExportCorrespondenceKey = (
       facts.membersPresent
         ? ["members", [...facts.members].sort(compareUnicodeCodePoints)]
         : ["members-unknown"],
-      facts.label,
       flag("namespace_access"),
       flag("dynamic_member_access"),
     ]);

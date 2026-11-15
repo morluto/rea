@@ -166,3 +166,25 @@ it.each([
     expect(requestBody(capture.records[0]!)).toEqual(expected);
   },
 );
+
+it.each([
+  ["null", null],
+  ["false", false],
+  ["0", 0],
+  ['""', ""],
+  ["not-json", "not-json"],
+] as const)(
+  "preserves the recorded request JSON value %s",
+  (text, expected) => {
+    const capture = environmentManifestCaptureFixture([
+      {
+        request: {
+          method: "POST",
+          url: "http://app.example/api/value",
+          postData: { mimeType: "application/json", text },
+        },
+      },
+    ]);
+    expect(requestBody(capture.records[0]!)).toEqual(expected);
+  },
+);

@@ -4,9 +4,13 @@ import { z } from "incur";
 import { compareManagedMemberPaths } from "../application/managed/ManagedMemberComparisonService.js";
 import { executeManagedNativeBoundaries } from "../application/managed/ManagedNativeVerificationService.js";
 import { importManagedReconstructionEvidence } from "../application/managed/ManagedReconstructionService.js";
+import { projectManagedApplicationGraphEvidence } from "../application/managed/ManagedApplicationGraphService.js";
+import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
+import { MANAGED_WORKFLOW_TOOL_CONTRACTS } from "../contracts/managed/managedWorkflowToolContracts.js";
+import { contractNamed } from "./contractCliDescription.js";
+import { registerContractDocumentCommand } from "./contractCommand.js";
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { parseCliJsonInput } from "../cliJsonInput.js";
 import { MANAGED_STATIC_PROVIDER } from "../domain/investigationProviders.js";
 import { ok } from "../domain/result.js";
 import {
@@ -17,11 +21,36 @@ import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
-import { registerProjectManagedApplicationGraph } from "./managedProjectGraphCommand.js";
 import { managedMembersInputSchema } from "../contracts/managed/managedToolContracts.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { managedInspectionBudgetShape } from "../domain/managed/managedInspectionLimits.js";
+import { cliDecimalField } from "./options.js";
+
+const managedBudgetOptions = {
+  maxSnapshotBytes: cliDecimalField(
+    managedInspectionBudgetShape.max_snapshot_bytes,
+  ),
+  maxMetadataRepresentationBytes: cliDecimalField(
+    managedInspectionBudgetShape.max_metadata_representation_bytes,
+  ),
+};
+
+const managedBudgetParameters = (options: {
+  readonly maxSnapshotBytes?: number | undefined;
+  readonly maxMetadataRepresentationBytes?: number | undefined;
+}) => ({
+  ...(options.maxSnapshotBytes === undefined
+    ? {}
+    : { max_snapshot_bytes: options.maxSnapshotBytes }),
+  ...(options.maxMetadataRepresentationBytes === undefined
+    ? {}
+    : {
+        max_metadata_representation_bytes:
+          options.maxMetadataRepresentationBytes,
+      }),
+});
 
 export const registerManagedCommands = (
   cli: CliInstance,
@@ -32,9 +61,7 @@ export const registerManagedCommands = (
   registerInspectManagedMembers(cli, logger, runProviderAnalysis);
   registerInspectManagedNativeBoundaries(cli, logger, runProviderAnalysis);
   registerCompareManagedMembers(cli, logger);
-  registerImportManagedReconstruction(cli, logger);
-  registerVerifyManagedNativeBoundaries(cli, logger);
-  registerProjectManagedApplicationGraph(cli, logger);
+  registerManagedWorkflowCommands(cli, logger);
 };
 
 const registerInspectManagedArtifact = (
@@ -49,12 +76,13 @@ const registerInspectManagedArtifact = (
         "Managed PE executable or assembly path",
       ),
     }),
-    run: ({ args }) =>
+    options: z.object(managedBudgetOptions),
+    run: ({ args, options }) =>
       logCliCommand(logger, "inspect-managed-artifact", () =>
         runProviderAnalysis(
           args.path,
           "inspect_managed_artifact",
-          {},
+          managedBudgetParameters(options),
           logger,
         ).then(projectCliAnalysisResult),
       ),
@@ -75,6 +103,7 @@ const registerInspectManagedMembers = (
       ),
     }),
     options: z.object({
+      ...managedBudgetOptions,
       type: managedMembersInputSchema.shape.type_names.describe(
         "Inspect only members declared by this exact type full name, and the string literals they load, such as System.Threading.Monitor; a nested type is named by its bare name, which selects every nested type of that name (repeatable)",
       ),
@@ -93,7 +122,12 @@ const registerInspectManagedMembers = (
           runProviderAnalysis(
             args.path,
             "inspect_managed_members",
-            options.type === undefined ? {} : { type_names: options.type },
+            {
+              ...managedBudgetParameters(options),
+              ...(options.type === undefined
+                ? {}
+                : { type_names: options.type }),
+            },
             logger,
             signal,
             {
@@ -123,12 +157,13 @@ const registerInspectManagedNativeBoundaries = (
         "Managed PE executable or assembly path",
       ),
     }),
-    run: ({ args }) =>
+    options: z.object(managedBudgetOptions),
+    run: ({ args, options }) =>
       logCliCommand(logger, "inspect-managed-native-boundaries", () =>
         runProviderAnalysis(
           args.path,
           "inspect_managed_native_boundaries",
-          {},
+          managedBudgetParameters(options),
           logger,
         ).then(projectCliAnalysisResult),
       ),
@@ -153,6 +188,7 @@ const registerCompareManagedMembers = (
       "Compare managed PE/CLI member inventories by exact declared type, name, and signature; names alone never form a match",
     args: compareManagedMemberArgs,
     options: z.object({
+      ...managedBudgetOptions,
       type: managedMembersInputSchema.shape.type_names.describe(
         "Compare only members declared by this exact type full name on both sides, as selected by inspect-managed-members --type; use it when a whole-assembly comparison exceeds capacity (repeatable)",
       ),
@@ -167,6 +203,15 @@ const registerCompareManagedMembers = (
                 {
                   leftPath: args.leftPath,
                   rightPath: args.rightPath,
+                  ...(options.maxSnapshotBytes === undefined
+                    ? {}
+                    : { maxSnapshotBytes: options.maxSnapshotBytes }),
+                  ...(options.maxMetadataRepresentationBytes === undefined
+                    ? {}
+                    : {
+                        maxRepresentationBytes:
+                          options.maxMetadataRepresentationBytes,
+                      }),
                   ...(options.type === undefined
                     ? {}
                     : { typeNames: options.type }),
@@ -188,82 +233,76 @@ const registerCompareManagedMembers = (
   });
 };
 
-const registerImportManagedReconstruction = (
-  cli: CliInstance,
-  logger: Logger,
-): void => {
-  cli.command(CLI_COMMANDS.importManagedReconstruction, {
+/** Managed Evidence workflows, each taking its contract input as one JSON document. */
+const MANAGED_WORKFLOWS = [
+  {
+    name: "import_managed_reconstruction",
+    command: CLI_COMMANDS.importManagedReconstruction,
     description:
       "Import decompiler-produced managed reconstruction against exact static member evidence",
-    args: z.object({
-      inputJson: z
-        .string()
-        .describe("Inline managed reconstruction JSON or JSON file path"),
-    }),
-    options: z.object({ evidenceBundle: evidenceBundleOption }),
-    run: ({ args, options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, "import-managed-reconstruction", async () => {
-          const input = await parseCliJsonInput(
-            args.inputJson,
-            "import-managed-reconstruction",
-            signal,
-          );
-          if (!input.ok) return input.error;
-          return runEvidenceInputCommand(
-            "import_managed_reconstruction",
-            options.evidenceBundle,
-            signal,
-            (lookup) =>
-              Promise.resolve(
-                importManagedReconstructionEvidence(input.value, lookup, {
-                  signal,
-                }),
-              ),
-          ).then(projectCliAnalysisResult);
-        }),
-      ),
-  });
-};
+    document: "Inline managed reconstruction JSON or JSON file path",
+    workflow: (
+      input: unknown,
+      lookup: EvidenceLookup | undefined,
+      signal: AbortSignal,
+    ) => importManagedReconstructionEvidence(input, lookup, { signal }),
+  },
+  {
+    name: "verify_managed_native_boundaries",
+    command: CLI_COMMANDS.verifyManagedNativeBoundaries,
+    description:
+      "Verify managed P/Invoke declarations against authenticated native Evidence",
+    document: "Inline managed/native verification JSON or JSON file path",
+    workflow: (
+      input: unknown,
+      lookup: EvidenceLookup | undefined,
+      signal: AbortSignal,
+    ) => {
+      const result = executeManagedNativeBoundaries(input, lookup, { signal });
+      return result.ok ? ok(result.value.evidence) : result;
+    },
+  },
+  {
+    name: "project_managed_application_graph",
+    command: CLI_COMMANDS.projectManagedApplicationGraph,
+    description:
+      "Project authenticated managed static Evidence into an application graph",
+    document: "Inline managed application graph JSON or JSON file path",
+    workflow: (
+      input: unknown,
+      lookup: EvidenceLookup | undefined,
+      signal: AbortSignal,
+    ) => projectManagedApplicationGraphEvidence(input, lookup, { signal }),
+  },
+] as const;
 
-const registerVerifyManagedNativeBoundaries = (
+const registerManagedWorkflowCommands = (
   cli: CliInstance,
   logger: Logger,
 ): void => {
-  cli.command(CLI_COMMANDS.verifyManagedNativeBoundaries, {
-    description:
-      "Verify managed P/Invoke declarations against authenticated native Evidence",
-    args: z.object({
-      inputJson: z
-        .string()
-        .describe("Inline managed/native verification JSON or JSON file path"),
-    }),
-    options: z.object({ evidenceBundle: evidenceBundleOption }),
-    run: ({ args, options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, "verify-managed-native-boundaries", async () => {
-          const input = await parseCliJsonInput(
-            args.inputJson,
-            "verify-managed-native-boundaries",
-            signal,
-          );
-          if (!input.ok) return input.error;
-          return runEvidenceInputCommand(
-            "verify_managed_native_boundaries",
-            options.evidenceBundle,
-            signal,
-            (lookup) => {
-              const result = executeManagedNativeBoundaries(
-                input.value,
-                lookup,
-                { signal },
-              );
-              return Promise.resolve(
-                result.ok ? ok(result.value.evidence) : result,
-              );
-            },
-          ).then(projectCliAnalysisResult);
-        }),
-      ),
-  });
+  for (const {
+    name,
+    command,
+    description,
+    document,
+    workflow,
+  } of MANAGED_WORKFLOWS)
+    registerContractDocumentCommand(
+      cli,
+      logger,
+      contractNamed(MANAGED_WORKFLOW_TOOL_CONTRACTS, name),
+      {
+        command,
+        description,
+        document,
+        cliOptions: { evidenceBundle: evidenceBundleOption },
+      },
+      (input, { signal, operation, cliOptions }) =>
+        runEvidenceInputCommand(
+          operation,
+          cliOptions.evidenceBundle,
+          signal,
+          (lookup) => Promise.resolve(workflow(input, lookup, signal)),
+        ).then(projectCliAnalysisResult),
+    );
 };

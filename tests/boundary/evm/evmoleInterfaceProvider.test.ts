@@ -23,6 +23,14 @@ const requestSchema = z.strictObject({
   reply_path: z.string(),
   failure_marker_path: z.string(),
   encoding: z.enum(["raw", "hex"]),
+  producer_limits: z.object({
+    input_bytes: z.number(),
+    output_bytes: z.number(),
+    diagnostic_bytes: z.number(),
+    address_space_bytes: z.number(),
+    file_bytes: z.number(),
+    cpu_seconds: z.number(),
+  }),
 });
 const fixture = async () => {
   const workspace = await createTestWorkspace("rea-evm-interface-boundary-");
@@ -84,7 +92,7 @@ it.runIf(!unsupportedHost).each(["SIGXCPU", "SIGXFSZ", "EFBIG"])(
       },
     });
     expect(result.error.message).toContain(
-      failure === "EFBIG" ? "exact write failure cause" : "exact signal cause",
+      failure === "EFBIG" ? "exact write failure cause" : failure,
     );
     await expect(access(ownedPath)).rejects.toMatchObject({ code: "ENOENT" });
   },
@@ -181,7 +189,7 @@ it.runIf(!unsupportedHost)(
       .parse(projectAnalysisError(result.error).details?.["diagnostics"]);
     expect(cleanup).toEqual({
       reason: "injected post-cleanup reporting failure",
-      previous_error: expect.objectContaining({ code: "unreadable_output" }),
+      previous_error: expect.objectContaining({ code: "resource_constraint" }),
       captured_output: { truncated: true, stderr: "", stdout: 1048576 },
     });
     expect(cleanup.previous_error.details?.["captured_output"]).toBeUndefined();
@@ -364,8 +372,13 @@ it.runIf(!unsupportedHost).each([1048576, 1048577])(
       if (result.ok)
         throw new Error("Expected explicit diagnostic budget failure");
       expect(projectAnalysisError(result.error)).toMatchObject({
-        code: "unreadable_output",
-        details: { captured_output: { truncated: true } },
+        code: "resource_constraint",
+        details: {
+          reported_limits: {
+            parameter: "producer_limits.diagnostic_bytes",
+          },
+          captured_output: { truncated: true },
+        },
       });
     }
     await expect(access(ownedPath)).rejects.toMatchObject({ code: "ENOENT" });
@@ -642,7 +655,7 @@ it.runIf(!unsupportedHost).each(["cancelled", "output-limit", "process"])(
           scenario === "cancelled"
             ? "AnalysisCancelledError"
             : scenario === "output-limit"
-              ? "AnalysisOutputError"
+              ? "AnalysisResourceConstraintError"
               : "ProviderAdapterError",
       },
     });

@@ -39,6 +39,7 @@ const controlledRuntime = (
   return {
     cleanupLease,
     signal,
+    deadlineMs: 180_000,
     invoke: vi.fn(async () => ({ ok: true, result: snapshot })),
     close: vi.fn(() => cleanupLease.release()),
     resources: () => (cleanupLease.released ? [] : ["controlled-ui-runtime"]),

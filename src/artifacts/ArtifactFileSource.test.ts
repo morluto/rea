@@ -2,6 +2,7 @@ import { open, writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 
 it("retries an admission cancelled after opening and closing the selected descriptor", async () => {
@@ -132,7 +133,7 @@ it("lets another caller continue when shared admission is cancelled", async () =
       },
       (cause: unknown) => cause,
     );
-    await started;
+    await awaitAcknowledgement(started, first, "artifact source admission");
     const second = source.read();
     await Promise.resolve();
     controller.abort(reason);

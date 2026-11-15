@@ -64,10 +64,11 @@ Equivalent MCP input:
 ```
 
 Each selected regular file is read through the existing stable artifact reader;
-symlinks, changing files and files over 8 MiB fail closed. An oversized input
-returns `resource_constraint` with resource `file-size` and its fixed byte
-allowance in `reported_limits.maximum_input_bytes`; retrying the unchanged file
-does not raise that allowance. WASM bytes are copied
+symlinks, changing files and files over the selected `max_input_bytes` (default
+8 MiB) fail closed. An oversized input returns `resource_constraint` with
+resource `file-size` and the effective allowance in
+`reported_limits.maximum_input_bytes`. Its recovery names `max_input_bytes`;
+raise that per-call value before retrying the same complete file. WASM bytes are copied
 into a private workspace as read-only `module.wasm`; its digest is rechecked
 before and after each tool. WABT validates with
 `wasm-validate --enable-all --ignore-custom-section-errors`, reports sections
@@ -137,12 +138,30 @@ the equivalent MCP input is `{"path":"/artifacts/module.wasm",
 "command_timeout_ms":60000,"detail":"summary"}`. Summary delivery retains the
 complete Evidence but does not reduce WABT analysis work.
 
-The 8 MiB input allowance and 32 MiB combined command-output budget remain fixed;
-increasing `command_timeout_ms`, host memory or the client deadline does not raise
-them. Do not truncate required module bytes to fit. Select another suitable
-complete artifact only if it answers the question, otherwise report the limit.
-Inspection output past the budget fails with `resource_constraint`; an oversized
-`--version` probe still reports `unreadable_output`. Both streams share the
+The default input, executable, and combined command-output allowances remain
+8 MiB, 64 MiB, and 32 MiB respectively. Select `max_input_bytes`,
+`max_tool_bytes`, or `max_output_bytes` (CLI `--max-input-bytes`,
+`--max-tool-bytes`, `--max-output-bytes`) to change one allowance for the next
+inspection. Values are positive integer bytes; the advertised schema maximum
+follows the runtime's single-string or Buffer representation ceiling. Raising a
+budget does not reserve host memory or raise another budget, the command
+deadline, or the client's receive buffer. No REA restart is required. Unset
+values preserve the defaults, and explicit values remain in Evidence parameters.
+The same effective input/tool limit is used for initial and integrity rereads.
+Before cloning and committing complete Evidence, REA accounts for the actual
+escaped JSON representation and authentication copies. A large command budget
+does not guarantee that the complete report fits the runtime's single-string
+ceiling or available heap. Those refusals name the distinct representation or
+heap constraint; increasing `max_output_bytes` cannot repair them. WABT reports
+use no redundant raw-result mirror, but exact import/export forms and derived
+interface facts can still expand beyond their source WAT size.
+
+A limit failure names its effective byte value and exact per-call control.
+Raise that control, resolve incomplete cleanup, then retry the same complete
+artifact. Do not truncate required module bytes. If already at the runtime
+maximum, report the limit or explicitly select another suitable complete input.
+Output past the budget fails with `resource_constraint`, including a `--version`
+probe; no truncated output is claimed as a successful inspection. Both streams share the
 budget, so a stream that starts after the other has filled it retains nothing.
 The captured output keeps up to the first 4,096 bytes that each stream retained,
 each stream's retained byte count, and the exit code and signal. Retained text
@@ -238,3 +257,25 @@ Glue parsing accepts Node-supported WASM source-phase imports, including
 `await import.source("./module.wasm")`. Their string literals retain the same
 coordinates and local candidate associations as ordinary import literals; these
 are static source observations, without module instantiation or execution.
+
+Typed interface decoding separately charges `max_interface_bytes` (default
+32 MiB; CLI `--max-interface-bytes`). The selected allowance applies to both
+nested WAT parsing and retained typed entries, so increasing it is not blocked
+by an independent fixed nested-parser cap. A partial interface preserves the
+original WAT, admitted entries, exact exhausted allowance and retry guidance.
+Inspect the same complete module again with a larger value to recover omitted
+typed facts.
+
+`compare_wasm_interfaces` accepts its own `max_interface_bytes` in the JSON
+input, also default 32 MiB. It admits selected entries and group metadata before
+building the comparison inventory. A larger comparison budget cannot upgrade
+an already partial inspection: first recover the producer Evidence, then compare
+those exact replacement records. Both allowances retain independent runtime
+serialization and heap boundaries.
+
+Auxiliary `candidate_paths` and `glue_paths` each retain a default admission of
+16 paths. Set `max_artifact_paths` (CLI `--max-artifact-paths`) to admit a larger
+explicit selection. Admission happens before any provider acquisition or command,
+and errors report the selected list, requested count and required control.
+Per-file byte budgets still apply to each admitted path; increasing the path
+count does not raise those limits or reserve host memory.

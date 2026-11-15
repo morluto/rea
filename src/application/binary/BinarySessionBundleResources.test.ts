@@ -145,9 +145,11 @@ it("opens a resource-only bundle without executable identity and keeps snapshot 
     path: opened.value.canonicalPath,
     caller_path: opened.value.callerPath,
   });
-  expect(session.activeBundleResourceRoot()?.canonicalPath).toBe(
-    opened.value.canonicalPath,
-  );
+  expect(await session.status()).toMatchObject({
+    open: true,
+    session_kind: "bundle_resources",
+    resource_root: { canonical_path: opened.value.canonicalPath },
+  });
   expect(
     bundleResourceRootSchema.parse({
       caller_path: opened.value.callerPath,
