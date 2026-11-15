@@ -30,7 +30,16 @@ export class VerifierFixture {
   release(): Promise<void>;
 }
 
-/** Run a verifier and release its fixture, keeping both failures. */
+/**
+ * Share one cleanup between fixtures that depend on it: a confirmed or
+ * in-flight attempt is reused; a failed attempt is retried by the next call.
+ */
+export function onceConfirmed(cleanup: () => unknown): () => Promise<void>;
+
+/**
+ * Run a verifier and release its fixture, keeping both failures. When the
+ * fixture is retained, the thrown failure's `cleanupLeases` is `[fixture]`.
+ */
 export function withVerifierFixture<T>(
   fixture: VerifierFixture,
   operation: (fixture: VerifierFixture) => T | Promise<T>,

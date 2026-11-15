@@ -20,6 +20,9 @@ export class VerifierFixture {
   #pending = [];
   #released = false;
   #releasing;
+  // Closed when the first release starts and never reopened: a resource that
+  // joined after others had closed would be released out of order.
+  #registrationClosed = false;
 
   /** Take ownership of a root that is already allocated: `{ path, close() }`. */
   constructor(root) {
@@ -66,7 +69,7 @@ export class VerifierFixture {
 
   /** Register a cleanup that must confirm before the root may be removed. */
   releaseAfter(cleanup) {
-    if (this.#released || this.#releasing !== undefined)
+    if (this.#registrationClosed)
       throw new Error(
         `Verifier fixture ${this.path} is already being released; register its cleanups before release.`,
       );
@@ -77,6 +80,7 @@ export class VerifierFixture {
   /** Concurrent callers share one attempt; a failed attempt can be retried. */
   release() {
     if (this.#released) return Promise.resolve();
+    this.#registrationClosed = true;
     this.#releasing ??= this.#attemptRelease().finally(() => {
       this.#releasing = undefined;
     });
@@ -127,9 +131,35 @@ export class VerifierFixture {
  * Run a verifier against its fixture and release the fixture afterwards,
  * keeping both the verification failure and any cleanup failure.
  */
-export function withVerifierFixture(fixture, operation) {
-  return withVerifierCleanup(
-    () => operation(fixture),
-    [() => fixture.release()],
-  );
+export async function withVerifierFixture(fixture, operation) {
+  try {
+    return await withVerifierCleanup(
+      () => operation(fixture),
+      [() => fixture.release()],
+    );
+  } catch (cause) {
+    // The caller holds this failure, so it carries the retained fixture as
+    // its own cleanup lease rather than only on a nested cleanup error.
+    if (!fixture.released && typeof cause === "object" && cause !== null)
+      Object.assign(cause, { cleanupLeases: [fixture] });
+    throw cause;
+  }
+}
+
+/**
+ * Share one cleanup between fixtures that each depend on it: concurrent and
+ * later calls reuse a confirmed or in-flight attempt, and a failed attempt is
+ * retried by the next call.
+ */
+export function onceConfirmed(cleanup) {
+  let attempt;
+  return () => {
+    attempt ??= Promise.resolve()
+      .then(cleanup)
+      .catch((cause) => {
+        attempt = undefined;
+        throw cause;
+      });
+    return attempt;
+  };
 }

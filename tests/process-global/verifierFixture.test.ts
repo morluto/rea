@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 
 import {
+  onceConfirmed,
   VerifierFixture,
   withVerifierFixture,
 } from "../../scripts/lib/verifier-fixture.mjs";
@@ -136,6 +137,50 @@ it("keeps the verification failure and the cleanup failure", async () => {
   expect(first).toBe(primary);
   expect(retained.errors[0]).toBe(cleanup);
   expect(fixture.released).toBe(false);
+  // The failure the caller catches carries the retained fixture itself.
+  expect((failure as { cleanupLeases?: unknown[] }).cleanupLeases?.[0]).toBe(
+    fixture,
+  );
+});
+
+it("keeps registration closed after a failed release", async () => {
+  const fixture = new VerifierFixture({
+    path: "/fixture/root",
+    close: async () => undefined,
+  });
+  let fails = true;
+  fixture.releaseAfter(async () => {
+    if (fails) throw new Error("client close failed");
+  });
+  await expect(fixture.release()).rejects.toBeInstanceOf(AggregateError);
+  expect(() => fixture.releaseAfter(async () => undefined)).toThrow(
+    /already being released/u,
+  );
+  fails = false;
+  await fixture.release();
+  expect(fixture.released).toBe(true);
+});
+
+it("runs a cleanup shared by two fixtures once it has confirmed", async () => {
+  let attempts = 0;
+  const closeClient = onceConfirmed(async () => {
+    attempts += 1;
+    if (attempts === 1) throw new Error("client close failed");
+  });
+  const fixtures = [1, 2].map(
+    () =>
+      new VerifierFixture({
+        path: "/fixture/root",
+        close: async () => undefined,
+      }),
+  );
+  for (const fixture of fixtures) fixture.releaseAfter(closeClient);
+  await expect(fixtures[0]!.release()).rejects.toBeInstanceOf(AggregateError);
+  await fixtures[1]!.release();
+  await fixtures[0]!.release();
+  // The first failure is retried once; the confirmed close is not repeated.
+  expect(attempts).toBe(2);
+  expect(fixtures.every((fixture) => fixture.released)).toBe(true);
 });
 
 it("allocates a plain temporary directory for child scratch space", async () => {

@@ -17,7 +17,7 @@ import {
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
 import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
-import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { onceConfirmed, VerifierFixture } from "./lib/verifier-fixture.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { WABT_OPERATION_TIMEOUT_MS } from "./lib/wabt-verifier-timeouts.mjs";
 
@@ -623,9 +623,11 @@ try {
 // The MCP server child uses both roots until it exits, so each is released
 // only after the client and transport close. The two roots are otherwise
 // independent; a leaked provider workspace keeps the child temp root.
+const closeClient = onceConfirmed(() => client.close());
+const closeTransport = onceConfirmed(() => transport.close());
 for (const fixture of [childTemp, root]) {
-  fixture.releaseAfter(() => client.close());
-  fixture.releaseAfter(() => transport.close());
+  fixture.releaseAfter(closeClient);
+  fixture.releaseAfter(closeTransport);
 }
 childTemp.releaseAfter(async () =>
   assert.ok(
