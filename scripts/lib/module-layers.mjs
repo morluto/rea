@@ -66,6 +66,7 @@ export const UNIT_LAYERS = Object.freeze(
       "kuna",
       "model",
       "native",
+      "nuget",
       "objdump",
       "pcap",
       "providers",
