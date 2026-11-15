@@ -47,6 +47,7 @@ export const finishAnalysisCommand = async <
   // close retries and mutates the producer's live cleanup status.
   let initialFailure: ReturnType<typeof projectAnalysisError> | undefined;
   let initialDiagnosticFailure: typeof initialFailure;
+  let closeFailed = false;
   const finalized = await runOwned(run, {
     providerId,
     operation: canonicalOperation,
@@ -55,6 +56,9 @@ export const finishAnalysisCommand = async <
     close: async () => {
       try {
         await service.close();
+      } catch (cause) {
+        closeFailed = true;
+        throw cause;
       } finally {
         await dispatchQueuedInterrupts();
       }
@@ -106,8 +110,9 @@ export const finishAnalysisCommand = async <
   if (result.ok) return ok(result.value);
   const failure = projectFailure(result.error);
   if (initialFailure === undefined) return err(failure);
-  if (finalized.kind === "failed" && finalized.cleanup.kind === "released") {
-    // Close may mutate cleanup state; preserve the snapshot and add later failures.
+  if (!closeFailed) {
+    // Close may mutate cleanup state, including resolving the cleanup of a
+    // cancelled primary; preserve the snapshot and add later failures.
     const secondary = failure.details?.secondary_failures;
     return err(
       secondary === undefined
