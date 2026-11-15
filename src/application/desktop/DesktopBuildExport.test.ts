@@ -47,10 +47,7 @@ it.each([4, 8])(
         consents: [],
       },
       {
-        directory: join(
-          await createTestTempDirectory("build-export-"),
-          "out",
-        ),
+        directory: join(await createTestTempDirectory("build-export-"), "out"),
         tasks: [
           {
             task: {
@@ -114,10 +111,7 @@ it.each([
         consents: [],
       },
       {
-        directory: join(
-          await createTestTempDirectory("build-export-"),
-          "out",
-        ),
+        directory: join(await createTestTempDirectory("build-export-"), "out"),
         tasks: [
           {
             task: {

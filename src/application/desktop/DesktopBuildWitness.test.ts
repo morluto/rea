@@ -363,60 +363,69 @@ describe("published witness cancellation recovery", () => {
   );
 });
 
-describe.skipIf(process.platform === "win32")("seed output folder admission", () => {
-  it("refuses a symlinked folder before starting the recording, and leaves the witness open for a fresh seed", async () => {
-    const root = await createTestTempDirectory("witness-seed-");
-    const target = join(root, "target");
-    await mkdir(target);
-    const linked = join(root, "linked");
-    await symlink(target, linked);
-    let recordings = 0;
-    const computer = {
-      appData: () => Promise.reject(new Error("unread")),
-      startRecording: () => {
-        recordings += 1;
-        return Promise.reject(new Error("unstarted"));
+// Mode bits do not bind root, so a read-only folder is admitted there.
+const unwritable = process.getuid?.() === 0 ? [] : ["read-only folder"];
+
+describe.skipIf(process.platform === "win32")(
+  "seed output folder admission",
+  () => {
+    it.each(["symlinked folder", ...unwritable])(
+      "refuses a %s before starting the recording, and leaves the witness open for a fresh seed",
+      async (kind) => {
+        const root = await createTestTempDirectory("witness-seed-");
+        const refusedFolder = join(root, "refused");
+        if (kind === "symlinked folder") {
+          const target = join(root, "target");
+          await mkdir(target);
+          await symlink(target, refusedFolder);
+        } else await mkdir(refusedFolder, { mode: 0o500 });
+        let recordings = 0;
+        const witness = new DesktopBuildWitness(
+          {
+            ...computer,
+            startRecording: () => {
+              recordings += 1;
+              return Promise.reject(new Error("unstarted"));
+            },
+          } as WitnessedComputer,
+          new BuildComputerActionLog(),
+          SETTLE_TIMING,
+          {
+            bundle: { path: await createTestTempDirectory("witness-bundle-") },
+          },
+        );
+        const signal = new AbortController().signal;
+
+        const refusedSeed = await witness.check(
+          { task, stage: "seed", directory: refusedFolder },
+          signal,
+        );
+        expect(refusedSeed.ok).toBe(false);
+        if (refusedSeed.ok) return;
+        expect(refusedSeed.error).toBeInstanceOf(AnalysisInputError);
+        if (!(refusedSeed.error instanceof AnalysisInputError)) return;
+        expect(refusedSeed.error.issues).toContainEqual(
+          expect.objectContaining({
+            path: ["directory"],
+            reason: "invalid_value",
+          }),
+        );
+        expect(recordings).toBe(0);
+
+        // The refused seed opened no witness, so a fresh seed with a usable
+        // folder passes the folder check and reaches the bundle-task
+        // comparison instead of a directory or already-open refusal.
+        const retry = await witness.check(
+          { task, stage: "seed", directory: join(root, "record") },
+          signal,
+        );
+        expect(retry.ok).toBe(false);
+        if (retry.ok) return;
+        expect(retry.error).toBeInstanceOf(AnalysisInputError);
+        if (!(retry.error instanceof AnalysisInputError)) return;
+        expect(retry.error.userMessage).toContain("bundle");
+        expect(recordings).toBe(0);
       },
-      endRecording: () => Promise.reject(new Error("unended")),
-      recordingSegments: () => Promise.reject(new Error("unfetched")),
-      exec: () => Promise.reject(new Error("unrun")),
-      callTool: () => Promise.reject(new Error("uncalled")),
-    } as WitnessedComputer;
-    const bundle = await createTestTempDirectory("witness-bundle-");
-    const witness = new DesktopBuildWitness(
-      computer,
-      new BuildComputerActionLog(),
-      SETTLE_TIMING,
-      { bundle: { path: bundle } },
     );
-    const signal = new AbortController().signal;
-
-    const refusedSeed = await witness.check(
-      { task, stage: "seed", directory: linked },
-      signal,
-    );
-    expect(refusedSeed.ok).toBe(false);
-    if (refusedSeed.ok) return;
-    expect(refusedSeed.error).toBeInstanceOf(AnalysisInputError);
-    if (!(refusedSeed.error instanceof AnalysisInputError)) return;
-    expect(refusedSeed.error.issues).toContainEqual(
-      expect.objectContaining({ path: ["directory"], reason: "invalid_value" }),
-    );
-    expect(recordings).toBe(0);
-
-    // No witness was opened by the refused seed, so a fresh seed with a
-    // usable folder is admitted past the folder check: it reaches the
-    // bundle-task comparison instead of a directory or already-open refusal.
-    const retry = await witness.check(
-      { task, stage: "seed", directory: join(root, "record") },
-      signal,
-    );
-    expect(retry.ok).toBe(false);
-    if (retry.ok) return;
-    expect(retry.error).toBeInstanceOf(AnalysisInputError);
-    if (!(retry.error instanceof AnalysisInputError)) return;
-    expect(retry.error.userMessage).toContain("bundle");
-    expect(recordings).toBe(0);
-  });
   },
 );

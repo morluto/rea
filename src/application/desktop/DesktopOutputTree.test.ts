@@ -1,4 +1,4 @@
-import { readdir, writeFile } from "node:fs/promises";
+import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
@@ -52,3 +52,27 @@ it("refuses a regular file in the output parent path instead of failing a host w
   });
   expect(await readdir(root)).toEqual(["file"]);
 });
+
+it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "refuses an unwritable folder or parent at planning, before anything is created",
+  async () => {
+    const root = await createTestTempDirectory("rea-output-unwritable-");
+    const locked = join(root, "locked");
+    await mkdir(locked, { mode: 0o500 });
+    const refusal = {
+      operation: "export_build_environment",
+      field: "directory",
+    };
+    for (const directory of [locked, join(locked, "nested", "output")]) {
+      const failure = await planOutputTree(directory, refusal).catch(
+        (cause: unknown) => cause,
+      );
+      expect(failure).toMatchObject({
+        _tag: "AnalysisInputError",
+        operation: refusal.operation,
+        issues: [expect.objectContaining({ path: [refusal.field] })],
+      });
+    }
+    expect(await readdir(locked)).toEqual([]);
+  },
+);
