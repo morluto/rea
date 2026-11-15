@@ -1,6 +1,8 @@
 import { z } from "zod";
 
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
+import { DEFAULT_BRIDGE_MAX_REQUEST_BYTES } from "../domain/analysisResourceLimits.js";
+import { HopperProtocolError } from "../domain/hopperErrors.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
   analysisBookmarkSchema,
@@ -37,7 +39,10 @@ type HopperBridgeMethod =
   | Exclude<HopperOperation, "procedure_callers">
   | "rea_caller_base"
   | "rea_caller_scan_page"
-  | "rea_caller_scan_target";
+  | "rea_caller_scan_target"
+  | "health"
+  | "shutdown"
+  | "shutdown_document";
 
 const nullableText = z.string().nullable();
 
@@ -61,6 +66,30 @@ const compactEdgeSchema = z.strictObject({
   ]),
   target_procedure: z.string(),
   call: nativeCallClassificationSchema,
+});
+/**
+ * The bridge's shutdown reply (bridge/hopper_bridge.py `_dispatch`): analysis
+ * and document state, plus whether the document was deliberately retained or
+ * the owned process group must be cleaned up by REA.
+ */
+const shutdownReplySchema = z.object({
+  shutdown: z.literal(true),
+  analysis_stopped: z.boolean(),
+  document_closed: z.boolean(),
+  document_retained: z.literal(true).exactOptional(),
+  cleanup_required: z.literal(true).exactOptional(),
+});
+/**
+ * The bridge's health reply (bridge/hopper_bridge.py `_dispatch`): its fixed
+ * name, the per-launch run identifier, its process and its request ceiling.
+ * An omitted ceiling means the 16 MiB default.
+ */
+const healthReplySchema = z.object({
+  name: z.literal("REA Hopper bridge"),
+  version: z.string(),
+  run_id: z.string(),
+  process_id: z.int().positive(),
+  max_request_bytes: z.int().positive().exactOptional(),
 });
 const callerScanTargetSchema = z.strictObject({
   target: procedureIdentitySchema,
@@ -115,6 +144,10 @@ export const hopperReplySchemas = {
     unresolved_calls: z.array(unresolvedCallSchema),
     references: z.array(referenceEdgeSchema),
   }),
+  // REA-private lifecycle methods.
+  health: healthReplySchema,
+  shutdown: shutdownReplySchema,
+  shutdown_document: shutdownReplySchema,
   // REA-private bridge methods behind procedure_callers reconciliation.
   rea_caller_base: callerScanTargetSchema.extend({
     callers: z.array(z.string()),
@@ -170,4 +203,64 @@ export const parseHopperReply = <M extends HopperReplyMethod>(
           },
         ),
       );
+};
+
+/**
+ * What a shutdown reply establishes: the bridge detached with its document
+ * closed and analysis stopped, or with the document deliberately retained
+ * (`confirmed`); the owned process group still needs REA's cleanup
+ * (`cleanup_required`); or nothing (`unconfirmed`). A reply outside the
+ * contract is refused with its field diagnostics.
+ */
+export const parseHopperShutdownReply = (
+  method: "shutdown" | "shutdown_document",
+  value: JsonValue,
+): Result<
+  "confirmed" | "cleanup_required" | "unconfirmed",
+  AnalysisOutputError
+> => {
+  const reply = parseHopperReply(method, value);
+  if (!reply.ok) return reply;
+  const { analysis_stopped, document_closed, document_retained } = reply.value;
+  if (reply.value.cleanup_required === true) return ok("cleanup_required");
+  return ok(
+    (analysis_stopped && document_closed) ||
+      (!document_closed && document_retained === true)
+      ? "confirmed"
+      : "unconfirmed",
+  );
+};
+
+/** Authenticated identity returned by the Hopper bridge health handshake. */
+export interface HopperServerInfo {
+  readonly name: string;
+  readonly version: string;
+  readonly processId: number;
+  /** Bridge request ceiling. An omitted health field means the 16 MiB default. */
+  readonly maxRequestBytes: number;
+}
+
+/**
+ * Read a health reply through its contract and require this launch's run
+ * identifier; otherwise the peer is not the bridge REA started.
+ */
+export const parseHopperServerInfo = (
+  value: JsonValue,
+  expectedRunId: string,
+): Result<HopperServerInfo, HopperProtocolError> => {
+  const reply = parseHopperReply("health", value);
+  if (!reply.ok || reply.value.run_id !== expectedRunId)
+    return err(
+      new HopperProtocolError(
+        "Hopper bridge health result is invalid",
+        reply.ok ? {} : { cause: reply.error },
+      ),
+    );
+  return ok({
+    name: reply.value.name,
+    version: reply.value.version,
+    processId: reply.value.process_id,
+    maxRequestBytes:
+      reply.value.max_request_bytes ?? DEFAULT_BRIDGE_MAX_REQUEST_BYTES,
+  });
 };

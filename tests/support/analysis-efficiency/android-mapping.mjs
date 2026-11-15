@@ -71,6 +71,8 @@ const transport = new StdioClientTransport({
     REA_LOG_LEVEL: "silent",
     REA_MCP_TOOL_FAMILIES: values.proof ? "android,session" : "android",
     REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
+    // The run validates each result against its advertised output schema.
+    REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
   },
   stderr: "pipe",
   maxBufferSize: 16 * 1024 * 1024,

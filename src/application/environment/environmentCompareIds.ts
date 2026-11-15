@@ -4,12 +4,10 @@ import type { BodyAddress } from "../../domain/analysisView/environmentStateWrit
 import { isUuid } from "../../domain/analysisView/environmentStateWriteValues.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import type { ProbeToolCall } from "./environmentCompareMatch.js";
+import { isRecord } from "../../domain/isRecord.js";
 
 /** Field names that hold an identifier: `id`, `uuid`, `guid`, or names ending in `id` or `_id`. */
 export const ID_FIELD = /^(id|uuid|guid)$|(_id|Id|ID|_uuid|Uuid)$/u;
-
-const isObject = (value: JsonValue | undefined): value is JsonObject =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const isScalarId = (value: JsonValue | undefined): value is string | number =>
   (typeof value === "string" && value !== "") ||
@@ -179,7 +177,7 @@ const pairing = (
     ),
     by,
   });
-  if (!live.every(isObject) || !env.every(isObject))
+  if (!live.every(isRecord) || !env.every(isRecord))
     return byPosition("position");
   const liveItems = live as readonly JsonObject[];
   const envItems = env as readonly JsonObject[];
@@ -218,7 +216,7 @@ const keyedByIds = (
     ([key, value]) =>
       /^\d+$/u.test(key) ||
       isUuid(key) ||
-      (isObject(value) &&
+      (isRecord(value) &&
         Object.entries(value).some(
           ([field, held]) =>
             IDENTITY_FIELD.test(field) &&
@@ -237,7 +235,7 @@ export const keyedByLearnedIds = (
   if (!entries.some(([key]) => map.hasLive(key))) return false;
   return entries.some(([key]) => Object.hasOwn(env, key))
     ? keyedByIds(entries)
-    : entries.every(([, value]) => isObject(value)) || keyedByIds(entries);
+    : entries.every(([, value]) => isRecord(value)) || keyedByIds(entries);
 };
 
 /**
@@ -258,8 +256,8 @@ const learnKeyedEntries = (
     liveEntries.length === 0 ||
     envEntries.length === 0 ||
     shared === liveEntries.length ||
-    !liveEntries.every(([, value]) => isObject(value)) ||
-    !envEntries.every(([, value]) => isObject(value))
+    !liveEntries.every(([, value]) => isRecord(value)) ||
+    !envEntries.every(([, value]) => isRecord(value))
   )
     return false;
   const paired = pairing(
@@ -340,7 +338,7 @@ const learnAt = (
       });
     return;
   }
-  if (!isObject(live) || !isObject(env)) {
+  if (!isRecord(live) || !isRecord(env)) {
     if (
       context.identity &&
       place.at === context.entityAt &&
@@ -423,7 +421,7 @@ const inEnvTerms = (
 export const translateValue = (value: JsonValue, map: IdMap): JsonValue => {
   if (Array.isArray(value))
     return value.map((item) => translateValue(item, map));
-  if (isObject(value))
+  if (isRecord(value))
     return Object.fromEntries(
       Object.entries(value).map(([key, item]) => [
         key,
@@ -455,7 +453,7 @@ const translateBulkBody = (
       ? value.map((entry) =>
           address.by === "ids"
             ? id(entry)
-            : isObject(entry) && Object.hasOwn(entry, idField)
+            : isRecord(entry) && Object.hasOwn(entry, idField)
               ? {
                   ...(translateValue(entry, map) as JsonObject),
                   [idField]: id(entry[idField]!),
@@ -464,7 +462,7 @@ const translateBulkBody = (
         )
       : translateValue(value, map);
   if (address.member === null) return entries(body);
-  return isObject(body)
+  return isRecord(body)
     ? Object.fromEntries(
         Object.entries(body).map(([key, value]) => [
           key,

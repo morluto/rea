@@ -17,6 +17,7 @@ import {
   textSyntaxFormat,
 } from "./stateFormats.js";
 import { strictUtf8Decoder } from "../strictUtf8.js";
+import { isRecord } from "../isRecord.js";
 
 /** What the export ships for one seed. */
 export interface SeedScrub {
@@ -291,11 +292,6 @@ const scrubGVariant = (
   const scrubbed = parts.join("");
   return { text: scrubbed, decoded: [scrubbed, ...strings].join("\n") };
 };
-
-const isRecord = (
-  value: JsonValue | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /**
  * A dconf view's groups as the key file the computer compiles, each value's

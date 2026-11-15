@@ -2,7 +2,7 @@ import type { Stats } from "node:fs";
 import { open, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { cancelledBy, carriedReason } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -32,6 +32,7 @@ import {
   type AsarHeaderAdmission,
 } from "../config/asarHeaderAdmission.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { isRecord } from "../domain/isRecord.js";
 
 type ElectronFileOperation =
   | "inspect_electron_page"
@@ -65,8 +66,7 @@ export class ElectronFileScope {
     } catch (cause: unknown) {
       if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
         throw cause;
-      if (signal?.aborted === true)
-        throw new AnalysisCancelledError(operation, { cause: signal.reason });
+      if (signal?.aborted === true) throw cancelledBy(operation, signal);
       throw cause;
     }
   }
@@ -123,9 +123,7 @@ export const mapElectronFileAuthorizationFailure = (
     (physicalPrimary instanceof ArtifactReaderFailure &&
       physicalPrimary.reason === "cancelled");
   const primary = hasCancellation
-    ? new AnalysisCancelledError(operation, {
-        cause: cancellationReason,
-      })
+    ? cancelledBy(operation, carriedReason(cancellationReason))
     : physicalPrimary instanceof AnalysisError
       ? physicalPrimary
       : physicalPrimary === undefined
@@ -374,9 +372,6 @@ const isAsarRegularFile = (
     parsed.data.link === undefined
   );
 };
-
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const throwIfAborted = (signal?: AbortSignal): void => {
   assertArtifactReadActive(signal);

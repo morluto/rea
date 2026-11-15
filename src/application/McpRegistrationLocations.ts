@@ -5,7 +5,6 @@ import { ConfigurationError } from "../domain/configurationErrors.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import {
   absoluteXdgConfigHome,
-  vscodeUserDirectory,
   type ClientRootContext,
 } from "./ClientConfigRoots.js";
 import { windowsAppDataRoots } from "./MsixPackageStorage.js";
@@ -116,18 +115,6 @@ export const firstExisting = async (
   return fallback;
 };
 
-export const clineLocation = async (
-  context: McpRegistrationLocationContext,
-): Promise<McpRegistrationGlobalLocation> =>
-  location(
-    join(
-      vscodeUserDirectory(rootContext(context)),
-      "globalStorage",
-      "saoudrizwan.claude-dev",
-      "settings",
-      "cline_mcp_settings.json",
-    ),
-  );
 export const gooseLocation = async (
   context: McpRegistrationLocationContext,
 ): Promise<McpRegistrationGlobalLocation> => {
@@ -169,53 +156,33 @@ export const fixedProjectLocation =
       ),
     };
   };
-export const kiroLocation = async (
-  context: McpRegistrationLocationContext,
-): Promise<McpRegistrationGlobalLocation> =>
-  location(
-    join(context.home, ".kiro", "settings", "mcp.json"),
-    join(context.home, ".kiro"),
-  );
-export const mcporterLocation = async (
-  context: McpRegistrationLocationContext,
-): Promise<McpRegistrationGlobalLocation> => {
-  const root = join(context.home, ".mcporter");
-  const primary = join(root, "mcporter.json");
-  return location(
-    await firstExisting([primary, join(root, "mcporter.jsonc")], primary),
-    root,
-  );
-};
-export const zedLocation = async (
-  context: McpRegistrationLocationContext,
-): Promise<McpRegistrationGlobalLocation> =>
-  // Zed's paths::config_dir. On Windows it reads the RoamingAppData known
-  // folder, which APPDATA normally names; on Linux, `dirs::config_dir`
-  // admits only an absolute XDG_CONFIG_HOME.
-  location(
-    context.platform === "darwin"
-      ? join(context.home, ".config", "zed", "settings.json")
-      : context.platform === "win32"
-        ? join(windowsRoaming(context), "Zed", "settings.json")
-        : join(
-            absoluteXdgConfigHome({
-              home: context.home,
-              env: context.environment,
-            }),
-            "zed",
-            "settings.json",
-          ),
-  );
-
+/**
+ * fx's profile folder: `$FX_HOME` when set, which fx admits only as an
+ * absolute path other than the root and the home folder (`useFxHome`), else
+ * `~/.fx`. fx refuses an invalid value, so registration does too.
+ */
 export const fxLocation = async (
   context: McpRegistrationLocationContext,
-): Promise<McpRegistrationGlobalLocation> =>
-  location(join(context.home, ".fx", "mcp.json"));
-export const mastraLocation = async (
-  context: McpRegistrationLocationContext,
-): Promise<McpRegistrationGlobalLocation> =>
-  location(join(context.home, ".mastracode", "mcp.json"));
-export const ampLocation = async (
-  context: McpRegistrationLocationContext,
-): Promise<McpRegistrationGlobalLocation> =>
-  location(join(context.home, ".config", "amp", "settings.json"));
+): Promise<McpRegistrationGlobalLocation> => {
+  const value = context.environment.FX_HOME;
+  if (!value) return location(join(context.home, ".fx", "mcp.json"));
+  const pathApi = context.platform === "win32" ? win32 : posix;
+  const trimmed = value.replace(/\/+$/u, "");
+  // fx opens FX_HOME as written, so `.` and `..` resolve through links on the
+  // filesystem. Refusing them keeps REA's file and its root/home check on the
+  // folder fx opens, so the private profile mode can never land on home.
+  const dotSegment = trimmed
+    .split(/[\\/]/u)
+    .some((segment) => segment === "." || segment === "..");
+  if (
+    !pathApi.isAbsolute(value) ||
+    trimmed.length === 0 ||
+    dotSegment ||
+    pathApi.parse(trimmed).root === trimmed ||
+    trimmed === context.home.replace(/[\\/]+$/u, "")
+  )
+    throw new ConfigurationError(
+      "FX_HOME must be an absolute path without . or .. segments, other than the root and home folders. Repair FX_HOME before registering; no settings were written.",
+    );
+  return location(pathApi.join(trimmed, "mcp.json"));
+};

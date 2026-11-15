@@ -1,6 +1,6 @@
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { BrowserObservationError } from "../../domain/browserObservationError.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { cancelledBy } from "../../domain/analysisErrorCore.js";
 import type {
   ObserveWebExecutionInput,
   WebExecution,
@@ -64,9 +64,7 @@ export const captureWebExecution = async (
     const reason = await waiting;
     session.beginCompletion();
     if (session.options.signal?.aborted)
-      throw new AnalysisCancelledError(session.operation, {
-        cause: session.options.signal.reason,
-      });
+      throw cancelledBy(session.operation, session.options.signal);
     sources.check();
     requests.check();
     let sampled: CdpCommandResult<"Profiler.takePreciseCoverage"> | undefined;

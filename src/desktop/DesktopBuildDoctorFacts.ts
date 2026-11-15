@@ -9,7 +9,11 @@ import type {
   DesktopBuildFacts,
   DesktopBuildFactsInput,
 } from "../application/DesktopBuildDoctor.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
+} from "../domain/analysisErrorCore.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import {
   readRegularFileText,
@@ -18,7 +22,14 @@ import {
 import { DESKTOP_EXPORT_FRAMEWORK_VERSION } from "../domain/desktop/appExport.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { execFileOutputFailure } from "../process/ExecFileOutput.js";
+import { describeSystemPs, resolveSystemPs } from "../process/systemPs.js";
 import { agentEnvInterpreter } from "./AgentEnvComputerHelper.js";
+import { ArtifactFileCleanupFailure } from "../artifacts/ArtifactFileOperation.js";
+import {
+  AnalysisCleanupLeaseGroup,
+  type AnalysisCleanupLease,
+} from "../artifacts/AnalysisCleanupLease.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   agentEnvReportedVersion,
   defaultBuildComputerArchive,
@@ -85,7 +96,12 @@ export const readDesktopBuildFacts = async (
       ? agentEnvInterpreter(
           { ...input.environment, REA_AGENT_ENV_COMMAND: agentEnv.path },
           "desktop_build_doctor",
-        ).catch(() => "python3")
+          input.resources,
+        ).catch((cause: unknown) => {
+          if (cause instanceof ArtifactFileCleanupFailure)
+            throw runnerCleanupFailure(cause);
+          return "python3";
+        })
       : "python3",
   );
   const chosenCommand = (
@@ -187,12 +203,21 @@ const settingCommand = async (
     : { status: "invalid", value };
 };
 
-/** procps `ps` accepts `-p`; busybox's does not. */
+/**
+ * Probe the `ps` REA's process supervisor selects: a fixed system location
+ * first, REA's PATH only as the fallback. procps `ps` accepts `-p`; busybox's
+ * does not.
+ */
 const psFact = async (
   input: DesktopBuildFactsInput,
 ): Promise<DesktopBuildFacts["ps"]> => {
-  const ps = await programOnPath("ps", input.environment);
-  if (ps === undefined) return { found: false, detail: "No ps is on PATH." };
+  const selected = await resolveSystemPs(input.platform);
+  const ps =
+    selected.source === "system"
+      ? selected.command
+      : await programOnPath("ps", input.environment);
+  if (ps === undefined)
+    return { found: false, detail: `No ${describeSystemPs(selected)}.` };
   const probe = await attempt(input, ps, [
     "-o",
     "pid=",
@@ -353,7 +378,9 @@ const registrationFacts = async (
   );
   const registered = statuses.filter(({ command }) => command.length > 0);
   const considered = selected ?? registered.map(({ client }) => client);
-  return Promise.all(
+  // Every admitted client inspection settles before a failure is reported, so
+  // no file a peer opened outlives the doctor operation that owns it.
+  const outcomes = await Promise.allSettled(
     considered.map(async (client) => {
       const status = registered.find((entry) => entry.client === client);
       const values = status === undefined ? undefined : recorded.get(client);
@@ -426,7 +453,12 @@ const registrationFacts = async (
                 : agentEnvInterpreter(
                     { ...environment, REA_AGENT_ENV_COMMAND: effectiveRunner },
                     "desktop_build_doctor",
-                  ).catch(() => undefined),
+                    input.resources,
+                  ).catch((cause: unknown) => {
+                    if (cause instanceof ArtifactFileCleanupFailure)
+                      throw runnerCleanupFailure(cause);
+                    return undefined;
+                  }),
           );
           if (archive.status === "unknown") unchecked.push(name);
           else if (archive.status !== "current") compared.push(name);
@@ -443,14 +475,18 @@ const registrationFacts = async (
       };
     }),
   );
+  const failure = outcomes.find((outcome) => outcome.status === "rejected");
+  if (failure !== undefined) throw failure.reason;
+  return outcomes.flatMap((outcome) =>
+    outcome.status === "fulfilled" ? [outcome.value] : [],
+  );
 };
 
 const solveEndpoint = async (
   input: DesktopBuildFactsInput,
   runner: DesktopBuildCommand,
 ): Promise<string | null | undefined> => {
-  if (input.signal.aborted)
-    throw new AnalysisCancelledError("doctor", { cause: input.signal.reason });
+  if (input.signal.aborted) throw cancelledBy("doctor", input.signal);
   if (runner.status !== "found") return null;
   const discovery = await attempt(input, runner.path, [
     "config",
@@ -510,20 +546,46 @@ const solveEndpoint = async (
     : (selected ?? "agentenv model configuration");
 };
 
+/**
+ * A doctor file whose close failed stays owned by `input.resources`, which the
+ * doctor host retries on close. Report it as the doctor's typed cleanup
+ * failure, bound to that owner's lease, so the error document keeps the
+ * retained file and its recovery.
+ */
+const doctorFileCleanupFailure = (
+  lease: AnalysisCleanupLease,
+  resources: readonly string[],
+  reason: string,
+  cause: unknown,
+): ProviderCleanupError => {
+  const failure = new ProviderCleanupError(
+    "rea",
+    resources,
+    { reason },
+    { operation: "doctor", cause },
+  );
+  new AnalysisCleanupLeaseGroup(failure, [lease]);
+  return failure;
+};
+
+const runnerCleanupFailure = (
+  cause: ArtifactFileCleanupFailure,
+): ProviderCleanupError =>
+  doctorFileCleanupFailure(
+    cause.cleanupLease,
+    cause.cleanup?.resources ?? cause.cleanupLease.cleanupResources ?? [],
+    cause.cleanup?.reason ?? cause.message,
+    cause,
+  );
+
 const canReadModelConfig = async (
   path: string,
   input: DesktopBuildFactsInput,
 ): Promise<boolean> => {
   try {
-    if (input.signal.aborted)
-      throw new AnalysisCancelledError("doctor", {
-        cause: input.signal.reason,
-      });
+    if (input.signal.aborted) throw cancelledBy("doctor", input.signal);
     const candidate = await stat(path);
-    if (input.signal.aborted)
-      throw new AnalysisCancelledError("doctor", {
-        cause: input.signal.reason,
-      });
+    if (input.signal.aborted) throw cancelledBy("doctor", input.signal);
     if (!candidate.isFile() || candidate.size > CONFIG_BYTES) return false;
     await readRegularFileText(path, {
       signal: input.signal,
@@ -532,19 +594,21 @@ const canReadModelConfig = async (
           throw new Error("Configuration exceeds the read limit");
       },
       cancellationFailure: (reason) =>
-        new AnalysisCancelledError("doctor", { cause: reason }),
+        cancelledBy("doctor", carriedReason(reason)),
     });
     return true;
   } catch (cause: unknown) {
     if (cause instanceof RetainedRegularFileCleanupFailure) {
       input.resources.retain(cause.cleanupOwner);
-      throw cause;
+      throw doctorFileCleanupFailure(
+        cause.cleanupLease,
+        [cause.path],
+        cause.message,
+        cause,
+      );
     }
     if (cause instanceof AnalysisCancelledError) throw cause;
-    if (input.signal.aborted)
-      throw new AnalysisCancelledError("doctor", {
-        cause: input.signal.reason,
-      });
+    if (input.signal.aborted) throw cancelledBy("doctor", input.signal);
     return false;
   }
 };

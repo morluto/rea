@@ -61,6 +61,17 @@ const darwinPrerequisiteRefusal = (
     : undefined;
 };
 
+/**
+ * Refusal facts a provider's availability keeps: why admission failed and
+ * which `ps` ran (see `LinuxOwnedProcessPrerequisiteError`).
+ */
+const PREREQUISITE_DIAGNOSTIC_KEYS = [
+  "admission_code",
+  "system_code",
+  "ps_command",
+  "ps_source",
+] as const;
+
 /** A host prerequisite gap is the probed provider's unavailability, not a probe failure. */
 export const ownedProcessPrerequisiteAvailability = (
   cause: unknown,
@@ -78,12 +89,12 @@ export const ownedProcessPrerequisiteAvailability = (
         stage: "ownership_preparation",
         prerequisite_provider_id: refusal.providerId,
         prerequisite_operation: refusal.operation,
-        ...(refusal.diagnostics?.admission_code === undefined
-          ? {}
-          : { admission_code: refusal.diagnostics.admission_code }),
-        ...(refusal.diagnostics?.system_code === undefined
-          ? {}
-          : { system_code: refusal.diagnostics.system_code }),
+        ...Object.fromEntries(
+          PREREQUISITE_DIAGNOSTIC_KEYS.flatMap((key) => {
+            const value = refusal.diagnostics?.[key];
+            return value === undefined ? [] : [[key, value]];
+          }),
+        ),
       },
     };
   }
