@@ -18,7 +18,6 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
-import { TextDecoder } from "node:util";
 import { normalizeArtifactPath } from "../../artifacts/ArtifactPaths.js";
 import {
   AnalysisAccessDeniedError,

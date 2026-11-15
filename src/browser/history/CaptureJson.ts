@@ -3,7 +3,6 @@ import { captureBudgets } from "./CaptureBudgets.js";
 import { visit } from "jsonc-parser";
 import { LosslessNumber } from "lossless-json";
 import { CaptureFormatError } from "./CaptureFormatError.js";
-import { TextDecoder } from "node:util";
 import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
 
 type Frame =
