@@ -188,10 +188,7 @@ const registerBundleAnalysis = (
             input,
           ),
         );
-      const provider = createBrowserObservationProvider(
-        undefined,
-        environment,
-      );
+      const provider = createBrowserObservationProvider(undefined, environment);
       return deliverCliAnalysisEvidence({
         ...delivery!,
         run: () => analyzeWebBundle(provider, parsed.data, { signal }),
