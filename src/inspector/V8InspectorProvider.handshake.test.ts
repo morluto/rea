@@ -19,6 +19,12 @@ import {
   V8InspectorProvider,
 } from "./V8InspectorProvider.js";
 
+/** The Inspector commands a zero-length observation sends; others are refused. */
+const MODELED_INSPECTOR_COMMANDS = new Set([
+  "Runtime.enable",
+  "Debugger.enable",
+]);
+
 it("cancels a held inspector WebSocket handshake and admits the next observation", async () => {
   const root = await mkdtemp(join(tmpdir(), "rea-inspector-handshake-"));
   const scriptPath = join(root, "target.js");
@@ -51,8 +57,25 @@ it("cancels a held inspector WebSocket handshake and admits the next observation
   const sockets = new WebSocketServer({ noServer: true });
   sockets.on("connection", (socket) => {
     socket.on("message", (raw) => {
-      const command = JSON.parse(raw.toString()) as { id: number };
-      socket.send(JSON.stringify({ id: command.id, result: {} }));
+      const command = JSON.parse(raw.toString()) as {
+        id: number;
+        method: string;
+      };
+      // Only the commands this fixture models succeed; any other Inspector
+      // call is refused, so it cannot pass as a successful observation.
+      socket.send(
+        JSON.stringify(
+          MODELED_INSPECTOR_COMMANDS.has(command.method)
+            ? { id: command.id, result: {} }
+            : {
+                id: command.id,
+                error: {
+                  code: -32601,
+                  message: `Unmodeled Inspector command: ${command.method}`,
+                },
+              },
+        ),
+      );
     });
   });
   // The first upgrade is held unanswered; later upgrades complete normally.

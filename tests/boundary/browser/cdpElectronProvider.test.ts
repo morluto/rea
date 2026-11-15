@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { createPackage } from "@electron/asar";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
@@ -594,6 +594,13 @@ describe("CdpElectronProvider transport lifecycle", () => {
     const reason = new Error("cancelled during the Electron handshake");
     const inspecting = provider.inspectPage(inspectInput(browser.endpoint), {
       signal: controller.signal,
+    });
+    // Release and join the held request and close the provider even when a
+    // barrier or assertion below fails.
+    onTestFinished(async () => {
+      handshake.release();
+      await inspecting;
+      await provider.close();
     });
     await handshake.reached(inspecting, "Electron CDP WebSocket handshake");
     controller.abort(reason);

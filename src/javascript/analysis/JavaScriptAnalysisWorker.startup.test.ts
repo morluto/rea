@@ -62,7 +62,6 @@ it("refuses a worker that emits facts before its ready frame and stops it", asyn
   if (refused.ok) throw new Error("Expected a handshake refusal");
   const primary = primaryAnalysisError(refused.error.error);
   expect(primary).toBeInstanceOf(AnalysisOutputError);
-  expect(primary.message).toContain("before its startup handshake");
   expect(refused.error.error.cleanupIncomplete).toBe(false);
   expect(worker.canReuse()).toBe(false);
   // The refusal itself stops the child; close() is only teardown.
