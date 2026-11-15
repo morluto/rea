@@ -1535,15 +1535,15 @@ it.each(["load_frida_script", "instrument_with_frida"] as const)(
   "%s refuses a relative script path before starting or loading",
   async (name) => {
     const fixture = await connectedFixture();
+    const sessionId =
+      name === "load_frida_script" ? await fixture.start() : undefined;
+    const startSession = vi.spyOn(fixture.manager, "startSession");
+    const loadScript = vi.spyOn(fixture.manager, "loadScript");
     const result = await fixture.client.callTool({
       name,
       arguments:
-        name === "load_frida_script"
-          ? {
-              session_id: await fixture.start(),
-              source_kind: "file",
-              path: "script.js",
-            }
+        sessionId !== undefined
+          ? { session_id: sessionId, source_kind: "file", path: "script.js" }
           : {
               mode: "attach",
               device_id: "local",
@@ -1566,6 +1566,8 @@ it.each(["load_frida_script", "instrument_with_frida"] as const)(
         },
       },
     });
+    expect(startSession).not.toHaveBeenCalled();
+    expect(loadScript).not.toHaveBeenCalled();
     expect(fixture.loaded).toEqual([]);
   },
 );
