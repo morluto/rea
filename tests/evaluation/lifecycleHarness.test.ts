@@ -1,6 +1,6 @@
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { expect, it } from "vitest";
-import { phaseGate } from "../support/lifecycleHarness.js";
+import { phaseArrival, phaseGate } from "../support/lifecycleHarness.js";
 
 it("hands an early rejection to the later hold without an unhandled rejection", async () => {
   const unhandled: unknown[] = [];
@@ -29,4 +29,16 @@ it("releases every hold with the first value", async () => {
   gate.reject(new Error("ignored after release"));
   expect(await operation).toBe(7);
   expect(await gate.hold("again")).toBe(7);
+});
+
+it("reports an arrival only when it happens before the operation settles", async () => {
+  const arrival = phaseArrival<string>();
+  const settled = Promise.resolve("done");
+  await expect(arrival.reached(settled, "late boundary")).rejects.toThrow(
+    "late boundary was not acknowledged before the triggering operation settled",
+  );
+  const running = new Promise<void>(() => {});
+  arrival.arrive("first");
+  arrival.arrive("second");
+  expect(await arrival.reached(running, "announced boundary")).toBe("first");
 });
