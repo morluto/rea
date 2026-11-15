@@ -12,7 +12,10 @@ import {
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import type { AnalysisErrorProjection } from "../../domain/analysisErrorProjection.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
-import { describeValidationFailure } from "../../domain/validationFailure.js";
+import {
+  describeValidationFailure,
+  firstValidationIssuePath,
+} from "../../domain/validationFailure.js";
 import { PROCESS_PROVIDER } from "../../domain/process/processEvidenceProvider.js";
 import {
   analysisInputErrorFromIssues,
@@ -311,13 +314,18 @@ const parseTraceSpecification = (input: unknown) => {
   );
 };
 
-const invalidCaptureEvidence = (cause: unknown, side: "left" | "right") =>
-  processInputFailure(
+const invalidCaptureEvidence = (cause: unknown, side: "left" | "right") => {
+  const issuePath = firstValidationIssuePath(cause);
+  return processInputFailure(
     "compare_process_captures",
     `Capture evidence is malformed (${describeValidationFailure(cause)}). Create new capture evidence, then try again.`,
     [side],
     "invalid_value",
+    issuePath === undefined
+      ? undefined
+      : { issue_path: ["normalized_result", ...issuePath] },
   );
+};
 
 const readJson = async (
   path: string,

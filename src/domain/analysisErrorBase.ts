@@ -194,6 +194,8 @@ export abstract class AnalysisError extends Error {
    * is read from them when asked instead of being pushed to each dependent.
    */
   #cleanupIncomplete: boolean;
+  /** Whether this error ever owned cleanup, apart from whether it finished. */
+  #carriesCleanup: boolean;
   #ownedCleanupResources: readonly string[];
   #cleanupResourceOwner: AnalysisCleanupResourceOwner | undefined;
   #cleanupCompletionOwner: AnalysisCleanupResourceOwner | undefined;
@@ -222,6 +224,7 @@ export abstract class AnalysisError extends Error {
         : { ...options.capturedOutput };
     this.cleanup = options?.cleanup;
     this.#cleanupIncomplete = options?.cleanup !== undefined;
+    this.#carriesCleanup = this.#cleanupIncomplete;
     this.#ownedCleanupResources = [...(options?.cleanup?.resources ?? [])];
     this.partialObservation = options?.partialObservation;
   }
@@ -270,6 +273,7 @@ export abstract class AnalysisError extends Error {
 
   /** Read completion from a lease owner instead of having it pushed here. */
   bindCleanupReleaseClaim(claim: AnalysisCleanupReleaseClaim): this {
+    this.#carriesCleanup = true;
     this.#cleanupReleaseClaims.push(claim);
     return this;
   }
@@ -277,6 +281,7 @@ export abstract class AnalysisError extends Error {
   /** A subclass whose own resources are unreleased when it is constructed. */
   protected markCleanupIncomplete(incomplete: boolean): void {
     this.#cleanupIncomplete = incomplete;
+    if (incomplete) this.#carriesCleanup = true;
   }
   /** Later typed failures retained without changing the primary error cause. */
   get secondaryFailures(): readonly AnalysisError[] {
@@ -309,6 +314,16 @@ export abstract class AnalysisError extends Error {
       this.#cleanupCompletionOwner !== undefined ||
       this.#cleanupDependencies !== undefined
     );
+  }
+
+  /**
+   * Whether this error owns cleanup at all: its own resources, a release
+   * claim, or an owner it follows. Unlike `cleanupIncomplete`, this stays
+   * true after that cleanup finished, so a consumer can tell a released
+   * owner from a failure (such as a cancellation) that never had one.
+   */
+  get carriesCleanup(): boolean {
+    return this.#carriesCleanup || this.hasCleanupOwner;
   }
 
   /** Bind attribution only to the producer that owns the complete cleanup set. */

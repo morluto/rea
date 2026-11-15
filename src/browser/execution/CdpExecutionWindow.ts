@@ -1,13 +1,11 @@
 import { cancelledBy, carriedReason } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { WebExecution } from "../../domain/webExecution.js";
-import type { CdpEvent } from "../CdpConnection.js";
+import type { CdpReceivedEvent } from "../CdpConnection.js";
 import type { CdpRuntimeSession } from "./CdpRuntimeSession.js";
 import { BrowserObservationError } from "../../domain/browserObservationError.js";
-import {
-  selectCdpFrameIdentity,
-  cdpFrameEventFacts,
-} from "../CdpFrameIdentity.js";
+import { selectCdpFrameIdentity } from "../CdpFrameIdentity.js";
+import { cdpFrameEvent } from "../protocol/CdpEvents.js";
 
 type EndReason = WebExecution["window"]["end_reason"];
 /** One finite document-scoped window, with an actual armed point and event-driven termination. */
@@ -27,7 +25,7 @@ export class CdpExecutionWindow {
   ) {}
 
   /** Collection ends on a main-document replacement, never follows source URLs into another context. */
-  ingest(event: CdpEvent): void {
+  ingest(event: CdpReceivedEvent): void {
     if (event.method === "Target.detachedFromTarget") {
       this.end("session_detached");
       return;
@@ -39,9 +37,10 @@ export class CdpExecutionWindow {
     if (!this.active) return;
     if (event.method === "Runtime.executionContextsCleared")
       this.end("document_changed");
-    if (event.method === "Page.frameNavigated") {
+    const frame = cdpFrameEvent(event)?.facts;
+    if (frame?.kind === "navigated") {
       const identity = selectCdpFrameIdentity(
-        cdpFrameEventFacts(event),
+        frame,
         this.session.target.frame_id,
       );
       if (identity.identityIssue !== null || identity.parentIssue !== null) {
@@ -68,8 +67,8 @@ export class CdpExecutionWindow {
       return;
     }
     if (
-      event.method === "Page.frameDetached" &&
-      cdpFrameEventFacts(event).frameId === this.session.target.frame_id
+      frame?.kind === "detached" &&
+      frame.frameId === this.session.target.frame_id
     )
       this.end("document_changed");
   }

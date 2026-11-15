@@ -1,4 +1,5 @@
 import { ghidraAsciiLiteralCandidate } from "./GhidraLiteralSearch.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   fileSnapshotPartialObservationSchema,
   type FileSnapshotPartialObservation,
@@ -243,7 +244,7 @@ export class GhidraClient {
       ...options,
       startupTimeoutMs:
         options.startupTimeoutMs ?? DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
-      platform: options.platform ?? process.platform,
+      platform: options.platform ?? HOST_PLATFORM.platform,
       transport: options.transport ?? "unix-socket",
     };
     this.#logger = options.logger ?? silentLogger;
@@ -1635,13 +1636,9 @@ export class GhidraClient {
     cause?: unknown,
     cancellation?: { readonly reason: unknown },
   ): GhidraSessionError {
-    if (
-      cancellation !== undefined &&
-      !(
-        deadline.signal.aborted &&
-        cancellation.reason === deadline.signal.reason
-      )
-    )
+    // A producer that cancelled while startup's deadline still ran reports
+    // its own cancellation; once the deadline aborted, the deadline reports.
+    if (cancellation !== undefined && !deadline.signal.aborted)
       return this.#failure("cancelled", "Ghidra startup was cancelled", cause, {
         cancellation,
       });

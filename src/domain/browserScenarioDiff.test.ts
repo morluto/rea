@@ -501,7 +501,8 @@ describe("browser scenario network event order", () => {
           ? {
               ...event,
               redirected_from_transaction_id: predecessor,
-              redirected_from_transaction_state: undefined,
+              redirected_from_transaction_state:
+                predecessor === null ? ("unknown" as const) : undefined,
             }
           : event,
       );
@@ -610,6 +611,7 @@ describe("browser scenario network comparison stability", () => {
               kind: "request",
               transaction_id: "orphan-request",
               redirected_from_transaction_id: null,
+              redirected_from_transaction_state: "unknown",
               method: "GET",
               url: {
                 url: "https://app.example.test/orphan",

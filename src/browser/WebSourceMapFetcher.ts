@@ -666,9 +666,8 @@ const fetchOne = async (
     );
     completedResponseIdentity = body.responseIdentity;
     if (!body.text.ok)
-      return emptySourceMapItem(
+      return invalidSourceMapItem(
         request,
-        "invalid",
         body.text.error.message,
         effectiveUrl,
         body.responseIdentity,
@@ -1040,9 +1039,8 @@ const normalizeSourceMap = (
     );
   const parsedJson = safeParseJson(sourceMapJsonText(text));
   if (!parsedJson.ok)
-    return emptySourceMapItem(
+    return invalidSourceMapItem(
       request,
-      "invalid",
       "Source-map JSON is not a version 3 map.",
       fetchedUrl,
       responseIdentity,
@@ -1211,9 +1209,8 @@ const normalizeSourceMap = (
       cause instanceof SourceMapDeadlineError
     )
       throw cause;
-    return emptySourceMapItem(
+    return invalidSourceMapItem(
       request,
-      "invalid",
       isSourceMapSectionOverlap(cause)
         ? cause.message
         : "Source-map JSON mappings could not be decoded safely.",
@@ -1359,24 +1356,37 @@ const sourceMapContext = (
   effective_url: effectiveUrl,
 });
 
+const failedSourceMapBase = (
+  request: WebSourceMapRequest,
+  limitation: string,
+  effectiveUrl: string | null,
+  responseIdentity: ResponseIdentity | undefined,
+) => ({
+  ...sourceMapContext(request, effectiveUrl),
+  artifact: null,
+  original_sources: [],
+  original_module_edges: [],
+  mappings: [],
+  limitation:
+    responseIdentity === undefined
+      ? limitation
+      : `${limitation} Response text was not retained; completed response body identity is available.`,
+});
+
+/** A map that was filtered or whose complete body may not have been read. */
 const emptySourceMapItem = (
   request: WebSourceMapRequest,
-  status: FailedSourceMapStatus,
+  status: Exclude<FailedSourceMapStatus, "invalid">,
   limitation: string,
   effectiveUrl: string | null = null,
   responseIdentity?: ResponseIdentity,
 ): WebSourceMapItem => {
-  const base = {
-    ...sourceMapContext(request, effectiveUrl),
-    artifact: null,
-    original_sources: [],
-    original_module_edges: [],
-    mappings: [],
-    limitation:
-      responseIdentity === undefined
-        ? limitation
-        : `${limitation} Response text was not retained; completed response body identity is available.`,
-  };
+  const base = failedSourceMapBase(
+    request,
+    limitation,
+    effectiveUrl,
+    responseIdentity,
+  );
   return status === "policy_filtered"
     ? { ...base, status }
     : {
@@ -1387,6 +1397,18 @@ const emptySourceMapItem = (
           : { response_identity: responseIdentity }),
       };
 };
+
+/** A completely read body that is not a usable map keeps its identity. */
+const invalidSourceMapItem = (
+  request: WebSourceMapRequest,
+  limitation: string,
+  effectiveUrl: string | null,
+  responseIdentity: ResponseIdentity,
+): WebSourceMapItem => ({
+  ...failedSourceMapBase(request, limitation, effectiveUrl, responseIdentity),
+  status: "invalid",
+  response_identity: responseIdentity,
+});
 
 const sourceMapTextArtifact = (
   text: string,

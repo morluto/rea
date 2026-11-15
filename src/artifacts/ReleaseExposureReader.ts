@@ -29,6 +29,10 @@ import {
   type ArtifactFilePrimaryFacts,
 } from "./ArtifactFileOperation.js";
 import { decodeBinaryPlistText } from "./apple/BinaryPlistMaterializer.js";
+import {
+  InternalInvariantError,
+  invariantViolation,
+} from "../domain/internalInvariant.js";
 import { ArtifactEmbeddedFormatProbes } from "./ArtifactEmbeddedFormatProbes.js";
 import {
   asarHeaderAdmissionRecovery,
@@ -434,7 +438,7 @@ const consumeInventory = async (
   }
   if (failed) throw failure;
   if (result === undefined)
-    throw new Error("Release exposure scan produced no result.");
+    throw invariantViolation("Release exposure scan produced no result.");
   return result;
 };
 
@@ -2234,7 +2238,9 @@ const decodeBinaryPlistMember = (bytes: Buffer): MemberText => {
     return decoded.complete
       ? decoded
       : { text: `${decoded.text}\n${bytes.toString("utf8")}`, complete: false };
-  } catch {
+  } catch (cause: unknown) {
+    // A broken internal assumption is a REA defect, not an undecodable plist.
+    if (cause instanceof InternalInvariantError) throw cause;
     return { text: bytes.toString("utf8"), complete: false };
   }
 };

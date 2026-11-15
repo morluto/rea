@@ -6,6 +6,7 @@ import {
 } from "../../domain/parseFailure.js";
 import { basename, join } from "node:path";
 import { realpath } from "node:fs/promises";
+import { InternalInvariantError } from "../../domain/internalInvariant.js";
 import { readStableArtifact } from "../readStableArtifact.js";
 import { projectStableArtifactFailure } from "../StableArtifactFailure.js";
 import { ARTIFACT_GRAPH_PROVIDER } from "../../domain/investigationProviders.js";
@@ -454,7 +455,12 @@ const decodeSelectedArchive = (
       ...decodeKeyedArchiveBytes(bytes, input.parameters),
     });
   } catch (cause) {
-    if (cause instanceof AnalysisInputError) throw cause;
+    // A broken internal assumption is a REA defect, not a damaged archive.
+    if (
+      cause instanceof AnalysisInputError ||
+      cause instanceof InternalInvariantError
+    )
+      throw cause;
     if (cause instanceof UnsupportedBinaryPlistUidError)
       throw new AnalysisUnsupportedTargetError(
         "inspect_keyed_archive",

@@ -797,7 +797,14 @@ const requestErrorDetails = (
         ? {}
         : { binding_mismatch: jsonValueSchema.parse(error.bindingMismatch) }),
     };
-  if (error instanceof EvidenceIntegrityError) return { reason: error.message };
+  if (error instanceof EvidenceIntegrityError)
+    return {
+      reason: error.message,
+      ...(error.side === undefined ? {} : { side: error.side }),
+      ...(error.issuePath === undefined
+        ? {}
+        : { issue_path: [...error.issuePath] }),
+    };
   return undefined;
 };
 
