@@ -5,15 +5,15 @@ import {
   type CdpRequestWillBeSentFacts,
 } from "./CdpNetworkEventFacts.js";
 import {
-  readCdpExecutionContextCreated,
-  readCdpExecutionContextDestroyed,
-  readCdpScriptParsed,
   selectCdpScriptFrame,
+  type CdpExecutionContextCreatedFacts,
+  type CdpExecutionContextIdentity,
+  type CdpScriptParsedFacts,
 } from "./CdpScriptContextFacts.js";
 import { selectCdpFrameIdentity } from "./CdpFrameIdentity.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
-import type { CdpFrameEvent } from "./protocol/CdpEvents.js";
+import type { CdpEventPayload, CdpFrameEvent } from "./protocol/CdpEvents.js";
 import { observedFrameUrl, reportedFrameUrl } from "./protocol/CdpFrameTree.js";
 import {
   inferJsonShape,
@@ -28,7 +28,6 @@ import {
   allowedSanitizedUrl,
   isHttpUrl,
   numberValue,
-  admitRecords,
   recordValue,
   cdpStringValue,
   type UnknownRecord,
@@ -44,7 +43,6 @@ import {
   exclusionReasonForUrl,
   initiatorLocation,
   isJsonMediaType,
-  topCallFrame,
 } from "./CdpCaptureEventHelpers.js";
 import type { CdpCaptureEventsState } from "./CdpCaptureEventState.js";
 import {
@@ -55,9 +53,8 @@ import {
 
 export const handleExecutionContextCreated = (
   state: CdpCaptureEventsState,
-  params: UnknownRecord,
+  facts: CdpExecutionContextCreatedFacts,
 ): void => {
-  const facts = readCdpExecutionContextCreated(params);
   if (facts.contextKey === null) return;
   // Every reuse replaces future authority, including missing or malformed claims.
   state.executionContextFrames.set(facts.contextKey, facts.frameClaim);
@@ -65,17 +62,16 @@ export const handleExecutionContextCreated = (
 
 export const handleExecutionContextDestroyed = (
   state: CdpCaptureEventsState,
-  params: UnknownRecord,
+  identity: CdpExecutionContextIdentity,
 ): void => {
-  const key = readCdpExecutionContextDestroyed(params).contextKey;
+  const key = identity.contextKey;
   if (key !== null) state.executionContextFrames.delete(key);
 };
 
 export const handleScriptParsed = (
   state: CdpCaptureEventsState,
-  params: UnknownRecord,
+  facts: CdpScriptParsedFacts,
 ): void => {
-  const facts = readCdpScriptParsed(params);
   const scriptId = facts.scriptId;
   const rawUrl = facts.url ?? "";
   const sanitized = allowedSanitizedUrl(rawUrl, state.allowedOrigins);
@@ -459,9 +455,9 @@ export const handleLoadingFinished = (
 
 export const handleConsoleAPICalled = (
   state: CdpCaptureEventsState,
-  params: UnknownRecord,
+  call: CdpEventPayload<"Runtime.consoleAPICalled">,
 ): void => {
-  const topFrame = topCallFrame(params.stackTrace);
+  const topFrame = call.topFrame;
   if (!topFrame.ok) {
     state.completeness.exclude("console_events", "invalid_protocol_value");
     return;
@@ -482,22 +478,19 @@ export const handleConsoleAPICalled = (
     );
     return;
   }
-  // Malformed elements keep their position so retained siblings keep their
-  // CDP argument indices; a missing inventory is unknown, not empty.
-  const arguments_ = admitRecords(params.args)?.map((argument) =>
-    recordValue(argument),
-  );
+  // A missing inventory is unknown, not empty.
+  const arguments_ = call.arguments;
   const argumentTypes = arguments_?.map((argument) =>
     cdpStringValue(argument?.type),
   );
-  const timestamp = numberValue(params.timestamp);
+  const timestamp = call.timestamp;
   if (
     timestamp === undefined ||
     argumentTypes === undefined ||
     argumentTypes.includes(undefined)
   )
     state.completeness.exclude("console_events", "invalid_protocol_value");
-  const type = cdpStringValue(params.type) ?? "unknown";
+  const type = call.type ?? "unknown";
   const textCapture = captureConsoleText(state, arguments_);
   // The shared retained-event budget bounds the whole console inventory, so a
   // page cannot grow the capture without limit; a refused entry stays counted

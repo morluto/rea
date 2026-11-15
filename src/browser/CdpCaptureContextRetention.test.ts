@@ -42,7 +42,7 @@ describe("CDP execution-context retention", () => {
       const completeness = new CdpCaptureCompleteness();
       const retention = { bytes: 2 };
       ingestElectronScriptEvent({
-        event: {
+        event: receiveCdpEvent({
           method: "Debugger.scriptParsed",
           params: {
             scriptId: "script",
@@ -51,7 +51,7 @@ describe("CDP execution-context retention", () => {
             executionContextAuxData: { frameId },
             hasSourceURL,
           },
-        },
+        }),
         scripts,
         retention,
         executionContextFrames: new Map<string, CdpContextFrameClaim>([
@@ -112,17 +112,20 @@ describe("CDP execution-context retention", () => {
     const retention = { bytes: 2 };
     const completeness = new CdpCaptureCompleteness();
     ingestElectronScriptEvent({
-      event: {
+      event: receiveCdpEvent({
         method: "Runtime.executionContextCreated",
         params: { context: { id: 7, auxData: { frameId: "frame-old" } } },
-      },
+      }),
       scripts: [],
       retention,
       executionContextFrames: electronFrames,
       completeness,
     });
     ingestElectronScriptEvent({
-      event: { method: "Runtime.executionContextsCleared", params: {} },
+      event: receiveCdpEvent({
+        method: "Runtime.executionContextsCleared",
+        params: {},
+      }),
       scripts: [],
       retention,
       executionContextFrames: electronFrames,
@@ -130,7 +133,9 @@ describe("CDP execution-context retention", () => {
     });
     expect(electronFrames.size).toBe(0);
   });
+});
 
+describe("CDP script frame attribution", () => {
   it("keeps a script on the frame stored when it was parsed", () => {
     const request = inspectWebPageInputSchema.parse({
       cdp_endpoint: "http://127.0.0.1:9222",
@@ -243,7 +248,7 @@ it.each([
     for (const event of events) {
       ingest(browser, event);
       ingestElectronScriptEvent({
-        event,
+        event: receiveCdpEvent(event),
         scripts,
         executionContextFrames,
         completeness,

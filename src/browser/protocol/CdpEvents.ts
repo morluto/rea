@@ -5,12 +5,25 @@ import {
   observeCdpFrameUrl,
   type CdpFrameUrlObservation,
 } from "../CdpCaptureDocuments.js";
-import { recordValue } from "../CdpCaptureValues.js";
+import { topCallFrame } from "../CdpCaptureEventHelpers.js";
+import {
+  admitRecords,
+  cdpStringValue,
+  numberValue,
+  recordValue,
+} from "../CdpCaptureValues.js";
 import {
   cdpFrameEventPayloadFacts,
   type CdpFrameEventKind,
   type CdpFrameFacts,
 } from "../CdpFrameIdentity.js";
+import {
+  readCdpExecutionContextCreated,
+  readCdpExecutionContextDestroyed,
+  readCdpScriptParsed,
+  runtimeContextSchema,
+  runtimeScriptParsedSchema,
+} from "../CdpScriptContextFacts.js";
 
 // Playwright ships the generated protocol event table only through the
 // generic `CDPSession.on` overload, which precedes its `'close'` and
@@ -55,6 +68,44 @@ const frameEvent = (kind: CdpFrameEventKind) =>
     };
   });
 
+/** UTF-8 JSON size of a declaration as the producer sent it, for retention budgets. */
+const declarationBytes = (params: unknown): number =>
+  Buffer.byteLength(JSON.stringify(params) ?? "");
+
+/**
+ * A script declaration has two admission policies: passive capture keeps
+ * tolerant facts and records gaps, while the active runtime requires the
+ * complete declaration. Both are derived here, once.
+ */
+const scriptEvent = z.unknown().transform((params) => ({
+  facts: readCdpScriptParsed(params),
+  runtime: runtimeScriptParsedSchema.safeParse(params),
+  declarationBytes: declarationBytes(params),
+}));
+
+const executionContextCreated = z.unknown().transform((params) => ({
+  facts: readCdpExecutionContextCreated(params),
+  runtime: runtimeContextSchema.safeParse(params),
+  declarationBytes: declarationBytes(params),
+}));
+
+/**
+ * The console call site, argument inventory, timestamp and type. A malformed
+ * stack stays a failure; malformed arguments keep their positions so
+ * retained siblings keep their CDP argument indices.
+ */
+const consoleApiCalled = z.unknown().transform((params) => {
+  const record = recordValue(params);
+  return {
+    topFrame: topCallFrame(record?.stackTrace),
+    arguments: admitRecords(record?.args)?.map((argument) =>
+      recordValue(argument),
+    ),
+    timestamp: numberValue(record?.timestamp),
+    type: cdpStringValue(record?.type),
+  };
+});
+
 /**
  * One payload schema per subscribed event. The connection parses each
  * registered event once, before any subscriber sees it. A schema never
@@ -67,6 +118,13 @@ const CDP_EVENT_PAYLOADS = {
   "Page.frameNavigated": frameEvent("navigated"),
   "Page.frameRequestedNavigation": frameEvent("requested"),
   "Page.navigatedWithinDocument": frameEvent("within_document"),
+  "Debugger.scriptParsed": scriptEvent,
+  "Debugger.scriptFailedToParse": scriptEvent,
+  "Runtime.executionContextCreated": executionContextCreated,
+  "Runtime.executionContextDestroyed": z
+    .unknown()
+    .transform(readCdpExecutionContextDestroyed),
+  "Runtime.consoleAPICalled": consoleApiCalled,
 } as const satisfies {
   readonly [E in CdpProtocolEvent]?: z.ZodType<unknown, unknown>;
 };
@@ -101,18 +159,25 @@ export const registeredCdpEvent = (
   } as CdpRegisteredEvent;
 };
 
-const FRAME_EVENTS: ReadonlySet<string> = new Set<CdpEventName>([
+const FRAME_EVENTS = [
   "Page.frameAttached",
   "Page.frameDetached",
   "Page.frameNavigated",
   "Page.frameRequestedNavigation",
   "Page.navigatedWithinDocument",
-]);
+] as const satisfies readonly CdpEventName[];
+type CdpFrameEventName = (typeof FRAME_EVENTS)[number];
+const FRAME_EVENT_NAMES: ReadonlySet<string> = new Set(FRAME_EVENTS);
+
+const isFrameEvent = (
+  event: CdpRegisteredEvent,
+): event is Extract<CdpRegisteredEvent, { method: CdpFrameEventName }> =>
+  FRAME_EVENT_NAMES.has(event.method);
 
 /** The parsed frame lifecycle payload of a registered frame event. */
 export const cdpFrameEvent = (event: {
   readonly registered: CdpRegisteredEvent | undefined;
 }): CdpFrameEvent | undefined =>
-  event.registered !== undefined && FRAME_EVENTS.has(event.registered.method)
+  event.registered !== undefined && isFrameEvent(event.registered)
     ? event.registered.payload
     : undefined;
