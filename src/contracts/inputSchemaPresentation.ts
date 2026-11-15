@@ -336,15 +336,35 @@ const REMOVABLE_KEYWORDS = new Set([
  * Whether a pointer from `root` passes through a keyword normalization may
  * remove. An `anyOf` is removed only when it collapses: every branch boolean.
  */
+/** Keywords a relaxed draft-07 reference keeps; its other siblings go. */
+const DRAFT07_REDUCED_REFERENCE_KEYS = new Set([
+  "$id",
+  "$schema",
+  "$anchor",
+  "$defs",
+  "definitions",
+  "description",
+  "title",
+  "default",
+  "examples",
+  "$comment",
+]);
+
 const throughRemovableLocation = (
   root: unknown,
   path: readonly string[],
+  draft07: boolean,
 ): boolean => {
   let value = root;
   for (const [index, step] of schemaPointerSteps(path).entries()) {
     if (
       step.kind === "keyword" &&
       (REMOVABLE_KEYWORDS.has(step.keyword) ||
+        // Relaxing a draft-07 reference removes its ignored siblings.
+        (draft07 &&
+          isObject(value) &&
+          hasReference(value) &&
+          !DRAFT07_REDUCED_REFERENCE_KEYS.has(step.keyword)) ||
         (step.keyword === "anyOf" &&
           isObject(value) &&
           Array.isArray(value.anyOf) &&
@@ -449,7 +469,11 @@ const normalizationContext = (
       const target = references.resolve(scope, schema.$ref);
       if (
         target.kind === "target" &&
-        !throughRemovableLocation(scope?.root, target.path)
+        !throughRemovableLocation(
+          scope?.root,
+          target.path,
+          scope?.dialect === "draft-07",
+        )
       ) {
         const dependency = factAt(target.value, scope);
         dependency?.dependents.add(fact);
@@ -728,21 +752,7 @@ const normalizeAdvertisedSchema = (
     // this affected reference rather than copy or mutate its executable view.
     if (scope?.dialect === "draft-07") {
       for (const key of Object.keys(node))
-        if (
-          ![
-            "$id",
-            "$schema",
-            "$anchor",
-            "$defs",
-            "definitions",
-            "description",
-            "title",
-            "default",
-            "examples",
-            "$comment",
-          ].includes(key)
-        )
-          delete node[key];
+        if (!DRAFT07_REDUCED_REFERENCE_KEYS.has(key)) delete node[key];
     } else {
       delete node.$ref;
       delete node.$dynamicRef;

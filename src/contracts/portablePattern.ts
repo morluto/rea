@@ -113,9 +113,13 @@ const emitClass = (
       if (ascii.size === 0) throw new Unexpressible();
       return `[${emitAsciiMembers(ascii)}]`;
     }
-    return ascii.size === 0
-      ? NON_ASCII
-      : `(?:[${emitAsciiMembers(ascii)}]|${NON_ASCII})`;
+    if (ascii.size === 0) return NON_ASCII;
+    // One negated class admits every non-ASCII character; an alternation of
+    // two classes would cost a backtracking frame per repeated character.
+    const missing = new Set(ASCII_CODES.filter((code) => !ascii.has(code)));
+    return missing.size === 0
+      ? ANY_CHARACTER
+      : `[^${emitAsciiMembers(missing)}]`;
   }
   if (nonAscii === "all") {
     const rest = new Set(ASCII_CODES.filter((code) => !ascii.has(code)));
