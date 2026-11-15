@@ -11,7 +11,7 @@ import {
 } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../support/lifecycleHarness.js";
 
 const fault = vi.hoisted(() => ({
   path: "",
@@ -229,22 +229,17 @@ it.skipIf(process.platform === "win32")(
   "keeps endpoint observation admitted until its read and close finish",
   async () => {
     const { endpoint, resources } = await fixture();
-    let entered: (() => void) | undefined;
-    const observed = new Promise<void>((resolve) => {
-      entered = resolve;
-    });
-    const gate = new Promise<void>((resolve) => {
-      releaseRead = resolve;
-    });
+    const endpointRead = phaseGate();
+    // afterEach releases a read a failed test left held.
+    releaseRead = () => endpointRead.release();
     fault.readGate = async () => {
-      entered?.();
-      await gate;
+      await endpointRead.hold();
     };
     const pending = observeGhidraEndpoint(endpoint, {
       resourceScope: resources,
     });
     operations.push(pending);
-    await awaitAcknowledgement(observed, pending, "Ghidra endpoint read");
+    await endpointRead.reached(pending, "Ghidra endpoint read");
     let closed = false;
     const closing = resources.close().then(() => {
       closed = true;
@@ -252,7 +247,7 @@ it.skipIf(process.platform === "win32")(
     operations.push(closing);
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(closed).toBe(false);
-    releaseRead?.();
+    endpointRead.release();
     await expect(pending).resolves.toMatchObject({ ok: true });
     await closing;
     expect(fault.handles.every((handle) => handle.fd === -1)).toBe(true);
