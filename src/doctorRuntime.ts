@@ -29,7 +29,7 @@ import { ok } from "./domain/result.js";
 import { cancelledBy, carriedReason } from "./domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "./domain/providerCleanupError.js";
 import { AnalysisCleanupLeaseGroup } from "./artifacts/AnalysisCleanupLease.js";
-import type { RetainedResourceScope } from "./application/AnalysisProvider.js";
+import type { RetainedResourceScope } from "./ports/AnalysisProvider.js";
 import { RegularFileCleanupFailure } from "./filesystem/OwnedRegularFile.js";
 import { readEffectiveClientRegistrationConfiguration } from "./application/ClientConfigurationFiles.js";
 import { clientRegistrationEnvironmentDetails } from "./application/ClientRegistrationEnvironment.js";

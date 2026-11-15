@@ -2,7 +2,7 @@ import type { HostPlatform } from "../platform/HostPlatform.js";
 import type {
   RetainedResourceScope,
   ProviderAvailability,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import type {
   DoctorProviderCheck,
   DoctorProviderInspection,

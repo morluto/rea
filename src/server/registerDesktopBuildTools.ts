@@ -9,7 +9,7 @@ import type {
   DesktopBuildComputers,
   ForwardedResult,
 } from "../application/desktop/DesktopBuildComputers.js";
-import type { ProgressReporter } from "../application/ProgressReporter.js";
+import type { ProgressReporter } from "../ports/ProgressReporter.js";
 import { DesktopBuildSteps } from "../application/desktop/DesktopBuildSteps.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import type { ToolContract } from "../contracts/toolContractTypes.js";

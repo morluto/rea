@@ -28,7 +28,7 @@ import type { HistoricalCaptureFormatAdapter } from "./HistoricalCaptureFormatAd
 import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
 import { completedStableArtifactObservation } from "../../artifacts/StableArtifactObservation.js";
 import type { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";

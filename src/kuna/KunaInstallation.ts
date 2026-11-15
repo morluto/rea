@@ -25,7 +25,7 @@ import {
   observeStableFile,
   stableFileHashCause,
 } from "../filesystem/StableFileHash.js";
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import {
   RegularFileCleanupFailure,
   RegularFileCancelled,

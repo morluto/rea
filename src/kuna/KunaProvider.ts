@@ -6,7 +6,7 @@ import type {
   AnalysisProviderCandidate,
   ProviderAvailability,
   ProviderTargetSupport,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { cancelledBy } from "../domain/analysisErrorCore.js";
 import {
   createAnalysisProfile,

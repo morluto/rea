@@ -4,7 +4,7 @@ import { readNativeCallRoutes } from "./NativeCallRoutes.js";
 import {
   createAnalysisExecution,
   type AnalysisOperation,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import { ghidraReferenceEdge } from "../../domain/ghidraValues.fixture.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { err, ok } from "../../domain/result.js";

@@ -3,12 +3,12 @@ import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { assertArtifactCommandPath } from "../process/ArtifactCommandPath.js";
 import { join } from "node:path";
-import type { FirmwareAnalysisPort } from "../application/firmware/FirmwareAnalysisPort.js";
+import type { FirmwareAnalysisPort } from "../ports/firmware/FirmwareAnalysisPort.js";
 import {
   createAnalysisExecution,
   type AnalysisExecution,
   type ExecutionOptions,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import {
   firmwareResultSchemas,
   DEFAULT_FIRMWARE_ANALYSIS_TIMEOUT_MS,

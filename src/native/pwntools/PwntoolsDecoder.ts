@@ -26,7 +26,7 @@ import { z } from "zod";
 import type {
   ExecutionOptions,
   ProviderIdentity,
-} from "../../application/AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import type {
   AnalysisCapturedOutput,
   AnalysisPartialObservation,

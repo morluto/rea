@@ -5,13 +5,13 @@ import type {
 import type { Logger } from "pino";
 import type { z } from "zod";
 
-import type { ProgressReporter } from "../application/ProgressReporter.js";
+import type { ProgressReporter } from "../ports/ProgressReporter.js";
 import {
   optionalProviderUnavailable,
   type OptionalProviderLoadFailure,
-} from "../application/OptionalObservationProviders.js";
+} from "../ports/OptionalObservationProviders.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import {
   projectRetainedAnalysis,
   requireAnalysisViewRetention,

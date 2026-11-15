@@ -4,7 +4,7 @@ import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.j
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import { WebArtifactCleanup } from "../../../src/browser/WebArtifactCleanup.js";
 import { LocalWebScriptArtifacts } from "../../../src/browser/assets/LocalWebScriptArtifacts.js";
-import type { ExecutionOptions } from "../../../src/application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../../../src/ports/AnalysisProvider.js";
 import { NativeModuleResolver } from "../../../src/browser/modules/NativeModuleResolver.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";

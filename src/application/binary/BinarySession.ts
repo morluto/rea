@@ -41,7 +41,7 @@ import type {
   AnalysisOperationPort,
   ProviderIdentity,
   AnalysisOperation,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import type {
   BinarySessionPort,
   BinaryOpenResult,
@@ -79,7 +79,7 @@ import {
   commitExecutionProfile,
   prepareSessionExecution,
 } from "./BinarySessionExecution.js";
-import { closeAnalysisClient } from "../AnalysisClientCleanup.js";
+import { closeAnalysisClient } from "../../providers/AnalysisClientCleanup.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { ConfigurationError } from "../../domain/configurationErrors.js";
 import type { AnalysisCleanupRetry } from "../../domain/analysisErrorRecovery.js";

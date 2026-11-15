@@ -27,7 +27,7 @@ import type {
   AnalysisOperationPort,
   ExecutionOptions,
   ProviderIdentity,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 
 import type { SavedAnalysisSnapshot } from "../../domain/savedAnalysisSnapshot.js";
 

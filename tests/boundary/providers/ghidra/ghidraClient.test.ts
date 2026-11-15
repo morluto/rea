@@ -29,7 +29,7 @@ import { ConfigurationError } from "../../../../src/domain/configurationErrors.j
 import { withVerifierCleanup } from "../../../../scripts/lib/verifier-cleanup.mjs";
 import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
 import type { Logger } from "pino";
-import type { ProgressUpdate } from "../../../../src/application/ProgressReporter.js";
+import type { ProgressUpdate } from "../../../../src/ports/ProgressReporter.js";
 
 import { err, ok } from "../../../../src/domain/result.js";
 import * as GhidraTransport from "../../../../src/ghidra/GhidraTransport.js";

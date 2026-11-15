@@ -5,14 +5,16 @@
  * its layer when it is added.
  *
  * The order follows docs/architecture/architecture.mermaid: domain and
- * contracts at the centre, the process/filesystem foundation, provider
- * adapters, shared application workflows, production composition, then the
+ * contracts at the centre, the process/filesystem foundation, the ports
+ * that providers implement and application consumes, provider adapters,
+ * shared application workflows, production composition, then the
  * CLI and MCP entry points.
  */
 export const LAYER_ORDER = Object.freeze([
   "domain",
   "contracts",
   "foundation",
+  "ports",
   "providers",
   "application",
   "composition",
@@ -36,6 +38,7 @@ export const UNIT_LAYERS = Object.freeze(
       "identity.ts",
       "logger.ts",
     ]),
+    ...units("ports", ["ports"]),
     ...units("providers", [
       "adb",
       "android",

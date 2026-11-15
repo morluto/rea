@@ -13,7 +13,7 @@ import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { readStableArtifact } from "../../../src/artifacts/readStableArtifact.js";
 import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
-import type { ExecutionOptions } from "../../../src/application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../../../src/ports/AnalysisProvider.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 // Simulated Linux admission, real descriptors; no producer, limiter or target runs.

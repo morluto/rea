@@ -18,8 +18,8 @@ import {
   type ArtifactFilePrimaryFacts,
 } from "../../artifacts/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import type { PeResourcesPort } from "../../application/binaryDiagnostics/PeResourcesPort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+import type { PeResourcesPort } from "../../ports/binaryDiagnostics/PeResourcesPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import {
   AnalysisInputError,

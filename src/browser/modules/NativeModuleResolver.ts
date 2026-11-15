@@ -13,8 +13,8 @@ import type {
   ConsoleMessage,
   LaunchOptions,
 } from "playwright-core";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
-import type { WebModuleResolutionPort } from "../../application/WebModulePorts.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { WebModuleResolutionPort } from "../../ports/WebModulePorts.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";

@@ -6,8 +6,8 @@ import { parseBinaryTarget } from "../BinaryTargetResolver.js";
 import type {
   AnalysisProvider,
   ProviderIdentity,
-} from "../AnalysisProvider.js";
-import { createAnalysisExecution } from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../ports/AnalysisProvider.js";
 import { LazyAnalysisProvider } from "./LazyAnalysisProvider.js";
 import { ok as resultOk } from "../../domain/result.js";
 

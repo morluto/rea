@@ -15,7 +15,7 @@ import {
   type AnalysisProviderCandidate,
   type CapabilityDescriptor,
   type ProviderIdentity,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
 import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";

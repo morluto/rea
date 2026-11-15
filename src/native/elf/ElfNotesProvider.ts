@@ -16,8 +16,8 @@ import {
   type ArtifactFilePrimaryFacts,
 } from "../../artifacts/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import type { ElfNotesPort } from "../../application/binaryDiagnostics/ElfNotesPort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+import type { ElfNotesPort } from "../../ports/binaryDiagnostics/ElfNotesPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";

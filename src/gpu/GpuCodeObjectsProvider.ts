@@ -1,12 +1,12 @@
 import { readerIntegrityFailure } from "../artifacts/StableArtifactFailure.js";
 import { GPU_CODE_OBJECTS_PROVIDER_IDENTITY } from "./GpuCodeObjectsProviderIdentity.js";
 import { lstat, type FileHandle } from "node:fs/promises";
-import type { GpuCodeObjectsPort } from "../application/gpu/GpuCodeObjectsPort.js";
+import type { GpuCodeObjectsPort } from "../ports/gpu/GpuCodeObjectsPort.js";
 import {
   createGpuCodeObjectsEvidence,
   createGpuCodeObjectsPartialEvidence,
 } from "../domain/gpu/gpuCodeObjectsEvidence.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type {
   GpuCodeObjects,
   GpuCodeObjectsInput,

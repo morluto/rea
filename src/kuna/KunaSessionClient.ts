@@ -24,7 +24,7 @@ import {
   type AnalysisOperation,
   type ExecutionOptions,
   type RetainedResourceScope,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,

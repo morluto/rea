@@ -62,7 +62,7 @@ vi.mock("../../../../src/filesystem/RegularFile.js", async (importOriginal) => {
 });
 
 import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
-import type { RetainedResourceScope } from "../../../../src/application/AnalysisProvider.js";
+import type { RetainedResourceScope } from "../../../../src/ports/AnalysisProvider.js";
 import {
   inspectKunaInstallation,
   kunaInstallationCancellation,

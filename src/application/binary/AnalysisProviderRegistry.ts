@@ -1,4 +1,4 @@
-import { ProviderInspectionScope } from "../ProviderInspectionScope.js";
+import { ProviderInspectionScope } from "../../ports/ProviderInspectionScope.js";
 import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
@@ -46,7 +46,7 @@ import type {
   ProviderIdentity,
   ProviderTargetSupport,
   RetainedResourceScope,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import {
   evaluateAnalysisProviderCandidate,
   type AnalysisProviderCandidateEvaluation,

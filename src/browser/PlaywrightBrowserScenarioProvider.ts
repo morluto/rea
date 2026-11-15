@@ -8,11 +8,11 @@ import {
   AnalysisCleanupLeaseGroup,
 } from "../artifacts/AnalysisCleanupLease.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import type { BrowserScenarioCapturePort } from "../application/BrowserScenarioCapturePort.js";
+import type { BrowserScenarioCapturePort } from "../ports/BrowserScenarioCapturePort.js";
 import type {
   ExecutionOptions,
   ProviderIdentity,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import type { BrowserScenario } from "../domain/browserScenario.js";
 import {
   BROWSER_SCENARIO_START_STEP_ID,

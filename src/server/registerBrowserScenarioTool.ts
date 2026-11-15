@@ -4,11 +4,11 @@ import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
 import {
   optionalProviderUnavailable,
   type OptionalProviderLoadFailure,
-} from "../application/OptionalObservationProviders.js";
+} from "../ports/OptionalObservationProviders.js";
 import { err } from "../domain/result.js";
 import { browserScenarioSchema } from "../domain/browserScenario.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
-import type { BrowserScenarioCapturePort } from "../application/BrowserScenarioCapturePort.js";
+import type { BrowserScenarioCapturePort } from "../ports/BrowserScenarioCapturePort.js";
 import { captureBrowserScenario } from "../application/BrowserScenarioCaptureService.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import type { Logger } from "pino";

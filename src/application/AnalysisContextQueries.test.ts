@@ -10,7 +10,7 @@ import {
   createAnalysisExecution,
   type AnalysisOperationPort,
   type AnalysisExecution,
-} from "./AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisCancelledError,

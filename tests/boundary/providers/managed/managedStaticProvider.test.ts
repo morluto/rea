@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
-import type { AnalysisExecution } from "../../../../src/application/AnalysisProvider.js";
+import type { AnalysisExecution } from "../../../../src/ports/AnalysisProvider.js";
 import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
 import {
   managedArtifactInspectionSchema,

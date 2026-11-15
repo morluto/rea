@@ -53,7 +53,7 @@ import { err, ok, type Result } from "../domain/result.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
-import type { ProgressReporter } from "../application/ProgressReporter.js";
+import type { ProgressReporter } from "../ports/ProgressReporter.js";
 import { silentLogger } from "../logger.js";
 import type { Logger } from "pino";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";

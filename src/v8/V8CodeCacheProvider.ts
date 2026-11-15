@@ -16,8 +16,8 @@ import {
   projectStableArtifactFailure,
   stableArtifactInputFailure,
 } from "../artifacts/StableArtifactFailure.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
-import type { V8CodeCachePort } from "../application/v8CodeCache/V8CodeCachePort.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
+import type { V8CodeCachePort } from "../ports/v8CodeCache/V8CodeCachePort.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,

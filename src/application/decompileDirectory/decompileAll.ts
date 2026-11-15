@@ -19,7 +19,7 @@ import { digestSchema } from "../../domain/digests.js";
 import type {
   AnalysisExecution,
   AnalysisOperationPort,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,

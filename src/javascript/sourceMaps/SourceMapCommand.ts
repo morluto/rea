@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisCleanupRelease } from "../../domain/analysisCleanupRelease.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";

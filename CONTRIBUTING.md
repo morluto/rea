@@ -279,6 +279,12 @@ and version provenance, update license notices when needed, and report which
 verification was actually repeated. The lab requirements describe a recorded
 environment; a dependency update does not verify the revised environment.
 
+Commits that only move files or rewrite import paths are listed in
+`.git-blame-ignore-revs`; run
+`git config blame.ignoreRevsFile .git-blame-ignore-revs` once so `git blame`
+attributes lines to the change that wrote them. Move files with `git mv` and
+keep such a commit free of other edits.
+
 Repository invariants live in [AGENTS.md](AGENTS.md). Keep provider-specific
 protocols in adapters and shared CLI/MCP workflows in the application layer.
 

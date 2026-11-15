@@ -5,11 +5,11 @@ import {
 } from "../application/analysisView/AnalysisViewService.js";
 import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
-import type { OptionalProviderLoadFailure } from "../application/OptionalObservationProviders.js";
+import type { OptionalProviderLoadFailure } from "../ports/OptionalObservationProviders.js";
 
-import type { ElectronActiveObservationPort } from "../application/javascript/ElectronActiveObservationPort.js";
+import type { ElectronActiveObservationPort } from "../ports/javascript/ElectronActiveObservationPort.js";
 import { captureElectronScenario } from "../application/javascript/ElectronActiveObservationService.js";
-import type { ElectronObservationPort } from "../application/javascript/ElectronObservationPort.js";
+import type { ElectronObservationPort } from "../ports/javascript/ElectronObservationPort.js";
 import {
   inspectElectronPage,
   listElectronTargets,
