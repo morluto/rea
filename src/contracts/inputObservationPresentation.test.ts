@@ -83,39 +83,39 @@ const referenceWideningCases: readonly {
   {
     name: "oneOf",
     schema: {
-      definitions: { off: { const: false } },
+      definitions: { off: { type: "string", pattern: "^😀$" } },
       properties: { value: { oneOf: [{ $ref: "#/definitions/off" }, {}] } },
     },
-    input: { value: true },
+    input: { value: "x" },
   },
   {
     name: "not",
     schema: {
-      definitions: { off: { const: false } },
+      definitions: { off: { type: "string", pattern: "^😀$" } },
       properties: { value: { not: { $ref: "#/definitions/off" } } },
     },
-    input: { value: true },
+    input: { value: "x" },
   },
   {
     name: "if",
     schema: {
-      definitions: { off: { const: false } },
+      definitions: { off: { type: "string", pattern: "^😀$" } },
       properties: {
         value: { if: { $ref: "#/definitions/off" }, then: false, else: true },
       },
     },
-    input: { value: true },
+    input: { value: "x" },
   },
   {
     name: "chain",
     schema: {
       definitions: {
-        off: { const: false },
+        off: { type: "string", pattern: "^😀$" },
         alias: { $ref: "#/definitions/off" },
       },
       properties: { value: { not: { $ref: "#/definitions/alias" } } },
     },
-    input: { value: true },
+    input: { value: "x" },
   },
   {
     name: "recursive affected",
@@ -124,7 +124,7 @@ const referenceWideningCases: readonly {
         node: {
           type: "object",
           properties: {
-            flag: { const: false },
+            flag: { type: "string", pattern: "^😀$" },
             next: { $ref: "#/definitions/node" },
           },
           required: ["flag"],
@@ -132,7 +132,7 @@ const referenceWideningCases: readonly {
       },
       properties: { value: { not: { $ref: "#/definitions/node" } } },
     },
-    input: { value: { flag: true } },
+    input: { value: { flag: "x" } },
   },
   {
     name: "literal target unchanged",
@@ -147,7 +147,7 @@ const referenceWideningCases: readonly {
     name: "nested resource unaffected",
     schema: {
       $id: "https://example.test/root",
-      definitions: { flag: { const: false } },
+      definitions: { flag: { type: "string", pattern: "^😀$" } },
       properties: {
         value: {
           $id: "child",
@@ -209,15 +209,17 @@ it.each(
     expect(advertised.default, `${name} literal data`).toEqual(
       canonical.default,
     );
+    // An affected site is rewritten; an unaffected one is left as it was.
     if (unchanged)
       expect(advertised.properties, name).toEqual(canonical.properties);
+    else expect(advertised.properties, name).not.toEqual(canonical.properties);
   },
 );
 
-it("keeps an upper contains bound from rejecting canonical items after referenced literal widening", () => {
+it("keeps an upper contains bound from rejecting canonical items after referenced pattern widening", () => {
   const canonical = {
     type: "object",
-    definitions: { off: { const: false } },
+    definitions: { off: { type: "string", pattern: "^😀$" } },
     properties: {
       values: {
         type: "array",
@@ -228,16 +230,17 @@ it("keeps an upper contains bound from rejecting canonical items after reference
     },
   };
   const advertised = presentInputJsonSchema(canonical, () => undefined);
-  const input = { values: [false, true] };
+  const input = { values: ["x", "y"] };
   expect(new Ajv2020({ strict: false }).compile(canonical)(input)).toBe(true);
   expect(new Ajv2020({ strict: false }).compile(advertised)(input)).toBe(true);
+  expect(advertised).not.toHaveProperty("properties.values.maxContains");
 });
 
 it.each([false, true])(
   "preserves conditional evaluation annotations (referenced: %s)",
   (referenced) => {
     const conditional = {
-      if: { properties: { flag: { const: false } } },
+      if: { properties: { flag: { type: "string", pattern: "^😀$" } } },
       then: { properties: { extra: { type: "string" } } },
     };
     const canonical = {
@@ -247,11 +250,13 @@ it.each([false, true])(
       unevaluatedProperties: false,
     };
     const advertised = presentInputJsonSchema(canonical, () => undefined);
-    const input = { flag: false, extra: "kept" };
+    const input = { flag: "😀", extra: "kept" };
     expect(new Ajv2020({ strict: false }).compile(canonical)(input)).toBe(true);
     expect(new Ajv2020({ strict: false }).compile(advertised)(input)).toBe(
       true,
     );
+    // The widened condition goes, and with it the evaluation it provided.
+    expect(advertised).not.toHaveProperty("unevaluatedProperties");
   },
 );
 
@@ -286,7 +291,7 @@ it("keeps unaffected root property annotations strict when a child conditional w
     type: "object",
     properties: {
       child: {
-        if: { const: false },
+        if: { type: "string", pattern: "^😀$" },
         then: { type: "string" },
         else: { type: "boolean" },
       },
@@ -298,6 +303,7 @@ it("keeps unaffected root property annotations strict when a child conditional w
   expect(validate({ child: true })).toBe(true);
   expect(validate({ child: true, unknown: "reject" })).toBe(false);
   expect(advertised.unevaluatedProperties).toBe(false);
+  expect(advertised).not.toHaveProperty("properties.child.if");
 });
 
 it.each(["draft-07", "draft-2020-12"] as const)(
@@ -311,7 +317,7 @@ it.each(["draft-07", "draft-2020-12"] as const)(
       type: "object",
       definitions: {
         number: { type: "number" },
-        alias: { $ref: "#/definitions/number", const: false },
+        alias: { $ref: "#/definitions/number", pattern: "^😀$" },
       },
       properties: { value: { not: { $ref: "#/definitions/alias" } } },
     };
@@ -383,7 +389,10 @@ it("does not treat unused definitions as validation dependencies", () => {
     type: "object",
     properties: {
       value: {
-        not: { type: "number", definitions: { unused: { const: false } } },
+        not: {
+          type: "number",
+          definitions: { unused: { type: "string", pattern: "^😀$" } },
+        },
       },
     },
   };
