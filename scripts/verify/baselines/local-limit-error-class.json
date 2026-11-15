@@ -1,0 +1,8 @@
+{
+  "src/browser/WebSourceMapFetcher.ts": 1,
+  "src/captures/parseFieldDiscovery.ts": 1,
+  "src/firmware/devicetree/DevicetreeParser.ts": 1,
+  "src/signals/SigrokRecordingProvider.ts": 1,
+  "src/signals/parseDecoderDiscovery.ts": 1,
+  "src/v8/V8CodeCache.errors.ts": 1
+}

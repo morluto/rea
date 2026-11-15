@@ -10,6 +10,7 @@ import { toolContractMetadata } from "../toolEffects.js";
 export const MAVEN_GRADLE_METADATA_TOOL_CONTRACTS = [
   {
     name: "inspect_maven_gradle_metadata",
+    availability: "standalone",
     ...toolContractMetadata("inspect_maven_gradle_metadata"),
     kind: "artifact-provider",
     description:

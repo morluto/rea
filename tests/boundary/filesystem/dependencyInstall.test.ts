@@ -12,6 +12,7 @@ import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { copyScriptsWithImports } from "../../support/scriptImportClosure.js";
 
 const script = join(process.cwd(), "scripts", "check-dependency-install.mjs");
 const sourceRoot = process.cwd();
@@ -195,19 +196,6 @@ const createBuildCacheFixture = async (): Promise<string> => {
     "turbo.json",
     "tsconfig.json",
     "tsconfig.build.json",
-    "scripts/check-dependency-install.mjs",
-    "scripts/run-turbo.mjs",
-    "scripts/run-typescript.mjs",
-    "scripts/run-exclusive.mjs",
-    "scripts/run-exclusive-command.mjs",
-    "scripts/lib/windows-owned-command.mjs",
-    "scripts/generate-skill-metadata.mjs",
-    "scripts/clean-build-output.mjs",
-    "scripts/generate-package-metadata.mjs",
-    "scripts/lib/generated-file.mjs",
-    "scripts/lib/verifier-source-loader.mjs",
-    "src/domain/skillManifest.ts",
-    "src/domain/result.ts",
     ".agents/skills/reverse-engineer-anything/SKILL.md",
     "src/generatedPackageMetadata.ts",
   ];
@@ -217,6 +205,21 @@ const createBuildCacheFixture = async (): Promise<string> => {
       await mkdir(dirname(destination), { recursive: true });
       await copyFile(join(sourceRoot, path), destination);
     }),
+  );
+  // The check and the package scripts it runs spawn these entry points.
+  await copyScriptsWithImports(
+    [
+      "scripts/check-dependency-install.mjs",
+      "scripts/run-turbo.mjs",
+      "scripts/run-typescript.mjs",
+      "scripts/run-exclusive.mjs",
+      "scripts/run-exclusive-command.mjs",
+      "scripts/generate-skill-metadata.mjs",
+      "scripts/clean-build-output.mjs",
+      "scripts/generate-package-metadata.mjs",
+    ],
+    root,
+    sourceRoot,
   );
   await writeFile(
     join(root, "package.json"),
