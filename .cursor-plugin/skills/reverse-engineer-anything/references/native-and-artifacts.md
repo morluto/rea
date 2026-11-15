@@ -850,6 +850,16 @@ status with unknown coverage and are refused on extraction; no decryption is
 attempted. See
 [wxapkg](https://github.com/morluto/rea/blob/main/docs/wxapkg.md).
 
+macOS flat installer packages (`.pkg` files beginning with `xar!`) use the
+same inspection/extraction workflows on every host. Prefer a retained summary
+for XAR header/TOC facts, Distribution `pkg-ref` and choices, PackageInfo
+identity, Scripts `preinstall`/`postinstall` presence, and gzip cpio Payload
+paths, including each component's Scripts/Payload until the expansion budget
+is exhausted. XAR signatures are named and not verified. `pbzx` payloads keep
+the stored member with an unsupported-compression refusal; Bom is presence
+and size only; installer JavaScript is never executed. See
+[macOS flat installer packages](https://github.com/morluto/rea/blob/main/docs/macos-pkg.md).
+
 U-Boot legacy uImages use the same inspection/extraction workflows. Prefer a
 retained summary and selected inventory views for header facts or component
 IDs. Header addresses/CPU/OS are declarations; payloads remain as stored.

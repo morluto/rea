@@ -1,0 +1,480 @@
+import { buffer } from "node:stream/consumers";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
+
+import { expect, it, vi } from "vitest";
+
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
+import { MacosPkgArtifactReader } from "./MacosPkgArtifactReader.js";
+import {
+  createBoundedXarInflate,
+  inflateXarMemberBytes,
+} from "./macosPkg/XarInflate.js";
+
+vi.mock("./macosPkg/XarInflate.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("./macosPkg/XarInflate.js")>();
+  return {
+    ...actual,
+    inflateXarMemberBytes: vi.fn(actual.inflateXarMemberBytes),
+    createBoundedXarInflate: vi.fn(actual.createBoundedXarInflate),
+  };
+});
+import {
+  buildBadCpioPackage,
+  buildBadInflatePackage,
+  buildComponentPackage,
+  buildExtractedSizeMismatchGzipPackage,
+  buildGzipPackageInfo,
+  buildHeapOutOfBoundsPackage,
+  buildMultiComponentProductArchive,
+  buildOversizeDeclaredGzipPackage,
+  buildOversizeTocPackage,
+  buildPbzxPayloadPackage,
+  buildProductArchive,
+  buildSignedProductArchive,
+  buildTocPastEofPackage,
+  truncatedPkgHeader,
+} from "./macosPkg/MacosPkg.fixture.js";
+import { parseCpioOdc } from "./macosPkg/CpioOdc.js";
+import { buildCpioOdc } from "./macosPkg/MacosPkg.fixture.js";
+
+const writePkg = async (name: string, bytes: Buffer): Promise<string> => {
+  const directory = await createTestTempDirectory("rea-macos-pkg-");
+  const path = join(directory, name);
+  await writeFile(path, bytes);
+  return path;
+};
+
+const entriesOf = async (
+  bytes: Buffer,
+  name = "fixture.pkg",
+  expandedBytes?: number,
+) => {
+  const path = await writePkg(name, bytes);
+  const reader = new MacosPkgArtifactReader(path, undefined, expandedBytes);
+  try {
+    const entries = [];
+    const coverage: unknown[] = [];
+    for await (const entry of reader.entries(undefined, {
+      onCoverage: (value) => coverage.push(value),
+    }))
+      entries.push(entry);
+    return { reader, entries, coverage, path };
+  } catch (cause: unknown) {
+    await reader.close();
+    throw cause;
+  }
+};
+
+it("round-trips odc cpio members including a symlink", () => {
+  const archive = buildCpioOdc([
+    { name: "hello.txt", mode: 0o100644, data: Buffer.from("hi") },
+    { name: "link", mode: 0o120777, data: Buffer.from("hello.txt") },
+  ]);
+  const parsed = parseCpioOdc(archive);
+  expect(parsed.ok).toBe(true);
+  if (!parsed.ok) return;
+  expect(parsed.value).toMatchObject([
+    {
+      name: "hello.txt",
+      kind: "file",
+      size: 2,
+    },
+    {
+      name: "link",
+      kind: "symlink",
+      symlinkTarget: "hello.txt",
+    },
+  ]);
+});
+
+it("inventories a product archive's Distribution, scripts and payload", async () => {
+  const { reader, entries, coverage } = await entriesOf(buildProductArchive());
+  try {
+    expect(reader.formatMetadata()).toMatchObject({
+      kind: "macos-pkg",
+      archive_kind: "product",
+      xar: { magic: "xar!", version: 1, checksum_algorithm: "sha1" },
+      signature: { present: false, verification: "not_verified" },
+      distribution: {
+        title: "REA Fixture",
+        pkg_refs: [
+          expect.objectContaining({
+            id: "com.rea.fixture.component",
+            version: "1.0.0",
+            install_kbytes: 1,
+          }),
+        ],
+        choices: ["default", "component"],
+        allowed_os_versions: [{ min: "13.0", max: null }],
+        installation_check_script_bytes: expect.any(Number),
+        volume_check_script_bytes: expect.any(Number),
+      },
+      packages: [
+        expect.objectContaining({
+          identifier: "com.rea.fixture.component",
+          version: "1.0.0",
+          install_location: "/",
+          auth: "root",
+          preinstall: "./preinstall",
+          postinstall: "./postinstall",
+        }),
+      ],
+      scripts: {
+        present: true,
+        compression: "gzip-cpio-odc",
+        preinstall: true,
+        postinstall: true,
+      },
+      payload: { present: true, compression: "gzip-cpio-odc" },
+      bom: { present: true, path: "Component.pkg/Bom" },
+    });
+    expect(coverage).toEqual([expect.objectContaining({ status: "complete" })]);
+    const paths = entries.map((entry) => entry.path);
+    expect(paths).toEqual(
+      expect.arrayContaining([
+        "Distribution",
+        "Component.pkg/PackageInfo",
+        "Component.pkg/Bom",
+        "Component.pkg/Scripts/preinstall",
+        "Component.pkg/Scripts/postinstall",
+        "Component.pkg/Payload/usr/local/rea/hello.txt",
+        "Component.pkg/Payload/usr/local/rea/link",
+      ]),
+    );
+    const hello = entries.find(
+      (entry) => entry.path === "Component.pkg/Payload/usr/local/rea/hello.txt",
+    );
+    expect(hello?.formatMetadata).toMatchObject({
+      kind: "macos-pkg-entry",
+      role: "payload-member",
+      uid: 0,
+      gid: 0,
+    });
+    const link = entries.find(
+      (entry) => entry.path === "Component.pkg/Payload/usr/local/rea/link",
+    );
+    expect(link).toMatchObject({
+      kind: "symlink",
+      formatMetadata: expect.objectContaining({ symlink_target: "hello.txt" }),
+    });
+    expect((await buffer(await reader.open(hello!))).toString("utf8")).toBe(
+      "hello from payload\n",
+    );
+  } finally {
+    await reader.close();
+  }
+});
+
+it("inventories a component-only package", async () => {
+  const { reader, entries } = await entriesOf(buildComponentPackage());
+  try {
+    expect(reader.formatMetadata()).toMatchObject({
+      archive_kind: "component",
+      distribution: null,
+      packages: [
+        expect.objectContaining({ identifier: "com.rea.fixture.component" }),
+      ],
+    });
+    expect(entries.map((entry) => entry.path)).toEqual(
+      expect.arrayContaining([
+        "PackageInfo",
+        "Payload/usr/local/rea/hello.txt",
+      ]),
+    );
+  } finally {
+    await reader.close();
+  }
+});
+
+it("reports a signed TOC without claiming the signature is valid", async () => {
+  const { reader } = await entriesOf(buildSignedProductArchive());
+  try {
+    expect(reader.formatMetadata()?.signature).toMatchObject({
+      present: true,
+      toc_signature: true,
+      algorithm: "RSA",
+      certificate_count: 1,
+      certificates: [
+        { subject_cn: "REA Test Packager", issuer_cn: "REA Test Packager" },
+      ],
+      verification: "not_verified",
+    });
+  } finally {
+    await reader.close();
+  }
+});
+
+it("refuses pbzx payload expansion while keeping PackageInfo and Scripts", async () => {
+  const { reader, entries } = await entriesOf(buildPbzxPayloadPackage());
+  try {
+    const metadata = reader.formatMetadata();
+    expect(metadata?.payload).toMatchObject({
+      present: true,
+      compression: "pbzx",
+      members: [],
+    });
+    expect(metadata?.refusals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "unsupported-compression" }),
+      ]),
+    );
+    expect(metadata?.scripts.preinstall).toBe(true);
+    expect(entries.map((entry) => entry.path)).toEqual(
+      expect.arrayContaining(["PackageInfo", "Scripts/preinstall", "Payload"]),
+    );
+    expect(entries.map((entry) => entry.path)).not.toContain(
+      "Payload/usr/local/rea/hello.txt",
+    );
+  } finally {
+    await reader.close();
+  }
+});
+
+it("keeps a truncated xar header as a typed refusal", async () => {
+  const { reader, entries, coverage } = await entriesOf(
+    truncatedPkgHeader(),
+    "truncated.pkg",
+  );
+  try {
+    expect(entries).toEqual([]);
+    expect(reader.formatMetadata()?.refusals).toEqual([
+      expect.objectContaining({ code: "truncated-header" }),
+    ]);
+    expect(coverage).toEqual([expect.objectContaining({ status: "unknown" })]);
+  } finally {
+    await reader.close();
+  }
+});
+
+it("keeps the header when the TOC length extends past EOF", async () => {
+  const { reader } = await entriesOf(buildTocPastEofPackage(), "past-eof.pkg");
+  try {
+    expect(reader.formatMetadata()).toMatchObject({
+      xar: { header_size: 28, toc_compressed_length: 1024 },
+      refusals: [expect.objectContaining({ code: "toc-past-eof" })],
+    });
+  } finally {
+    await reader.close();
+  }
+});
+
+it("keeps the header when TOC inflate fails", async () => {
+  const { reader } = await entriesOf(
+    buildBadInflatePackage(),
+    "bad-inflate.pkg",
+  );
+  try {
+    expect(reader.formatMetadata()?.refusals).toEqual([
+      expect.objectContaining({ code: "toc-inflate" }),
+    ]);
+  } finally {
+    await reader.close();
+  }
+});
+
+it("keeps other members when a heap range is out of bounds", async () => {
+  const { reader, entries } = await entriesOf(
+    buildHeapOutOfBoundsPackage(),
+    "heap-oob.pkg",
+  );
+  try {
+    expect(reader.formatMetadata()?.refusals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "heap-out-of-bounds" }),
+      ]),
+    );
+    expect(
+      entries.find((entry) => entry.path === "PackageInfo"),
+    ).toBeUndefined();
+  } finally {
+    await reader.close();
+  }
+});
+
+it("keeps PackageInfo when Payload cpio headers are garbage", async () => {
+  const { reader, entries } = await entriesOf(
+    buildBadCpioPackage(),
+    "bad-cpio.pkg",
+  );
+  try {
+    expect(reader.formatMetadata()?.refusals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "cpio-malformed" }),
+      ]),
+    );
+    expect(entries.map((entry) => entry.path)).toContain("PackageInfo");
+  } finally {
+    await reader.close();
+  }
+});
+
+it("refuses an oversize TOC file count as a capacity limit", async () => {
+  const path = await writePkg("oversize.pkg", buildOversizeTocPackage());
+  const reader = new MacosPkgArtifactReader(path);
+  try {
+    await expect(async () => {
+      for await (const _entry of reader.entries()) {
+        /* Exhaust the iterator. */
+      }
+    }).rejects.toMatchObject({ reason: "limit", boundary: "capacity" });
+  } finally {
+    await reader.close();
+  }
+});
+
+it("refuses an oversize declared gzip member without inflating it", async () => {
+  vi.mocked(inflateXarMemberBytes).mockClear();
+  const { reader, entries } = await entriesOf(
+    buildOversizeDeclaredGzipPackage(),
+    "oversize-gzip.pkg",
+  );
+  try {
+    expect(reader.formatMetadata()?.packages).toEqual([]);
+    expect(reader.formatMetadata()?.refusals).toEqual([
+      expect.objectContaining({
+        code: "oversize",
+        path: "PackageInfo",
+      }),
+    ]);
+    expect(entries.map((entry) => entry.path)).toContain("PackageInfo");
+    expect(inflateXarMemberBytes).not.toHaveBeenCalled();
+  } finally {
+    await reader.close();
+  }
+});
+
+it("refuses a gzip member whose decoded size disagrees with the TOC", async () => {
+  const { reader, entries } = await entriesOf(
+    buildExtractedSizeMismatchGzipPackage(),
+    "size-mismatch.pkg",
+  );
+  try {
+    expect(reader.formatMetadata()?.packages).toEqual([]);
+    expect(reader.formatMetadata()?.refusals).toEqual([
+      expect.objectContaining({
+        code: "extracted-size-mismatch",
+        path: "PackageInfo",
+      }),
+    ]);
+    expect(entries.map((entry) => entry.path)).toContain("PackageInfo");
+  } finally {
+    await reader.close();
+  }
+});
+
+it("fails open() of an oversize gzip member with a limit error without inflating", async () => {
+  vi.mocked(createBoundedXarInflate).mockClear();
+  const path = await writePkg("open-oversize.pkg", buildGzipPackageInfo());
+  const reader = new MacosPkgArtifactReader(path, undefined, 16);
+  try {
+    const listed = [];
+    for await (const entry of reader.entries()) listed.push(entry);
+    const pkgInfo = listed.find((entry) => entry.path === "PackageInfo");
+    expect(pkgInfo).toBeDefined();
+    await expect(reader.open(pkgInfo!)).rejects.toMatchObject({
+      reason: "limit",
+    });
+    expect(createBoundedXarInflate).not.toHaveBeenCalled();
+  } finally {
+    await reader.close();
+  }
+});
+
+it("expands Scripts and Payload for every product-archive component", async () => {
+  const { reader, entries, coverage } = await entriesOf(
+    buildMultiComponentProductArchive(),
+    "multi.pkg",
+  );
+  try {
+    expect(reader.formatMetadata()).toMatchObject({
+      archive_kind: "product",
+      distribution: { title: "REA Multi" },
+      packages: [
+        expect.objectContaining({ identifier: "com.rea.fixture.a" }),
+        expect.objectContaining({ identifier: "com.rea.fixture.b" }),
+      ],
+      scripts: { present: true, preinstall: true, postinstall: true },
+      payload: { present: true, compression: "gzip-cpio-odc" },
+    });
+    expect(coverage).toEqual([expect.objectContaining({ status: "complete" })]);
+    const paths = entries.map((entry) => entry.path);
+    expect(paths).toEqual(
+      expect.arrayContaining([
+        "A.pkg/Scripts/preinstall",
+        "A.pkg/Payload/usr/local/rea/hello.txt",
+        "B.pkg/Scripts/preinstall",
+        "B.pkg/Payload/usr/local/rea/hello.txt",
+      ]),
+    );
+    const helloA = entries.find(
+      (entry) => entry.path === "A.pkg/Payload/usr/local/rea/hello.txt",
+    );
+    const helloB = entries.find(
+      (entry) => entry.path === "B.pkg/Payload/usr/local/rea/hello.txt",
+    );
+    expect((await buffer(await reader.open(helloA!))).toString("utf8")).toBe(
+      "hello from A\n",
+    );
+    expect((await buffer(await reader.open(helloB!))).toString("utf8")).toBe(
+      "hello from B\n",
+    );
+  } finally {
+    await reader.close();
+  }
+});
+
+it("names skipped component archives when the expansion budget is exhausted", async () => {
+  const { reader, entries, coverage } = await entriesOf(
+    buildMultiComponentProductArchive(),
+    "multi-budget.pkg",
+    1,
+  );
+  try {
+    expect(coverage).toEqual([
+      expect.objectContaining({
+        status: "unknown",
+        limitations: [
+          expect.stringContaining("Did not expand Scripts/Payload for"),
+        ],
+      }),
+    ]);
+    expect(coverage[0]).toMatchObject({
+      limitations: [expect.stringMatching(/A\.pkg\/Scripts.*B\.pkg\/Payload/s)],
+    });
+    const paths = entries.map((entry) => entry.path);
+    expect(paths).toEqual(
+      expect.arrayContaining([
+        "A.pkg/Scripts",
+        "A.pkg/Payload",
+        "B.pkg/Scripts",
+        "B.pkg/Payload",
+      ]),
+    );
+    expect(paths).not.toContain("A.pkg/Payload/usr/local/rea/hello.txt");
+    expect(paths).not.toContain("B.pkg/Payload/usr/local/rea/hello.txt");
+    expect(reader.formatMetadata()?.scripts.present).toBe(false);
+  } finally {
+    await reader.close();
+  }
+});
+
+it("classifies a product archive as pkg and inventories it through the shared scan", async () => {
+  const bytes = buildProductArchive();
+  const path = await writePkg("scan.pkg", bytes);
+  const inventory = await scanCanonicalArtifactInventory(path);
+  expect(inventory.manifest.root_format).toBe("pkg");
+  expect(inventory.coverage.status).toBe("complete");
+  expect(
+    inventory.occurrences.find((row) => row.logical_path === ".")
+      ?.format_metadata,
+  ).toMatchObject({ kind: "macos-pkg", archive_kind: "product" });
+  expect(
+    inventory.occurrences.some(
+      (row) =>
+        row.logical_path === "Component.pkg/Payload/usr/local/rea/hello.txt",
+    ),
+  ).toBe(true);
+});

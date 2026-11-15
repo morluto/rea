@@ -611,6 +611,11 @@ export const documentationSections = [
         route: "/kernel-modules",
       },
       {
+        text: "macOS flat installer packages",
+        source: "macos-pkg.md",
+        route: "/macos-pkg",
+      },
+      {
         text: "Kuna provider",
         source: "kuna-provider.md",
         route: "/kuna-provider",
