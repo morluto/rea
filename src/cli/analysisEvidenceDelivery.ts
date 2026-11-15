@@ -1,5 +1,6 @@
 import { explicitValuesOccurIn } from "../domain/explicitSensitiveValues.js";
 import { recordCliEvidencePublication } from "./cliEvidencePublication.js";
+import { recordCliDeliveredEvidence } from "./cliResultControls.js";
 import {
   analysisEvidenceSources,
   undeliveredSourceClosure,
@@ -218,6 +219,8 @@ export const publishCliAnalysisEvidence = async (
           closureInput,
         );
   const complete = parseEvidence(result.value);
+  // A summary delivery wraps the view; controls are read from this Evidence.
+  recordCliDeliveredEvidence(complete);
   const inputError = cliEvidenceDeliveryInputError(input);
   if (inputError !== undefined) {
     inputError.retainPartialObservation(complete);

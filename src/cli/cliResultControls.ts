@@ -11,6 +11,12 @@ export type CliResultControls = Readonly<Record<string, string>>;
 interface ControlsContext {
   /** Collects the controls on demand: only a full-output envelope shows them. */
   collect?: () => CliResultControls;
+  /**
+   * The complete Evidence the command delivered. A delivery that wraps it
+   * (a summary view beside its published bundle) records it here so its
+   * controls are read from the Evidence, not from the wrapper.
+   */
+  delivered?: unknown;
 }
 const invocation = new AsyncLocalStorage<ControlsContext>();
 
@@ -24,6 +30,16 @@ export const recordCliResultControls = (
   const context = invocation.getStore();
   if (context !== undefined) context.collect = collect;
 };
+
+/** Record the complete Evidence this invocation delivers, before any wrapper. */
+export const recordCliDeliveredEvidence = (evidence: unknown): void => {
+  const context = invocation.getStore();
+  if (context !== undefined) context.delivered = evidence;
+};
+
+/** The complete Evidence this invocation delivered, when its delivery recorded it. */
+export const cliDeliveredEvidence = (): unknown =>
+  invocation.getStore()?.delivered;
 
 /**
  * This invocation's recorded controls, or undefined when its result records

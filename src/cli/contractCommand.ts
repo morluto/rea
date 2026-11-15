@@ -48,7 +48,10 @@ import {
   type CliJsonInputCheck,
   withoutDefault,
 } from "./contractCliDescription.js";
-import { recordCliResultControls } from "./cliResultControls.js";
+import {
+  cliDeliveredEvidence,
+  recordCliResultControls,
+} from "./cliResultControls.js";
 import {
   cliResultControlsIn,
   projectCliAnalysisResult,
@@ -361,7 +364,13 @@ const projectCliResult = <Output>(
   // recorded controls, has no control to render.
   if (outputSchema !== undefined && Object.keys(binding.flags).length > 0)
     recordCliResultControls(() =>
-      cliResultControlsIn(output, outputSchema, binding),
+      // A wrapped delivery recorded its complete Evidence, which the
+      // contract's output schema describes.
+      cliResultControlsIn(
+        cliDeliveredEvidence() ?? output,
+        outputSchema,
+        binding,
+      ),
     );
   return projectCliInputFields(output, binding);
 };
