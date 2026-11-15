@@ -124,8 +124,21 @@ mcpTest(
     } extends PeImportsBinding
       ? false
       : true = true;
-    expect([summaryAccepted, bothRefused, summaryWithoutDetailRefused]).toEqual(
-      [true, true, true],
-    );
+    // A session-derived workflow is its own handler kind, never combined
+    // with a run or value handler.
+    const deriveWithRunRefused: {
+      readonly admission: "sdk";
+      readonly session: never;
+      readonly derive: () => never;
+      readonly run: Operation;
+    } extends PeImportsBinding
+      ? false
+      : true = true;
+    expect([
+      summaryAccepted,
+      bothRefused,
+      summaryWithoutDetailRefused,
+      deriveWithRunRefused,
+    ]).toEqual([true, true, true, true]);
   },
 );

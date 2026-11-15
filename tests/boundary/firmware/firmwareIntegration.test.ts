@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
@@ -115,7 +116,7 @@ it("binds region observations to exact bytes and preserves provider-reported unc
     size_basis: "provider_reported_validation_unknown",
   });
   expect(result.value.subject?.local_path).toBe(fixture.path);
-  expect(result.value.subject?.format).toBe("file");
+  expect(fileIdentity(result.value.subject).format).toBe("file");
   expect(result.value.raw_result).toMatchObject({
     report: [{ Analysis: { file_map: [{ id: "hit" }] } }],
   });

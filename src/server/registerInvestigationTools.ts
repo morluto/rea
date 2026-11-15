@@ -1,3 +1,4 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import { resolveInvestigationEvidenceClosure } from "../application/investigation/InvestigationEvidence.js";
@@ -136,24 +137,28 @@ const registerReconstruction = (
           if (!closure.ok)
             return server.delivery.toCallToolResult(closure, contract);
           const links = closure.value;
-          const evidence = createEvidence(undefined, RECONSTRUCTION_PROVIDER, {
-            predicateType: "rea.reconstruction-verification",
-            operation: contract.name,
-            analysisProfile: createAnalysisProfile(RECONSTRUCTION_PROVIDER, {
-              workflow_revision: 2,
-            }),
-            parameters: {
-              specification_sha256: result.specification_sha256,
-              claim_ids: input.specification.claims.map(
-                ({ claim_id: id }) => id,
-              ),
+          const evidence = createEvidence(
+            unknownTarget("derived-from-linked-evidence"),
+            RECONSTRUCTION_PROVIDER,
+            {
+              predicateType: "rea.reconstruction-verification",
+              operation: contract.name,
+              analysisProfile: createAnalysisProfile(RECONSTRUCTION_PROVIDER, {
+                workflow_revision: 2,
+              }),
+              parameters: {
+                specification_sha256: result.specification_sha256,
+                claim_ids: input.specification.claims.map(
+                  ({ claim_id: id }) => id,
+                ),
+              },
+              result,
+              confidence: "derived",
+              authority: "analyst-inference",
+              limitations: result.limitations,
+              evidenceLinks: links,
             },
-            result,
-            confidence: "derived",
-            authority: "analyst-inference",
-            limitations: result.limitations,
-            evidenceLinks: links,
-          });
+          );
           return server.delivery.toEvidenceToolResult(
             evidence,
             contract,

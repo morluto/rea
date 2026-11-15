@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import pino from "pino";
 import { Cli, z } from "incur";
 import { afterEach, expect, it, vi } from "vitest";
@@ -41,7 +42,7 @@ afterEach(() => {
 
 const observation = (completionStatus: "complete" | "unknown") =>
   createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "gnu.objdump", name: "GNU objdump", version: null },
     {
       predicateType: "rea.reverse-engineering.command-observation",
@@ -499,7 +500,7 @@ it.each([false, true])(
       },
     } as unknown as CliInstance;
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "rizin.debugger", name: "Rizin debugger", version: null },
       {
         predicateType: "rea.debugger.command-observation",
@@ -619,7 +620,7 @@ it.each(["incomplete", "interrupt", "control"] as const)(
     } as unknown as CliInstance;
     const previous = process.exitCode;
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "rizin.debugger", name: "Rizin debugger", version: null },
       {
         predicateType: "rea.debugger.command-observation",

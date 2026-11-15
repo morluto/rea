@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { InMemoryTransport } from "@modelcontextprotocol/client";
 import {
   isCallToolResult,
@@ -60,7 +61,7 @@ const readBundle = async (path: string) =>
 
 const authoredRecord = () =>
   createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     {
       id: "fixture",
       name: "Authored request publication fixture",
@@ -103,7 +104,7 @@ it("publishes an oversized validation-error reference only after an earlier rese
   const checkpoint = join(root, "previous.json");
   const exported = join(root, "current.json");
   const previous = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Authored retained observation", version: "1" },
     { operation: "fixture_observation", parameters: {}, result: true },
   );

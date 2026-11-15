@@ -283,7 +283,7 @@ it.each([false, true])(
       confidence: "observed",
       subject: {
         local_path: "/selected.db",
-        digest: { sha256: "a".repeat(64) },
+        identity: { sha256: "a".repeat(64) },
       },
       normalized_result: value,
       analysis_profile: profile,

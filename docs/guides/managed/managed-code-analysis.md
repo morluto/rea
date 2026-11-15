@@ -677,6 +677,11 @@ signature has the other member kind is malformed and cannot establish an
 unchanged signature. Comparison retains exact byte-based pairs for malformed
 signatures, including empty, truncated, or invalid headers, but reports them as
 unknown with a `signature-malformed` limitation when no change is observed.
+Each method and field comparison item states its limitations as
+`{code, side?, message}` objects: `code` names the reason, `side` names the
+other inventory when the reason concerns it (for example
+`unknown-within-incomplete-metadata` with `side: "right"`), and `message`
+explains it. Read the code rather than the message text.
 Runtime-provided methods have the Runtime code type or the InternalCall
 implementation flag, as core library FCalls do. They are counted separately in
 `native_implementations.runtime_provided`; they have no file-backed native body

@@ -406,10 +406,9 @@ it("merges source and built reports exactly once using the workflow's shard matr
               outputs: {
                 test_shards: JSON.stringify(
                   testShards("fast", {
-                    version: 2,
+                    version: 3,
                     mode: "full",
                     reason: "Complete fast suite",
-                    groups: [],
                   }),
                 ),
               },

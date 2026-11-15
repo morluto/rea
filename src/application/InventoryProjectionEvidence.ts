@@ -1,3 +1,4 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
 import {
   resolveEvidenceRequest,
   type EvidenceLookup,
@@ -7,9 +8,9 @@ import type { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   createEvidence,
-  evidenceSubjectTarget,
   type Evidence,
   type EvidenceProvider,
+  evidenceSubjectInput,
 } from "../domain/evidence.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { ParsedInventorySet } from "../domain/artifactInventoryEvidence.js";
@@ -69,7 +70,9 @@ export const projectInventoryEvidence = <
   const first = source.value.evidence[0];
   return ok({
     evidence: createEvidence(
-      evidenceSubjectTarget(first?.subject ?? null),
+      first === undefined
+        ? unknownTarget("derived-from-linked-evidence")
+        : evidenceSubjectInput(first.subject),
       options.provider,
       {
         predicateType: options.predicateType,

@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -21,12 +22,12 @@ it("leaves the session unchanged after bundle comparison cancellation and permit
   const leftPath = join(root, "left.json");
   const rightPath = join(root, "right.json");
   const provider = { id: "fixture", name: "Fixture", version: "1" };
-  const left = createEvidence(undefined, provider, {
+  const left = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "observation",
     parameters: { side: "left" },
     result: { side: "left" },
   });
-  const right = createEvidence(undefined, provider, {
+  const right = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "observation",
     parameters: { side: "right" },
     result: { side: "right" },
@@ -46,7 +47,7 @@ it("leaves the session unchanged after bundle comparison cancellation and permit
   const session = createTestBinarySession(() => {
     throw new Error("Bundle comparison must not start a binary provider");
   });
-  const existing = createEvidence(undefined, provider, {
+  const existing = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "existing_observation",
     parameters: {},
     result: { retained: true },

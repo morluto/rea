@@ -71,7 +71,7 @@ cliTest.for(["small", "large", "corrupt"] as const)(
           expect.arrayContaining([
             expect.objectContaining({
               subject: expect.objectContaining({
-                digest: expect.objectContaining({ sha256 }),
+                identity: expect.objectContaining({ sha256 }),
               }),
             }),
           ]),

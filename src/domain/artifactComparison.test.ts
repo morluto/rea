@@ -1,3 +1,4 @@
+import { unknownTarget } from "./targetIdentity.js";
 import { expect, it } from "vitest";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../contracts/artifactComparisonExample.js";
 import { compareArtifacts } from "./artifactComparison.js";
@@ -875,11 +876,15 @@ it("names the constraint an unchanged comparison with changes violates", () => {
     ARTIFACT_COMPARISON_EXAMPLE.right,
   );
   const read = readComparisonResult(
-    createEvidence(undefined, ARTIFACT_COMPARISON_EXAMPLE.left.provider, {
-      operation: "compare_artifacts",
-      parameters: {},
-      result: { ...changed, status: "unchanged" },
-    }),
+    createEvidence(
+      unknownTarget("not-observed"),
+      ARTIFACT_COMPARISON_EXAMPLE.left.provider,
+      {
+        operation: "compare_artifacts",
+        parameters: {},
+        result: { ...changed, status: "unchanged" },
+      },
+    ),
     "compare_artifacts",
   );
   if (read.ok) throw new Error("Expected the comparison to be refused");

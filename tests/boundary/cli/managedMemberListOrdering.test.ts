@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -41,7 +42,7 @@ cliTest.for(["decreasing", "ordered"] as const)(
     );
     if (parent === undefined)
       throw new Error("Missing complete member Evidence");
-    expect(parent.subject?.digest.sha256).toBe(sha256);
+    expect(fileIdentity(parent.subject).sha256).toBe(sha256);
     const report = managedMemberInspectionSchema.parse(
       parent.normalized_result,
     );

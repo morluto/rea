@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { expect, it } from "vitest";
 import { compareStaticAndObservedEndpointsEvidence } from "./StaticObservedEndpointComparisonService.js";
 import { STATIC_OBSERVED_ENDPOINT_COMPARISON_EXAMPLE } from "../../contracts/javascript/staticObservedEndpointExample.js";
@@ -36,7 +37,7 @@ it("admits the combined representation before source authentication can clone it
 
 it("locates malformed retained capture facts at the named consumer input", async () => {
   const capture = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     STATIC_OBSERVED_ENDPOINT_COMPARISON_EXAMPLE.capture.provider,
     {
       operation: "inspect_web_network_capture",
