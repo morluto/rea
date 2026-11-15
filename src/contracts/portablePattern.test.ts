@@ -299,6 +299,10 @@ describe("advertised pattern presentation", () => {
       expect(validate({ name: "con" })).toBe(true);
     },
   );
+});
+
+describe("advertised pattern presentation through pointers", () => {
+  const lookAround = "^(?!con$)[a-z]+$";
 
   it.each(PRESENTERS)(
     "keeps %s pointers valid into locations presentation may remove",
@@ -335,6 +339,25 @@ describe("advertised pattern presentation", () => {
           alternative: "w",
         }),
       ).toBe(true);
+    },
+  );
+
+  it.each(PRESENTERS)(
+    "reads %s pointer segments by schema position, not by spelling",
+    (_kind, present) => {
+      // `properties` and `items` here are definition names, so the `not`
+      // after each is the removable keyword, not a map entry.
+      const widened = { type: "string", pattern: lookAround };
+      const schema = {
+        $defs: { properties: { not: widened }, items: { not: widened } },
+        type: "object",
+        properties: {
+          first: { $ref: "#/$defs/properties/not" },
+          second: { $ref: "#/$defs/items/not" },
+        },
+      };
+      const validate = new Ajv2020({ strict: false }).compile(present(schema));
+      expect(validate({ first: "con", second: "con" })).toBe(true);
     },
   );
 
