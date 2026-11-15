@@ -1,7 +1,5 @@
 {
-  "upward": {
-    "dotnet -> application": 1
-  },
+  "upward": {},
   "cycles": [
     "cli <-> cli.ts",
     "cli <-> cliBrowserScenarioCommands.ts",
