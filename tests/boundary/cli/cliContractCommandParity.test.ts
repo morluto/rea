@@ -316,6 +316,7 @@ const MIGRATED_COMMANDS = [
   "demangle-swift",
   "analyze",
   "inspect-managed-artifact",
+  "inspect-managed-members",
   "inspect-managed-native-boundaries",
 ];
 
