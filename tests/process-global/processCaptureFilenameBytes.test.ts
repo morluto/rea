@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../fixtures/canonicalOutputSchema.js";
 import { createHash } from "node:crypto";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { Dirent } from "node:fs";
@@ -149,8 +150,12 @@ it("advertises byte-preserving omissions in valid SDK-converted MCP schemas", as
     expect(tool).toBeDefined();
     if (tool === undefined) throw new Error("Missing process capture contract");
     expect(advertisedSchemaErrors([tool])).toEqual([]);
-    expect(JSON.stringify(tool.outputSchema)).toContain("unrepresentable_name");
-    expect(JSON.stringify(tool.outputSchema)).toContain("raw_name_hex");
+    expect(JSON.stringify(canonicalOutputSchema(tool.name))).toContain(
+      "unrepresentable_name",
+    );
+    expect(JSON.stringify(canonicalOutputSchema(tool.name))).toContain(
+      "raw_name_hex",
+    );
   } finally {
     await client.close();
     await server.close();

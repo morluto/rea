@@ -12,9 +12,9 @@ import { resolveEvidenceInput } from "../EvidenceInputResolver.js";
 import type { EvidenceWriter } from "../investigation/InvestigationRecordPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisCapabilityUnavailableError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { validateAnalysisViewSubject } from "../../domain/analysisView/analysisViewParent.js";
@@ -28,11 +28,11 @@ import {
 } from "../../domain/evidence.js";
 import {
   inspectAnalysisViewInputSchema,
-  prepareAnalysisViewProjection,
-  type AnalysisViewResult,
   type AnalysisViewRequest,
   type InspectAnalysisViewInput,
-} from "../../domain/analysisView/analysisView.js";
+} from "../../domain/analysisView/analysisViewRequest.js";
+import { prepareAnalysisViewProjection } from "../../domain/analysisView/analysisView.js";
+import type { AnalysisViewResult } from "../../domain/analysisView/analysisViewResult.js";
 import {
   immutableJsonSnapshotMember,
   isImmutableJsonSnapshot,
@@ -173,14 +173,12 @@ const cancelledFileViewResult = <T>(
   completedEvidence?: Evidence,
 ): Result<T, AnalysisError> => {
   if (!signal?.aborted) return result;
-  const cancellation = new AnalysisCancelledError(
+  const cancellation = cancelledBy(
     INSPECT_ANALYSIS_VIEW_OPERATION,
-    {
-      cause: signal.reason,
-      ...(completedEvidence !== undefined
-        ? { partialObservation: completedEvidence }
-        : {}),
-    },
+    signal,
+    completedEvidence !== undefined
+      ? { partialObservation: completedEvidence }
+      : {},
   );
   if (!result.ok)
     cancellation.retainSecondaryFailure(result.error, {

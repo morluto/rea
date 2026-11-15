@@ -12,7 +12,7 @@ import {
 } from "../fixtures/godotPck.js";
 import { elf } from "../../src/domain/binaryTarget.fixture.js";
 import { readEvidenceBundle } from "../../src/application/EvidenceBundleFiles.js";
-import { analysisViewResultSchema } from "../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../src/domain/analysisView/analysisViewResult.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
 import {

@@ -60,7 +60,6 @@ cliTest.skipIf(missingNative)(
     const success = await cli.run({
       arguments: ["inspect-pcap-capture", single, "--json"],
       environment: environmentFor(root),
-      timeoutMs: 60_000,
     });
     expect(success.exitCode, success.stderr).toBe(0);
     expect(success.stdout.includes(credential)).toBe(false);
@@ -78,7 +77,6 @@ cliTest.skipIf(missingNative)(
     const failed = await cli.run({
       arguments: ["inspect-pcap-capture", many, "--json"],
       environment: environmentFor(root),
-      timeoutMs: 60_000,
     });
     expect(failed.exitCode, failed.stderr).toBe(1);
     expect(failed.stdout.includes(credential)).toBe(false);

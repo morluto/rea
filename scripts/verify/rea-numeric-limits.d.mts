@@ -1,12 +1,11 @@
 /** Relative path of the registry. Its text is a declaration, not a producer. */
 export const NUMERIC_LIMIT_DECLARATION: "src/domain/numericLimitRegistry.ts";
 
-/** Limits that must become analysis settings and cannot be registry exceptions. */
-export const REQUIRED_RUNTIME_LIMITS: readonly [
-  "REA_NTFS_MFT_MAX_FILE_BYTES",
-  "REA_REGF_HIVE_MAX_FILE_BYTES",
-  "REA_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES",
-];
+/** Roots scanned for the removed restart-field names. */
+export const FORBIDDEN_FIELD_SCAN_ROOTS: readonly string[];
+
+/** File extensions, without the dot, scanned under those roots. */
+export const FORBIDDEN_FIELD_SCAN_EXTENSIONS: readonly string[];
 
 /** True for a numeric `REA_` limit, including the documented endpoint-candidate count. */
 export function isNumericLimit(name: string): boolean;
@@ -55,6 +54,8 @@ export function discoverNumericLimitUses(
   readonly unresolved: readonly {
     readonly path: string;
     readonly offset: number;
+    readonly line: number;
+    readonly column: number;
     readonly reason: string;
   }[];
 };

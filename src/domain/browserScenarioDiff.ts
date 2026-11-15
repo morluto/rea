@@ -151,11 +151,14 @@ const alignScenarioSteps = (
   const afterDuplicates = duplicateStepIds(afterCapture.steps);
   const before = uniqueSteps(beforeCapture.steps, beforeDuplicates);
   const after = uniqueSteps(afterCapture.steps, afterDuplicates);
+  // A duplicated step_id keeps its ambiguous presence on that side: it stays
+  // ineligible for alignment, but its counterpart capture must not classify
+  // the id as absent when the duplicate side still retains it.
   const beforeOnly = [...before.keys()]
-    .filter((stepId) => !after.has(stepId))
+    .filter((stepId) => !after.has(stepId) && !afterDuplicates.has(stepId))
     .sort();
   const afterOnly = [...after.keys()]
-    .filter((stepId) => !before.has(stepId))
+    .filter((stepId) => !before.has(stepId) && !beforeDuplicates.has(stepId))
     .sort();
   const failures: BrowserScenarioAlignmentFailure[] = [
     ...duplicateFailures("before", beforeDuplicates),

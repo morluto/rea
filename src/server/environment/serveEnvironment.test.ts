@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { environmentServeSource } from "../../../tests/fixtures/environmentServe.js";
 import {
+  advertisedEnvironmentTool,
   environmentCard,
   environmentToolDefinitions as prepareDefinitions,
   REPLAY_CATALOG_INSTRUCTIONS,
@@ -147,11 +148,7 @@ describe("environment routes", () => {
       JSON.stringify(
         echoCardShape(
           "grafana-example",
-          definitions.map(({ name, description, inputSchema }) => ({
-            name,
-            description,
-            inputSchema,
-          })),
+          definitions.map(advertisedEnvironmentTool),
         ),
       ),
     );

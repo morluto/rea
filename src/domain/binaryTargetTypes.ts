@@ -14,6 +14,7 @@ export const BINARY_ARCHITECTURES = [
   "powerpc",
   "m68k",
   "hexagon",
+  "xtensa",
 ] as const;
 export type BinaryArchitecture = (typeof BINARY_ARCHITECTURES)[number];
 
@@ -62,10 +63,19 @@ export const isElfMetadataArchitecture = (
 ): architecture is ElfMetadataArchitecture =>
   (ELF_METADATA_ARCHITECTURES as readonly string[]).includes(architecture);
 
-/** Recognized family with no ELF metadata member; the header alone is the fact. */
+/** Families that require a specialized target variant instead of generic headers. */
+export const HEADER_ARCHITECTURE_EXCLUSIONS = [
+  ...ELF_METADATA_ARCHITECTURES,
+  ...RAW_ONLY_ARCHITECTURES,
+  "hexagon",
+  "xtensa",
+  "arm64_32",
+] as const satisfies readonly BinaryArchitecture[];
+
+/** Recognized family with no specialized target member; the header alone is the fact. */
 export type HeaderArchitecture = Exclude<
   BinaryArchitecture,
-  ElfMetadataArchitecture | RawOnlyArchitecture | "hexagon" | "arm64_32"
+  (typeof HEADER_ARCHITECTURE_EXCLUSIONS)[number]
 >;
 
 /** Raw ELF facts; family recognition does not establish ISA or ABI support. */
@@ -209,6 +219,14 @@ export type BinaryTarget =
       readonly format: "elf";
       readonly architecture: "hexagon";
       readonly availableArchitectures: readonly "hexagon"[];
+      readonly executableRole?: never;
+      readonly managed?: never;
+    })
+  | (BinaryTargetIdentity & {
+      readonly kind: "executable";
+      readonly format: "elf";
+      readonly architecture: "xtensa";
+      readonly availableArchitectures: readonly "xtensa"[];
       readonly executableRole?: never;
       readonly managed?: never;
     })

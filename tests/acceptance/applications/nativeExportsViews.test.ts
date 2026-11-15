@@ -6,7 +6,7 @@ import { readEvidenceBundle } from "../../../src/application/EvidenceBundleFiles
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
 import { digestCanonicalValue } from "../../../src/domain/canonicalDigest.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import {
   elfExportImage,
@@ -40,7 +40,7 @@ cliTest.for(["pe", "elf"] as const)(
             versionDefinitions: ["fixture", "V1"],
           });
     await writeFile(path, bytes);
-    const run = cli.sharedCliRun?.bind(cli) ?? cli.run.bind(cli);
+    const run = cli.run.bind(cli);
     const complete = await run({
       arguments: ["inspect-native-exports", path, "--json"],
     });

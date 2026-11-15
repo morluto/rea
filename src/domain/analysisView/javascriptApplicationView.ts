@@ -419,7 +419,7 @@ export const projectJavaScriptApplicationView = (
         }),
         limitation_count: limitationCount,
       },
-      coverage: completeCoverage(moduleCount, moduleCount),
+      coverage: completeCoverage(moduleCount),
       ...shared,
     });
   }
@@ -437,7 +437,7 @@ export const projectJavaScriptApplicationView = (
       kind: "item" as const,
       view,
       item: moduleItem(selected.value.node, selected.value.path),
-      coverage: completeCoverage(1, modules.length),
+      coverage: completeCoverage(1),
       ...shared,
     });
   }

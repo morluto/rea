@@ -1,8 +1,9 @@
-import { expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
 import { WebRuntimeService } from "../../../src/application/WebRuntimeService.js";
 import { CdpWebRuntimeProvider } from "../../../src/browser/execution/CdpWebRuntimeProvider.js";
 import { AnalysisOutputError } from "../../../src/domain/analysisErrorCore.js";
 import { startRuntimeBrowser } from "../../fixtures/webRuntime.js";
+import { waitFor } from "../../support/testWait.js";
 
 it.each([
   new Error("operator stopped observation"),
@@ -41,10 +42,10 @@ it.each([
           (command) => command.method === "Profiler.stopPreciseCoverage",
         ),
       ).toHaveLength(2);
-      await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+      await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
       const after = await service.observe(input);
       if (!after.ok) throw after.error;
-      await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+      await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
     } finally {
       await provider.close();
       await browser.close();
@@ -85,7 +86,7 @@ it("preserves the caller reason when a navigation observation is cancelled at ar
     expect(result.error._tag).toBe("AnalysisCancelledError");
     expect(result.error.cause).toBe(reason);
     expect(result.error.cleanupIncomplete).toBe(false);
-    await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+    await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
   } finally {
     await provider.close();
     await browser.close();

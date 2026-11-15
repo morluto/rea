@@ -7,30 +7,26 @@ import type {
   InspectElectronPageInput,
 } from "../domain/javascript/electronObservation.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
-import type { CdpConnection, CdpEvent } from "./CdpConnection.js";
+import { cancelledBy } from "../domain/analysisErrorCore.js";
+import type { CdpConnection, CdpReceivedEvent } from "./CdpConnection.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
+import { delayWithCancellation, cdpStringValue } from "./CdpCaptureValues.js";
 import {
-  delayWithCancellation,
-  resourceContentSize,
-  recordValue,
-  recordsValue,
-  type UnknownRecord,
-  requiredRecord,
-  cdpStringValue,
-} from "./CdpCaptureValues.js";
+  CdpMalformedReply,
+  type CdpCommandResult,
+} from "./protocol/CdpCommands.js";
 import {
-  frameTreeResources,
-  cdpFrameUrl,
   snapshotDocuments,
-  walkFrameTrees,
+  type CdpFrameUrlObservation,
 } from "./CdpCaptureDocuments.js";
+import type { CdpFrameFacts } from "./CdpFrameIdentity.js";
+import { cdpFrameEvent } from "./protocol/CdpEvents.js";
 import {
-  cdpFrameRecordFacts,
-  cdpFrameEventFacts,
-  type CdpFrameFacts,
-} from "./CdpFrameIdentity.js";
+  observedFrameUrl,
+  type CdpFrameTree,
+  type CdpFrameTreeNode,
+} from "./protocol/CdpFrameTree.js";
 import { snapshotDocumentNodes, snapshotNodeAt } from "./CdpSnapshotNodes.js";
 import { cdpSnapshotString } from "./CdpSnapshotStrings.js";
 import {
@@ -309,35 +305,30 @@ const unprovenFrameIds = (
 
 /** Lifecycle events invalidate future attribution, never earlier script facts. */
 const advanceFrameGeneration = (
-  event: CdpEvent,
+  event: CdpReceivedEvent,
   state: ElectronInspectionState,
 ): void => {
-  const facts = cdpFrameEventFacts(event);
+  const frame = cdpFrameEvent(event);
+  if (frame === undefined) return;
+  const { facts, url: observation } = frame;
   // A same-document event changes the cached identity, never its generation
   // or authority. Later full-frame replay must compare with that current URL.
-  if (event.method === "Page.navigatedWithinDocument") {
+  if (facts.kind === "within_document") {
     const id = facts.frameId;
     if (id === null) return;
     if (id === state.mainFrameId) state.navigationDuringCapture = true;
     const previous = state.frameDocuments.get(id);
     if (previous === undefined) return;
-    const url = cdpFrameUrl(facts.source);
+    const url = observedFrameUrl(observation);
     if (url === undefined || url === "") state.frameDocuments.delete(id);
     else state.frameDocuments.set(id, { ...previous, url });
     return;
   }
-  if (
-    ![
-      "Page.frameNavigated",
-      "Page.frameDetached",
-      "Page.frameAttached",
-    ].includes(event.method)
-  )
-    return;
+  if (facts.kind === "requested") return;
   const id = facts.frameId;
   if (id === null) return;
   const document =
-    facts.kind === "navigated" ? frameDocument(facts) : undefined;
+    facts.kind === "navigated" ? frameDocument(facts, observation) : undefined;
   const previous = state.frameDocuments.get(id);
   if (
     document !== undefined &&
@@ -416,8 +407,9 @@ const invalidateFrameGenerations = (
 /** Only a known URL and loader together can prove a duplicate document event. */
 const frameDocument = (
   facts: CdpFrameFacts,
+  observation: CdpFrameUrlObservation,
 ): ElectronFrameDocument | undefined => {
-  const url = cdpFrameUrl(facts.source);
+  const url = observedFrameUrl(observation);
   if (
     url === undefined ||
     url === "" ||
@@ -432,18 +424,15 @@ const frameDocument = (
 
 /** Protocol identities are observations, separate from asynchronous file authorization. */
 const seedFrameDocuments = (
-  result: unknown,
+  tree: CdpFrameTree,
   generations: ReadonlyMap<string, number>,
   documents: ReadonlyMap<string, ElectronFrameDocument>,
   state: ElectronInspectionState,
 ): Set<string> => {
   const unproven = new Set<string>();
-  const tree = recordValue(recordValue(result)?.frameTree);
-  if (tree === undefined) return unproven;
-  for (const entry of walkFrameTrees(tree)) {
-    const facts = cdpFrameRecordFacts(recordValue(entry.frame));
+  for (const { facts, url } of tree.frames) {
     const id = facts.frameId;
-    const document = frameDocument(facts);
+    const document = frameDocument(facts, url);
     if (
       id !== null &&
       document === undefined &&
@@ -667,44 +656,40 @@ const assertStableMainFrame = async (
 };
 
 export const captureFrames = async (
-  result: unknown,
+  tree: CdpFrameTree,
   completeness: CdpCaptureCompleteness,
   asarHeaderAdmission: AsarHeaderAdmission,
   signal?: AbortSignal,
 ): Promise<ElectronFrameInventory> => {
-  const frameTree = recordValue(requiredRecord(result).frameTree);
-  if (frameTree === undefined)
-    throw new BrowserObservationError("inspect_web_page", "protocol_error");
+  if (tree.omittedFrames)
+    completeness.exclude("frames", "invalid_protocol_value", null);
   const frames: ElectronPageInspection["frames"] = [];
-  const enclosingParents = new Map<UnknownRecord, string>();
+  const provedFrames = new Set<CdpFrameTreeNode>();
   const parents = new Map<string, string | null>();
   const excludedFrameIds = new Set<string>();
-  for (const tree of walkFrameTrees(frameTree, (count) =>
-    completeness.exclude("frames", "invalid_protocol_value", count),
-  )) {
+  for (const node of tree.frames) {
     throwIfElectronInspectionCancelled(signal);
-    const frame = recordValue(tree.frame);
-    const facts = cdpFrameRecordFacts(frame);
+    const { facts, enclosing } = node;
     const frameId = facts.frameId;
     const parentId = facts.parentId;
     // Only the enclosing tree root may omit its parent. Children must agree
     // with a structurally proved enclosing frame, independent of its file policy.
     // Malformed ancestry cannot grant proof to a frame or its descendants.
     const ancestryKnown =
-      tree === frameTree
+      enclosing === undefined
         ? facts.parentRelation === "root"
         : facts.parentRelation === "child" &&
           parentId !== null &&
-          parentId === enclosingParents.get(tree);
-    if (frame === undefined || frameId === null || !ancestryKnown) {
+          provedFrames.has(enclosing) &&
+          parentId === enclosing.facts.frameId;
+    if (frameId === null || !ancestryKnown) {
       completeness.exclude("frames", "invalid_protocol_value");
       continue;
     }
     parents.set(frameId, parentId ?? null);
-    for (const child of recordsValue(tree.childFrames))
-      enclosingParents.set(child, frameId);
+    provedFrames.add(node);
     const path = await authorizedElectronFile(
-      cdpStringValue(frame.url) ?? "",
+      node.url.kind === "missing" ? "" : node.url.scopeUrl,
       signal,
       "inspect_electron_page",
       asarHeaderAdmission,
@@ -727,23 +712,26 @@ const captureResources = async (
   context: ElectronContext,
   completeness: CdpCaptureCompleteness,
 ): Promise<ElectronPageInspection["resources"]> => {
-  const result = await context.connection.send(
+  const tree = await context.connection.send(
     "Page.getResourceTree",
     {},
     context.sessionId,
     context.signal,
   );
-  const root = recordValue(requiredRecord(result).frameTree);
-  if (root === undefined)
-    throw new BrowserObservationError("inspect_web_page", "protocol_error");
+  if (tree.omittedResources)
+    completeness.exclude("resources", "invalid_protocol_value", null);
+  if (tree.malformedResources > 0)
+    completeness.exclude(
+      "resources",
+      "invalid_protocol_value",
+      tree.malformedResources,
+    );
   const resources: ElectronPageInspection["resources"] = [];
   const seen = new Set<string>();
-  for (const resource of frameTreeResources(root, (count) =>
-    completeness.exclude("resources", "invalid_protocol_value", count),
-  )) {
+  for (const resource of tree.resources) {
     throwIfElectronInspectionCancelled(context.signal);
     const path = await authorizedElectronFile(
-      cdpStringValue(resource.url) ?? "",
+      resource.url ?? "",
       context.signal,
       "inspect_electron_page",
       context.asarHeaderAdmission,
@@ -752,13 +740,13 @@ const captureResources = async (
       completeness.exclude("resources", "out_of_target_scope");
       continue;
     }
-    const contentSize = resourceContentSize(resource.contentSize);
+    const { contentSize } = resource;
     if (!contentSize.ok)
       completeness.exclude("resources", "invalid_protocol_value");
     const item = {
       file_path: path,
-      type: cdpStringValue(resource.type) ?? "Other",
-      mime_type: cdpStringValue(resource.mimeType) ?? "",
+      type: resource.type ?? "Other",
+      mime_type: resource.mimeType ?? "",
       content_size: contentSize.ok ? contentSize.value : null,
     };
     const resourceKey = `electron_resource_${digestCanonicalValue(item, "CDP capture")}`;
@@ -779,17 +767,19 @@ const captureDom = async (
   completeness: CdpCaptureCompleteness,
 ): Promise<ElectronPageInspection["dom"]> => {
   const nodeValueLengthUnit = "utf8-bytes";
-  const result = requiredRecord(
-    await context.connection.send(
+  const invalid = (count: number | null) =>
+    completeness.exclude("dom", "invalid_protocol_value", count);
+  let result: CdpCommandResult<"DOMSnapshot.captureSnapshot">;
+  try {
+    result = await context.connection.send(
       "DOMSnapshot.captureSnapshot",
       { computedStyles: [], includePaintOrder: false, includeDOMRects: false },
       context.sessionId,
       context.signal,
-    ),
-  );
-  const invalid = (count: number | null) =>
-    completeness.exclude("dom", "invalid_protocol_value", count);
-  if (!Array.isArray(result.strings)) {
+    );
+  } catch (cause: unknown) {
+    // A malformed snapshot leaves the DOM unknown rather than empty.
+    if (!(cause instanceof CdpMalformedReply)) throw cause;
     invalid(null);
     return {
       total_nodes: 0,
@@ -868,9 +858,7 @@ const selectedMainFrame = (
 
 const throwIfElectronInspectionCancelled = (signal?: AbortSignal): void => {
   if (signal?.aborted === true)
-    throw new AnalysisCancelledError("inspect_electron_page", {
-      cause: signal.reason,
-    });
+    throw cancelledBy("inspect_electron_page", signal);
 };
 
 const report = async (

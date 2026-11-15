@@ -17,10 +17,11 @@ import {
 } from "../filesystem/readStableFileBytes.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { RegularFileChangedError } from "../filesystem/RegularFile.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -137,11 +138,11 @@ export const ghidraFileFailure = (
   }
   const error =
     cause instanceof ArtifactReaderFailure && cause.reason === "cancelled"
-      ? new AnalysisCancelledError(operation, {
-          cause: artifactFileCancellationCause(cause),
-          cleanup,
-          diagnostics,
-        })
+      ? cancelledBy(
+          operation,
+          carriedReason(artifactFileCancellationCause(cause)),
+          { cleanup, diagnostics },
+        )
       : new ProviderAdapterError("ghidra", operation, {
           cause,
           cleanup,

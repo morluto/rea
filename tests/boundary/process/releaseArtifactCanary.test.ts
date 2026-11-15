@@ -1,3 +1,4 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import {
   copyFile,
   cp,
@@ -73,7 +74,7 @@ processTest.skipIf(process.platform === "win32")(
         tools,
         reply: await harness.client.callTool(
           { name: "binary_session", arguments: {} },
-          { toolDefinition: sessionDefinition },
+          { toolDefinition: withCanonicalOutputSchema(sessionDefinition) },
         ),
       };
     } finally {
@@ -113,7 +114,7 @@ if (process.argv[2] === "mcp") {
       const result = await processes.run(
         "npm",
         ["pack", "--ignore-scripts", "--json"],
-        { cwd: candidate, timeoutMs: 30_000 },
+        { cwd: candidate },
       );
       expect(result.exitCode, result.stderr).toBe(0);
       return result;

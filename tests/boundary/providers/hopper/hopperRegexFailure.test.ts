@@ -1,10 +1,11 @@
+import { HopperClient } from "../../../../src/hopper/HopperClient.js";
 import { expect, it } from "vitest";
 import { HopperRegexSearch } from "../../../../src/hopper/HopperRegexSearch.js";
 import { HopperRemoteError } from "../../../../src/domain/hopperErrors.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import {
   HopperFixtureLauncher,
-  startHopperFixtureClient,
+  trackHopperClient,
 } from "./hopperClient.fixture.js";
 
 it.each(
@@ -23,7 +24,12 @@ it.each(
       "acknowledge",
       failure,
     );
-    const client = await startHopperFixtureClient(launcher);
+    // Production reply contracts: the inventory reply is validated by the client.
+    const client = trackHopperClient(
+      new HopperClient({ launcher, startupTimeoutMs: 10_000 }),
+    );
+    const started = await client.start();
+    if (!started.ok) throw started.error;
     const search = new HopperRegexSearch(client);
     try {
       const result = await search.execute(operation, {
@@ -71,7 +77,12 @@ it.each(["search_strings", "search_procedures"] as const)(
   "preserves successful %s search and caller-selected document",
   async (operation) => {
     const launcher = new HopperFixtureLauncher();
-    const client = await startHopperFixtureClient(launcher);
+    // Production reply contracts: the inventory reply is validated by the client.
+    const client = trackHopperClient(
+      new HopperClient({ launcher, startupTimeoutMs: 10_000 }),
+    );
+    const started = await client.start();
+    if (!started.ok) throw started.error;
     const search = new HopperRegexSearch(client);
     try {
       expect(
