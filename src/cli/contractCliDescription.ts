@@ -13,6 +13,7 @@ import {
 } from "./analysisEvidenceDelivery.js";
 import { parseCliJsonOption } from "./cliJsonOption.js";
 import { getEvidenceInputContract } from "../domain/evidenceInputContract.js";
+import { cliJsonCallerPathSchema } from "../cliJsonInput.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import { cliDecimalShape } from "./options.js";
 
@@ -625,8 +626,8 @@ const admitDocumentCallerPath = (
   if (head === undefined) {
     const admitted =
       core(schema) instanceof z.ZodArray
-        ? z.array(localPathStringSchema)
-        : localPathStringSchema;
+        ? z.array(cliJsonCallerPathSchema)
+        : cliJsonCallerPathSchema;
     const field = admitsOmission(schema) ? admitted.optional() : admitted;
     return schema.description === undefined
       ? field
