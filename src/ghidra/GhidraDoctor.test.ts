@@ -557,28 +557,52 @@ it("does not claim probe deletion failed when only descriptor cleanup remains", 
   expect(check?.detail).not.toContain("remains");
 });
 
+const unavailableAuthority = {
+  available: false,
+  failureStage: "self-test",
+  retryable: true,
+  reason: "cleanup failed (145)",
+} as const;
+
 it.each([
   {
     name: "a usable Linux installation",
     platform: "linux",
     java: true,
     native: undefined,
+    project: false,
   },
-  { name: "missing Java", platform: "linux", java: false, native: undefined },
+  {
+    name: "missing Java",
+    platform: "linux",
+    java: false,
+    native: undefined,
+    project: false,
+  },
   {
     name: "unavailable Windows native authority",
     platform: "win32",
     java: true,
-    native: {
-      available: false,
-      failureStage: "self-test",
-      retryable: true,
-      reason: "cleanup failed (145)",
-    },
+    native: unavailableAuthority,
+    project: false,
+  },
+  {
+    name: "an existing project on Linux",
+    platform: "linux",
+    java: true,
+    native: undefined,
+    project: true,
+  },
+  {
+    name: "an existing project on Windows",
+    platform: "win32",
+    java: true,
+    native: unavailableAuthority,
+    project: true,
   },
 ] as const)(
   "doctor and provider readiness project one admission: $name",
-  async ({ platform, java, native }) => {
+  async ({ platform, java, native, project }) => {
     if (native !== undefined) {
       const authority = vi
         .spyOn(nativeLoader, "systemWindowsNativeAuthority")
@@ -588,8 +612,13 @@ it.each([
     const overrides = java ? {} : { probeJava: () => missingJavaProbe };
     const doctor = projectGhidraDoctorInspection(
       await inspection({ installDir: INSTALL, platform }, overrides),
+      undefined,
+      { existingProject: project },
     );
-    const config = parseConfig({ GHIDRA_INSTALL_DIR: INSTALL });
+    const config = parseConfig({
+      GHIDRA_INSTALL_DIR: INSTALL,
+      ...(project ? { REA_GHIDRA_PROJECT_PATH: "/projects/target.gpr" } : {}),
+    });
     if (!config.ok) throw config.error;
     const provider = new GhidraProvider(
       config.value,
@@ -604,6 +633,11 @@ it.each([
     try {
       const availability = await provider.inspectAvailability();
       expect(doctor.available).toBe(availability.status === "available");
+      expect(doctor.available).toBe(
+        !(project && platform === "win32") &&
+          java &&
+          native?.available !== false,
+      );
       if (availability.status === "unavailable")
         expect(doctor.checks).toContainEqual(
           expect.objectContaining({
