@@ -103,15 +103,6 @@
     "src/rust/RustAuditableReader.ts": 1
   },
   "parser-plain-throw": {
-    "src/artifacts/DirectoryArtifactReader.ts": 1,
-    "src/artifacts/NativeDmgArtifactReader.ts": 1,
-    "src/artifacts/ReleaseExposureReader.ts": 1,
-    "src/artifacts/StreamBytes.ts": 1,
-    "src/artifacts/ZipArtifactReader.ts": 1,
-    "src/domain/native/functionByteCoverage.ts": 1,
-    "src/domain/python/marshalUtf8.ts": 1,
-    "src/il2cpp/Il2cppMetadataFile.ts": 2,
-    "src/model/ModelHeaderReader.ts": 1,
     "src/native/AppleDispatchMetadata.ts": 1,
     "src/native/MachoCommandNames.ts": 1,
     "src/native/NativeMachoInspection.ts": 4
