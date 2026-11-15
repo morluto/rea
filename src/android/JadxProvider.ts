@@ -1,8 +1,10 @@
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { HOST_PLATFORM, type HostPlatform } from "../platform/HostPlatform.js";
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
+import {
+  ArtifactResourceScope,
+  AnalysisCleanupLease,
+} from "../resources/index.js";
 import type {
   RetainedResourceScope,
   ExecutionOptions,

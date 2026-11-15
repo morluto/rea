@@ -3,10 +3,10 @@ import {
   ArtifactFileCancelled,
   ArtifactFileCleanupFailure,
   withArtifactRegularFile,
-} from "../../resources/ArtifactFileOperation.js";
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+} from "../../resources/index.js";
 import { fileSnapshotPartialObservationSchema } from "../../domain/fileSnapshotObservation.js";
-import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
-import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { OwnedDirectoryHandle } from "../../filesystem/OwnedDirectoryHandle.js";
 import { createHash } from "node:crypto";
 import {

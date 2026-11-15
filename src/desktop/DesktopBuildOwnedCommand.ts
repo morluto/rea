@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 
-import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
+import {
+  type ArtifactResourceScope,
+  AnalysisCleanupLease,
+} from "../resources/index.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import {

@@ -14,6 +14,8 @@ graph TD
     %% (for example inspector -> browser CDP helpers); shared pieces belong in
     %% ports, foundation or the provider core. Application, composition and
     %% adapters reach a provider through its entry file src/<provider>/index.ts.
+    %% Every unit reaches the shared provider toolkit (src/resources/) through
+    %% src/resources/index.ts.
     %% The baseline counts both kinds of import per unit pair; both only shrink.
     subgraph "Entry Points"
         CLI["src/cli.ts + src/cli/<br/>One-shot CLI adapter<br/>setup, diagnostics, analysis, decompilation<br/>cliLoader: recorded registrar per command, complete CLI otherwise"]

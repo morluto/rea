@@ -4,8 +4,10 @@ import type { CliInstance } from "./types.js";
 import { cliDecimalField } from "./options.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
-import { projectArtifactCloseFailure } from "../resources/StableArtifactFailure.js";
+import {
+  ArtifactResourceScope,
+  projectArtifactCloseFailure,
+} from "../resources/index.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";

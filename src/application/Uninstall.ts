@@ -65,8 +65,10 @@ import {
   readRegularFileText,
   bindRegularFileCleanup,
 } from "../process/RegularFileRead.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+import {
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+} from "../resources/index.js";
 import {
   appDataRedirection,
   clientOwnershipEvidencePaths,

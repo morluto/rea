@@ -11,11 +11,11 @@ import {
   sameRegularFileState,
   type StableRegularFileDescriptor,
 } from "../../filesystem/RegularFile.js";
-import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
+  ArtifactReaderFailure,
   ArtifactResourceScope,
   type ArtifactResourceOwner,
-} from "../../resources/ArtifactResourceScope.js";
+} from "../../resources/index.js";
 import { abortIfNeeded } from "../ArtifactHash.js";
 import { readArtifactFileChunks } from "../readArtifactFileChunks.js";
 import {

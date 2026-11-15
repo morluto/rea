@@ -4,7 +4,7 @@ import { realpath } from "node:fs/promises";
 import {
   artifactSelectedPathErrno,
   assertArtifactReadActive,
-} from "../resources/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,

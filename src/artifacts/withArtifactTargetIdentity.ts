@@ -1,6 +1,8 @@
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+import {
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+} from "../resources/index.js";
 import { hashStableRootArtifact } from "./inventory/hashStableRootArtifact.js";
 
 /**

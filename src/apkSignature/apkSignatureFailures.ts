@@ -1,17 +1,15 @@
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
+  ArtifactReaderFailure,
   stableArtifactInputFailure,
   readerIntegrityFailure,
-} from "../resources/StableArtifactFailure.js";
-import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
-} from "../resources/ArtifactFileOperation.js";
+  completedStableArtifactObservation,
+} from "../resources/index.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { completedStableArtifactObservation } from "../resources/StableArtifactObservation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {

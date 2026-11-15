@@ -20,7 +20,9 @@ import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.
 import {
   ArtifactReaderFailure,
   type ArtifactReaderTraversal,
-} from "../../resources/ArtifactReader.js";
+  ArtifactResourceScope,
+  assertArtifactReadActive,
+} from "../../resources/index.js";
 import { ArtifactTraversalObservation } from "../ArtifactTraversalObservation.js";
 import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import { targetDigestChangedFailure } from "../withArtifactTargetIdentity.js";
@@ -29,8 +31,6 @@ import {
   DylibFileAccess,
   classifyDylibReadFailure,
 } from "./DylibFileAccess.js";
-import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
-import { assertArtifactReadActive } from "../../resources/ArtifactFileOperation.js";
 
 const OPERATION = "trace_dylib_resolution";
 // Resolution reads paths on this host's filesystem.

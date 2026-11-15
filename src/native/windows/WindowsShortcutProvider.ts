@@ -5,20 +5,16 @@ import {
   projectOwnedArtifactIdentityFailure,
   projectStableArtifactFailure,
   projectArtifactCloseFailure,
-} from "../../resources/StableArtifactFailure.js";
-import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
-import {
+  ArtifactReaderFailure,
   readStableArtifact,
   type StableArtifactFileSystem,
   type StableArtifactSnapshot,
-} from "../../resources/readStableArtifact.js";
-import { fileSnapshotPartialObservationSchema } from "../../domain/fileSnapshotObservation.js";
-import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   assertArtifactReadActive,
-} from "../../resources/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
+  ArtifactResourceScope,
+} from "../../resources/index.js";
+import { fileSnapshotPartialObservationSchema } from "../../domain/fileSnapshotObservation.js";
 import type { WindowsShortcutPort } from "../../ports/binaryDiagnostics/WindowsShortcutPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";

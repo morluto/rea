@@ -2,8 +2,8 @@ import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   ArtifactResourceScope,
   ArtifactResourceRetryFailure,
-} from "../../resources/ArtifactResourceScope.js";
-import { bindArtifactFileCleanup } from "../../resources/ArtifactFileOperation.js";
+  bindArtifactFileCleanup,
+} from "../../resources/index.js";
 import type { BuildSource } from "../../domain/desktop/appBuild.js";
 import {
   AnalysisInputError,

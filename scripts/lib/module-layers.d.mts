@@ -20,11 +20,18 @@ export declare const PROVIDER_CORE: string;
 /** Whether a unit is a provider folder (not the shared provider core). */
 export function isProviderUnit(unit: string): boolean;
 
+/** Units every other unit reaches only through src/<unit>/index.ts. */
+export declare const ENTRY_UNITS: readonly string[];
+
 export interface ProviderBoundaryFacts {
   /** Imports from one provider folder into another, per unit pair. */
   readonly crossProvider: Readonly<Record<string, number>>;
-  /** Application, composition and adapter imports past a provider's index.ts. */
-  readonly providerEntry: Readonly<Record<string, number>>;
+  /**
+   * Imports past an entry file: application, composition and adapter imports
+   * of a provider file other than its index.ts, and any outside import of an
+   * ENTRY_UNITS file other than its index.ts.
+   */
+  readonly entry: Readonly<Record<string, number>>;
 }
 
 export function providerBoundaryFacts(

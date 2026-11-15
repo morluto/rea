@@ -28,13 +28,13 @@ import {
 import type { FirmwareDeadline } from "./FirmwareDeadline.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import type { SafeOutputTree } from "../artifacts/SafeOutputTree.js";
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import {
+  ArtifactResourceScope,
   withArtifactRegularFile,
   assertArtifactReadActive,
   mapArtifactFileFailure,
   artifactSelectedPathErrno,
-} from "../resources/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import { readArtifactFileChunks } from "../artifacts/readArtifactFileChunks.js";
 import { decodeDirectoryEntryName } from "../filesystem/decodeDirectoryEntryName.js";
 import { NonRegularFileReadError } from "../filesystem/RegularFile.js";

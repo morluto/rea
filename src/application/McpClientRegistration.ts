@@ -2,8 +2,10 @@ import { mkdir } from "node:fs/promises";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { dirname } from "node:path";
 
-import { AnalysisCleanupLeaseGroup } from "../resources/AnalysisCleanupLease.js";
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+import {
+  AnalysisCleanupLeaseGroup,
+  ArtifactResourceScope,
+} from "../resources/index.js";
 import {
   AnalysisCancelledError,
   cancelledBy,

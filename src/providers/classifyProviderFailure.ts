@@ -1,21 +1,17 @@
 import {
   ArtifactReaderFailure,
   type CleanupFailedRead,
-} from "../resources/ArtifactReader.js";
-import {
   ArtifactFileCleanupFailure,
   artifactFileCancellationCause,
   artifactFileCompletion,
   artifactFilePrimaryFacts,
   bindArtifactFileCleanup,
-} from "../resources/ArtifactFileOperation.js";
-import {
   projectSelectedArtifactFileFailure,
   stableArtifactInputFailure,
   type RequestField,
   readerIntegrityFailure,
-} from "../resources/StableArtifactFailure.js";
-import { completedStableArtifactObservation } from "../resources/StableArtifactObservation.js";
+  completedStableArtifactObservation,
+} from "../resources/index.js";
 import {
   AnalysisError,
   type AnalysisCapturedOutput,

@@ -4,17 +4,19 @@ import {
   snapshotRegexConfiguration,
   type RegexConfigurationSnapshot,
 } from "../process/RegexMatcher.js";
-import { bindArtifactFileCleanup } from "../resources/ArtifactFileOperation.js";
+import {
+  bindArtifactFileCleanup,
+  AnalysisCleanupLease,
+  AnalysisCleanupLeaseGroup,
+  type ArtifactResourceOwner,
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import { basename, join } from "node:path";
 import {
   regularFileCancellation,
   RegularFileCleanupFailure,
 } from "../filesystem/OwnedRegularFile.js";
-import {
-  AnalysisCleanupLease,
-  AnalysisCleanupLeaseGroup,
-} from "../resources/AnalysisCleanupLease.js";
-import type { ArtifactResourceOwner } from "../resources/ArtifactResourceScope.js";
 import { z } from "zod";
 
 import {
@@ -131,8 +133,6 @@ import {
   type KunaProjectFileSpan,
 } from "./KunaProjectReader.js";
 import { kunaUnavailable } from "./KunaUnavailable.js";
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { kunaQueryFailureForCaller } from "./KunaQueryErrors.js";
 import type { PseudocodeAbsence } from "../domain/native/pseudocodeAbsence.js";

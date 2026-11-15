@@ -65,8 +65,10 @@ import { jsonValueSchema } from "../domain/jsonValue.js";
 import { createPcapEvidence } from "../domain/pcap/pcapEvidence.js";
 import { preparePcapNativeBound } from "./PcapNativeBound.js";
 import { PcapSnapshot } from "./PcapSnapshot.js";
-import { readStableArtifact } from "../resources/readStableArtifact.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
+import {
+  readStableArtifact,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import { ArtifactAnalysisResources } from "../process/ArtifactAnalysisResources.js";
 import { createArtifactAnalysisResources } from "../providers/artifactResourceFailure.js";
 import { readLinuxResourceLimits } from "../process/LinuxResourceLimits.js";

@@ -1,4 +1,12 @@
-import { artifactOperationCause } from "../resources/ArtifactFileOperation.js";
+import {
+  artifactOperationCause,
+  ArtifactReaderFailure,
+  copyArtifactEntry,
+  assertProducedEntry,
+  type ArtifactEntry,
+  type ArtifactReader,
+  type ArtifactTraversalOptions,
+} from "../resources/index.js";
 import { readFileHandlePrefix } from "../filesystem/readFileHandlePrefix.js";
 import { Readable } from "node:stream";
 import {
@@ -14,14 +22,6 @@ import {
 } from "../filesystem/RegularFile.js";
 import { readArtifactFileChunks } from "./readArtifactFileChunks.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import {
-  ArtifactReaderFailure,
-  copyArtifactEntry,
-  assertProducedEntry,
-  type ArtifactEntry,
-  type ArtifactReader,
-  type ArtifactTraversalOptions,
-} from "../resources/ArtifactReader.js";
 import { abortIfNeeded } from "./ArtifactHash.js";
 import { streamChunkToBuffer } from "./StreamBytes.js";
 

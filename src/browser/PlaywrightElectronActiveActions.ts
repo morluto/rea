@@ -6,7 +6,7 @@ import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type {
   ArtifactResourceScope,
   ArtifactResourceOwner,
-} from "../resources/ArtifactResourceScope.js";
+} from "../resources/index.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {

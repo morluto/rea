@@ -1,5 +1,5 @@
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/index.js";
 
 /**
  * `SafeOutputTree.create` refused the caller's selected destination itself:

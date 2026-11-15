@@ -8,8 +8,10 @@ import {
   type ProviderIdentity,
 } from "../ports/AnalysisProvider.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+import {
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+} from "../resources/index.js";
 import { managedStaticCapabilities } from "./ManagedStaticProviderMetadata.js";
 import { MANAGED_STATIC_PROVIDER } from "../domain/investigationProviders.js";
 import {

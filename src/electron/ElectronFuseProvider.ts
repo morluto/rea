@@ -1,11 +1,11 @@
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type { ElectronFusePort } from "../ports/electron/ElectronFusePort.js";
 import { createElectronFuseEvidence } from "../domain/electron/electronFuseEvidence.js";
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import {
+  ArtifactResourceScope,
   assertArtifactReadActive,
   artifactFileCompletion,
-} from "../resources/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import {

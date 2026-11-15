@@ -13,9 +13,9 @@ import { join } from "node:path";
 import {
   ArtifactFileCleanupFailure,
   withArtifactFileHandle,
-} from "../resources/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 
 import { safeParseJson } from "../domain/safeJson.js";
 

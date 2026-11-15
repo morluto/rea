@@ -6,18 +6,14 @@ import {
   projectStableArtifactFailure,
   stableArtifactInputFailure,
   projectArtifactCloseFailure,
-} from "../../resources/StableArtifactFailure.js";
-import { fixedNativeAllowance } from "../../domain/native/nativeDeadlines.js";
-import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
-import {
+  ArtifactReaderFailure,
   type StableArtifactSnapshot,
   readStableArtifact,
-} from "../../resources/readStableArtifact.js";
-import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
-} from "../../resources/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
+  ArtifactResourceScope,
+} from "../../resources/index.js";
+import { fixedNativeAllowance } from "../../domain/native/nativeDeadlines.js";
 import type { PeResourcesPort } from "../../ports/binaryDiagnostics/PeResourcesPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";

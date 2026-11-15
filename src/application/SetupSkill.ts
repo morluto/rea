@@ -5,8 +5,10 @@ import { appendCallerPath } from "../filesystem/callerPath.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { parseSkillManifestMetadata } from "../domain/skillManifest.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
-import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
+import {
+  type ArtifactResourceScope,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
 import {

@@ -2,7 +2,11 @@ import { safeParseUtf8Json } from "../domain/safeJson.js";
 import {
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
-} from "../resources/ArtifactFileOperation.js";
+  completedStableArtifact,
+  readStableArtifact,
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+} from "../resources/index.js";
 import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -27,15 +31,9 @@ import {
   type InspectSqliteDatabaseInput,
 } from "../domain/sqlite/sqliteDatabase.js";
 import {
-  completedStableArtifact,
-  readStableArtifact,
-} from "../resources/readStableArtifact.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
-import {
   classifyProviderFailure,
   type ProviderFailureDialect,
 } from "../providers/classifyProviderFailure.js";
-import type { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { runOwnedCommand } from "../process/OwnedCommand.js";
 import type {
   ProviderProcessSupervisor,

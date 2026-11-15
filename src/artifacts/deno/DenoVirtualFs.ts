@@ -1,6 +1,6 @@
 import { fixedAllowanceRemediation } from "../../domain/fixedAllowanceRemediation.js";
 import { abortIfNeeded } from "../ArtifactHash.js";
-import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/index.js";
 import { normalizeArtifactPath } from "../ArtifactPaths.js";
 
 /** Directory, file, and symlink records admitted from one virtual filesystem. */

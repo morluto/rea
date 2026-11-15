@@ -11,21 +11,17 @@ import { setImmediate } from "node:timers/promises";
 import {
   readStableArtifact,
   type StableArtifactSnapshot,
-} from "../resources/readStableArtifact.js";
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
-import {
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
   projectOwnedArtifactIdentityFailure,
   projectSelectedArtifactFileFailure,
   stableArtifactInputFailure,
-} from "../resources/StableArtifactFailure.js";
-import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   artifactFileCompletion,
   bindArtifactFileCleanup,
   assertArtifactReadActive,
-} from "../resources/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type { Il2cppMetadataPort } from "../ports/il2cpp/Il2cppMetadataPort.js";

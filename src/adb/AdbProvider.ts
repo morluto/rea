@@ -43,15 +43,13 @@ import type {
   AdbPackagePullPartialObservation,
   AdbRequest,
 } from "../domain/adb/adbDeviceAnalysis.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
+  ArtifactReaderFailure,
   ArtifactResourceRetryFailure,
   ArtifactResourceScope,
-} from "../resources/ArtifactResourceScope.js";
-import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../resources/AnalysisCleanupLease.js";
+} from "../resources/index.js";
 import {
   adbDisplayPartialObservationSchema,
   adbResultSchemas,

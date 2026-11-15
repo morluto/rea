@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { readArtifactFileChunks } from "./readArtifactFileChunks.js";
-import { assertArtifactReadActive } from "../resources/ArtifactFileOperation.js";
+import {
+  assertArtifactReadActive,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import { streamChunkToBuffer } from "./StreamBytes.js";
 
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   assertFilePathIdentity,
   readFileIdentity,

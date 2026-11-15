@@ -1,4 +1,4 @@
-import { assertArtifactReadActive } from "../resources/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../resources/index.js";
 import {
   observeElfStringTableEntry,
   elfStringTableText,

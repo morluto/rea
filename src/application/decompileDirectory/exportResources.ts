@@ -10,11 +10,13 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 
-import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
-import { ArtifactFileCleanupFailure } from "../../resources/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
+import {
+  AnalysisCleanupLease,
+  ArtifactFileCleanupFailure,
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+} from "../../resources/index.js";
 import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
-import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { DECOMPILE_DIRECTORY_JOURNAL_NAME } from "../../contracts/decompileDirectory.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
