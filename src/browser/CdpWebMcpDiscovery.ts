@@ -15,6 +15,7 @@ import {
 } from "../domain/unicodeCodePointOrder.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
 import type { CdpConnection, CdpReceivedEvent } from "./CdpConnection.js";
+import { onCdpTargetEvent } from "./CdpTargetEvents.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { cdpOriginScopeRefusal } from "./CdpOriginScopeError.js";
@@ -100,19 +101,22 @@ export const discoverWebMcp = async (
       "WebMCP.enable replay does not establish coverage of pre-existing subframe registrations. Later live registrations are retained, but cannot recover descriptors omitted before attachment.",
     );
   }
-  const removeListener = context.connection.onEvent((event) => {
-    if (event.sessionId !== context.sessionId) return;
-    if (ingestFrameScopeEvent(event, frameScope)) return;
-    ingestWebMcpEvent({
-      event,
-      input: context.input,
-      frames: frameUrls,
-      tools,
-      completeness,
-      transientFrames: frameScope.transientFrames,
-      resolvedTransientFrames: frameScope.resolvedTransientFrames,
-    });
-  });
+  const removeListener = onCdpTargetEvent(
+    context.connection,
+    context.sessionId,
+    (event) => {
+      if (ingestFrameScopeEvent(event, frameScope)) return;
+      ingestWebMcpEvent({
+        event,
+        input: context.input,
+        frames: frameUrls,
+        tools,
+        completeness,
+        transientFrames: frameScope.transientFrames,
+        resolvedTransientFrames: frameScope.resolvedTransientFrames,
+      });
+    },
+  );
   let result: ReturnType<typeof buildWebMcpResult>;
   try {
     await context.progress?.report({

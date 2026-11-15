@@ -27,7 +27,7 @@ import {
   type CdpEventPayload,
   type CdpFrameEvent,
 } from "./protocol/CdpEvents.js";
-import { cdpTargetEventMatches } from "./CdpTargetEvents.js";
+import { onCdpTargetEvent } from "./CdpTargetEvents.js";
 
 import {
   scopeCdpResponse,
@@ -107,10 +107,11 @@ export const observeCdpSession = async (
       context.sessionId,
       context.signal,
     );
-    removeListener = context.connection.onEvent((event) => {
-      if (cdpTargetEventMatches(event, context.sessionId))
-        capture.ingest(event);
-    });
+    removeListener = onCdpTargetEvent(
+      context.connection,
+      context.sessionId,
+      (event) => capture.ingest(event),
+    );
     // Host wall time marks command dispatch. The returned browser monotonic
     // timestamp is the authoritative cutoff for timestamped lifecycle facts.
     const armedAt = new Date().toISOString();
