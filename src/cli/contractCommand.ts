@@ -43,6 +43,7 @@ import {
   type ContractCliSessionTarget,
   type ContractField,
   type ProjectedContract,
+  withoutDefault,
 } from "./contractCliDescription.js";
 import {
   projectCliAnalysisResult,
@@ -577,10 +578,14 @@ export const registerContractCommand = <
           const read = await readJsonInputs(selected, values, signal);
           if (!read.ok) return read.error;
           const admitted = selected.admit(read.value);
-          if (!admitted.ok) return projectAnalysisError(admitted.error);
+          // Admission and handler issues alike name renamed fields by CLI key.
+          if (!admitted.ok)
+            return projectCliInputFields(
+              projectAnalysisError(admitted.error),
+              selected.inputBinding,
+            );
           const opening = admitOpening(selected, values);
           if (!opening.ok) return projectAnalysisError(opening.error);
-          // Every handler's input issues name renamed fields by their CLI key.
           return projectCliInputFields(
             await run(
               admitted.value.input as z.input<Contract["inputSchema"]>,
@@ -731,27 +736,6 @@ const commandShape = (description: ContractCliDescription) => ({
   ),
 });
 
-/**
- * An omitted option must stay omitted, since a given option routes the
- * input; the chosen route applies its own default on admission. Help and
- * `--schema` still state the default, in the description and as JSON
- * Schema `default`.
- */
-const withoutDefault = (schema: z.ZodType): z.ZodType => {
-  if (!(schema instanceof z.ZodDefault)) return schema;
-  const value: unknown = schema.parse(undefined);
-  const omittable = (schema.removeDefault() as z.ZodType).optional();
-  const shown = typeof value === "string" ? value : JSON.stringify(value);
-  return omittable.meta({
-    ...schema.meta(),
-    description:
-      schema.description === undefined
-        ? `Default: ${shown}`
-        : `${schema.description} (default: ${shown})`,
-    default: value,
-  });
-};
-
 const schemaSignature = (schema: z.ZodType): string =>
   JSON.stringify(z.toJSONSchema(schema, { unrepresentable: "any" }));
 
@@ -881,7 +865,11 @@ export const registerRoutedCommand = (
           );
           if (!read.ok) return read.error;
           const admitted = description.admit(read.value);
-          if (!admitted.ok) return projectAnalysisError(admitted.error);
+          if (!admitted.ok)
+            return projectCliInputFields(
+              projectAnalysisError(admitted.error),
+              description.inputBinding,
+            );
           const opening = admitOpening(description, values);
           if (!opening.ok) return projectAnalysisError(opening.error);
           return projectCliInputFields(
