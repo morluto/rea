@@ -5,11 +5,11 @@ import {
   metadataTokenFact,
   readMetadataString,
   readMetadataUserString,
-} from "./ManagedMetadataHeaps.js";
+} from "./managedMetadataHeaps.js";
 import {
   readManagedMetadataLayout,
   type ManagedMetadataLayout,
-} from "./ManagedMetadataLayout.js";
+} from "./managedMetadataLayout.js";
 
 describe("managed metadata heaps", () => {
   it("admits a metadata root that omits its empty #Blob stream", () => {

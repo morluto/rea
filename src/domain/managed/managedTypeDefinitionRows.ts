@@ -1,6 +1,6 @@
-import type { ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
-import { metadataRowCursor } from "./ManagedMetadataHeaps.js";
-import { memberListIndexSize } from "./ManagedMemberPointers.js";
+import type { ManagedMetadataLayout } from "./managedMetadataLayout.js";
+import { metadataRowCursor } from "./managedMetadataHeaps.js";
+import { memberListIndexSize } from "./managedMemberPointers.js";
 
 /** Scalar TypeDef source facts; consumers own heap and coded-index admission. */
 export interface TypeDefinitionRowFacts {

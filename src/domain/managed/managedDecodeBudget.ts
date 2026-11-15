@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
-import { Budget } from "../domain/budget.js";
-import { invariantViolation } from "../domain/internalInvariant.js";
+import { Budget } from "../budget.js";
+import { invariantViolation } from "../internalInvariant.js";
 
-import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
+import { jsonStringByteLength } from "../jsonStringByteLength.js";
 
-import type { ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
-import { ManagedReaderFailure } from "./ManagedReaderFailure.js";
-import { DEFAULT_MANAGED_REPRESENTATION_BYTES } from "../domain/managed/managedInspectionLimits.js";
+import type { ManagedMetadataLayout } from "./managedMetadataLayout.js";
+import { ManagedReaderFailure } from "./managedReaderFailure.js";
+import { DEFAULT_MANAGED_REPRESENTATION_BYTES } from "./managedInspectionLimits.js";
 
 /** The capacity owner's diagnostic, also used to admit a recovery envelope. */
 export class ManagedRepresentationFailure extends ManagedReaderFailure {
