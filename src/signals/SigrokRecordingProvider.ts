@@ -66,6 +66,7 @@ import {
   signalRecordingSchema,
 } from "../domain/signals/signalRecording.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { finalizedResult, runOwned } from "../providers/runOwned.js";
 import {
   runOwnedCommand,
   OwnedCommandFailure,
@@ -451,17 +452,21 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
         ),
       );
     }
-    return this.#resources.finish(
-      result,
-      (execution) =>
-        createAnalysisExecutionEvidence(
-          operation,
-          input,
-          execution,
-          "observed",
-        ),
-      operation,
-      options?.signal,
+    const completed = result;
+    return finalizedResult(
+      await runOwned(async () => completed, {
+        providerId: this.#resources.providerId,
+        operation,
+        signal: options?.signal,
+        close: () => this.#resources.release(),
+        partial: (execution) =>
+          createAnalysisExecutionEvidence(
+            operation,
+            input,
+            execution,
+            "observed",
+          ),
+      }),
     );
   }
   #failure(

@@ -20,8 +20,10 @@ import {
   AnalysisCancelledError,
   AnalysisOutputError,
   cancelledBy,
+  isAborted,
   OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
@@ -58,8 +60,9 @@ import {
 } from "./FirmwareReports.js";
 
 import {
-  firmwareFailure,
+  firmwareFailureDialect,
   firmwarePhaseInterruption,
+  firmwareSignalInterruption,
 } from "./FirmwareFailures.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 
@@ -215,10 +218,13 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
       await this.#files.close();
     } catch (cause: unknown) {
       failures.push(
-        firmwareFailure(cause, {
-          engine: "firmware",
-          operation: "close_firmware",
-        }),
+        classifyProviderFailure(
+          cause,
+          firmwareFailureDialect({
+            engine: "firmware",
+            operation: "close_firmware",
+          }),
+        ),
       );
     }
     const workspace = await this.#retryWorkspaceCleanup();
@@ -232,10 +238,13 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
     try {
       await this.#files.retryCleanup();
     } catch (cause: unknown) {
-      fileFailure = firmwareFailure(cause, {
-        engine: "firmware",
-        operation: "close_firmware",
-      });
+      fileFailure = classifyProviderFailure(
+        cause,
+        firmwareFailureDialect({
+          engine: "firmware",
+          operation: "close_firmware",
+        }),
+      );
     }
     const workspace = await this.#retryWorkspaceCleanup();
     return {
@@ -352,7 +361,8 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
     let signal = withCaller(deadline);
     let outcome: Outcome;
     try {
-      if (signal.aborted) throw cancelledBy(request.operation, signal);
+      if (isAborted(signal))
+        throw firmwareSignalInterruption(request.operation, signal, deadline);
       if (request.operation === "extract_firmware")
         await SafeOutputTree.checkDestination(
           request.input.output_directory,
@@ -534,6 +544,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
           ),
           request.operation,
           signal,
+          deadline,
         );
         // The inventory can finish after its deadline expired; an expired
         // extraction must not publish under the fresh publication budget.
@@ -607,12 +618,16 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
         ),
       );
     } catch (cause: unknown) {
-      const failure = firmwareFailure(cause, {
-        engine: engineName,
-        operation: request.operation,
-        deadline,
-      });
-      outcome = err(failure);
+      outcome = err(
+        classifyProviderFailure(
+          cause,
+          firmwareFailureDialect({
+            engine: engineName,
+            operation: request.operation,
+            phase: { signal, deadline },
+          }),
+        ),
+      );
     }
     const finished = await finishFirmwareWorkspace(
       root,

@@ -6,11 +6,11 @@ import { isAbsolute, join, relative, sep } from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import {
+  isAborted,
   AnalysisAccessDeniedError,
   AnalysisResourceConstraintError,
   AnalysisInputError,
   AnalysisOutputError,
-  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import type { FirmwareRequest } from "../domain/firmware/firmwareAnalysis.js";
 import {
@@ -21,7 +21,11 @@ import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { readLinuxResourceLimits } from "../process/LinuxResourceLimits.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import { FIRMWARE_LIMITS } from "./FirmwareRelease.js";
-import { firmwareLimitRecovery } from "./FirmwareFailures.js";
+import {
+  firmwareLimitRecovery,
+  firmwareSignalInterruption,
+} from "./FirmwareFailures.js";
+import type { FirmwareDeadline } from "./FirmwareDeadline.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import type { SafeOutputTree } from "../artifacts/SafeOutputTree.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
@@ -46,11 +50,14 @@ export interface FirmwareEntry {
   readonly linkTargetHex?: string;
 }
 
+/** An aborted inventory reports its phase deadline's timeout or its caller's cancellation. */
 const throwIfFirmwareInventoryCancelled = (
   signal: AbortSignal | undefined,
   operation: string,
+  deadline: FirmwareDeadline | undefined,
 ): void => {
-  if (signal?.aborted === true) throw cancelledBy(operation, signal);
+  if (isAborted(signal))
+    throw firmwareSignalInterruption(operation, signal, deadline);
 };
 
 /** Own all firmware reads, including rejected admission and final descriptor cleanup. */
@@ -365,13 +372,15 @@ export const inventoryFirmwareOutput = async (
   fileSizeBytes: number,
   operation: string,
   signal?: AbortSignal,
+  /** The phase deadline that owns an expiry of `signal`. */
+  deadline?: FirmwareDeadline,
 ): Promise<FirmwareEntry[]> => {
   const entries: FirmwareEntry[] = [];
   const pending = [root];
   let bytes = 0;
   let count = 0;
   while (pending.length > 0) {
-    throwIfFirmwareInventoryCancelled(signal, operation);
+    throwIfFirmwareInventoryCancelled(signal, operation, deadline);
     const directory = pending.pop();
     if (directory === undefined) break;
     const directoryStat = await lstat(directory).catch((cause: unknown) => {
@@ -395,7 +404,7 @@ export const inventoryFirmwareOutput = async (
     if (handle === undefined) continue;
     const names: string[] = [];
     for await (const entry of handle) {
-      throwIfFirmwareInventoryCancelled(signal, operation);
+      throwIfFirmwareInventoryCancelled(signal, operation, deadline);
       count++;
       if (count > maxEntries)
         throw firmwareStagingLimit(operation, "max_output_files", maxEntries);

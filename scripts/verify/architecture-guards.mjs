@@ -330,6 +330,16 @@ checkCounted(
   ["src/pcap/TsharkJsonPackets.ts"],
 );
 
+// Turning a completed result into a cancellation after cleanup is the
+// finalization precedence that runOwned owns (src/providers/runOwned.ts).
+checkCounted(
+  "completed result reclassified by a hand-read abort signal (finalize through runOwned in src/providers/runOwned)",
+  "completed-abort-reclassification",
+  files,
+  /\.ok\s*&&\s*(?:isAborted\(|[\w.?]*signal\??\.aborted)/gu,
+  ["src/providers/runOwned.ts"],
+);
+
 // An abort reason names who ended the work: a typed `CallerAbort` at the CLI,
 // MCP and HTTP adapters, or an `OwnerCancellation` when REA closes an owner.
 // A bare `.abort()` leaves an anonymous platform AbortError as the cause.
@@ -479,6 +489,25 @@ checkCounted(
   files,
   /\.split\(\s*(?:posix\.|win32\.)?(?:delimiter|pathDelimiter)\s*\)|\bPATH\b[^\n]{0,12}\.split\(":"\)|\bPATHEXT\b[^\n]{0,60}\.split\(/gu,
   ["src/process/executableSearch.ts"],
+);
+
+// The running host is read once by src/platform/HostPlatform; composition
+// takes it from there and passes the platform or architecture on as a
+// required parameter. An ambient read elsewhere mixes the host REA runs on
+// with the host a caller asked about, and cannot be selected by a test.
+checkCounted(
+  "ambient process.platform read (take HOST_PLATFORM from src/platform/HostPlatform at composition and pass the platform as a parameter)",
+  "ambient-host-platform",
+  files,
+  /\bprocess\.platform\b/gu,
+  ["src/platform/HostPlatform.ts"],
+);
+checkCounted(
+  "ambient process.arch read (take HOST_PLATFORM from src/platform/HostPlatform at composition and pass the architecture as a parameter)",
+  "ambient-host-architecture",
+  files,
+  /\bprocess\.arch\b/gu,
+  ["src/platform/HostPlatform.ts"],
 );
 
 // `find` on a parsed section, program-header or load-command table silently
