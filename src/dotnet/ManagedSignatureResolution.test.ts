@@ -602,30 +602,16 @@ describe("signature display name validity", () => {
 });
 
 describe("signature display compatibility and capacity", () => {
-  it("reads historical v1 Evidence without relabelling its raw display", () => {
+  it("refuses the retired v1 signature-resolution attestation", () => {
     const current = inspectDisplayFixture({
       fieldSignature: Buffer.from([0x06, 0x12, 0x04]),
     });
-    const old = {
-      ...current,
-      signature_resolution: "type-names-v1",
-      fields: current.fields.map((field) => ({
-        ...field,
-        signature: { ...field.signature, field_type: "class:4" },
-      })),
-    };
-    const parsed = managedMemberInspectionSchema.parse(old);
-    const comparison = compareManagedMembers(
-      { evidenceId: `ev_${"a".repeat(64)}`, result: parsed },
-      { evidenceId: `ev_${"b".repeat(64)}`, result: current },
-    );
-    expect(comparison.fields[0]?.status).toBe("unchanged");
-    expect(comparison.methods[0]?.status).toBe("unchanged");
-    expect(parsed.signature_resolution).toBe("type-names-v1");
-    expect(parsed.fields[0]?.signature.field_type).toBe("class:4");
-    expect(parsed.fields[0]?.signature.resolved_sha256).toBe(
-      current.fields[0]?.signature.resolved_sha256,
-    );
+    expect(
+      managedMemberInspectionSchema.safeParse({
+        ...current,
+        signature_resolution: "type-names-v1",
+      }).error?.issues[0]?.path,
+    ).toEqual(["signature_resolution"]);
   });
 
   it.each([64, 65])("bounds a real %i-level TypeRef display path", (depth) => {

@@ -7,6 +7,8 @@ import { expect, it, vi } from "vitest";
 import { ReverseEngineeringService } from "../../src/application/reverse/ReverseEngineeringService.js";
 import { analysisErrorProjectionSchema } from "../../src/contracts/errorSchemas.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
+import { ok } from "../../src/domain/result.js";
+import { createReverseEngineeringCommandPort } from "../../src/composition/reverseEngineering.js";
 import { execFileOutput } from "../../src/process/ExecFileOutput.js";
 
 type ExecFileOutputOptions = NonNullable<Parameters<typeof execFileOutput>[2]>;
@@ -25,21 +27,23 @@ it("uses provider profiles supplied through the application port", async () => {
   const service = new ReverseEngineeringService({
     environment: { REA_OBJDUMP_COMMAND: "ambient-objdump" },
     commands: {
-      objdump: () => ({
-        executable: "injected-objdump",
-        arguments: ["--injected", path],
-        identity: {
-          id: "test.objdump",
-          name: "Injected objdump",
-          version: null,
-        },
-        environmentOverrides: { INJECTED_PROFILE: "yes" },
-      }),
-      rizin: () => ({
-        executable: "injected-rizin",
-        arguments: ["--injected", path],
-        identity: { id: "test.rizin", name: "Injected Rizin", version: null },
-      }),
+      objdump: () =>
+        ok({
+          executable: "injected-objdump",
+          arguments: ["--injected", path],
+          identity: {
+            id: "test.objdump",
+            name: "Injected objdump",
+            version: null,
+          },
+          environmentOverrides: { INJECTED_PROFILE: "yes" },
+        }),
+      rizin: () =>
+        ok({
+          executable: "injected-rizin",
+          arguments: ["--injected", path],
+          identity: { id: "test.rizin", name: "Injected Rizin", version: null },
+        }),
     },
     run,
   });
@@ -77,21 +81,23 @@ it("does not reintroduce ambient variables absent from the captured provider env
   const service = new ReverseEngineeringService({
     environment: { REA_OBJDUMP_COMMAND: "captured-objdump" },
     commands: {
-      objdump: () => ({
-        executable: "captured-objdump",
-        arguments: [path],
-        identity: {
-          id: "test.objdump",
-          name: "Captured objdump",
-          version: null,
-        },
-        environmentOverrides: { PROFILE_VALUE: "explicit" },
-      }),
-      rizin: () => ({
-        executable: "captured-rizin",
-        arguments: [path],
-        identity: { id: "test.rizin", name: "Captured Rizin", version: null },
-      }),
+      objdump: () =>
+        ok({
+          executable: "captured-objdump",
+          arguments: [path],
+          identity: {
+            id: "test.objdump",
+            name: "Captured objdump",
+            version: null,
+          },
+          environmentOverrides: { PROFILE_VALUE: "explicit" },
+        }),
+      rizin: () =>
+        ok({
+          executable: "captured-rizin",
+          arguments: [path],
+          identity: { id: "test.rizin", name: "Captured Rizin", version: null },
+        }),
     },
     run,
   });
@@ -117,20 +123,22 @@ it("projects missing and non-file objdump targets with actionable path reasons",
   const run = vi.fn(async () => ({ stdout: "", stderr: "" }));
   const service = new ReverseEngineeringService({
     commands: {
-      objdump: () => ({
-        executable: "unused-objdump",
-        arguments: [missing],
-        identity: {
-          id: "test.objdump",
-          name: "Test objdump",
-          version: null,
-        },
-      }),
-      rizin: ({ path }) => ({
-        executable: "unused-rizin",
-        arguments: [path],
-        identity: { id: "test.rizin", name: "Test Rizin", version: null },
-      }),
+      objdump: () =>
+        ok({
+          executable: "unused-objdump",
+          arguments: [missing],
+          identity: {
+            id: "test.objdump",
+            name: "Test objdump",
+            version: null,
+          },
+        }),
+      rizin: ({ path }) =>
+        ok({
+          executable: "unused-rizin",
+          arguments: [path],
+          identity: { id: "test.rizin", name: "Test Rizin", version: null },
+        }),
     },
     run,
   });
@@ -191,20 +199,22 @@ it("keeps target preflight I/O failures out of invalid-input classification", as
   const service = new ReverseEngineeringService({
     stat,
     commands: {
-      objdump: () => ({
-        executable: "unused-objdump",
-        arguments: [path],
-        identity: {
-          id: "test.objdump",
-          name: "Test objdump",
-          version: null,
-        },
-      }),
-      rizin: () => ({
-        executable: "unused-rizin",
-        arguments: [path],
-        identity: { id: "test.rizin", name: "Test Rizin", version: null },
-      }),
+      objdump: () =>
+        ok({
+          executable: "unused-objdump",
+          arguments: [path],
+          identity: {
+            id: "test.objdump",
+            name: "Test objdump",
+            version: null,
+          },
+        }),
+      rizin: () =>
+        ok({
+          executable: "unused-rizin",
+          arguments: [path],
+          identity: { id: "test.rizin", name: "Test Rizin", version: null },
+        }),
     },
     run,
   });
@@ -257,20 +267,22 @@ it.each([
     const service = new ReverseEngineeringService({
       stat,
       commands: {
-        objdump: () => ({
-          executable: "unused-objdump",
-          arguments: [path],
-          identity: {
-            id: "test.objdump",
-            name: "Test objdump",
-            version: null,
-          },
-        }),
-        rizin: () => ({
-          executable: "unused-rizin",
-          arguments: [path],
-          identity: { id: "test.rizin", name: "Test Rizin", version: null },
-        }),
+        objdump: () =>
+          ok({
+            executable: "unused-objdump",
+            arguments: [path],
+            identity: {
+              id: "test.objdump",
+              name: "Test objdump",
+              version: null,
+            },
+          }),
+        rizin: () =>
+          ok({
+            executable: "unused-rizin",
+            arguments: [path],
+            identity: { id: "test.rizin", name: "Test Rizin", version: null },
+          }),
       },
       run,
     });
@@ -306,5 +318,71 @@ it.each([
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
+  },
+);
+
+it.each([
+  {
+    operation: "inspect_with_objdump",
+    environment: { PATH: "", REA_OBJDUMP_COMMAND: "rea-missing-objdump" },
+    run: (service: ReverseEngineeringService, signal?: AbortSignal) =>
+      service.inspectWithObjdump(
+        { path: "artifact", operation: "file_headers" },
+        signal === undefined ? {} : { signal },
+      ),
+    command: "rea-missing-objdump",
+    reason: { lookup_failure: "not_found" },
+  },
+  {
+    operation: "execute_rizin_command",
+    environment: { PATH: "C:\\tools", PATHEXT: ".EXE;C:\\bad" },
+    run: (service: ReverseEngineeringService, signal?: AbortSignal) =>
+      service.executeRizinCommand(
+        { path: "artifact", command: "i" },
+        signal === undefined ? {} : { signal },
+      ),
+    command: "rizin",
+    reason: { lookup_failure: "invalid_pathext", pathext_entry: "C:\\bad" },
+  },
+])(
+  "refuses $operation on Windows when the bare command is not found on PATH, launching nothing",
+  async ({ operation, environment, run: execute, command, reason }) => {
+    const run = vi.fn(async () => ({ stdout: "", stderr: "" }));
+    const service = new ReverseEngineeringService({
+      environment,
+      commands: createReverseEngineeringCommandPort(environment, "win32"),
+      run,
+    });
+    const result = await execute(service);
+    if (result.ok) throw new Error("Expected a lookup refusal");
+    const projection = projectAnalysisError(result.error);
+    expect(analysisErrorProjectionSchema.safeParse(projection).success).toBe(
+      true,
+    );
+    expect(projection).toMatchObject({
+      code: "capability_unavailable",
+      details: {
+        operation,
+        diagnostics: { boundary: "provider-lookup", command, ...reason },
+      },
+    });
+    // Capability discovery reports the refusal and its repair, as it does
+    // for a launch failure.
+    expect(service.observedLaunchFailures()).toEqual({
+      [operation]: {
+        reason: projection.message,
+        remediation: projection.remediation.action,
+      },
+    });
+    // Cancellation is reported before the lookup refusal.
+    const controller = new AbortController();
+    const abortReason = new Error("caller stopped");
+    controller.abort(abortReason);
+    const cancelled = await execute(service, controller.signal);
+    expect(cancelled).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError", cause: abortReason },
+    });
+    expect(run).not.toHaveBeenCalled();
   },
 );

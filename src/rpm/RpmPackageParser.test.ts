@@ -15,7 +15,9 @@ import {
   rpmLongFileSizesFixture,
   rpmMismatchedFileModesFixture,
   rpmMismatchedTriggerProgFixture,
+  rpmDuplicateTagFixture,
   rpmOutOfBoundsIndexFixture,
+  rpmUnknownBinTagsFixture,
   rpmSourcePackageFixture,
   rpmSparsePackageFixture,
   rpmTruncatedHeaderFixture,
@@ -608,4 +610,17 @@ it.each([
 it("reads file sizes from LONGFILESIZES when the package stores them there", () => {
   const report = parse(rpmLongFileSizesFixture());
   expect(report.files?.map((file) => file.size)).toEqual([5_000_000_000, 12]);
+});
+
+it("refuses a repeated reported tag instead of skipping its bounds check", () => {
+  expect(() => parse(rpmDuplicateTagFixture())).toThrow(
+    /main header repeats tag 1000, so its value is ambiguous/u,
+  );
+});
+
+it("checks unknown tags' placement without decoding their values", () => {
+  expect(parse(rpmUnknownBinTagsFixture(200)).package.name).toBe("demo");
+  expect(() => parse(rpmUnknownBinTagsFixture(1, 0xffff_fff0))).toThrow(
+    /tag 90000 offset -16 is outside the data store/u,
+  );
 });

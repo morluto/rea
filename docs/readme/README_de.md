@@ -86,7 +86,7 @@ MCP verwendet standardmäßig kompakte Eingabeschemas. Für vollständige Feldhi
 
 Die Einrichtung registriert die gewählte Laufzeit und das REA-Einstiegsskript direkt. Bewahre bei einem Paket-Runner dessen Cache-Eintrag und die Laufzeit auf; lade das Paket aus einem vertrauenswürdigen Verzeichnis außerhalb des Zielprojekts. Siehe die Installationsanleitung.
 
-Vollständige Ausgabeschemas werden standardmäßig angekündigt. Begrenzt dein Client `tools/list`, setze in der MCP-Registrierung `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` oder `off`. Servervalidierung und strukturierte Ergebnisse bleiben vollständig. Siehe „Output schemas“ im MCP-Vertragsleitfaden.
+Ausgabeschemas werden standardmäßig nicht in `tools/list` angekündigt: Keine Modell-API liest sie, und REA validiert jedes Ergebnis selbst. Setze in der MCP-Registrierung `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact`, um jedes Ausgabeschema innerhalb von 4096 Byte anzukündigen, oder `full` für vollständige Ausgabeschemas (für MCP-Clients, die Ergebnisse validieren). Servervalidierung und strukturierte Ergebnisse bleiben in jeder Einstellung vollständig. Siehe „Output schemas“ im MCP-Vertragsleitfaden.
 
 ### Deinen Agenten fragen
 

@@ -61,6 +61,8 @@ const SCRIPTLET_SENSE =
   RPM_SENSE.scriptPreun |
   RPM_SENSE.scriptPostun;
 
+const DEFINED_TYPES: ReadonlySet<number> = new Set(Object.values(RPM_TYPE));
+
 const TYPE_SIZE: Readonly<Record<number, number>> = {
   [RPM_TYPE.char]: 1,
   [RPM_TYPE.int8]: 1,
@@ -294,8 +296,14 @@ const readInts = (
   return values;
 };
 
-const decodeEntry = (store: BinaryReader, entry: IndexEntry): HeaderValue => {
+/** Checks shared by every index entry, decoded or not; allocates nothing. */
+const checkEntryPlacement = (store: BinaryReader, entry: IndexEntry): void => {
   const field = `tag ${String(entry.tag)}`;
+  if (!DEFINED_TYPES.has(entry.type))
+    fail(
+      `RPM tag ${String(entry.tag)} type ${String(entry.type)} is not a defined RPM type.`,
+      { field },
+    );
   const align = TYPE_ALIGN[entry.type] ?? 1;
   if (entry.count < 1)
     fail(
@@ -312,6 +320,11 @@ const decodeEntry = (store: BinaryReader, entry: IndexEntry): HeaderValue => {
       `RPM tag ${String(entry.tag)} offset ${String(entry.offset)} is not aligned for type ${String(entry.type)}.`,
       { field },
     );
+};
+
+const decodeEntry = (store: BinaryReader, entry: IndexEntry): HeaderValue => {
+  const field = `tag ${String(entry.tag)}`;
+  checkEntryPlacement(store, entry);
   const size = TYPE_SIZE[entry.type];
   switch (entry.type) {
     case RPM_TYPE.null:
@@ -350,7 +363,8 @@ const decodeEntry = (store: BinaryReader, entry: IndexEntry): HeaderValue => {
         });
       return {
         kind: "bin",
-        value: Buffer.from(store.range(entry.offset, entry.count, field)),
+        // A view of the bounded data store; repeated ranges never copy.
+        value: store.range(entry.offset, entry.count, field),
       };
     }
     case RPM_TYPE.stringArray:
@@ -602,13 +616,19 @@ const parseHeader = (
         );
       continue;
     }
-    checkTagSpec(
-      entry,
-      label === "main" ? MAIN_TAG_SPECS : SIGNATURE_TAG_SPECS,
-      label,
-      at,
-    );
-    if (values.has(entry.tag)) continue;
+    const specs = label === "main" ? MAIN_TAG_SPECS : SIGNATURE_TAG_SPECS;
+    // Only tags this reader reports are decoded, so unknown tags cannot make
+    // the parser materialize values the report never uses.
+    if (!specs.has(entry.tag)) {
+      checkEntryPlacement(store, entry);
+      continue;
+    }
+    checkTagSpec(entry, specs, label, at);
+    if (values.has(entry.tag))
+      fail(
+        `RPM ${label} header repeats tag ${String(entry.tag)}, so its value is ambiguous.`,
+        { offset: at, field: `${label} tag ${String(entry.tag)}` },
+      );
     values.set(entry.tag, decodeEntry(store, entry));
   }
   return {

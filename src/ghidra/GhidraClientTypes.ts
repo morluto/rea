@@ -3,6 +3,7 @@ import type { GhidraCheckpointSelection } from "./GhidraCheckpoint.js";
 import type { BridgeMaxRequestBytes } from "../config/bridgeMaxRequestBytes.js";
 import type { Result } from "../domain/result.js";
 import type { LinuxCgroupMemoryState } from "../process/LinuxCgroupMemory.js";
+import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import type { GhidraLauncher } from "./GhidraLauncher.js";
 import type { GhidraSessionError } from "./GhidraSessionError.js";
 import type { GhidraSessionInfo } from "./GhidraSessionValues.js";
@@ -56,8 +57,13 @@ export interface GhidraClientOptions {
   readonly readStartupTimeoutMs?: () => number;
   readonly onDiagnostic?: (event: GhidraDiagnostic) => void;
   readonly logger?: Logger;
-  /** Observes REA's memory cgroup around a run; defaults to the Linux cgroup v2 reader. */
-  readonly readMemoryCgroup?: () => Promise<LinuxCgroupMemoryState | undefined>;
+  /**
+   * Observes REA's memory cgroup around a run; defaults to the Linux cgroup v2
+   * reader. A file whose close fails is handed to `retainFailedClose`.
+   */
+  readonly readMemoryCgroup?: (options: {
+    readonly retainFailedClose: (path: string, owner: OwnedFileHandle) => void;
+  }) => Promise<LinuxCgroupMemoryState | undefined>;
   /** Effective request ceiling; defaults to the configured bridge ceiling. */
   readonly bridgeMaxRequestBytes?: BridgeMaxRequestBytes;
 }

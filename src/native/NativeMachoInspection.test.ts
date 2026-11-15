@@ -13,7 +13,8 @@ import {
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import { err, ok } from "../domain/result.js";
-import { parseMachoLayout, selectMachoSlice } from "./AppleMachoSelection.js";
+import { layoutFor } from "./AppleMachoSelection.fixture.js";
+import { selectMachoSlice } from "./metadata/MachoSliceSelection.js";
 import type { NativeCommandCapture } from "./CommandRunner.js";
 import type { MachoSliceEncryption } from "../domain/apple/machoEncryption.js";
 import { inspectMachoSchema } from "../domain/native/nativeInspection.js";
@@ -288,13 +289,19 @@ describe("Mach-O tool architecture selection", () => {
         offset: (index + 1) * 4096,
         size: slices[index]!.bytes.length,
       };
-      expect(selectMachoSlice(fat, "arm64", admitted).slice).toBe(
-        admitted.offset,
-      );
-      expect(() => selectMachoSlice(fat, "arm64")).toThrow(
-        /needs the admitted slice/u,
-      );
-      expect(parseMachoLayout(fat, "arm64", admitted).fixups.dylibs).toEqual([
+      const slice = (at?: typeof admitted) =>
+        selectMachoSlice(fat, {
+          mode: "admitted",
+          architecture: "arm64",
+          slice: at,
+        });
+      expect(slice(admitted)).toMatchObject({
+        value: { fileOffset: admitted.offset },
+      });
+      expect(slice()).toMatchObject({
+        error: { kind: "admitted_slice_mismatch" },
+      });
+      expect(layoutFor(fat, "arm64", admitted).fixups.dylibs).toEqual([
         `/fixture/${selected}.dylib`,
       ]);
     },
@@ -440,6 +447,67 @@ describe("Mach-O inspection container format", () => {
         limitations: [expect.stringContaining("linkedit dependency payload")],
       },
     });
+  });
+});
+
+describe("Mach-O chained-fixup import names", () => {
+  const chainedFixups = () => {
+    const command = new Uint8Array(16);
+    const view = new DataView(command.buffer);
+    view.setUint32(0, LC.DYLD_CHAINED_FIXUPS, true);
+    view.setUint32(4, command.length, true);
+    return command;
+  };
+  const inspectChained = async (commands: readonly Uint8Array[]) => {
+    const row = "      0x0000  _literal  (from library)";
+    const runner = new NativeFixtureRunner({
+      lipo: "Non-fat file: /fixture/app is architecture: arm64\n",
+      "dyld_info:-imports": `/fixture/app [arm64]:\n    -imports:\n${row}\n`,
+      nm: "_literal\n",
+    });
+    const sliceReads: number[] = [];
+    const result = await inspectNativeMacho({
+      resolveSlice: unexpectedSliceResolution,
+      readCommandNames: inspectionReader(inspectionImage({ commands })),
+      readSliceRange: (_offset, _size, at) => {
+        sliceReads.push(at);
+        return Promise.resolve(new Uint8Array(0));
+      },
+      target: nativeMachoTarget("/fixture/app"),
+      run: (tool, args) => runner.run(tool, args),
+      readEncryption: unreadEncryption,
+      invocation: (captured) => ({
+        tool: captured.tool,
+        command: [captured.executable, ...captured.arguments],
+        tool_version: captured.toolVersion,
+        version_reason: captured.versionReason,
+        executable_sha256: captured.executableSha256,
+        exit: { code: captured.exitCode, signal: captured.signal },
+        stdout_bytes: captured.stdoutBytes,
+        stderr_bytes: captured.stderrBytes,
+      }),
+    });
+    if (!result.ok) throw result.error;
+    return { result: result.value, sliceReads };
+  };
+
+  it("reads neither of repeated LC_DYLD_CHAINED_FIXUPS import tables", async () => {
+    const { result, sliceReads } = await inspectChained([
+      chainedFixups(),
+      chainedFixups(),
+    ]);
+    expect(sliceReads).toEqual([]);
+    expect(result.limitations).toContain(
+      "The chained-fixup import table is unusable (the slice declares 2 LC_DYLD_CHAINED_FIXUPS commands); chained import names are matched against the undefined symbol table instead.",
+    );
+  });
+
+  it("reads the single LC_DYLD_CHAINED_FIXUPS import table", async () => {
+    const { result, sliceReads } = await inspectChained([chainedFixups()]);
+    expect(sliceReads).toEqual([0]);
+    expect(result.limitations.join("\n")).not.toContain(
+      "LC_DYLD_CHAINED_FIXUPS commands",
+    );
   });
 });
 

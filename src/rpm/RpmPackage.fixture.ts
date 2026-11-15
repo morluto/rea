@@ -579,3 +579,31 @@ export const rpmTruncatedMainHeaderFixture = (): Buffer => {
     RPM_LEAD_SIZE + signature.length + 32,
   );
 };
+
+/** Default header with a second NAME entry whose offset leaves the data store. */
+export const rpmDuplicateTagFixture = (): Buffer =>
+  encodeRpmPackage({
+    headerTags: [
+      ...defaultHeaderTags(),
+      {
+        tag: RPM_TAG.name,
+        type: RPM_TYPE.string,
+        string: "oob",
+        offset: 0xffff,
+      },
+    ],
+  });
+
+/** Default header plus unknown BIN tags that all name one store range. */
+export const rpmUnknownBinTagsFixture = (count: number, offset = 0): Buffer => {
+  const shared = { type: RPM_TYPE.bin, bin: new Uint8Array(64), offset };
+  return encodeRpmPackage({
+    headerTags: [
+      ...defaultHeaderTags(),
+      ...Array.from({ length: count }, (_, index) => ({
+        tag: 90_000 + index,
+        ...shared,
+      })),
+    ],
+  });
+};

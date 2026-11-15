@@ -123,18 +123,14 @@ const validReport = (
     (report.files === null ? null : report.files.length)
   )
     return false;
-  if (report.files !== null && !input.include_script_text) {
-    /* files are independent of script text */
-  }
   if (report.scriptlets !== null) {
     for (const scriptlet of report.scriptlets) {
       if (input.include_script_text) {
         if (scriptlet.text === null) return false;
-        if (
-          Buffer.byteLength(scriptlet.text, "binary") > input.max_script_bytes
-        )
-          return false;
-        if (scriptlet.bytes !== Buffer.byteLength(scriptlet.text, "binary"))
+        // The parser decodes stored UTF-8 exactly (fatal, BOM kept), so the
+        // stored byte count is the text's UTF-8 length.
+        if (scriptlet.bytes > input.max_script_bytes) return false;
+        if (scriptlet.bytes !== Buffer.byteLength(scriptlet.text, "utf8"))
           return false;
       } else if (scriptlet.text !== null) return false;
     }

@@ -8,6 +8,7 @@ import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
 
 import { digestFile } from "../../src/application/reverse/ReverseEngineeringService.js";
+import { ok } from "../../src/domain/result.js";
 import { TestReverseEngineeringService as ReverseEngineeringService } from "../support/reverseEngineeringService.js";
 import { providerSnapshot } from "../support/reverseEngineeringCompositionFixtures.js";
 import { createReverseEngineeringService } from "../../src/composition/reverseEngineering.js";
@@ -33,7 +34,7 @@ it.each(["objdump", "rizin"] as const)(
       },
     };
     const service = new ReverseEngineeringService({
-      commands: { objdump: () => profile, rizin: () => profile },
+      commands: { objdump: () => ok(profile), rizin: () => ok(profile) },
     });
     const inspect = (max_output_bytes: number) =>
       provider === "objdump"

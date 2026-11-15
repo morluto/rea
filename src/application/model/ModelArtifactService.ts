@@ -5,8 +5,8 @@ import { modelArtifactSchema } from "../../domain/model/modelArtifact.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { createModelArtifactEvidence } from "../../domain/model/modelArtifactEvidence.js";
@@ -42,11 +42,7 @@ export class ModelArtifactService {
         ),
       );
     if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError("inspect_model_artifact", {
-          cause: options.signal.reason,
-        }),
-      );
+      return err(cancelledBy("inspect_model_artifact", options.signal));
     const { detail, view, ...parameters } = input.data;
     if (detail === "summary") {
       const ready = requireAnalysisViewRetention(
@@ -81,8 +77,7 @@ export class ModelArtifactService {
     );
     if (options?.signal?.aborted)
       return err(
-        new AnalysisCancelledError("inspect_model_artifact", {
-          cause: options.signal.reason,
+        cancelledBy("inspect_model_artifact", options.signal, {
           partialObservation: evidence,
         }),
       );

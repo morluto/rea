@@ -88,7 +88,7 @@ MCP സാധാരണയായി compact input schemas ഉപയോഗിക�
 
 തിരഞ്ഞെടുത്ത runtime-ഉം REA entry script-ഉം setup നേരിട്ട് രജിസ്റ്റർ ചെയ്യുന്നു. Package runner ഉപയോഗിക്കുമ്പോൾ അതിന്റെ cache entry-യും runtime-ഉം നിലനിർത്തുക; target project-ന് പുറത്തുള്ള വിശ്വസനീയമായ ഡയറക്ടറിയിൽ നിന്ന് package നേടുക. ഇൻസ്റ്റലേഷൻ ഗൈഡ് കാണുക.
 
-പൂർണ്ണ output schema-കൾ സ്ഥിരസ്ഥിതിയായി പരസ്യപ്പെടുത്തുന്നു. Client `tools/list` പരിമിതപ്പെടുത്തുന്നുവെങ്കിൽ MCP registration-ൽ `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` അല്ലെങ്കിൽ `off` സജ്ജമാക്കുക. Server validation-ഉം structured result-കളും പൂർണ്ണമായി നിലനിൽക്കും. MCP കരാർ ഗൈഡിലെ «Output schemas» കാണുക.
+സ്ഥിരസ്ഥിതിയായി output schema-കൾ `tools/list`-ൽ നിന്ന് ഒഴിവാക്കുന്നു: ഒരു model API-യും അവ വായിക്കുന്നില്ല, ഓരോ result-ഉം REA തന്നെ validate ചെയ്യുന്നു. ഓരോ output schema-യും 4096 byte പരിധിക്കുള്ളിൽ പരസ്യപ്പെടുത്താൻ MCP registration-ൽ `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact`, പൂർണ്ണ output schema-കൾക്ക് `full` (result-കൾ validate ചെയ്യുന്ന MCP client-കൾക്ക്) സജ്ജമാക്കുക. എല്ലാ ക്രമീകരണങ്ങളിലും Server validation-ഉം structured result-കളും പൂർണ്ണമായി നിലനിൽക്കും. MCP കരാർ ഗൈഡിലെ «Output schemas» കാണുക.
 
 ### നിങ്ങളുടെ agent-നോട് ആവശ്യപ്പെടുക
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { snapshotEnvironment } from "./process/snapshotEnvironment.js";
+import { HOST_PLATFORM } from "./platform/HostPlatform.js";
 import { CURRENT_ENTRYPOINT_PATH } from "./process/CurrentEntrypointPath.js";
 import { pathToFileURL } from "node:url";
 import { realpathSync } from "node:fs";
@@ -89,14 +90,20 @@ const httpRuntimeDependencies = (
 export const run = async (
   dependencies: RuntimeDependencies = runtimeDependencies(),
 ): Promise<number> => {
-  const environment = snapshotEnvironment(dependencies.env);
+  const environment = snapshotEnvironment(
+    dependencies.env,
+    HOST_PLATFORM.platform,
+  );
   const config = parseConfig(environment);
   if (!config.ok) {
     dependencies.writeStderr(`${projectAnalysisError(config.error).message}\n`);
     return 1;
   }
-  const fullOutputCatalog =
+  // The recorded catalog carries complete output schemas, which the deferred
+  // server either lists (full) or omits (off, the default).
+  const recordedOutputCatalog =
     environment.REA_MCP_OUTPUT_SCHEMA_PROFILE === undefined ||
+    environment.REA_MCP_OUTPUT_SCHEMA_PROFILE === "off" ||
     environment.REA_MCP_OUTPUT_SCHEMA_PROFILE === "full";
   // The recorded catalog holds the complete inventory and its full-catalog
   // identity, so only an unscoped registration can be served from it. A
@@ -107,7 +114,7 @@ export const run = async (
     RECORDED_MCP_CATALOG_SHA256 !== undefined &&
     dependencies.transport !== "http" &&
     config.value.hopperTargetPath === undefined &&
-    fullOutputCatalog &&
+    recordedOutputCatalog &&
     !scopedToolFamilies &&
     dependencies.createServer === undefined &&
     dependencies.loadOptionalProviders === undefined
@@ -172,13 +179,16 @@ export const runMcpHttpEntrypoint = async (
     io.setExitCode(1);
     return;
   }
-  const endpoint = parseMcpHttpEndpoint(snapshotEnvironment(process.env), {
-    ...(parsed.host === undefined ? {} : { host: parsed.host }),
-    ...(parsed.port === undefined ? {} : { port: parsed.port }),
-    ...(parsed.allowedHosts === undefined
-      ? {}
-      : { allowedHosts: [...parsed.allowedHosts] }),
-  });
+  const endpoint = parseMcpHttpEndpoint(
+    snapshotEnvironment(process.env, HOST_PLATFORM.platform),
+    {
+      ...(parsed.host === undefined ? {} : { host: parsed.host }),
+      ...(parsed.port === undefined ? {} : { port: parsed.port }),
+      ...(parsed.allowedHosts === undefined
+        ? {}
+        : { allowedHosts: [...parsed.allowedHosts] }),
+    },
+  );
   if (!endpoint.ok) {
     io.writeStderr(`${projectAnalysisError(endpoint.error).message}\n`);
     io.setExitCode(1);

@@ -86,7 +86,7 @@ MCP mặc định dùng schema đầu vào gọn. Để có hướng dẫn đầ
 
 Thiết lập đăng ký trực tiếp runtime đã chọn và script khởi chạy REA. Khi dùng trình chạy gói, hãy giữ mục cache và runtime đó; tải gói từ một thư mục đáng tin cậy bên ngoài dự án đích. Xem hướng dẫn cài đặt.
 
-Schema đầu ra đầy đủ được công bố theo mặc định. Nếu client giới hạn `tools/list`, hãy đặt `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` hoặc `off` trong cấu hình MCP. Xác thực phía server và kết quả có cấu trúc vẫn đầy đủ. Xem mục “Output schemas” trong hướng dẫn hợp đồng MCP.
+Theo mặc định, schema đầu ra được lược khỏi `tools/list`: không API mô hình nào đọc chúng, và REA tự xác thực mọi kết quả. Đặt `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` trong cấu hình MCP để công bố từng schema đầu ra trong giới hạn 4096 byte, hoặc `full` để công bố schema đầu ra đầy đủ (cho các client MCP có xác thực kết quả). Với mọi thiết lập, xác thực phía server và kết quả có cấu trúc vẫn đầy đủ. Xem mục “Output schemas” trong hướng dẫn hợp đồng MCP.
 
 ### Hỏi tác nhân
 

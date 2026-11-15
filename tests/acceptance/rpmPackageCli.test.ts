@@ -4,7 +4,10 @@ import { join } from "node:path";
 import { expect } from "vitest";
 import { RPM_PACKAGE_TOOL_CONTRACTS } from "../../src/contracts/rpm/rpmPackageToolContracts.js";
 import { rpmPackageSchema } from "../../src/domain/rpm/package.js";
-import { rpmBinaryPackageFixture } from "../../src/rpm/RpmPackage.fixture.js";
+import {
+  rpmBinaryPackageFixture,
+  rpmUtf8PackageFixture,
+} from "../../src/rpm/RpmPackage.fixture.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
@@ -154,5 +157,29 @@ cliTest(
     await expect(stat(bundle)).resolves.toMatchObject({
       size: expect.any(Number),
     });
+  },
+);
+
+cliTest(
+  "returns UTF-8 scriptlet text with its stored byte count",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-rpm-cli-utf8-");
+    const path = join(root, "utf8.rpm");
+    await writeFile(path, rpmUtf8PackageFixture());
+    const result = await cli.run({
+      arguments: [
+        "inspect-rpm-package",
+        path,
+        "--include-script-text",
+        "--json",
+      ],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const scriptlets = completeEvidenceSchema.parse(result.json)
+      .normalized_result.scriptlets;
+    // "echo é\n" is 7 characters but 8 stored UTF-8 bytes.
+    expect(
+      scriptlets?.find((scriptlet) => scriptlet.text === "echo é\n")?.bytes,
+    ).toBe(8);
   },
 );

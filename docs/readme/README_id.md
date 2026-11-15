@@ -86,7 +86,7 @@ MCP menggunakan skema input ringkas secara default. Untuk petunjuk bidang lengka
 
 Setup mencatat runtime yang dipilih dan skrip masuk REA secara langsung. Jika memakai package runner, pertahankan entri cache dan runtime tersebut; unduh paket dari direktori tepercaya di luar proyek target. Lihat panduan instalasi.
 
-Skema keluaran lengkap diumumkan secara default. Jika klien membatasi `tools/list`, atur `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` atau `off` dalam registrasi MCP. Validasi server dan hasil terstruktur tetap lengkap. Lihat «Output schemas» di panduan kontrak MCP.
+Skema keluaran tidak disertakan dalam `tools/list` secara default: tidak ada API model yang membacanya, dan REA memvalidasi setiap hasil sendiri. Atur `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` dalam registrasi MCP untuk mengumumkan setiap skema keluaran dalam batas 4096 byte, atau `full` untuk skema keluaran lengkap (bagi klien MCP yang memvalidasi hasil). Di semua pengaturan, validasi server dan hasil terstruktur tetap lengkap. Lihat «Output schemas» di panduan kontrak MCP.
 
 ### Minta agen Anda
 

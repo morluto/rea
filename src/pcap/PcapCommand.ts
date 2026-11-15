@@ -11,15 +11,15 @@ import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import {
   AnalysisError,
   type AnalysisCapturedOutput,
+  type AnalysisErrorOptions,
 } from "../domain/analysisErrorBase.js";
 import { createPcapDiagnosticProjection } from "./PcapDiagnosticOutput.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisProtocolError,
-  AnalysisResourceConstraintError,
-  AnalysisTimeoutError,
   AnalysisUnsupportedTargetError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import {
   OwnedCommandFailure,
@@ -36,10 +36,8 @@ import {
   windowsBatchCommand,
   WindowsBatchCommandError,
 } from "../process/WindowsBatchCommand.js";
-import {
-  classifyLaunchFailure,
-  executableLaunchRefusalOf,
-} from "../process/launchFailure.js";
+import { providerOutcomeOf } from "../process/ProviderOutcome.js";
+import { classifyProviderOutcome } from "../process/classifyProviderOutcome.js";
 import { pcapToolUnavailable } from "./PcapConfiguration.js";
 import {
   attributePcapLimitedExit,
@@ -113,8 +111,34 @@ export const runPcapCommand = async (options: {
         snapshot.diagnosticTruncated === true ||
         snapshot.outputIncomplete === true,
     });
-  if (signal?.aborted)
-    throw new AnalysisCancelledError(operation, { cause: signal.reason });
+  /** A version probe that fails names the tool; a capture read names the file. */
+  const pcapToolFailure = (
+    diagnostic: string,
+    details: AnalysisErrorOptions,
+  ): AnalysisError => {
+    if (options.inputPath === undefined)
+      return pcapToolUnavailable(
+        operation,
+        `The selected tool ${command} cannot report its version: ${diagnostic}`,
+        details,
+      );
+    if (
+      /not a capture file|file.*isn't a capture file|file format.*not supported/iu.test(
+        diagnostic,
+      )
+    )
+      return new AnalysisUnsupportedTargetError(
+        operation,
+        options.inputPath,
+        diagnostic,
+        details,
+      );
+    return new AnalysisProtocolError(
+      `Packet capture tool ${command} failed: ${diagnostic}`,
+      details,
+    );
+  };
+  if (signal?.aborted) throw cancelledBy(operation, signal);
   const hostEnvironment = {
     ...options.environment,
     LC_ALL: "C",
@@ -216,9 +240,10 @@ export const runPcapCommand = async (options: {
       throw cause;
     }
     if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-      throw new AnalysisCancelledError(operation, {
-        cause: artifactFileCancellationCause(cause),
-      });
+      throw cancelledBy(
+        operation,
+        carriedReason(artifactFileCancellationCause(cause)),
+      );
     if (
       cause instanceof OwnedCommandFailure &&
       cause.cleanupOwner !== undefined
@@ -231,14 +256,8 @@ export const runPcapCommand = async (options: {
           ? { stdout: "", stderr: "", truncated: true }
           : captureDiagnostic(cause.snapshot),
       );
-    const details = {
-      cause,
-      ...(cause instanceof OwnedCommandFailure && cause.snapshot !== null
-        ? {
-            capturedOutput: captureDiagnostic(cause.snapshot),
-          }
-        : {}),
-      ...(cleanup !== undefined
+    const cleanupDetails =
+      cleanup !== undefined
         ? { cleanup }
         : cause instanceof OwnedCommandFailure && cause.cleanupFailure !== null
           ? {
@@ -247,158 +266,121 @@ export const runPcapCommand = async (options: {
                 resources: cause.resources,
               },
             }
-          : {}),
-    };
-    if (cause instanceof OwnedCommandFailure && cause.reason === "cancelled")
-      throw new AnalysisCancelledError(operation, {
-        ...details,
-        cause: cause.cancellation?.reason,
-      });
-    if (
-      cause instanceof OwnedCommandFailure &&
-      cause.snapshot?.memoryLimitReached === true
-    )
-      throw new AnalysisResourceConstraintError(
-        operation,
-        "memory",
-        "The owned Windows tool tree reached its enforced committed-memory limit.",
-        {
-          process_memory_limit_bytes:
-            options.nativeBound?.memoryLimitBytes ?? null,
-        },
-        details,
-      );
-    if (
-      cause instanceof OwnedCommandFailure &&
-      (cause.snapshot?.signal === "SIGXCPU" ||
-        cause.snapshot?.signal === "SIGXFSZ")
-    )
-      throw new AnalysisResourceConstraintError(
-        operation,
-        cause.snapshot.signal === "SIGXCPU" ? "cpu" : "file-size",
-        `Producer terminated with ${cause.snapshot.signal}; its exact cause is not independently established.`,
-        null,
-        details,
-      );
-    if (cause instanceof OwnedCommandFailure && cause.reason === "timeout")
-      throw new AnalysisTimeoutError(operation, limits.timeoutMs, details);
-    if (cause instanceof OwnedCommandFailure && cause.reason === "output-limit")
-      throw new AnalysisResourceConstraintError(
-        operation,
-        "memory",
-        "Tool output exceeded its complete-output budget",
-        { max_output_bytes: limits.maxOutputBytes },
-        {
-          ...details,
-          ...fixedAllowanceOptions(
-            "The packet-tool output capture allowance",
-            "capture",
-          ),
-        },
-      );
+          : {};
     if (cause instanceof WindowsBatchCommandError)
       throw pcapToolUnavailable(
         operation,
         `Cannot run selected tool ${command}: ${cause.message}`,
-        details,
+        { cause, ...cleanupDetails },
       );
     const selectedLimiter =
       options.nativeBound?.limiter?.command.invocationPath;
     const launchedPath = selectedLimiter ?? command;
-    const launchRefusal = executableLaunchRefusalOf(cause);
-    const spawnRefusal =
-      launchRefusal?.executable === launchedPath ? launchRefusal : undefined;
-    if (spawnRefusal !== undefined && selectedLimiter !== undefined) {
-      const reason = `Selected capture limiter ${selectedLimiter} could not be launched (${spawnRefusal.code}).`;
-      throw new AnalysisCapabilityUnavailableError("pcap", operation, reason, {
-        ...details,
-        userMessage: `${reason} ${PCAP_LIMITER_REMEDIATION}`,
-        remediationAction: PCAP_LIMITER_REMEDIATION,
-      });
-    }
-    if (spawnRefusal !== undefined)
-      throw pcapToolUnavailable(
-        operation,
-        spawnRefusal.kind === "missing"
-          ? `Selected tool ${command} was not found (${spawnRefusal.code})`
-          : `Selected tool ${command} exists but could not be executed (${spawnRefusal.code})`,
-        details,
-      );
-    const diagnostic =
-      cause instanceof OwnedCommandFailure
-        ? cause.snapshot?.stderr.text.trim() || cause.message
-        : cause instanceof Error
-          ? cause.message
-          : String(cause);
-    if (!commandAttempted)
-      throw new AnalysisProtocolError(
+    const preparationFailure = (
+      diagnostic: string,
+      details: AnalysisErrorOptions,
+    ): AnalysisProtocolError =>
+      new AnalysisProtocolError(
         `Preparing the owned packet command failed: ${diagnostic}`,
         details,
       );
-    if (classifyLaunchFailure(cause) !== undefined)
-      throw new AnalysisProtocolError(
-        `The packet command could not start; the failing stage is unknown: ${diagnostic}`,
-        details,
-      );
-    if (
-      selectedLimiter !== undefined &&
-      cause instanceof OwnedCommandFailure &&
-      cause.reason === "process"
-    ) {
-      if (cause.collectionFailure || cause.snapshot === null)
+    const outcome = providerOutcomeOf(cause);
+    if (outcome === undefined) {
+      const diagnostic = cause instanceof Error ? cause.message : String(cause);
+      const details = { cause, ...cleanupDetails };
+      if (!commandAttempted) throw preparationFailure(diagnostic, details);
+      // An errno the launcher raised without a spawn identity names no stage.
+      if (cause instanceof Error && "code" in cause)
         throw new AnalysisProtocolError(
-          `The bounded packet command failed before its exit was observed; whether the limiter or selected tool failed is unknown: ${diagnostic}`,
+          `The packet command could not start; the failing stage is unknown: ${diagnostic}`,
           details,
         );
-      const attributed = attributePcapLimitedExit(selectedLimiter, {
-        exitCode: cause.snapshot.exitCode,
-        signal: cause.snapshot.signal,
-        stderr: cause.snapshot.stderr.text,
-      });
-      if (attributed.stage === "limiter") {
-        const reason = `Selected capture limiter ${selectedLimiter} failed before starting ${command}: ${diagnostic}`;
-        throw new AnalysisCapabilityUnavailableError(
-          "pcap",
-          operation,
-          reason,
-          {
-            ...details,
-            userMessage: `${reason} ${PCAP_LIMITER_REMEDIATION}`,
-            remediationAction: PCAP_LIMITER_REMEDIATION,
-          },
-        );
-      }
-      if (attributed.stage === "tool-launch")
-        throw pcapToolUnavailable(
-          operation,
-          attributed.refusal === "missing"
-            ? `Selected tool ${command} was not found: ${diagnostic}`
-            : `Selected tool ${command} exists but could not be executed: ${diagnostic}`,
-          details,
-        );
-      // Otherwise prlimit started the tool; its exit and output are the tool's.
+      throw pcapToolFailure(diagnostic, details);
     }
-    if (options.inputPath === undefined)
-      throw pcapToolUnavailable(
-        operation,
-        `The selected tool ${command} cannot report its version: ${diagnostic}`,
-        details,
-      );
-    if (
-      options.inputPath !== undefined &&
-      /not a capture file|file.*isn't a capture file|file format.*not supported/iu.test(
-        diagnostic,
-      )
-    )
-      throw new AnalysisUnsupportedTargetError(
-        operation,
-        options.inputPath,
-        diagnostic,
-        details,
-      );
-    throw new AnalysisProtocolError(
-      `Packet capture tool ${command} failed: ${diagnostic}`,
-      details,
-    );
+    throw classifyProviderOutcome(outcome, {
+      operation,
+      capturedOutput: captureDiagnostic,
+      details: cleanupDetails,
+      timeout: { ms: limits.timeoutMs },
+      outputLimit: {
+        limits: { max_output_bytes: limits.maxOutputBytes },
+        recovery: fixedAllowanceOptions(
+          "The packet-tool output capture allowance",
+          "capture",
+        ),
+      },
+      memoryLimitBytes: options.nativeBound?.memoryLimitBytes,
+      dialect: (failure, details) => {
+        if (
+          failure.kind === "launch-refused" &&
+          // Only a launcher naming the launched path identifies who refused.
+          failure.refusal.executable === launchedPath
+        ) {
+          if (selectedLimiter !== undefined) {
+            const reason = `Selected capture limiter ${selectedLimiter} could not be launched (${failure.refusal.code}).`;
+            return new AnalysisCapabilityUnavailableError(
+              "pcap",
+              operation,
+              reason,
+              {
+                ...details,
+                userMessage: `${reason} ${PCAP_LIMITER_REMEDIATION}`,
+                remediationAction: PCAP_LIMITER_REMEDIATION,
+              },
+            );
+          }
+          return pcapToolUnavailable(
+            operation,
+            failure.refusal.kind === "missing"
+              ? `Selected tool ${command} was not found (${failure.refusal.code})`
+              : `Selected tool ${command} exists but could not be executed (${failure.refusal.code})`,
+            details,
+          );
+        }
+        const diagnostic =
+          failure.output?.snapshot.stderr.text.trim() || failure.message;
+        if (!commandAttempted) return preparationFailure(diagnostic, details);
+        if (failure.kind === "launch-refused")
+          return new AnalysisProtocolError(
+            `The packet command could not start; the failing stage is unknown: ${diagnostic}`,
+            details,
+          );
+        if (selectedLimiter !== undefined) {
+          if (failure.kind !== "exited" || failure.output === undefined)
+            return new AnalysisProtocolError(
+              `The bounded packet command failed before its exit was observed; whether the limiter or selected tool failed is unknown: ${diagnostic}`,
+              details,
+            );
+          const attributed = attributePcapLimitedExit(selectedLimiter, {
+            exitCode: failure.exitCode,
+            signal: failure.signal,
+            stderr: failure.output.snapshot.stderr.text,
+          });
+          if (attributed.stage === "limiter") {
+            const reason = `Selected capture limiter ${selectedLimiter} failed before starting ${command}: ${diagnostic}`;
+            return new AnalysisCapabilityUnavailableError(
+              "pcap",
+              operation,
+              reason,
+              {
+                ...details,
+                userMessage: `${reason} ${PCAP_LIMITER_REMEDIATION}`,
+                remediationAction: PCAP_LIMITER_REMEDIATION,
+              },
+            );
+          }
+          if (attributed.stage === "tool-launch")
+            return pcapToolUnavailable(
+              operation,
+              attributed.refusal === "missing"
+                ? `Selected tool ${command} was not found: ${diagnostic}`
+                : `Selected tool ${command} exists but could not be executed: ${diagnostic}`,
+              details,
+            );
+          // Otherwise prlimit started the tool; its exit and output are the tool's.
+        }
+        return pcapToolFailure(diagnostic, details);
+      },
+    });
   }
 };
