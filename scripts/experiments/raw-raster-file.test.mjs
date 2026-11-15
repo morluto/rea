@@ -244,9 +244,32 @@ test("records original relative spelling and canonical absolute selected path", 
     assert.equal(result.manifest.sourcePath, selected);
     assert.equal(result.manifest.sourceResolvedPath, await realpath(path));
   }));
-test("does not normalize away invalid native file path components", async () =>
-  withSource(async ({ path }) => {
-    await assert.rejects(previewRawRasterFile(`${path}/../source.bin`, layout));
+test("preserves native file path component semantics", async () =>
+  withSource(async ({ path, bytes }) => {
+    const selected = `${path}/../source.bin`;
+    // POSIX rejects traversing a regular file; Windows resolves dot segments
+    // before opening it. Compare with native I/O, not a POSIX-only assumption.
+    const native = await readFile(selected).then(
+      (value) => ({ bytes: value }),
+      (error) => ({ error }),
+    );
+    if (native.error) {
+      assert.equal(native.error.code, "ENOTDIR");
+      await assert.rejects(previewRawRasterFile(selected, layout));
+    } else {
+      assert.deepEqual(native.bytes, bytes);
+      const result = await previewRawRasterFile(selected, layout, {
+        includeSourcePaths: true,
+      });
+      const direct = await previewRawRasterFile(path, layout);
+      assert.deepEqual(result.png, direct.png);
+      assert.deepEqual(
+        result.manifest.sourceRange,
+        direct.manifest.sourceRange,
+      );
+      assert.equal(result.manifest.sourcePath, selected);
+      assert.equal(result.manifest.sourceResolvedPath, await realpath(path));
+    }
   }));
 
 test("indexed4 file CLI preserves explicit palette, nibble order, alpha and range hash", async () =>

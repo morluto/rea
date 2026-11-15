@@ -209,3 +209,15 @@ input were verified. This exercised the exact decoding/export source in a minima
 Node/tsx harness, not the full file-acquisition CLI on that machine. Private raw
 bytes, palette, personal paths and reference output are not published. The generic
 core has no firmware-specific LUT/CLUT parser.
+
+### Full private file-workflow acceptance
+
+On 2026-11-15 the unregistered file CLI at `da9d35c3` was run on the same
+private 440×200 indexed4 resource, using Node 24.22.2 on macOS (one patch above
+the repository pin). Independent Pillow decoding matched all 88,000 pixels
+(352,000 RGBA bytes) against the retained reference. PNG integrity, selected-range
+and output hashes, explicit palette/order, unchanged source/layout, default
+manifest privacy and refusal to overwrite an existing output all passed. This
+closes the earlier full file-acquisition CLI gap for that sample on macOS, not
+production REA CLI/MCP integration or proprietary container parsing. No private
+source, palette, paths or images are included in the repository or CI.
