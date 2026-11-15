@@ -60,7 +60,6 @@
     "artifacts <-> javascript",
     "artifacts <-> native",
     "artifacts <-> process",
-    "catalogIdentity.ts <-> recordedCatalogDigests.ts",
     "cli <-> cli.ts",
     "cli <-> cliBrowserScenarioCommands.ts",
     "cli <-> cliEvidenceCommands.ts",
