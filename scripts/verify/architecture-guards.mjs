@@ -79,6 +79,19 @@ check(
 
 check("NUL-joined list key (use compositeKey)", files, /\.join\(["']\\0["']\)/);
 
+// Pushed effect invalidation (docs/adr/javascript/pushed-effect-invalidation.md),
+// slice 1: an intrinsic global read asks one owner whether global code or a
+// sloppy direct eval may have changed it, instead of combining effect checks.
+check(
+  "reader-side global-code or introduced-name check (use isIntrinsicGlobalReference or opaqueCodeMayChangeGlobalRead)",
+  files,
+  /\bsemanticOpaque(?:Global|Name)MayHaveChanged\b/u,
+  [
+    "src/domain/javascript/javascriptSemanticOpaqueEffects.ts",
+    "src/domain/javascript/javascriptSemanticGlobalReference.ts",
+  ],
+);
+
 check(
   "direct transparent-wrapper unwrap outside javascriptAstValues (use unwrapJavaScriptExpression)",
   files,
