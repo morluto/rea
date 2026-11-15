@@ -14,6 +14,7 @@ export const BINARY_ARCHITECTURES = [
   "powerpc",
   "m68k",
   "hexagon",
+  "xtensa",
 ] as const;
 export type BinaryArchitecture = (typeof BINARY_ARCHITECTURES)[number];
 
@@ -65,7 +66,11 @@ export const isElfMetadataArchitecture = (
 /** Recognized family with no ELF metadata member; the header alone is the fact. */
 export type HeaderArchitecture = Exclude<
   BinaryArchitecture,
-  ElfMetadataArchitecture | RawOnlyArchitecture | "hexagon" | "arm64_32"
+  | ElfMetadataArchitecture
+  | RawOnlyArchitecture
+  | "hexagon"
+  | "xtensa"
+  | "arm64_32"
 >;
 
 /** Raw ELF facts; family recognition does not establish ISA or ABI support. */
@@ -209,6 +214,14 @@ export type BinaryTarget =
       readonly format: "elf";
       readonly architecture: "hexagon";
       readonly availableArchitectures: readonly "hexagon"[];
+      readonly executableRole?: never;
+      readonly managed?: never;
+    })
+  | (BinaryTargetIdentity & {
+      readonly kind: "executable";
+      readonly format: "elf";
+      readonly architecture: "xtensa";
+      readonly availableArchitectures: readonly "xtensa"[];
       readonly executableRole?: never;
       readonly managed?: never;
     })
