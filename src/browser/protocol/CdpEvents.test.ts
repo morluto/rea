@@ -14,7 +14,10 @@ describe("registered CDP event payloads", () => {
       },
     };
     const event = receiveCdpEvent({ method: "Page.frameNavigated", params });
-    expect(event.params).toBe(params);
+    expect(event).not.toHaveProperty("params");
+    // Subscribers cannot name the raw payload; they read `registered`.
+    // @ts-expect-error `params` is not part of a received event.
+    expect(event.params).toBeUndefined();
     expect(cdpFrameEvent(event)).toEqual({
       facts: expect.objectContaining({
         kind: "navigated",

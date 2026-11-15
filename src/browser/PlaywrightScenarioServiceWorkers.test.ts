@@ -98,3 +98,57 @@ it("retains ownership and retries socket cleanup after ambiguous service-worker 
     await browser.close();
   }
 });
+
+it("reports a malformed target event the policy listener rejected at the next policy check", async () => {
+  const browser = await startFakeCdpBrowser({
+    commandResult: ({ method }) =>
+      method === "Page.addScriptToEvaluateOnNewDocument"
+        ? { identifier: "policy-script" }
+        : method === "Runtime.evaluate"
+          ? { result: { type: "object", value: null } }
+          : method === "Target.setAutoAttach" ||
+              method === "Page.removeScriptToEvaluateOnNewDocument"
+            ? {}
+            : undefined,
+  });
+  const policy = new PlaywrightScenarioServiceWorkers(
+    {
+      frames: () => [],
+      isClosed: () => false,
+      mainFrame: () => ({}) as never,
+    },
+    browser.browserWebSocketUrl,
+    "allowed-page",
+  );
+  try {
+    await policy.initialize();
+    await policy.assertBlocked();
+    // No policy command is pending: only the recorded failure can surface it.
+    browser.emitEvent({ method: "Target.detachedFromTarget", params: {} });
+    await expect
+      .poll(() =>
+        policy.assertBlocked().then(
+          () => "passed",
+          (cause: unknown) => cause,
+        ),
+      )
+      .toMatchObject({
+        _tag: "BrowserObservationError",
+        reason: "protocol_error",
+        cause: expect.objectContaining({ reason: "protocol_error" }),
+      });
+    // Cleanup still runs on the failed connection in its grace period.
+    await policy.close();
+    expect(browser.commands.map(({ method }) => method)).toEqual(
+      expect.arrayContaining([
+        "Page.removeScriptToEvaluateOnNewDocument",
+        "Runtime.evaluate",
+        "Target.detachFromTarget",
+      ]),
+    );
+    await expect.poll(() => browser.activeConnectionCount()).toBe(0);
+  } finally {
+    await policy.close().catch(() => undefined);
+    await browser.close();
+  }
+});
