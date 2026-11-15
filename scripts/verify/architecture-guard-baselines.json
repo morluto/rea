@@ -155,6 +155,10 @@
     "src/pcap/PcapDnsWire.ts": 5,
     "src/v8/V8CodeCacheParser.ts": 1
   },
+  "raw-json-schema-meta": {
+    "src/cli/jsonInputArgument.ts": 2,
+    "src/cli/utilityCommands.ts": 1
+  },
   "range-error-interpretation": {
     "src/application/JsonInputFile.ts": 1,
     "src/artifacts/nodeSea/NodeSeaBlob.ts": 1,

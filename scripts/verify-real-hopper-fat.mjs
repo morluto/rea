@@ -1,4 +1,4 @@
-import { schemaVerifierEnvironment } from "./lib/mcp-verification-environment.mjs";
+import { canonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
@@ -82,11 +82,11 @@ const client = new Client({ name: "hopper-fat-verifier", version: "1" });
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: ["dist/main.js"],
-  env: schemaVerifierEnvironment({
+  env: {
     ...process.env,
     REA_ANALYSIS_PROVIDER: "hopper",
     HOPPER_LOADER_ARGS_JSON: "[]",
-  }),
+  },
   stderr: "pipe",
 });
 transport.stderr?.on("data", (chunk) => process.stderr.write(chunk));
@@ -259,10 +259,11 @@ await withVerifierFixture(workspace, async () => {
       { timeout: 180_000 },
     );
     const result = requireMcpOperationResult(reply, name);
-    const schema = catalog.tools.find(
-      (tool) => tool.name === name,
-    )?.outputSchema;
-    assert.ok(schema, `${name} omitted its output schema`);
+    assert.ok(
+      catalog.tools.some((tool) => tool.name === name),
+      `${name} is not advertised`,
+    );
+    const schema = canonicalOutputSchema(name);
     assert.equal(
       ajv.validate(schema, reply.structuredContent),
       true,

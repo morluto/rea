@@ -105,9 +105,7 @@ try {
   let toolCount = 0;
   await withVerifierCleanup(async () => {
     await client.connect(server);
-    toolCount = (
-      await verifyCompleteToolCatalog(client, undefined, environment)
-    ).length;
+    toolCount = (await verifyCompleteToolCatalog(client)).length;
   }, [
     async () => {
       try {
