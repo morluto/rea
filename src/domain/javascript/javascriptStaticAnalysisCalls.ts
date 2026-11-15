@@ -3,7 +3,7 @@ import {
   isFetchCall,
 } from "./javascriptNetworkRequests.js";
 import * as t from "@babel/types";
-import { isIntrinsicMapLookup } from "./javascriptSemanticMapOperations.js";
+import { isIntrinsicMapLookup } from "./javascriptSemanticIntrinsicInstances.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { semanticIdentifierRole } from "./javascriptSemanticProjection.js";
 
