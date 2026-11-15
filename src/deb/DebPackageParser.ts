@@ -804,12 +804,20 @@ export const parseDebPackage = (
     limitations.push("No control.tar member was present.");
   if (dataMember === undefined)
     limitations.push("No data.tar member was present.");
+  const controlFilePresent =
+    controlTar !== null &&
+    listedFile(controlTar.files, "control").text !== null;
+  if (controlTar !== null && !controlFilePresent)
+    limitations.push("control.tar held no control file.");
+  if (debianBinary === undefined)
+    limitations.push("No debian-binary member was present.");
   if (format_version === null)
     limitations.push("debian-binary format version is unknown.");
   const status =
     issues.length === 0 &&
     extra_member_names.length === 0 &&
-    controlMember !== undefined &&
+    format_version !== null &&
+    controlFilePresent &&
     dataMember !== undefined
       ? "complete"
       : "partial";

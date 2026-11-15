@@ -328,6 +328,18 @@ it("keeps inventoried data entries when the selected count is exceeded", () => {
   expect(error.partial?.data_entries).toHaveLength(1);
 });
 
+it("reports partial coverage when control.tar holds no control file", () => {
+  const report = parse(debPackageFixture({ controlEntries: [] }));
+  expect(report.coverage.status).toBe("partial");
+  expect(report.limitations).toContain("control.tar held no control file.");
+});
+
+it("reports partial coverage when debian-binary is empty", () => {
+  const report = parse(debPackageFixture({ debianBinary: "" }));
+  expect(report.ar.format_version).toBeNull();
+  expect(report.coverage.status).toBe("partial");
+});
+
 it("flags extra ar members without treating them as control or data", () => {
   const report = parse(
     debPackageFixture({
