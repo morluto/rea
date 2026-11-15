@@ -9,15 +9,13 @@ import {
 describe("REA_MCP_TOOLS_LIST_PAGE_BYTES", () => {
   it("uses the default when the setting is unset", () => {
     const parsed = parseMcpToolsListPageBudget(undefined);
-    expect(parsed.ok).toBe(true);
-    if (!parsed.ok) return;
+    if (!parsed.ok) throw parsed.error;
     expect(parsed.value).toEqual(DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET);
   });
 
   it("accepts a positive decimal override inside the FastMCP event cap", () => {
     const parsed = parseMcpToolsListPageBudget("1048576");
-    expect(parsed.ok).toBe(true);
-    if (!parsed.ok) return;
+    if (!parsed.ok) throw parsed.error;
     expect(parsed.value).toMatchObject({
       setting: MCP_TOOLS_LIST_PAGE_BUDGET_SETTING,
       bytes: 1_048_576,

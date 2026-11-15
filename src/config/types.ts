@@ -8,6 +8,7 @@ import type { GhidraLanguageOverride } from "./ghidraLanguageOverride.js";
 import type { McpInputSchemaProfile } from "./mcpInputSchemaProfile.js";
 import type { McpOutputSchemaProfile } from "./mcpOutputSchemaProfile.js";
 import type { McpToolCatalogProfile } from "./mcpToolCatalogProfile.js";
+import type { McpToolsListPageBudget } from "./mcpToolsListPageBudget.js";
 import type { BridgeMaxRequestBytes } from "./bridgeMaxRequestBytes.js";
 import type { RegexMatchingDeadline } from "./regexMatchingDeadline.js";
 import type { RegexWorkerHeapRequest } from "./regexWorkerHeapRequest.js";
@@ -19,6 +20,8 @@ export interface AppConfig {
   readonly mcpToolFamilies?: readonly McpToolFamilies[number][];
   readonly mcpMaxResponseBytes?: number;
   readonly mcpMaxInputElements?: number;
+  /** Selected tools/list page budget; absent keeps the default page. */
+  readonly mcpToolsListPageBudget?: McpToolsListPageBudget;
   readonly mcpInputSchemaProfile?: McpInputSchemaProfile;
   readonly mcpOutputSchemaProfile?: McpOutputSchemaProfile;
   readonly mcpToolCatalogProfile?: McpToolCatalogProfile;
