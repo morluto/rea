@@ -13,6 +13,7 @@ export const CAPTURE_TOOL_CONTRACTS = [
   {
     name: "inspect_packet_fields",
     availability: { host: "packetCapture" },
+    cli: true,
     ...toolContractMetadata("inspect_packet_fields"),
     kind: "artifact-provider",
     requiresActiveTarget: true,
@@ -31,6 +32,7 @@ export const CAPTURE_TOOL_CONTRACTS = [
   {
     name: "inspect_packet_capture",
     availability: { host: "packetCapture" },
+    cli: true,
     ...toolContractMetadata("inspect_packet_capture"),
     kind: "artifact-provider",
     requiresActiveTarget: true,

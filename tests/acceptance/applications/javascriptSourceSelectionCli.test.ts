@@ -186,7 +186,7 @@ cliTest(
     expect(response.json).toMatchObject({
       code: "invalid_request",
       details: {
-        issues: [{ path: ["source_paths"], reason: "invalid_value" }],
+        issues: [{ path: ["sourcePath"], reason: "invalid_value" }],
       },
     });
   },
@@ -314,7 +314,7 @@ cliTest(
     expect(response.json).toMatchObject({
       code: "invalid_request",
       details: {
-        issues: [{ path: ["source_paths"], reason: "invalid_value" }],
+        issues: [{ path: ["sourcePathsJson"], reason: "invalid_value" }],
       },
     });
   },

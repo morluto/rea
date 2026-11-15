@@ -14,6 +14,7 @@ import { toolContractMetadata } from "./toolEffects.js";
 export const REVERSE_ENGINEERING_TOOL_CONTRACTS = [
   {
     name: "inspect_with_objdump",
+    cli: true,
     ...toolContractMetadata("inspect_with_objdump"),
     kind: "native-provider",
     description:
@@ -36,6 +37,7 @@ export const REVERSE_ENGINEERING_TOOL_CONTRACTS = [
   },
   {
     name: "execute_rizin_command",
+    cli: true,
     ...toolContractMetadata("execute_rizin_command"),
     kind: "native-provider",
     description:

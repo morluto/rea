@@ -204,14 +204,16 @@ available after the command exits:
 
 ```bash
 rea inspect-managed-members /absolute/path/Assembly.dll --type Namespace.Type \
-  --detail summary --evidence-bundle /absolute/path/evidence/members.json --json
+  --detail summary --evidence_output /absolute/path/evidence/members.json --json
 ```
 
-`--evidence-bundle` writes the complete original Evidence in REA's canonical
-bundle format. Its parent directory must exist, and it never replaces an
-existing path. Relative paths resolve against the command's working directory.
-The option also works with complete delivery when a saved bundle is useful.
-Summary without a destination is rejected before analysis. For partial Evidence
+`--evidence_output` writes the complete original Evidence in REA's canonical
+bundle format and prints `{"summary": …, "evidence_bundle": {"path", "bytes"}}`.
+Its parent directory must exist, and it never replaces an existing path.
+Relative paths resolve against the command's working directory. The option
+also works with complete delivery when a saved bundle is useful. Summary
+without a destination is rejected before analysis. Earlier releases spelled
+this option `--evidence-bundle` and printed the summary Evidence alone. For partial Evidence
 and committed-file receipts after failure or cancellation, see
 [Evidence publication and source recovery](../../reference/mcp-contracts.md#evidence-publication-and-source-recovery).
 
@@ -304,9 +306,12 @@ a smaller selection, pass the same repeatable `--type` full names that
 applies them to both sides and records them as `type_names`; over MCP, compare
 two `inspect_managed_members` Evidence records selected with the same
 `type_names`. A single selected type can still exceed the budget.
-The two-record MCP workflow keeps full source Evidence available for
-`inspect_analysis_view` field selection and paging; path-based CLI comparison
-records the selected paths, type names and per-side diagnostics.
+The CLI command composes that same workflow: it inspects each path as
+`inspect-managed-members` does, then compares the two records. The two-record
+MCP workflow keeps full source Evidence available for `inspect_analysis_view`
+field selection and paging; path-based CLI comparison records the selected
+paths, inspection options and per-side diagnostics, and keeps the baseline's
+member Evidence when the candidate fails.
 
 Input overflow returns a resource constraint. Decode or projection overflow
 reports `resource-limit` with unavailable or partial coverage; omitted facts do

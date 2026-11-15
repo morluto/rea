@@ -35,7 +35,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 import { createCli } from "../../src/cli.js";
-import { CLI_COMMANDS } from "../../src/cliCommandNames.js";
+import { cliCommandFor } from "../../src/cliCommandNames.js";
 import { BYTE_ENTROPY_PROVIDER } from "../../src/domain/investigationProviders.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
@@ -53,7 +53,7 @@ afterEach(async () => {
 const inspect = async (path: string): Promise<unknown> => {
   let stdout = "";
   await createCli({}).serve(
-    [CLI_COMMANDS.inspectByteEntropy, path, "--format", "json"],
+    [cliCommandFor("inspect_byte_entropy"), path, "--format", "json"],
     {
       env: {},
       stdout: (text) => {
