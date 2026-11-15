@@ -67,7 +67,7 @@ export const compareSourceToBundle = (
       ...nodeIds,
       ...candidates
         .filter((candidate) => nodeIds.includes(candidate.current_node_id))
-        // optional-fact-default: the schema omits an empty list (min 1 when present).
+        // optional-fact-default: omitted without occurrence provenance, when the only represented node is the candidate's own, already in nodeIds.
         .flatMap((candidate) => candidate.representation_node_ids ?? []),
     ]),
   );
