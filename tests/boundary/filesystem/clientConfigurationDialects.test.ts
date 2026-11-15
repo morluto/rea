@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import {
   currentClientRegistrationCommand,
   classifyClientRegistrationCommand,
@@ -45,6 +46,12 @@ const getClients = (home: string) =>
     ].includes(name),
   );
 
+/** Read registrations under this host's client layout. */
+const hostRegistrationStatuses = (home: string) =>
+  readClientRegistrationStatuses(home, undefined, {
+    platform: HOST_PLATFORM.platform,
+  });
+
 describe("additional client configuration dialects", () => {
   it("does not uninstall a Node registration whose relative script only matches this process cwd", async () => {
     if (CURRENT_ENTRYPOINT_PATH === undefined)
@@ -64,7 +71,9 @@ describe("additional client configuration dialects", () => {
     );
 
     expect(
-      await readClientRegistrationStatuses(home, CURRENT_ENTRYPOINT_PATH),
+      await readClientRegistrationStatuses(home, CURRENT_ENTRYPOINT_PATH, {
+        platform: HOST_PLATFORM.platform,
+      }),
     ).toContainEqual(
       expect.objectContaining({
         client: "cursor",
@@ -154,7 +163,7 @@ describe("additional client configuration dialects", () => {
         args: command.slice(1),
       });
 
-    const statuses = await readClientRegistrationStatuses(home);
+    const statuses = await hostRegistrationStatuses(home);
     expect(statuses).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ client: name, state: "aligned", command }),
@@ -464,7 +473,7 @@ describe("OpenCode V2 native server table", () => {
         rea: { type: "local", command: [...command], disabled: false },
       },
     });
-    expect(await readClientRegistrationStatuses(home)).toEqual(
+    expect(await hostRegistrationStatuses(home)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           client: "opencode",
@@ -493,7 +502,7 @@ describe("OpenCode V2 native server table", () => {
       `${JSON.stringify({ mcp: { servers: { rea: { type: "local", command: stale } } } })}\n`,
     );
 
-    expect(await readClientRegistrationStatuses(home)).toEqual(
+    expect(await hostRegistrationStatuses(home)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ client: "opencode", command: stale }),
       ]),
@@ -525,7 +534,7 @@ describe("OpenCode V2 native server table", () => {
       `{ "mcp": { "servers": {}, "rea": ${legacyEntry} } }\n`,
     );
 
-    expect(await readClientRegistrationStatuses(home)).toEqual(
+    expect(await hostRegistrationStatuses(home)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           client: "opencode",
@@ -552,7 +561,7 @@ describe("OpenCode V2 native server table", () => {
       `${JSON.stringify({ mcp: { servers: { type: typeServer, rea: { type: "local", command } } } })}\n`,
     );
 
-    expect(await readClientRegistrationStatuses(home)).toEqual(
+    expect(await hostRegistrationStatuses(home)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           client: "opencode",

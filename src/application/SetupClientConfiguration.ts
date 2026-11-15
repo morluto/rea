@@ -1303,7 +1303,7 @@ const clientConfigurationDesired = async (
       parsed === undefined
         ? new DshCordisDocument("")
         : dshDocument(parsed.document)
-    ).desired(launcher, providerEnvironment);
+    ).desired(launcher, providerEnvironment, HOST_PLATFORM.platform);
     if (!desired.ok) throw desired.error;
     return desired.value;
   }

@@ -120,14 +120,16 @@ const runUpdateProcess = async (
   const [executable, ...args] = command;
   if (executable === undefined)
     return commandFailure("No executable supplied.", "launch");
+  // Spawning is host-bound: the child runs on this host's platform.
+  const { platform } = HOST_PLATFORM;
   const environment = snapshotEnvironment(
-    withoutPackageRunnerIdentity(selectedEnvironment),
-    HOST_PLATFORM.platform,
+    withoutPackageRunnerIdentity(selectedEnvironment, platform),
+    platform,
   );
   let selectedExecutable = executable;
   let selectedArguments = args;
   let windowsVerbatimArguments = false;
-  if (process.platform === "win32") {
+  if (platform === "win32") {
     if (
       !win32.isAbsolute(executable) &&
       !/[\\/]/u.test(executable) &&
@@ -173,7 +175,7 @@ const runUpdateProcess = async (
     return commandFailure("Update command cancelled before launch.");
   let child;
   try {
-    child = (process.platform === "win32" ? spawnWindows : spawn)(
+    child = (platform === "win32" ? spawnWindows : spawn)(
       selectedExecutable,
       selectedArguments,
       {

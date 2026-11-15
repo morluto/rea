@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -502,6 +503,7 @@ it("leaves a stale Kilo registration KILO_CONFIG_CONTENT pins out of update main
     home,
     command[1] ?? "",
     environment,
+    { platform: HOST_PLATFORM.platform },
   );
   expect(scope.clients).not.toContain("kilo");
   expect(scope.unresolved).toEqual([
@@ -536,9 +538,14 @@ it("maintains a stale Kilo registration whose KILO_CONFIG_CONTENT entry setup's 
       },
     }),
   );
-  const scope = await existingMaintenanceScope(home, command[1] ?? "", {
-    KILO_CONFIG_CONTENT: JSON.stringify({ mcp: { rea: { enabled: true } } }),
-  });
+  const scope = await existingMaintenanceScope(
+    home,
+    command[1] ?? "",
+    {
+      KILO_CONFIG_CONTENT: JSON.stringify({ mcp: { rea: { enabled: true } } }),
+    },
+    { platform: HOST_PLATFORM.platform },
+  );
   expect(scope.clients).toContain("kilo");
   expect(scope.unresolved).toBeUndefined();
 });
@@ -559,13 +566,18 @@ it("leaves an aligned Kilo registration out of update maintenance when KILO_CONF
   const [status] = await readClientRegistrationStatuses(
     home,
     command[1] ?? "",
-    { environment, selectedClientIds: ["kilo"] },
+    {
+      platform: HOST_PLATFORM.platform,
+      environment,
+      selectedClientIds: ["kilo"],
+    },
   );
   expect(status).toMatchObject({ client: "kilo", state: "aligned" });
   const scope = await existingMaintenanceScope(
     home,
     command[1] ?? "",
     environment,
+    { platform: HOST_PLATFORM.platform },
   );
   expect(scope.clients).not.toContain("kilo");
   expect(scope.unresolved).toEqual([
@@ -590,9 +602,14 @@ it("reports a Kilo registration whose KILO_CONFIG_CONTENT differs only in a disc
   const inline = (environment: Record<string, string>) =>
     JSON.stringify({ mcp: { rea: { environment } } });
   const hopper = "/Applications/Hopper Disassembler.app/Contents/MacOS/hopper";
-  const scope = await existingMaintenanceScope(home, command[1] ?? "", {
-    KILO_CONFIG_CONTENT: inline({ HOPPER_LAUNCHER_PATH: hopper }),
-  });
+  const scope = await existingMaintenanceScope(
+    home,
+    command[1] ?? "",
+    {
+      KILO_CONFIG_CONTENT: inline({ HOPPER_LAUNCHER_PATH: hopper }),
+    },
+    { platform: HOST_PLATFORM.platform },
+  );
   // Setup may discover this launcher and write the same value, so update
   // can neither maintain nor refuse the client: its alignment is unknown.
   expect(scope.clients).not.toContain("kilo");
@@ -620,6 +637,7 @@ it("reports a Kilo registration whose KILO_CONFIG_CONTENT differs only in a disc
       home,
       command[1] ?? "",
       environment,
+      { platform: HOST_PLATFORM.platform },
     );
     expect(refused.unresolved).toEqual([
       expect.objectContaining({
@@ -653,11 +671,16 @@ it("reports a Kilo registration whose matching KILO_CONFIG_CONTENT sets a discov
       },
     }),
   );
-  const scope = await existingMaintenanceScope(home, command[1] ?? "", {
-    KILO_CONFIG_CONTENT: JSON.stringify({
-      mcp: { rea: { environment: { HOPPER_LAUNCHER_PATH: hopper } } },
-    }),
-  });
+  const scope = await existingMaintenanceScope(
+    home,
+    command[1] ?? "",
+    {
+      KILO_CONFIG_CONTENT: JSON.stringify({
+        mcp: { rea: { environment: { HOPPER_LAUNCHER_PATH: hopper } } },
+      }),
+    },
+    { platform: HOST_PLATFORM.platform },
+  );
   // The entry matches today, but setup may discover another launcher that
   // the inline layer would then override.
   expect(scope.clients).not.toContain("kilo");
@@ -684,9 +707,14 @@ it("leaves a Kilo file whose own launcher REA does not own out of update mainten
       },
     }),
   );
-  const scope = await existingMaintenanceScope(home, command[1] ?? "", {
-    KILO_CONFIG_CONTENT: JSON.stringify({ mcp: { rea: { command } } }),
-  });
+  const scope = await existingMaintenanceScope(
+    home,
+    command[1] ?? "",
+    {
+      KILO_CONFIG_CONTENT: JSON.stringify({ mcp: { rea: { command } } }),
+    },
+    { platform: HOST_PLATFORM.platform },
+  );
   // The effective entry is REA's, but setup refuses to replace the file's
   // foreign launcher, so maintenance must not select Kilo.
   expect(scope.clients).not.toContain("kilo");
@@ -737,6 +765,7 @@ it("inspects REA's Kilo entry that only KILO_CONFIG_CONTENT sets when no Kilo fo
     home,
     command[1] ?? "",
     {
+      platform: HOST_PLATFORM.platform,
       environment: {
         KILO_CONFIG_CONTENT: JSON.stringify({
           mcp: { rea: { type: "local", command, enabled: true } },

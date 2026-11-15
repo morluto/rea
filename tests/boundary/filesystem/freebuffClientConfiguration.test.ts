@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { constants as fsConstants } from "node:fs";
 import {
@@ -106,6 +107,7 @@ describe("FreeBuff configuration paths", () => {
       await symlink(join(home, "removed-profile"), profile, "dir");
       const statuses = (options = {}) =>
         readClientRegistrationStatuses(home, undefined, {
+          platform: HOST_PLATFORM.platform,
           environment: {},
           ...options,
         });
