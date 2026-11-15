@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import {
   isHostLimitFailure,
   ParseFailureError,
@@ -72,6 +71,7 @@ import {
   hasNibArchiveSignature,
 } from "../../domain/apple/appleArchiveFormat.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const MAX_AGGREGATE_INPUT_BYTES = 32 * 1024 * 1024;
 const MAX_AGGREGATE_DECODE_BYTES = 256 * 1024 * 1024;
@@ -265,7 +265,7 @@ const decodeInterfaceBuilderBundle = async (
           unknownScalars.set(entry.path, unknownScalarCount);
         if (repeatedKeys !== undefined && repeatedKeys.replaced > 0)
           duplicateKeys.set(entry.path, repeatedKeys);
-        const documentHash = createHash("sha256").update(bytes).digest("hex");
+        const documentHash = sha256Hex(bytes);
         documents.push({
           relativePath: entry.path,
           archiveSha256: documentHash,

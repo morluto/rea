@@ -1,5 +1,4 @@
 import { unknownTarget } from "../../domain/targetIdentity.js";
-import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 
@@ -33,6 +32,7 @@ import {
   desktopOutputFailure,
 } from "./DesktopOutputTree.js";
 import { errorMessage } from "../../kernel/errorMessage.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const CHECK = "check_build_task";
 const RECORD = "witness.json";
@@ -83,9 +83,6 @@ export interface EndedWitness {
   readonly stages: WitnessStageRecord[];
 }
 
-const sha256 = (bytes: Buffer) =>
-  createHash("sha256").update(bytes).digest("hex");
-
 /** A recording fetch that can resume after the manifest is known. */
 type RecordingFetch =
   | {
@@ -129,7 +126,7 @@ const fetchRecording = async (
             segment.path.split("/").at(-1) ?? segment.path,
           ),
           bytes: segment.bytes.length,
-          sha256: sha256(segment.bytes),
+          sha256: sha256Hex(segment.bytes),
         })),
       },
     };
@@ -161,7 +158,7 @@ const writeRecordFolder = async (
           await tree.write(
             file.path,
             Readable.from([file.bytes]),
-            { bytes: file.bytes.length, sha256: sha256(file.bytes) },
+            { bytes: file.bytes.length, sha256: sha256Hex(file.bytes) },
             signal,
           );
       },

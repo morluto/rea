@@ -126,9 +126,6 @@ export const readGpuNativeDirectory = async (
   }
   return next.value;
 };
-export const gpuSha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
-
 export const nextGpuContainerOffset = async (
   source: GpuSource,
   start: number,

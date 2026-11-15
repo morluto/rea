@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import { ArtifactReaderFailure } from "../../resources/index.js";
 import { allKeyed, firstKeyed, keyedBy } from "../../domain/keyedCollection.js";
 import { elfObjectTypeName } from "../../domain/native/elfNotes.js";
@@ -22,6 +20,7 @@ import type {
 } from "../../domain/binaryContainer.js";
 import { readElfImage } from "../../domain/native/elfImage.js";
 import { kernelCompressionCodecAt } from "./KernelCompressionCodec.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 type ElfSection = Extract<ImageSection, { format: "elf" }>;
 type Report = KernelModule;
@@ -29,9 +28,6 @@ type Limitations = string[];
 
 const MAGIC = Buffer.from(MODULE_SIGNATURE_MAGIC, "latin1");
 const MODULE_CODECS = ["gzip", "xz", "zstd"] as const;
-
-const sha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 const exceeds = (examined: number, maxEntries: number): void => {
   if (examined > maxEntries)
@@ -188,7 +184,7 @@ const parseModinfo = (
     return {
       status: "unsupported",
       location,
-      sha256: sha256(stored),
+      sha256: sha256Hex(stored),
       entries: [],
       reason: "modinfo_section_compressed",
     };
@@ -238,7 +234,7 @@ const parseModinfo = (
       },
       key,
       value,
-      raw_sha256: sha256(raw),
+      raw_sha256: sha256Hex(raw),
       raw_hex: rawHex(raw),
       status: reason === null ? "observed" : "malformed",
       reason,
@@ -269,7 +265,7 @@ const parseModinfo = (
   return {
     status: "present",
     location,
-    sha256: sha256(stored),
+    sha256: sha256Hex(stored),
     entries,
     reason: null,
   };
@@ -318,7 +314,7 @@ const parseVersions = (
       layout,
       entry_bytes: entryBytes,
       location,
-      sha256: sha256(stored),
+      sha256: sha256Hex(stored),
       entries: [],
       reason: "versions_section_compressed",
     };
@@ -328,7 +324,7 @@ const parseVersions = (
       layout,
       entry_bytes: entryBytes,
       location,
-      sha256: sha256(stored),
+      sha256: sha256Hex(stored),
       entries: [],
       reason: "versions_size_not_multiple",
     };
@@ -363,7 +359,7 @@ const parseVersions = (
     layout,
     entry_bytes: entryBytes,
     location,
-    sha256: sha256(stored),
+    sha256: sha256Hex(stored),
     entries,
     reason: null,
   };
@@ -500,7 +496,7 @@ const parseSignature = (bytes: Buffer): Report["signature"] => {
     info,
     pkcs7: {
       location: { offset: infoOffset - info.sig_len, bytes: info.sig_len },
-      sha256: sha256(pkcs7),
+      sha256: sha256Hex(pkcs7),
     },
     reason: null,
   };

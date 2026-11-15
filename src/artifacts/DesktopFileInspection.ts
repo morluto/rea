@@ -6,7 +6,6 @@ import {
 } from "../domain/godotPckFormat.js";
 import { observeEmbeddedGodotPck } from "./GodotPckLocation.js";
 import type { FileHandle } from "node:fs/promises";
-import { createHash } from "node:crypto";
 import { setImmediate } from "node:timers/promises";
 import type { DesktopFile, DesktopFact } from "../domain/desktopApplication.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
@@ -27,6 +26,7 @@ import {
   hasUnityFsHeader,
   readUnityFsHeaderFacts,
 } from "../domain/unityfsFormat.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 export interface DesktopReadBudget {
   bytes: number;
@@ -129,7 +129,7 @@ export const inspectDesktopFile = async (
     row.ranges.push({
       offset,
       bytes,
-      sha256: createHash("sha256").update(result).digest("hex"),
+      sha256: sha256Hex(result),
     });
     return result;
   };
