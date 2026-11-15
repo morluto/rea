@@ -25,8 +25,7 @@ const specifierDecoder = new TextDecoder("utf-8", {
   fatal: true,
   ignoreBOM: true,
 });
-// Section JSON is embedded binary content; a BOM there is content.
-const jsonDecoder = strictUtf8Decoder("preserve");
+const jsonDecoder = strictUtf8Decoder("strip-signature");
 
 const MEDIA_TYPE_NAMES = [
   "JavaScript",

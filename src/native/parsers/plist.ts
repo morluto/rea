@@ -177,7 +177,7 @@ export const readPlistJsonSource = (
   bytes: Buffer,
 ): PlistJsonParseAttempt | undefined => {
   try {
-    return readPlistJson(decodeStrictUtf8(bytes, "preserve"));
+    return readPlistJson(decodeStrictUtf8(bytes, "strip-signature"));
   } catch {
     return undefined;
   }

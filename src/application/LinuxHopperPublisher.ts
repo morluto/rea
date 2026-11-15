@@ -1083,7 +1083,7 @@ export const retryLinuxHopperPublisherCleanup = async (): Promise<void> => {
 };
 
 const decodeUtf8 = (bytes: Uint8Array): string =>
-  decodeStrictUtf8(bytes, "preserve");
+  decodeStrictUtf8(bytes, "strip-signature");
 const releaseFailure = (
   cause: unknown,
   signal: AbortSignal | undefined,

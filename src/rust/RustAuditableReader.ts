@@ -226,7 +226,7 @@ const parseDocument = (
 ): z.infer<typeof documentSchema> => {
   let text: string;
   try {
-    text = decodeStrictUtf8(bytes, "preserve");
+    text = decodeStrictUtf8(bytes, "strip-signature");
   } catch (cause) {
     throw malformedSection("Dependency JSON is not valid UTF-8", cause);
   }

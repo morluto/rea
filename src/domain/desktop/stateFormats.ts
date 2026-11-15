@@ -93,7 +93,7 @@ const isKeyfile = (text: string): boolean => {
 export const decodeStateText = (bytes: Uint8Array): string | undefined => {
   if (bytes.subarray(0, 8192).includes(0)) return undefined;
   try {
-    return decodeStrictUtf8(bytes, "preserve");
+    return decodeStrictUtf8(bytes, "strip-signature");
   } catch {
     return undefined;
   }

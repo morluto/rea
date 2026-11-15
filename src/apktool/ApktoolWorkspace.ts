@@ -204,7 +204,7 @@ export class ApktoolWorkspace {
           const sourceBytes = Math.min(length, budget);
           try {
             return {
-              text: strictUtf8Decoder("preserve").decode(
+              text: strictUtf8Decoder("strip-signature").decode(
                 bytes.subarray(0, sourceBytes),
                 { stream: truncated },
               ),

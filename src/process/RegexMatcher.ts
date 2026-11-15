@@ -233,7 +233,7 @@ const nodeOptionsFromEnviron = (
       try {
         return decodeStrictUtf8(
           entry.subarray(nodeOptionsKey.length),
-          "preserve",
+          "strip-signature",
         );
       } catch {
         return "invalid";
@@ -286,7 +286,7 @@ const commandLineTokens = (raw: Buffer): readonly string[] | "invalid" => {
   if (raw.length === 0) return "invalid";
   const end = raw[raw.length - 1] === 0 ? raw.length - 1 : raw.length;
   const tokens: string[] = [];
-  const decoder = strictUtf8Decoder("preserve");
+  const decoder = strictUtf8Decoder("strip-signature");
   let offset = 0;
   while (offset < end) {
     const next = raw.indexOf(0, offset);

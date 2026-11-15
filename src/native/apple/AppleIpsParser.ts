@@ -31,7 +31,7 @@ const IPS_LIMITATIONS = [
   "Symbol names printed inside the report are recorded claims and are not verified.",
 ];
 
-const utf8 = strictUtf8Decoder("preserve");
+const utf8 = strictUtf8Decoder("strip-signature");
 
 const canonicalUuid = (
   raw: string | null,

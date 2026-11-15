@@ -3,11 +3,14 @@ import { isUtf8 } from "node:buffer";
 /**
  * What a strict UTF-8 decode does with one leading byte order mark.
  *
+ * - `strip-signature` drops it as an encoding signature. This is the WHATWG
+ *   decoder default, so it is what a plain `{ fatal: true }` decoder did.
  * - `preserve` keeps it as U+FEFF, so the text matches the caller's bytes and
- *   offsets. Use it for every input where the BOM is content or cannot occur.
- * - `strip-signature` drops it, for user-authored text formats that allow the
- *   BOM as an encoding signature (for example a JSON or mapping file saved by
- *   an editor). Each such site states why.
+ *   offsets (`ignoreBOM: true`). Use it where a leading U+FEFF is content.
+ *
+ * Changing a site's policy changes what its consumers see (for example an
+ * exact-value secret match or a JSON parser that rejects U+FEFF), so a change
+ * needs a regression test at that consumer.
  */
 export type Utf8BomPolicy = "preserve" | "strip-signature";
 
