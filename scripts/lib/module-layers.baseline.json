@@ -15,14 +15,13 @@
     "hopper -> application": 2,
     "il2cpp -> application": 1,
     "native -> application": 2,
-    "process -> artifacts": 9
+    "process -> artifacts": 5
   },
   "cycles": [
     "application <-> artifacts",
     "application <-> config",
     "application <-> desktop",
     "application <-> dotnet",
-    "artifacts <-> dotnet",
     "artifacts <-> firmware",
     "artifacts <-> gpu",
     "artifacts <-> javascript",

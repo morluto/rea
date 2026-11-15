@@ -192,6 +192,8 @@ const classifyPackage = (before: string, after: string) =>
 it.each([
   // Shared resource owners moved from src/artifacts keep their lanes.
   ["src/resources/AnalysisCleanupLease.ts", "apk_signature"],
+  ["src/resources/ArtifactResourceScope.ts", "sqlite"],
+  ["src/resources/ArtifactResourceScope.ts", "agentenv"],
   ["src/resources/ArtifactReader.ts", "sqlite"],
   ["src/resources/ArtifactReader.ts", "binary_layout"],
   ["src/resources/ArtifactReader.ts", "evm"],
