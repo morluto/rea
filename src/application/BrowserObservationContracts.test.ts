@@ -198,8 +198,14 @@ it("retains own provider metadata separately from admitted browser facts", async
 });
 
 it("retains source omission when the browser contract supplies defaults", async () => {
-  const { fingerprint_algorithm: _algorithm, ...storage } = inspection.storage;
-  const source = { ...inspection, storage };
+  const worker = {
+    target_id: "worker-1",
+    type: "worker",
+    url: "https://app.example.test/worker.js",
+    origin: "https://app.example.test",
+    attached: false,
+  };
+  const source = { ...inspection, workers: [worker] };
   const result = await service.inspectWebPage(
     pageProvider(async () => ok(source as typeof inspection)),
     inspectWebPageInputSchema.parse(selected),
@@ -207,13 +213,24 @@ it("retains source omission when the browser contract supplies defaults", async 
   expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(result.value.normalized_result).toHaveProperty(
-    "storage.fingerprint_algorithm",
-    "sha256",
+    "workers.0.opener_target_id",
+    null,
   );
   expect(result.value.raw_result).toEqual(source);
   expect(result.value.raw_result).not.toHaveProperty(
-    "storage.fingerprint_algorithm",
+    "workers.0.opener_target_id",
   );
+});
+
+it("refuses a page inspection without the storage fingerprint algorithm", async () => {
+  const { fingerprint_algorithm: _algorithm, ...storage } = inspection.storage;
+  const result = await service.inspectWebPage(
+    pageProvider(async () =>
+      ok({ ...inspection, storage } as typeof inspection),
+    ),
+    inspectWebPageInputSchema.parse(selected),
+  );
+  expect(result.ok).toBe(false);
 });
 
 it("avoids a redundant raw browser report when parsed facts retain all own JSON", async () => {
