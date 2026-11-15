@@ -36,7 +36,6 @@ import {
 import {
   probeRequests,
   requestBody,
-  sendsBodies,
   type ProbeStep,
   type UnobservedRecord,
 } from "./environmentCompareProbe.js";
@@ -510,13 +509,26 @@ export const compareEnvironment = (input: {
   for (const [index, probe] of input.probes.entries()) {
     // A probe's request bodies are its call arguments, which a replay projection of a browser capture drops.
     const capture = parseCaptureEvidence(operation, probe.value, "manifest");
+    // A method that carries a body is not the only one: a served tool can take its call arguments in a body, as a
+    // state-backed bulk DELETE names its entities there. Only a catalog that names the tool can answer that here.
+    const requests = capture.ok
+      ? probeRequests(capture.value.records)
+      : undefined;
+    const needsRequestBodies =
+      capture.ok &&
+      !capture.value.requestBodies &&
+      requests!.steps.some(({ request }) => {
+        if (["POST", "PUT", "PATCH"].includes(request.method)) return true;
+        const call = matchProbeRequest(source.manifest, request, bodies);
+        return call !== undefined && bodies.has(call.tool.name);
+      });
     // Without response bodies only statuses would compare, and without request bodies writes would be made empty.
     const problem = !capture.ok
       ? capture.error.message
       : !capture.value.responseBodies
         ? "a browser probe needs capture.network.response_body selected, or only statuses would compare."
-        : !capture.value.requestBodies && sendsBodies(capture.value.records)
-          ? "a browser probe that makes POST, PUT or PATCH calls needs capture.network.request_body selected, or those calls would be made without their bodies."
+        : !capture.value.requestBodies && needsRequestBodies
+          ? "a browser probe that makes POST, PUT or PATCH calls, or calls a served tool with a body argument, needs capture.network.request_body selected, or those calls would be made without their bodies."
           : undefined;
     if (!capture.ok || problem !== undefined)
       return err(
@@ -544,7 +556,7 @@ export const compareEnvironment = (input: {
       map: new IdMap(),
       normalised: emptyNormalised(),
     };
-    const { steps, unobserved } = probeRequests(capture.value.records);
+    const { steps, unobserved } = requests!;
     const results = steps.flatMap(
       (step) => compareStep(run, source.manifest, step) ?? [],
     );
