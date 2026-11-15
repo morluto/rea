@@ -3,6 +3,8 @@ import type { Logger } from "pino";
 
 import { logCliCommand } from "../cliLogging.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
+import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
@@ -186,6 +188,84 @@ type SessionTargetOperation = Parameters<
   DirectAnalysis["runProviderAnalysis"]
 >[1];
 
+/** Operations `runDirectAnalysis` runs on a target it opens. */
+type DirectAnalysisOperation = Parameters<
+  DirectAnalysis["runDirectAnalysis"]
+>[1];
+
+/**
+ * The one-shot open the caller selected with `open_binary` fields: its
+ * target interpretation, provider and analysis snapshot.
+ */
+const directAnalysisOpening = ({
+  provider_id: providerId,
+  snapshot_path: snapshotPath,
+  ...selection
+}: Readonly<Record<string, unknown>>) => ({
+  ...openBinaryTargetSelection(selection),
+  ...(providerId === undefined
+    ? {}
+    : { providerId: providerId as AnalysisProviderSelector }),
+  ...(snapshotPath === undefined
+    ? {}
+    : { snapshotPath: snapshotPath as string }),
+});
+
+/**
+ * Open the session target for one operation with the `open_binary` fields
+ * the caller selected, run it, and release the provider. A projection with
+ * `evidenceDelivery` delivers complete Evidence or a summary beside its
+ * bundle. `requireSourceEvidence` refuses a bundle whose composed result did
+ * not return the source Evidence it cites.
+ */
+export const runDirectOnTarget =
+  (
+    runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
+    logger: Logger,
+    options: { readonly requireSourceEvidence?: true } = {},
+  ) =>
+  async (input: object, context: ContractCommandContext) => {
+    const { sessionTarget, operation, signal, delivery, opening } = context;
+    if (sessionTarget === undefined)
+      throw new Error(`${operation} declares no session target`);
+    const evidenceOutput = delivery?.evidenceOutput;
+    const result = await runDirectAnalysis(
+      sessionTarget,
+      operation as DirectAnalysisOperation,
+      // Argv values are decoded text, and absent options are left out.
+      input as Readonly<Record<string, JsonValue>>,
+      {
+        logger,
+        signal,
+        ...directAnalysisOpening(opening),
+        ...(evidenceOutput === undefined
+          ? {}
+          : { includeEvidenceSources: true }),
+      },
+    );
+    if (delivery === undefined)
+      return projectCliAnalysisResult(result, context.inputBinding);
+    if (
+      options.requireSourceEvidence === true &&
+      result.ok &&
+      evidenceOutput !== undefined &&
+      result.sourceEvidence === undefined
+    )
+      return projectAnalysisError(
+        new AnalysisOutputError(
+          operation,
+          "The CLI session did not return its source Evidence.",
+        ).retainPartialObservation(result.value),
+      );
+    return publishCliAnalysisEvidence(result, {
+      providerId: "auto",
+      operation,
+      signal,
+      detail: delivery.detail,
+      evidenceOutput,
+    });
+  };
+
 /**
  * Run an analysis that selects no target path through a closeable service
  * and finish its cleanup.
@@ -265,6 +345,11 @@ const incurOptions = (description: ContractCliDescription): z.ZodType => {
       ...description.cliOnlyOptions.map(
         ({ key, schema }) => [key, schema] as const,
       ),
+      ...description.parameters.flatMap(({ selectorOption }) =>
+        selectorOption === undefined
+          ? []
+          : [[selectorOption.key, selectorOption.schema] as const],
+      ),
     ]),
   );
   const constrained =
@@ -330,7 +415,13 @@ export const registerContractCommand = <
       readonly args?: Readonly<Record<string, unknown>>;
       readonly options: Readonly<Record<string, unknown>>;
     }) => {
-      const values = { ...options, ...args };
+      const values: Record<string, unknown> = { ...options, ...args };
+      // A selector's positional and named option may share one key.
+      for (const { key, selectorOption } of description.parameters)
+        if (selectorOption !== undefined) {
+          values[key] = args?.[key];
+          values[selectorOption.valueKey] = options[selectorOption.key];
+        }
       return withCommandCancellation((signal) =>
         logCliCommand(logger, description.command, async () => {
           const admitted = description.admit(values);

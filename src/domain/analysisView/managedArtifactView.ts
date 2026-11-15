@@ -123,7 +123,7 @@ export const projectManagedArtifactView = (
       view,
       ...shared,
       summary: { ...summary, reported_counts, identity_scope },
-      coverage: completeWithinViewCoverage(total, total),
+      coverage: completeWithinViewCoverage(total),
     });
   }
   const collection = report[view.collection];

@@ -31,6 +31,7 @@ import {
 import { javascriptRuntimeReconciliationResultSchema } from "../../domain/javascript/javascriptRuntimeReconciliationSchemas.js";
 import { reconcileJavaScriptRuntimeRequestSchema } from "./applicationWorkflowInputContracts.js";
 import { JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE } from "./javascriptRuntimeReconciliationExample.js";
+import { presentRootDiscriminator } from "../../domain/schemaAnnotations.js";
 
 const listOutputSchema = evidenceResultOf(electronTargetListSchema);
 const inspectionOutputSchema = evidenceResultOf(electronPageInspectionSchema);
@@ -41,16 +42,18 @@ const javascriptApplicationMcpInputSchema =
     ),
   });
 /** Caller-selected delivery of a completed JavaScript application analysis. */
-export const analyzeJavaScriptApplicationRequestSchema = z
-  .discriminatedUnion("detail", [
-    javascriptApplicationMcpInputSchema.extend(
-      javaScriptRoutesCompleteDeliveryShape,
-    ),
-    javascriptApplicationMcpInputSchema.extend(
-      javaScriptRoutesSummaryDeliveryShape,
-    ),
-  ])
-  .meta({ "x-rea-root-discriminator": "detail" });
+export const analyzeJavaScriptApplicationRequestSchema =
+  presentRootDiscriminator(
+    z.discriminatedUnion("detail", [
+      javascriptApplicationMcpInputSchema.extend(
+        javaScriptRoutesCompleteDeliveryShape,
+      ),
+      javascriptApplicationMcpInputSchema.extend(
+        javaScriptRoutesSummaryDeliveryShape,
+      ),
+    ]),
+    "detail",
+  );
 const applicationOutputSchema = analysisDetailOutputSchemaOf(
   javascriptApplicationAnalysisResultSchema,
   z.union([

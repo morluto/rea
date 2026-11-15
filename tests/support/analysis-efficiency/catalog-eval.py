@@ -175,8 +175,8 @@ def comparison(rows, expected_runtime_digest):
     return {'pairs': pairs, 'groups': groups}
 
 
-def catalog_receipt(root, profile, selected):
-    source = root / 'dist' / ('mcp-catalog-full.json' if profile == 'full' else 'mcp-catalog.json')
+def catalog_receipt(root, selected):
+    source = root / 'dist' / 'mcp-catalog.json'
     data = source.read_bytes()
     catalog = json.loads(data)
     names = {tool['name'] for tool in catalog['tools']}
@@ -200,7 +200,6 @@ def main():
     parser.add_argument('--reasoning', default='low')
     parser.add_argument('--modes', nargs='+', choices=['direct', 'client-code'], default=['client-code'],
                         help='Default: supported host mode. direct disables the host as a diagnostic control.')
-    parser.add_argument('--input-profile', choices=['compact', 'full'], default='compact')
     parser.add_argument('--selected-tools', nargs='+', default=['binary_session'])
     parser.add_argument('--repetitions', type=int, default=1)
     parser.add_argument('--timeout', type=int, default=180)
@@ -212,7 +211,7 @@ def main():
     root = args.runtime_root.resolve()
     output = args.output.resolve()
     runtime_files, pinned_digest = (None, None) if args.plan else runtime_fingerprint(root)
-    receipt = catalog_receipt(root, args.input_profile, args.selected_tools)
+    receipt = catalog_receipt(root, args.selected_tools)
     if not args.plan:
         catalog_path = Path(receipt['path']).relative_to(root).as_posix()
         pinned_catalog = next((row for row in runtime_files if row['path'] == catalog_path), None)
@@ -227,7 +226,7 @@ def main():
             for arm in ['none', 'all', 'selected'][::1 if repetition % 2 == 0 else -1]:
                 matrix.append({'repetition': repetition + 1, 'mode': mode, 'arm': arm})
     experiment = {'version': 1, 'runtime_revision': revision, 'model': args.model, 'reasoning': args.reasoning,
-                  'input_profile': args.input_profile, 'catalog': receipt, 'matrix': matrix,
+                  'catalog': receipt, 'matrix': matrix,
                   'sources_sha256': {name: hashlib.sha256((HERE / name).read_bytes()).hexdigest()
                                      for name in ['catalog-eval.py', 'agent-trial.py', 'codex_context.py', 'runtime_identity.py',
                                                   'resource-run.py', 'resource_payload.py', 'provider-environment.json']},
@@ -242,7 +241,7 @@ def main():
     write_json(output / 'runtime-files.json', runtime_files)
     (output / 'prompt.txt').write_text(PROMPT)
     write_json(output / 'selected-tools.json', args.selected_tools)
-    write_json(output / 'providers.json', {'REA_MCP_INPUT_SCHEMA_PROFILE': args.input_profile})
+    write_json(output / 'providers.json', {})
     rows = []
     for index, cell in enumerate(matrix):
         reason = 'Runtime changed between trials; no further model calls were made'

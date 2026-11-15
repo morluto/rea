@@ -16,6 +16,7 @@ import {
 } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { requireLaneToolchain } from "../tests/conformance/ghidra/fixture-toolchain.mjs";
 
 if (
   process.env.GHIDRA_INSTALL_DIR === undefined ||
@@ -26,6 +27,8 @@ if (
   );
 const execute = promisify(execFile);
 const run = createVerifierRun();
+// Refuse a host without the fixture toolchain before allocating anything.
+await requireLaneToolchain("mips-shared");
 const workspaceFixture = await VerifierFixture.open({
   prefix: "rea-mips-shared-proof-",
   // Ghidra children use the workspace as TMPDIR; a plain root admits them on every host.

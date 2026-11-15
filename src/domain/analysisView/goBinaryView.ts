@@ -279,7 +279,7 @@ export const projectGoBinaryView = (
               string_literals: stringSummary,
             }),
       },
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   }
   const indices =

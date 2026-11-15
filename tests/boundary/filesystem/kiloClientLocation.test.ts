@@ -196,7 +196,11 @@ it("refuses a relative Kilo configuration path instead of guessing its folder", 
     // Readers such as doctor's provider settings refuse it instead of reading
     // a file relative to REA's own folder.
     expect(
-      await readEffectiveClientRegistrationConfiguration(resolved),
+      await readEffectiveClientRegistrationConfiguration(
+        resolved,
+        undefined,
+        HOST_PLATFORM.platform,
+      ),
     ).toMatchObject({ ok: false, error: { kind: "unreadable" } });
   }
 });

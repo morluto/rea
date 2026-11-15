@@ -7,6 +7,8 @@ import {
   withArtifactRegularFile,
 } from "../artifacts/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import type { AnalysisPartialObservation } from "../domain/analysisErrorBase.js";
 import {
   AnalysisOutputError,
   AnalysisTimeoutError,
@@ -88,5 +90,61 @@ describe("classifyProviderFailure attribution", () => {
       unclassified,
     });
     expect(failure).toBeInstanceOf(AnalysisOutputError);
+  });
+});
+
+describe("classifyProviderFailure cancelled reads", () => {
+  const partial: AnalysisPartialObservation = {
+    kind: "omitted-observation",
+    reason: "recovery-input-invalid",
+  };
+  const unclassified = (cause: unknown) =>
+    new AnalysisOutputError("read", String(cause), { cause });
+
+  it("keeps the read's partial observation and the provider's diagnostics", () => {
+    const reason = { caller: "stop" };
+    const failure = classifyProviderFailure(
+      new ArtifactReaderFailure("cancelled", "read cancelled", {
+        cause: reason,
+        partialObservation: partial,
+      }),
+      {
+        providerId: "fixture",
+        operation: "read",
+        diagnostics: { path: "/selected" },
+        unclassified,
+      },
+    );
+    expect(failure).toMatchObject({
+      _tag: "AnalysisCancelledError",
+      partialObservation: partial,
+      diagnostics: { path: "/selected" },
+    });
+  });
+
+  it("keeps them on the primary of a cancelled read whose cleanup failed", () => {
+    let primary: unknown;
+    classifyProviderFailure(
+      new ArtifactReaderFailure("cancelled", "read cancelled", {
+        cause: { caller: "stop" },
+        partialObservation: partial,
+        cleanup: { reason: "close failed", resources: ["/selected"] },
+      }),
+      {
+        providerId: "fixture",
+        operation: "read",
+        diagnostics: { path: "/selected" },
+        readCleanup: (read, reported) => {
+          primary = reported;
+          return new AnalysisOutputError("read", read.message);
+        },
+        unclassified,
+      },
+    );
+    expect(primary).toMatchObject({
+      _tag: "AnalysisCancelledError",
+      partialObservation: partial,
+      diagnostics: { path: "/selected" },
+    });
   });
 });

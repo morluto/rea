@@ -313,7 +313,12 @@ describe("Hermes configuration paths", () => {
       expect(client.markerPath).toBe(selected);
       expect(client.configPath).toBe(`${selected}/config.yaml`);
       expect(
-        clientSkillDirectories(home, ["hermes"], environment).directories,
+        clientSkillDirectories(
+          home,
+          ["hermes"],
+          environment,
+          HOST_PLATFORM.platform,
+        ).directories,
       ).toEqual([{ client: "hermes", directory: `${selected}/skills` }]);
       expect(
         await configureClientConfiguration(client, {}, command),
@@ -447,7 +452,12 @@ describe("Hermes unresolved home identity", () => {
       if (client === undefined) throw new Error("missing Hermes client");
       expect(client.markerPath).toBe(selected);
       expect(
-        clientSkillDirectories(home, ["hermes"], environment).directories,
+        clientSkillDirectories(
+          home,
+          ["hermes"],
+          environment,
+          HOST_PLATFORM.platform,
+        ).directories,
       ).toEqual([{ client: "hermes", directory: join(selected, "skills") }]);
       expect(
         await configureClientConfiguration(client, {}, command),
@@ -484,7 +494,12 @@ describe("Hermes unresolved home identity", () => {
       });
       expect(client).not.toHaveProperty("markerPath");
       expect(
-        clientSkillDirectories(home, ["hermes"], environment),
+        clientSkillDirectories(
+          home,
+          ["hermes"],
+          environment,
+          HOST_PLATFORM.platform,
+        ),
       ).toMatchObject({
         directories: [],
         unresolved: [{ client: "hermes", path: selected }],

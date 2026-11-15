@@ -238,7 +238,7 @@ const verifyPortableCli = async (
   });
 };
 
-cliTest.for([{ profile: "full" }, { profile: "compact" }] as const)(
+cliTest.for([{ profile: "compact" }] as const)(
   "shared public CLI/MCP matching retains sources, pages exact facts, and feeds selected dossier pairs directly to compare_functions ($profile)",
   async ({ profile }, { cli }) => {
     const fixture = await createMatchingFixture();
@@ -692,7 +692,7 @@ cliTest(
   },
 );
 
-cliTest.for([{ profile: "full" }, { profile: "compact" }] as const)(
+cliTest.for([{ profile: "compact" }] as const)(
   "ties byte qualifications to selected observations through paged and offline MCP ($profile)",
   async ({ profile }) => {
     const left = nativeMatchingInventory("1", [
