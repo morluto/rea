@@ -46,7 +46,6 @@ import { PcapAnalysisService } from "../application/pcap/PcapAnalysisService.js"
 import { ApktoolResourceAnalysisService } from "../application/apktool/ApktoolResourceAnalysisService.js";
 import { FlutterBuildAnalysisService } from "../application/flutter/FlutterBuildAnalysisService.js";
 import { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisService.js";
-import { registerManagedWorkflowTools } from "./registerManagedWorkflowTools.js";
 import { registerOfficialTools } from "./registerOfficialTools.js";
 import { registerGuidedPrompts } from "./registerPrompts.js";
 import { registerSessionTools } from "./registerSessionTools.js";
@@ -506,13 +505,11 @@ export const createServer = (
     managed: () => {
       registerManagedTools(server, { ...evidenceOptions, evidenceById });
       if (session !== undefined)
-        registerManagedWorkflowTools(server, {
-          logger: toolLogger,
-          recordEvidence,
-          recordEvidenceWithUnknown,
-          session,
-          withAdmittedAnalysis: analysisAdmission,
-        });
+        registerServiceTools(
+          server,
+          { managedWorkflows: session },
+          contractTools,
+        );
     },
     firmware: () =>
       registerServiceTools(server, { firmwareAnalysis }, contractTools),
