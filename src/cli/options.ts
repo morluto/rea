@@ -36,15 +36,13 @@ export const publishArgvInput = <Field extends z.ZodType>(
   return field.meta(inputSchema);
 };
 
-const numericStack = (
+const unwrapWrappers = (
   field: z.ZodType,
-):
-  | {
-      readonly core: z.ZodNumber;
-      readonly wrappers: readonly DecimalWrapper[];
-      readonly description: string | undefined;
-    }
-  | undefined => {
+): {
+  readonly core: z.ZodType;
+  readonly wrappers: readonly DecimalWrapper[];
+  readonly description: string | undefined;
+} => {
   const wrappers: DecimalWrapper[] = [];
   let description: string | undefined;
   let current = field;
@@ -89,9 +87,48 @@ const numericStack = (
     }
     break;
   }
-  return current instanceof z.ZodNumber
-    ? { core: current, wrappers, description }
+  return { core: current, wrappers, description };
+};
+
+const numericStack = (
+  field: z.ZodType,
+):
+  | {
+      readonly core: z.ZodNumber;
+      readonly wrappers: readonly DecimalWrapper[];
+      readonly description: string | undefined;
+    }
+  | undefined => {
+  const stack = unwrapWrappers(field);
+  return stack.core instanceof z.ZodNumber
+    ? {
+        core: stack.core,
+        wrappers: stack.wrappers,
+        description: stack.description,
+      }
     : undefined;
+};
+
+const arrayStack = (
+  field: z.ZodType,
+):
+  | {
+      readonly core: z.ZodArray<z.ZodType>;
+      readonly elementNumber: z.ZodNumber;
+      readonly wrappers: readonly DecimalWrapper[];
+      readonly description: string | undefined;
+    }
+  | undefined => {
+  const stack = unwrapWrappers(field);
+  if (!(stack.core instanceof z.ZodArray)) return undefined;
+  const elementStack = unwrapWrappers(stack.core.element as z.ZodType);
+  if (!(elementStack.core instanceof z.ZodNumber)) return undefined;
+  return {
+    core: stack.core as z.ZodArray<z.ZodType>,
+    elementNumber: elementStack.core,
+    wrappers: stack.wrappers,
+    description: stack.description,
+  };
 };
 
 const applyDecimalWrappers = (
@@ -116,24 +153,45 @@ const applyDecimalWrappers = (
 /**
  * Parse a decimal token, then let the domain field own bounds, defaults,
  * nullability and help. JSON numbers remain valid for schema consumers.
+ * For an array of numbers, parses each token element while preserving the
+ * array's bounds (e.g. minItems), cardinality, and optionality.
  */
 export const cliDecimalField = <Field extends z.ZodType>(
   field: Field,
 ): z.ZodType<z.output<Field>> => {
   const numeric = numericStack(field);
-  if (numeric === undefined)
-    throw new Error(
-      `cliDecimalField expected a numeric domain field, received ${field.constructor.name}`,
+  if (numeric !== undefined) {
+    const admitted = applyDecimalWrappers(
+      z.union([numeric.core, decimalToken(numeric.core)]),
+      numeric.wrappers,
     );
-  const admitted = applyDecimalWrappers(
-    z.union([numeric.core, decimalToken(numeric.core)]),
-    numeric.wrappers,
+    const described =
+      numeric.description === undefined
+        ? admitted
+        : admitted.describe(numeric.description);
+    return publishArgvInput(described) as z.ZodType<z.output<Field>>;
+  }
+  const array = arrayStack(field);
+  if (array !== undefined) {
+    const tokenElement = z.union([
+      array.elementNumber,
+      decimalToken(array.elementNumber),
+    ]);
+    let arraySchema: z.ZodArray<z.ZodType> = z.array(tokenElement);
+    const checks = array.core._def.checks;
+    if (Array.isArray(checks) && checks.length > 0) {
+      arraySchema = arraySchema.check(...(checks as never[]));
+    }
+    const admitted = applyDecimalWrappers(arraySchema, array.wrappers);
+    const described =
+      array.description === undefined
+        ? admitted
+        : admitted.describe(array.description);
+    return publishArgvInput(described) as z.ZodType<z.output<Field>>;
+  }
+  throw new Error(
+    `cliDecimalField expected a numeric or numeric array domain field, received ${field.constructor.name}`,
   );
-  const described =
-    numeric.description === undefined
-      ? admitted
-      : admitted.describe(numeric.description);
-  return publishArgvInput(described) as z.ZodType<z.output<Field>>;
 };
 
 /** Adapt each numeric property of a shared shape; other properties stay unchanged. */
@@ -143,7 +201,9 @@ export const cliDecimalShape = <Shape extends Record<string, z.ZodType>>(
   Object.fromEntries(
     Object.entries(shape).map(([key, field]) => [
       key,
-      numericStack(field) === undefined ? field : cliDecimalField(field),
+      numericStack(field) === undefined && arrayStack(field) === undefined
+        ? field
+        : cliDecimalField(field),
     ]),
   ) as Shape;
 

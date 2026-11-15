@@ -275,3 +275,19 @@ it("rejects invalid selected paths before inspecting a target", async () => {
     });
   }
 });
+
+it("advertises domain minItems for inspect-web-network-capture record selection", async () => {
+  const cli = createCli({});
+  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  const advertised = await serve(cli, [
+    "inspect-web-network-capture",
+    "--schema",
+    "--json",
+  ]);
+  const schema = advertised.options;
+  expect(schema, "inspect-web-network-capture options").toBeDefined();
+  const validate = ajv.compile(schema as AnySchema);
+
+  expect(validate({ record: [] })).toBe(false);
+  expect(validate({ record: [0] })).toBe(true);
+});
