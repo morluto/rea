@@ -1,3 +1,4 @@
+import type { JavaScriptMemberMutationAllowance } from "../../domain/javascript/javascriptSemanticWorkAllowance.js";
 import { discoverJavaScriptPreloadPaths } from "./JavaScriptPreloadDiscovery.js";
 import { artifactNameForClassification } from "../../domain/artifactNameSelection.js";
 import type { AnalysisSettingValues } from "../../domain/analysisSettings.js";
@@ -91,6 +92,7 @@ export const reconstructJavaScriptArtifact = async (
   progress?: ProgressReporter,
   asarHeaderAdmission: AsarHeaderAdmission = DEFAULT_ASAR_HEADER_ADMISSION,
   overrides?: Readonly<Partial<AnalysisSettingValues>>,
+  memberMutationAllowance?: JavaScriptMemberMutationAllowance,
 ): Promise<JavaScriptArtifactReconstructionResult> =>
   scope.run(async () => {
     const reportPhase = async (
@@ -196,6 +198,9 @@ export const reconstructJavaScriptArtifact = async (
         ...(input.semantic_precision === undefined
           ? {}
           : { semanticPrecision: input.semantic_precision }),
+        ...(memberMutationAllowance === undefined
+          ? {}
+          : { memberMutationAllowance }),
         heapMb: heap.value,
         heapSource: heap.source,
         timeoutMs: timeout.value,

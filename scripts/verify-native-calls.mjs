@@ -1,8 +1,7 @@
 import { requireMcpToolError } from "./lib/mcp-verifier-results.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -14,6 +13,10 @@ import {
   artifactMcpCall,
   withArtifactMcp,
 } from "./lib/artifact-e2e.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 const exec = promisify(execFile);
 
@@ -264,8 +267,12 @@ const checkHardenedRuntime = async (directory, binary) => {
   assert.equal(traced.process.exit_status, 0);
 };
 
-const directory = await mkdtemp(join(tmpdir(), "rea-native-calls-"));
-try {
+const directoryFixture = await VerifierFixture.open({
+  prefix: "rea-native-calls-",
+  private: false,
+});
+const directory = directoryFixture.path;
+await withVerifierFixture(directoryFixture, async () => {
   const binary = join(directory, "ReaCalls");
   await exec("/usr/bin/xcrun", [
     "clang",
@@ -346,6 +353,4 @@ try {
       },
     }),
   );
-} finally {
-  await rm(directory, { recursive: true, force: true });
-}
+});

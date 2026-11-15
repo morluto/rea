@@ -1,3 +1,7 @@
+import {
+  javaScriptMemberMutationAllowanceFromField,
+  type JavaScriptMemberMutationAllowance,
+} from "../domain/javascript/javascriptSemanticWorkAllowance.js";
 import type { JavaScriptSemanticPrecisionInput } from "../domain/javascript/javascriptSemanticPrecision.js";
 import { fitJavaScriptRouteSourceFacts } from "../domain/javascript/javascriptRouteResultBudget.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
@@ -31,7 +35,8 @@ import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js"
 export interface WebBundleScriptAnalyzer {
   (
     script: IncludedScript,
-    precision?: JavaScriptSemanticPrecisionInput,
+    precision: JavaScriptSemanticPrecisionInput | undefined,
+    memberMutationAllowance: JavaScriptMemberMutationAllowance,
   ): WebBundleScriptAnalysis;
 }
 
@@ -134,7 +139,13 @@ const analyzeJob = async (
     let result: WebBundleScriptAnalysis;
     try {
       result = webBundleScriptAnalysisSchema.parse(
-        analyze(script, request.semantic_precision),
+        analyze(
+          script,
+          request.semantic_precision,
+          javaScriptMemberMutationAllowanceFromField(
+            request.member_mutation_allowance,
+          ),
+        ),
       );
     } catch (cause) {
       if (cause instanceof AnalysisResourceConstraintError) throw cause;
@@ -142,11 +153,13 @@ const analyzeJob = async (
         `Web bundle analyzer returned an invalid result: ${cause instanceof Error ? cause.message : String(cause)}`,
       );
     }
-    if (result.status !== "analyzed")
+    // A refused script crosses with its partial facts; the parent states the
+    // refusal from the allowance it sent.
+    if (result.status !== "analyzed" && result.partial === undefined)
       throw new WebBundleWorkerOutputError(
         "Web bundle analyzer did not produce a completed per-script result",
       );
-    if (result.route_facts != null) {
+    if (result.status === "analyzed" && result.route_facts != null) {
       const { route_facts, ...existing } = result;
       const available =
         request.result_budget_bytes -

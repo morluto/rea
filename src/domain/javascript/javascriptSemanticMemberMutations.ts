@@ -518,7 +518,7 @@ export function* collectSemanticMemberMutationsSteps(
   >();
   // Alias states are retained until their query finishes; bound the phase
   // before a pathological alias history exhausts the worker heap.
-  const work = new JavaScriptSemanticWorkMeter();
+  const work = new JavaScriptSemanticWorkMeter(state.memberMutationAllowance);
   // The binding pass already retained callable nodes. Ordinary data-only code
   // must not pay an alias walk for every member read or assignment.
   const accessorKeys = {
