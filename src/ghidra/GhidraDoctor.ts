@@ -7,6 +7,10 @@ import type {
 } from "../application/Doctor.js";
 import { admitGhidraInstallation } from "./GhidraAdmission.js";
 import {
+  EXISTING_PROJECT_WINDOWS_REMEDIATION,
+  EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
+} from "./GhidraProviderCapabilities.js";
+import {
   inspectGhidraInstallation,
   type GhidraInstallationCheck,
   type GhidraInstallationInspection,
@@ -22,14 +26,19 @@ export const GHIDRA_DOCTOR_SETTINGS = [
   "GHIDRA_INSTALL_DIR",
   "JAVA_HOME",
   "PATH",
+  "REA_GHIDRA_PROJECT_PATH",
 ] as const;
 
 /** Project installation and runtime-authority facts into the doctor contract. */
 export const projectGhidraDoctorInspection = (
   inspection: GhidraInstallationInspection,
   temporaryDirectory?: GhidraTemporaryDirectoryProbe,
+  selection: { readonly existingProject: boolean } = { existingProject: false },
 ): DoctorProviderInspection => {
-  const admission = admitGhidraInstallation(inspection);
+  const admission = admitGhidraInstallation(inspection, selection);
+  const existingProjectRefused =
+    !admission.admitted &&
+    admission.refusal.kind === "existing_project_unsupported_host";
   // Native authority is reported once the installation itself is usable.
   const readiness =
     inspection.status === "available" ? admission.windowsNative : undefined;
@@ -78,6 +87,18 @@ export const projectGhidraDoctorInspection = (
       ...(temporaryDirectory === undefined
         ? []
         : [temporaryDirectoryCheck(temporaryDirectory)]),
+      ...(existingProjectRefused
+        ? [
+            {
+              name: "existing_project",
+              ok: false,
+              code: "unsupported_host",
+              detail: EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
+              remediation: EXISTING_PROJECT_WINDOWS_REMEDIATION,
+              classification: "unsupported_host" as const,
+            },
+          ]
+        : []),
     ],
   };
 };
@@ -117,11 +138,14 @@ export const inspectSystemGhidraProvider = async (
   environment: Readonly<NodeJS.ProcessEnv>,
   resourceOwner: RetainedResourceScope,
   signal?: AbortSignal,
+  /** The host whose installation is inspected; defaults to the running host. */
+  platform?: NodeJS.Platform,
 ): Promise<DoctorProviderInspection> => {
   try {
     const installation = await inspectGhidraInstallation({
       environment,
       resourceOwner,
+      ...(platform === undefined ? {} : { platform }),
       ...(signal === undefined ? {} : { signal }),
       ...(environment.GHIDRA_INSTALL_DIR === undefined
         ? {}
@@ -135,7 +159,9 @@ export const inspectSystemGhidraProvider = async (
       installation.status === "available" && installation.platform === "win32"
         ? await probeGhidraTemporaryDirectory(resourceOwner)
         : undefined;
-    return projectGhidraDoctorInspection(installation, temporaryDirectory);
+    return projectGhidraDoctorInspection(installation, temporaryDirectory, {
+      existingProject: environment.REA_GHIDRA_PROJECT_PATH !== undefined,
+    });
   } catch (cause: unknown) {
     throw analysisClientFailureForOperation(cause, "ghidra", "doctor");
   }

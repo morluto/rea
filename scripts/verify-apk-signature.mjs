@@ -6,14 +6,12 @@ import { constants } from "node:fs";
 import {
   access,
   copyFile,
-  mkdtemp,
   open,
   readFile,
   readdir,
-  rm,
   writeFile,
 } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -26,6 +24,7 @@ import {
   locateApkSigningBlock,
   parseZipTail,
 } from "../dist/domain/apkSignature/apkSigningBlock.js";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import { mcpTextValue, requireMcpOutput } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 
@@ -216,7 +215,10 @@ const inspectCli = async (path) => {
 };
 
 const verifierRun = createVerifierRun();
-const workspace = await mkdtemp(join(tmpdir(), "rea-apk-signature-verifier-"));
+const fixture = await VerifierFixture.open({
+  prefix: "rea-apk-signature-verifier-",
+});
+const workspace = fixture.path;
 const client = new Client({ name: "apk-signature-verifier", version: "1" });
 const transport = new StdioClientTransport({
   command: process.execPath,
@@ -224,6 +226,9 @@ const transport = new StdioClientTransport({
   env: environment,
   stderr: "pipe",
 });
+// The MCP server child reads files under the workspace until it has exited.
+fixture.releaseAfter(() => client.close());
+fixture.releaseAfter(() => transport.close());
 let cases = 0;
 const failures = [];
 
@@ -666,16 +671,10 @@ try {
   failures.push(cause);
 }
 
-for (const close of [
-  () => client.close(),
-  () => transport.close(),
-  () => rm(workspace, { recursive: true, force: true }),
-]) {
-  try {
-    await close();
-  } catch (cause) {
-    failures.push(cause);
-  }
+try {
+  await fixture.release();
+} catch (cause) {
+  failures.push(cause);
 }
 
 if (failures.length > 0)

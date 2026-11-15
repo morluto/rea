@@ -293,8 +293,11 @@ rendered declarations. `src/contracts/advertisedDialect.ts` owns the portable
 advertised dialect: the keyword allowlist, size and depth limits, and the regex
 grammar that compiles in V8, Python, RE2 and Rust. `advertisedDialect.test.ts`
 lists every input, output and catalog profile combination and compares the
-violation counts with `advertisedDialectBaseline.ts`, which may only shrink;
-the packaged catalog check applies the same rules to the default profiles.
+violation counts with `advertisedDialectBaseline.ts`, which may only shrink,
+except when a runtime analysis setting adds its `update_analysis_settings`
+branch, or a fix restores a contract declaration the presentation had lost and
+the PR names it; the packaged catalog check applies the same rules to the
+default profiles.
 Advertised patterns, input and output, are enforced at zero:
 `portablePattern.ts` re-emits each one exactly, widens it, or omits it, and the
 presentation drops any enclosing `not` or `if` and turns `oneOf` into `anyOf`
