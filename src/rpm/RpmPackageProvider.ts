@@ -1,15 +1,10 @@
 import { RPM_PACKAGE_PROVIDER_IDENTITY } from "./RpmPackageProviderIdentity.js";
 import {
-  artifactFilePrimaryFacts,
   ArtifactReaderFailure,
   ArtifactResourceScope,
+  completedStableArtifactObservation,
   projectArtifactCloseFailure,
-  projectOwnedArtifactIdentityFailure,
-  projectSelectedArtifactFileFailure,
-  projectStableArtifactFailure,
   readStableArtifact,
-  stableArtifactInputFailure,
-  type ArtifactFilePrimaryFacts,
   type StableArtifactSnapshot,
 } from "../resources/index.js";
 import type { RpmPackagePort } from "../application/rpm/RpmPackagePort.js";
@@ -25,6 +20,11 @@ import {
   type InspectRpmPackageInput,
 } from "../domain/rpm/package.js";
 import { err, ok } from "../domain/result.js";
+import type { AnalysisErrorOptions } from "../domain/analysisErrorBase.js";
+import {
+  classifyProviderFailure,
+  type ProviderFailureDialect,
+} from "../providers/classifyProviderFailure.js";
 import { RpmPackageCapacityFailure } from "./RpmPackage.errors.js";
 import { parseRpmPackage } from "./RpmPackageParser.js";
 
@@ -59,79 +59,62 @@ const inputBudgetRemediation = (
   }
 };
 
-const rpmFailurePrimary = (
-  facts: ArtifactFilePrimaryFacts,
+const budgetFailure = (
+  cause: ArtifactReaderFailure,
   input: InspectRpmPackageInput,
+  details: AnalysisErrorOptions,
 ) => {
-  const { cause, origin } = facts;
-  const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
-  if (formatFailure !== undefined) return formatFailure;
-  const identityFailure = projectOwnedArtifactIdentityFailure(
-    facts,
+  const remediationAction = inputBudgetRemediation(cause, input);
+  return new AnalysisResourceConstraintError(
     OPERATION,
-    input.path,
-  );
-  if (identityFailure !== undefined) return identityFailure;
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure
-  ) {
-    if (cause.reason === "limit") {
-      const remediationAction = inputBudgetRemediation(cause, input);
-      return new AnalysisResourceConstraintError(
-        OPERATION,
-        cause.boundary ?? "memory",
-        cause.message,
-        {
-          max_file_bytes: input.max_file_bytes,
-          max_header_index_entries: input.max_header_index_entries,
-          max_files: input.max_files,
-          max_script_bytes: input.max_script_bytes,
-        },
-        {
-          cause,
-          ...(remediationAction === undefined
-            ? {}
-            : { retryable: false, remediationAction }),
-        },
-      );
-    }
-    if (cause.reason === "path" || cause.reason === "format")
-      return stableArtifactInputFailure(cause, OPERATION);
-  }
-  const fileFailure = projectSelectedArtifactFileFailure(
-    cause,
-    OPERATION,
-    input.path,
-    "RPM package",
-  );
-  if (fileFailure !== undefined) return fileFailure;
-  return new ArtifactOperationError(
-    OPERATION,
-    origin === "owned-or-classified" && cause instanceof ArtifactReaderFailure
-      ? cause.reason
-      : "io",
-    undefined,
-    cause instanceof Error ? cause.message : "RPM package inspection failed.",
-    { cause },
+    cause.boundary ?? "memory",
+    cause.message,
+    {
+      max_file_bytes: input.max_file_bytes,
+      max_header_index_entries: input.max_header_index_entries,
+      max_files: input.max_files,
+      max_script_bytes: input.max_script_bytes,
+    },
+    {
+      ...details,
+      cause,
+      ...(remediationAction === undefined
+        ? {}
+        : { retryable: false, remediationAction }),
+    },
   );
 };
 
-const rpmFailure = (
-  cause: unknown,
+/**
+ * RPM's dialect for the shared provider failure classifier. Parser format
+ * refusals and the budget refusals with their recovery advice are the only
+ * cases this provider names.
+ */
+const failureDialect = (
   input: InspectRpmPackageInput,
-  snapshot?: StableArtifactSnapshot,
-) => {
-  const primary = rpmFailurePrimary(artifactFilePrimaryFacts(cause), input);
-  return projectStableArtifactFailure(
-    cause,
-    primary,
-    input.path,
-    RPM_PACKAGE_PROVIDER_IDENTITY.id,
-    OPERATION,
-    snapshot,
-  );
-};
+): ProviderFailureDialect => ({
+  providerId: RPM_PACKAGE_PROVIDER_IDENTITY.id,
+  operation: OPERATION,
+  recognise: (cause, details) => {
+    if (cause instanceof RpmPackageCapacityFailure)
+      return budgetFailure(cause, input, details);
+    return parseFailureAnalysisError(OPERATION, input.path, cause);
+  },
+  file: {
+    path: input.path,
+    description: "RPM package",
+    retainCompletedIdentity: true,
+    fileSize: (limit, details) => budgetFailure(limit, input, details),
+  },
+  unclassified: (cause, details) =>
+    new ArtifactOperationError(
+      OPERATION,
+      "io",
+      undefined,
+      cause instanceof Error ? cause.message : "RPM package inspection failed.",
+      { ...details, cause },
+    ),
+});
 
 /** Portable parser over one bounded, identity-checked regular file. */
 export class RpmPackageProvider implements RpmPackagePort {
@@ -175,7 +158,18 @@ export class RpmPackageProvider implements RpmPackagePort {
         );
       });
     } catch (cause) {
-      return err(rpmFailure(cause, input, snapshot));
+      const failure = classifyProviderFailure(cause, failureDialect(input));
+      // The read already completed; its byte identity stays on the parser refusal.
+      if (snapshot !== undefined) {
+        const observation = completedStableArtifactObservation(
+          cause,
+          input.path,
+          snapshot,
+        );
+        if (observation !== undefined)
+          failure.retainPartialObservation(observation);
+      }
+      return err(failure);
     }
   }
 }
