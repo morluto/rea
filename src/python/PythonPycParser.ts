@@ -310,11 +310,11 @@ export const parsePythonPyc = (
 
 class PycMarshalReader extends MarshalReader<MarshalValue> {
   /** Name and identifier bytes the report carries across all code objects. */
-  #reportedStringBytes = 0;
+  readonly #reportedStringBytes: Budget;
   /** Const summaries the report copies, including tables shared by TYPE_REF. */
-  #reportedConsts = 0;
+  readonly #reportedCopies: Budget;
   /** Bytes of hash-key descriptors materialized for set and dict rules. */
-  #keyBytes = 0;
+  readonly #keyBytes: Budget;
   /** Identity keys for NaN values, which are not equal to themselves. */
   readonly #identities = new WeakMap<MarshalValue, number>();
   #identityNext = 0;
@@ -325,8 +325,11 @@ class PycMarshalReader extends MarshalReader<MarshalValue> {
   /** Interned descriptors so equal values share one token within this walk. */
   readonly #keyTokens = new Map<string, string>();
   #keyTokenNext = 0;
-  /** Explicit key-walk steps. Stream `max_depth` does not bound reference chains. */
-  #keySteps = 0;
+  /**
+   * Explicit key-walk steps, `max_objects * 8`. Stream `max_depth` does not
+   * bound reference chains.
+   */
+  readonly #keySteps: Budget;
   /** One code-equality key per code object. Empty while that key is in progress. */
   readonly #codeKeys = new WeakMap<CodeNode, string>();
   readonly #codeIdentities = new WeakMap<CodeNode, number>();
@@ -368,6 +371,10 @@ class PycMarshalReader extends MarshalReader<MarshalValue> {
     });
     this.#nestedSteps = new Budget(input.max_objects * input.max_depth);
     this.#nestedRetained = new Budget(input.max_objects * input.max_depth);
+    this.#reportedStringBytes = new Budget(input.max_file_bytes);
+    this.#reportedCopies = new Budget(input.max_objects);
+    this.#keyBytes = new Budget(input.max_file_bytes);
+    this.#keySteps = new Budget(input.max_objects * 8);
   }
 
   protected wrap(value: MarshalCoreValue<MarshalValue>): MarshalValue {
@@ -672,14 +679,17 @@ class PycMarshalReader extends MarshalReader<MarshalValue> {
    * in the report, so bound what the report carries, not the stream.
    */
   #reportStrings(values: readonly string[]): void {
-    for (const value of values)
-      this.#reportedStringBytes += Buffer.byteLength(value, "utf8");
-    if (this.#reportedStringBytes > this.input.max_file_bytes)
-      throw new PythonPycResourceFailure(
-        "string",
-        { max_file_bytes: this.input.max_file_bytes },
-        `Reported code-object strings exceed max_file_bytes ${this.input.max_file_bytes}.`,
-      );
+    let bytes = 0;
+    for (const value of values) bytes += Buffer.byteLength(value, "utf8");
+    this.#reportedStringBytes.charge(
+      bytes,
+      () =>
+        new PythonPycResourceFailure(
+          "string",
+          { max_file_bytes: this.input.max_file_bytes },
+          `Reported code-object strings exceed max_file_bytes ${this.input.max_file_bytes}.`,
+        ),
+    );
   }
 
   /**
@@ -717,13 +727,15 @@ class PycMarshalReader extends MarshalReader<MarshalValue> {
     count: number,
     what: "constants" | "names" | "nested code relationships",
   ): void {
-    this.#reportedConsts += count;
-    if (this.#reportedConsts > this.input.max_objects)
-      throw new PythonPycResourceFailure(
-        "objects",
-        { max_objects: this.input.max_objects },
-        `Reported ${what} exceed max_objects ${this.input.max_objects}.`,
-      );
+    this.#reportedCopies.charge(
+      count,
+      () =>
+        new PythonPycResourceFailure(
+          "objects",
+          { max_objects: this.input.max_objects },
+          `Reported ${what} exceed max_objects ${this.input.max_objects}.`,
+        ),
+    );
   }
 
   /**
@@ -1135,14 +1147,15 @@ class PycMarshalReader extends MarshalReader<MarshalValue> {
    * not `max_depth`, because a reference chain is shallow in the stream.
    */
   #takeKeyStep(): void {
-    this.#keySteps += 1;
-    const limit = this.input.max_objects * 8;
-    if (this.#keySteps > limit)
-      throw new PythonPycResourceFailure(
-        "objects",
-        { max_objects: this.input.max_objects },
-        `Marshal key walk exceeds ${limit} steps (max_objects * 8).`,
-      );
+    this.#keySteps.charge(
+      1,
+      () =>
+        new PythonPycResourceFailure(
+          "objects",
+          { max_objects: this.input.max_objects },
+          `Marshal key walk exceeds ${this.#keySteps.maximum} steps (max_objects * 8).`,
+        ),
+    );
   }
 
   #leafKey(value: MarshalValue, mode: KeyMode): ResolvedKey | null {
@@ -1451,13 +1464,15 @@ class PycMarshalReader extends MarshalReader<MarshalValue> {
 
   #reserveKey(size: number): void {
     if (size > this.input.max_string_bytes) this.#keyTooLarge(size);
-    this.#keyBytes += size;
-    if (this.#keyBytes > this.input.max_file_bytes)
-      throw new PythonPycResourceFailure(
-        "string",
-        { max_file_bytes: this.input.max_file_bytes },
-        `Marshal key expansion exceeds max_file_bytes ${this.input.max_file_bytes}.`,
-      );
+    this.#keyBytes.charge(
+      size,
+      () =>
+        new PythonPycResourceFailure(
+          "string",
+          { max_file_bytes: this.input.max_file_bytes },
+          `Marshal key expansion exceeds max_file_bytes ${this.input.max_file_bytes}.`,
+        ),
+    );
   }
 
   #keyTooLarge(size: number): never {
