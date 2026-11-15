@@ -3,6 +3,7 @@ import { API_CONTRACT_TOOL_CONTRACTS } from "./apiContractToolContracts.js";
 import { NTFS_JOURNAL_TOOL_CONTRACTS } from "./ntfsJournalToolContracts.js";
 import { applicationInventoryProjectionInputSchema } from "../domain/mobileApplicationGraphProjection.js";
 import { z } from "zod";
+import { EVIDENCE_FORMAT_REVISION } from "../domain/evidenceFormat.js";
 import {
   featureTraceSummaryViewResultSchema,
   featureTraceViewResultSchema,
@@ -304,7 +305,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
         title: "Generate the complete obligation ledger",
         input: {
           evidence_bundle: {
-            evidence_format: 1,
+            evidence_format: EVIDENCE_FORMAT_REVISION,
             artifacts: [],
             providers: [],
             environments: [],
@@ -337,7 +338,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
         input: {
           coverage: {
             evidence_bundle: {
-              evidence_format: 1,
+              evidence_format: EVIDENCE_FORMAT_REVISION,
               artifacts: [],
               providers: [],
               environments: [],

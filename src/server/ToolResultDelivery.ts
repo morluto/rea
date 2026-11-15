@@ -440,10 +440,12 @@ export class ToolResultDelivery {
       const candidates = [...unretainedEvidenceCandidates(candidateProjection)]
         .map((candidate) => ({
           candidate,
-          size: estimateJsonStorage(candidate.value, {
-            maximumValueBytes: this.resultBudgetBytes,
-            includeSerialized: false,
-          }).valueBytes,
+          // Rank by serialized size, which is what the budget counts. A
+          // parsed-storage lower bound clipped at the budget leaves every
+          // candidate above it unordered, so a smaller source could be
+          // omitted ahead of a larger completed observation. The walk is
+          // linear in the projection the encoder has just traversed.
+          size: estimateJsonStorage(candidate.value).serializedUtf16Bytes,
         }))
         .sort((left, right) => right.size - left.size);
       let next: AnalysisErrorProjection | undefined;
