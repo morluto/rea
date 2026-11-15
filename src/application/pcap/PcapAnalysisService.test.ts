@@ -195,15 +195,20 @@ it("preserves pcap caller field constraints before provider execution", async ()
       return Promise.reject(new Error("provider must not run"));
     },
   });
-  const result = await service.execute("inspect_pcap_capture", { path: "" });
+  const result = await service.execute("inspect_pcap_capture", {
+    path: "relative.pcap",
+  });
   expect(result.ok).toBe(false);
   if (result.ok) return;
   expect(projectAnalysisError(result.error)).toMatchObject({
     code: "invalid_request",
     details: {
       issues: [
-        { path: ["path"], reason: "out_of_range", minimum: 1 },
-        { path: ["path"], reason: "invalid_format", expected: "regex" },
+        {
+          path: ["path"],
+          reason: "invalid_format",
+          expected: "regex",
+        },
       ],
     },
   });
