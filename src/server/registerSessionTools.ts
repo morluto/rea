@@ -29,8 +29,6 @@ import { err, ok, type Result } from "../domain/result.js";
 import type { Logger } from "pino";
 import type { ProviderAvailability } from "../ports/AnalysisProvider.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
-import { registerArtifactComparisonTool } from "./registerArtifactComparisonTool.js";
-import { registerBundleComparisonTool } from "./registerBundleComparisonTool.js";
 import { registerCloseLifecycleTool } from "./registerCloseLifecycleTool.js";
 import { registerResetInvestigationTool } from "./registerResetInvestigationTool.js";
 import {
@@ -344,8 +342,6 @@ export const registerSessionTools = (
   const exportContract = toolContract("export_evidence_bundle");
   const importContract = toolContract("import_evidence_bundle");
   const captureContract = toolContract("capture_process_scenario");
-  const compareArtifactsContract = toolContract("compare_artifacts");
-  const compareBundlesContract = toolContract("compare_bundles");
   const snapshotContract = toolContract("get_evidence_bundle");
   const processResources = new ProcessCaptureResourceScope();
   server.registerTool(
@@ -464,24 +460,18 @@ export const registerSessionTools = (
       });
     }
   };
-  registerServiceTools(server, { sessionDerived: session }, { logger });
-  registerArtifactComparisonTool(
+  registerServiceTools(
     server,
-    session,
-    compareArtifactsContract,
-    options.artifactResources,
+    {
+      sessionDerived: { session, resources: options.artifactResources },
+    },
+    { logger },
   );
   registerNativeFunctionMatchingTool(
     server,
     session,
     logger,
     options.environment,
-  );
-  registerBundleComparisonTool(
-    server,
-    session,
-    compareBundlesContract,
-    options.artifactResources,
   );
   registerUnknownTools({ server, session });
   registerContextTools(server, session);
