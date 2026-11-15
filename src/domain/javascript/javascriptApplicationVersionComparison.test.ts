@@ -431,15 +431,11 @@ describe("application version comparison graph ownership", () => {
 
   it("keeps coverage validation for owned results", () => {
     const result = compare();
-    const parsed = ownedApplicationVersionComparisonResultSchema.safeParse({
-      ...result,
-      coverage: { ...result.coverage, status: "partial" },
-    });
-    expect(parsed.error?.issues).toMatchObject([
-      {
-        path: ["coverage", "status"],
-        params: { constraint: "coverage-matches-graph-completeness" },
-      },
-    ]);
+    expect(() =>
+      ownedApplicationVersionComparisonResultSchema.parse({
+        ...result,
+        coverage: { ...result.coverage, status: "partial" },
+      }),
+    ).toThrow("Comparison coverage must match source graph completeness");
   });
 });

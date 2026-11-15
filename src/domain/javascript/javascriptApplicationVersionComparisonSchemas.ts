@@ -226,7 +226,6 @@ export const applicationVersionComparisonResultSchema = z
         code: "custom",
         path: ["coverage", "status"],
         message: "Comparison coverage must match source graph completeness",
-        params: { constraint: "coverage-matches-graph-completeness" },
       });
   });
 
