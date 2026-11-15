@@ -213,6 +213,9 @@ const webArtifactPrimaryError = (
         ...(cause.reason === "limit" && context.limitRecovery !== undefined
           ? { remediationAction: context.limitRecovery }
           : {}),
+        ...(cause.integrityCheck === undefined
+          ? {}
+          : { integrityCheck: cause.integrityCheck }),
       },
     );
   if (

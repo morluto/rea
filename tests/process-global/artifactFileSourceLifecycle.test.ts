@@ -123,7 +123,7 @@ it.each(carriers)(
       await writeFile(path, carrier.bytes(BODY.repeat(3)));
       await expect(reader.prepareContainer(sha256)).rejects.toMatchObject({
         reason: "integrity",
-        message: `${carrier.name} source identity changed: ${path}`,
+        integrityCheck: "container-identity",
       });
     } finally {
       await reader.close();
