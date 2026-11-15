@@ -33,6 +33,7 @@ import {
   fileAccessFailureReason,
 } from "../resources/index.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 // The JSON read owner records the exact leases it binds; consumers never
 // infer cleanup ownership from matching resource labels.
@@ -237,10 +238,7 @@ const jsonFileCleanupError = <Value>(
     cause: failure,
     path,
     cleanup: {
-      reason:
-        failure.cleanupCause instanceof Error
-          ? failure.cleanupCause.message
-          : String(failure.cleanupCause),
+      reason: errorMessage(failure.cleanupCause),
       resources: [failure.path],
     },
   });

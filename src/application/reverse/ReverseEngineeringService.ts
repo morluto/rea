@@ -88,6 +88,7 @@ import {
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 export type ReverseEngineeringOperation =
   | "inspect_with_objdump"
@@ -296,7 +297,7 @@ export class ReverseEngineeringService {
       } catch (cause) {
         stopped = {
           status: "incomplete",
-          reason: cause instanceof Error ? cause.message : String(cause),
+          reason: errorMessage(cause),
         };
       }
       if (stopped.status === "incomplete") {
