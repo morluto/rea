@@ -1,5 +1,3 @@
-import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
 import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -691,24 +689,5 @@ if (baselinesShrunk) {
 if (failures.length > 0) {
   console.error(`Architecture guards failed:\n\n${failures.join("\n\n")}\n`);
   process.exit(1);
-}
-// CI runs this file before `npm ci`. The numeric-limit parser needs
-// typescript6, so that check waits until dependencies exist. `npm run lint`
-// runs it after install.
-const typescript6 = new URL(
-  "../../node_modules/typescript6/package.json",
-  import.meta.url,
-);
-if (!existsSync(typescript6)) {
-  console.log(
-    "Numeric REA_ limit check waits until dependencies are installed.",
-  );
-} else {
-  const numericLimits = spawnSync(
-    process.execPath,
-    [fileURLToPath(new URL("./rea-numeric-limits.mjs", import.meta.url))],
-    { stdio: "inherit" },
-  );
-  if (numericLimits.status !== 0) process.exit(numericLimits.status ?? 1);
 }
 console.log(`Architecture guards passed across ${files.length} source files.`);
