@@ -1,4 +1,4 @@
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { z } from "zod";
@@ -553,3 +553,116 @@ const assertKiloNativeLayers = (
       error: { tag: "ConfigurationError" },
     });
 };
+
+const resolveWith = async (
+  agent: string,
+  environment: NodeJS.ProcessEnv,
+  prepare: (home: string) => Promise<void> = async () => {},
+) => {
+  const home = await createTestTempDirectory("rea-mcp-override-");
+  await prepare(home);
+  const resources = new ArtifactResourceScope();
+  try {
+    const result = await resolveMcpRegistrationClients(
+      {
+        agents: [agent],
+        global: true,
+        cwd: home,
+        home,
+        platform: "linux",
+        environment: Object.fromEntries(
+          Object.entries(environment).map(([key, value]) => [
+            key,
+            value?.replace("<home>", home),
+          ]),
+        ),
+      },
+      resources,
+    );
+    return { home, result };
+  } finally {
+    await resources.close();
+  }
+};
+
+it.each([
+  { name: "default", env: {}, path: ".fx/mcp.json" },
+  {
+    name: "FX_HOME",
+    env: { FX_HOME: "<home>/profile/" },
+    path: "profile/mcp.json",
+  },
+])(
+  "registers fx in the profile folder fx reads ($name)",
+  async ({ env, path }) => {
+    const { home, result } = await resolveWith("fx", env);
+    if (!result.ok) throw result.error;
+    expect(result.value[0]?.configPath).toBe(join(home, path));
+  },
+);
+
+it.each(["relative/fx", "/", "<home>", "<home>/"])(
+  "refuses an FX_HOME of %s that fx itself refuses",
+  async (value) => {
+    const { result } = await resolveWith("fx", { FX_HOME: value });
+    expect(result).toMatchObject({
+      ok: false,
+      error: { message: expect.stringContaining("FX_HOME") },
+    });
+  },
+);
+
+it.each([
+  {
+    name: "legacy default",
+    env: {},
+    existing: [],
+    path: ".mcporter/mcporter.json",
+  },
+  {
+    name: "absolute XDG default",
+    env: { XDG_CONFIG_HOME: "<home>/xdg" },
+    existing: [],
+    path: "xdg/mcporter/mcporter.json",
+  },
+  {
+    name: "existing legacy file under XDG",
+    env: { XDG_CONFIG_HOME: "<home>/xdg" },
+    existing: [".mcporter/mcporter.jsonc"],
+    path: ".mcporter/mcporter.jsonc",
+  },
+  {
+    name: "XDG file before legacy file",
+    env: { XDG_CONFIG_HOME: "<home>/xdg" },
+    existing: [".mcporter/mcporter.json", "xdg/mcporter/mcporter.jsonc"],
+    path: "xdg/mcporter/mcporter.jsonc",
+  },
+  {
+    name: "relative XDG ignored",
+    env: { XDG_CONFIG_HOME: "xdg" },
+    existing: [],
+    path: ".mcporter/mcporter.json",
+  },
+  {
+    name: "MCPORTER_CONFIG exclusive",
+    env: { MCPORTER_CONFIG: " ~/selected.json " },
+    existing: [".mcporter/mcporter.json"],
+    path: "selected.json",
+  },
+])(
+  "registers MCPorter in the home file it loads ($name)",
+  async ({ env, existing, path }) => {
+    const { home, result } = await resolveWith(
+      "mcporter",
+      env,
+      async (root) => {
+        for (const file of existing) {
+          await mkdir(join(root, file, ".."), { recursive: true });
+          await writeFile(join(root, file), "{}\n");
+        }
+      },
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value[0]?.configPath).toBe(join(home, path));
+  },
+);

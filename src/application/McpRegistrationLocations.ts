@@ -156,18 +156,70 @@ export const fixedProjectLocation =
       ),
     };
   };
+/** MCPorter's expandHome: a leading `~` path segment names the home folder. */
+const expandHome = (value: string, home: string): string =>
+  value === "~"
+    ? home
+    : value.startsWith("~/") || value.startsWith("~\\")
+      ? join(home, value.slice(2))
+      : value;
+
+/**
+ * MCPorter's home layer: `MCPORTER_CONFIG` selects one file exclusively;
+ * otherwise the first existing of the XDG and legacy `~/.mcporter` candidates
+ * (`mcporterConfigCandidates`), where only an absolute `XDG_CONFIG_HOME`
+ * counts. A new file goes where `mcporter config add --scope home` puts it.
+ */
 export const mcporterLocation = async (
   context: McpRegistrationLocationContext,
 ): Promise<McpRegistrationGlobalLocation> => {
-  const root = join(context.home, ".mcporter");
-  const primary = join(root, "mcporter.json");
-  return location(
-    await firstExisting([primary, join(root, "mcporter.jsonc")], primary),
-    root,
+  const pathApi = context.platform === "win32" ? win32 : posix;
+  const legacy = join(context.home, ".mcporter");
+  const selected = context.environment.MCPORTER_CONFIG?.trim();
+  if (selected)
+    return location(
+      selectedPath(expandHome(selected, context.home), context),
+      legacy,
+    );
+  const configHome = expandHome(
+    context.environment.XDG_CONFIG_HOME?.trim() ?? "",
+    context.home,
   );
+  const base = pathApi.isAbsolute(configHome)
+    ? join(configHome, "mcporter")
+    : legacy;
+  const candidates = [base, ...(base === legacy ? [] : [legacy])].flatMap(
+    (directory) => [
+      join(directory, "mcporter.json"),
+      join(directory, "mcporter.jsonc"),
+    ],
+  );
+  const configPath = await firstExisting(
+    candidates,
+    join(base, "mcporter.json"),
+  );
+  return { configPath, markers: [...new Set([base, legacy])] };
 };
 
+/**
+ * fx's profile folder: `$FX_HOME` when set, which fx admits only as an
+ * absolute path other than the root and the home folder (`useFxHome`), else
+ * `~/.fx`. fx refuses an invalid value, so registration does too.
+ */
 export const fxLocation = async (
   context: McpRegistrationLocationContext,
-): Promise<McpRegistrationGlobalLocation> =>
-  location(join(context.home, ".fx", "mcp.json"));
+): Promise<McpRegistrationGlobalLocation> => {
+  const value = context.environment.FX_HOME;
+  if (!value) return location(join(context.home, ".fx", "mcp.json"));
+  const pathApi = context.platform === "win32" ? win32 : posix;
+  const trimmed = value.replace(/\/+$/u, "");
+  if (
+    !pathApi.isAbsolute(value) ||
+    trimmed.length === 0 ||
+    trimmed === context.home.replace(/\/+$/u, "")
+  )
+    throw new ConfigurationError(
+      "FX_HOME must be an absolute path other than the root and home folders, as fx requires. Repair FX_HOME before registering; no settings were written.",
+    );
+  return location(join(trimmed, "mcp.json"));
+};
