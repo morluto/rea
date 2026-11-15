@@ -140,16 +140,33 @@ describe("maintenance activation and layered configuration", () => {
       }),
     );
     const before = await readFile(cursor, "utf8");
+    const commands: (readonly string[])[] = [];
     const result = await planIntegrationMaintenance(
       home,
       entryPoint,
       process.env,
-      () => {
-        throw new Error("An unresolved maintenance scope must not be executed");
+      async (command) => {
+        commands.push(command);
+        return ok(
+          JSON.stringify({
+            status: "planned",
+            // An action for the unresolved client is outside the scope.
+            plannedActions: [{ ...action, id: "configure_client:cursor" }],
+          }),
+        );
       },
     );
-    expect(result).toMatchObject({
-      status: "unavailable",
+    expect(result).toMatchObject({ status: "unavailable" });
+    expect(commands[0]).not.toContain("cursor");
+    const planned = await planIntegrationMaintenance(
+      home,
+      entryPoint,
+      process.env,
+      async () =>
+        ok(JSON.stringify({ status: "planned", plannedActions: [action] })),
+    );
+    expect(planned).toMatchObject({
+      status: "planned",
       scope: {
         clients: ["codex"],
         unresolved: [
@@ -160,9 +177,36 @@ describe("maintenance activation and layered configuration", () => {
           }),
         ],
       },
-      remediation: expect.stringContaining("cursor"),
     });
     expect(await readFile(cursor, "utf8")).toBe(before);
+  });
+
+  it("maintains other clients while an unresolved MCPorter location stays unknown", async () => {
+    vi.stubEnv("MCPORTER_CONFIG", "config/mcporter.json");
+    await writeClient("codex", staleCodex);
+    const scope = await existingMaintenanceScope(home, entryPoint, process.env);
+    expect(scope).toMatchObject({
+      clients: ["codex"],
+      unresolved: [
+        {
+          client: "mcporter",
+          state: "unknown",
+          command: [],
+          remediation: expect.stringContaining("MCPORTER_CONFIG is relative"),
+        },
+      ],
+    });
+    const current = await planIntegrationMaintenance(
+      home,
+      entryPoint,
+      process.env,
+      async () => ok(JSON.stringify({ status: "planned", plannedActions: [] })),
+    );
+    // Nothing else needs maintenance, yet the unknown client is not hidden.
+    expect(current).toMatchObject({
+      status: "current",
+      unresolved: [{ client: "mcporter", state: "unknown" }],
+    });
   });
 
   it("leaves an inherited disabled OpenCode V2 registration outside maintenance", async () => {

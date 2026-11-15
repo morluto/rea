@@ -299,3 +299,25 @@ it("keeps MCPorter out of setup detection and doctor until REA registers it", as
     state: "missing",
   });
 });
+
+it("stops uninstall with MCPorter's recovery while its location is unknown", async () => {
+  const home = await createTestTempDirectory("rea-mcporter-unknown-uninstall-");
+  const environment = { MCPORTER_CONFIG: "config/mcporter.json" };
+  const claude = join(home, ".claude.json");
+  const original = `${JSON.stringify({ mcpServers: { rea: { command: command[0], args: command.slice(1) } } })}\n`;
+  await writeFile(claude, original);
+  const uninstall = await runUninstall(
+    false,
+    systemUninstallHost(home, undefined, environment, platform),
+  );
+  // REA cannot tell whether MCPorter's file holds its row, so nothing is
+  // removed and the result names MCPorter's own recovery.
+  expect(uninstall.items).toContainEqual(
+    expect.objectContaining({
+      name: "mcporter",
+      status: "failed",
+      detail: expect.stringContaining("MCPORTER_CONFIG is relative"),
+    }),
+  );
+  expect(await readFile(claude, "utf8")).toBe(original);
+});

@@ -577,7 +577,9 @@ global directory without its `package.json` is not treated as an owned
 installation, because Bun would install into the nearest ancestor project
 instead.
 Its maintenance plan selects only existing REA registrations and an already
-installed REA skill. Run the returned scoped setup command to review and approve
+installed REA skill. A client whose configuration location or registration
+cannot be resolved is left unmaintained and named with its own recovery; the
+other clients are still maintained. Run the returned scoped setup command to review and approve
 those changes, then restart affected agents. The plan is returned in terminal,
 non-TTY, and JSON modes without applying configuration changes.
 

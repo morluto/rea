@@ -81,7 +81,8 @@ export type ClientRegistrationStatus = ClientRegistrationStatusBase &
         readonly remediation: string;
       }
     | {
-        readonly command: RegistrationCommand;
+        /** Empty when the client's configuration location is unresolved. */
+        readonly command: RegistrationCommand | readonly [];
         readonly state: "unknown";
         readonly remediation: string;
       }
@@ -160,13 +161,15 @@ export const readClientRegistrationInspections = async (
     options.environment,
   )) {
     const selected = options.selectedClientIds?.includes(client.name) === true;
+    // An unresolved location leaves this client's registration unknown, never
+    // absent; diagnostics and maintenance still cover every other client.
     if (client.configPathError !== undefined) {
       record({
         client: client.name,
         config_path: client.configPath,
         command: [],
         command_identity: "unknown",
-        state: "invalid",
+        state: "unknown",
         remediation: client.configPathError,
       });
       continue;
