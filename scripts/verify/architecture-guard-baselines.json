@@ -437,7 +437,6 @@
     "src/application/EvidenceBundleCommands.ts": 1,
     "src/application/EvidenceBundleFiles.ts": 1,
     "src/application/JsonFiles.ts": 1,
-    "src/application/McpRegistrationGit.ts": 1,
     "src/application/Setup.ts": 2,
     "src/application/SetupCleanupOwner.ts": 2,
     "src/application/Uninstall.ts": 1,
@@ -547,5 +546,11 @@
     "src/sqlite/SqliteDatabaseProvider.ts": 8,
     "src/sqlite/SqliteDatabaseWorkerExecution.ts": 2,
     "src/wasm/WabtArtifactProvider.ts": 1
+  },
+  "section-first-match": {
+    "src/application/GuidanceAccess.ts": 1,
+    "src/domain/native/nativeAotPe.ts": 2,
+    "src/dotnet/ManagedPeReader.ts": 1,
+    "src/go/GoBuildInfoSearch.ts": 1
   }
 }

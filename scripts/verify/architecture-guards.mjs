@@ -354,6 +354,18 @@ checkCounted(
   ["src/domain/analysisErrorBase.ts"],
 );
 
+// `find` on a parsed section table silently keeps the first of repeated
+// declarations. Select keyed sections through src/domain/keyedCollection
+// (`uniqueKeyed`, `allKeyed`, or `firstKeyed`/`lastKeyed` with the format's
+// precedence rule). The counted sites include address-containment searches.
+checkCounted(
+  "first-match section lookup (select through src/domain/keyedCollection)",
+  "section-first-match",
+  files,
+  /\bsections\.find(?:Last)?\(/gu,
+  [],
+);
+
 if (baselinesShrunk) {
   const sorted = Object.fromEntries(
     Object.entries(baselines).map(([key, counts]) => [

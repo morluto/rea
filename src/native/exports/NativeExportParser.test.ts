@@ -1376,3 +1376,43 @@ it.each(
     expect(parse(compressExportSection(bytes, 5))).toEqual(expected);
   },
 );
+
+describe("ELF sections of a once-only type", () => {
+  /** Retype the first ELF64 little-endian section header of type `from`. */
+  const retype = (bytes: Buffer, from: number, to: number): Buffer => {
+    const copy = Buffer.from(bytes);
+    const offset = Number(copy.readBigUInt64LE(0x28));
+    const width = copy.readUInt16LE(0x3a);
+    const count = copy.readUInt16LE(0x3c);
+    for (let index = 0; index < count; index++) {
+      const at = offset + index * width + 4;
+      if (copy.readUInt32LE(at) !== from) continue;
+      copy.writeUInt32LE(to, at);
+      return copy;
+    }
+    throw new Error(`No section of type ${String(from)}`);
+  };
+  const image = () =>
+    elfExportImage({
+      symbols: [{ name: "stdout", type: 1, value: 0x28268n, version: 3 }],
+      versionRequirements: [{ index: 3, name: "GLIBC_2.2.5" }],
+    });
+
+  it("refuses an image that declares two dynamic symbol tables", () => {
+    expect(refusal(retype(image(), 0x6fffffff, 11))).toMatchObject({
+      kind: "malformed",
+      message: "ELF image has more than one SHT_DYNSYM",
+    });
+  });
+
+  it("reads neither of two version requirement tables and says so", () => {
+    const result = parse(retype(image(), 0x6fffffff, 0x6ffffffe));
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({
+        code: "version_unresolved",
+        message:
+          "Version requirements: the ELF declares 2 sections of this type, so none was read",
+      }),
+    );
+  });
+});
