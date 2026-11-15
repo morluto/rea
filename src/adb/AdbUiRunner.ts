@@ -247,7 +247,7 @@ export class AdbUiRunner {
     /** Launch adapters must preserve the launch-state observations owned by this boundary. */
     private readonly launcher = spawnOwnedProviderProcess,
     /** Host facts deciding how the selected adb executable reaches the launcher. */
-    private readonly platform: NodeJS.Platform = process.platform,
+    private readonly platform: NodeJS.Platform,
     /** Test seam for Windows PATH lookup while running on another host. */
     private readonly windowsIsFile?: (path: string) => boolean,
     /** Record a terminal outcome recovered after its original response was sent. */
@@ -261,12 +261,29 @@ export class AdbUiRunner {
    * so an unset `REA_ADB_PATH` works there exactly as the `adb version` probe
    * already does.
    */
-  #launchExecutable(binary: string): string {
+  #launchExecutable(binary: string, operation: string): string {
     if (this.platform !== "win32") return binary;
-    return resolveWindowsProviderExecutable(
+    const selected = resolveWindowsProviderExecutable(
       binary,
       this.environment,
       this.windowsIsFile === undefined ? {} : { isFile: this.windowsIsFile },
+    );
+    if (selected.ok) return selected.value;
+    throw new AnalysisCapabilityUnavailableError(
+      "adb",
+      operation,
+      selected.error.kind === "not_found"
+        ? "Selected ADB executable was not found on the captured Windows PATH/PATHEXT"
+        : "Windows PATHEXT contains an invalid executable extension",
+      {
+        cause: selected.error,
+        diagnostics: {
+          selected_binary: binary,
+          lookup_failure: selected.error.kind,
+        },
+        remediationAction:
+          "Set REA_ADB_PATH to an absolute adb executable or correct the selected PATH/PATHEXT before retrying.",
+      },
     );
   }
 
@@ -907,7 +924,7 @@ export class AdbUiRunner {
         });
       const packageName = parsedPackage.data;
       const { serial } = request.input;
-      const launch = this.#launchExecutable(selectedBinary);
+      const launch = this.#launchExecutable(selectedBinary, request.operation);
       const ping = await this.#send(
         launch,
         serial,

@@ -21,6 +21,31 @@ const client = {
   installed_path: null,
 };
 const provider = { id: "adb", name: "ADB", version: null };
+it.each([
+  { environment: { PATH: "C:\\tools", PATHEXT: ".EXE" }, kind: "not_found" },
+  {
+    environment: { PATH: "C:\\tools", PATHEXT: ".EXE;C:\\bad" },
+    kind: "invalid_extension",
+  },
+])(
+  "refuses Windows executable selection before UI launch: $kind",
+  async ({ environment, kind }) => {
+    const launcher = vi.fn(async () => {
+      throw new Error("must not launch an unresolved executable");
+    });
+    const runner = new AdbUiRunner(environment, launcher, "win32", () => false);
+    const result = await runner.execute(request, "adb", client, provider);
+    if (result.ok) throw new Error("Expected executable selection refusal");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisCapabilityUnavailableError",
+      diagnostics: { selected_binary: "adb", lookup_failure: kind },
+    });
+    expect(launcher).not.toHaveBeenCalled();
+    expect(runner.pendingResources).toEqual([]);
+    await runner.close();
+  },
+);
+
 afterEach(() => {
   vi.restoreAllMocks();
   vi.useRealTimers();
@@ -41,7 +66,7 @@ it("does not spend the short UI command deadline on cold ownership preparation",
   const launcher = vi.fn(async () => {
     throw new Error("controlled no-launch transport failure");
   });
-  const runner = new AdbUiRunner({}, launcher);
+  const runner = new AdbUiRunner({}, launcher, "linux");
   const pending = runner.execute(
     request,
     "adb",
@@ -115,7 +140,7 @@ it.each([
       if (stage === "launch") return failPreparation();
       throw new Error("target must not launch");
     });
-    const runner = new AdbUiRunner({}, launcher);
+    const runner = new AdbUiRunner({}, launcher, "linux");
     try {
       const result = await runner.execute(
         request,

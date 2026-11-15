@@ -120,6 +120,7 @@ import type { JebAnalysisPort } from "../application/jeb/JebAnalysisPort.js";
 import type { AdbDeviceAnalysisPort } from "../application/adb/AdbDeviceAnalysisPort.js";
 import type { BuildSettle } from "../application/desktop/DesktopBuildSettle.js";
 import type { BuildComputerDefaults } from "../desktop/BuildComputerEnvironment.js";
+import type { ComputerStartTiming } from "../desktop/AgentEnvComputer.js";
 
 /** Typed injection inputs shared by a capability host, independent of transport. */
 export interface CapabilityServiceOptions {
@@ -162,6 +163,8 @@ export interface CapabilityServiceOptions {
   readonly desktopBuildSettle?: BuildSettle;
   /** Where build computers look for unset settings; the host's PATH and REA cache unless a test isolates them. */
   readonly desktopBuildDefaults?: BuildComputerDefaults;
+  /** How long a build computer waits for its desktop to draw and how often its start reports progress; the shipped timing unless a test shortens it. */
+  readonly desktopBuildStartTiming?: ComputerStartTiming;
   readonly reverseEngineering?: ReverseEngineeringService;
 }
 
@@ -342,6 +345,7 @@ const modules = {
         providerEnvironment,
         options.desktopBuildSettle,
         options.desktopBuildDefaults,
+        options.desktopBuildStartTiming,
       ),
     (value) => value.closeAll(),
   ),

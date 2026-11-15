@@ -495,10 +495,11 @@ it.skipIf(process.platform === "win32")(
   "closes a session after unsolicited frames make command correlation unsafe",
   async () => {
     const provider = await makeProvider(
-      'process.stdout.write("\\0"); setTimeout(() => process.stdout.write("unexpected\\0"), 20); process.stdin.resume();',
+      // One pipe write delivers the handshake and the unsolicited frame in a
+      // single chunk, so the frame is queued before start() resolves.
+      'process.stdout.write("\\0unexpected\\0"); process.stdin.resume();',
     );
     const { manager, sessionId } = await start(provider);
-    await new Promise((resolve) => setTimeout(resolve, 50));
     const result = await manager.execute(sessionId, "dr");
     expect(result.ok).toBe(false);
     expect(manager.status(sessionId)?.state).toBe("closed");

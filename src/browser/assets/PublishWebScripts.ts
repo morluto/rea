@@ -12,7 +12,11 @@ import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
 import { outputDirectoryAdmissionRefusal } from "../../artifacts/SafeOutputTreeAdmission.js";
 import { SafeOutputTreeCreationFailure } from "../../artifacts/SafeOutputTreeCreationFailure.js";
 import { PLAYWRIGHT_RESPONSE_BODY_PROVENANCE_LIMITATION } from "../../domain/browserNetworkEvidence.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
+} from "../../domain/analysisErrorCore.js";
 import {
   webScriptExportManifestSchema,
   webScriptExportResultSchema,
@@ -52,10 +56,7 @@ export const publishWebScripts = async (
 ): Promise<WebScriptExportResult> =>
   options.resources.run(async () => {
     const assertActive = (): void => {
-      if (options.signal?.aborted)
-        throw new AnalysisCancelledError(OPERATION, {
-          cause: options.signal.reason,
-        });
+      if (options.signal?.aborted) throw cancelledBy(OPERATION, options.signal);
     };
     const planned = planWebScriptExport(capture.scripts);
     const scenarioResponseBodyCaptured =
@@ -135,9 +136,7 @@ export const publishWebScripts = async (
           ? cause
           : cause instanceof ArtifactReaderFailure &&
               cause.cancellation !== undefined
-            ? new AnalysisCancelledError(OPERATION, {
-                cause: cause.cancellation.reason,
-              })
+            ? cancelledBy(OPERATION, carriedReason(cause.cancellation.reason))
             : undefined;
       if (cause instanceof SafeOutputTreeCreationFailure) tree = cause.tree;
       if (tree !== undefined) {
@@ -156,13 +155,16 @@ export const publishWebScripts = async (
               ? ({ kind: "web-script-export", result } as const)
               : undefined;
           if (cancellation !== undefined) {
-            const cancelled = new AnalysisCancelledError(OPERATION, {
-              cause: cancellation.cause,
-              cleanup: { reason: diagnostic, resources: [tree.outputRoot] },
-              ...(partialObservation === undefined
-                ? {}
-                : { partialObservation }),
-            });
+            const cancelled = cancelledBy(
+              OPERATION,
+              carriedReason(cancellation.cause),
+              {
+                cleanup: { reason: diagnostic, resources: [tree.outputRoot] },
+                ...(partialObservation === undefined
+                  ? {}
+                  : { partialObservation }),
+              },
+            );
             cleanup.lease.bindCleanupError(cancelled);
             throw cancelled;
           }

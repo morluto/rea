@@ -442,54 +442,42 @@ it.each(
     const reason = new Error("cancel during admission command cleanup");
     let denied = true;
     let cleanupAttempts = 0;
-    const transport = new AdbUiRunner(environment, async (input) => {
-      const acquired = await spawnOwnedProviderProcess(input);
-      const body = input.arguments[3] === "-T";
-      if (
-        stage === "body"
-          ? !body
-          : body ||
-            JSON.parse(
-              Buffer.from(input.arguments.at(-1)!, "base64").toString("utf8"),
-            ).operation !== "prepare"
-      )
-        return acquired;
-      return {
-        ...acquired,
-        cleanup: async () => {
-          cleanupAttempts++;
-          if (denied) {
-            if (cancel) controller.abort(reason);
-            return { cleaned: false, reason: "controlled host cleanup denial" };
-          }
-          return (
-            acquired.cleanup?.() ?? cleanupOwnedProcessGroup(acquired.ownership)
-          );
-        },
-      };
-    });
-    const restorePreparedSlot = async () => {
-      if (
-        stage !== "prepare" ||
-        !transport.pendingResources.some((resource) =>
-          resource.startsWith("adb-ui:"),
+    const transport = new AdbUiRunner(
+      environment,
+      async (input) => {
+        const acquired = await spawnOwnedProviderProcess(input);
+        const body = input.arguments[3] === "-T";
+        if (
+          stage === "body"
+            ? !body
+            : body ||
+              JSON.parse(
+                Buffer.from(input.arguments.at(-1)!, "base64").toString("utf8"),
+              ).operation !== "prepare"
         )
-      )
-        return;
-      // Unmatched/malformed replies cannot prove preparation refusal. Supply
-      // a controlled slot so cleanup can later obtain definitive settlement.
-      const calls = (await readFile(workspace.path("calls"), "utf8"))
-        .trim()
-        .split("\n")
-        .map((line) => JSON.parse(line));
-      const prepared = calls.find((call) => call.operation === "prepare");
-      if (prepared === undefined)
-        throw new Error("Missing preparation request");
-      await writeFile(
-        workspace.path(`job-${prepared.request_id}.json`),
-        JSON.stringify({ state: "prepared" }),
-      );
-    };
+          return acquired;
+        return {
+          ...acquired,
+          cleanup: async () => {
+            cleanupAttempts++;
+            if (denied) {
+              if (cancel) controller.abort(reason);
+              return {
+                cleaned: false,
+                reason: "controlled host cleanup denial",
+              };
+            }
+            return (
+              acquired.cleanup?.() ??
+              cleanupOwnedProcessGroup(acquired.ownership)
+            );
+          },
+        };
+      },
+      process.platform,
+    );
+    const restorePreparedSlot = () =>
+      restoreUnconfirmedPreparedSlot(stage, transport, workspace);
     onTestFinished(async () => {
       denied = false;
       await restorePreparedSlot();
@@ -602,34 +590,39 @@ it.each(
     const controller = new AbortController();
     let denied = true;
     let terminalCleanup = false;
-    const transport = new AdbUiRunner(environment, async (input) => {
-      const acquired = await spawnOwnedProviderProcess(input);
-      if (input.arguments[3] === "-T") return acquired;
-      const payload = JSON.parse(
-        Buffer.from(input.arguments.at(-1)!, "base64").toString("utf8"),
-      );
-      if (payload.operation !== phase) return acquired;
-      return {
-        ...acquired,
-        cleanup: async () => {
-          if (denied) {
-            terminalCleanup = true;
-            await setMode({ status_offline: true, cancel_offline: true });
-            if (cancelled)
-              controller.abort(
-                new Error("cancel during terminal host cleanup"),
-              );
-            return {
-              cleaned: false,
-              reason: "controlled terminal cleanup denial",
-            };
-          }
-          return (
-            acquired.cleanup?.() ?? cleanupOwnedProcessGroup(acquired.ownership)
-          );
-        },
-      };
-    });
+    const transport = new AdbUiRunner(
+      environment,
+      async (input) => {
+        const acquired = await spawnOwnedProviderProcess(input);
+        if (input.arguments[3] === "-T") return acquired;
+        const payload = JSON.parse(
+          Buffer.from(input.arguments.at(-1)!, "base64").toString("utf8"),
+        );
+        if (payload.operation !== phase) return acquired;
+        return {
+          ...acquired,
+          cleanup: async () => {
+            if (denied) {
+              terminalCleanup = true;
+              await setMode({ status_offline: true, cancel_offline: true });
+              if (cancelled)
+                controller.abort(
+                  new Error("cancel during terminal host cleanup"),
+                );
+              return {
+                cleaned: false,
+                reason: "controlled terminal cleanup denial",
+              };
+            }
+            return (
+              acquired.cleanup?.() ??
+              cleanupOwnedProcessGroup(acquired.ownership)
+            );
+          },
+        };
+      },
+      process.platform,
+    );
     onTestFinished(async () => {
       denied = false;
       await setMode({});
@@ -683,6 +676,33 @@ it.each(
     expect(result.error.cleanupIncomplete).toBe(false);
   },
 );
+
+/** Give an unconfirmed preparation its controlled slot before retrying cleanup. */
+async function restoreUnconfirmedPreparedSlot(
+  stage: string,
+  transport: AdbUiRunner,
+  workspace: Awaited<ReturnType<typeof fixture>>["workspace"],
+): Promise<void> {
+  if (
+    stage !== "prepare" ||
+    !transport.pendingResources.some((resource) =>
+      resource.startsWith("adb-ui:"),
+    )
+  )
+    return;
+  // Unmatched/malformed replies cannot prove refusal. Only the fixture supplies
+  // this slot; production still requires a validated runner settlement.
+  const calls = (await readFile(workspace.path("calls"), "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  const prepared = calls.find((call) => call.operation === "prepare");
+  if (prepared === undefined) throw new Error("Missing preparation request");
+  await writeFile(
+    workspace.path(`job-${prepared.request_id}.json`),
+    JSON.stringify({ state: "prepared" }),
+  );
+}
 
 const completionRecoveryCases = [
   { name: "status", mode: {}, cleanupIncomplete: false },
@@ -1120,23 +1140,27 @@ it.each(["prepare", "input"])(
   async (phase) => {
     const { workspace, binary, environment } = await fixture();
     const controller = new AbortController();
-    const transport = new AdbUiRunner(environment, async (input) => {
-      const wire =
-        input.arguments[3] === "am"
-          ? JSON.parse(
-              Buffer.from(input.arguments.at(-1)!, "base64").toString("utf8"),
-            )
-          : null;
-      if (
-        !controller.signal.aborted &&
-        (phase === "prepare"
-          ? wire?.operation === "prepare" &&
-            wire.target_operation === "inspect_adb_ui"
-          : input.arguments[3] === "-T")
-      )
-        controller.abort();
-      return spawnOwnedProviderProcess(input);
-    });
+    const transport = new AdbUiRunner(
+      environment,
+      async (input) => {
+        const wire =
+          input.arguments[3] === "am"
+            ? JSON.parse(
+                Buffer.from(input.arguments.at(-1)!, "base64").toString("utf8"),
+              )
+            : null;
+        if (
+          !controller.signal.aborted &&
+          (phase === "prepare"
+            ? wire?.operation === "prepare" &&
+              wire.target_operation === "inspect_adb_ui"
+            : input.arguments[3] === "-T")
+        )
+          controller.abort();
+        return spawnOwnedProviderProcess(input);
+      },
+      process.platform,
+    );
     onTestFinished(() => transport.close());
     const request = {
       operation: "inspect_adb_ui" as const,
@@ -1251,17 +1275,21 @@ it.each([
     const { binary, environment } = await fixture(mode);
     const controller = new AbortController();
     const reason = new Error("cancelled during UI acknowledgement");
-    const transport = new AdbUiRunner(environment, async (input) => {
-      const control =
-        input.arguments[3] === "am"
-          ? JSON.parse(
-              Buffer.from(input.arguments.at(-1)!, "base64").toString("utf8"),
-            )
-          : null;
-      if (control?.operation === "forget" && !controller.signal.aborted)
-        controller.abort(reason);
-      return spawnOwnedProviderProcess(input);
-    });
+    const transport = new AdbUiRunner(
+      environment,
+      async (input) => {
+        const control =
+          input.arguments[3] === "am"
+            ? JSON.parse(
+                Buffer.from(input.arguments.at(-1)!, "base64").toString("utf8"),
+              )
+            : null;
+        if (control?.operation === "forget" && !controller.signal.aborted)
+          controller.abort(reason);
+        return spawnOwnedProviderProcess(input);
+      },
+      process.platform,
+    );
     onTestFinished(() => transport.close());
     const request = {
       operation: "perform_adb_ui_action" as const,
@@ -2065,10 +2093,14 @@ it("reports cancellation when the UI action input process never launches", async
   const { binary, environment, workspace } = await fixture();
   const controller = new AbortController();
   const reason = new Error("cancelled before private input launch");
-  const transport = new AdbUiRunner(environment, async (input) => {
-    if (input.stdin === "pipe") controller.abort(reason);
-    return spawnOwnedProviderProcess(input);
-  });
+  const transport = new AdbUiRunner(
+    environment,
+    async (input) => {
+      if (input.stdin === "pipe") controller.abort(reason);
+      return spawnOwnedProviderProcess(input);
+    },
+    process.platform,
+  );
   onTestFinished(() => transport.close());
   const client = {
     binary_path: binary,
@@ -2312,7 +2344,7 @@ it.each([
     "C:\\platform-tools\\adb.exe",
   ],
   ["win32", "C:\\tools\\adb.exe", "C:\\tools\\adb.exe", "C:\\tools\\adb.exe"],
-  ["win32", "adb", "adb", "C:\\elsewhere\\adb.exe"],
+  ["win32", "adb", null, "C:\\elsewhere\\adb.exe"],
   ["linux", "adb", "adb", "C:\\platform-tools\\adb.exe"],
 ] as const)(
   "launches %s UI traffic with the resolved executable for %s",
@@ -2344,7 +2376,12 @@ it.each([
       { id: "adb", name: "Android Debug Bridge", version: "34.0.5-ui-fixture" },
     );
     if (result.ok) throw new Error("Expected the observed launch refusal");
-    expect(launched).toEqual([expected]);
+    expect(launched).toEqual(expected === null ? [] : [expected]);
+    if (expected === null)
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisCapabilityUnavailableError",
+        diagnostics: { lookup_failure: "not_found" },
+      });
     expect(transport.pendingResources).toEqual([]);
   },
 );

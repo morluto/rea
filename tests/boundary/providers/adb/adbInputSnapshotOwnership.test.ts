@@ -9,6 +9,7 @@ import {
   execFileOutput,
 } from "../../../../src/process/ExecFileOutput.js";
 import { parseEvidence } from "../../../../src/domain/evidence.js";
+import { primaryAnalysisError } from "../../../../src/domain/analysisErrorBase.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { PrivateRuntimeRoot } from "../../../../src/process/PrivateRuntimeRoot.js";
 import { AdbInputSnapshotFailure } from "../../../../src/adb/AdbInputSnapshot.js";
@@ -544,7 +545,9 @@ test.each([false, true])(
       throw new Error("expected retained package digest cleanup failure");
     expect(result.error.cleanupIncomplete).toBe(!cancelDuringClose);
     if (cancelDuringClose) {
-      expect(result.error._tag).toBe("AnalysisCancelledError");
+      expect(primaryAnalysisError(result.error)._tag).toBe(
+        "AnalysisCancelledError",
+      );
       expect(result.error.cause).toBe(reason);
       expect(result.error.cleanupResources).toEqual([]);
     }
@@ -649,7 +652,9 @@ test.each([false, true])(
       signal: controller.signal,
     });
     if (result.ok) throw new Error("expected cancellation");
-    expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(primaryAnalysisError(result.error)._tag).toBe(
+      "AnalysisCancelledError",
+    );
     if (failCleanup) {
       expect(result.error.cause).toBeInstanceOf(AggregateError);
       const causes = (result.error.cause as AggregateError).errors as [
@@ -713,7 +718,9 @@ test("cancels after the input snapshot copy and before contacting the device", a
     signal: controller.signal,
   });
   if (result.ok) throw new Error("expected cancellation");
-  expect(result.error._tag).toBe("AnalysisCancelledError");
+  expect(primaryAnalysisError(result.error)._tag).toBe(
+    "AnalysisCancelledError",
+  );
   expect(execFileOutput).toHaveBeenCalledTimes(1);
   expect(execFileBytes).not.toHaveBeenCalled();
   expect(await readFile(f.source, "utf8")).toBe("immutable payload");

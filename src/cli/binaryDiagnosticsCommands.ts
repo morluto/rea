@@ -26,6 +26,7 @@ import { BYTE_ENTROPY_PROVIDER } from "../domain/investigationProviders.js";
 import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../contracts/native/binaryDiagnosticsToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
 import {
+  callerTargetPath,
   deliverWithService,
   inspectWithService,
   registerContractCommand,
@@ -331,10 +332,12 @@ export const registerBinaryDiagnosticsCommands = (
           "One-shot output is complete Evidence; this command has no summary delivery",
       },
     },
-    async (input, { signal, callerInputs }) => {
-      const result = await layout.inspectAndClose(input, { signal });
+    async (input, context) => {
+      const result = await layout.inspectAndClose(input, {
+        signal: context.signal,
+      });
       return result.ok
-        ? withEvidenceCallerInputPath(result.value, callerInputs.path)
+        ? withEvidenceCallerInputPath(result.value, callerTargetPath(context))
         : projectAnalysisError(result.error);
     },
   );
@@ -361,10 +364,12 @@ export const registerBinaryDiagnosticsCommands = (
         },
       },
     },
-    async (input, { signal, callerInputs }) => {
-      const result = await recorded.inspectAndClose(input, { signal });
+    async (input, context) => {
+      const result = await recorded.inspectAndClose(input, {
+        signal: context.signal,
+      });
       return result.ok
-        ? withEvidenceCallerInputPath(result.value, callerInputs.path)
+        ? withEvidenceCallerInputPath(result.value, callerTargetPath(context))
         : projectAnalysisError(result.error);
     },
   );

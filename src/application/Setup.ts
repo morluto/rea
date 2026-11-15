@@ -41,7 +41,7 @@ import type {
   SkillInstallResult,
 } from "./SetupSkill.js";
 import { planDesktopBuild } from "./SetupDesktopBuild.js";
-import { DESKTOP_BUILD_PROVIDER_ID } from "./DoctorProviderIds.js";
+import { DESKTOP_BUILD_PROVIDER_ID } from "../domain/doctorProviderIds.js";
 import type {
   SetupHopperInstallFailure,
   SetupHopperInstallResult,

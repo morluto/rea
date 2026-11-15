@@ -346,11 +346,19 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     this.progressiveCatalog = catalog;
     const { name, ...config } = DISCOVER_TOOLS;
     // Transport discovery has no target or analysis lifecycle. Domain tools
-    // continue through registerTool and their original named handlers.
-    super.registerTool(name, config, (input, context) => {
-      context.mcpReq.signal.throwIfAborted();
-      return catalog.discover(input);
-    });
+    // continue through registerTool and their original named handlers. Its
+    // advertisement still follows the selected input presentation.
+    super.registerTool(
+      name,
+      {
+        ...config,
+        inputSchema: this.presentInputSchema(config.inputSchema),
+      },
+      (input, context) => {
+        context.mcpReq.signal.throwIfAborted();
+        return catalog.discover(input);
+      },
+    );
   }
 
   override sendToolListChanged(): void {
@@ -448,20 +456,7 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
   ): RegisteredTool {
     if (canReferenceInlineEvidence(config.inputSchema))
       this.registerEvidenceReferenceAlternative(name);
-    const budget = this.compactPresentation?.budgetBytes;
-    const inputSchema =
-      budget !== undefined &&
-      config !== undefined &&
-      hasAdvertisedInputJsonSchema(config.inputSchema)
-        ? transformAdvertisedInputJsonSchema(
-            config.inputSchema as Parameters<
-              typeof transformAdvertisedInputJsonSchema
-            >[0],
-            (projected) =>
-              presentAdvertisedInputSchema(projected, { budgetBytes: budget }),
-          )
-        : undefined;
-    const presentedSchema = inputSchema ?? config.inputSchema;
+    const presentedSchema = this.presentInputSchema(config.inputSchema);
     const registeredConfig =
       presentedSchema === undefined
         ? config
@@ -512,6 +507,20 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     );
     if (!this.advertisesTool(name)) registered.disable();
     return registered;
+  }
+
+  /**
+   * The input schema this server advertises for one registration: the
+   * selected compact presentation, or the registered schema unchanged. Every
+   * listed tool, including transport discovery, takes this one path.
+   */
+  private presentInputSchema<Schema>(schema: Schema): Schema {
+    const budget = this.compactPresentation?.budgetBytes;
+    if (budget === undefined || !hasAdvertisedInputJsonSchema(schema))
+      return schema;
+    return transformAdvertisedInputJsonSchema(schema, (projected) =>
+      presentAdvertisedInputSchema(projected, { budgetBytes: budget }),
+    );
   }
 
   /** Whether this process advertises one named operation. */
