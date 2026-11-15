@@ -230,8 +230,7 @@ status and limitations state.
 
 Relocation rows retain Ghidra's `symbol` value, including an empty string or
 null when returned by Ghidra. It is a provider observation, not proof of the
-runtime-resolved address. Older Evidence may not have recorded this field;
-a relocation page requesting it reports that uncertainty.
+runtime-resolved address. Every relocation row records the field.
 
 For large relocation inventories, select MCP `inspect_native_load_image` with
 `detail: "summary"`. It returns verification state, observed identity and counts,
