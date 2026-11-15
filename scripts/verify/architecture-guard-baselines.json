@@ -265,7 +265,6 @@
     "src/artifacts/nodeSea/NodeSeaBlob.ts": 4,
     "src/artifacts/nodeSea/NodeSeaLocation.ts": 2,
     "src/artifacts/pyinstaller/CArchiveLayout.ts": 8,
-    "src/artifacts/pyinstaller/MarshalSubset.ts": 2,
     "src/artifacts/pyinstaller/PyzArchive.ts": 1,
     "src/browser/PngVisualDiff.ts": 7,
     "src/domain/apkSignature/apkSignatureSchemes.ts": 1,
@@ -302,6 +301,7 @@
     "src/domain/peOptionalHeader.ts": 12,
     "src/domain/peSectionHeader.ts": 5,
     "src/domain/pngHeader.ts": 4,
+    "src/domain/python/marshalReader.ts": 4,
     "src/domain/python/pythonBytecodeIdentity.ts": 1,
     "src/domain/riscvIsaDeclaration.ts": 1,
     "src/domain/uimageFormat.ts": 10,
@@ -375,7 +375,6 @@
     "src/native/pwntools/RecordedCrashSourceBindings.ts": 6,
     "src/native/windows/WindowsShortcutParser.ts": 49,
     "src/pcap/PcapDnsWire.ts": 5,
-    "src/python/PythonPycParser.ts": 9,
     "src/v8/V8CodeCacheParser.ts": 1
   },
   "range-error-interpretation": {
