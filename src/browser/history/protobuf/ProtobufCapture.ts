@@ -421,7 +421,7 @@ export const prepareCaptureProtobuf = async (
           Math.ceil(captureBudgets().inputBytes / 3) * 4
       )
         throw new CaptureFormatError(
-          "limit",
+          { name: "protobuf-body", maximum: captureBudgets().inputBytes },
           `Protobuf body exceeds max_input_bytes (${String(captureBudgets().inputBytes)} bytes)`,
         );
       const body = Buffer.from(field.content_base64, "base64");

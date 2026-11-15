@@ -10,6 +10,7 @@ import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import { CdpCommandRejection } from "./CdpCommandRejection.js";
 import { CdpConnection } from "./CdpConnection.js";
+import type { CdpDomainWith } from "./protocol/CdpCommands.js";
 import {
   CdpTargetSessionOwner,
   bindCdpTransportCleanup,
@@ -257,7 +258,7 @@ const combineOpenFailure = (
 /** Disable enabled domains, detach browser sessions, and release or close REA's socket. */
 export const closeCdpTargetSession = async (
   targetSession: CdpTargetSession,
-  enabledDomains: readonly string[],
+  enabledDomains: readonly CdpDomainWith<"disable">[],
   signal?: AbortSignal,
   owner?: CdpTargetSessionOwner,
   reuseBrowserSocket = false,
@@ -280,7 +281,7 @@ export const closeCdpTargetSession = async (
 
 const cleanupCdpTargetCommands = async (
   targetSession: CdpTargetSession,
-  enabledDomains: readonly string[],
+  enabledDomains: readonly CdpDomainWith<"disable">[],
   signal?: AbortSignal,
 ): Promise<boolean> => {
   const { connection, sessionId } = targetSession;
@@ -297,7 +298,7 @@ const cleanupCdpTargetCommands = async (
         if (domainSignal.aborted) break;
         try {
           await connection.send(
-            `${domain}.disable`,
+            `${domain}.disable` as const,
             {},
             sessionId,
             domainSignal,

@@ -262,6 +262,17 @@ activation independently of readiness. An owned registration may be disabled
 or stale; unresolved ownership remains unknown. Consumers use those facts
 instead of reclassifying the raw command.
 
+Owned provider commands follow the same rule. `providerOutcomeOf` in
+`src/process/ProviderOutcome.ts` reads what the supervisor observed (launch
+refusal, cancellation, deadline, output or memory limit, resource signal, exit
+status with the owner's stop state, or stream failure) together with the
+retained output and whether it was truncated. `classifyProviderOutcome` maps
+that outcome to a typed error once; a provider supplies only its settings,
+recovery text and a dialect for what an exit or launch refusal means. The
+`rea/provider-failure-classifier` lint rule keeps new `(cause: unknown) =>
+AnalysisError` functions out of `src/`; existing ones are counted in a baseline
+that may only shrink.
+
 A completed read can establish byte identity even when decoding or format
 validation fails. State which representation a digest identifies, such as file
 bytes, Fetch response-body bytes, or UTF-8 text. Preserve admitted source values
@@ -294,9 +305,16 @@ fields through `BinaryReader` (`src/native/metadata/BinaryContainer.ts`), which
 raises that failure instead of a bare `RangeError`. Providers project the
 failure with `parseFailureAnalysisError` rather than their own `instanceof`
 ladder; a `limit` stays with its producer, which knows the budget to name.
+Do not use `RangeError` as a failure channel: a stack overflow, a host string
+or buffer limit, and an unchecked read past the end of a buffer are all
+`RangeError`s. `hostRangeErrorKind` is the one interpreter of a host
+`RangeError`, and `parseFailureFromCause` admits only a reported parse failure
+as evidence about the input. Readers report bounds failures at the read site;
+host error codes alone cannot distinguish a read from a write or allocation.
 `scripts/verify/architecture-guards.mjs` counts the remaining raw `Buffer` and
-`DataView` reads, plain `Error` throws in parser folders, and plain `JSON.parse`
-of parser input against `scripts/verify/architecture-guard-baselines.json`. A
+`DataView` reads, plain `Error` throws in parser folders, plain `JSON.parse`
+of parser input, and direct `instanceof RangeError` checks against
+`scripts/verify/architecture-guard-baselines.json`. A
 file may not exceed its count; after removing copies, run
 `node scripts/verify/architecture-guards.mjs --shrink-baselines`.
 
@@ -452,7 +470,12 @@ failed request's physical, cancellation and cleanup facts.
   remain attached to their owning envelope while cleanup is pending and after
   confirmed release. CLI adapters should reuse
   [`finishAnalysisCommand`](https://github.com/morluto/rea/blob/main/src/cli/finishAnalysisCommand.ts) where its contract
-  applies rather than duplicate close/finally handling.
+  applies rather than duplicate close/finally handling. It projects
+  [`runOwned`](https://github.com/morluto/rea/blob/main/src/application/runOwned.ts),
+  which owns this precedence for owned work: a recorded failure stays primary,
+  cancellation before commit keeps the completed value as a partial
+  observation, cancellation after commit keeps the value, and unconfirmed
+  cleanup reports `cleanup_incomplete` while keeping the completed value.
 - Give descriptor-backed reads an owner before opening the file. A rejected
   close must retain the exact handle and preserve any earlier failure.
   Carry [`openRegularFile`](https://github.com/morluto/rea/blob/main/src/filesystem/RegularFile.ts)'s
@@ -584,7 +607,7 @@ and rendered for the CLI framework by `registerContractCommand` in
 [`contractCommand.ts`](https://github.com/morluto/rea/blob/main/src/cli/contractCommand.ts).
 The projection names only what the CLI spells differently: positionals,
 caller-relative path fields, option renames and short flags, CLI help wording,
-omitted optional fields with a reason, and whether the contract's cross-field
+omitted optional fields with a reason, Evidence delivery options, and whether the contract's cross-field
 rules refuse at argv parsing or at the service's contract parse. Field schemas
 and decimal argv tokens are derived, and
 `tests/boundary/cli/cliContractCommandParity.test.ts` checks that each projected

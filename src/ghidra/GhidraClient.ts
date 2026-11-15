@@ -123,6 +123,12 @@ import {
 } from "./GhidraCheckpoint.js";
 
 const SHUTDOWN_TIMEOUT_MS = 10_000;
+/**
+ * Bound for draining launcher output into failure evidence. A failed startup
+ * gets it as its finalize budget, separate from the startup budget it may
+ * have exhausted.
+ */
+const OUTPUT_DRAIN_MS = 1_000;
 const SESSION_ROOT = ghidraSessionRoot();
 
 type GhidraStartupAttempt = SharedStartupAttempt<GhidraStartResult>;
@@ -819,7 +825,11 @@ export class GhidraClient {
     primary: GhidraSessionError,
     deadline?: ProviderStartupDeadline,
   ): Promise<GhidraStartResult> {
-    await this.#drainOutputBounded(deadline?.signal);
+    const finalization = deadline?.finalize();
+    await this.#drainOutputBounded(
+      finalization?.signal,
+      finalization?.deadline.remainingMs(),
+    );
     const refreshed = this.#failure(
       primary.kind,
       primary.message,
@@ -936,6 +946,7 @@ export class GhidraClient {
     const deadline = new ProviderStartupDeadline(
       this.#options.readStartupTimeoutMs?.() ?? this.#options.startupTimeoutMs,
       signal,
+      { finalizeMs: OUTPUT_DRAIN_MS },
     );
     try {
       const result = await this.#startWithin(deadline);
@@ -1687,19 +1698,24 @@ export class GhidraClient {
     });
   }
 
-  #drainOutputBounded(signal?: AbortSignal): Promise<boolean> {
+  #drainOutputBounded(
+    signal?: AbortSignal,
+    budgetMs = OUTPUT_DRAIN_MS,
+  ): Promise<boolean> {
     if (this.#outputDrainPromise !== undefined) return this.#outputDrainPromise;
     const process = this.#process;
     if (process === undefined) return Promise.resolve(true);
-    const pending = process.waitForOutputClose(1_000, signal).then((closed) => {
-      if (this.#process !== process) return;
-      if (!closed) this.#outputDrainIncomplete = true;
-      const snapshot = process.snapshot();
-      this.#processSnapshot = this.#outputDrainIncomplete
-        ? { ...snapshot, diagnosticTruncated: true, outputIncomplete: true }
-        : snapshot;
-      return closed;
-    });
+    const pending = process
+      .waitForOutputClose(budgetMs, signal)
+      .then((closed) => {
+        if (this.#process !== process) return;
+        if (!closed) this.#outputDrainIncomplete = true;
+        const snapshot = process.snapshot();
+        this.#processSnapshot = this.#outputDrainIncomplete
+          ? { ...snapshot, diagnosticTruncated: true, outputIncomplete: true }
+          : snapshot;
+        return closed;
+      });
     this.#outputDrainPromise = pending.then((closed) => closed ?? false);
     return this.#outputDrainPromise;
   }

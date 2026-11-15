@@ -3,7 +3,10 @@ import { existsSync } from "node:fs";
 import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { compareCountedBaseline } from "./counted-baseline.mjs";
+import {
+  compareCountedBaseline,
+  recordLoweredBaseline,
+} from "./counted-baseline.mjs";
 
 // Architecture guards for the strict-identity / best-effort-inference split.
 // - Composite dedup keys must not NUL-join variable-length or free-form
@@ -229,10 +232,7 @@ const checkCounted = (label, key, selected, pattern, owners) => {
     failures.push(
       `${label}; new copies are not allowed:\n${lines(compared.grown)}`,
     );
-  if (compared.baseline !== (baselines[key] ?? {})) {
-    baselines[key] = compared.baseline;
-    baselinesShrunk = true;
-  }
+  if (recordLoweredBaseline(baselines, key, compared)) baselinesShrunk = true;
   if (compared.stale.length > 0)
     failures.push(
       `${label}; copies were removed, so lower the baseline with \`node scripts/verify/architecture-guards.mjs --shrink-baselines\`:\n${lines(compared.stale)}`,
@@ -247,6 +247,18 @@ checkCounted(
   files,
   /new AnalysisCancelledError\(/gu,
   ["src/domain/analysisErrorCore.ts"],
+);
+
+// A deadline is a monotonic budget owned by `Deadline` in src/domain/deadline;
+// a wall-clock sum moves with clock changes and has no finalize phase. The
+// remaining copy converts a monotonic budget for a browser page, which can
+// only read its own wall clock.
+checkCounted(
+  "wall-clock deadline computation (use Deadline from src/domain/deadline)",
+  "wall-clock-deadline",
+  files,
+  /Date\.now\(\)\s*\+/gu,
+  [],
 );
 
 // Byte-format parsers read untrusted input. Bounds, truncation and failure
@@ -335,6 +347,17 @@ checkCounted(
   parserFiles,
   /JSON\.parse\(/gu,
   [],
+);
+
+// A RangeError can mean a stack overflow, a host string or buffer limit, a
+// raw read or write past a buffer, or whatever its thrower intended. Only
+// known host limits are classified; parsers throw a ParseFailureError.
+checkCounted(
+  "direct RangeError interpretation (use hostRangeErrorKind or parseFailureFromCause from src/domain/parseFailure)",
+  "range-error-interpretation",
+  files,
+  /instanceof RangeError/gu,
+  ["src/domain/parseFailure.ts"],
 );
 
 if (baselinesShrunk) {
