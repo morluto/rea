@@ -3,6 +3,7 @@ import { z } from "zod";
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 import { ELF_OBJECT_TYPE_NAMES } from "./elfNotes.js";
+import { coverageStatusSchema } from "../coverage.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
 const crc32Hex = z.string().regex(/^[0-9a-f]{8}$/u);
@@ -290,7 +291,7 @@ export const elfDebugLinkSchema = z.strictObject({
   candidate: candidateSchema.nullable(),
   verification: verificationSchema.nullable(),
   coverage: z.strictObject({
-    status: z.enum(["complete", "incomplete"]),
+    status: coverageStatusSchema,
     examined_sections: uint,
   }),
   limitations: z.array(z.string()),

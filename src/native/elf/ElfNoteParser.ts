@@ -30,6 +30,7 @@ import {
 } from "../../domain/native/elfNotes.js";
 import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
 import { readElfTableDeclarationsFromBuffer } from "../metadata/NativeSectionDirectory.js";
+import { decodeLimit, ParseFailureError } from "../../domain/parseFailure.js";
 import {
   decodeElfSectionNameTable,
   readElfSectionNameTableHeader,
@@ -55,20 +56,49 @@ interface TextBudget {
   readonly maxGnuBuildIdBytes?: number | undefined;
 }
 
-/** Caller can raise max_file_bytes to admit the decoded section-name table. */
-export class ElfNoteSectionNameBudgetFailure extends Error {
-  readonly _tag = "ElfNoteSectionNameBudgetFailure";
+/** Limit name of the caller's file budget, which also bounds decoded section names. */
+const SECTION_NAME_BUDGET_LIMIT = "max_file_bytes";
 
-  constructor(
-    readonly minimumMaxFileBytes: bigint,
-    readonly selectedMaxFileBytes: number,
-  ) {
-    super(
-      `ELF source and decoded section names require ${String(minimumMaxFileBytes)} bytes, above the selected max_file_bytes (${String(selectedMaxFileBytes)}).`,
-    );
-    this.name = "ElfNoteSectionNameBudgetFailure";
-  }
-}
+/** Caller can raise max_file_bytes to admit the decoded section-name table. */
+const sectionNameBudgetFailure = (
+  required: bigint,
+  selected: number,
+): ParseFailureError<"limit"> =>
+  decodeLimit(
+    "elf",
+    `ELF source and decoded section names require ${String(required)} bytes, above the selected max_file_bytes (${String(selected)}).`,
+    { name: SECTION_NAME_BUDGET_LIMIT, maximum: selected, required },
+  );
+
+/**
+ * The section-name budget stop's limit: the selected max_file_bytes and the
+ * size the source plus decoded names require.
+ */
+export const elfNoteSectionNameBudget = (
+  cause: unknown,
+):
+  | {
+      readonly selected: number;
+      readonly required: bigint;
+      readonly detail: string;
+    }
+  | undefined => {
+  if (
+    !(cause instanceof ParseFailureError) ||
+    cause.failure.kind !== "limit" ||
+    cause.failure.format !== "elf" ||
+    cause.failure.limit.name !== SECTION_NAME_BUDGET_LIMIT
+  )
+    return undefined;
+  const { maximum, required } = cause.failure.limit;
+  return required === undefined
+    ? undefined
+    : {
+        selected: maximum,
+        required: BigInt(required),
+        detail: cause.failure.detail,
+      };
+};
 
 /**
  * Refuse a compressed section-name table whose declared decoded size does not
@@ -110,7 +140,7 @@ export const assertElfSectionNameBudget = (
   );
   if (names.state !== "compressed") return;
   if (names.declaredSize > BigInt(Math.max(0, maxFileBytes - bytes.length)))
-    throw new ElfNoteSectionNameBudgetFailure(
+    throw sectionNameBudgetFailure(
       BigInt(bytes.length) + names.declaredSize,
       maxFileBytes,
     );
@@ -850,7 +880,7 @@ export const parseElfNotes = (
     );
     if (decoded.state === "malformed") return fail(decoded.message);
     if (decoded.state === "limit")
-      throw new ElfNoteSectionNameBudgetFailure(
+      throw sectionNameBudgetFailure(
         BigInt(bytes.length) + decoded.requiredBytes,
         input.max_file_bytes,
       );

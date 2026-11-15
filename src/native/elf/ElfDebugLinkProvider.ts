@@ -41,7 +41,7 @@ import {
   unreadableElfDebugCandidate,
   verifyElfDebugCandidate,
 } from "./ElfDebugLink.js";
-import { ElfNoteSectionNameBudgetFailure } from "./ElfNoteParser.js";
+import { elfNoteSectionNameBudget } from "./ElfNoteParser.js";
 
 const OPERATION = "inspect_elf_debug_link";
 
@@ -242,14 +242,13 @@ const inputBudgetRemediation = (
 };
 
 const sectionNameBudgetRemediation = (
-  cause: ElfNoteSectionNameBudgetFailure,
+  required: bigint,
   field: SelectedField,
 ): string => {
   const label = inputLabel(field);
-  return cause.minimumMaxFileBytes <=
-    BigInt(MAX_INSPECT_ELF_DEBUG_LINK_FILE_BYTES)
-    ? `Raise max_file_bytes to at least ${String(cause.minimumMaxFileBytes)} bytes to admit the ${label} and its decoded ELF section names.`
-    : `The ${label} and its decoded ELF section names require ${String(cause.minimumMaxFileBytes)} bytes, above this operation's ${String(MAX_INSPECT_ELF_DEBUG_LINK_FILE_BYTES)}-byte maximum; select a ${label} with a smaller section-name table.`;
+  return required <= BigInt(MAX_INSPECT_ELF_DEBUG_LINK_FILE_BYTES)
+    ? `Raise max_file_bytes to at least ${String(required)} bytes to admit the ${label} and its decoded ELF section names.`
+    : `The ${label} and its decoded ELF section names require ${String(required)} bytes, above this operation's ${String(MAX_INSPECT_ELF_DEBUG_LINK_FILE_BYTES)}-byte maximum; select a ${label} with a smaller section-name table.`;
 };
 
 const selectedPath = (
@@ -267,19 +266,23 @@ const elfDebugLinkFailurePrimary = (
 ) => {
   const { cause, origin } = facts;
   const path = selectedPath(input, field);
-  if (cause instanceof ElfNoteSectionNameBudgetFailure)
+  const sectionNameBudget = elfNoteSectionNameBudget(cause);
+  if (sectionNameBudget !== undefined)
     return new AnalysisResourceConstraintError(
       OPERATION,
       "memory",
-      cause.message,
+      sectionNameBudget.detail,
       {
-        max_file_bytes: cause.selectedMaxFileBytes,
-        minimum_required_bytes: cause.minimumMaxFileBytes.toString(),
+        max_file_bytes: sectionNameBudget.selected,
+        minimum_required_bytes: sectionNameBudget.required.toString(),
       },
       {
         cause,
         retryable: false,
-        remediationAction: sectionNameBudgetRemediation(cause, field),
+        remediationAction: sectionNameBudgetRemediation(
+          sectionNameBudget.required,
+          field,
+        ),
       },
     );
   if (cause instanceof BinaryResourceFailure)

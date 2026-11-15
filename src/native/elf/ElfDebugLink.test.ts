@@ -273,7 +273,7 @@ it("keeps an observed build-id when section names are unavailable", () => {
     status: "observed",
     hex: FIXTURE_BUILD_ID_HEX,
   });
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("partial");
   expect(report.limitations).toContain(
     "ELF section names are unavailable because no section-name string table is declared",
   );
@@ -362,7 +362,7 @@ it("keeps debuglink facts when the note table is malformed", () => {
     reason: "note_tables_malformed",
     hex: null,
   });
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("partial");
 });
 
 const verify = (image: Buffer, candidate: Buffer, candidatePath: string) => {

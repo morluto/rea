@@ -420,7 +420,7 @@ const coverageAgrees = (report: ElfDebugLink): boolean => {
     report.debugaltlink.status === "unknown" ||
     report.debugdata.status === "unknown" ||
     report.build_id.status === "unknown";
-  if (unknown && report.coverage.status !== "incomplete") return false;
+  if (unknown && report.coverage.status !== "partial") return false;
   return true;
 };
 
