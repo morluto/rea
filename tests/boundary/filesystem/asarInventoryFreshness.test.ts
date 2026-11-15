@@ -7,11 +7,11 @@ import { createPackage, listPackage, uncache } from "@electron/asar";
 import { describe, expect, it, onTestFinished } from "vitest";
 
 import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
-import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
 import { inventoryArtifact } from "../../fixtures/artifactInventory.js";
 import { AsarArtifactReader } from "../../../src/artifacts/AsarArtifactReader.js";
 import { scanCanonicalArtifactInventoryInScope } from "../../../src/artifacts/inventory/scanCanonical.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { DirectoryArtifactReader } from "../../../src/resources/index.js";
 
 const CONTENT = "module.exports = 42;\n";
 

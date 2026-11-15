@@ -3,8 +3,8 @@ import {
   type ArtifactEntry,
   type ArtifactTraversalOmission,
   assertArtifactReadActive,
+  DirectoryArtifactTraversalLimit,
 } from "../resources/index.js";
-import { DirectoryArtifactTraversalLimit } from "../artifacts/DirectoryArtifactReader.js";
 import { classifyAndroidStringsTable } from "../domain/apktool/apktoolResourceAnalysis.js";
 import type { ApktoolWorkspace } from "./ApktoolWorkspace.js";
 

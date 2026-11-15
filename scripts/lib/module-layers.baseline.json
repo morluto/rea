@@ -8,7 +8,6 @@
     "main <-> server"
   ],
   "crossProvider": {
-    "apktool -> artifacts": 2,
     "desktop -> electron": 1,
     "gpu -> artifacts": 1,
     "model -> artifacts": 1

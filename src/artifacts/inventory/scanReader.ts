@@ -19,16 +19,14 @@ import {
   type ArtifactReader,
   type ArtifactReaderTraversal,
   abortIfNeeded,
+  DirectoryArtifactEntryAccessDenied,
+  DirectoryArtifactReader,
+  DirectoryArtifactTraversalLimit,
 } from "../../resources/index.js";
 import {
   ArtifactTraversalObservation,
   declaredArtifactEntries,
 } from "../ArtifactTraversalObservation.js";
-import {
-  DirectoryArtifactEntryAccessDenied,
-  DirectoryArtifactReader,
-  DirectoryArtifactTraversalLimit,
-} from "../DirectoryArtifactReader.js";
 import type { ArtifactInventoryOptions } from "./types.js";
 import { AsarArtifactReader } from "../AsarArtifactReader.js";
 import {

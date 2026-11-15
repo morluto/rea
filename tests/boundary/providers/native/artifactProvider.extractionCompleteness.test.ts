@@ -20,7 +20,7 @@ import {
 } from "../../../fixtures/artifactInventory.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
-import { DirectoryArtifactReader } from "../../../../src/artifacts/DirectoryArtifactReader.js";
+import { DirectoryArtifactReader } from "../../../../src/resources/index.js";
 
 it.for([false, true])(
   "preserves source traversal coverage when invalid-byte names are present: %s",
