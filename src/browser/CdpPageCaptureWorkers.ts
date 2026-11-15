@@ -36,14 +36,16 @@ export const captureWorkers = async (
     limitations,
   );
   const items: WebPageInspection["workers"] = [];
-  if (result === undefined) completeness.unavailable("workers");
-  const targets = admitRecords(recordValue(result)?.targetInfos);
-  if (result !== undefined && targets === undefined) {
+  if (!result.ok) completeness.unavailable("workers");
+  const targets = result.ok
+    ? admitRecords(recordValue(result.value)?.targetInfos)
+    : [];
+  if (targets === undefined) {
     completeness.exclude("workers", "invalid_protocol_value", null);
     return items;
   }
   let malformedEntries = 0;
-  for (const entry of targets ?? []) {
+  for (const entry of targets) {
     const parsed = parseCdpWorkerTarget(entry);
     if (!parsed.ok) {
       malformedEntries += 1;
