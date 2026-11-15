@@ -4,12 +4,14 @@ import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import {
   admitCdpReply,
+  assertCdpCommand,
   type CdpCommand,
   type CdpCommandParams,
   type CdpCommandResult,
   type CdpProtocolMethod,
 } from "./protocol/CdpCommands.js";
 import {
+  isCdpEvent,
   registeredCdpEvent,
   type CdpEventName,
   type CdpRegisteredEventOf,
@@ -49,6 +51,7 @@ const registeredSession = (
   return {
     send: async (method, params) => {
       if (failure !== undefined) throw failure;
+      assertCdpCommand(method, operation);
       return admitCdpReply(
         method,
         // Playwright types each reply by an unchecked cast; the schema decides it.
@@ -57,6 +60,11 @@ const registeredSession = (
       );
     },
     on: (event, listener) => {
+      // An unregistered name would subscribe to events no listener can receive.
+      if (!isCdpEvent(event))
+        throw new BrowserObservationError(operation, "protocol_error", {
+          detail: `REA refused to subscribe to CDP event ${JSON.stringify(event)}: no payload schema is registered for it.`,
+        });
       const receive = (params: unknown): void => {
         if (failure !== undefined) return;
         const registered = registeredCdpEvent(event, params);

@@ -265,7 +265,8 @@ export type CdpRegisteredEventOf<E extends CdpEventName> = Extract<
   { readonly method: E }
 >;
 
-const isRegistered = (method: string): method is CdpEventName =>
+/** Whether a payload schema is registered for this event name. */
+export const isCdpEvent = (method: string): method is CdpEventName =>
   Object.hasOwn(CDP_EVENT_PAYLOADS, method);
 
 /** Parse one event's payload by its registered schema, or undefined when unregistered. */
@@ -273,7 +274,7 @@ export const registeredCdpEvent = (
   method: string,
   params: unknown,
 ): CdpRegisteredEvent | undefined => {
-  if (!isRegistered(method)) return undefined;
+  if (!isCdpEvent(method)) return undefined;
   const schema: z.ZodType<unknown, unknown> = CDP_EVENT_PAYLOADS[method];
   return {
     method,
