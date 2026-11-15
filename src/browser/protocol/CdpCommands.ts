@@ -1,5 +1,5 @@
 import type { CDPSession } from "playwright-core";
-import type { z } from "zod";
+import { z } from "zod";
 
 import { BrowserObservationError } from "../../domain/browserObservationError.js";
 import type { BrowserObservationOperation } from "../../domain/browserObservationErrors.js";
@@ -17,13 +17,72 @@ declare const protocolSend: CDPSession["send"];
 /** Every command name in the protocol version Playwright ships. */
 export type CdpProtocolMethod = Parameters<CDPSession["send"]>[0];
 
+/** A command whose reply REA does not read beyond its success. */
+const acknowledgement = z.object({});
+
+const coverageOffset = z.int().min(0);
+
+/** Precise coverage keeps every nested producer range; counts are not flattened. */
+const preciseCoverageReply = z.object({
+  timestamp: z.number().min(0),
+  result: z.array(
+    z.object({
+      scriptId: z.string().min(1),
+      url: z.string(),
+      functions: z.array(
+        z.object({
+          functionName: z.string(),
+          isBlockCoverage: z.boolean(),
+          ranges: z.array(
+            z.object({
+              startOffset: coverageOffset,
+              endOffset: coverageOffset,
+              count: coverageOffset,
+            }),
+          ),
+        }),
+      ),
+    }),
+  ),
+});
+
 /**
  * One result schema per command REA sends. Each schema is the only reader of
  * that command's raw reply; consumers receive its parsed output.
  */
 const CDP_COMMAND_REPLIES = {
+  "Debugger.enable": acknowledgement,
+  "Debugger.evaluateOnCallFrame": z.object({
+    result: z.looseObject({}),
+    exceptionDetails: z.unknown().optional(),
+  }),
+  "Debugger.getScriptSource": z.object({ scriptSource: z.string() }),
+  "Debugger.resume": acknowledgement,
+  "Debugger.setBreakpointByUrl": z.object({ breakpointId: z.string() }),
+  "Network.enable": acknowledgement,
+  "Page.addScriptToEvaluateOnNewDocument": z.object({
+    identifier: z.string(),
+  }),
+  "Page.enable": acknowledgement,
   "Page.getFrameTree": cdpFrameTreeReplySchema,
   "Page.getResourceTree": cdpResourceTreeReplySchema,
+  "Page.removeScriptToEvaluateOnNewDocument": acknowledgement,
+  "Page.setLifecycleEventsEnabled": acknowledgement,
+  "Page.stopLoading": acknowledgement,
+  "Performance.enable": acknowledgement,
+  "Profiler.startPreciseCoverage": z.object({ timestamp: z.number().min(0) }),
+  "Profiler.stopPreciseCoverage": acknowledgement,
+  "Profiler.takePreciseCoverage": preciseCoverageReply,
+  "Runtime.enable": acknowledgement,
+  "Runtime.releaseObjectGroup": acknowledgement,
+  "Runtime.runIfWaitingForDebugger": acknowledgement,
+  "Storage.getStorageKey": z.object({ storageKey: z.string() }),
+  "Target.attachToTarget": z.object({ sessionId: z.string().min(1) }),
+  "Target.detachFromTarget": acknowledgement,
+  "Target.getTargetInfo": z.object({
+    targetInfo: z.object({ targetId: z.string() }),
+  }),
+  "Target.setAutoAttach": acknowledgement,
 } as const satisfies { readonly [M in CdpProtocolMethod]?: z.ZodType };
 
 export type CdpCommand = keyof typeof CDP_COMMAND_REPLIES;

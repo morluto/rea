@@ -129,6 +129,7 @@ export class ArtifactAnalysisResources {
             "capacity",
             this.capacity.message,
             this.capacity.details,
+            { measuredExhaustion: true },
           ),
         ),
       );

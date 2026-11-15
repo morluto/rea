@@ -122,27 +122,3 @@ export const probeGhidraTemporaryDirectory = async (
   }
   return { ok: true, directory };
 };
-
-/** A denied `java_home.save` write reported in Ghidra launcher output. */
-export interface GhidraJavaHomeSaveDenial {
-  readonly path: string;
-}
-
-const JAVA_HOME_SAVE_DENIED =
-  /FileNotFoundException:\s*(.*?java_home\.save)\s*\(Access is denied\)/iu;
-
-/**
- * Recognize the JVM's access-denied refusal to open `java_home.save` (Win32
- * error 5). Only a line naming that file and the denial counts; other output,
- * including other denied paths, is not classified.
- */
-export const ghidraJavaHomeSaveDenial = (
-  text: readonly string[],
-): GhidraJavaHomeSaveDenial | undefined => {
-  for (const block of text)
-    for (const line of block.split(/\r?\n/u)) {
-      const path = JAVA_HOME_SAVE_DENIED.exec(line)?.[1]?.trim();
-      if (path !== undefined && path !== "") return { path };
-    }
-  return undefined;
-};
