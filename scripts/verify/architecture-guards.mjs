@@ -8,6 +8,7 @@ import {
   compareCountedBaseline,
   recordLoweredBaseline,
 } from "./counted-baseline.mjs";
+import { localCompletenessEnumCount } from "./completeness-enum-guard.mjs";
 import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
 
 // Architecture guards for the strict-identity / best-effort-inference split.
@@ -313,7 +314,7 @@ checkCounted(
   "local completeness enum (use coverageStatusSchema from src/domain/coverage)",
   "local-completeness-enum",
   files,
-  /z\.enum\(\[[^\]]*"complete"[^\]]*\]/gu,
+  localCompletenessEnumCount,
   ["src/domain/coverage.ts"],
 );
 
