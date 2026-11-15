@@ -312,6 +312,22 @@ it.each([
   },
 );
 
+it.each([false, true])(
+  "preserves whether a transport refusal sent its request (%s) through redaction",
+  (requestSent) => {
+    const source = new AnalysisResourceConstraintError(
+      "cutter_command",
+      "transport",
+      "Cutter request exceeds its frame limit",
+      { max_request_bytes: 8192 },
+      { requestSent },
+    );
+    expect(redactExplicitFailure(source, ["secret"])).toMatchObject({
+      requestSent,
+    });
+  },
+);
+
 it("coarsens format issue pointers without creating replacement coordinates", () => {
   const error = new AnalysisInputError(
     "inspect_web_network_capture",

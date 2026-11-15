@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { MAX_NODE_TIMER_DELAY_MS } from "../../domain/analysisResourceLimits.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
@@ -831,7 +832,7 @@ export class ReverseEngineeringService {
           typeof rawSystemCode === "string" ? rawSystemCode : undefined;
         const recovery = processOwnershipAdmissionRecovery(
           admissionFailure.code,
-          systemProcessOwnershipHost.platform ?? process.platform,
+          systemProcessOwnershipHost.platform ?? HOST_PLATFORM.platform,
           admissionSystemCode,
         );
         earlyFailure = new AnalysisCapabilityUnavailableError(
