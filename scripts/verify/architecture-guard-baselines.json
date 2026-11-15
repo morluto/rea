@@ -436,7 +436,6 @@
     "src/cli/environmentCommands.ts": 1,
     "src/cutter/CutterBridgeClient.ts": 2,
     "src/cutter/CutterBridgeService.ts": 2,
-    "src/desktop/DesktopBuildSetupHost.ts": 1,
     "src/desktop/ScreenJudgeProcess.ts": 1,
     "src/domain/explicitSensitiveFailure.ts": 1,
     "src/electron/ElectronFuseFailures.ts": 1,
