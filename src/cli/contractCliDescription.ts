@@ -1,11 +1,12 @@
 import { z } from "zod";
 
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import type { AnalysisInputError } from "../domain/analysisErrorCore.js";
+import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import type { AnalysisViewRequest } from "../domain/analysisView/analysisViewRequest.js";
 import type { CallerInputPaths } from "../domain/evidence.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { localPathStringSchema } from "../domain/localPath.js";
+import { isRecord } from "../domain/isRecord.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import {
@@ -262,6 +263,23 @@ export interface CliContractProjection<
    * contract.
    */
   readonly operationBy?: CliOperationChoice<keyof CliOptions & string>;
+  /**
+   * Optional top-level fields taken together as one JSON object option,
+   * keyed by the option's CLI key, such as a selection whose members are
+   * each a contract field. The text is decoded when the command runs, with
+   * the group's refusal when it is not a JSON object; a member must be one
+   * of the group's fields, and the contract admits each member's value as
+   * that field. The grouped fields are not otherwise exposed.
+   */
+  readonly fieldGroups?: Readonly<Record<string, CliFieldGroup<Field>>>;
+}
+
+/** Contract fields one CLI option takes as the members of a JSON object. */
+export interface CliFieldGroup<Field extends string = string> {
+  readonly fields: readonly [Field, ...Field[]];
+  readonly description: string;
+  /** The refusal for text that is not a JSON object. */
+  readonly invalidJson: string;
 }
 
 /** The input branches one command takes, by their discriminating values. */
@@ -540,6 +558,12 @@ export interface ContractCliParameter {
   readonly member: readonly string[] | undefined;
   /** The named option of a positional selector, if any. */
   readonly selectorOption: ContractCliSelectorOption | undefined;
+  /**
+   * The top-level contract fields this JSON object option supplies as its
+   * members, for a field group; `field` is then the group's CLI key, not a
+   * contract field. Undefined otherwise.
+   */
+  readonly group: readonly string[] | undefined;
 }
 
 /** The contract input and delivery one invocation selected. */
@@ -1754,6 +1778,31 @@ export const describeContractCommand = <
     if (fixedFields.has(field))
       throw new Error(`${contract.name}.${field} is fixed by its input branch`);
   }
+  const fieldGroups: Readonly<Record<string, CliFieldGroup | undefined>> =
+    projection.fieldGroups ?? {};
+  const groupedFields = new Set<string>();
+  const projectedFields = new Set([
+    ...positionals,
+    ...callerPaths,
+    ...jsonTextFields,
+    ...Object.keys(runtimeJsonFields),
+    ...Object.keys(nullFlags),
+    ...Object.keys(projection.flatten ?? {}),
+    ...Object.keys(fieldProjections),
+    ...Object.keys(omitted),
+    ...unprojectedFields,
+  ]);
+  for (const group of Object.values(fieldGroups))
+    for (const field of group?.fields ?? []) {
+      if (!Object.hasOwn(shape, field))
+        throw new Error(`${contract.name} has no input field ${field}`);
+      if (projectedFields.has(field) || groupedFields.has(field))
+        throw new Error(`${contract.name}.${field} is projected twice`);
+      // The option may be omitted, so each member may be.
+      if (!admitsOmission(shape[field]!))
+        throw new Error(`${contract.name}.${field} is a required group member`);
+      groupedFields.add(field);
+    }
   for (const field of handlerFields) {
     if (!Object.hasOwn(shape, field))
       throw new Error(`${contract.name} has no input field ${field}`);
@@ -1889,6 +1938,7 @@ export const describeContractCommand = <
       nullFlag,
       member: undefined,
       selectorOption,
+      group: undefined,
     };
   };
   const flattened: Readonly<Record<string, CliFlattenedMembers | undefined>> =
@@ -1981,6 +2031,7 @@ export const describeContractCommand = <
             nullFlag: undefined,
             member: memberPath,
             selectorOption: undefined,
+            group: undefined,
           },
         ];
       },
@@ -1996,7 +2047,7 @@ export const describeContractCommand = <
       throw new Error(`${contract.name}.${name} has no required member`);
     return memberParameterList;
   };
-  const parameters = [
+  const parameters: ContractCliParameter[] = [
     ...positionals,
     ...Object.keys(shape).filter(
       (field) =>
@@ -2004,13 +2055,40 @@ export const describeContractCommand = <
         !Object.hasOwn(omitted, field) &&
         !targetFields.has(field) &&
         !handlerFields.includes(field) &&
-        !fixedFields.has(field),
+        !fixedFields.has(field) &&
+        !groupedFields.has(field),
     ),
   ].flatMap((field) =>
     flattened[field] === undefined
       ? [parameter(field)]
       : memberParameters(field, [], shape[field]!, flattened[field], true),
   );
+  for (const [key, group] of Object.entries(fieldGroups))
+    if (group !== undefined)
+      parameters.push({
+        field: key,
+        key,
+        positional: false,
+        alias: undefined,
+        description: group.description,
+        schema: z.string().optional().describe(group.description),
+        inbound: false,
+        booleanFlag: false,
+        cliDefault: undefined,
+        repeatable: false,
+        decimal: false,
+        callerPath: false,
+        delivery: false,
+        jsonText: false,
+        viewSelection: false,
+        runtimeJson: group.invalidJson,
+        jsonInput: false,
+        checkJsonInput: undefined,
+        nullFlag: undefined,
+        member: undefined,
+        selectorOption: undefined,
+        group: group.fields,
+      });
   const cliOptions: CliOptionShape = projection.cliOptions ?? {};
   const cliPositionalKeys: readonly string[] = projection.cliPositionals ?? [];
   for (const key of cliPositionalKeys)
@@ -2130,6 +2208,7 @@ export const describeContractCommand = <
       delivery,
       member,
       selectorOption,
+      group,
     } of parameters) {
       // The named spelling is preserved when both agree.
       const value =
@@ -2137,6 +2216,13 @@ export const describeContractCommand = <
           ? undefined
           : values[selectorOption.valueKey]) ?? values[key];
       if (value === undefined || delivery || member !== undefined) continue;
+      if (group !== undefined) {
+        // A decoded group supplies each member it names as that field.
+        if (isRecord(value))
+          for (const grouped of group)
+            if (Object.hasOwn(value, grouped)) input[grouped] = value[grouped];
+        continue;
+      }
       input[field] = !callerPath
         ? value
         : Array.isArray(value)
@@ -2346,7 +2432,7 @@ const decodeInlineJson = (
   values: Readonly<Record<string, unknown>>,
 ): Result<Record<string, unknown>, AnalysisInputError> => {
   const decoded: Record<string, unknown> = { ...values };
-  for (const { key, runtimeJson, jsonInput } of parameters) {
+  for (const { key, runtimeJson, jsonInput, group } of parameters) {
     if (runtimeJson === undefined || jsonInput) continue;
     const parsed = parseCliJsonOption(
       operation,
@@ -2355,9 +2441,56 @@ const decodeInlineJson = (
       runtimeJson,
     );
     if (!parsed.ok) return parsed;
+    if (group !== undefined && parsed.value !== undefined) {
+      const members = admitGroupMembers(
+        operation,
+        key,
+        group,
+        runtimeJson,
+        parsed.value,
+      );
+      if (!members.ok) return members;
+    }
     decoded[key] = parsed.value;
   }
   return ok(decoded);
+};
+
+/** A group is a JSON object whose members are its own fields. */
+const admitGroupMembers = (
+  operation: string,
+  key: string,
+  group: readonly string[],
+  invalidJson: string,
+  value: unknown,
+): Result<void, AnalysisInputError> => {
+  if (!isRecord(value))
+    return err(
+      new AnalysisInputError(operation, undefined, [
+        {
+          path: [key],
+          reason: "invalid_format",
+          expected: "JSON",
+          message: invalidJson,
+        },
+      ]),
+    );
+  const members = z.strictObject(
+    Object.fromEntries(group.map((field) => [field, z.unknown().optional()])),
+  );
+  const admitted = members.safeParse(value);
+  return admitted.success
+    ? ok(undefined)
+    : err(
+        analysisInputErrorFromIssues(
+          operation,
+          admitted.error.issues.map((issue) => ({
+            ...issue,
+            path: [key, ...issue.path],
+          })),
+          { [key]: value },
+        ),
+      );
 };
 
 /**
