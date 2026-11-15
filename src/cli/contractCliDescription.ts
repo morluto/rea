@@ -193,11 +193,14 @@ export interface CliContractProjection<
    */
   readonly evidenceTargets?: CliEvidenceTargets<Field>;
   /**
-   * Optional object fields taken as one option per member, keyed by contract
-   * field and then member; a member that is itself an optional object may be
-   * flattened in turn. Any member given supplies each enclosing object with
-   * only the given members, so the contract reports a missing companion
-   * member and an omitted optional member stays omitted.
+   * Object fields taken as one parameter per member, keyed by contract field
+   * and then member; a member that is itself an object may be flattened in
+   * turn. A member is required when it and each enclosing object are. Any
+   * member given supplies each enclosing object with only the given members,
+   * so the contract reports a missing companion member and an omitted
+   * optional member stays omitted. A flattened field listed in `positionals`
+   * takes its members as positionals there, in member order; it and each of
+   * its members must be required.
    */
   readonly flatten?: { readonly [Key in Field]?: CliFlattenedMembers };
   readonly fields?: { readonly [Key in Field]?: CliContractFieldProjection };
@@ -1895,11 +1898,21 @@ export const describeContractCommand = <
     path: readonly string[],
     declared: z.ZodType,
     members: CliFlattenedMembers,
+    enclosingRequired: boolean,
   ): ContractCliParameter[] => {
     const object = core(declared);
     const name = [field, ...path].join(".");
-    if (!(object instanceof z.ZodObject) || !admitsOmission(declared))
-      throw new Error(`${contract.name}.${name} is not an optional object`);
+    if (!(object instanceof z.ZodObject))
+      throw new Error(`${contract.name}.${name} is not an object`);
+    // A member is required when it and every enclosing object are.
+    const required = enclosingRequired && !admitsOmission(declared);
+    // A flattened positional field takes each member as a positional, in
+    // member order, so every member must be required.
+    const positional = path.length === 0 && positionals.includes(field);
+    if (positional && !required)
+      throw new Error(
+        `${contract.name}.${name} is an optional positional object`,
+      );
     const memberShape = object.shape as Record<string, z.ZodType>;
     if (
       Object.keys(members).toSorted().join() !==
@@ -1909,24 +1922,37 @@ export const describeContractCommand = <
     return Object.entries(memberShape).flatMap(([member, memberDeclared]) => {
       const projected = members[member]!;
       const memberPath = [...path, member];
-      if ("flatten" in projected)
+      const memberName = [field, ...memberPath].join(".");
+      if ("flatten" in projected) {
+        if (positional)
+          throw new Error(
+            `${contract.name}.${memberName} is a positional object`,
+          );
         return memberParameters(
           field,
           memberPath,
           memberDeclared,
           projected.flatten,
+          required,
         );
-      const memberName = [field, ...memberPath].join(".");
+      }
+      const memberRequired = required && !admitsOmission(memberDeclared);
+      if (positional && !memberRequired)
+        throw new Error(
+          `${contract.name}.${memberName} is an optional positional`,
+        );
+      const omittable = (schema: z.ZodType) =>
+        memberRequired ? schema : schema.optional();
       const callerPath = projected.callerPath === true;
       let schema: z.ZodType;
       if (callerPath) {
         if (!(core(memberDeclared) instanceof z.ZodString))
           throw new Error(`${contract.name}.${memberName} is not a path`);
-        schema = localPathStringSchema.optional();
+        schema = omittable(localPathStringSchema);
       } else {
         assertArgvField(contract.name, memberName, memberDeclared);
         // An omitted member stays omitted; the contract applies its default.
-        schema = argvDecimal(withoutDefault(memberDeclared).optional());
+        schema = argvDecimal(omittable(withoutDefault(memberDeclared)));
       }
       const description = projected.description ?? memberDeclared.description;
       if (description !== undefined) schema = schema.describe(description);
@@ -1935,7 +1961,7 @@ export const describeContractCommand = <
         {
           field,
           key: projected.name ?? camelCase(member),
-          positional: false,
+          positional,
           alias: projected.alias,
           description,
           schema,
@@ -1971,7 +1997,7 @@ export const describeContractCommand = <
   ].flatMap((field) =>
     flattened[field] === undefined
       ? [parameter(field)]
-      : memberParameters(field, [], shape[field]!, flattened[field]),
+      : memberParameters(field, [], shape[field]!, flattened[field], true),
   );
   const cliOptions: CliOptionShape = projection.cliOptions ?? {};
   const cliPositionalKeys: readonly string[] = projection.cliPositionals ?? [];
