@@ -4,6 +4,7 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 
 import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/config/mcpInputSchemaProfile.js";
 import { presentAdvertisedInputSchema } from "../../../src/contracts/compactInputSchema.js";
+import { SESSION_TOOL_CONTRACTS } from "../../../src/contracts/sessionToolContracts.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import {
   advertisedInputJsonSchema,
@@ -43,9 +44,15 @@ describe("Evidence input SDK boundaries", () => {
   it("advertises the Evidence union for described borrowed inputs", () => {
     // `.describe()` rebuilds a schema from its definition; the borrowed
     // declaration must survive it rather than advertise an unconstrained value.
-    const properties = advertisedInputJsonSchema(
-      toolContract("match_native_functions"),
-    ).properties as Record<string, Record<string, unknown>>;
+    const contract = SESSION_TOOL_CONTRACTS.find(
+      (item) => item.name === "match_native_functions",
+    );
+    if (contract === undefined)
+      throw new Error("Missing match_native_functions contract");
+    const properties = advertisedInputJsonSchema(contract).properties as Record<
+      string,
+      Record<string, unknown>
+    >;
     for (const name of ["left", "right"]) {
       const property = properties[name];
       expect(property?.description, name).toBe(
