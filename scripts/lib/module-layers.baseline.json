@@ -1,7 +1,6 @@
 {
   "upward": {
-    "artifacts -> application": 1,
-    "dotnet -> application": 1
+    "artifacts -> application": 1
   },
   "cycles": [
     "application <-> artifacts",
