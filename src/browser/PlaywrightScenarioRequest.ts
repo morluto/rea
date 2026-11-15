@@ -1,3 +1,4 @@
+import { Deadline } from "../domain/deadline.js";
 import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -197,7 +198,12 @@ interface PageRequest {
   readonly method: string;
   readonly headers: [string, string][];
   readonly body: string | undefined;
-  readonly deadline: number | undefined;
+  /**
+   * The step deadline on the page's wall clock. The host keeps a monotonic
+   * deadline and converts what is left of it when the request is built,
+   * because the page cannot read the host's monotonic clock.
+   */
+  readonly deadlineEpochMs: number | undefined;
   /** Return the response text up to this many characters, for a step that saves values from it. */
   readonly readLimit: number | undefined;
 }
@@ -224,9 +230,9 @@ const sendFromPage = (
           "Request steps require a page without a controlling service worker so cancellation can guard dispatch.",
       };
     const remaining =
-      request.deadline === undefined
+      request.deadlineEpochMs === undefined
         ? undefined
-        : request.deadline - Date.now();
+        : request.deadlineEpochMs - Date.now();
     if (remaining !== undefined && remaining <= 0)
       return { error: "The request ran out of time before it was sent." };
     const controller = new AbortController();
@@ -305,7 +311,7 @@ export const performScenarioRequest = async (input: {
   const deadline =
     action.timeout_ms === undefined
       ? undefined
-      : Date.now() + action.timeout_ms;
+      : Deadline.after(action.timeout_ms);
   const pageOrigin = originOf(page.url());
   if (pageOrigin !== startOrigin)
     throw new ScenarioRequestError(
@@ -355,8 +361,7 @@ export const performScenarioRequest = async (input: {
   if (action.json !== undefined && !hasContentType)
     appendHeader("content-type", "application/json");
   // A step the boundary abandoned, or whose time ran out while values were read, sends nothing.
-  const remaining = deadline === undefined ? undefined : deadline - Date.now();
-  if (signal?.aborted === true || (remaining !== undefined && remaining <= 0))
+  if (signal?.aborted === true || deadline?.expired() === true)
     throw new ScenarioRequestError(
       `Request step ${action.step_id} ran out of time before its request was sent.`,
     );
@@ -369,7 +374,8 @@ export const performScenarioRequest = async (input: {
     method: action.method,
     headers,
     body: json === undefined ? undefined : JSON.stringify(json),
-    deadline,
+    deadlineEpochMs:
+      deadline === undefined ? undefined : Date.now() + deadline.remainingMs(),
     readLimit:
       action.save.length > 0 ? MAX_SAVED_RESPONSE_CHARACTERS : undefined,
   };
@@ -381,7 +387,7 @@ export const performScenarioRequest = async (input: {
         method: action.method,
         headers: [],
         body: request.body ?? null,
-        deadline: deadline ?? null,
+        deadlineEpochMs: request.deadlineEpochMs ?? null,
         readLimit: request.readLimit ?? null,
       },
       envelopeLimit,
@@ -419,10 +425,7 @@ export const performScenarioRequest = async (input: {
       await route.fallback();
       return;
     }
-    if (
-      signal?.aborted === true ||
-      (deadline !== undefined && Date.now() >= deadline)
-    )
+    if (signal?.aborted === true || deadline?.expired() === true)
       await route.abort("aborted");
     else {
       await route.fallback();
@@ -563,13 +566,10 @@ const namesResponse = (
 /** Publication must still belong to the step after its last asynchronous boundary. */
 const assertResponseSaveActive = (
   stepId: string,
-  deadline: number | undefined,
+  deadline: Deadline | undefined,
   signal: AbortSignal | undefined,
 ): void => {
-  if (
-    signal?.aborted === true ||
-    (deadline !== undefined && Date.now() >= deadline)
-  )
+  if (signal?.aborted === true || deadline?.expired() === true)
     throw new ScenarioRequestError(
       `Step ${stepId} ended before its saved response was read, so nothing was saved.`,
     );
@@ -579,7 +579,7 @@ const assertResponseSaveActive = (
 const beforeStepEnds = <T>(
   work: Promise<T>,
   stepId: string,
-  deadline: number | undefined,
+  deadline: Deadline | undefined,
   signal: AbortSignal | undefined,
 ): Promise<T> =>
   new Promise<T>((resolve, reject) => {
@@ -597,8 +597,7 @@ const beforeStepEnds = <T>(
       );
     };
     work.catch(() => undefined);
-    const remaining =
-      deadline === undefined ? undefined : deadline - Date.now();
+    const remaining = deadline?.remainingMs();
     if (
       signal?.aborted === true ||
       (remaining !== undefined && remaining <= 0)
@@ -643,7 +642,7 @@ export const awaitSavedResponse = (
   },
 ): SavedResponseWait => {
   const { stepId, spec, startOrigin, timeout, secrets, signal } = step;
-  const deadline = timeout === undefined ? undefined : Date.now() + timeout;
+  const deadline = timeout === undefined ? undefined : Deadline.after(timeout);
   const pattern = pathPattern(spec.path);
   const started = new Set<Request>();
   const protectResponse = secrets.responseProtector(stepId, spec.save);

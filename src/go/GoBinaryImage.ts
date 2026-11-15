@@ -1,3 +1,4 @@
+import { readLeb128, ULEB64 } from "../domain/leb128.js";
 import type {
   FileMapping,
   ZeroFillMapping,
@@ -349,44 +350,37 @@ const readInlineExtent = (
   remaining: number,
   maximumBytes: number,
 ): { readonly location: GoStringLocation; readonly next: number } => {
-  let length = 0n;
-  for (let index = 0; index < 10; index++) {
-    if (index >= remaining)
-      throw new BinaryFormatFailure(
-        "malformed",
-        "Go build-info varint is truncated",
-      );
-    const byte = reader.bytes[offset + index] ?? 0;
-    if (index === 9 && byte > 1)
-      throw new BinaryFormatFailure(
-        "malformed",
-        "Go build-info varint overflows 64 bits",
-      );
-    length |= BigInt(byte & 127) << BigInt(index * 7);
-    if ((byte & 128) === 0) {
-      if (length > BigInt(remaining - index - 1))
-        throw new BinaryFormatFailure(
-          "malformed",
-          "Go build-info string range is truncated",
-        );
-      if (length > BigInt(maximumBytes))
-        throw new BinaryResourceFailure(
-          "build-info",
-          maximumBytes,
-          `Go build-info string length exceeds max_build_info_bytes=${String(maximumBytes)}`,
-        );
-      const size = Number(length);
-      const start = offset + index + 1;
-      return {
-        location: { offset: start, bytes: size },
-        next: start + size,
-      };
-    }
-  }
-  throw new BinaryFormatFailure(
-    "malformed",
-    "Go build-info varint is unterminated",
+  const read = readLeb128(
+    reader.bytes,
+    offset,
+    offset + Math.max(0, remaining),
+    ULEB64,
   );
+  if ("failure" in read)
+    throw new BinaryFormatFailure(
+      "malformed",
+      read.failure === "truncated"
+        ? "Go build-info varint is truncated"
+        : "Go build-info varint overflows 64 bits",
+    );
+  const start = read.next;
+  const length = read.value;
+  if (length > BigInt(remaining - (start - offset)))
+    throw new BinaryFormatFailure(
+      "malformed",
+      "Go build-info string range is truncated",
+    );
+  if (length > BigInt(maximumBytes))
+    throw new BinaryResourceFailure(
+      "build-info",
+      maximumBytes,
+      `Go build-info string length exceeds max_build_info_bytes=${String(maximumBytes)}`,
+    );
+  const size = Number(length);
+  return {
+    location: { offset: start, bytes: size },
+    next: start + size,
+  };
 };
 
 interface PointerStringContext {

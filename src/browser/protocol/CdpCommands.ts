@@ -81,6 +81,25 @@ const preciseCoverageReply = z.object({
 });
 
 /**
+ * An inventory whose entries the reading section admits one by one, so one
+ * malformed entry is counted there as a gap instead of rejecting the reply.
+ */
+const inventory = z.array(z.unknown());
+
+/**
+ * IndexedDB versions are exact non-negative integers. An omitted or other value
+ * leaves only the version unknown; the database's stores stay readable.
+ */
+const indexedDbVersion = z
+  .unknown()
+  .transform((value) =>
+    typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+      ? value
+      : undefined,
+  )
+  .optional();
+
+/**
  * One result schema per command REA sends. Each schema is the only reader of
  * that command's raw reply; consumers receive its parsed output.
  */
@@ -103,6 +122,21 @@ const CDP_COMMAND_REPLIES = {
     object: z.object({ objectId: z.string().min(1) }),
   }),
   "DOMDebugger.getEventListeners": eventListenersReply,
+  "Accessibility.getFullAXTree": z.object({ nodes: inventory }),
+  "CacheStorage.requestCacheNames": z.object({ caches: inventory }),
+  "CacheStorage.requestCachedResponse": z.object({
+    response: z.object({ body: z.string() }),
+  }),
+  "CacheStorage.requestEntries": z.object({
+    cacheDataEntries: inventory,
+    returnCount: z.int().min(0),
+  }),
+  "DOMSnapshot.captureSnapshot": z.object({
+    // A snapshot always describes at least one document.
+    documents: inventory.min(1),
+    strings: inventory,
+  }),
+  "DOMStorage.getDOMStorageItems": z.object({ entries: inventory }),
   "Debugger.disable": acknowledgement,
   "Debugger.enable": acknowledgement,
   "Debugger.evaluateOnCallFrame": z.object({
@@ -118,8 +152,25 @@ const CDP_COMMAND_REPLIES = {
   "Emulation.setFocusEmulationEnabled": acknowledgement,
   "Emulation.setLocaleOverride": acknowledgement,
   "Emulation.setTimezoneOverride": acknowledgement,
+  "IndexedDB.requestData": z.object({
+    objectStoreDataEntries: inventory,
+    hasMore: z.boolean(),
+  }),
+  "IndexedDB.requestDatabase": z.object({
+    databaseWithObjectStores: z.object({
+      name: z.string(),
+      version: indexedDbVersion,
+      objectStores: inventory,
+    }),
+  }),
+  "IndexedDB.requestDatabaseNames": z.object({ databaseNames: inventory }),
   "Network.disable": acknowledgement,
   "Network.enable": acknowledgement,
+  "Network.getCookies": z.object({ cookies: inventory }),
+  "Network.getResponseBody": z.object({
+    body: z.string(),
+    base64Encoded: z.boolean(),
+  }),
   "Page.addScriptToEvaluateOnNewDocument": z.object({
     identifier: z.string(),
   }),
@@ -147,6 +198,10 @@ const CDP_COMMAND_REPLIES = {
   "Runtime.releaseObjectGroup": acknowledgement,
   "Runtime.runIfWaitingForDebugger": acknowledgement,
   "Storage.getStorageKey": z.object({ storageKey: z.string() }),
+  "Storage.getUsageAndQuota": z.object({
+    usage: z.number(),
+    quota: z.number(),
+  }),
   "Target.attachToTarget": z.object({ sessionId: z.string().min(1) }),
   "Target.detachFromTarget": acknowledgement,
   "Target.getTargetInfo": z.object({
