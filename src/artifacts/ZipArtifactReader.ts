@@ -8,6 +8,7 @@ import {
   type ArtifactReader,
   type ArtifactReaderTraversal,
   type ArtifactTraversalOptions,
+  artifactReaderLimitFailure,
 } from "../resources/index.js";
 import type { FileHandle } from "node:fs/promises";
 import { Duplex, PassThrough, type Readable } from "node:stream";
@@ -48,7 +49,6 @@ import {
 } from "../domain/zip/zipMemberRegion.js";
 import type { ZipPackageFormat } from "../domain/zipPackageFormat.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
-import { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
