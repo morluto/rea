@@ -68,7 +68,7 @@ const clientSchema = z.object({
   configPaths: z.array(z.string()).optional(),
   scope: z.enum(["global", "project"]),
   format: z.string(),
-  privateProfile: z.literal(true).optional(),
+  privateProfile: z.object({ home: z.string() }).optional(),
   inlineConfiguration: z
     .object({ origin: z.literal("KILO_CONFIG_CONTENT"), parsed: z.unknown() })
     .optional(),
@@ -358,7 +358,7 @@ it(
       );
       expect(
         result.explicit.value.find((client) => client.id === "fx"),
-      ).toMatchObject({ format: "fx", privateProfile: true });
+      ).toMatchObject({ format: "fx", privateProfile: { home } });
       expect(result.detected.ok).toBe(true);
       if (!result.detected.ok) throw new Error(result.detected.error.message);
       expect(result.detected.value.map((client) => client.id)).toEqual([

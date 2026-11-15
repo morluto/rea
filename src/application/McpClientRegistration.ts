@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { lstat, mkdir, open } from "node:fs/promises";
+import { lstat, mkdir, open, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import {
@@ -177,12 +177,13 @@ export const registerMcpClient = async (
       checkCancellation();
       await mkdir(dirname(path), {
         recursive: true,
-        ...(client.privateProfile === true ? { mode: 0o700 } : {}),
+        ...(client.privateProfile !== undefined ? { mode: 0o700 } : {}),
       });
       checkCancellation();
-      if (client.privateProfile === true && process.platform !== "win32")
+      if (client.privateProfile !== undefined && process.platform !== "win32")
         await securePrivateDirectory(
           dirname(path),
+          client.privateProfile.home,
           checkCancellation,
           resources,
         );
@@ -194,7 +195,7 @@ export const registerMcpClient = async (
         {
           requestedPath: settingsPath,
           state: snapshot?.state,
-          ...(client.privateProfile === true
+          ...(client.privateProfile !== undefined
             ? { requiredMode: 0o600 as const }
             : {}),
         },
@@ -206,7 +207,7 @@ export const registerMcpClient = async (
       return ok({
         status: "configured",
         ...(backupPath === undefined ? {} : { backupPath }),
-        ...(client.privateProfile === true
+        ...(client.privateProfile !== undefined
           ? { permissions: privateProfilePermissions() }
           : {}),
       });
@@ -274,7 +275,7 @@ const unchangedRegistration = async (
   if (
     parsed.requiresRewrite === true ||
     !clientConfigurationValuesEqual(parsed.document, updated) ||
-    (client.privateProfile === true &&
+    (client.privateProfile !== undefined &&
       process.platform !== "win32" &&
       ((snapshot?.state.mode ?? 0) & 0o777) !== 0o600)
   )
@@ -291,16 +292,17 @@ const unchangedRegistration = async (
   checkCancellation();
   await verifyEffectiveRegistration(prepared, current.text);
   const permissionsChanged =
-    client.privateProfile === true && process.platform !== "win32"
+    client.privateProfile !== undefined && process.platform !== "win32"
       ? await securePrivateDirectory(
           dirname(path),
+          client.privateProfile.home,
           checkCancellation,
           resources,
         )
       : false;
   return {
     status: permissionsChanged ? "configured" : "unchanged",
-    ...(client.privateProfile === true
+    ...(client.privateProfile !== undefined
       ? { permissions: privateProfilePermissions() }
       : {}),
   };
@@ -353,6 +355,7 @@ const verifyRegistration = async (
 /** fx's profile permissions are applied through the selected directory descriptor. */
 const securePrivateDirectory = async (
   path: string,
+  home: string,
   checkCancellation: () => void,
   resources: ArtifactResourceScope,
 ): Promise<boolean> => {
@@ -379,6 +382,12 @@ const securePrivateDirectory = async (
       !named.isDirectory()
     )
       throw new RegularFileChangedError(path);
+    // A linked parent can make a profile path name the home folder itself.
+    const homeFolder = await stat(home);
+    if (homeFolder.dev === before.dev && homeFolder.ino === before.ino)
+      throw new ConfigurationError(
+        `The private profile folder ${path} is the home folder; REA will not make the home folder private. Point the client at its own profile folder; no settings were written.`,
+      );
     changed = (before.mode & 0o777) !== 0o700;
     checkCancellation();
     if (changed) await owner.handle.chmod(0o700);
