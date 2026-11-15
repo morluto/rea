@@ -874,8 +874,9 @@ supplying a bundle does not make incompatible Evidence valid for a workflow.
 `compare-managed-members` keeps its two assembly paths and an optional
 repeatable `--type` selection applied to both sides, and
 `compare-process-captures` keeps its two capture Evidence JSON paths. The bundle
-option above selects an input; producer options that write a new bundle, such
-as `inspect-managed-members --evidence-bundle`, retain their existing meaning.
+option above selects an input. Producers write a new bundle with
+`--evidence_output`; `inspect-managed-members` spelled that option
+`--evidence-bundle` in earlier releases.
 File selectors remain available only on contracts that explicitly support them.
 
 Compare two artifact inventories with `compare-artifacts`. It takes the same

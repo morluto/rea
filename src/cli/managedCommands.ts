@@ -44,21 +44,6 @@ const managedBudgetOptions = {
   ),
 };
 
-const managedBudgetParameters = (options: {
-  readonly maxSnapshotBytes?: number | undefined;
-  readonly maxMetadataRepresentationBytes?: number | undefined;
-}) => ({
-  ...(options.maxSnapshotBytes === undefined
-    ? {}
-    : { max_snapshot_bytes: options.maxSnapshotBytes }),
-  ...(options.maxMetadataRepresentationBytes === undefined
-    ? {}
-    : {
-        max_metadata_representation_bytes:
-          options.maxMetadataRepresentationBytes,
-      }),
-});
-
 export const registerManagedCommands = (
   cli: CliInstance,
   logger: Logger,
@@ -101,54 +86,26 @@ const registerInspectManagedMembers = (
   logger: Logger,
   runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
 ): void => {
-  cli.command(CLI_COMMANDS.inspectManagedMembers, {
-    description:
-      "Inspect PE/CLI metadata members, signatures, CIL anchors, and ldstr string literals without loading target code",
-    args: z.object({
-      path: localPathStringSchema.describe(
-        "Managed PE executable or assembly path",
-      ),
-    }),
-    options: z.object({
-      ...managedBudgetOptions,
-      type: managedMembersInputSchema.shape.type_names.describe(
-        "Inspect only members declared by this exact type full name, and the string literals they load, such as System.Threading.Monitor; a nested type is named by its bare name, which selects every nested type of that name (repeatable)",
-      ),
-      detail: managedMembersInputSchema.shape.detail.describe(
-        "complete returns full Evidence (default); summary returns identity, selection, coverage, limitations and collection counts and requires --evidence-bundle",
-      ),
-      evidenceBundle: localPathStringSchema
-        .optional()
-        .describe(
-          "Write complete parent Evidence to a new local bundle for later inspect-analysis-view calls; never replaces an existing path",
-        ),
-    }),
-    run: ({ args, options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, "inspect-managed-members", () =>
-          runProviderAnalysis(
-            args.path,
-            "inspect_managed_members",
-            {
-              ...managedBudgetParameters(options),
-              ...(options.type === undefined
-                ? {}
-                : { type_names: options.type }),
-            },
-            logger,
-            signal,
-            {
-              ...(options.detail === undefined
-                ? {}
-                : { detail: options.detail }),
-              ...(options.evidenceBundle === undefined
-                ? {}
-                : { evidenceBundlePath: options.evidenceBundle }),
-            },
-          ).then(projectCliAnalysisResult),
-        ),
-      ),
-  });
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(MANAGED_TOOL_CONTRACTS, "inspect_managed_members"),
+    {
+      command: CLI_COMMANDS.inspectManagedMembers,
+      description:
+        "Inspect PE/CLI metadata members, signatures, CIL anchors, and ldstr string literals without loading target code",
+      ...managedTarget,
+      evidenceDelivery: true,
+      fields: {
+        type_names: {
+          name: "type",
+          description:
+            "Inspect only members declared by this exact type full name, and the string literals they load, such as System.Threading.Monitor; a nested type is named by its bare name, which selects every nested type of that name (repeatable)",
+        },
+      },
+    },
+    runOnSessionTarget(runProviderAnalysis, logger),
+  );
 };
 
 const registerInspectManagedNativeBoundaries = (
