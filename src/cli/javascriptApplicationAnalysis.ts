@@ -166,7 +166,6 @@ export const runCliJavaScriptApplicationAnalysis = async (
       : finalized.error
     : publishCliAnalysisEvidence(finalized, {
         ...delivery,
-        providerId: JAVASCRIPT_APPLICATION_PROVIDER.id,
         operation: "analyze_javascript_application",
         signal: signal ?? new AbortController().signal,
       });
