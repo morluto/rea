@@ -102,7 +102,8 @@ const createClient = (options: HopperClientOptions) => {
 
 const failedStartup = async (launcher: RetryCleanupLauncher) => {
   const client = createClient({ launcher });
-  await expect(client.start()).resolves.toMatchObject({
+  const started = await client.start();
+  expect(started).toMatchObject({
     ok: false,
     error: {
       _tag: "ProviderAdapterError",
@@ -112,14 +113,15 @@ const failedStartup = async (launcher: RetryCleanupLauncher) => {
   });
   const session = launcher.sessions[0];
   const child = launcher.processes[0];
-  if (session === undefined || child === undefined)
+  if (session === undefined || child === undefined || started.ok)
     throw new Error("Fixture launch was not observed");
-  return { client, session, child };
+  return { client, session, child, startupFailure: started.error };
 };
 
 it("retains failed startup cleanup until an owned process and its backing image are closed", async () => {
   const launcher = new RetryCleanupLauncher();
-  const { client, session, child } = await failedStartup(launcher);
+  const { client, session, child, startupFailure } =
+    await failedStartup(launcher);
   const closed = await client.close();
   expect(closed).toMatchObject({
     ok: false,
@@ -150,6 +152,9 @@ it("retains failed startup cleanup until an owned process and its backing image 
   const second = client.close();
   await expect(first).resolves.toEqual({ ok: true, value: null });
   await expect(second).resolves.toEqual({ ok: true, value: null });
+  // The successful retry confirms the cleanup the earlier failures reported.
+  expect(closed.error.cleanupIncomplete).toBe(false);
+  expect(startupFailure.cleanupIncomplete).toBe(false);
   expectStoppedFixture(child);
   await expect(access(session.directory)).rejects.toMatchObject({
     code: "ENOENT",

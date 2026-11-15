@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import writeFileAtomic from "write-file-atomic";
 
+import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import {
   analysisErrorWithCloseRejection,
   analysisErrorWithCloseRejections,
@@ -172,6 +173,12 @@ export class HopperClient {
   #runId: string | undefined;
   #startupAttempt: HopperStartupAttempt | undefined;
   #closePromise: Promise<Result<null, AnalysisError>> | undefined;
+  /**
+   * Confirms every failure a close of this client reported: the next close
+   * retries the same retained session and launcher, so its success releases
+   * them all.
+   */
+  #closeRetry: AnalysisCleanupRelease | undefined;
   readonly #onSocketData = (chunk: Buffer): void => {
     try {
       this.#responses.push(chunk);
@@ -863,7 +870,17 @@ export class HopperClient {
             ),
           ),
         );
+      if (closed.ok && (launcherClosed === undefined || launcherClosed.ok)) {
+        this.#closeRetry?.confirm();
+        this.#closeRetry = undefined;
+        return closed;
+      }
+      // Bind each failed part to the retry before composing, so the
+      // composite completes when a later close of this client succeeds.
+      const retry = (this.#closeRetry ??= new AnalysisCleanupRelease());
+      if (!closed.ok) retry.bind(closed.error);
       if (launcherClosed === undefined || launcherClosed.ok) return closed;
+      retry.bind(launcherClosed.error);
       return closed.ok
         ? launcherClosed
         : err(
