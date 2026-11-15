@@ -724,6 +724,7 @@ hosted connector; see [its configuration](client-configuration.md#other-client-s
 | fx                        | `fx`                    |
 | Junie                     | `junie`                 |
 | Goose                     | `goose`                 |
+| Kilo Code                 | `kilo`                  |
 
 `droid`, `dsh`, `kimi`, `qoder`, `trae`, `workbuddy`, and `zcode` require
 `rea-agents@6.5.0` or later. The 6.4.0 registry check above does not cover them.
@@ -741,7 +742,7 @@ not see those registrations. Current releases inspect, refresh and remove them
 like any other setup client. `mcporter` also requires a release after 6.9.0;
 setup never selects it from detection, because MCPorter already imports the
 registrations setup writes for other clients. Select it with
-`--client mcporter`. `fx`, `junie` and `goose` also require a release after 6.9.0.
+`--client mcporter`. `fx`, `junie`, `goose` and `kilo` also require a release after 6.9.0.
 
 See [client configuration and troubleshooting](client-configuration.md) for
 configuration paths, profiles, trust policies, and schema-limit workarounds.
