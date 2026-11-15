@@ -277,7 +277,11 @@ process.stdin.on("data", (chunk) => {
       environment: { REA_GDB_COMMAND: provider },
       stopProcess: async (session) => {
         retainedSessionId = session.id;
-        return { status: "incomplete", reason: "startup cleanup is retained" };
+        return {
+          status: "incomplete",
+          code: "stop-failed",
+          reason: "startup cleanup is retained",
+        };
       },
     });
     managers.push(manager);
@@ -656,6 +660,7 @@ setTimeout(() => process.exit(0), 250);
       },
       stopProcess: async () => ({
         status: "incomplete",
+        code: "stop-failed",
         reason: "simulated incomplete stop",
       }),
     });
@@ -927,6 +932,7 @@ setTimeout(() => process.exit(0), 500);
       environment: { REA_GDB_COMMAND: provider },
       stopProcess: async () => ({
         status: "incomplete",
+        code: "stop-failed",
         reason: "test cleanup",
       }),
     });
@@ -1041,6 +1047,7 @@ setInterval(() => {}, 1000);
           ? stopOwnedDebuggerProcess(session, name, options)
           : {
               status: "incomplete",
+              code: "stop-failed",
               reason: "fixture-owned process awaits test teardown",
             },
     });
@@ -1225,6 +1232,7 @@ setTimeout(() => process.exit(0), 250);
       environment: { REA_GDB_COMMAND: provider },
       stopProcess: async () => ({
         status: "incomplete",
+        code: "stop-failed",
         reason: "simulated debugger cleanup failure",
       }),
     });

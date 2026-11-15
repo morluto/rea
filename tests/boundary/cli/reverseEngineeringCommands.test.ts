@@ -696,7 +696,11 @@ it.each(["incomplete", "interrupt", "control"] as const)(
         abortedAtCleanupEnd = signal?.aborted === true;
         await closeOwnedDebuggerSessions(
           sessions,
-          async () => ({ status: "incomplete", reason: "stop unconfirmed" }),
+          async () => ({
+            status: "incomplete",
+            code: "stop-failed",
+            reason: "stop unconfirmed",
+          }),
           "Rizin",
         );
       });

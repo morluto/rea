@@ -53,7 +53,11 @@ test.each([
         stopProcess: async (session) => {
           stops += 1;
           if (cleanupRetry && stops === 1)
-            return { status: "incomplete", reason: "injected stop pending" };
+            return {
+              status: "incomplete",
+              code: "stop-failed",
+              reason: "injected stop pending",
+            };
           if (session.exited) return { status: "already_exited" };
           await session.detachInferior?.();
           injected.control.exit();

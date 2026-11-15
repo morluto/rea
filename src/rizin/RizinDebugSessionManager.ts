@@ -1219,7 +1219,7 @@ export class RizinDebugSessionManager {
         this.#sessions.retainCleanupFailure(
           session,
           "close_rizin_debug_session",
-          stopped.reason,
+          stopped,
         ),
       );
     this.#sessions.remove(session);
@@ -1699,7 +1699,7 @@ export class RizinDebugSessionManager {
       this.#sessions.retainCleanupFailure(
         session,
         "rizin_debug_command",
-        stopped.reason,
+        stopped,
         {
           partialObservation: observation.evidence,
           ...(stop === undefined
@@ -1723,18 +1723,13 @@ export class RizinDebugSessionManager {
       });
     if (stopped.status !== "incomplete") return primary;
     if (primary instanceof AnalysisCancelledError)
-      return this.#sessions.retainCleanupFailure(
-        session,
-        operation,
-        stopped.reason,
-        {
-          cause: primary,
-        },
-      );
+      return this.#sessions.retainCleanupFailure(session, operation, stopped, {
+        cause: primary,
+      });
     const cleanup = this.#sessions.retainCleanupFailure(
       session,
       operation,
-      stopped.reason,
+      stopped,
     );
     const composed = analysisErrorWithCleanupDependencies(
       primary,
