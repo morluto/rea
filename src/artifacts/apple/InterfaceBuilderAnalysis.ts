@@ -558,7 +558,10 @@ const finalizeHierarchyCoverage = (
                 // it, so that cause keeps the reason the graph already named.
                 // Only a facet with no other cause reports the omission.
                 reason: facet.reason ?? "connection_unresolved",
-                omitted: facet.omitted + omittedConnection,
+                omitted:
+                  facet.omitted === null
+                    ? null
+                    : facet.omitted + omittedConnection,
               }
             : facet;
         }),

@@ -1065,8 +1065,9 @@ export const nativeFunctionSummarySchema = z.strictObject({
     available: z.boolean(),
     truncated: z
       .boolean()
+      .nullable()
       .describe(
-        "True only when value-flow is available and the provider truncated it; false when value-flow is unavailable (see available).",
+        "Whether the provider truncated available value-flow; null when value-flow is unavailable (see available).",
       ),
   }),
   facet_availability: functionFacetAvailabilitySchema

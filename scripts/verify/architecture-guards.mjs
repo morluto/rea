@@ -323,6 +323,21 @@ const checkCounted = (label, key, selected, pattern, owners) => {
     );
 };
 
+// Comparison, coverage and count code that reads an optional parsed fact with
+// `?? 0`, `?? []` or `?? false` turns "not reported" into an observed zero,
+// empty list or no. Keep the fact unknown (null with a limitation) instead.
+// The pattern matches a property read only, so Map accumulators
+// (`map.get(k) ?? []`) and indexed bytes (`bytes[i] ?? 0`) are not counted.
+const comparisonOrCountFile =
+  /\/[^/]*(?:compar|diff|delta|reconcil|coverage|summar|count|match)[^/]*\.ts$/iu;
+checkCounted(
+  "optional fact defaulted to 0, [] or false in comparison or count code (keep it unknown)",
+  "optional-fact-default",
+  files.filter(({ path }) => comparisonOrCountFile.test(path)),
+  /\??\.[a-z_][\w$]* \?\? (?:0|\[\]|false)(?![\w.$])/gu,
+  [],
+);
+
 // Coverage status has one vocabulary, coverageStatusSchema in
 // src/domain/coverage.ts. A local enum that contains "complete" either copies
 // it or drops `unknown`, which forces an unknown producer to pick a side.
