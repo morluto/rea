@@ -13,7 +13,7 @@ import { safeParseImmutableEvidence } from "../../domain/evidenceValidation.js";
 import { freezeJsonSnapshot } from "../../domain/immutableJson.js";
 import { jsonObjectSchema, type JsonValue } from "../../domain/jsonValue.js";
 import type { Result } from "../../domain/result.js";
-import type { AnalysisExecution } from "../AnalysisProvider.js";
+import type { AnalysisExecution } from "../../ports/AnalysisProvider.js";
 import {
   estimateJsonArrayScalarEntry,
   estimateJsonStorage,

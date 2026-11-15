@@ -1,4 +1,4 @@
-import { AnalysisWorkScope } from "./AnalysisWorkScope.js";
+import { AnalysisWorkScope } from "../ports/AnalysisWorkScope.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
@@ -10,7 +10,7 @@ import {
 import type {
   AnalysisOperation,
   AnalysisOperationPort,
-} from "./AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { err, ok } from "../domain/result.js";
 import type { EnhancedResult } from "./EnhancedToolTypes.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";

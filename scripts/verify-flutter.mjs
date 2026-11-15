@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { toolContract } from "../dist/contracts/toolContracts.js";
-import { ArtifactResourceScope } from "../dist/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../dist/resources/ArtifactResourceScope.js";
 import { requireMcpOutput } from "./lib/mcp-verifier-results.mjs";
 import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
 import { hashVerifierFile } from "./lib/verifier-file-resources.mjs";

@@ -14,8 +14,7 @@ import {
   resolveOccurrenceParents,
 } from "./ArtifactGraphConstruction.js";
 import { createArtifactClassificationProbe } from "../ArtifactClassificationProbe.js";
-import { createAsarHeaderSignatureProbe } from "../AsarHeader.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { artifactIdForContent } from "../../domain/artifactIdentity.js";
@@ -25,7 +24,7 @@ import {
   minimalElfImage,
   minimalMachoImage,
 } from "../../../tests/fixtures/nativeHeaders.js";
-import type { ArtifactEntry } from "../ArtifactReader.js";
+import type { ArtifactEntry } from "../../resources/ArtifactReader.js";
 import { dfuseFile } from "../../domain/firmware/dfuse.fixture.js";
 import {
   RP2040_FAMILY,
@@ -41,8 +40,9 @@ import {
   esp8266Image,
   espImage,
 } from "../../../tests/fixtures/espImage.js";
-import { devicetreeFixture } from "../../firmware/devicetree/Devicetree.fixture.js";
+import { devicetreeFixture } from "../../domain/firmware/devicetree.fixture.js";
 import { fitFixture } from "../fit/FitImage.fixture.js";
+import { createAsarHeaderSignatureProbe } from "../../resources/index.js";
 
 it("joins only observed PE signature bytes across stream chunks", () => {
   const bytes = pe(0x8664, 8190);

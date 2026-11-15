@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { expect } from "vitest";
 import { z } from "zod";
 
-import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import {
   createEvidence,
@@ -208,5 +208,42 @@ cliTest(
     } finally {
       await client.close();
     }
+  },
+);
+
+cliTest(
+  "names max_artifact_paths by field and the CLI flag that sets it before reading selections",
+  async ({ cli }) => {
+    const directory = await createTestTempDirectory("rea-wasm-paths-");
+    const invocation = await cli.run({
+      arguments: [
+        "inspect-wasm-artifact",
+        "./selected.wasm",
+        "--glue_paths",
+        "./first.js",
+        "--glue_paths",
+        "./second.js",
+        "--max-artifact-paths",
+        "1",
+        "--format",
+        "json",
+      ],
+      environment: { HOME: directory, XDG_CONFIG_HOME: directory },
+      cwd: directory,
+    });
+    expect(invocation.exitCode, invocation.stderr).toBe(1);
+    const cliError = analysisErrorProjectionSchema.parse(invocation.json);
+    expect(cliError).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_artifact_paths",
+          effective_value: 1,
+          cli_flag: "--max-artifact-paths",
+        },
+      },
+    });
+    expect(JSON.stringify(cliError.remediation)).not.toContain("--");
   },
 );

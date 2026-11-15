@@ -1,18 +1,17 @@
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { parseEvidence, createEvidence } from "../../../src/domain/evidence.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
+import { phaseArrival, phaseGate } from "../../support/lifecycleHarness.js";
 
 import {
-  createDeferred,
   createBinarySessionTargets,
   createTestBinarySession,
 } from "../../fixtures/binarySession.js";
 import {
   createAnalysisExecution,
   type AnalysisOperationPort,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComparisonExample.js";
 import {
@@ -137,9 +136,8 @@ it("keeps call-path publication ahead of close_binary record draining", async ()
   const client = new Client({ name: "investigation-close-race", version: "1" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
-  const preparationReached = createDeferred<void>();
-  const closeReached = createDeferred<void>();
-  const releasePreparation = createDeferred<void>();
+  const callPathPreparation = phaseGate();
+  const analysisClose = phaseArrival();
   const send = serverTransport.send.bind(serverTransport);
   let preparationToken: string | number | undefined;
   serverTransport.send = async (message, options) => {
@@ -157,10 +155,9 @@ it("keeps call-path publication ahead of close_binary record draining", async ()
       if (preparationToken === undefined) {
         // The first request cannot advance until this notification is released.
         preparationToken = message.params.progressToken;
-        preparationReached.resolve();
-        await releasePreparation.promise;
+        await callPathPreparation.hold();
       } else if (message.params.progressToken !== preparationToken) {
-        closeReached.resolve();
+        analysisClose.arrive();
       }
     }
   };
@@ -183,11 +180,7 @@ it("keeps call-path publication ahead of close_binary record draining", async ()
         return response;
       });
     pending.push(request);
-    await awaitAcknowledgement(
-      preparationReached.promise,
-      request,
-      "call-path preparation",
-    );
+    await callPathPreparation.reached(request, "call-path preparation");
 
     let closeSettled = false;
     const closing = client
@@ -201,14 +194,10 @@ it("keeps call-path publication ahead of close_binary record draining", async ()
         return response;
       });
     pending.push(closing);
-    await awaitAcknowledgement(
-      closeReached.promise,
-      closing,
-      "call-path queued close",
-    );
+    await analysisClose.reached(closing, "call-path queued close");
     expect(closeSettled).toBe(false);
 
-    releasePreparation.resolve();
+    callPathPreparation.release();
     const [response, closed] = await Promise.all([request, closing]);
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
     expect(closed.isError, JSON.stringify(closed)).not.toBe(true);
@@ -222,7 +211,7 @@ it("keeps call-path publication ahead of close_binary record draining", async ()
     for (const source of input.functions)
       expect(session.hasEvidence(source.evidence_id)).toBe(true);
   } finally {
-    releasePreparation.resolve();
+    callPathPreparation.release();
     await Promise.allSettled(pending);
     await close(session, server, client);
   }

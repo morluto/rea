@@ -4,7 +4,7 @@ import {
 } from "../../domain/firmware/firmwareAnalysis.js";
 import type { ToolContract } from "../toolContractTypes.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
-import { toolContractMetadata } from "../toolEffects.js";
+import { toolContractMetadata, toolEffects } from "../toolEffects.js";
 import {
   FIRMWARE_OPERATION_ENGINES,
   FIRMWARE_TOOL_REQUIREMENTS,
@@ -15,7 +15,15 @@ export const FIRMWARE_TOOL_CONTRACTS = [
   {
     name: "inspect_firmware_regions",
     availability: { host: "firmwareInspection" },
-    ...toolContractMetadata("inspect_firmware_regions"),
+    cli: true,
+    ...toolContractMetadata(
+      "inspect_firmware_regions",
+      toolEffects({
+        mutatesSession: true,
+        launchesProcess: true,
+        writesFilesystem: true,
+      }),
+    ),
     kind: "firmware-provider",
     description: `Inspect signature candidates in a local firmware file with ${FIRMWARE_TOOL_REQUIREMENTS[FIRMWARE_OPERATION_ENGINES.inspect_firmware_regions].requirement}. Returns offsets, reported lengths, descriptions and raw confidence values. Length validation and runtime addresses remain unknown. No extraction or target execution. Linux, caller-supplied tool, util-linux prlimit and procps ps required; 128 MiB input limit, one worker. Adjust analysis_timeout_ms for the analysis wall-clock budget (default 120000); fixed per-process limits are unchanged.`,
     inputSchema: firmwareInputSchemas.inspect_firmware_regions,
@@ -32,7 +40,16 @@ export const FIRMWARE_TOOL_CONTRACTS = [
   {
     name: "extract_firmware",
     availability: { host: "firmwareExtraction" },
-    ...toolContractMetadata("extract_firmware"),
+    cli: true,
+    ...toolContractMetadata(
+      "extract_firmware",
+      toolEffects({
+        mutatesSession: true,
+        launchesProcess: true,
+        writesFilesystem: true,
+        idempotent: false,
+      }),
+    ),
     kind: "firmware-provider",
     description: `Extract selected local firmware bytes with ${FIRMWARE_TOOL_REQUIREMENTS[FIRMWARE_OPERATION_ENGINES.extract_firmware].requirement} into an absent output directory. Returns verified child paths/digests, derivations, uncovered ranges, unknown chunks and extraction_gaps with continuation_id recovery instructions. Linux, format-specific extractors, prlimit and procps ps are required. Preserves the sandbox and publishes only regular files; no mounts or extracted-code execution. Select a returned native file with open_binary for analysis. Decompressed offsets are not original-file addresses.`,
     inputSchema: firmwareInputSchemas.extract_firmware,

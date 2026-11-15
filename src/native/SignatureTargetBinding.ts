@@ -22,20 +22,20 @@ import {
 import { InternalInvariantError } from "../domain/internalInvariant.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+  bindArtifactFileCleanup,
+  type ArtifactResourceOwner,
+} from "../resources/index.js";
+import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { finalizedResult, runOwned } from "../providers/runOwned.js";
-import type { ArtifactResourceOwner } from "../artifacts/ArtifactResourceScope.js";
 
 import { NATIVE_MACOS_PROVIDER_IDENTITY } from "./NativeMacosProviderIdentity.js";
 
@@ -222,11 +222,11 @@ export const withSignatureTarget = async (
       );
       bindArtifactFileCleanup(cause, failure);
       return err(
-        analysisErrorWithCleanupFailure(
+        analysisErrorWithCleanupDependencies(
           outcome,
           failure,
           "inspect_signature",
-        ).bindCleanupDependencies([outcome, failure]),
+        ),
       );
     }
     return err(outcome);

@@ -171,7 +171,7 @@ try {
       const parameters = profile.parameters;
       assert.equal(parameters.language_id, expectedLanguage);
       assert.equal(parameters.compiler_spec_id, "gcc");
-      assert.equal(parameters.language_selection, "provider-pinned-v1");
+      assert.equal(parameters.language_selection, "provider-pinned");
       assert.equal(parameters.riscv_support_lane, want.lane);
       assert.equal(parameters.riscv_calling_convention, want.callingConvention);
       assert.deepEqual(parameters.riscv_elf, want.riscvElf);

@@ -75,7 +75,6 @@ export const readNativeDeadline = (
 export const nativeDeadlineRecovery = (input: {
   readonly timeoutMs: number;
   readonly parameter: string;
-  readonly cliFlag: string;
   readonly defaultMs: number;
   readonly phase: string;
   readonly unchanged: string;
@@ -87,15 +86,14 @@ export const nativeDeadlineRecovery = (input: {
 } => {
   const atMaximum = input.timeoutMs >= MAX_NODE_TIMER_DELAY_MS;
   const adjustment = atMaximum
-    ? `${input.parameter} (${input.cliFlag} on the CLI) is already at the maximum ${String(MAX_NODE_TIMER_DELAY_MS)} ms; do not increase it.`
-    : `Increase ${input.parameter} above ${String(input.timeoutMs)} (integer milliseconds from 1 to ${String(MAX_NODE_TIMER_DELAY_MS)}; omitted means ${String(input.defaultMs)}), or pass ${input.cliFlag} on the CLI. A change applies on the next call.`;
+    ? `${input.parameter} is already at the maximum ${String(MAX_NODE_TIMER_DELAY_MS)} ms; do not increase it.`
+    : `Increase ${input.parameter} above ${String(input.timeoutMs)} (integer milliseconds from 1 to ${String(MAX_NODE_TIMER_DELAY_MS)}; omitted means ${String(input.defaultMs)}). A change applies on the next call.`;
   return {
     userMessage: `This request reached REA's ${input.phase} of ${String(input.timeoutMs)} ms (${input.parameter}). This is a server/provider deadline, not the MCP client deadline.${input.detail ?? ""}`,
     remediationAction: `${adjustment} ${input.unchanged} Allow execution, cleanup, and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
     limit: {
       control_kind: "parameter",
       parameter: input.parameter,
-      cli_flag: input.cliFlag,
       effective_value: input.timeoutMs,
       unit: "ms",
       minimum: 1,

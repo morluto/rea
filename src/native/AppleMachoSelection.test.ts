@@ -16,14 +16,14 @@ import {
   machoImage,
   machoImageWithUnknownCommand,
 } from "../artifacts/apple/MachoImage.fixture.js";
-import { readMachoImage } from "../artifacts/apple/MachoLoadCommandReader.js";
-import { readMachoImage as readMachoMetadataImage } from "./metadata/MachoImage.js";
-import { BinaryFormatFailure } from "./metadata/BinaryContainer.js";
+import { readMachoImage } from "../domain/apple/machoLoadCommandReader.js";
+import { readMachoImage as readMachoMetadataImage } from "../domain/apple/machoImage.js";
+import { BinaryFormatFailure } from "../domain/binaryContainer.js";
 import { layoutFor, MachoSliceRefused } from "./AppleMachoSelection.fixture.js";
 import {
   selectMachoSlice,
   type AdmittedMachoSlice,
-} from "./metadata/MachoSliceSelection.js";
+} from "../domain/apple/machoSliceSelection.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 
 const admittedSlice = (

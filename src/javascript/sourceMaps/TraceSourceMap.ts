@@ -28,8 +28,8 @@ import {
   SOURCE_MAP_FORMAT,
   sourceMapLimitFailure,
   type SourceMapSourceDeclaration,
-} from "./SourceMapFormat.js";
-import { decodeValidatedSourceMapLeaves } from "./DecodedSourceMap.js";
+} from "../../domain/sourceMapFormat.js";
+import { decodeValidatedSourceMapLeaves } from "../../domain/decodedSourceMap.js";
 
 /** Decode with the pinned upstream codec; preserve every equal-position candidate. */
 export const traceSourceMap = (

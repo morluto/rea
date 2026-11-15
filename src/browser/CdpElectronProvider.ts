@@ -6,8 +6,8 @@ import {
 import type {
   ExecutionOptions,
   ProviderIdentity,
-} from "../application/AnalysisProvider.js";
-import type { ElectronObservationPort } from "../application/javascript/ElectronObservationPort.js";
+} from "../ports/AnalysisProvider.js";
+import type { ElectronObservationPort } from "../ports/javascript/ElectronObservationPort.js";
 import {
   electronPageInspectionSchema,
   electronTargetListSchema,

@@ -14,7 +14,7 @@ import * as sessionObservations from "./DesktopSessionObservations.js";
 import type { ProcessCleanupResult } from "../process/ProcessOwnership.js";
 import * as runTokenObservations from "../process/ProcessRunTokenObservations.js";
 import { isProcessOwnershipInspectionCancellation } from "../process/ProcessInspectionCancellation.js";
-import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../resources/ArtifactFileOperation.js";
 import {
   runDesktopSession,
   type DesktopSessionPlan,

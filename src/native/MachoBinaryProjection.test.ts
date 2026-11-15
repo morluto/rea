@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { projectMachoBinary } from "./MachoBinaryProjection.js";
-import type { MachoCommandNames } from "./MachoCommandNames.js";
-import { readMachoCommandNames } from "./MachoCommandNames.js";
+import type { MachoCommandNames } from "../domain/apple/machoCommandNames.js";
+import { readMachoCommandNames } from "../domain/apple/machoCommandNames.js";
 import {
   machoImage,
   readerOf,

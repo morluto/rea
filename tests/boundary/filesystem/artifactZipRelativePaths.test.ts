@@ -7,7 +7,7 @@ import { expect, it } from "vitest";
 import { writeOrderedZip } from "../../fixtures/artifactEntryOrder.js";
 import { inventoryArtifact } from "../../fixtures/artifactInventory.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import type { ArtifactEntry } from "../../../src/artifacts/ArtifactReader.js";
+import type { ArtifactEntry } from "../../../src/resources/ArtifactReader.js";
 import { ZipArtifactReader } from "../../../src/artifacts/ZipArtifactReader.js";
 
 it("retains distinct occurrences when ZIP paths normalize to the same child", async () => {

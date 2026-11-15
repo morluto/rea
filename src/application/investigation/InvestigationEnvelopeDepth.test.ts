@@ -6,7 +6,7 @@ import { createAnalysisProfile } from "../../domain/analysisProfile.js";
 import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import { MAX_EVIDENCE_JSON_DEPTH } from "../../domain/evidence.js";
 import { MAX_JSON_DEPTH, type JsonValue } from "../../domain/jsonValue.js";
-import { createAnalysisExecution } from "../AnalysisProvider.js";
+import { createAnalysisExecution } from "../../ports/AnalysisProvider.js";
 import { BinarySessionRecords } from "../binary/BinarySessionRecords.js";
 import { estimateJsonStorage } from "../JsonAuthenticationHeadroom.js";
 import { InvestigationRecords } from "./InvestigationRecords.js";

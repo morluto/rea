@@ -4,17 +4,19 @@ import {
   snapshotRegexConfiguration,
   type RegexConfigurationSnapshot,
 } from "../process/RegexMatcher.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import {
+  bindArtifactFileCleanup,
+  AnalysisCleanupLease,
+  AnalysisCleanupLeaseGroup,
+  type ArtifactResourceOwner,
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import { basename, join } from "node:path";
 import {
   regularFileCancellation,
   RegularFileCleanupFailure,
 } from "../filesystem/OwnedRegularFile.js";
-import {
-  AnalysisCleanupLease,
-  AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
-import type { ArtifactResourceOwner } from "../artifacts/ArtifactResourceScope.js";
 import { z } from "zod";
 
 import {
@@ -24,7 +26,7 @@ import {
   type AnalysisOperation,
   type ExecutionOptions,
   type RetainedResourceScope,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
@@ -131,8 +133,6 @@ import {
   type KunaProjectFileSpan,
 } from "./KunaProjectReader.js";
 import { kunaUnavailable } from "./KunaUnavailable.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { kunaQueryFailureForCaller } from "./KunaQueryErrors.js";
 import type { PseudocodeAbsence } from "../domain/native/pseudocodeAbsence.js";
@@ -379,6 +379,7 @@ export class KunaSessionClient implements AnalysisClient {
   readonly #profile: AnalysisProfileCommitment | undefined;
   readonly #cache: KunaProjectCache;
   readonly #environment: Readonly<NodeJS.ProcessEnv>;
+  readonly #platform: NodeJS.Platform;
   readonly #runSlots: KunaRunSlots;
   readonly #launcher: KunaProcessLauncher | undefined;
   readonly #resourceScope = new ArtifactResourceScope();
@@ -446,6 +447,7 @@ export class KunaSessionClient implements AnalysisClient {
       readonly cache: KunaProjectCache;
       readonly runSlots: KunaRunSlots;
       readonly environment: Readonly<NodeJS.ProcessEnv>;
+      readonly platform: NodeJS.Platform;
       readonly deadline: RegexMatchingDeadline;
       readonly heapRequest: RegexWorkerHeapRequest;
       readonly launcher?: KunaProcessLauncher;
@@ -456,6 +458,7 @@ export class KunaSessionClient implements AnalysisClient {
     this.#cache = dependencies.cache;
     this.#runSlots = dependencies.runSlots;
     this.#environment = dependencies.environment;
+    this.#platform = dependencies.platform;
     this.#launcher = dependencies.launcher;
     this.#commands = new KunaTargetCommands(target, {
       signal: this.#session.signal,
@@ -2029,6 +2032,7 @@ export class KunaSessionClient implements AnalysisClient {
     const kunaResources = createKunaResourceScope(parentResourceScope);
     try {
       const inspected = await inspectKunaInstallation(this.#environment, {
+        platform: this.#platform,
         resourceScope: kunaResources.owner,
         signal,
         ...(this.#launcher === undefined
