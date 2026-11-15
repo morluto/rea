@@ -135,7 +135,11 @@ export class RustBinaryProvider implements RustBinaryPort {
             ...selected.limitations,
           ],
         };
-        retainCompilerPathsWithinReport(report, limits.output_bytes);
+        retainCompilerPathsWithinReport(
+          report,
+          limits.output_bytes,
+          rustcLimitation(image.rustc_commit),
+        );
         if (
           Buffer.byteLength(JSON.stringify(report), "utf8") >
           limits.output_bytes
@@ -236,7 +240,6 @@ const limitationsFor = (
         "Dependency indices contain a cycle. The cycle is reported and was not traversed.",
       ]
     : []),
-  ...rustcLimitation(image.rustc_commit),
 ];
 
 const unknownFormatLimitation = (
@@ -277,17 +280,28 @@ const rustcLimitation = (
   ];
 };
 
-/** Optional inferred paths never displace independently observed dependency facts. */
+/**
+ * Optional inferred paths never displace independently observed dependency
+ * facts. The compiler guidance describes the retained result: the reader's
+ * guidance when every retained path fits, otherwise the trimming guidance,
+ * which names its control directly because no compiler record may survive.
+ */
 const retainCompilerPathsWithinReport = (
   report: RustBinary,
   maxOutputBytes: number,
+  compilerGuidance: readonly string[],
 ): void => {
   const commit = report.rustc_commit;
+  const withGuidance = [...report.limitations, ...compilerGuidance];
   if (
     commit === null ||
-    Buffer.byteLength(JSON.stringify(report)) <= maxOutputBytes
-  )
+    Buffer.byteLength(
+      JSON.stringify({ ...report, limitations: withGuidance }),
+    ) <= maxOutputBytes
+  ) {
+    report.limitations = withGuidance;
     return;
+  }
   const limitation =
     "Compiler paths were omitted to preserve dependency facts within the complete-report byte allowance; compiler-path coverage is partial. Increase producer_limits.output_bytes on the next call; no restart is required. Increasing max_rustc_hashes alone does not raise this allowance.";
   const baseline = {

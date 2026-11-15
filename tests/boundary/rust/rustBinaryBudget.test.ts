@@ -118,3 +118,41 @@ it("recovers the same complete Rust image after input and report budget changes"
     await provider.close();
   }
 });
+
+it("describes compiler coverage from the retained result when report trimming drops every path", async () => {
+  const root = await createTestTempDirectory("rea-rust-trimmed-guidance-");
+  const path = join(root, "many-hashes.elf");
+  await writeFile(path, createRustHashOverflowImage());
+  const provider = new RustBinaryProvider();
+  try {
+    const inspect = (output_bytes: number) =>
+      provider.inspect({
+        path,
+        max_rustc_hashes: 1,
+        producer_limits: { output_bytes },
+      });
+    // The smallest admitted report keeps dependencies and no compiler path.
+    let refused = 16;
+    let admitted = 1024 * 1024;
+    while (admitted - refused > 1) {
+      const middle = Math.floor((refused + admitted) / 2);
+      if ((await inspect(middle)).ok) admitted = middle;
+      else refused = middle;
+    }
+    const trimmed = await inspect(admitted);
+    if (!trimmed.ok) throw trimmed.error;
+    expect(trimmed.value.rustc_commit).toBeNull();
+    expect(trimmed.value.auditable_metadata?.packages).toHaveLength(2);
+    const text = trimmed.value.limitations.join(" ");
+    // The reader's partial-prefix guidance referred to a record that no
+    // longer exists; the trimming guidance names its control directly.
+    expect(text).not.toContain("rustc_commit.coverage.limit");
+    expect(text).not.toContain("max_rustc_hashes=1");
+    expect(text).toContain(
+      "Compiler paths were omitted to preserve dependency facts",
+    );
+    expect(text).toContain("producer_limits.output_bytes");
+  } finally {
+    await provider.close();
+  }
+});
