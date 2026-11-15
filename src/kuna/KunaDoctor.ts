@@ -1,4 +1,5 @@
 import { constants } from "node:fs";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { access, lstat, stat } from "node:fs/promises";
 import { dirname, posix, win32 } from "node:path";
 
@@ -70,7 +71,10 @@ export const inspectKunaProvider = async (
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
   } catch (cause: unknown) {
-    const retainedCleanup = kunaRetainedResourceCleanupError(cause, "doctor");
+    const retainedCleanup =
+      cause instanceof ArtifactReaderFailure
+        ? kunaRetainedResourceCleanupError(cause, "doctor")
+        : undefined;
     if (retainedCleanup !== undefined)
       return {
         id: KUNA_PROVIDER_ID,

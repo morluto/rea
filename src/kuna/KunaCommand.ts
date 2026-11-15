@@ -145,14 +145,10 @@ export const kunaFileCleanupError = (
 
 /** Preserve the exact retryable resources when an inspection admission retries them. */
 export const kunaRetainedResourceCleanupError = (
-  cause: unknown,
+  cause: ArtifactReaderFailure,
   operation: string,
-): AnalysisError | undefined => {
-  if (
-    !(cause instanceof ArtifactReaderFailure) ||
-    cause.cleanupLeases === undefined ||
-    cause.cleanupLeases.length === 0
-  )
+): ProviderCleanupError | undefined => {
+  if (cause.cleanupLeases === undefined || cause.cleanupLeases.length === 0)
     return undefined;
   const cleanup = new ProviderCleanupError(
     KUNA_PROVIDER_ID,

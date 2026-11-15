@@ -2068,7 +2068,10 @@ export class KunaSessionClient implements AnalysisClient {
         );
       return ok(inspected.value);
     } catch (cause: unknown) {
-      const retainedCleanup = kunaRetainedResourceCleanupError(cause, "health");
+      const retainedCleanup =
+        cause instanceof ArtifactReaderFailure
+          ? kunaRetainedResourceCleanupError(cause, "health")
+          : undefined;
       if (retainedCleanup !== undefined) return err(retainedCleanup);
       if (!(cause instanceof RegularFileCleanupFailure)) {
         const cancellation = kunaResources.installationCancellationError(

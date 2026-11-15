@@ -44,7 +44,6 @@
     "src/inspector/V8InspectorProvider.ts": 1,
     "src/javascript/analysis/JavaScriptAnalysisWorker.ts": 3,
     "src/javascript/sourceMaps/SourceMapCommand.ts": 1,
-    "src/kuna/KunaCommand.ts": 1,
     "src/native/AppleDispatchMetadata.ts": 1,
     "src/native/NativeCallTarget.ts": 1,
     "src/native/NativeMacOSProvider.ts": 4,
