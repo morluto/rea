@@ -12,6 +12,7 @@ import {
 import {
   contractCommandDescriptions,
   contractDocumentCommandDescriptions,
+  targetRoutedCommandDescriptions,
 } from "../../../src/cli/contractCommand.js";
 import { jsonInputContentSchema } from "../../../src/cli/jsonInputArgument.js";
 import {
@@ -27,7 +28,11 @@ const registered = new Map<string, RegisteredCommand>();
 visitRegisteredCommands(cli, (command, path) => {
   registered.set(path, command);
 });
-const descriptions = contractCommandDescriptions(cli);
+// A target-routed command contributes one description per contract it runs.
+const descriptions = [
+  ...contractCommandDescriptions(cli),
+  ...targetRoutedCommandDescriptions(cli),
+];
 
 const inputJsonSchema = (field: z.ZodType): Record<string, unknown> =>
   z.toJSONSchema(field, { io: "input", unrepresentable: "any" });
@@ -309,6 +314,7 @@ const MIGRATED_COMMANDS = [
   "list-architectures",
   "inspect-plist",
   "demangle-swift",
+  "analyze",
 ];
 
 describe("CLI commands projected from tool contracts", () => {
@@ -344,17 +350,25 @@ describe("CLI commands projected from tool contracts", () => {
           .filter(({ positional }) => positional)
           .map(({ key }) => key),
       ]);
+      // A routed command takes the union of its routes' options.
+      const routes = descriptions.filter(
+        ({ command: name }) => name === description.command,
+      );
       expect(optionKeys.toSorted()).toEqual(
         [
-          ...description.parameters
-            .filter(({ positional }) => !positional)
-            .map(({ key }) => key),
-          ...(description.sessionTarget?.options ?? []).map(({ key }) => key),
-          ...description.cliOnlyOptions.map(({ key }) => key),
-          ...description.parameters.flatMap(({ selectorOption }) =>
-            [selectorOption, selectorOption?.alternative].flatMap((option) =>
-              option === undefined ? [] : [option.key],
-            ),
+          ...new Set(
+            routes.flatMap((route) => [
+              ...route.parameters
+                .filter(({ positional }) => !positional)
+                .map(({ key }) => key),
+              ...(route.sessionTarget?.options ?? []).map(({ key }) => key),
+              ...route.cliOnlyOptions.map(({ key }) => key),
+              ...route.parameters.flatMap(({ selectorOption }) =>
+                [selectorOption, selectorOption?.alternative].flatMap(
+                  (option) => (option === undefined ? [] : [option.key]),
+                ),
+              ),
+            ]),
           ),
         ].toSorted(),
       );
