@@ -280,50 +280,7 @@
     "src/process/capture/ProcessScenarioRuntimeValidation.ts": 1
   },
   "ambient-host-platform": {
-    "src/adb/AdbConfiguration.ts": 1,
-    "src/adb/AdbDeviceOutput.ts": 1,
-    "src/adb/AdbHostFileName.ts": 1,
-    "src/adb/AdbProvider.ts": 1,
-    "src/captures/TsharkCaptureProvider.ts": 1,
-    "src/cli/desktopCaptureCommands.ts": 1,
-    "src/cli/mcpRegistration.ts": 2,
-    "src/composition/auxiliaryAnalysisProviders.ts": 1,
-    "src/composition/binary.ts": 2,
-    "src/composition/reverseEngineering.ts": 1,
-    "src/config/parseConfig.ts": 2,
-    "src/cutter/CutterBridgeClient.ts": 1,
-    "src/desktop/BuildComputerEnvironment.ts": 3,
-    "src/desktop/BuildSecretFiles.ts": 1,
-    "src/domain/localPath.ts": 1,
-    "src/electron/ElectronFusePath.ts": 1,
-    "src/evm/EvmoleInterfaceProvider.ts": 2,
-    "src/filesystem/ChangeTimeBaseline.ts": 2,
-    "src/filesystem/callerPath.ts": 2,
-    "src/firmware/FirmwareCommand.ts": 1,
-    "src/gdb/GdbSessionManager.ts": 2,
-    "src/ida/IdaWorkspace.ts": 1,
-    "src/inspector/JavaScriptRuntimeScope.ts": 1,
-    "src/javascript/analysis/JavaScriptAnalysisSourceTransfer.ts": 1,
-    "src/javascript/recovery/WakaruCommand.ts": 1,
-    "src/kuna/KunaConfiguration.ts": 1,
-    "src/kuna/KunaDoctor.ts": 1,
-    "src/kuna/KunaProvider.ts": 1,
-    "src/native/NativeMacOSProvider.ts": 1,
-    "src/native/NativeMacOSProviderMetadata.ts": 1,
-    "src/native/pwntools/PwntoolsDecoder.ts": 2,
-    "src/native/windows/WindowsShortcutProvider.ts": 1,
-    "src/rizin/RizinDebugSessionManager.ts": 1,
-    "src/server/createServer.ts": 1,
-    "src/server/registerSessionTools.ts": 3,
-    "src/serverIdentity.ts": 1,
-    "src/signals/SigrokRecordingProvider.ts": 1,
-    "src/wasm/WabtArtifactProvider.ts": 1
-  },
-  "ambient-host-architecture": {
-    "src/evm/EvmoleInterfaceProvider.ts": 2,
-    "src/javascript/recovery/WakaruCommand.ts": 1,
-    "src/native/pwntools/PwntoolsDecoder.ts": 2,
-    "src/server/createServer.ts": 1
+    "src/domain/localPath.ts": 1
   },
   "hand-caught-configuration-error": {
     "src/application/McpClientRegistration.ts": 1,
@@ -387,17 +344,7 @@
     "src/native/pwntools/PwntoolsDecoder.ts": 1
   },
   "test-host-platform-stub": {
-    "tests/boundary/cli/debuggerOneShotExit.test.ts": 1,
-    "tests/boundary/evm/evmCleanupRetry.test.ts": 52,
-    "tests/boundary/filesystem/webScriptExport.test.ts": 2,
-    "tests/boundary/native/pwntoolsArtifactCleanup.test.ts": 4,
-    "tests/boundary/process/artifactSelectedCommand.test.ts": 4,
-    "tests/boundary/process/nativeUiVerifierActions.test.ts": 1,
-    "tests/process-global/hostRestrictedAvailabilityMcp.test.ts": 4,
-    "tests/process-global/pwntoolsCleanup.test.ts": 4,
-    "tests/process-global/pwntoolsCliFinalization.test.ts": 4,
-    "tests/process-global/pwntoolsCliRemediation.test.ts": 4,
-    "tests/process-global/pwntoolsStageRetirement.test.ts": 4
+    "tests/boundary/cli/debuggerOneShotExit.test.ts": 1
   },
   "local-completeness-enum": {
     "src/contracts/cutterToolContracts.ts": 1,

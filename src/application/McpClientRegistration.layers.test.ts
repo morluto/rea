@@ -1,3 +1,4 @@
+import { registerMcpClientOnHost } from "../../tests/fixtures/mcpRegistration.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -10,7 +11,6 @@ import {
   parseClientConfiguration,
 } from "./ClientConfigurationDocument.js";
 import { mergeClientConfigurationDocuments } from "./ClientConfigurationFiles.js";
-import { registerMcpClient } from "./McpClientRegistration.js";
 import {
   mcpClientRegistrationProfile,
   type McpRegistrationClient,
@@ -81,7 +81,7 @@ it("retains lower Kilo disable/environment policy without copying its source int
   const originalTarget = await write(target, targetDocument);
   const client = clientFor(target, [missing, lower, target]);
   expect(
-    await registerMcpClient(client, launcher, undefined, resources),
+    await registerMcpClientOnHost(client, launcher, undefined, resources),
   ).toMatchObject({ ok: true });
   const targetText = await readFile(target, "utf8");
   expect(JSON.parse(targetText)).toEqual({
@@ -115,7 +115,7 @@ it("refuses a higher Kilo file launcher before creating the lower selected targe
       rea: { type: "local", command: ["higher-server", "higher-argument"] },
     },
   });
-  const result = await registerMcpClient(
+  const result = await registerMcpClientOnHost(
     clientFor(target, [join(root, "absent", "config.json"), target, higher]),
     launcher,
     undefined,
@@ -148,7 +148,7 @@ it("refuses a conflicting KILO_CONFIG_CONTENT launcher without mutating the inli
     ),
   } as const;
   const beforeInline = structuredClone(inline);
-  const result = await registerMcpClient(
+  const result = await registerMcpClientOnHost(
     { ...clientFor(target, [target]), inlineConfiguration: inline },
     launcher,
     undefined,
@@ -207,7 +207,7 @@ it("retains harmless higher file and inline metadata as read-only inherited fact
     inlineConfiguration: inline,
   };
   expect(
-    await registerMcpClient(client, launcher, undefined, resources),
+    await registerMcpClientOnHost(client, launcher, undefined, resources),
   ).toMatchObject({ ok: true });
   const targetText = await readFile(target, "utf8");
   expect(JSON.parse(targetText)).toEqual({
@@ -248,7 +248,7 @@ it("uses the effective OpenCode V2 dialect in its target fragment while preservi
   const peer = { type: "local", command: ["peer"] };
   await write(target, { mcp: { peer } });
   expect(
-    await registerMcpClient(
+    await registerMcpClientOnHost(
       clientFor(target, [lower, target], "opencode"),
       launcher,
       undefined,
@@ -294,7 +294,7 @@ it("publishes through the last repeated target layer without copying intervening
       },
     },
   });
-  const result = await registerMcpClient(
+  const result = await registerMcpClientOnHost(
     clientFor(target, [target, middle, target]),
     launcher,
     undefined,
