@@ -232,6 +232,7 @@ class CdpTransportCore {
           new BrowserObservationError(operation, "timeout", {
             detail: recovery.userMessage,
             remediationAction: recovery.remediationAction,
+            limit: recovery.limit,
           }),
         );
       };
@@ -770,6 +771,7 @@ const waitForOpen = async (
         new BrowserObservationError(operation, "timeout", {
           detail: recovery.userMessage,
           remediationAction: recovery.remediationAction,
+          limit: recovery.limit,
         }),
       );
     }, boundedTimeoutMs);
