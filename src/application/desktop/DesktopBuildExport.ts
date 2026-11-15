@@ -372,6 +372,13 @@ export const exportBuild = async (
       }
     | undefined;
   try {
+    // Admit the host folder by the rule the bundle is written under before
+    // running anything in the computer, so an unusable folder is refused
+    // before the in-computer export runs rather than when its bundle returns.
+    await planOutputTree(request.directory, {
+      operation: EXPORT,
+      field: "directory",
+    });
     const argv = [
       "export-desktop-application",
       `${folder}/capture`,
