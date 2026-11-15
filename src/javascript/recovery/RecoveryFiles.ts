@@ -18,7 +18,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
-import { normalizeArtifactPath } from "../../artifacts/ArtifactPaths.js";
+import { normalizeArtifactPath } from "../../resources/index.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,

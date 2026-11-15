@@ -17,7 +17,7 @@ import {
   type ArtifactResourceOwner,
 } from "../../resources/index.js";
 import { abortIfNeeded } from "../ArtifactHash.js";
-import { readArtifactFileChunks } from "../readArtifactFileChunks.js";
+import { readArtifactFileChunks } from "../../resources/index.js";
 import {
   pyInstallerMemberStream,
   readPyInstallerMemberPrefix,

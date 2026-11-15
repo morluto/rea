@@ -5,11 +5,11 @@ import {
 } from "../../domain/artifactReaderLimits.js";
 import { artifactReaderLimitFailure } from "../ArtifactReaderLimits.js";
 
-import { readArtifactFileChunks } from "../readArtifactFileChunks.js";
 import {
+  readArtifactFileChunks,
   ArtifactPathRegistry,
   normalizeArtifactPath,
-} from "../ArtifactPaths.js";
+} from "../../resources/index.js";
 import { abortIfNeeded } from "../ArtifactHash.js";
 import {
   ArtifactReaderFailure,

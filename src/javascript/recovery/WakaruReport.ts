@@ -8,7 +8,7 @@ import type { AnalysisCapturedOutput } from "../../domain/analysisErrorBase.js";
 import {
   normalizeArtifactPath,
   ArtifactPathRegistry,
-} from "../../artifacts/ArtifactPaths.js";
+} from "../../resources/index.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import type { Readable } from "node:stream";
 
 import { ArtifactReaderFailure } from "../resources/index.js";
-import { streamChunkToBuffer } from "./StreamBytes.js";
+import { streamChunkToBuffer } from "../resources/index.js";
 import {
   createArtifactClassificationProbe,
   type ArtifactClassificationEvidence,

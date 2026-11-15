@@ -1,5 +1,5 @@
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
-import { normalizeArtifactPath } from "./ArtifactPaths.js";
+import { normalizeArtifactPath } from "../resources/index.js";
 import type {
   ArtifactReader,
   ArtifactReaderTraversal,

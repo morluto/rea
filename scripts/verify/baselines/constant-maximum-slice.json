@@ -10,7 +10,6 @@
   "src/application/environment/environmentReplay.ts": 1,
   "src/application/javascript/JavaScriptArtifactAnalysis.ts": 1,
   "src/application/releaseExposure/ReleaseExposureService.ts": 1,
-  "src/artifacts/ArtifactPaths.ts": 1,
   "src/artifacts/AsarListing.ts": 1,
   "src/desktop/DesktopSessionObservations.ts": 1,
   "src/domain/analysisView/environmentStateWriteApply.ts": 2,
@@ -38,5 +37,6 @@
   "src/domain/firmware/dfuse.ts": 1,
   "src/domain/firmware/uf2.ts": 1,
   "src/domain/native/nativeProviderOutput.ts": 1,
-  "src/domain/releaseExposure.ts": 2
+  "src/domain/releaseExposure.ts": 2,
+  "src/resources/ArtifactPaths.ts": 1
 }

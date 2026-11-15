@@ -6,7 +6,7 @@ import {
 import { regularFileCancellation } from "../../filesystem/OwnedRegularFile.js";
 import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
-import { readArtifactFileChunks } from "../readArtifactFileChunks.js";
+import { readArtifactFileChunks } from "../../resources/index.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 
 import {

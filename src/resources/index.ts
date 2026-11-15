@@ -79,3 +79,19 @@ export type {
   StableArtifactFileSystem,
   StableArtifactSnapshot,
 } from "./readStableArtifact.js";
+export {
+  ArtifactPathRegistry,
+  DestinationCaseCollisionFailure,
+  DestinationPathUnrepresentableFailure,
+  annotateEnglishUnicodeCaseCollisions,
+  hasDestinationPath,
+  normalizeArtifactPath,
+} from "./ArtifactPaths.js";
+export { SafeOutputTree } from "./SafeOutputTree.js";
+export {
+  SafeOutputTreeDestinationRefusal,
+  outputDirectoryAdmissionRefusal,
+} from "./SafeOutputTreeAdmission.js";
+export { SafeOutputTreeCreationFailure } from "./SafeOutputTreeCreationFailure.js";
+export { streamChunkToBuffer } from "./StreamBytes.js";
+export { readArtifactFileChunks } from "./readArtifactFileChunks.js";

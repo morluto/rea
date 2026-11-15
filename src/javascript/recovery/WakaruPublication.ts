@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { Readable } from "node:stream";
-import type { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
+import type { SafeOutputTree } from "../../resources/index.js";
 import type { ArtifactResourceScope } from "../../resources/index.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import {

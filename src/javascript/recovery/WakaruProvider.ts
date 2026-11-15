@@ -14,8 +14,10 @@ import {
   ArtifactReaderFailure,
   artifactFileCancellationCause,
 } from "../../resources/index.js";
-import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
-import { SafeOutputTreeCreationFailure } from "../../artifacts/SafeOutputTreeCreationFailure.js";
+import {
+  SafeOutputTree,
+  SafeOutputTreeCreationFailure,
+} from "../../resources/index.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import {

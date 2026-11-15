@@ -34,7 +34,7 @@ import {
 } from "./AsarHeader.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import type { FileHandleChunkStream } from "../filesystem/readFileHandleChunks.js";
-import { readArtifactFileChunks } from "./readArtifactFileChunks.js";
+import { readArtifactFileChunks } from "../resources/index.js";
 import {
   assertAsarReadActive,
   asarCancellationFailure,

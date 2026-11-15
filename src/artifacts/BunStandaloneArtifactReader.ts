@@ -29,7 +29,7 @@ import {
 import {
   normalizeArtifactPath,
   ArtifactPathRegistry,
-} from "./ArtifactPaths.js";
+} from "../resources/index.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { ownArtifactStream } from "./OwnedArtifactStream.js";
 import {

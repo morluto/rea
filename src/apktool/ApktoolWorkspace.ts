@@ -1,4 +1,4 @@
-import { readArtifactFileChunks } from "../artifacts/readArtifactFileChunks.js";
+import { readArtifactFileChunks } from "../resources/index.js";
 import {
   ArtifactReaderFailure,
   type ArtifactTraversalOptions,
