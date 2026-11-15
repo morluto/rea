@@ -953,7 +953,10 @@ describe("execFileOutput cancellation provenance", () => {
         ).toBe("pending");
         controller.abort(reason);
       } finally {
+        // Join the command even when a readiness assertion failed, so the
+        // descendant sees the release before the temporary directory goes.
         await writeFile(release, "");
+        await settled;
       }
       const result = await execution;
       expect(result.stdout).toBe("done");
