@@ -47,7 +47,12 @@ describe("Linux process table prerequisite discovery", () => {
       expect(availability).toMatchObject({
         status: "unavailable",
         reason: expect.stringContaining(code),
-        diagnostics: { system_code: code },
+        // Provider status keeps which ps ran, not only the system code.
+        diagnostics: {
+          system_code: code,
+          ps_command: expect.stringMatching(/(?:^|\/)ps$/u),
+          ps_source: expect.stringMatching(/^(?:system|path)$/u),
+        },
       });
       if (availability?.status !== "unavailable")
         throw new Error("expected unavailability");
