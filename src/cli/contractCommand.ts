@@ -434,7 +434,7 @@ const admitOpening = (
         )
       : { ok: true, value: {} };
 
-/** Target positionals, then the contract's own, in argv order. */
+/** Target positionals, the contract's own, then CLI-only ones, in argv order. */
 const commandPositionals = (
   description: ContractCliDescription,
 ): readonly { readonly key: string; readonly schema: z.ZodType }[] => [
@@ -443,6 +443,7 @@ const commandPositionals = (
     : [description.sessionTarget]),
   ...(description.evidenceTargets?.targets ?? []),
   ...description.parameters.filter(({ positional }) => positional),
+  ...description.cliPositionals,
 ];
 
 const descriptions = new WeakMap<CliInstance, ContractCliDescription[]>();
