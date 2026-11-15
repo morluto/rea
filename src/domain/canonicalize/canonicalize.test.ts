@@ -339,15 +339,15 @@ describe("json-structure normalizer", () => {
     );
     const unicode = facts.core.find((fact) => fact.name === "$/main");
     // Non-ASCII text is folded in the sample, never rendered raw, but the exact
-    // value is recoverable by digest with an explicit note.
+    // value is recoverable by its own digest with an explicit note.
     expect(unicode?.sample ?? "").not.toMatch(/[^\x20-\x7e]/u);
-    expect(unicode?.sha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(unicode?.value_sha256).toMatch(/^[a-f0-9]{64}$/u);
     expect(unicode?.detail).toMatch(/exact digest/iu);
     const long = facts.core.find((fact) => fact.name === "$/long");
     expect((long?.sample ?? "").length).toBeLessThanOrEqual(
       CANONICALIZE_SAMPLE_UNITS,
     );
-    expect(long?.sha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(long?.value_sha256).toMatch(/^[a-f0-9]{64}$/u);
   });
 
   it("escapes slashes in keys so distinct members get distinct names", () => {
@@ -380,6 +380,53 @@ describe("json-structure normalizer", () => {
     expect(childNames).toHaveLength(2);
     // Two keys that share their first 128 units must not collapse to one name.
     expect(new Set(childNames).size).toBe(2);
+  });
+});
+
+describe("json-structure source fidelity", () => {
+  it("keeps separate key and value digests when both are shortened", () => {
+    const hugeKey = "k".repeat(4000);
+    const facts = canonicalizeArtifactFacts(
+      Buffer.from(JSON.stringify({ [hugeKey]: "λ中.js" }), "utf8"),
+      "json",
+      budget(),
+    );
+    const leaf = facts.core.find((fact) => fact.collection === "json-value");
+    // The exact key and the exact value each keep a distinct reference.
+    expect(leaf?.sha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(leaf?.value_sha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(leaf?.sha256).not.toBe(leaf?.value_sha256);
+  });
+
+  it("rejects invalid UTF-8 rather than decoding it lossily", () => {
+    const bytes = Buffer.concat([
+      Buffer.from('{"a":"x', "utf8"),
+      Buffer.from([0xff]),
+      Buffer.from('"}', "utf8"),
+    ]);
+    const facts = canonicalizeArtifactFacts(bytes, "json", budget());
+    expect(facts.limitations.join(" ")).toMatch(/not valid UTF-8/iu);
+    expect(facts.coverage.status).toBe("partial");
+  });
+
+  it("records a duplicate member and reports partial coverage", () => {
+    const facts = canonicalizeArtifactFacts(
+      Buffer.from('{"a":1,"a":2}', "utf8"),
+      "json",
+      budget(),
+    );
+    expect(facts.coverage.status).toBe("partial");
+    expect(facts.limitations.join(" ")).toMatch(/repeats/iu);
+  });
+
+  it("flags integer literals beyond safe precision", () => {
+    const facts = canonicalizeArtifactFacts(
+      Buffer.from('{"id":9007199254740993}', "utf8"),
+      "json",
+      budget(),
+    );
+    expect(facts.coverage.status).toBe("partial");
+    expect(facts.limitations.join(" ")).toMatch(/safe-integer precision/iu);
   });
 });
 

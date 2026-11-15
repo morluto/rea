@@ -81,6 +81,13 @@ export const canonicalizeFactSchema = z.strictObject({
   location: rangeSchema.nullable(),
   /** SHA-256 of the exact collapsed/retained region bytes; null when not hashed. */
   sha256: digestSchema.nullable(),
+  /**
+   * SHA-256 of a scalar value's exact bytes when its sample is ASCII-folded or
+   * truncated. A leaf keeps this separate from `sha256` (its key reference), so
+   * both the exact key and the exact value survive normalization. Absent for
+   * facts that carry no value.
+   */
+  value_sha256: digestSchema.nullish(),
   /** Bounded printable exemplar of the region; null when omitted. */
   sample: z.string().nullable(),
   /** Short producer note; null when none. */

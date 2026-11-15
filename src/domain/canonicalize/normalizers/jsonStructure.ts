@@ -11,6 +11,7 @@ import {
   type NormalizedArtifactFacts,
   type NormalizerBudget,
 } from "../normalizer.js";
+import { findDuplicateJsonMember } from "../../jsonDuplicateMember.js";
 
 /** Multiplier bounding the pass's own node walk against structural inflation. */
 const NODE_BUDGET_FACTOR = 256;
@@ -44,6 +45,19 @@ const SHORT_HASH_UNITS = 12;
 
 const sha256Hex = (text: string): string =>
   createHash("sha256").update(text, "utf8").digest("hex");
+
+/** A duplicate member name, JSON-quoted and bounded so an inflated name stays safe. */
+const boundedKey = (name: string): string =>
+  name.length <= MAX_SEGMENT_UNITS
+    ? JSON.stringify(name)
+    : `${JSON.stringify(name.slice(0, MAX_SEGMENT_UNITS))}… (${String(name.length)} units; sha256 ${sha256Hex(name)})`;
+
+/** True when any JSON integer literal exceeds JS safe-integer precision (2^53). */
+const hasUnsafeIntegerLiteral = (text: string): boolean => {
+  for (const match of text.matchAll(/-?\d{16,}/gu))
+    if (!Number.isSafeInteger(Number(match[0]))) return true;
+  return false;
+};
 
 /** JSON Pointer escaping so a key containing `/` cannot forge a nested path. */
 const escapeSegment = (segment: string): string =>
@@ -128,10 +142,10 @@ const leafFact = (
 ): CanonicalizeFact => {
   const kind = value === null ? "null" : typeof value;
   const valueBytes = Buffer.from(scalarText(value), "utf8");
-  // The sample is intentionally ASCII-folded and bounded so an adversarial
-  // value cannot smuggle terminal control sequences or read as an instruction.
-  // That folding is lossy, so when it does not reproduce the value exactly,
-  // retain the value by digest and say so — identity stays separate from display.
+  // The sample is intentionally ASCII-folded and bounded so an adversarial value
+  // cannot smuggle terminal control sequences or read as an instruction. When
+  // that folding is lossy, keep the exact value by its own digest, held in
+  // value_sha256 separately from the key digest so both references survive.
   const faithful =
     valueBytes.length <= sampleUnits &&
     valueBytes.every((byte) => byte >= 0x20 && byte <= 0x7e);
@@ -142,15 +156,15 @@ const leafFact = (
     classification: "behavior-relevant",
     bytes: valueBytes.length,
     location: null,
-    // One digest references whatever normalization could not reproduce: the
-    // folded or truncated value, otherwise the shortened key.
-    sha256: valueSha256 ?? keySha256,
+    sha256: keySha256,
+    value_sha256: valueSha256,
     sample: canonicalizeSample(valueBytes, sampleUnits),
     detail:
       `Behavior-relevant ${kind} value.` +
+      truncatedKeyDetail(keySha256) +
       (valueSha256 === null
-        ? truncatedKeyDetail(keySha256)
-        : ` Value sample is ASCII-folded and bounded to ${String(sampleUnits)} units; sha256 is the exact digest of the ${String(valueBytes.length)}-byte value.${keySha256 === null ? "" : " Path name was also shortened to bound an inflated key."}`),
+        ? ""
+        : ` Value sample is ASCII-folded and bounded to ${String(sampleUnits)} units; value_sha256 is the exact digest of the ${String(valueBytes.length)}-byte value.`),
   };
 };
 
@@ -311,9 +325,19 @@ const canonicalize = (
   bytes: Buffer,
   budget: NormalizerBudget,
 ): NormalizedArtifactFacts => {
+  let text: string;
+  try {
+    // Strict UTF-8: a lossy decode would replace invalid bytes and change keys
+    // and values before any fact is built, so reject it instead.
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return parseFailure(
+      "JSON bytes are not valid UTF-8; structure unverified.",
+    );
+  }
   let root: unknown;
   try {
-    root = JSON.parse(bytes.toString("utf8"));
+    root = JSON.parse(text);
   } catch (cause) {
     return parseFailure(
       `JSON parse failed; structure unverified: ${cause instanceof Error ? cause.message : "unknown error"}`,
@@ -327,6 +351,25 @@ const canonicalize = (
       coverage: { status: "complete", examined: 1, total: 1, truncated: false },
     };
 
+  const limitations: string[] = [];
+  let sourceFidelityLost = false;
+  // JSON.parse silently loses source data: a repeated member keeps only its last
+  // value, and an integer beyond 2^53 is rounded. Report those as explicit
+  // omissions so coverage is never falsely reported as complete.
+  const duplicate = findDuplicateJsonMember(text);
+  if (duplicate !== undefined) {
+    sourceFidelityLost = true;
+    limitations.push(
+      `Member ${boundedKey(duplicate.name)} repeats at offset ${String(duplicate.offset)}; JSON.parse keeps only the last value, so an earlier declaration is not represented.`,
+    );
+  }
+  if (hasUnsafeIntegerLiteral(text)) {
+    sourceFidelityLost = true;
+    limitations.push(
+      "One or more integer literals exceed JS safe-integer precision (2^53) and are represented approximately; the artifact's own sha256 holds the exact bytes.",
+    );
+  }
+
   const state: WalkState = {
     core: [rootSummary(root)],
     collapsed: [],
@@ -337,7 +380,6 @@ const canonicalize = (
     maxDepthObserved: 0,
     truncated: false,
   };
-  const limitations: string[] = [];
   const nodeBudget = Math.max(
     budget.maxFacts * NODE_BUDGET_FACTOR,
     MIN_NODE_BUDGET,
@@ -389,7 +431,7 @@ const canonicalize = (
     collapsed: state.collapsed,
     reductions,
     coverage: {
-      status: state.truncated ? "partial" : "complete",
+      status: state.truncated || sourceFidelityLost ? "partial" : "complete",
       examined: nodesWalked,
       total: state.truncated ? null : nodesWalked,
       truncated: state.truncated,
