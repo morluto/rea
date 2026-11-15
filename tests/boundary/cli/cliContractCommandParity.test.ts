@@ -255,6 +255,8 @@ const ARGV_SATISFYING_RULES: Readonly<
   "capture-native-ui-scenario": {
     steps: '[{"kind":"wait","milliseconds":0}]',
   },
+  // The handler selects the local device when the caller selects none.
+  "list-frida-processes": { deviceId: "local" },
 };
 
 const each = descriptions.map(
@@ -688,14 +690,15 @@ describe("Flattened object fields of contract commands", () => {
         field in description.toContractInput(argvValues(description, {})),
       ).toBe(false);
       for (const given of members) {
+        const value = requiredValue(description, given);
         const input = description.toContractInput(
-          argvValues(description, { [given.key]: 1 }),
+          argvValues(description, { [given.key]: value }),
         );
         expect(Object.keys(input[field] as object).toSorted()).toEqual(
           members.map(({ member }) => member).toSorted(),
         );
         expect((input[field] as Record<string, unknown>)[given.member!]).toBe(
-          1,
+          value,
         );
       }
     },
