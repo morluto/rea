@@ -372,6 +372,8 @@ const MIGRATED_COMMANDS = [
   "observe-web-session",
   "discover-webmcp-tools",
   "capture-web-screenshot",
+  "list-javascript-runtime-targets",
+  "observe-javascript-runtime",
 ];
 
 // An argv fixture is enrolled, so it cannot outlive its registration.
