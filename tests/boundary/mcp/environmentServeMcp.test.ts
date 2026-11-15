@@ -219,12 +219,25 @@ describe("rea environment-serve --replay-only", () => {
         // The dialect has no portable form for a query parameter's
         // string, number, boolean or string-list union yet, so only that
         // union's untyped node remains outside it.
-        for (const violation of tools.flatMap(advertisedInputDialectViolations))
-          expect(violation).toMatchObject({
-            rule: "type",
-            detail: "untyped",
-            path: expect.stringMatching(/^\$\.properties\.[^.]+$/u),
+        for (const violation of tools.flatMap(
+          advertisedInputDialectViolations,
+        )) {
+          expect(violation).toMatchObject({ rule: "type", detail: "untyped" });
+          const property = /^\$\.properties\.([^.]+)$/u.exec(violation.path);
+          const name = property?.[1] ?? "";
+          const tool = tools.find(
+            ({ name: listed }) => listed === violation.tool,
+          );
+          expect(tool?.inputSchema.properties?.[name], violation.path).toEqual({
+            description: expect.stringMatching(/^Query parameter /u),
+            anyOf: [
+              { type: "string" },
+              { type: "number" },
+              { type: "boolean" },
+              { type: "array", items: { type: "string" } },
+            ],
           });
+        }
         const users = tools.find(({ name }) => name === "get_users_by_id");
         expect(users?.description).toContain(
           '; returns a JSON object with fields "id", "uid", "login", "email"; recorded statuses 200;',
