@@ -138,7 +138,7 @@ product pages. The VitePress documentation source is this `docs/` tree.
 | `public/product-catalog.json`             | Ignored contract projection; `npm run docs:generate`                                      |
 | `verification/managed-conformance-*.json` | Ignored managed conformance projections; `npm run evidence:generate`                      |
 | `error-contract.schema.json`              | Tracked schema from contracts; `npm run docs:error-schema`                                |
-| `user-visible-errors.csv`                 | Authored error classification inventory; preserve its schema                              |
+| `user-visible-errors.csv`                 | Generated error code and category per domain error case; `npm run docs:error-schema`      |
 | `releases/<version>.contributions.json`   | Durable release contribution record; follow the [release guide](development/releasing.md) |
 | `assets/`                                 | Shared authored images referenced by guides                                               |
 

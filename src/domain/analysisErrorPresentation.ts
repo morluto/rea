@@ -29,6 +29,7 @@ import { ProviderSelectionError } from "./providerSelectionError.js";
 import { ProviderAdapterError } from "./providerAdapterError.js";
 import { UnknownRegistryError } from "./unknownRegistryError.js";
 import { analysisErrorRefusal } from "./analysisErrorRefusal.js";
+import { classifyAnalysisError } from "./analysisErrorClassification.js";
 import {
   analysisRefusalMessage,
   analysisRefusalRemediation,
@@ -298,107 +299,8 @@ const measuredResourceRemediation = (
 
 export const analysisErrorCategory = (
   error: AnalysisError,
-): AnalysisErrorProjection["category"] => {
-  error = primaryAnalysisError(error);
-  const owned = error.ownPresentation();
-  if (owned !== undefined) return owned.category;
-  if (error instanceof AnalysisCapabilityUnavailableError && error.retryable)
-    return "unavailable";
-  if (
-    error instanceof BinaryTargetError &&
-    error.constraint === "load_selection_rejected"
-  )
-    return "invalid_input";
-  if (
-    error instanceof BinaryTargetError &&
-    (error.constraint === "wasm_requires_static_inspection" ||
-      error.constraint === "file_format_rejected" ||
-      error.constraint === "bundle_type_unsupported")
-  )
-    return "unsupported_target";
-  if (
-    error instanceof ProviderSelectionError &&
-    error.reason === "provider_unavailable"
-  )
-    return "unavailable";
-  if (error._tag === "ProcessCaptureError")
-    return error.userCategory ?? "execution_failure";
-  if (error instanceof BrowserObservationError)
-    return error.userCategory ?? browserErrorCategory(error.reason);
-  if (error instanceof ArtifactOperationError)
-    return artifactErrorCategory(error.reason);
-  if (
-    error instanceof EvidenceFileError &&
-    (error.reason === "path-limit" || error.reason === "storage-limit")
-  )
-    return "resource_constraint";
-  if (
-    error instanceof EvidenceFileError &&
-    (error.reason === "missing" ||
-      error.reason === "symlink-traversal" ||
-      error.reason === "not-file" ||
-      error.reason === "wrong-kind" ||
-      error.reason === "exists")
-  )
-    return "invalid_input";
-  if (
-    error instanceof UnknownRegistryError &&
-    (error.reason === "already-exists" || error.reason === "constraint")
-  )
-    return "invalid_input";
-  const tag = domainErrorTag(error);
-  return (
-    (tag === undefined ? undefined : STATIC_ERROR_CATEGORIES[tag]) ??
-    "execution_failure"
-  );
-};
-
-const browserErrorCategory = (
-  reason: BrowserObservationError["reason"],
-): AnalysisErrorProjection["category"] => {
-  if (reason === "cancelled") return "cancelled";
-  if (reason === "timeout") return "timeout";
-  if (reason === "payload_limit") return "truncated";
-  if (
-    reason === "target_not_found" ||
-    reason === "target_not_allowed" ||
-    reason === "service_worker_blocked" ||
-    reason === "target_changed" ||
-    reason === "target_session_detached" ||
-    reason === "endpoint_unreachable" ||
-    reason === "disconnected"
-  )
-    return "unavailable";
-  return "execution_failure";
-};
-
-const artifactErrorCategory = (
-  reason: ArtifactOperationError["reason"],
-): AnalysisErrorProjection["category"] => {
-  if (reason === "integrity") return "integrity_mismatch";
-  if (reason === "limit") return "truncated";
-  if (reason === "cancelled") return "cancelled";
-  if (reason === "unavailable") return "unavailable";
-  return "execution_failure";
-};
-
-const STATIC_ERROR_CATEGORIES: Readonly<
-  Partial<Record<AnalysisErrorTag, AnalysisErrorProjection["category"]>>
-> = {
-  ConfigurationError: "invalid_input",
-  AnalysisInputError: "invalid_input",
-  AnalysisAccessDeniedError: "unavailable",
-  AnalysisArtifactChangedError: "integrity_mismatch",
-  AnalysisCapabilityUnavailableError: "unsupported_provider",
-  AnalysisUnsupportedTargetError: "unsupported_target",
-  ProviderSelectionError: "unsupported_provider",
-  EvidenceIntegrityError: "integrity_mismatch",
-  AnalysisCancelledError: "cancelled",
-  AnalysisTimeoutError: "timeout",
-  AnalysisResourceConstraintError: "resource_constraint",
-  NoBinaryOpenError: "unavailable",
-  BinaryTargetError: "unavailable",
-};
+): AnalysisErrorProjection["category"] =>
+  classifyAnalysisError(primaryAnalysisError(error)).category;
 
 /** Describe the request's outcome, adding continuing-caller facts only for that caller. */
 export const analysisErrorUserMessage = (
