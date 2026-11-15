@@ -7,6 +7,7 @@ import {
   spawnOwnedProviderProcess,
 } from "./ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "./ProcessOwnership.js";
+import { waitFor } from "../../tests/support/testWait.js";
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -22,7 +23,7 @@ it.runIf(process.platform === "darwin")(
       command: process.execPath,
       arguments: [
         "-e",
-        "require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore' }); setInterval(() => {}, 1000);",
+        "require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore' }).once('spawn', () => process.stdout.write('descendant\\n')); setInterval(() => {}, 1000);",
       ],
       runId: `rea-system-ps-${randomUUID()}`,
       cwd: tmpdir(),
@@ -33,6 +34,10 @@ it.runIf(process.platform === "darwin")(
       ownsProcessLifetime: true,
       cleanup: () => cleanupOwnedProcessGroup(launch.ownership),
     });
+    // Stop only once the descendant exists, so cleanup covers the whole group.
+    await waitFor(() =>
+      expect(supervisor.snapshot().stdout.text).toContain("descendant"),
+    );
     const stopped = await supervisor.stop({
       terminationGraceMs: 100,
       killGraceMs: 500,
