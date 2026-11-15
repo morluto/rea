@@ -30,7 +30,7 @@ import type { BinarySessionPort } from "../application/binary/BinarySessionPort.
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { silentLogger } from "../logger.js";
 import type { Logger } from "pino";
-import { registerApplicationTools } from "./registerApplicationTools.js";
+import { registerGuidedWorkflowTool } from "./registerGuidedWorkflowTool.js";
 import { registerArtifactTools } from "./registerArtifactTools.js";
 import { registerNativeTools } from "./registerNativeTools.js";
 import { registerBrowserScenarioTool } from "./registerBrowserScenarioTool.js";
@@ -624,11 +624,7 @@ export const createServer = (
         },
         contractTools,
       );
-      registerApplicationTools(server, {
-        evidenceById,
-        logger: toolLogger,
-        withAdmittedAnalysis: analysisAdmission,
-      });
+      registerGuidedWorkflowTool(server);
       registerDesktopBuildTools(server, desktopBuildComputers, toolLogger);
     },
     session: () => {

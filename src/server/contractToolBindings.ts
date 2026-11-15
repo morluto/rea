@@ -105,11 +105,14 @@ type ValueOperation<Input> = (
 
 /**
  * Run a workflow that returns a plain JSON value rather than Evidence, and
- * deliver it against the contract's output schema. It records no Evidence
- * and runs outside analysis admission, so provider-free guidance, discovery
- * and status reads answer without waiting on an analysis.
+ * deliver it against the contract's output schema. It records no Evidence.
+ * It runs outside analysis admission, so provider-free guidance, discovery
+ * and status reads answer without waiting on an analysis; one that declares
+ * `admitted: true` runs under analysis admission like an Evidence workflow.
  */
-type ValueBinding<Input = unknown> =
+type ValueBinding<Input = unknown> = {
+  readonly admitted?: true;
+} & (
   | {
       readonly admission: "sdk";
       readonly value: ValueOperation<Input>;
@@ -127,7 +130,8 @@ type ValueBinding<Input = unknown> =
       readonly derive?: never;
       readonly acquire?: never;
       readonly workflow?: never;
-    };
+    }
+);
 
 /**
  * Derive Evidence from Evidence the session holds (a comparison or an
@@ -325,7 +329,12 @@ export const registerContractTools = (
         : applicationToolRegistrationOptions(contract);
     const handler =
       binding.value !== undefined
-        ? createValueToolHandler(server, binding.value, logger)(contract)
+        ? createValueToolHandler(
+            server,
+            binding.value,
+            logger,
+            binding.admitted === true ? withAdmittedAnalysis : undefined,
+          )(contract)
         : binding.workflow !== undefined
           ? createApplicationToolHandler(
               server,
