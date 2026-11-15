@@ -249,13 +249,15 @@ export interface CutterBridgeExecution {
   readonly requestId: string;
   readonly output: unknown;
   readonly currentFile: string | null;
-  readonly documentGeneration: number;
+  /** Generation the bridge reported after the command; null when it did not. */
+  readonly documentGeneration: number | null;
   readonly identityStatus: "partial";
   readonly cutterVersion: string | null;
   readonly executionState: CutterBridgeExecutionState;
   readonly error: string | null;
   readonly message: string | null;
-  readonly outputTruncated: boolean;
+  /** Whether output was omitted; null when the bridge did not declare it. */
+  readonly outputTruncated: boolean | null;
   readonly completionToken?: string;
 }
 
@@ -547,15 +549,17 @@ export class CutterBridgeClient {
           requestId,
           output: null,
           currentFile: descriptor.current_file,
-          documentGeneration: input.expectedGeneration,
+          // No reply was read, so the generation after the command is unknown.
+          documentGeneration: null,
           identityStatus: "partial",
           cutterVersion: descriptor.cutter_version,
           executionState: "unknown",
           error: "transport-response-missing",
           message: `${cause.message}; the command may have completed; do not retry automatically`,
-          // The carried limit is the framed response ceiling. The command was
-          // sent, and the discarded response is omitted output.
-          outputTruncated: cause.limit !== undefined,
+          // The carried limit is the framed response ceiling: the command was
+          // sent and its discarded response is omitted output. Any other
+          // missing reply leaves truncation unknown.
+          outputTruncated: cause.limit === undefined ? null : true,
           ...(completionToken === undefined ? {} : { completionToken }),
         };
       }
@@ -565,14 +569,14 @@ export class CutterBridgeClient {
           requestId,
           output: null,
           currentFile: descriptor.current_file,
-          documentGeneration: input.expectedGeneration,
+          documentGeneration: null,
           identityStatus: "partial",
           cutterVersion: descriptor.cutter_version,
           executionState: "unknown",
           error: "malformed-bridge-response",
           message:
             "Cutter may have completed the command, but its response was invalid; do not retry automatically",
-          outputTruncated: false,
+          outputTruncated: null,
           ...(completionToken === undefined ? {} : { completionToken }),
         };
       const response = parsed.data;
@@ -623,14 +627,18 @@ export class CutterBridgeClient {
           response.current_file === undefined
             ? descriptor.current_file
             : response.current_file,
-        documentGeneration:
-          response.document_generation ?? input.expectedGeneration,
+        // An undeclared generation or truncation stays unknown: the command
+        // may have changed the document, and an omitted flag is not "false".
+        documentGeneration: response.document_generation ?? null,
         identityStatus: "partial",
         cutterVersion: response.cutter_version ?? descriptor.cutter_version,
         executionState,
         error: response.ok ? null : (response.error ?? "cutter-command-failed"),
         message: response.message ?? null,
-        outputTruncated: response.output_truncated ?? false,
+        // A command that never started produced no output to omit.
+        outputTruncated:
+          response.output_truncated ??
+          (executionState === "not_started" ? false : null),
         ...(completionToken === undefined ? {} : { completionToken }),
       };
     } catch (cause) {

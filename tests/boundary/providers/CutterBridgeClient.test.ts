@@ -140,7 +140,7 @@ const verifyCutterCancellationAfterDispatch = async (): Promise<void> => {
       executionState: "unknown",
       error: "transport-response-missing",
       message: expect.stringContaining("do not retry automatically"),
-      documentGeneration: 0,
+      documentGeneration: null,
     });
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -487,7 +487,7 @@ describe("CutterBridgeClient: scenario group 1", () => {
       executionState: "unknown",
       error: "transport-response-missing",
       message: expect.stringContaining("do not retry automatically"),
-      documentGeneration: 0,
+      documentGeneration: null,
     });
   });
 
@@ -809,12 +809,13 @@ describe("CutterBridgeClient: scenario group 4", () => {
         command: "pd 4",
         json: true,
       });
+    // An undeclared generation and truncation stay unknown, not inferred.
     await expect(run()).resolves.toMatchObject({
       executionState: "complete",
       output: null,
       currentFile: "/tmp/input",
-      documentGeneration: 8,
-      outputTruncated: false,
+      documentGeneration: null,
+      outputTruncated: null,
     });
     response = {
       ok: false,

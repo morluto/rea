@@ -556,6 +556,8 @@ class _RequestDispatcher(QObject):
                 "ok": False,
                 "error": "active-document-generation-changed",
                 "execution_state": "not_started",
+                "document_generation": self.generation,
+                "output_truncated": False,
             })
             self._record_command_completion(request_id, "not_started")
             request["_event"].set()
@@ -566,6 +568,8 @@ class _RequestDispatcher(QObject):
                 "ok": False,
                 "error": "invalid-command",
                 "execution_state": "not_started",
+                "document_generation": self.generation,
+                "output_truncated": False,
             })
             self._record_command_completion(request_id, "not_started")
             request["_event"].set()
@@ -587,6 +591,7 @@ class _RequestDispatcher(QObject):
                 "cutter_version": self.cutter_version,
                 "identity_status": "partial",
                 "execution_state": "complete",
+                "output_truncated": False,
             })
             self._record_command_completion(request_id, "complete")
         else:
@@ -598,6 +603,7 @@ class _RequestDispatcher(QObject):
                 "cutter_version": self.cutter_version,
                 "identity_status": "partial",
                 "execution_state": "unknown",
+                "output_truncated": False,
                 "message": "The command raised an exception; it may have produced partial effects. Do not retry automatically.",
             })
             self._record_command_completion(request_id, "failed")
