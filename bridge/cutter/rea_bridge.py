@@ -130,6 +130,18 @@ MAX_FRAME_BYTES, BRIDGE_MAX_REQUEST_BYTES_SOURCE = (
 )
 
 
+def _bridge_source_sha256() -> str | None:
+    """Digest this plugin file so REA can tell its packaged copy from another one."""
+    try:
+        with open(__file__, "rb") as source:
+            return hashlib.sha256(source.read()).hexdigest()
+    except (NameError, OSError):
+        return None
+
+
+BRIDGE_SOURCE_SHA256 = _bridge_source_sha256()
+
+
 def _bridge_max_request_bytes_recovery():
     return (
         "The effective REA_BRIDGE_MAX_REQUEST_BYTES value is %d bytes "
@@ -655,6 +667,7 @@ class _BridgeServer(threading.Thread):
             "cutter_version": self.dispatcher.cutter_version,
             "identity_status": "partial",
             "max_request_bytes": MAX_FRAME_BYTES,
+            "bridge_source_sha256": BRIDGE_SOURCE_SHA256,
         }
         if os.name == "nt":
             _write_windows_descriptor(self.directory, self.descriptor, json.dumps(payload).encode("utf-8"))
