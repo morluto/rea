@@ -47,16 +47,24 @@ export class AnalysisResourceConstraintError extends AnalysisError {
    * object.
    */
   readonly recovery: ResourceConstraintRecovery;
+  /**
+   * Whether the refused request reached its peer: false when it was refused
+   * before anything was sent, true when the peer received it and may have
+   * acted on it. Undefined when the producer does not know.
+   */
+  readonly requestSent: boolean | undefined;
 
   constructor(
     readonly operation: string,
     readonly resource: (typeof ANALYSIS_RESOURCE_KINDS)[number],
     readonly reason: string,
     readonly reportedLimits: Readonly<Record<string, JsonValue>> | null,
-    options?: AnalysisErrorOptions & ResourceConstraintRecovery,
+    options?: AnalysisErrorOptions &
+      ResourceConstraintRecovery & { readonly requestSent?: boolean },
   ) {
     super(`Resource constraint during ${operation}: ${reason}`, options);
     this.recovery = resourceConstraintRecoveryFrom(options);
+    this.requestSent = options?.requestSent;
   }
 
   /** Projection of `recovery`. Absent when recovery names a fixed allowance. */
@@ -126,6 +134,9 @@ export const reattributedResourceConstraint = (
       ...options,
       ...resourceConstraintRecovery(error),
       ...(error.limit === undefined ? {} : { limit: error.limit }),
+      ...(error.requestSent === undefined
+        ? {}
+        : { requestSent: error.requestSent }),
     },
   );
 
