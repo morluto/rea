@@ -136,7 +136,6 @@ it.each(cases)(
         ...evidence,
         subject: {
           ...evidence.subject,
-          architecture: "x86",
           identity: { ...evidence.subject!.identity, architecture: "x86" },
         },
       }),

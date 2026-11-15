@@ -21,7 +21,6 @@ describe("persisted observation subject declarations", () => {
       ]) {
         const declaration = { format, architecture };
         const evidence = evidenceSubject.safeParse({
-          ...declaration,
           identity: {
             kind: "file",
             sha256: digest,
@@ -30,7 +29,6 @@ describe("persisted observation subject declarations", () => {
           },
           name: "fixture",
           local_path: "/tmp/fixture",
-          digest: { sha256: digest },
         });
         const snapshot = snapshotSubject.safeParse({
           ...declaration,
@@ -59,8 +57,6 @@ describe("persisted observation subject declarations", () => {
   it("preserves each persistence envelope's handling of additional fields", () => {
     expect(
       evidenceSubject.safeParse({
-        format: "pe",
-        architecture: null,
         identity: {
           kind: "file",
           sha256: digest,
@@ -70,7 +66,6 @@ describe("persisted observation subject declarations", () => {
         },
         name: "fixture",
         local_path: "/tmp/fixture",
-        digest: { sha256: digest },
         extra: true,
       }).success,
     ).toBe(false);
