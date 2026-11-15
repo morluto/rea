@@ -1,7 +1,6 @@
 import type { Logger } from "pino";
 
 import { JavaScriptRecoveryService } from "../application/javascript/JavaScriptRecoveryService.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { createJavaScriptRecoveryProvider } from "../composition/javascriptRecovery.js";
 import { JAVASCRIPT_RECOVERY_TOOL_CONTRACTS } from "../contracts/javascript/javascriptRecoveryToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
@@ -27,7 +26,6 @@ export const registerJavaScriptRecoveryCommands = (
       "recover_javascript_sources",
     ),
     {
-      command: CLI_COMMANDS.recoverJavaScriptSources,
       description:
         "Recover readable JavaScript modules with source provenance and verified files",
       positionals: ["path", "output_directory"],

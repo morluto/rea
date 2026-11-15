@@ -45,7 +45,6 @@ export const registerProcessCommands = (
     logger,
     contractNamed(SESSION_TOOL_CONTRACTS, "compare_process_captures"),
     {
-      command: CLI_COMMANDS.compareProcessCaptures,
       description: "Compare two process capture Evidence JSON files",
       positionals: ["left", "right", "trace_spec"],
       jsonInputs: {

@@ -1,6 +1,5 @@
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { APPLICATION_TOOL_CONTRACTS } from "../contracts/applicationToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
 import { registerContractDocumentCommand } from "./contractCommand.js";
@@ -28,7 +27,6 @@ export const registerSourceToBundleCommand = (
     logger,
     contractNamed(APPLICATION_TOOL_CONTRACTS, "compare_source_to_bundle"),
     {
-      command: CLI_COMMANDS.compareSourceToBundle,
       description:
         "Compare historical source (inline graph or reference {kind:file,path}) with authenticated application Evidence. Save the complete JSON to query with inspect-analysis-view.",
       document: "Inline workflow JSON or JSON file path",

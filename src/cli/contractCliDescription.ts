@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { cliCommandFor } from "../cliCommandNames.js";
+
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import type { AnalysisViewRequest } from "../domain/analysisView/analysisViewRequest.js";
@@ -37,6 +39,8 @@ import {
  */
 export interface ProjectedContract<Name extends string = string> {
   readonly name: Name;
+  /** The contract names its own CLI command; see `ToolContract.cli`. */
+  readonly cli?: true;
   readonly inputSchema:
     | z.ZodObject
     | z.ZodDiscriminatedUnion<readonly z.ZodObject[]>
@@ -46,8 +50,25 @@ export interface ProjectedContract<Name extends string = string> {
 /** A contract whose whole input a CLI command takes as one JSON document. */
 export interface DocumentContract<Name extends string = string> {
   readonly name: Name;
+  /** The contract names its own CLI command; see `ToolContract.cli`. */
+  readonly cli?: true;
   readonly inputSchema: z.ZodType;
 }
+
+/**
+ * The command a projection registers: the contract's own command, which the
+ * contract declares with `cli: true` so the CLI inventory can be derived from
+ * the registry, or the command a route names.
+ */
+const projectedCommand = (
+  contract: DocumentContract,
+  command: string | undefined,
+): string => {
+  if (command !== undefined) return command;
+  if (contract.cli !== true)
+    throw new Error(`${contract.name} does not declare its CLI command`);
+  return cliCommandFor(contract.name);
+};
 
 /** A contract input field name, from any of its input branches. */
 export type ContractField<Contract extends DocumentContract> =
@@ -119,7 +140,11 @@ export interface CliContractProjection<
   Field extends string,
   CliOptions extends CliOptionShape = CliOptionShape,
 > {
-  readonly command: string;
+  /**
+   * Omitted for the contract's own command (`cli: true`), named after the
+   * contract. A command routed to several contracts names itself here.
+   */
+  readonly command?: string;
   readonly description: string;
   /**
    * The input branches of a union contract this command takes, by the text
@@ -1159,7 +1184,8 @@ export interface CliDocumentProjection<
   Field extends string,
   CliOptions extends CliOptionShape = CliOptionShape,
 > {
-  readonly command: string;
+  /** Omitted for the contract's own command; see `CliContractProjection`. */
+  readonly command?: string;
   readonly description: string;
   /** Help for the document argument. */
   readonly document: string;
@@ -1632,7 +1658,7 @@ export const describeContractDocumentCommand = <
     ),
   };
   return {
-    command: projection.command,
+    command: projectedCommand(contract, projection.command),
     description: projection.description,
     contract,
     key: DOCUMENT_KEY,
@@ -2306,7 +2332,7 @@ export const describeContractCommand = <
         };
 
   return {
-    command: projection.command,
+    command: projectedCommand(contract, projection.command),
     description: projection.description,
     contract,
     parameters,

@@ -1,6 +1,5 @@
 import type { Logger } from "pino";
 
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { createCutterBridgeService } from "../composition/cutter.js";
 import { CUTTER_TOOL_CONTRACTS } from "../contracts/cutterToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
@@ -25,7 +24,6 @@ export const registerCutterCommands = (
     logger,
     contractNamed(CUTTER_TOOL_CONTRACTS, "list_cutter_sessions"),
     {
-      command: CLI_COMMANDS.listCutterSessions,
       description:
         "List live Cutter instances connected through the REA Python plugin bridge",
     },
@@ -46,7 +44,6 @@ export const registerCutterCommands = (
     logger,
     contractNamed(CUTTER_TOOL_CONTRACTS, "cutter_command"),
     {
-      command: CLI_COMMANDS.cutterCommand,
       description:
         "Execute one Rizin command in a selected live Cutter instance",
       positionals: ["session_id", "expected_generation", "command"],

@@ -6,7 +6,7 @@ import { expect, it, vi } from "vitest";
 
 import { registerWebScriptCommands } from "../../../src/cli/webScriptCommands.js";
 import * as webScriptExport from "../../../src/application/WebScriptExportService.js";
-import { CLI_COMMANDS } from "../../../src/cliCommandNames.js";
+import { cliCommandFor } from "../../../src/cliCommandNames.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
@@ -29,7 +29,7 @@ const registeredExportCommand = () => {
     },
   } as unknown as Parameters<typeof registerWebScriptCommands>[0];
   registerWebScriptCommands(cli, pino({ enabled: false }));
-  return commands.get(CLI_COMMANDS.exportWebScripts)!;
+  return commands.get(cliCommandFor("export_web_scripts"))!;
 };
 
 it("forwards an interrupt into the export workflow and reports cancellation", async () => {

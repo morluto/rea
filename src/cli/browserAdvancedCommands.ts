@@ -22,7 +22,6 @@ import {
   discoverWebMcpTools,
 } from "../application/BrowserObservationService.js";
 import { CdpBrowserProvider } from "../browser/CdpBrowserProvider.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { BROWSER_TOOL_CONTRACTS } from "../contracts/browserToolContracts.js";
 import {
   isScenarioCaptureDocument,
@@ -44,7 +43,6 @@ export const registerAdvancedBrowserCommands = (
     logger,
     discoverWebMcp,
     {
-      command: CLI_COMMANDS.discoverWebMcpTools,
       description: "Passively discover page-declared WebMCP tools",
       ...browserTargetProjection,
       fields: {
@@ -66,7 +64,6 @@ export const registerAdvancedBrowserCommands = (
     logger,
     screenshot,
     {
-      command: CLI_COMMANDS.captureWebScreenshot,
       description:
         "Capture one visible page viewport within the supplied origin scope",
       ...browserTargetProjection,
@@ -85,7 +82,6 @@ const registerCaptureDiff = (
     "compare_web_captures",
   );
   const command = {
-    command: CLI_COMMANDS.compareWebCaptures,
     description:
       "Compare two normalized passive captures or recorded browser scenarios",
   };
@@ -183,7 +179,6 @@ const registerScreenshotDiff = (
     logger,
     contract,
     {
-      command: CLI_COMMANDS.compareWebScreenshots,
       description: "Compare two self-verifying PNG artifact JSON values",
       positionals: ["before", "after"],
       // Screenshot artifacts embed PNG bytes that can exceed the host's

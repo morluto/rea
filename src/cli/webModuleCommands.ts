@@ -1,6 +1,5 @@
 import type { Logger } from "pino";
 
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { createWebModuleTraceService } from "../composition/webModules.js";
 import { WEB_SCRIPT_TOOL_CONTRACTS } from "../contracts/webScriptToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
@@ -21,7 +20,6 @@ export const registerWebModuleCommands = (
     logger,
     contractNamed(WEB_SCRIPT_TOOL_CONTRACTS, "trace_web_module_imports"),
     {
-      command: CLI_COMMANDS.traceWebModuleImports,
       description:
         "Trace one captured script's native imports to URLs and captured source candidates",
       positionals: ["manifest_path", "script_index"],

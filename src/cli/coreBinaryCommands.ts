@@ -105,7 +105,6 @@ const registerContractBinaryCommands = (
     logger,
     contractNamed(OFFICIAL_TOOL_CONTRACTS, "xrefs"),
     {
-      command: CLI_COMMANDS.xrefs,
       description: `List bounded, untyped references to an analyzed address. For typed incoming references, use inspect-native-instruction at the target address where supported. ${namedAddressGuidance} ${equalSelectorGuidance}`,
       sessionTarget: program,
       positionals: ["address"],
@@ -189,43 +188,35 @@ const registerOverviewCommands = (
 ): void => {
   const description = "Get an overview of an app";
   const target = "App, program, or analysis database path";
-  registerRoutedCommand(
-    cli,
-    logger,
-    { command: CLI_COMMANDS.analyze, description },
-    [
-      commandRoute(
-        contractNamed(
-          ELECTRON_TOOL_CONTRACTS,
-          "analyze_javascript_application",
-        ),
-        {
-          command: CLI_COMMANDS.analyze,
-          description,
-          ...javaScriptApplicationCliProjection(target),
-          evidenceDelivery: true,
-          viewDelivery: { invalidJson: "view must be valid JSON" },
-        },
-        // Route JavaScript targets exactly like analyze-javascript-application.
-        runJavaScriptApplicationCommand(environment),
-        {
-          takes: async ({ path }) =>
-            typeof path === "string" && isJavaScriptApplicationPath(path),
-          requirement: "the static JavaScript ASAR/directory analysis lane",
-        },
-      ),
-      commandRoute(
-        contractNamed(ENHANCED_TOOL_CONTRACTS, "binary_overview"),
-        {
-          command: CLI_COMMANDS.analyze,
-          description,
-          sessionTarget: nativeTarget(target, true),
-        },
-        runDirectOnTarget(runDirectAnalysis, logger),
-        { requirement: "a native program target" },
-      ),
-    ],
-  );
+  registerRoutedCommand(cli, logger, { description }, [
+    commandRoute(
+      contractNamed(ELECTRON_TOOL_CONTRACTS, "analyze_javascript_application"),
+      {
+        command: CLI_COMMANDS.analyze,
+        description,
+        ...javaScriptApplicationCliProjection(target),
+        evidenceDelivery: true,
+        viewDelivery: { invalidJson: "view must be valid JSON" },
+      },
+      // Route JavaScript targets exactly like analyze-javascript-application.
+      runJavaScriptApplicationCommand(environment),
+      {
+        takes: async ({ path }) =>
+          typeof path === "string" && isJavaScriptApplicationPath(path),
+        requirement: "the static JavaScript ASAR/directory analysis lane",
+      },
+    ),
+    commandRoute(
+      contractNamed(ENHANCED_TOOL_CONTRACTS, "binary_overview"),
+      {
+        command: CLI_COMMANDS.analyze,
+        description,
+        sessionTarget: nativeTarget(target, true),
+      },
+      runDirectOnTarget(runDirectAnalysis, logger),
+      { requirement: "a native program target" },
+    ),
+  ]);
 };
 
 const registerDecompileCommand = (

@@ -1,5 +1,5 @@
 import { registerManagedCommands } from "../../src/cli/managedCommands.js";
-import { CLI_COMMANDS } from "../../src/cliCommandNames.js";
+import { cliCommandFor } from "../../src/cliCommandNames.js";
 import { createDirectAnalysis } from "../../src/composition/directAnalysis.js";
 import type { DirectAnalysis } from "../../src/composition/directAnalysis.js";
 import { silentLogger } from "../../src/logger.js";
@@ -22,7 +22,8 @@ export const managedComparisonCommand = (
       name: string,
       definition: { run(input: unknown): Promise<Record<string, unknown>> },
     ) => {
-      if (name === CLI_COMMANDS.compareManagedMembers) registered = definition;
+      if (name === cliCommandFor("compare_managed_members"))
+        registered = definition;
       return cli;
     },
   } as unknown as Parameters<typeof registerManagedCommands>[0];

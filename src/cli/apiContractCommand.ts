@@ -1,6 +1,5 @@
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { projectArtifactCloseFailure } from "../artifacts/StableArtifactFailure.js";
 import { API_CONTRACT_TOOL_CONTRACTS } from "../contracts/apiContractToolContracts.js";
@@ -25,7 +24,6 @@ export const registerApiContractCommand = (
     logger,
     contractNamed(API_CONTRACT_TOOL_CONTRACTS, operation),
     {
-      command: CLI_COMMANDS.inspectApiContract,
       description:
         "Inspect local OpenAPI JSON or GraphQL SDL declarations and field bindings offline",
       positionals: ["path"],

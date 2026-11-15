@@ -83,7 +83,6 @@ export const registerAnalysisViewCommands = (
     logger,
     contractNamed(ANALYSIS_VIEW_TOOL_CONTRACTS, "inspect_analysis_view"),
     {
-      command: CLI_COMMANDS.inspectAnalysisView,
       description:
         "Project a selected view of completed Evidence JSON for a supported analysis operation. For inventory rows, use --format csv or --format tsv with --filter-output normalized_result.items and --columns logical_path,artifact_id (if those fields are included in the view).",
       document: "Inline workflow JSON or JSON file path",

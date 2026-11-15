@@ -1,7 +1,6 @@
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { NATIVE_TOOL_CONTRACTS } from "../contracts/native/nativeToolContracts.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
@@ -23,7 +22,6 @@ export const registerNativeCallCommands = (
     logger,
     contract,
     {
-      command: CLI_COMMANDS.observeNativeCalls,
       description:
         "Launch a Mach-O under LLDB and record entries into selected functions or Objective-C methods",
       sessionTarget: { description: "Mach-O or app path" },

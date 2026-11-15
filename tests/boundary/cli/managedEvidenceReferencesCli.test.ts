@@ -11,7 +11,7 @@ import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { CLI_COMMANDS } from "../../../src/cliCommandNames.js";
+import { cliCommandFor } from "../../../src/cliCommandNames.js";
 
 const reference = (evidence: Evidence) => ({
   kind: "retained-evidence" as const,
@@ -106,12 +106,12 @@ cliTest(
   async ({ cli }) => {
     const directory = await createTestTempDirectory("rea-evidence-input-cli-");
     for (const command of [
-      CLI_COMMANDS.projectManagedApplicationGraph,
-      CLI_COMMANDS.traceApplicationFeature,
-      CLI_COMMANDS.compareSourceToBundle,
-      CLI_COMMANDS.reconcileJavaScriptRuntime,
-      CLI_COMMANDS.compareWasmInterfaces,
-      CLI_COMMANDS.compareStaticAndObservedEndpoints,
+      cliCommandFor("project_managed_application_graph"),
+      cliCommandFor("trace_application_feature"),
+      cliCommandFor("compare_source_to_bundle"),
+      cliCommandFor("reconcile_javascript_runtime"),
+      cliCommandFor("compare_wasm_interfaces"),
+      cliCommandFor("compare_static_and_observed_endpoints"),
     ]) {
       // The bundle does not exist, so reading it first would fail on it.
       const refused = await cli.run({

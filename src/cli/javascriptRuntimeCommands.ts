@@ -9,7 +9,6 @@ import {
 import { createJavaScriptRuntimeObservationProvider } from "../composition/javascriptRuntimeObservation.js";
 import { JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS } from "../contracts/javascript/javascriptRuntimeObservationToolContracts.js";
 import { V8InspectorAdmission } from "../inspector/V8InspectorProvider.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Evidence } from "../domain/evidence.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
@@ -80,7 +79,6 @@ export const registerJavaScriptRuntimeObservationCommands = (
     logger,
     listTargets,
     {
-      command: CLI_COMMANDS.listJavaScriptRuntimeTargets,
       description: "List Node/Electron V8 Inspector targets",
       positionals: ["inspector_endpoint"],
       fields: { inspector_endpoint: endpoint },
@@ -96,7 +94,6 @@ export const registerJavaScriptRuntimeObservationCommands = (
     logger,
     observeRuntime,
     {
-      command: CLI_COMMANDS.observeJavaScriptRuntime,
       description: "Passively observe one exact Node/Electron Inspector target",
       positionals: ["inspector_endpoint", "target_id"],
       fields: {
