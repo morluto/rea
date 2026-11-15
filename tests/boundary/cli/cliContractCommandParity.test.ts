@@ -188,7 +188,11 @@ const suppliedField = (
   const field = contractShape(description)[parameter.field]!;
   if (parameter.member === undefined) return field;
   let object: z.ZodType = field;
-  while (object instanceof z.ZodOptional) object = object.unwrap() as z.ZodType;
+  while (
+    object instanceof z.ZodOptional ||
+    object instanceof z.ZodExactOptional
+  )
+    object = object.unwrap() as z.ZodType;
   return (
     (object as z.ZodObject).shape[parameter.member] as z.ZodType
   ).optional();
@@ -303,6 +307,7 @@ const ARGV_SATISFYING_RULES: Readonly<
   "inspect-electron-page": { endpoint: "http://127.0.0.1:9222" },
   "discover-webmcp-tools": { endpoint: "http://127.0.0.1:9222" },
   "capture-web-screenshot": { endpoint: "http://127.0.0.1:9222" },
+  "analyze-web-bundle": { endpoint: "http://127.0.0.1:9222" },
   "list-javascript-runtime-targets": { endpoint: "http://127.0.0.1:9229" },
   "observe-javascript-runtime": { endpoint: "http://127.0.0.1:9229" },
   // Each side must be a self-verifying screenshot artifact.
@@ -328,7 +333,6 @@ const contractBuilt: ReadonlySet<string> = new Set(
  * Migrating one removes it here; this list may only shrink.
  */
 const HAND_REGISTERED_CONTRACT_COMMANDS = [
-  "analyze-web-bundle",
   "compare-process-captures",
   "compare-web-captures",
   "cutter-command",
@@ -729,11 +733,11 @@ describe("JSON decoded when contract commands run", () => {
               ...(detail === undefined
                 ? {}
                 : { detail, evidence_output: "out.json" }),
-              // The command hands admission a JSON input already decoded.
-              [parameter.key]: parameter.jsonInput
-                ? (JSON.parse(text) as unknown)
-                : text,
+              [parameter.key]: text,
             });
+            // The command hands admission a JSON input already decoded.
+            if (parameter.jsonInput)
+              values[parameter.key] = JSON.parse(text) as unknown;
             const expected = description.contract.inputSchema.safeParse({
               ...description.toContractInput({
                 ...values,
@@ -1076,6 +1080,15 @@ describe("Opening fields a session target projects", () => {
   });
 });
 
+/** Summary selections for contracts whose summary requires a view. */
+const SUMMARY_SELECTIONS: Readonly<
+  Record<string, Readonly<Record<string, unknown>>>
+> = {
+  "analyze-web-bundle": {
+    view: '{"kind":"web-bundle","collection":"endpoints"}',
+  },
+};
+
 const delivering = each.filter(
   ([, description]) => description.evidenceDelivery,
 );
@@ -1083,9 +1096,13 @@ const delivering = each.filter(
 describe("Evidence delivery of contract commands", () => {
   it.each(delivering)(
     "%s refuses summary delivery without --evidence_output before analysis",
-    (_command, description) => {
+    (command, description) => {
+      const satisfying = {
+        ...ARGV_SATISFYING_RULES[command],
+        ...SUMMARY_SELECTIONS[command],
+      };
       const refused = description.admit(
-        argvValues(description, { detail: "summary" }),
+        argvValues(description, { ...satisfying, detail: "summary" }),
       );
       expect(refused.ok).toBe(false);
       if (!refused.ok)
@@ -1095,6 +1112,7 @@ describe("Evidence delivery of contract commands", () => {
       expect(
         description.admit(
           argvValues(description, {
+            ...satisfying,
             detail: "summary",
             evidence_output: "out.json",
           }),
