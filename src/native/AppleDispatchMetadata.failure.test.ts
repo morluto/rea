@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { appleDispatchMetadataFailure } from "./AppleDispatchMetadata.js";
-import { BinaryFormatFailure } from "./metadata/BinaryContainer.js";
+import { BinaryFormatFailure } from "../domain/binaryContainer.js";
 
 it.each(["malformed", "unsupported"] as const)(
   "keeps an explicit %s metadata refusal target-specific",

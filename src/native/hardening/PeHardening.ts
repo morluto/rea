@@ -13,7 +13,7 @@ import {
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
-} from "../metadata/BinaryContainer.js";
+} from "../../domain/binaryContainer.js";
 import { peSubjectArchitecture } from "../../domain/peMachine.js";
 import type { PeDataDirectory } from "../../domain/peOptionalHeader.js";
 import { readPeImage } from "../metadata/PeImage.js";

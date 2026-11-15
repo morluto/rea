@@ -1,7 +1,7 @@
 import {
   BinaryFormatFailure,
   type BinaryContainer,
-} from "./BinaryContainer.js";
+} from "../../domain/binaryContainer.js";
 import {
   classifyFatContainerIdentity,
   readFatContainerHeader,

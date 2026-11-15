@@ -26,7 +26,7 @@ import {
   type PythonPycConst,
 } from "../domain/python/pythonPyc.js";
 import { malformedInput, unsupportedInput } from "../domain/parseFailure.js";
-import { BinaryReader } from "../native/metadata/BinaryContainer.js";
+import { BinaryReader } from "../domain/binaryContainer.js";
 import {
   PYTHON_PYC_FORMAT,
   PythonPycResourceFailure,

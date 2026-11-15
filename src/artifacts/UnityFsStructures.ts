@@ -6,7 +6,7 @@ import { decodeLz4Block } from "../gpu/Lz4Block.js";
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
-} from "../native/metadata/BinaryContainer.js";
+} from "../domain/binaryContainer.js";
 import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import { setImmediate } from "node:timers/promises";
 import {

@@ -22,7 +22,7 @@ import {
   BinaryFormatFailure,
   BinaryResourceFailure,
   isBinaryStringReadLimit,
-} from "../native/metadata/BinaryContainer.js";
+} from "../domain/binaryContainer.js";
 import {
   readElfSectionDirectory,
   readPeSectionDirectory,
