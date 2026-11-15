@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { toolContract } from "../../src/contracts/toolContracts.js";
+import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../../src/contracts/native/binaryDiagnosticsToolContracts.js";
 import { elf32RelAddends } from "../fixtures/elf32RelAddends.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
@@ -18,9 +18,12 @@ cliTest(
       arguments: ["inspect-native-initializers", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
-    const report = toolContract(
-      "inspect_native_initializers",
-    ).outputSchema.parse(result.json).normalized_result;
+    const contract = BINARY_DIAGNOSTICS_TOOL_CONTRACTS.find(
+      (candidate) => candidate.name === "inspect_native_initializers",
+    );
+    if (contract === undefined)
+      throw new Error("Missing native initializer contract");
+    const report = contract.outputSchema.parse(result.json).normalized_result;
     expect(report).toMatchObject({ status: "parsed", bits: 32, elf_type: 1 });
     expect(report.artifact).toMatchObject({
       path,
