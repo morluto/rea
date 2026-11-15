@@ -192,6 +192,72 @@ describe("artifact Mach-O slice integrity", () => {
       }
     }).rejects.toThrow(/structural slice index is malformed/u);
   });
+
+  // #4280: record-and-continue keeps going with REA's FAT parse as the authority.
+  const disagreeingLipo = async (integrity: "fail" | "record-and-continue") => {
+    const root = await createTestTempDirectory("rea-slices-record-");
+    const binary = join(root, "fat");
+    const x86 = machoImage({ cpu: CPU.x86_64 });
+    const arm = machoImage({ cpu: CPU.arm64 });
+    await writeFile(
+      binary,
+      fatImage([
+        { cpu: CPU.x86_64, bytes: x86 },
+        { cpu: CPU.arm64, bytes: arm },
+      ]),
+    );
+    const reader = new MachOSliceArtifactReader(
+      binary,
+      {},
+      // The arm64 row names a byte offset the FAT table does not.
+      lipoRunner(
+        `architecture x86_64\n cputype 16777223\n cpusubtype 3\n offset 4096\n size ${String(x86.length)}\n align 2^12 (4096)\narchitecture arm64\n cputype 16777228\n cpusubtype 0\n offset 8193\n size ${String(arm.length)}\n align 2^12 (4096)\n`,
+      ),
+      undefined,
+      integrity,
+    );
+    onTestFinished(() => reader.close());
+    const entries = [];
+    const coverage: unknown[] = [];
+    for await (const entry of reader.entries(undefined, {
+      onCoverage: (observed) => coverage.push(observed),
+    }))
+      entries.push(entry);
+    return { reader, entries, coverage, arm };
+  };
+
+  it("fails on a lipo/FAT disagreement under the default policy", async () => {
+    await expect(disagreeingLipo("fail")).rejects.toMatchObject({
+      reason: "integrity",
+      message: expect.stringContaining("disagrees with the Mach-O FAT table"),
+    });
+  });
+
+  it("records a lipo/FAT disagreement and enumerates the FAT slices under record-and-continue", async () => {
+    const { reader, entries, coverage, arm } = await disagreeingLipo(
+      "record-and-continue",
+    );
+    expect(entries.map(({ path, byteOffset }) => [path, byteOffset])).toEqual([
+      ["slices/x86_64", 4096],
+      ["slices/arm64", 8192],
+    ]);
+    expect(coverage).toEqual([
+      {
+        status: "complete",
+        limitations: [
+          expect.stringMatching(
+            /^Integrity limitation: lipo slice metadata disagrees with the Mach-O FAT table \(.*arm64.*offset=8193.*\)\. Slices were enumerated from REA's FAT table parse/u,
+          ),
+        ],
+      },
+    ]);
+    const chunks: Buffer[] = [];
+    const armEntry = entries[1];
+    if (armEntry === undefined) throw new Error("Expected the arm64 slice");
+    for await (const chunk of await reader.open(armEntry))
+      chunks.push(Buffer.from(chunk as Uint8Array));
+    expect(Buffer.compare(Buffer.concat(chunks), Buffer.from(arm))).toBe(0);
+  });
 });
 
 const lipoRunner = (stdout: string): NativeCommandRunner => ({

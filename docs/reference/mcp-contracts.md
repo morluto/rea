@@ -1915,6 +1915,13 @@ occurrence (logical path `.`), recorded as a `dfu-crc32` pair. Under
 listed and extractable as observed-untrusted bytes, and `extract_artifact`
 returns the root record with the extracted files' records.
 
+A universal Mach-O is inventoried from `lipo -detailed_info`, cross-checked
+against REA's own parse of the FAT table. When the two disagree, the default
+policy fails with `integrity`. Under `record-and-continue` the disagreement is
+reported as an integrity limitation and the slices are enumerated from the FAT
+table, whose bytes are authoritative; lipo's records are not used. A malformed
+FAT table still fails.
+
 If native DMG child traversal is unavailable after carrier identification,
 the typed failure retains a revalidated root-only inventory under
 `details.partial_observation.inventory`, with unknown child coverage and the
