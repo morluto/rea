@@ -33,11 +33,10 @@ export const registerWasmCommands = (
         "Inline JSON or input file containing left/right Evidence or retained references and required scope",
       cliOptions: { evidenceBundle: evidenceBundleOption },
     },
-    (document, { signal, operation, cliOptions }) =>
+    (document, { signal, operation, frame, cliOptions }) =>
       runEvidenceInputCommand(
-        operation,
-        cliOptions.evidenceBundle,
-        signal,
+        document,
+        { operation, signal, frame, cliOptions },
         async (lookup) => {
           const result = await compareWasmInterfaces(
             document,
