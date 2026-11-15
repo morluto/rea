@@ -353,6 +353,17 @@ checkCounted(
   ["src/domain/budget.ts"],
 );
 
+// A slice to a named maximum drops items; boundedList in src/domain/boundedList
+// keeps the count of what it dropped beside the retained items, so a consumer
+// can say that more exist and how many.
+checkCounted(
+  "slice to a named maximum (use boundedList or BoundedListCollector from src/domain/boundedList so the omitted count travels with the items)",
+  "constant-maximum-slice",
+  files,
+  /\.slice\(\s*0\s*,\s*[A-Z][A-Z0-9_]*\s*\)/gu,
+  ["src/domain/boundedList.ts"],
+);
+
 // A deadline is a monotonic budget owned by `Deadline` in src/domain/deadline;
 // a wall-clock sum moves with clock changes and has no finalize phase. The
 // remaining copy converts a monotonic budget for a browser page, which can
