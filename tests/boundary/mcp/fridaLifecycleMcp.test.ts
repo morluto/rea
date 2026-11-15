@@ -15,11 +15,11 @@ import type {
 import { expect, it, onTestFinished, vi } from "vitest";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
-import { FridaScriptLoadCancelledError } from "../../../src/application/frida/FridaInstrumentationPort.js";
+import { FridaScriptLoadCancelledError } from "../../../src/ports/frida/FridaInstrumentationPort.js";
 import type {
   FridaInstrumentationPort,
   FridaScriptObservation,
-} from "../../../src/application/frida/FridaInstrumentationPort.js";
+} from "../../../src/ports/frida/FridaInstrumentationPort.js";
 import type { EvidenceWriter } from "../../../src/application/investigation/InvestigationRecordPort.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import {

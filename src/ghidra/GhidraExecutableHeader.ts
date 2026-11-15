@@ -1,10 +1,11 @@
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { createHash } from "node:crypto";
 import type { GhidraExecutableHeaderProbe } from "./GhidraInstallation.js";
 import type { GhidraInstallationFileOptions } from "./GhidraInstallationProperties.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
-import { withArtifactRegularFile } from "../artifacts/ArtifactFileOperation.js";
+import { withArtifactRegularFile } from "../resources/index.js";
 import { readStableFilePrefix } from "../filesystem/readStableFileBytes.js";
 import { ghidraFileFailure } from "./GhidraFileArtifacts.js";
 
@@ -53,7 +54,11 @@ export const readGhidraExecutableHeader = async (
                 },
                 {
                   diagnostics: { path, stage: "native_decompiler_header" },
-                  retryable: false,
+                  ...fixedAllowanceOptions(
+                    "The header parser's exactly representable executable extent",
+                    "parser",
+                    { limit: Number.MAX_SAFE_INTEGER, unit: "bytes" },
+                  ),
                 },
               );
             completedHeader = {

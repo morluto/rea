@@ -119,7 +119,7 @@ it("runs a cold independent request without starting a project export", async ()
   }
 });
 
-it.each(["compact", "full"] as const)(
+it.each(["compact"] as const)(
   "keeps the failed project observation when an explicit fresh retry succeeds (%s)",
   async (profile) => {
     const root = await createTestTempDirectory("rea-kuna-independent-");

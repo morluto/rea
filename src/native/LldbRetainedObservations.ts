@@ -1,7 +1,9 @@
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 import {
   NATIVE_CALL_CAPTURE_DEFAULTS,
   type NativeCallCaptureLimits,
 } from "../domain/native/nativeCallCaptureLimits.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
 import type { FileHandle } from "node:fs/promises";
 import type { LldbReadbackFiles } from "./LldbReadbackFiles.js";
 import type { Result } from "../domain/result.js";
@@ -107,7 +109,7 @@ const parseLldbObservationJournal = (bytes: Uint8Array): ParsedLldbJournal => {
   const events: ParsedLldbJournal["events"] = [];
   const otherStops: string[] = [];
   const limitations: string[] = [];
-  const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+  const decoder = strictUtf8Decoder("preserve");
   let malformedCount = 0;
   let firstMalformedRow: number | undefined;
   let start = 0;
@@ -190,7 +192,9 @@ export const readBoundedPrefix = async (
     }
     if (count === 0) break;
     if (count > requestedBytes - bytesRead)
-      throw new Error("The bounded read returned more bytes than requested");
+      throw invariantViolation(
+        "The bounded read returned more bytes than requested",
+      );
     bytesRead += count;
   }
   return {

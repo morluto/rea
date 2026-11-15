@@ -11,7 +11,7 @@ import {
   type ElfDynamicSegment,
   type ImageSection,
   type LoadRegion,
-} from "./BinaryContainer.js";
+} from "../../domain/binaryContainer.js";
 import { elfArchitecture } from "../../domain/elfFixedHeader.js";
 import { readElfDirectoryFromBuffer } from "./NativeSectionDirectory.js";
 
@@ -21,7 +21,7 @@ export const readElfImage = (
 ): Extract<BinaryContainer, { format: "elf" }> => {
   const directory = readElfDirectoryFromBuffer(bytes);
   const { bits } = directory;
-  const reader = new BinaryReader(bytes, directory.little);
+  const reader = new BinaryReader(bytes, directory.little, "elf");
   const mappings: FileMapping[] = [];
   const loadRegions: LoadRegion[] = [];
   const executableMappings: FileMapping[] = [];

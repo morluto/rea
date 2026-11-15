@@ -8,7 +8,7 @@ import {
   cells,
   devicetreeFixture,
   emptyStringsAtReservationBoundaryFixture,
-} from "../../src/firmware/devicetree/Devicetree.fixture.js";
+} from "../../src/domain/firmware/devicetree.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { cliTest } from "../support/cli/cliFixture.js";

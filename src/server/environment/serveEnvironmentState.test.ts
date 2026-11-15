@@ -42,7 +42,7 @@ import {
 } from "../../../tests/fixtures/environmentServe.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { EnvironmentStateStore } from "../../application/environment/environmentStateStore.js";
-import { ArtifactResourceRetryFailure } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceRetryFailure } from "../../resources/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { environmentCard } from "../../application/environment/environmentTools.js";
 import { stateDataPlane } from "./environmentDataPlane.js";
@@ -1229,7 +1229,8 @@ describe("serveEnvironment state file cleanup", () => {
     await expect(
       add({ kind: "data", data: renamedDocument() }),
     ).resolves.toMatchObject({ result: {} });
-    await expect(environment.close()).rejects.toMatchObject({
+    const reported = await environment.close().catch((cause: unknown) => cause);
+    expect(reported).toMatchObject({
       _tag: "AnalysisOutputError",
       diagnostics: { cleanup_stages: ["state-files"] },
       cause: expect.any(ArtifactResourceRetryFailure),
@@ -1239,6 +1240,8 @@ describe("serveEnvironment state file cleanup", () => {
     failing = false;
     await expect(environment.close()).resolves.toBeUndefined();
     expect(owners[0]?.handle.fd).toBe(-1);
+    // The earlier report reads the confirmed release instead of staying open.
+    expect(reported).toMatchObject({ cleanupIncomplete: false });
   });
 });
 

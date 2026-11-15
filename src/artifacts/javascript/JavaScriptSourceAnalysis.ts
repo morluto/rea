@@ -1,3 +1,4 @@
+import { DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE } from "../../domain/javascript/javascriptSemanticWorkAllowance.js";
 import { resolveJavaScriptSemanticPrecision } from "../../domain/javascript/javascriptSemanticPrecision.js";
 import type {
   JavaScriptSourceAnalysisLimits,
@@ -6,7 +7,7 @@ import type {
 import { JavaScriptAnalysisWorker } from "../../javascript/analysis/JavaScriptAnalysisWorker.js";
 import type { spawnOwnedProviderProcess } from "../../process/ProviderProcess.js";
 import { WorkerCleanupRegistry } from "../../process/OwnedWorkerRuntime.js";
-import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/index.js";
 
 interface RetainedJavaScriptSourceAnalysis {
   readonly worker: JavaScriptAnalysisWorker;
@@ -126,11 +127,24 @@ const registerJavaScriptSourceAnalysisClose = (
   });
 };
 
+/**
+ * Whether a parked worker was built for the same result-affecting choices. Its
+ * requests carry the limits it was built with, so every choice that changes a
+ * result belongs here, including the member-mutation allowance.
+ */
 const sameLimits = (
   left: JavaScriptSourceAnalysisLimits,
   right: JavaScriptSourceAnalysisLimits,
 ): boolean => {
+  const leftAllowance =
+    left.memberMutationAllowance ??
+    DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE;
+  const rightAllowance =
+    right.memberMutationAllowance ??
+    DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE;
   if (
+    leftAllowance.aliasStates !== rightAllowance.aliasStates ||
+    leftAllowance.source !== rightAllowance.source ||
     left.heapMb !== right.heapMb ||
     left.timeoutMs !== right.timeoutMs ||
     left.heapSource !== right.heapSource ||

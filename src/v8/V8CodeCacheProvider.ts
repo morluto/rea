@@ -1,27 +1,23 @@
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
 import {
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
   type StableArtifactSnapshot,
   readStableArtifact,
-} from "../artifacts/readStableArtifact.js";
-import {
   artifactFilePrimaryFacts,
   artifactSelectedPathErrno,
   type ArtifactFilePrimaryFacts,
-} from "../artifacts/ArtifactFileOperation.js";
-import {
   projectArtifactCloseFailure,
   projectOwnedArtifactIdentityFailure,
   projectStableArtifactFailure,
   stableArtifactInputFailure,
-} from "../artifacts/StableArtifactFailure.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
-import type { V8CodeCachePort } from "../application/v8CodeCache/V8CodeCachePort.js";
+} from "../resources/index.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
+import type { V8CodeCachePort } from "../ports/v8CodeCache/V8CodeCachePort.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
 import {
@@ -32,10 +28,7 @@ import {
   type InspectV8CodeCacheInput,
 } from "../domain/v8/v8CodeCache.js";
 import { err, ok } from "../domain/result.js";
-import {
-  V8CodeCacheBudgetFailure,
-  V8CodeCacheFormatFailure,
-} from "./V8CodeCache.errors.js";
+import { V8CodeCacheBudgetFailure } from "./V8CodeCache.errors.js";
 import { V8_CODE_CACHE_PROVIDER_IDENTITY } from "./V8CodeCacheProviderIdentity.js";
 import { parseV8CodeCache } from "./V8CodeCacheParser.js";
 
@@ -183,21 +176,8 @@ const v8CodeCacheFailurePrimary = (
         remediationAction: observationBudgetRemediation(cause, input),
       },
     );
-  if (cause instanceof V8CodeCacheFormatFailure)
-    return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(
-          OPERATION,
-          input.path,
-          cause.message,
-          { cause },
-        )
-      : new AnalysisInputError(OPERATION, { cause }, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: cause.message,
-          },
-        ]);
+  const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
+  if (formatFailure !== undefined) return formatFailure;
   const identityFailure = projectOwnedArtifactIdentityFailure(
     facts,
     OPERATION,

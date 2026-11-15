@@ -1,8 +1,11 @@
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import {
+  type ArtifactResourceScope,
+  AnalysisCleanupLease,
+} from "../resources/index.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import {
@@ -14,10 +17,10 @@ import {
   runOwnedCommand,
 } from "../process/OwnedCommand.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
-import { artifactCommandOutput } from "../process/ArtifactAnalysisResources.js";
 import {
-  AnalysisCancelledError,
   AnalysisOutputError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 
 /** Run a setup command with ownership of its entire process family and partial output. */
@@ -141,7 +144,7 @@ export const runDesktopBuildOwnedCommand = async (input: {
         ? preparation instanceof DarwinProcessOwnershipInspectionError
           ? preparation.capturedOutput
           : undefined
-        : artifactCommandOutput(command.snapshot);
+        : capturedProviderOutput(command.snapshot);
     const reason = desktopBuildOwnedCommandReason(failure);
     const physical =
       failure instanceof AnalysisError
@@ -161,8 +164,7 @@ export const runDesktopBuildOwnedCommand = async (input: {
     if (command?.reason === "cancelled" && command.cancellation !== undefined) {
       primary =
         inspectionCancellation ??
-        new AnalysisCancelledError("setup", {
-          cause: command.cancellation.reason,
+        cancelledBy("setup", carriedReason(command.cancellation.reason), {
           diagnostics: {
             setup_failure: reason,
             command_failure: command.reason,
@@ -187,18 +189,14 @@ export const runDesktopBuildOwnedCommand = async (input: {
           ? primary
           : analysisErrorWithCancellation(
               primary,
-              new AnalysisCancelledError("setup", {
-                cause: command.cancellation.reason,
-              }),
+              cancelledBy("setup", carriedReason(command.cancellation.reason)),
             );
     // This finalization checkpoint records a later caller cancellation without
     // reclassifying the established physical command or cleanup outcome.
     if (input.signal?.aborted)
       primary = analysisErrorWithCancellation(
         primary,
-        new AnalysisCancelledError("setup", {
-          cause: input.signal.reason,
-        }),
+        cancelledBy("setup", input.signal),
       );
     throw primary;
   }

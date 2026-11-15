@@ -36,8 +36,8 @@ import {
 } from "../../../src/artifacts/apple/MachoImage.fixture.js";
 import { locateGodotPck } from "../../../src/artifacts/GodotPckLocation.js";
 import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
-import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
-import { artifactFilePrimaryFacts } from "../../../src/artifacts/ArtifactFileOperation.js";
+import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
+import { artifactFilePrimaryFacts } from "../../../src/resources/ArtifactFileOperation.js";
 import { DesktopApplicationReader } from "../../../src/artifacts/DesktopApplicationReader.js";
 import { inspectDesktopFile } from "../../../src/artifacts/DesktopFileInspection.js";
 import { DesktopApplicationService } from "../../../src/application/artifacts/DesktopApplicationService.js";
@@ -942,7 +942,7 @@ const inspectSimulatedRows = async (
   const service = new DesktopApplicationService(
     new DesktopApplicationReader((selected) => {
       const reader = new DirectoryArtifactReader(selected);
-      reader.entries = async function* () {
+      reader.entries = async function* (_signal, options) {
         for (let index = 0; index < count; index++) {
           yielded++;
           yield {
@@ -959,6 +959,8 @@ const inspectSimulatedRows = async (
             adapterKey: `${root}/${path(index)}`,
           };
         }
+        if (typeof options !== "function")
+          options?.onCoverage?.({ status: "complete", limitations: [] });
       };
       return reader;
     }),

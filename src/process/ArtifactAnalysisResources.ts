@@ -1,29 +1,23 @@
+import { capturedProviderOutput } from "./capturedProviderOutput.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
-import {
-  ArtifactFileCleanupFailure,
-  artifactFileCancellationCause,
-} from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
-import { completedStableArtifactObservation } from "../artifacts/StableArtifactObservation.js";
-import { stableArtifactInputRecovery } from "../artifacts/StableArtifactFailure.js";
+  ArtifactReaderFailure,
+  type CleanupFailedRead,
+  ArtifactResourceScope,
+  readStableArtifact,
+} from "../resources/index.js";
 import {
   AnalysisError,
   type AnalysisCapturedOutput,
-  type AnalysisPartialObservation,
+  type AnalysisErrorOptions,
 } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisAccessDeniedError,
-  AnalysisCancelledError,
   AnalysisArtifactChangedError,
-  AnalysisInputError,
   AnalysisResourceConstraintError,
   AnalysisOutputError,
-  AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -31,7 +25,6 @@ import {
   fixedAllowanceOptions,
   fixedProducerInputAllowance,
 } from "../domain/fixedAllowanceRemediation.js";
-import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, type Result } from "../domain/result.js";
@@ -45,6 +38,11 @@ import type {
   ProviderProcessSupervisor,
 } from "./ProviderProcess.js";
 import { OwnedCommandFailure, ownedCommandResources } from "./OwnedCommand.js";
+import { providerOutcomeOf } from "./ProviderOutcome.js";
+import {
+  classifyProviderOutcome,
+  type ProviderOutcomeContext,
+} from "./classifyProviderOutcome.js";
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 
 /** Limitations shared by resource-limited artifact producer observations. */
@@ -56,7 +54,8 @@ export type ArtifactAnalysisRuntime = Pick<
   "path" | "close"
 >;
 
-interface SelectedArtifactRead {
+/** A selected input one resource-owned read admits. */
+export interface SelectedArtifactRead {
   readonly path: string;
   readonly maximumBytes: number;
   readonly allowanceName: string;
@@ -65,15 +64,31 @@ interface SelectedArtifactRead {
   readonly budgetParameter?: "producer_limits.input_bytes";
 }
 
-export const artifactCommandOutput = (
-  snapshot: ProviderProcessSnapshot,
-): AnalysisCapturedOutput => ({
-  stdout: snapshot.stdout.text,
-  stderr: snapshot.stderr.text,
-  truncated: snapshot.diagnosticTruncated ?? false,
-  exit_code: snapshot.exitCode ?? null,
-  signal: snapshot.signal ?? null,
-});
+/** What a resource-owned read was doing when it failed. */
+export type ArtifactResourceFailureContext =
+  | {
+      readonly kind: "selected-input";
+      readonly operation: string;
+      readonly input: SelectedArtifactRead;
+    }
+  | {
+      readonly kind: "integrity";
+      readonly operation: string;
+      readonly path: string;
+      readonly capturedOutput: AnalysisCapturedOutput | undefined;
+    }
+  | { readonly kind: "resources"; readonly operation: string };
+
+/**
+ * Classifies a raw failure these resources observed. The provider layer owns
+ * raw-failure classification, so the consumer supplies it; the resources
+ * supply the typed pieces (`selectedFileSize`, `integrityChanged`,
+ * `readCleanupFailure`) its dialect is built from.
+ */
+export type ArtifactResourceClassifier = (
+  cause: unknown,
+  context: ArtifactResourceFailureContext,
+) => AnalysisError;
 
 /** Own admission, artifact descriptors, producer cleanup and private workspaces together. */
 export class ArtifactAnalysisResources {
@@ -102,6 +117,7 @@ export class ArtifactAnalysisResources {
       readonly message: string;
       readonly details: Readonly<Record<string, JsonValue>>;
     },
+    readonly classify: ArtifactResourceClassifier,
   ) {
     this.#artifacts = { scope: new ArtifactResourceScope(), operation };
   }
@@ -114,9 +130,10 @@ export class ArtifactAnalysisResources {
     if (this.#closed || signal?.aborted)
       return Promise.resolve(
         err(
-          new AnalysisCancelledError(operation, {
-            cause: signal?.aborted ? signal.reason : undefined,
-          }),
+          cancelledBy(
+            operation,
+            carriedReason(signal?.aborted ? signal.reason : undefined),
+          ),
         ),
       );
     if (this.#busy)
@@ -127,6 +144,7 @@ export class ArtifactAnalysisResources {
             "capacity",
             this.capacity.message,
             this.capacity.details,
+            { measuredExhaustion: true },
           ),
         ),
       );
@@ -138,15 +156,18 @@ export class ArtifactAnalysisResources {
           // this scope has drained it and admits acquisition for the new request.
           this.#artifacts.operation = operation;
           if (signal?.aborted)
-            return Promise.resolve(
-              err(
-                new AnalysisCancelledError(operation, { cause: signal.reason }),
-              ),
-            );
+            return Promise.resolve(err(cancelledBy(operation, signal)));
           return work();
         }),
       )
-      .catch((cause: unknown) => err(this.#artifactFailure(cause)))
+      .catch((cause: unknown) =>
+        err(
+          this.classify(cause, {
+            kind: "resources",
+            operation: this.#artifacts.operation,
+          }),
+        ),
+      )
       .finally(() => {
         this.#busy = false;
       });
@@ -173,76 +194,30 @@ export class ArtifactAnalysisResources {
     try {
       return await this.read(input.path, input.maximumBytes, input.signal);
     } catch (cause: unknown) {
-      throw this.#selectedArtifactFailure(cause, input, operation);
+      throw this.classify(cause, { kind: "selected-input", operation, input });
     }
   }
 
-  #selectedArtifactFailure(
-    cause: unknown,
-    input: SelectedArtifactRead,
-    operation: string,
-  ): AnalysisError {
-    const { path, maximumBytes, allowanceName, observedOutput } = input;
-    if (cause instanceof AnalysisError) return cause;
-    const observation = completedStableArtifactObservation(cause, path);
-    if (cause instanceof ArtifactReaderFailure && observation !== undefined)
-      cause.retainPartialObservation(observation);
-    if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
-      return this.cleanupFailure(
-        cause,
-        (primary) => this.#selectedArtifactFailure(primary, input, operation),
-        observedOutput,
-        operation,
-      );
-    if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-      return new AnalysisCancelledError(operation, {
-        cause: artifactFileCancellationCause(cause),
-        ...(observedOutput === undefined
-          ? {}
-          : { capturedOutput: observedOutput }),
-        ...(cause.partialObservation === undefined
-          ? {}
-          : { partialObservation: cause.partialObservation }),
-      });
-    const reason = cause instanceof Error ? cause.message : String(cause);
-    if (cause instanceof ArtifactReaderFailure && cause.reason === "limit")
-      return new AnalysisResourceConstraintError(
+  /** The read budget and recovery for a selected input larger than it admits. */
+  selectedFileSize(input: SelectedArtifactRead, operation: string) {
+    const { maximumBytes, allowanceName, budgetParameter } = input;
+    return (cause: ArtifactReaderFailure, details: AnalysisErrorOptions) =>
+      new AnalysisResourceConstraintError(
         operation,
         "file-size",
-        reason,
+        cause.message,
         { input_bytes: maximumBytes },
         {
+          ...details,
           cause,
-          ...(input.budgetParameter === undefined
+          ...(budgetParameter === undefined
             ? fixedProducerInputAllowance(maximumBytes, allowanceName)
             : {
                 retryable: false,
-                remediationAction: `Increase ${input.budgetParameter} above ${String(maximumBytes)} bytes on the next call to admit the same complete selected artifact; no REA restart is required. Do not truncate required input bytes. Output, parser, transport and inherited OS limits remain independent.`,
+                remediationAction: `Increase ${budgetParameter} above ${String(maximumBytes)} bytes on the next call to admit the same complete selected artifact; no REA restart is required. Do not truncate required input bytes. Output, parser, transport and inherited OS limits remain independent.`,
               }),
         },
       );
-    if (cause instanceof ArtifactReaderFailure && cause.reason === "integrity")
-      return new AnalysisArtifactChangedError(operation, path, reason, {
-        cause,
-      });
-    if (
-      cause instanceof Error &&
-      "code" in cause &&
-      (cause.code === "EACCES" || cause.code === "EPERM")
-    )
-      return new AnalysisAccessDeniedError(operation, path, cause.code, {
-        cause,
-      });
-    return new AnalysisInputError(
-      operation,
-      {
-        cause,
-        ...(cause instanceof ArtifactReaderFailure
-          ? stableArtifactInputRecovery(cause)
-          : {}),
-      },
-      [{ path: ["path"], reason: "invalid_value", message: reason }],
-    );
   }
 
   readLimits(limits: LinuxResourceLimits): Promise<LinuxResourceLimits> {
@@ -260,7 +235,12 @@ export class ArtifactAnalysisResources {
       try {
         return await this.read(path, 64 * 1024 * 1024);
       } catch (cause: unknown) {
-        throw this.integrityFailure(cause, path, capturedOutput, operation);
+        throw this.classify(cause, {
+          kind: "integrity",
+          operation,
+          path,
+          capturedOutput,
+        });
       }
     };
     const current = await read(command);
@@ -275,45 +255,21 @@ export class ArtifactAnalysisResources {
     return current;
   }
 
-  integrityFailure(
-    cause: unknown,
+  /** A post-run identity read whose failure shows the file changed. */
+  integrityChanged(
+    cause: ArtifactReaderFailure,
     path: string,
-    capturedOutput?: AnalysisCapturedOutput,
-    operation = this.operation,
-  ): AnalysisError {
-    if (cause instanceof AnalysisError) return cause;
-    if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
-      return this.cleanupFailure(
-        cause,
-        (primary) =>
-          this.integrityFailure(primary, path, capturedOutput, operation),
-        capturedOutput,
-        operation,
-      );
-    const detail = {
-      cause,
-      ...(capturedOutput === undefined ? {} : { capturedOutput }),
-    };
-    if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-      return new AnalysisCancelledError(operation, {
-        ...detail,
-        cause: artifactFileCancellationCause(cause),
-      });
-    const reason = cause instanceof Error ? cause.message : String(cause);
-    if (
-      cause instanceof ArtifactReaderFailure &&
-      ["limit", "integrity", "path"].includes(cause.reason)
-    )
-      return new AnalysisArtifactChangedError(
-        operation,
-        path,
-        `Post-run identity verification failed for ${path}: ${reason}`,
-        detail,
-      );
-    return new ProviderAdapterError(this.providerId, operation, {
-      ...detail,
-      diagnostics: { stage: "integrity", resource_path: path, reason },
-    });
+    details: AnalysisErrorOptions,
+    operation: string,
+  ): AnalysisArtifactChangedError | undefined {
+    return ["limit", "integrity", "path"].includes(cause.reason)
+      ? new AnalysisArtifactChangedError(
+          operation,
+          path,
+          `Post-run identity verification failed for ${path}: ${cause.message}`,
+          details,
+        )
+      : undefined;
   }
 
   retain(
@@ -346,12 +302,6 @@ export class ArtifactAnalysisResources {
     return ownership === undefined
       ? [root.path]
       : ownedCommandResources(ownership, root.path);
-  }
-
-  get #pendingResources(): readonly string[] {
-    return [...this.#pending.keys()].flatMap((root) =>
-      this.#resourcesFor(root),
-    );
   }
 
   async release(): Promise<void> {
@@ -441,14 +391,18 @@ export class ArtifactAnalysisResources {
     this.#pending.delete(root);
   }
 
-  cleanupFailure(
-    cause: ArtifactReaderFailure,
-    classifyPrimary: (cause: unknown) => AnalysisError,
+  /**
+   * This provider's report for a read whose own cleanup failed: its cleanup
+   * error, bound to the read's descriptor leases (or to a retained unresolved
+   * lease), composed with what the read reports apart from that cleanup.
+   */
+  readCleanupFailure(
+    cause: CleanupFailedRead,
+    primary: AnalysisError | undefined,
     capturedOutput?: AnalysisCapturedOutput,
     operation = this.operation,
   ): AnalysisError {
     const observation = cause.cleanup;
-    if (observation === undefined) return classifyPrimary(cause);
     const failure = new ProviderCleanupError(
       this.providerId,
       observation.resources,
@@ -475,24 +429,6 @@ export class ArtifactAnalysisResources {
       leases = [unresolved];
     }
     new AnalysisCleanupLeaseGroup(failure, leases);
-    let primary: AnalysisError | undefined;
-    if (cause instanceof ArtifactFileCleanupFailure) {
-      const physical = cause.fileCleanupFailure;
-      if (physical.outcome.kind === "failed")
-        primary = classifyPrimary(physical.outcome.cause);
-      else if (physical.completionCancellation !== undefined)
-        primary = new AnalysisCancelledError(operation, {
-          cause: physical.completionCancellation.reason,
-          ...(capturedOutput === undefined ? {} : { capturedOutput }),
-          partialObservation: cause.partialObservation,
-        });
-    } else if (cause.reason === "cancelled") {
-      primary = new AnalysisCancelledError(operation, {
-        cause: artifactFileCancellationCause(cause),
-        ...(capturedOutput === undefined ? {} : { capturedOutput }),
-        partialObservation: cause.partialObservation,
-      });
-    }
     if (cause.partialObservation !== undefined)
       (primary ?? failure).retainPartialObservation(cause.partialObservation);
     return primary === undefined
@@ -514,38 +450,37 @@ export class ArtifactAnalysisResources {
     operation = this.operation,
     budgetParameter?: "producer_limits",
   ): AnalysisError {
-    const capturedOutput =
-      cause.snapshot === null
-        ? undefined
-        : artifactCommandOutput(cause.snapshot);
-    const detail = {
-      cause,
-      ...(capturedOutput === undefined ? {} : { capturedOutput }),
-    };
-    if (cause.reason === "cancelled")
-      return new AnalysisCancelledError(operation, {
-        ...detail,
-        cause:
-          cause.cancellation === undefined ? cause : cause.cancellation.reason,
-      });
-    if (cause.reason === "timeout")
-      return new AnalysisTimeoutError(operation, limits.command_timeout_ms, {
-        ...detail,
+    return classifyProviderOutcome(
+      providerOutcomeOf(cause),
+      this.commandContext(limits, effectiveLimits, operation, budgetParameter),
+    );
+  }
+
+  /** How this provider's owned producer commands report, for the shared classifiers. */
+  commandContext(
+    limits: {
+      readonly command_timeout_ms: number;
+      readonly output_bytes: number;
+    },
+    effectiveLimits: LinuxResourceLimits | undefined,
+    operation = this.operation,
+    budgetParameter?: "producer_limits",
+  ): ProviderOutcomeContext {
+    return {
+      operation,
+      capturedOutput: capturedProviderOutput,
+      timeout: {
+        ms: limits.command_timeout_ms,
         userMessage: `The owned producer command reached its ${String(limits.command_timeout_ms)} ms deadline. This is not a client-side timeout; extending only the MCP client's deadline does not change this budget.`,
         remediationAction:
           budgetParameter === undefined
             ? `REA's fixed producer command deadline is ${String(limits.command_timeout_ms)} ms and this release has no runtime override. Inspect any partial output and cleanup before retrying. Repeating the unchanged request reaches the same deadline.`
             : `${limits.command_timeout_ms < MAX_NODE_TIMER_DELAY_MS ? `Increase ${budgetParameter}.command_timeout_ms above ${String(limits.command_timeout_ms)} milliseconds on the next call (range 1..${String(MAX_NODE_TIMER_DELAY_MS)}); no restart is required.` : `${budgetParameter}.command_timeout_ms is already at the runtime timer maximum ${String(MAX_NODE_TIMER_DELAY_MS)} milliseconds; no higher deadline is supported. Narrow the selected work if that preserves the required observation.`} Inspect retained observations and confirm cleanup before retrying. This does not raise CPU, memory, output, parser or external client limits.`,
-      });
-    if (cause.reason === "output-limit")
-      return new AnalysisResourceConstraintError(
-        operation,
-        "memory",
-        cause.message,
-        { output_bytes: limits.output_bytes },
-        {
-          ...detail,
-          ...(budgetParameter === undefined
+      },
+      outputLimit: {
+        limits: { output_bytes: limits.output_bytes },
+        recovery:
+          budgetParameter === undefined
             ? fixedAllowanceOptions(
                 `The retained command-output allowance of ${String(limits.output_bytes)} bytes (this release has no runtime override)`,
                 "capture",
@@ -553,85 +488,26 @@ export class ArtifactAnalysisResources {
             : {
                 retryable: false,
                 remediationAction: `Increase ${budgetParameter}.output_bytes above ${String(limits.output_bytes)} bytes on the next call; no restart is required. Inspect captured output and confirm cleanup before retrying. This controls collection, not parser, transport, host memory or inherited OS limits. Repeating the unchanged request cannot raise it.`,
-              }),
-        },
-      );
-    if (
-      cause.reason === "process" &&
-      (cause.snapshot?.signal === "SIGXFSZ" ||
-        cause.snapshot?.signal === "SIGXCPU")
-    ) {
-      const signal = cause.snapshot.signal;
-      const reported =
-        effectiveLimits === undefined
-          ? "The effective inherited limit was not reported."
-          : `The effective inherited limits are ${String(effectiveLimits.address_space_bytes)} bytes of address space, ${String(effectiveLimits.file_bytes)} bytes per file, and ${String(effectiveLimits.cpu_seconds)} CPU seconds.`;
-      // A producer can raise SIGXCPU/SIGXFSZ without exhausting the retained
-      // rlimit, so an unchanged retry is not a proven failure.
-      return new AnalysisResourceConstraintError(
-        operation,
-        signal === "SIGXFSZ" ? "file-size" : "cpu",
-        `Producer terminated with ${signal}; the signal's exact cause is not independently established.`,
-        effectiveLimits === undefined ? null : { ...effectiveLimits },
-        {
-          ...detail,
-          retryable: true,
-          remediationAction: `${reported} REA retains the tighter inherited limit. ${budgetParameter === undefined ? "This release has no runtime override for that ceiling." : `Review ${budgetParameter}.${signal === "SIGXFSZ" ? "file_bytes" : "cpu_seconds"} for a new call; a higher requested policy cannot raise a tighter inherited soft or hard limit. No REA restart is needed for a per-call update.`} A smaller artifact may finish inside the retained limit. The signal does not prove that ceiling was exhausted, so an unchanged retry may succeed or may fail the same way.`,
-        },
-      );
-    }
-    return new AnalysisOutputError(operation, cause.message, detail);
-  }
-
-  async finish<T>(
-    result: Result<T, AnalysisError>,
-    observation: (value: T) => AnalysisPartialObservation,
-    operation = this.operation,
-    signal?: AbortSignal,
-  ): Promise<Result<T, AnalysisError>> {
-    try {
-      await this.release();
-      if (result.ok && signal?.aborted)
-        return err(
-          new AnalysisCancelledError(operation, {
-            cause: signal.reason,
-            partialObservation: observation(result.value),
-          }),
-        );
-      return result;
-    } catch (cause: unknown) {
-      const partialObservation = result.ok
-        ? observation(result.value)
-        : result.error.partialObservation;
-      const primary = !result.ok
-        ? result.error
-        : signal?.aborted
-          ? new AnalysisCancelledError(operation, {
-              cause: signal.reason,
-              partialObservation,
-            })
-          : undefined;
-      const cleanup =
-        cause instanceof AnalysisError
-          ? cause
-          : new ProviderCleanupError(
-              this.providerId,
-              this.#pendingResources,
-              { reason: String(cause) },
-              { operation, cause },
-            );
-      const failure =
-        primary === undefined
-          ? cleanup
-          : analysisErrorWithCleanupFailure(
-              primary,
-              cleanup,
-              operation,
-            ).bindCleanupDependencies([primary, cleanup]);
-      if (partialObservation !== undefined)
-        failure.retainPartialObservation(partialObservation);
-      return err(failure);
-    }
+              },
+      },
+      resourceSignal: (signal) => {
+        const reported =
+          effectiveLimits === undefined
+            ? "The effective inherited limit was not reported."
+            : `The effective inherited limits are ${String(effectiveLimits.address_space_bytes)} bytes of address space, ${String(effectiveLimits.file_bytes)} bytes per file, and ${String(effectiveLimits.cpu_seconds)} CPU seconds.`;
+        // A producer can raise SIGXCPU/SIGXFSZ without exhausting the retained
+        // rlimit, so an unchanged retry is not a proven failure.
+        return {
+          limits: effectiveLimits === undefined ? null : { ...effectiveLimits },
+          recovery: {
+            retryable: true,
+            remediationAction: `${reported} REA retains the tighter inherited limit. ${budgetParameter === undefined ? "This release has no runtime override for that ceiling." : `Review ${budgetParameter}.${signal === "SIGXFSZ" ? "file_bytes" : "cpu_seconds"} for a new call; a higher requested policy cannot raise a tighter inherited soft or hard limit. No REA restart is needed for a per-call update.`} A smaller artifact may finish inside the retained limit. The signal does not prove that ceiling was exhausted, so an unchanged retry may succeed or may fail the same way.`,
+          },
+        };
+      },
+      dialect: (outcome, details) =>
+        new AnalysisOutputError(operation, outcome.message, details),
+    };
   }
 
   close(): Promise<void> {
@@ -646,7 +522,10 @@ export class ArtifactAnalysisResources {
     try {
       await this.#artifacts.scope.close();
     } catch (cause: unknown) {
-      descriptorFailure = this.#artifactFailure(cause);
+      descriptorFailure = this.classify(cause, {
+        kind: "resources",
+        operation: this.#artifacts.operation,
+      });
     }
     try {
       await this.release();
@@ -660,27 +539,5 @@ export class ArtifactAnalysisResources {
       throw cause;
     }
     if (descriptorFailure !== undefined) throw descriptorFailure;
-  }
-
-  #artifactFailure(
-    cause: unknown,
-    operation = this.#artifacts.operation,
-  ): AnalysisError {
-    if (cause instanceof AnalysisError) return cause;
-    if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
-      return this.cleanupFailure(
-        cause,
-        (primary) => this.#artifactFailure(primary, operation),
-        undefined,
-        operation,
-      );
-    if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-      return new AnalysisCancelledError(operation, {
-        cause: artifactFileCancellationCause(cause),
-      });
-    return new ProviderAdapterError(this.providerId, operation, {
-      cause,
-      diagnostics: { stage: "artifact-resources", reason: String(cause) },
-    });
   }
 }

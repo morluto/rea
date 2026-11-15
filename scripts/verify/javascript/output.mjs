@@ -5,7 +5,7 @@ import { once } from "node:events";
 import { createInterface } from "node:readline";
 import { Writable } from "node:stream";
 import { createReadStream, createWriteStream } from "node:fs";
-import { mkdtemp, rm, stat, statfs } from "node:fs/promises";
+import { stat, statfs } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { finished } from "node:stream/promises";
@@ -16,6 +16,10 @@ import { estimateTokenCount } from "tokenx";
 import { parseCliOutputArguments } from "../../../dist/cliOutput.js";
 import { createCliResultOutput } from "../../../dist/cli/cliResultOutput.js";
 import { createEvidence } from "../../../dist/domain/evidence.js";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "../../lib/verifier-fixture.mjs";
 
 // This opt-in format-boundary check writes one temporary file larger than the
 // actual engine string limit. Shared leaves keep the analysis input small.
@@ -29,7 +33,10 @@ assert.ok(
   volume.bavail * volume.bsize > count * encodedLeaf.length + 1024 ** 3,
   "Large-output verification needs room for one output file and a 1-GiB reserve",
 );
-const workspace = await mkdtemp(join(tmpdir(), "rea-javascript-output-"));
+const fixture = await VerifierFixture.open({
+  prefix: "rea-javascript-output-",
+});
+const workspace = fixture.path;
 const path = join(workspace, "result.json");
 let destination;
 let peakRss = process.memoryUsage().rss;
@@ -40,7 +47,17 @@ const sampler = setInterval(sampleRss, 25);
 sampler.unref();
 let finalReport;
 
-try {
+// The output stream writes under the root: it closes before the root is
+// removed.
+fixture.releaseAfter(async () => {
+  clearInterval(sampler);
+  if (destination !== undefined && !destination.closed) {
+    const closed = once(destination, "close");
+    destination.destroy();
+    await closed;
+  }
+});
+await withVerifierFixture(fixture, async () => {
   const evidence = createEvidence(
     undefined,
     { id: "large-output-fixture", name: "Large output fixture", version: "1" },
@@ -189,13 +206,5 @@ try {
     evidence_id: evidence.evidence_id,
     rss: { method: "node-memoryUsage-rss-sampled", peak_bytes: peakRss },
   };
-} finally {
-  clearInterval(sampler);
-  if (destination !== undefined && !destination.closed) {
-    const closed = once(destination, "close");
-    destination.destroy();
-    await closed;
-  }
-  await rm(workspace, { recursive: true, force: true });
-}
+});
 process.stdout.write(`${JSON.stringify(finalReport)}\n`);

@@ -1,25 +1,31 @@
 import { snapshotEnvironment } from "../../process/snapshotEnvironment.js";
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { JavaScriptRecoveryPort } from "../../application/javascript/JavaScriptRecoveryPort.js";
+import type { JavaScriptRecoveryPort } from "../../ports/javascript/JavaScriptRecoveryPort.js";
 import type {
   AnalysisExecution,
   ExecutionOptions,
-} from "../../application/AnalysisProvider.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
-import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
-import { SafeOutputTreeCreationFailure } from "../../artifacts/SafeOutputTreeCreationFailure.js";
+} from "../../ports/AnalysisProvider.js";
+import {
+  ArtifactResourceScope,
+  AnalysisCleanupLease,
+  ArtifactReaderFailure,
+  artifactFileCancellationCause,
+} from "../../resources/index.js";
+import {
+  SafeOutputTree,
+  SafeOutputTreeCreationFailure,
+} from "../../resources/index.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { artifactFileCancellationCause } from "../../artifacts/ArtifactFileOperation.js";
 import {
   javascriptRecoveryResultSchema,
   type JavaScriptRecoveryInput,
@@ -103,7 +109,10 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
     const pending = await this.#retire();
     if (pending !== undefined) return err(pending);
     // Capture configuration after queue/cleanup admission; later requests may select updates.
-    const environment = snapshotEnvironment(this.environment);
+    const environment = snapshotEnvironment(
+      this.environment,
+      HOST_PLATFORM.platform,
+    );
     let root: string | undefined;
     let tree: SafeOutputTree | undefined;
     let failed: { readonly cause: unknown } | undefined;
@@ -167,15 +176,18 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
         primary instanceof ArtifactReaderFailure &&
         primary.reason === "cancelled" &&
         primary.cleanup === undefined
-          ? new AnalysisCancelledError(OPERATION, {
-              cause: artifactFileCancellationCause(primary),
-              ...(primary.partialObservation === undefined
-                ? {}
-                : { partialObservation: primary.partialObservation }),
-              ...(reportFailure === undefined
-                ? {}
-                : { capturedOutput: reportFailure.capturedOutput }),
-            })
+          ? cancelledBy(
+              OPERATION,
+              carriedReason(artifactFileCancellationCause(primary)),
+              {
+                ...(primary.partialObservation === undefined
+                  ? {}
+                  : { partialObservation: primary.partialObservation }),
+                ...(reportFailure === undefined
+                  ? {}
+                  : { capturedOutput: reportFailure.capturedOutput }),
+              },
+            )
           : primary;
       const residuals: string[] = [];
       const cleanupFailures: { resource: string; reason: string }[] = [];
@@ -269,7 +281,7 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
               });
         failure = analysisErrorWithCancellation(
           analysisFailure,
-          new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
+          cancelledBy(OPERATION, signal),
         );
       }
       if (residuals.length > 0) {

@@ -1,7 +1,7 @@
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createInflate } from "node:zlib";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/index.js";
 import { abortIfNeeded } from "../ArtifactHash.js";
 
 interface MemberStreamOptions {
@@ -94,6 +94,7 @@ export const pyInstallerMemberStream = (
           throw new ArtifactReaderFailure(
             "integrity",
             "Compressed PyInstaller member did not consume its complete declared source span",
+            { integrityCheck: "read-coverage" },
           );
         if (
           options.expectedBytes !== undefined &&
@@ -102,6 +103,7 @@ export const pyInstallerMemberStream = (
           throw new ArtifactReaderFailure(
             "integrity",
             "PyInstaller member size disagrees with its declaration or previous observation",
+            { integrityCheck: "declared-size" },
           );
         await options.complete?.(bytes);
         abortIfNeeded(options.signal);

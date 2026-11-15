@@ -1,6 +1,8 @@
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import type { Evidence } from "../evidence.js";
+import { joinCoverageStatus } from "../coverage.js";
+import { applicationCoverageKnowledge } from "./javascriptApplicationEvidenceSchemas.js";
 import { buildJavaScriptApplicationChangeGraph } from "./javascriptApplicationChangeGraph.js";
 import {
   ownedApplicationVersionComparisonResultSchema,
@@ -129,19 +131,23 @@ const comparisonCoverage = (
     left_graph_status: input.left.graph.coverage.status,
     right_graph_status: input.right.graph.coverage.status,
   };
-  const sourceGraphsComplete =
-    input.left.graph.coverage.status === "complete" &&
-    input.right.graph.coverage.status === "complete";
+  const joined = joinCoverageStatus([
+    applicationCoverageKnowledge(input.left.graph.coverage.status),
+    applicationCoverageKnowledge(input.right.graph.coverage.status),
+  ]);
   const sourceGraphsTruncated =
     input.left.graph.coverage.truncated || input.right.graph.coverage.truncated;
   return {
     ...context,
     ...omissions,
-    status: sourceGraphsComplete
-      ? "complete-within-inputs"
-      : sourceGraphsTruncated
-        ? "truncated"
-        : "partial",
+    status:
+      joined === "complete"
+        ? "complete-within-inputs"
+        : joined === "unknown"
+          ? "unknown"
+          : sourceGraphsTruncated
+            ? "truncated"
+            : "partial",
   };
 };
 

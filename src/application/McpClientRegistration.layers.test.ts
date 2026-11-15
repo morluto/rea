@@ -1,9 +1,10 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import {
   effectiveClientServer,
   parseClientConfiguration,
@@ -50,6 +51,7 @@ const effective = (
 ) => {
   const parsed = mergeClientConfigurationDocuments(
     texts.map((text) => parseClientConfiguration(text, format)),
+    HOST_PLATFORM.platform,
   );
   if (parsed === undefined)
     throw new Error("Fixture has no configuration documents");

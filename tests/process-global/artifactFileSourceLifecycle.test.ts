@@ -15,8 +15,8 @@ import {
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactReader,
-} from "../../src/artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+} from "../../src/resources/ArtifactReader.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { GodotPckArtifactReader } from "../../src/artifacts/GodotPckArtifactReader.js";
 import { NodeSeaArtifactReader } from "../../src/artifacts/NodeSeaArtifactReader.js";
 import { nodeSeaElf } from "../../src/artifacts/nodeSea/NodeSea.fixture.js";
@@ -123,7 +123,7 @@ it.each(carriers)(
       await writeFile(path, carrier.bytes(BODY.repeat(3)));
       await expect(reader.prepareContainer(sha256)).rejects.toMatchObject({
         reason: "integrity",
-        message: `${carrier.name} source identity changed: ${path}`,
+        integrityCheck: "container-identity",
       });
     } finally {
       await reader.close();

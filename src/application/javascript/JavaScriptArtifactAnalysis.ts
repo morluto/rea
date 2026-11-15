@@ -45,13 +45,14 @@ import { htmlArtifactReferences } from "../../domain/javascript/htmlArtifactRefe
 import type { JavaScriptSourceAnalysisPort } from "../../domain/javascript/javascriptSourceAnalysis.js";
 import type { JavaScriptSemanticGraphProjection } from "./JavaScriptSemanticGraphBuilder.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/index.js";
 import { translateArtifactFailure } from "../../artifacts/ArtifactOperationFailure.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import {
-  AnalysisCancelledError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 
 interface MutableArtifactAnalysis {
@@ -105,18 +106,13 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
       await setImmediate();
       if (classifyUnavailableSource(file, state, projection)) {
         if (signal?.aborted === true) {
-          interruption = new AnalysisCancelledError(
-            "analyze_javascript_application",
-            { cause: signal.reason },
-          );
+          interruption = cancelledBy("analyze_javascript_application", signal);
           break;
         }
         continue;
       }
       if (signal?.aborted === true)
-        throw new AnalysisCancelledError("analyze_javascript_application", {
-          cause: signal.reason,
-        });
+        throw cancelledBy("analyze_javascript_application", signal);
       await beforeFile(file, selectedFileIndex++, selectedFileCount);
       analysisStarted = true;
       if (file.kind !== "javascript" || !file.text.included) {
@@ -235,9 +231,9 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
           cause,
         );
       else if (signal?.aborted === true && cause === signal.reason)
-        interruption = new AnalysisCancelledError(
+        interruption = cancelledBy(
           "analyze_javascript_application",
-          { cause },
+          carriedReason(cause),
         );
       else throw cause;
       const scope = javascriptArtifactAnalysisScopes[file.kind];

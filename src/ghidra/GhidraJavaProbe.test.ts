@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -44,6 +44,8 @@ const probe = (values: {
 describe("Ghidra Java prerequisite process facts", () => {
   it.each([
     ["ENOENT", "runtime_missing"],
+    // A non-directory path component also leaves nothing runnable to start.
+    ["ENOTDIR", "runtime_missing"],
     ["EACCES", "runtime_unavailable"],
     ["ETIMEDOUT", "runtime_unavailable"],
     ["ENOBUFS", "runtime_unavailable"],

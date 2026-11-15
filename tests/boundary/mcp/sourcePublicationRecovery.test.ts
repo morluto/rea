@@ -8,7 +8,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import { InvestigationRecords } from "../../../src/application/investigation/InvestigationRecords.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { createAnalysisExecutionEvidence } from "../../../src/domain/analysisObservation.js";
 import { UNRETAINED_EVIDENCE_EXPORT_GUIDANCE } from "../../../src/domain/analysisErrorPresentation.js";
 import { createEvidence, type Evidence } from "../../../src/domain/evidence.js";
@@ -458,7 +458,7 @@ it("accounts for a wide source ID list before constructing recovery Evidence", a
   }
 });
 
-it.each(["compact", "full"] as const)(
+it.each(["compact"] as const)(
   "reports omitted primary when a retained provider source precedes an authentication refusal (%s)",
   async (profile) => {
     const identity = { id: "fixture", name: "Fixture", version: "1" };

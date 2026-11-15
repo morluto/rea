@@ -9,8 +9,9 @@ import { createAndroidManifestDetailsReader } from "./AndroidManifestComponentDe
 import {
   ANDROID_COMPONENT_KINDS,
   type AndroidComponentKind,
-  type ObservedAndroidManifestComponent,
-  type ObservedAndroidManifestComponentInventory,
+  type AndroidCoverage,
+  type AndroidManifestComponent,
+  type AndroidManifestComponentInventory,
 } from "../domain/android/androidManifestComponents.js";
 
 /** Bounds keep a hostile manifest from exhausting the inspection. */
@@ -35,7 +36,7 @@ const PARTIAL_LIMITATION =
 
 const unavailable = (
   limitation: string,
-): ObservedAndroidManifestComponentInventory => ({
+): AndroidManifestComponentInventory => ({
   status: "unavailable",
   items: [],
   limitations: [limitation],
@@ -149,10 +150,10 @@ const providerAuthorities = (
  */
 export const parseAndroidManifestComponents = (
   manifestText: string,
-  coverage: "complete" | "partial",
+  coverage: AndroidCoverage,
   declaredTargetSdk: string | null = null,
   minimumSdk: string | null = null,
-): ObservedAndroidManifestComponentInventory => {
+): AndroidManifestComponentInventory => {
   if (coverage === "partial")
     return {
       status: "partial",
@@ -165,7 +166,7 @@ export const parseAndroidManifestComponents = (
   });
   if (!parsed.ok)
     return unavailable(
-      `The decoded manifest is not well-formed XML (${parsed.error.reason}), so its component inventory is unavailable.`,
+      `The decoded manifest is not well-formed XML (${parsed.error.failure.field ?? parsed.error.kind}), so its component inventory is unavailable.`,
     );
   const root = parsed.value.documentElement;
   if (!isManifestElement(root) || root.nodeName !== "manifest")
@@ -185,7 +186,7 @@ export const parseAndroidManifestComponents = (
   const packageNameBytes =
     packageName === null ? 0 : Buffer.byteLength(packageName);
   const limitations: string[] = [];
-  const items: ObservedAndroidManifestComponent[] = [];
+  const items: AndroidManifestComponent[] = [];
   let truncated = false;
   let applicationSeen = false;
   let unnamed = 0;

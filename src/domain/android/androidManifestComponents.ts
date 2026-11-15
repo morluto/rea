@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { coverageStatusSchema } from "../coverage.js";
 
 /** Component declarations, not effective installation or runtime state. */
 export const ANDROID_COMPONENT_KINDS = [
@@ -11,6 +12,14 @@ export const ANDROID_COMPONENT_KINDS = [
 export type AndroidComponentKind = (typeof ANDROID_COMPONENT_KINDS)[number];
 
 /** Positions in retained decoded manifest text; offset counts UTF-16 code units. */
+/**
+ * Android manifest and text results report known coverage: `partial` records
+ * a parse failure, truncation or detail limit the producer observed, so they
+ * never report `unknown`.
+ */
+export const androidCoverageSchema = coverageStatusSchema.exclude(["unknown"]);
+export type AndroidCoverage = z.infer<typeof androidCoverageSchema>;
+
 export const androidManifestLocationSchema = z.strictObject({
   line: z.int().positive(),
   column: z.int().positive(),
@@ -40,7 +49,7 @@ export const androidIntentFilterSchema = z.strictObject({
   actions: z.array(z.string()),
   categories: z.array(z.string()),
   data: z.array(androidIntentDataSchema),
-  coverage: z.enum(["complete", "partial"]),
+  coverage: androidCoverageSchema,
 });
 export const androidComponentMetadataSchema = z.strictObject({
   name: z.string().nullable(),
@@ -61,20 +70,16 @@ export const androidManifestComponentSchema = z.strictObject({
   foreground_service_type: z.string().nullable(),
   authorities: z.array(z.string()).nullable(),
   target_activity: z.string().nullable(),
-  // Historical records never observed these facets. Omission stays omission;
-  // the default describes unknown coverage, never an absent declaration.
-  declaration_coverage: z
-    .enum(["complete", "partial", "unknown"])
-    .default("unknown"),
-  declaration_index: z.int().nonnegative().optional(),
-  location: androidManifestLocationSchema.nullable().optional(),
-  enabled: z.boolean().nullable().optional(),
-  enabled_declaration: z.string().nullable().optional(),
-  process: z.string().nullable().optional(),
-  grant_uri_permissions: z.boolean().nullable().optional(),
-  grant_uri_permissions_declaration: z.string().nullable().optional(),
-  intent_filters: z.array(androidIntentFilterSchema).optional(),
-  meta_data: z.array(androidComponentMetadataSchema).optional(),
+  declaration_coverage: androidCoverageSchema,
+  declaration_index: z.int().nonnegative(),
+  location: androidManifestLocationSchema.nullable(),
+  enabled: z.boolean().nullable(),
+  enabled_declaration: z.string().nullable(),
+  process: z.string().nullable(),
+  grant_uri_permissions: z.boolean().nullable(),
+  grant_uri_permissions_declaration: z.string().nullable(),
+  intent_filters: z.array(androidIntentFilterSchema),
+  meta_data: z.array(androidComponentMetadataSchema),
 });
 export type AndroidManifestComponent = Readonly<
   z.output<typeof androidManifestComponentSchema>
@@ -84,17 +89,6 @@ export const androidManifestComponentsSchema = z.strictObject({
   items: z.array(androidManifestComponentSchema),
   limitations: z.array(z.string()),
 });
-
-/** Current producers observe every declaration facet; historical readers accept omissions. */
-export const observedAndroidManifestComponentSchema =
-  androidManifestComponentSchema.required();
-export type ObservedAndroidManifestComponent = Readonly<
-  z.output<typeof observedAndroidManifestComponentSchema>
->;
-export const observedAndroidManifestComponentsSchema =
-  androidManifestComponentsSchema.extend({
-    items: z.array(observedAndroidManifestComponentSchema),
-  });
-export type ObservedAndroidManifestComponentInventory = Readonly<
-  z.output<typeof observedAndroidManifestComponentsSchema>
+export type AndroidManifestComponentInventory = Readonly<
+  z.output<typeof androidManifestComponentsSchema>
 >;

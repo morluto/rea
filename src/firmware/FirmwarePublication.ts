@@ -1,16 +1,19 @@
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/index.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import {
-  firmwareFailure,
+  firmwareFailureDialect,
   firmwarePhaseInterruption,
 } from "./FirmwareFailures.js";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { z } from "zod";
-import { SafeOutputTree } from "../artifacts/SafeOutputTree.js";
-import { outputDirectoryAdmissionRefusal } from "../artifacts/SafeOutputTreeAdmission.js";
-import { SafeOutputTreeCreationFailure } from "../artifacts/SafeOutputTreeCreationFailure.js";
+import {
+  SafeOutputTree,
+  outputDirectoryAdmissionRefusal,
+  SafeOutputTreeCreationFailure,
+} from "../resources/index.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
@@ -223,19 +226,22 @@ export const publishFirmwareExtraction = async (context: {
         : new AnalysisCleanupLease(async () => {
             await ownedTree.rollback();
           });
-    const primary = firmwareFailure(
+    const primary = classifyProviderFailure(
       outputDirectoryAdmissionRefusal(
         "extract_firmware",
         "output_directory",
         cause,
       ),
-      {
+      firmwareFailureDialect({
         engine: "unblob",
         operation: "extract_firmware",
-        deadline: context.deadline,
+        phase: {
+          signal: context.signal,
+          deadline: context.deadline,
+          publication: progress(),
+        },
         treeCleanupLease: treeLease,
-        publication: progress(),
-      },
+      }),
     );
     try {
       await treeLease?.release();
@@ -270,11 +276,11 @@ export const publishFirmwareExtraction = async (context: {
         context.retainCleanup(tree, treeLease, cleanup);
       if (publishedResult !== undefined)
         primary.retainPartialObservation(publishedResult);
-      throw analysisErrorWithCleanupFailure(
+      throw analysisErrorWithCleanupDependencies(
         primary,
         cleanup,
         "extract_firmware",
-      ).bindCleanupDependencies([primary, cleanup]);
+      );
     }
     if (tree?.published === true && result !== undefined) return result;
     throw primary;

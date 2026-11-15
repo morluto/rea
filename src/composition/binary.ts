@@ -6,14 +6,17 @@ import type { AppConfig } from "../config/types.js";
 import type { BinarySession } from "../application/binary/BinarySession.js";
 import { HopperProvider } from "../hopper/HopperProvider.js";
 import { GhidraProvider } from "../ghidra/GhidraProvider.js";
+import { createIdaMcpConnection } from "../ida/IdaMcpConnection.js";
 import { IdaProvider } from "../ida/IdaProvider.js";
 import { KunaProvider } from "../kuna/KunaProvider.js";
 import type { Logger } from "pino";
 import { auxiliaryAnalysisProviderDeclarations } from "./auxiliaryAnalysisProviders.js";
 import { AnalysisProviderRegistry } from "../application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../application/binary/BinarySessionComposition.js";
+import { LINUX_HOPPER_LAUNCHER_VERIFICATION } from "../application/LinuxHopper.js";
 import { LazyAnalysisProvider } from "../application/binary/LazyAnalysisProvider.js";
 import { ManagedStaticProvider } from "../dotnet/ManagedStaticProvider.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   BUNDLE_ARTIFACT_RESOURCE_OPERATIONS,
   BUNDLE_NATIVE_RESOURCE_OPERATIONS,
@@ -59,17 +62,28 @@ const composeDeepBinarySession = (
   inspection?: "inspect_native_dispatch_metadata",
   settings?: AnalysisSettingsReader,
 ): BinarySession => {
-  const environment = snapshotEnvironment(selectedEnvironment);
-  const hopper = new HopperProvider(config, logger, environment);
+  const platform = HOST_PLATFORM.platform;
+  const environment = snapshotEnvironment(selectedEnvironment, platform);
+  const hopper = new HopperProvider(
+    config,
+    logger,
+    environment,
+    platform,
+    LINUX_HOPPER_LAUNCHER_VERIFICATION,
+  );
   const ghidra = new GhidraProvider(config, logger, environment);
-  const ida = new IdaProvider(config, environment);
+  const ida = new IdaProvider(config, environment, (registration, selected) =>
+    createIdaMcpConnection(registration, selected, {
+      platform: HOST_PLATFORM.platform,
+    }),
+  );
   const kuna = new KunaProvider(environment, {
     regexMatchingDeadline: config.regexMatchingDeadline,
     regexWorkerHeapRequest: config.regexWorkerHeapRequest,
   });
   const auxiliaryDeclarations = auxiliaryAnalysisProviderDeclarations(
     environment,
-    process.platform,
+    platform,
     settings,
   );
   const nativeInspectionAvailable =
@@ -88,7 +102,7 @@ const composeDeepBinarySession = (
     auxiliaryDeclarations.map(
       (declaration) => new LazyAnalysisProvider(declaration),
     ),
-    createBundleResourceFactory(environment, process.platform, settings),
+    createBundleResourceFactory(environment, platform, settings),
   );
 };
 
@@ -99,7 +113,7 @@ const createBundleResourceFactory = (
 ) => {
   return {
     createClient: async (
-      root: import("../application/AppBundleExecutable.js").ResolvedAppBundleResourceRoot,
+      root: import("../domain/apple/bundleResourceRoot.js").ResolvedAppBundleResourceRoot,
     ) => {
       const [{ ArtifactProvider }, { NativeMacOSProvider }] = await Promise.all(
         [

@@ -342,7 +342,7 @@ export const projectManagedMemberView = (
       view,
       ...shared,
       summary,
-      coverage: completeWithinViewCoverage(total, total),
+      coverage: completeWithinViewCoverage(total),
     });
   }
   const selected = collectionPage(report, view);

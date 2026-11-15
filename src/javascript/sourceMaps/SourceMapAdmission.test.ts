@@ -5,7 +5,7 @@ import { selectedSourceMapLimits } from "../../domain/sourceMapLimits.js";
 import { expect, it } from "vitest";
 
 import { inspectSourceMapEnvelope } from "../../domain/sourceMapEnvelope.js";
-import { inspectSourceMapValue } from "./SourceMapFormat.js";
+import { inspectSourceMapValue } from "../../domain/sourceMapFormat.js";
 import { traceSourceMap } from "./TraceSourceMap.js";
 
 const leaf = {
@@ -30,13 +30,21 @@ it.each([2, null, undefined, "3"])(
     for (const profile of [undefined, "browser-collection"] as const)
       expect(() =>
         inspectSourceMapValue(map, profile === undefined ? {} : { profile }),
-      ).toThrow(expect.objectContaining({ reason: "format" }));
+      ).toThrow(
+        expect.objectContaining({
+          failure: expect.objectContaining({ kind: "malformed" }),
+        }),
+      );
     expect(() =>
       traceSourceMap(JSON.stringify(map), "https://example.test/main.js.map", {
         line: 1,
         column: 0,
       }),
-    ).toThrow(expect.objectContaining({ reason: "format" }));
+    ).toThrow(
+      expect.objectContaining({
+        failure: expect.objectContaining({ kind: "malformed" }),
+      }),
+    );
   },
 );
 
@@ -72,10 +80,14 @@ it("recovers the same finite map by raising the exact decoder record admission",
     ),
   ).toThrow(
     expect.objectContaining({
-      reason: "limit",
-      message: expect.stringContaining(
-        "source_map_limits.decoded_records is 4",
-      ),
+      failure: expect.objectContaining({
+        kind: "limit",
+        format: "source-map",
+        limit: { name: "decoded_records", maximum: 4 },
+        detail: expect.stringContaining(
+          "source_map_limits.decoded_records is 4",
+        ),
+      }),
     }),
   );
   expect(

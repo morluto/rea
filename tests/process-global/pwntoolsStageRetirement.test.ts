@@ -32,8 +32,8 @@ import {
 import { prepareProcessOwnershipInspection } from "../../src/process/ProcessOwnershipObservation.js";
 import { spawnOwnedProviderProcess } from "../../src/process/ProviderProcess.js";
 import { PrivateRuntimeRoot } from "../../src/process/PrivateRuntimeRoot.js";
-import { ArtifactFileCleanupFailure } from "../../src/artifacts/ArtifactFileOperation.js";
-import * as artifacts from "../../src/artifacts/readStableArtifact.js";
+import { ArtifactFileCleanupFailure } from "../../src/resources/ArtifactFileOperation.js";
+import * as artifacts from "../../src/resources/readStableArtifact.js";
 import {
   recordedCrashFixture,
   recordedCrashFixtureBytes,
@@ -191,7 +191,9 @@ it.runIf(supportedHost).each(["decoder", "debugger"] as const)(
           phase: stage,
           resource_failure_marker: { resource: null },
           exit_code: PWNTOOLS_MEMORY_FAILURE_EXIT,
-          captured_output: { stdout: "stage diagnostic" },
+        },
+        captured_output: {
+          stdout: expect.stringContaining("stage diagnostic"),
         },
       },
     });
@@ -362,7 +364,7 @@ it.runIf(supportedHost)(
       code: "cleanup_incomplete",
       details: {
         captured_output: { truncated: true },
-        diagnostics: { primary_error: { code: "unreadable_output" } },
+        diagnostics: { primary_error: { code: "resource_constraint" } },
         partial_observation: {
           artifact: { path },
           diagnostics: { stdout: "basic diagnostic" },

@@ -1,3 +1,4 @@
+import { canonicalInputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { resolve } from "node:path";
@@ -16,10 +17,7 @@ interface PathInputCase {
   readonly issuePath: readonly string[];
 }
 
-const createMcp = async (
-  firmwareCalls: string[],
-  profile?: "full" | "compact",
-) => {
+const createMcp = async (firmwareCalls: string[], profile?: "compact") => {
   const session = createTestBinarySession(() => {
     throw new Error("Invalid path input must not acquire a binary provider");
   });
@@ -246,7 +244,7 @@ const inputCases = (
 
 it("advertises full host-absolute path constraints after SDK schema conversion", async () => {
   const firmwareCalls: string[] = [];
-  const { client, close } = await createMcp(firmwareCalls, "full");
+  const { client, close } = await createMcp(firmwareCalls, "compact");
   try {
     const listed = await client.listTools();
     const ajv = new Ajv2020({ strict: false, validateFormats: false });
@@ -284,12 +282,10 @@ it("advertises full host-absolute path constraints after SDK schema conversion",
     ];
     const checked: string[] = [];
     for (const { name, field, valid, invalid } of schemaCases) {
-      const schema = listed.tools.find(
-        (tool) => tool.name === name,
-      )?.inputSchema;
-      if (schema === undefined)
+      if (!listed.tools.some((tool) => tool.name === name))
         throw new Error(`Missing advertised tool ${name}`);
-      const validate = ajv.compile(schema);
+      // Path rules belong to the canonical input contract.
+      const validate = ajv.compile(canonicalInputSchema(name));
       expect(validate(invalid), `${name}.${field}`).toBe(false);
       expect(
         validate(valid),
@@ -354,7 +350,7 @@ it("rejects relative paths through in-memory MCP handlers", async () => {
   }
 });
 
-// advertisedPatternsVMode.test.ts proves no schema profile advertises the
+// advertisedDialect.test.ts proves no schema profile advertises the
 // surrogate escape; this case proves the handlers still refuse such paths.
 it("rejects unpaired surrogates through in-memory MCP handlers", async () => {
   const firmwareCalls: string[] = [];

@@ -579,7 +579,7 @@ it("projects layout summary, facet, item, and stable pages", () => {
       format: "elf",
       counts: { sections: 3, symbols: 3, segments: 0, relocations: 0 },
     },
-    coverage: completeWithinViewCoverage(6, 6),
+    coverage: completeWithinViewCoverage(6),
   });
   const mitigations = projectAnalysisView(parent, {
     kind: "facet",

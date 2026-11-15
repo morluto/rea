@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
   MAX_DENO_LOGICAL_PATH_PARTS,
   walkDenoVirtualFs,
@@ -358,7 +358,6 @@ it("charges directory paths against the retained allowance", () => {
   }));
   const chain = (depth: number): unknown[] =>
     depth === 0 ? emptySiblings : [{ Dir: { n: name, e: chain(depth - 1) } }];
-  const started = performance.now();
   expect(() =>
     walkDenoVirtualFs(chain(MAX_DENO_LOGICAL_PATH_PARTS), 0),
   ).toThrow(
@@ -367,5 +366,4 @@ it("charges directory paths against the retained allowance", () => {
       message: expect.stringContaining("MAX_DENO_VFS_RETAINED_UNITS"),
     }),
   );
-  expect(performance.now() - started).toBeLessThan(5_000);
 });

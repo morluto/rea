@@ -16,21 +16,21 @@ import type {
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import {
-  normalizeArtifactPath,
-  ArtifactPathRegistry,
-} from "./ArtifactPaths.js";
-import {
+  assertArtifactReadActive,
   ArtifactReaderFailure,
   copyArtifactEntry,
-  sameArtifactEntry,
+  assertProducedEntry,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
+  ArtifactResourceScope,
+} from "../resources/index.js";
+import {
+  normalizeArtifactPath,
+  ArtifactPathRegistry,
+} from "../resources/index.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import { ownArtifactStream } from "./OwnedArtifactStream.js";
 import {
   bunFormatFailure,
@@ -97,7 +97,7 @@ export class BunStandaloneArtifactReader implements ArtifactReader {
 
   async *entries(
     signal?: AbortSignal,
-    _options?: ArtifactTraversalOptions,
+    options?: ArtifactTraversalOptions,
   ): AsyncIterable<ArtifactEntry> {
     await this.#scope.run(async () => {
       this.#assertOpen(signal);
@@ -116,17 +116,19 @@ export class BunStandaloneArtifactReader implements ArtifactReader {
       yield copyArtifactEntry(entry);
     }
     this.#assertOpen(signal);
+    // Every present module region is listed; absent regions are not members.
+    options?.onCoverage?.({ status: "complete", limitations: [] });
   }
 
   async open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {
     return this.#scope.run(async () => {
       this.#assertOpen(signal);
       const stored = this.#entries.get(entry.adapterKey);
-      if (stored === undefined || !sameArtifactEntry(entry, stored))
-        throw new ArtifactReaderFailure(
-          "integrity",
-          "Bun standalone entry does not match its owning inventory",
-        );
+      assertProducedEntry(
+        entry,
+        stored,
+        "Bun standalone entry does not match its owning inventory",
+      );
       const { handle } = await this.#source.readSelectedPath(signal);
       this.#assertOpen(signal);
       if (stored.byteOffset === null || stored.declaredSize === null)

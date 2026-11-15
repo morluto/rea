@@ -1,4 +1,9 @@
+import {
+  capturedProviderOutput,
+  providerResultDiagnostics,
+} from "../process/capturedProviderOutput.js";
 import { EvmAdmissionError } from "./EvmAdmissionError.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -9,31 +14,27 @@ import { constants } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import {
   createAnalysisExecution,
   type ExecutionOptions,
   type ProviderAvailability,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import type {
   EvmInterfaceExecution,
   EvmInterfacePort,
-} from "../application/evm/EvmInterfacePort.js";
+} from "../ports/evm/EvmInterfacePort.js";
 import {
   completedStableArtifact,
   readStableArtifact,
-} from "../artifacts/readStableArtifact.js";
-import { completedStableArtifactObservation } from "../artifacts/StableArtifactObservation.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import {
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
-import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
+} from "../resources/index.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import {
   OwnedCommandFailure,
   ownedCommandResources,
@@ -44,11 +45,13 @@ import {
   type AnalysisCapturedOutput,
 } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
+  type AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisUnsupportedTargetError,
   AnalysisInputError,
   AnalysisOutputError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import {
   projectAnalysisError,
@@ -68,8 +71,7 @@ import { err, ok, type Result } from "../domain/result.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import {
-  evmInterfaceFailure,
-  capturedEvmOutput,
+  evmFailureDialect,
   evmReplyBudgetFailure,
   type EvmFileSizeFailureEvidence,
 } from "./EvmoleFailures.js";
@@ -89,6 +91,21 @@ import {
 } from "./EvmWorkerLimits.js";
 
 const OPERATION = "inspect_evm_interface";
+
+/** The caller's own abort, keeping any read cleanup bound to the report. */
+const abortedFailure = (
+  cause: unknown,
+  retainedOutput: AnalysisCapturedOutput | undefined,
+): AnalysisCancelledError => {
+  const failure = cancelledBy(OPERATION, carriedReason(cause), {
+    ...(retainedOutput === undefined ? {} : { capturedOutput: retainedOutput }),
+    ...(cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined
+      ? { cleanup: cause.cleanup }
+      : {}),
+  });
+  bindArtifactFileCleanup(cause, failure);
+  return failure;
+};
 const HOST_REQUIREMENT =
   "Initial real-verified offline EVM interface profile supports Linux x64 only.";
 
@@ -133,8 +150,7 @@ const selectEvmLimiter = async (
   operation = OPERATION,
 ): Promise<Result<EvmLimiterSelection, EvmLimiterUnavailable> | undefined> => {
   const throwIfAborted = (): void => {
-    if (signal?.aborted)
-      throw new AnalysisCancelledError(operation, { cause: signal.reason });
+    if (signal?.aborted) throw cancelledBy(operation, signal);
   };
   throwIfAborted();
   const platform = probes?.platform ?? process.platform;
@@ -362,10 +378,11 @@ const evmReplyCompletionFailure = (
 ): AnalysisError => {
   const cancellation =
     cause.reason === "cancelled"
-      ? new AnalysisCancelledError(OPERATION, {
-          cause: artifactFileCancellationCause(cause),
-          capturedOutput,
-        })
+      ? cancelledBy(
+          OPERATION,
+          carriedReason(artifactFileCancellationCause(cause)),
+          { capturedOutput },
+        )
       : undefined;
   if (cause.cleanup === undefined) {
     if (cancellation !== undefined) return cancellation;
@@ -432,22 +449,27 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
     if (this.#closing) return Promise.resolve(err(this.#closedError()));
     const operation = this.#tail.then(async () => {
       if (this.#closing) return err(this.#closedError());
-      const environment = snapshotEnvironment(this.environment);
+      const environment = snapshotEnvironment(
+        this.environment,
+        HOST_PLATFORM.platform,
+      );
       try {
         return await this.#resources.run(() =>
           this.#inspect(input, environment, options),
         );
       } catch (cause: unknown) {
-        const failure = evmInterfaceFailure(cause, {
-          phase: "artifact-read",
-          path: input.path,
-          limiter:
-            environment.REA_EVM_PRLIMIT_COMMAND ?? EVM_PRLIMIT_COMMAND_DEFAULT,
-          timeoutMs: input.timeout_ms ?? DEFAULT_EVM_TIMEOUT_MS,
-          producerLimits: selectedEvmProducerLimits(input.producer_limits),
-        });
-        if (cause instanceof ArtifactReaderFailure)
-          bindArtifactFileCleanup(cause, failure);
+        const failure = classifyProviderFailure(
+          cause,
+          evmFailureDialect({
+            phase: "artifact-read",
+            path: input.path,
+            limiter:
+              environment.REA_EVM_PRLIMIT_COMMAND ??
+              EVM_PRLIMIT_COMMAND_DEFAULT,
+            timeoutMs: input.timeout_ms ?? DEFAULT_EVM_TIMEOUT_MS,
+            producerLimits: selectedEvmProducerLimits(input.producer_limits),
+          }),
+        );
         return err(failure);
       }
     });
@@ -521,9 +543,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
     let result: Result<EvmInterfaceExecution, AnalysisError>;
     try {
       if (options?.signal?.aborted)
-        throw new AnalysisCancelledError(OPERATION, {
-          cause: options.signal.reason,
-        });
+        throw cancelledBy(OPERATION, options.signal);
       if (!evmHostSupported(process.platform, process.arch))
         throw new AnalysisCapabilityUnavailableError(
           EVMOLE_PROVIDER_IDENTITY.id,
@@ -636,6 +656,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
         {
           timeoutMs,
           diagnosticBytes: producerLimits.diagnostic_bytes,
+          runtime: "v8",
         },
         {
           ...(options?.signal === undefined ? {} : { signal: options.signal }),
@@ -653,7 +674,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
           },
         },
       );
-      const capturedOutput = capturedEvmOutput(execution);
+      const capturedOutput = capturedProviderOutput(execution);
       retainedOutput = capturedOutput;
       let reply: z.output<typeof replySchema>;
       try {
@@ -686,11 +707,11 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
           cause instanceof ArtifactReaderFailure &&
           cause.reason === "cancelled"
         ) {
-          const failure = new AnalysisCancelledError(OPERATION, {
-            cause: artifactFileCancellationCause(cause),
-            capturedOutput,
-            ...(cleanup === undefined ? {} : { cleanup }),
-          });
+          const failure = cancelledBy(
+            OPERATION,
+            carriedReason(artifactFileCancellationCause(cause)),
+            { capturedOutput, ...(cleanup === undefined ? {} : { cleanup }) },
+          );
           if (cause instanceof ArtifactReaderFailure)
             bindArtifactFileCleanup(cause, failure);
           throw failure;
@@ -801,11 +822,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
         functions: projectEvmoleFunctions(reply.raw),
         discovery_completeness: "unknown",
         runtime_execution: "not-performed",
-        diagnostics: {
-          stdout: execution.stdout.text,
-          stderr: execution.stderr.text,
-          truncated: capturedOutput.truncated,
-        },
+        diagnostics: providerResultDiagnostics(capturedOutput),
         limitations,
       });
       if (!validated.success)
@@ -879,25 +896,20 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
         options?.signal?.aborted &&
         (cause === options.signal.reason ||
           (cause instanceof Error && cause.name === "AbortError"))
-          ? new AnalysisCancelledError(OPERATION, {
+          ? abortedFailure(cause, retainedOutput)
+          : // Owns the selected carrier's cleanup binding and snapshot identity.
+            classifyProviderFailure(
               cause,
-              ...(retainedOutput === undefined
-                ? {}
-                : { capturedOutput: retainedOutput }),
-              ...(cause instanceof ArtifactReaderFailure &&
-              cause.cleanup !== undefined
-                ? { cleanup: cause.cleanup }
-                : {}),
-            })
-          : evmInterfaceFailure(cause, {
-              phase,
-              path: input.path,
-              workerLimits,
-              limiter,
-              fileFailure,
-              timeoutMs,
-              producerLimits,
-            });
+              evmFailureDialect({
+                phase,
+                path: input.path,
+                workerLimits,
+                limiter,
+                fileFailure,
+                timeoutMs,
+                producerLimits,
+              }),
+            );
       if (markerCleanupFailure !== undefined) {
         const cleanup = retainedCleanupFailure(markerCleanupFailure);
         failure = analysisErrorWithCleanupFailure(
@@ -905,19 +917,6 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
           cleanup,
           OPERATION,
         ).bindCleanupDependencies([failure, cleanup]);
-      }
-      const artifactFailure =
-        cause instanceof ArtifactReaderFailure ? cause : undefined;
-      if (artifactFailure !== undefined)
-        bindArtifactFileCleanup(artifactFailure, failure);
-      // Only the selected-carrier read can establish caller-path snapshot identity.
-      if (phase === "artifact-read") {
-        const observation = completedStableArtifactObservation(
-          cause,
-          input.path,
-        );
-        if (observation !== undefined)
-          failure.retainPartialObservation(observation);
       }
       result = err(failure);
     }
@@ -945,8 +944,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
     const retainCancellation = (outcome: EvmOutcome): EvmOutcome =>
       outcome.ok && options?.signal?.aborted
         ? err(
-            new AnalysisCancelledError(OPERATION, {
-              cause: options.signal.reason,
+            cancelledBy(OPERATION, options.signal, {
               partialObservation: evmInterfaceEvidence(input, outcome.value),
               ...(retainedOutput === undefined
                 ? {}

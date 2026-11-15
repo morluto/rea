@@ -1,5 +1,5 @@
 import { setImmediate as immediate } from "node:timers/promises";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../../resources/index.js";
 import { readElfDynamicEntry } from "../../domain/elfDynamicEntry.js";
 import { elfArchitecture } from "../../domain/elfFixedHeader.js";
 import {
@@ -22,7 +22,7 @@ import {
   createFileMappingIndex,
   mappedFileOffset,
   type FileMappingIndex,
-} from "../metadata/BinaryContainer.js";
+} from "../../domain/binaryContainer.js";
 import { readElfDirectoryFromBuffer } from "../metadata/NativeSectionDirectory.js";
 import type { NativeSection } from "../metadata/NativeSectionDirectory.js";
 import {
@@ -645,13 +645,13 @@ const loadWrites = async (
     }
     return { writes, clobbered, trustRaw: true };
   } catch (cause) {
-    if (!(cause instanceof ElfPointerRelocationFailure)) throw cause;
-    if (cause.reason === "native-index-capacity")
-      throw new BinaryResourceFailure(
-        "structure",
-        16 * 1024 * 1024,
-        cause.message,
-      );
+    // A budget stop is not a malformed table; the provider reports it with
+    // the maximum the failing index declared.
+    if (
+      !(cause instanceof ElfPointerRelocationFailure) ||
+      cause.kind === "limit"
+    )
+      throw cause;
     note(scan, cause.message);
     return { writes: new Map(), clobbered: new Set(), trustRaw: false };
   }

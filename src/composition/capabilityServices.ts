@@ -1,4 +1,4 @@
-import type { OptionalProviderLoadFailures } from "../application/OptionalObservationProviders.js";
+import type { OptionalProviderLoadFailures } from "../ports/OptionalObservationProviders.js";
 import {
   locateWiresharkTool,
   selectWiresharkTool,
@@ -41,7 +41,7 @@ import { createWebModuleTraceService } from "./webModules.js";
 import { createWebRuntimeService } from "./webRuntime.js";
 import { createJavaScriptRecoveryProvider } from "./javascriptRecovery.js";
 import { wakaruHostSupported } from "../javascript/recovery/WakaruCommand.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/index.js";
 import { createReverseEngineeringService } from "./reverseEngineering.js";
 import type {
   ReverseEngineeringService,
@@ -99,26 +99,27 @@ import type { BeamService } from "../application/erlang/BeamService.js";
 import type { V8CodeCacheService } from "../application/v8CodeCache/V8CodeCacheService.js";
 import type { RecordedCrashService } from "../application/binaryDiagnostics/RecordedCrashService.js";
 import type { BinaryLayoutService } from "../application/binaryDiagnostics/BinaryLayoutService.js";
-import type { BrowserObservationPort } from "../application/BrowserObservationPort.js";
-import type { BrowserScenarioCapturePort } from "../application/BrowserScenarioCapturePort.js";
-import type { ElectronActiveObservationPort } from "../application/javascript/ElectronActiveObservationPort.js";
-import type { ElectronObservationPort } from "../application/javascript/ElectronObservationPort.js";
-import type { JavaScriptRuntimeObservationPort } from "../application/javascript/JavaScriptRuntimeObservationPort.js";
-import type { FridaInstrumentationPort } from "../application/frida/FridaInstrumentationPort.js";
+import type { BrowserObservationPort } from "../ports/BrowserObservationPort.js";
+import type { BrowserScenarioCapturePort } from "../ports/BrowserScenarioCapturePort.js";
+import type { ElectronActiveObservationPort } from "../ports/javascript/ElectronActiveObservationPort.js";
+import type { ElectronObservationPort } from "../ports/javascript/ElectronObservationPort.js";
+import type { JavaScriptRuntimeObservationPort } from "../ports/javascript/JavaScriptRuntimeObservationPort.js";
+import type { FridaInstrumentationPort } from "../ports/frida/FridaInstrumentationPort.js";
 import type { WebModuleTraceService } from "../application/WebModuleTraceService.js";
 import type { WebSourceLocationService } from "../application/WebSourceLocationService.js";
 import type { WebRuntimeService } from "../application/WebRuntimeService.js";
 import type { WebNetworkCaptureService } from "../application/WebNetworkCaptureService.js";
-import type { JavaScriptRecoveryPort } from "../application/javascript/JavaScriptRecoveryPort.js";
-import type { FirmwareAnalysisPort } from "../application/firmware/FirmwareAnalysisPort.js";
-import type { AndroidAnalysisPort } from "../application/android/AndroidAnalysisPort.js";
+import type { JavaScriptRecoveryPort } from "../ports/javascript/JavaScriptRecoveryPort.js";
+import type { FirmwareAnalysisPort } from "../ports/firmware/FirmwareAnalysisPort.js";
+import type { AndroidAnalysisPort } from "../ports/android/AndroidAnalysisPort.js";
 import type { ApktoolResourceAnalysisPort } from "../application/apktool/ApktoolResourceAnalysisPort.js";
 import type { PcapAnalysisPort } from "../application/pcap/PcapAnalysisPort.js";
 import type { FlutterBuildAnalysisPort } from "../application/flutter/FlutterBuildAnalysisPort.js";
-import type { JebAnalysisPort } from "../application/jeb/JebAnalysisPort.js";
+import type { JebAnalysisPort } from "../ports/jeb/JebAnalysisPort.js";
 import type { AdbDeviceAnalysisPort } from "../application/adb/AdbDeviceAnalysisPort.js";
 import type { BuildSettle } from "../application/desktop/DesktopBuildSettle.js";
 import type { BuildComputerDefaults } from "../desktop/BuildComputerEnvironment.js";
+import type { ComputerStartTiming } from "../desktop/AgentEnvComputer.js";
 
 /** Typed injection inputs shared by a capability host, independent of transport. */
 export interface CapabilityServiceOptions {
@@ -161,6 +162,8 @@ export interface CapabilityServiceOptions {
   readonly desktopBuildSettle?: BuildSettle;
   /** Where build computers look for unset settings; the host's PATH and REA cache unless a test isolates them. */
   readonly desktopBuildDefaults?: BuildComputerDefaults;
+  /** How long a build computer waits for its desktop to draw and how often its start reports progress; the shipped timing unless a test shortens it. */
+  readonly desktopBuildStartTiming?: ComputerStartTiming;
   readonly reverseEngineering?: ReverseEngineeringService;
 }
 
@@ -339,6 +342,7 @@ const modules = {
         providerEnvironment,
         options.desktopBuildSettle,
         options.desktopBuildDefaults,
+        options.desktopBuildStartTiming,
       ),
     (value) => value.closeAll(),
   ),

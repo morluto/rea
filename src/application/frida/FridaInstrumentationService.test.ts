@@ -4,8 +4,8 @@ import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
-import { FridaScriptLoadCancelledError } from "./FridaInstrumentationPort.js";
-import type { FridaInstrumentationPort } from "./FridaInstrumentationPort.js";
+import { FridaScriptLoadCancelledError } from "../../ports/frida/FridaInstrumentationPort.js";
+import type { FridaInstrumentationPort } from "../../ports/frida/FridaInstrumentationPort.js";
 import { FridaInstrumentationService } from "./FridaInstrumentationService.js";
 import {
   AnalysisCancelledError,
@@ -15,6 +15,7 @@ import {
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { ok } from "../../domain/result.js";
+import { releaseOwnedCleanup } from "../../../tests/support/cleanupRelease.js";
 
 const createSession = () => ({
   sessionId: "00000000-0000-4000-8000-000000000001",
@@ -993,7 +994,7 @@ it.each([false, true])(
           // The parent provider owns the script and confirms its release.
           if (released) {
             scriptOwner.cleanupResources = [];
-            failure.resolveCleanup();
+            releaseOwnedCleanup(failure);
           }
           return { ok: true, value: { targetResumeObserved: false } };
         },

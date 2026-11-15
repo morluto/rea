@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -33,10 +34,14 @@ describe("TOML configuration source capacity", () => {
           newline,
         );
       const parsed = parseClientConfiguration(original, "toml");
-      const desired = withClientServers(parsed, {
-        ...parsed.servers,
-        rea: registration,
-      });
+      const desired = withClientServers(
+        parsed,
+        {
+          ...parsed.servers,
+          rea: registration,
+        },
+        HOST_PLATFORM.platform,
+      );
       const configured = serializedText(desired, "toml", original);
       expect(
         configured.startsWith("\uFEFF" + prefix.replaceAll("\n", newline)),
@@ -45,7 +50,7 @@ describe("TOML configuration source capacity", () => {
         desired,
       );
       const removed = serializedText(
-        withClientServers(parsed, {}),
+        withClientServers(parsed, {}, HOST_PLATFORM.platform),
         "toml",
         configured,
       );
@@ -61,10 +66,14 @@ describe("TOML configuration source capacity", () => {
     const note = `first\n${"x\n".repeat(500_000)}last`;
     const original = `mcp_servers = { other = {command="other",env={NOTE="""${note}"""}}}\n`;
     const parsed = parseClientConfiguration(original, "toml");
-    const desired = withClientServers(parsed, {
-      ...parsed.servers,
-      rea: registration,
-    });
+    const desired = withClientServers(
+      parsed,
+      {
+        ...parsed.servers,
+        rea: registration,
+      },
+      HOST_PLATFORM.platform,
+    );
     const configured = serializedText(desired, "toml", original);
     expect(configured).toContain(`NOTE="""${note}"""`);
     expect(parseClientConfiguration(configured, "toml").document).toEqual(
@@ -83,10 +92,14 @@ describe("TOML configuration source capacity", () => {
       `disabled_mcp_servers = [\n"rea",\n${otherNames}]\n` +
       '[mcp_servers.other]\ncommand = "other"\n';
     const parsed = parseClientConfiguration(original, "grok");
-    const desired = withClientServers(parsed, {
-      ...parsed.servers,
-      rea: registration,
-    });
+    const desired = withClientServers(
+      parsed,
+      {
+        ...parsed.servers,
+        rea: registration,
+      },
+      HOST_PLATFORM.platform,
+    );
     const configured = serializedText(desired, "grok", original);
     const result = parseClientConfiguration(configured, "grok");
     expect(result.document.disabled_mcp_servers).toEqual(

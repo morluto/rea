@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import {
   AnalysisError,
   type AnalysisCapturedOutput,
@@ -7,22 +8,29 @@ import {
   AnalysisTimeoutError,
   AnalysisCapabilityUnavailableError,
   AnalysisResourceConstraintError,
+  OwnerCancellation,
 } from "../../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import { createHash } from "node:crypto";
 import { lstat } from "node:fs/promises";
-import { streamChunkToBuffer } from "../StreamBytes.js";
+import { streamChunkToBuffer } from "../../resources/index.js";
 import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
-import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
-import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
-import { ArtifactTraversalObservation } from "../ArtifactTraversalObservation.js";
 import {
+  ArtifactResourceScope,
   ArtifactReaderFailure,
   sameArtifactSourceIdentity,
   type ArtifactEntry,
   type ArtifactReaderTraversal,
-} from "../ArtifactReader.js";
+} from "../../resources/index.js";
+import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
+import { InternalInvariantError } from "../../domain/internalInvariant.js";
+import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
+import { ARTIFACT_GRAPH_PROVIDER } from "../../domain/investigationProviders.js";
+import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import {
+  ArtifactTraversalObservation,
+  declaredArtifactEntries,
+} from "../ArtifactTraversalObservation.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { analyzeInterfaceBuilderBundle } from "./InterfaceBuilderAnalysis.js";
 import {
@@ -57,8 +65,13 @@ export const analyzeAppleAssetCatalogs = async (input: {
     signal?: AbortSignal,
   ) => Promise<string>;
   readonly analyzeInterfaceBuilder?: typeof analyzeInterfaceBuilderBundle;
+  /** The host whose assetutil runs; tests select macOS on another host. */
+  readonly platform?: NodeJS.Platform;
 }) => {
-  if (process.platform !== "darwin" && input.runAssetUtil === undefined)
+  if (
+    (input.platform ?? HOST_PLATFORM.platform) !== "darwin" &&
+    input.runAssetUtil === undefined
+  )
     throw new ArtifactReaderFailure(
       "unavailable",
       "Apple asset catalog inspection requires macOS assetutil",
@@ -100,7 +113,7 @@ export const analyzeAppleAssetCatalogs = async (input: {
       collectAssetCatalogs({ ...input, resources }),
     ));
   } catch (cause: unknown) {
-    interfaceBuilderCancel.abort();
+    interfaceBuilderCancel.abort(OwnerCancellation.noLongerNeeded);
     const joined = await interfaceBuilderAnalysis;
     if (
       !joined.ok &&
@@ -109,7 +122,16 @@ export const analyzeAppleAssetCatalogs = async (input: {
         (joined.error instanceof AnalysisError &&
           joined.error.cleanupIncomplete))
     ) {
-      const primary = translateArtifactFailure("inspect_asset_catalog", cause);
+      // A defect still owns the outcome; it becomes the adapter failure the
+      // provider boundary would report, so the reader's cleanup can join it.
+      const primary =
+        cause instanceof InternalInvariantError
+          ? new ProviderAdapterError(
+              ARTIFACT_GRAPH_PROVIDER.id,
+              "inspect_asset_catalog",
+              { cause },
+            )
+          : translateArtifactFailure("inspect_asset_catalog", cause);
       const cleanup = translateArtifactFailure(
         "inspect_asset_catalog",
         joined.error,
@@ -206,10 +228,10 @@ const collectAssetCatalogs = async (input: {
     kind: "completed",
   };
   try {
-    for await (const entry of reader.entries(input.signal, {
-      onCoverage: traversal.onCoverage,
+    for await (const entry of declaredArtifactEntries(reader, input.signal, {
+      onCoverage: traversal.record,
       onOmission: (omission) => {
-        traversal.onOmission(omission);
+        traversal.omit(omission);
         const { path, kind } = omission;
         if (path.split("/").at(-1) === "Assets.car")
           uninspected.push(`${path} (${kind})`);
@@ -269,7 +291,7 @@ const collectAssetCatalogs = async (input: {
   }
   if (outcome.kind === "failed") throw outcome.cause;
   if (symlinks > 0)
-    traversal.onCoverage({
+    traversal.record({
       // Source entries are represented even when their link targets were not
       // inspected. Keep that inventory scope separate from catalog discovery.
       status: "complete",
@@ -315,6 +337,7 @@ const inspectAssetCatalogEntry = async (input: {
     throw new ArtifactReaderFailure(
       "integrity",
       `Asset catalog changed before inspection: ${entry.path}`,
+      { integrityCheck: "member-identity" },
     );
   let output: string;
   try {
@@ -331,6 +354,7 @@ const inspectAssetCatalogEntry = async (input: {
     throw new ArtifactReaderFailure(
       "integrity",
       `Asset catalog changed during inspection: ${entry.path}`,
+      { integrityCheck: "member-identity" },
     );
   const capturedOutput: AnalysisCapturedOutput = {
     stdout: output,
@@ -502,7 +526,7 @@ const assetUtilFailure = (cause: unknown, entry: ArtifactEntry): unknown => {
 
 const digestBounded = async (
   reader: DirectoryArtifactReader,
-  entry: import("../ArtifactReader.js").ArtifactEntry,
+  entry: import("../../resources/index.js").ArtifactEntry,
   signal?: AbortSignal,
 ): Promise<string> => {
   if (entry.declaredSize === null || entry.declaredSize > MAX_CATALOG_BYTES)

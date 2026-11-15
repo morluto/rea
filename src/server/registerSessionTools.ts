@@ -1,8 +1,8 @@
 import type { CapabilityAvailabilityProbes } from "../application/CapabilityAvailability.js";
-import { parseEspFlashAddress } from "../domain/firmware/espFlashSelection.js";
+import { openBinaryTargetSelection } from "../contracts/sessionLifecycleInputs.js";
 import { registerNativeFunctionMatchingTool } from "./registerNativeFunctionMatchingTool.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import { workflowUnknownInput } from "../application/investigation/WorkflowUnknown.js";
 
 import {
@@ -27,7 +27,7 @@ import type { Evidence } from "../domain/evidence.js";
 import type { ProcessCapture } from "../domain/process/processCaptureParsing.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { Logger } from "pino";
-import type { ProviderAvailability } from "../application/AnalysisProvider.js";
+import type { ProviderAvailability } from "../ports/AnalysisProvider.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
 import { registerArtifactComparisonTool } from "./registerArtifactComparisonTool.js";
 import { registerBundleComparisonTool } from "./registerBundleComparisonTool.js";
@@ -225,32 +225,7 @@ const registerOpenLifecycleTool = ({
       const opened = await logToolExecution(logger, openContract.name, () =>
         session.open(input.path, {
           signal: context.mcpReq.signal,
-          ...(input.format === undefined ? {} : { formatHint: input.format }),
-          ...(input.architecture === undefined
-            ? {}
-            : { architecture: input.architecture }),
-          ...(input.entry_point === undefined
-            ? {}
-            : { entryPoint: input.entry_point }),
-          ...(input.flash_offset === undefined &&
-          input.partition_table_offset === undefined
-            ? {}
-            : {
-                espFlash: {
-                  ...(input.flash_offset === undefined
-                    ? {}
-                    : {
-                        flashOffset: parseEspFlashAddress(input.flash_offset),
-                      }),
-                  ...(input.partition_table_offset === undefined
-                    ? {}
-                    : {
-                        partitionTableOffset: parseEspFlashAddress(
-                          input.partition_table_offset,
-                        ),
-                      }),
-                },
-              }),
+          ...openBinaryTargetSelection(input),
           ...(input.provider_id === undefined
             ? {}
             : { providerId: input.provider_id }),

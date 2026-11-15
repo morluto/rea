@@ -1,8 +1,9 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { isAbsolute } from "node:path";
 
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { currentAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
-import { defaultKunaCacheDirectory } from "../config/kunaCacheDirectory.js";
+import { defaultKunaCacheDirectory } from "../filesystem/cacheDirectory.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { providerStartupTimeoutSchema } from "../config/providerStartupTimeout.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -172,7 +173,7 @@ const refuseInvalidLaunch = (
   if (parsed.launchValid) return ok(undefined);
   return failure(
     "open_options_invalid",
-    `${setting} must be a decimal millisecond count from 1 to 2147483647; received ${String(raw)}.`,
+    `${setting} must be a decimal millisecond count from 1 to ${String(MAX_NODE_TIMER_DELAY_MS)}; received ${String(raw)}.`,
     setting,
   );
 };

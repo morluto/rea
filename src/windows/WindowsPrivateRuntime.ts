@@ -2,10 +2,12 @@ import { win32 } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { z } from "zod";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import { PrivateRuntimeRootUnavailableError } from "../process/PrivateRuntimeRootUnavailableError.js";
-import { RuntimeControlUnavailableError } from "../process/RuntimeControlUnavailableError.js";
+import {
+  ArtifactReaderFailure,
+  AnalysisCleanupLease,
+} from "../resources/index.js";
+import { PrivateRuntimeRootUnavailableError } from "../domain/privateRuntimeRootUnavailableError.js";
+import { RuntimeControlUnavailableError } from "../domain/runtimeControlUnavailableError.js";
 
 import {
   requireWindowsNativeAuthority,

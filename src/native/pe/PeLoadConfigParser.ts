@@ -3,14 +3,14 @@ import {
   appendPeConsumedSpan as consume,
 } from "./PeRvaSpans.js";
 import { setImmediate } from "node:timers/promises";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../../resources/index.js";
 import {
   BinaryFormatFailure,
   BinaryMappingFailure,
   BinaryResourceFailure,
   createFileMappingIndex,
   imageFileMappings,
-} from "../metadata/BinaryContainer.js";
+} from "../../domain/binaryContainer.js";
 import { readPeImage, type PeImage } from "../metadata/PeImage.js";
 import {
   guardFlagRecord,
@@ -51,20 +51,9 @@ const optionalFileOffset = (
   }
 };
 
-/** The parser-owned allowance an image exhausted. */
-export type PeLoadConfigLimit = "callbacks";
-
-/** Structured parser allowance refusal; consumers branch on `limit`, never on prose. */
-export class PeLoadConfigLimitFailure extends BinaryResourceFailure {
-  constructor(
-    readonly limit: PeLoadConfigLimit,
-    readonly allowance: number,
-    message: string,
-  ) {
-    super("structure", allowance, message);
-    this.name = "PeLoadConfigLimitFailure";
-  }
-}
+/** The parser-owned allowances an image can exhaust. */
+export const PE_LOAD_CONFIG_LIMITS = ["callbacks"] as const;
+export type PeLoadConfigLimit = (typeof PE_LOAD_CONFIG_LIMITS)[number];
 
 const hex = (value: bigint | number): string => `0x${value.toString(16)}`;
 
@@ -343,10 +332,11 @@ const readTls = async ({
       consume(callbackArrayLocations, slotOffset, pointerWidth);
       if (value === 0n) break;
       if (callbacks.length >= maxCallbacks)
-        throw new PeLoadConfigLimitFailure(
-          "callbacks",
+        throw new BinaryResourceFailure(
+          "structure",
           maxCallbacks,
           `TLS callback array exceeds the ${String(maxCallbacks)}-entry callback allowance`,
+          "callbacks" satisfies PeLoadConfigLimit,
         );
       callbacks.push(locate(value));
       slot += BigInt(pointerWidth);

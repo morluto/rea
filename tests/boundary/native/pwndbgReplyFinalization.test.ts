@@ -34,7 +34,7 @@ vi.mock("node:fs/promises", async (original) => {
   };
 });
 
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import {
   AnalysisError,
   primaryAnalysisError,
@@ -74,11 +74,14 @@ const fixture = async (
   replyClose.denied = false;
   replyClose.onClose = undefined;
   replyClose.handles = [];
-  const environment = snapshotEnvironment({
-    REA_PWNDBG_GDB: process.execPath,
-    REA_PWNDBG_GDBINIT: init,
-    REA_PWNDBG_VENV_PATH: venv,
-  });
+  const environment = snapshotEnvironment(
+    {
+      REA_PWNDBG_GDB: process.execPath,
+      REA_PWNDBG_GDBINIT: init,
+      REA_PWNDBG_VENV_PATH: venv,
+    },
+    process.platform,
+  );
   const provider = new PwntoolsRecordedCrashProvider(environment);
   onTestFinished(async () => {
     replyClose.denied = false;

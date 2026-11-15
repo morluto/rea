@@ -55,6 +55,7 @@ import {
   nativeMachoTargetForFile,
   nativeResolvedToolFixture,
 } from "../../../fixtures/nativeCommands.js";
+import { releaseOwnedCleanup } from "../../../support/cleanupRelease.js";
 
 /** The file runner identifies selected .plist inputs as XML. */
 const writeFixturePlist = async (path: string): Promise<void> => {
@@ -1243,7 +1244,7 @@ describe("native command failure projection", () => {
       const result = await client.execute("list_architectures", {});
       if (result.ok) throw new Error("Expected native command failure");
       expect(result.error.cleanupIncomplete).toBe(true);
-      marker.resolveCleanup();
+      releaseOwnedCleanup(marker);
       expect(result.error.cleanupIncomplete).toBe(true);
       expect(result.error.cleanupResources).toEqual([
         "run:known",
@@ -1593,13 +1594,16 @@ it("rejects malformed selected plist bytes before mocked conversion can invent f
   expect(await readFile(path, "utf8")).toBe("fixture");
 });
 
-/** Emit entitlements whose dictionary also holds a legal `__proto__` key. */
-class PrototypeEntitlementsRunner extends FixtureRunner {
+/** Emit the given entitlements plist for `codesign --entitlements`. */
+class EntitlementsRunner extends FixtureRunner {
+  constructor(readonly entitlements: string) {
+    super();
+  }
+
   override async run(tool: string, arguments_: readonly string[]) {
     const result = await super.run(tool, arguments_);
     if (!result.ok || !arguments_.includes("--entitlements")) return result;
-    const stdout =
-      '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>com.apple.security.app-sandbox</key><true/><key>__proto__</key><dict><key>com.apple.security.get-task-allow</key><true/></dict></dict></plist>';
+    const stdout = this.entitlements;
     return ok({
       ...result.value,
       stdout,
@@ -1615,7 +1619,9 @@ describe("native signature entitlements", () => {
     await writeFile(executable, "fixture");
     const client = new NativeMacOSProvider(
       {},
-      new PrototypeEntitlementsRunner(),
+      new EntitlementsRunner(
+        '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>com.apple.security.app-sandbox</key><true/><key>__proto__</key><dict><key>com.apple.security.get-task-allow</key><true/></dict></dict></plist>',
+      ),
       "darwin",
     ).createClient(await nativeMachoTargetForFile(executable));
 
@@ -1634,6 +1640,33 @@ describe("native signature entitlements", () => {
     ).toBe(true);
     expect(signature.value.limitations).not.toContainEqual(
       expect.stringContaining("omitted"),
+    );
+  });
+});
+
+describe("native signature repeated entitlement keys", () => {
+  it("keeps the last value and reports the repeated key as a limitation", async () => {
+    directory = await createTestTempDirectory("rea-signature-repeated-");
+    const executable = join(directory, "fixture");
+    await writeFile(executable, "fixture");
+    const client = new NativeMacOSProvider(
+      {},
+      new EntitlementsRunner(
+        '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>com.apple.security.get-task-allow</key><true/><key>com.apple.security.get-task-allow</key><false/></dict></plist>',
+      ),
+      "darwin",
+    ).createClient(await nativeMachoTargetForFile(executable));
+
+    const signature = await client.execute("inspect_signature", {});
+
+    if (!signature.ok) throw signature.error;
+    expect(signature.value.result).toMatchObject({
+      entitlements: { "com.apple.security.get-task-allow": false },
+    });
+    expect(signature.value.limitations).toContainEqual(
+      expect.stringMatching(
+        /^Entitlements: 1 dictionary\(ies\) declare a key more than once \("com\.apple\.security\.get-task-allow"\)\. REA kept the last value for each key; 1 earlier value\(s\) are not reported/u,
+      ),
     );
   });
 });
@@ -1944,7 +1977,7 @@ it("does not reopen a resolved preparation cleanup marker or invent absent compi
     "controlled preparation failure",
     { capturedOutput, cleanupFailure: marker },
   );
-  marker.resolveCleanup();
+  releaseOwnedCleanup(marker);
   const failure = new NativeCommandFailure("swift-demangle", "io", null, {
     cause: inspection,
   });
@@ -2001,7 +2034,7 @@ it("retains an owned preparation cleanup marker when the command deadline expire
       _tag: "AnalysisTimeoutError",
       cause: failure,
     });
-    marker.resolveCleanup();
+    releaseOwnedCleanup(marker);
     expect(result.error.cleanupIncomplete).toBe(false);
   } finally {
     await client.close();
@@ -2045,14 +2078,18 @@ it("reports the selected command deadline when preparation times out", async () 
       cause: failure,
     });
     const projected = projectAnalysisError(primaryAnalysisError(result.error));
-    expect(projected.message).toContain("of 1500 ms");
-    expect(projected.message).toContain("native_command_timeout_ms");
-    expect(projected.remediation.action).toContain("above 1500");
-    expect(projected.remediation.action).not.toContain("above 60000");
-    expect(projected.remediation.action).toContain(
-      `${String(NATIVE_COMMAND_OUTPUT_BUDGET_BYTES)}-byte command output allowance`,
+    expect(projected.details).toMatchObject({
+      operation: "demangle_swift",
+      timeout_ms: 1_500,
+    });
+    // The setting and the fixed output allowance exist only in this prose.
+    expect(projected.remediation.action).toMatch(
+      new RegExp(
+        `^Increase native_command_timeout_ms above 1500 .*The ${String(NATIVE_COMMAND_OUTPUT_BUDGET_BYTES)}-byte command output allowance`,
+        "u",
+      ),
     );
-    marker.resolveCleanup();
+    releaseOwnedCleanup(marker);
     expect(result.error.cleanupIncomplete).toBe(false);
   } finally {
     await client.close();
@@ -2099,12 +2136,10 @@ it("projects an ownership-helper compile timeout independently from the command 
       category: "timeout",
       retryable: true,
     });
-    expect(projected.message).toContain("of 1 ms");
-    expect(projected.remediation.action).toContain(
-      "REA_SWIFTC_COMPILE_TIMEOUT_MS",
-    );
-    expect(projected.remediation.action).not.toContain(
-      "native_command_timeout_ms",
+    expect(projected.details).toMatchObject({ timeout_ms: 1 });
+    // The compile-timeout setting exists only in this prose.
+    expect(projected.remediation.action).toMatch(
+      /^The effective REA_SWIFTC_COMPILE_TIMEOUT_MS value is 1 ms/u,
     );
   } finally {
     await client.close();

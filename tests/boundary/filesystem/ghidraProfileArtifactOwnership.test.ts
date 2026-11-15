@@ -6,9 +6,9 @@ import { GhidraHeadlessLauncher } from "../../../src/ghidra/GhidraLauncher.js";
 import { GhidraProvider } from "../../../src/ghidra/GhidraProvider.js";
 import { ghidraProfileInstallationHost } from "../../../src/ghidra/GhidraInstallation.fixture.js";
 import { silentLogger } from "../../../src/logger.js";
+import { OwnerCancellation } from "../../../src/domain/analysisErrorCore.js";
 import { createDeferred } from "../../fixtures/binarySession.js";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
-import { STARTUP_OWNER_CLOSED } from "../../../src/process/SharedStartupAttempt.js";
 import {
   readFile,
   rename,
@@ -17,7 +17,7 @@ import {
   type FileHandle,
 } from "node:fs/promises";
 import { afterEach, expect, it, vi } from "vitest";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { parseConfig } from "../../../src/config/parseConfig.js";
 import {
   resolveGhidraAnalysisSeeds,
@@ -414,13 +414,13 @@ it("joins whole provider resolution before shutdown and gates the next admission
     release.resolve();
     const stopped = await resolving;
     if (stopped.ok) throw new Error("Expected owned resolution cancellation");
-    expect(stopped.error.cause).toBe(STARTUP_OWNER_CLOSED);
+    expect(stopped.error.cause).toBe(OwnerCancellation.startupOwnerClosed);
     expect(stopped).toMatchObject({
       ok: false,
       error: {
         _tag: "AnalysisCancelledError",
         operation: "open_binary",
-        cause: STARTUP_OWNER_CLOSED,
+        cause: OwnerCancellation.startupOwnerClosed,
       },
     });
     expect(await closing).toEqual({ ok: true, value: null });

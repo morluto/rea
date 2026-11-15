@@ -1,7 +1,7 @@
 import { NATIVE_MACOS_PROVIDER_IDENTITY as IDENTITY } from "./NativeMacosProviderIdentity.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { cancelledBy, carriedReason } from "../domain/analysisErrorCore.js";
 import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -20,15 +20,13 @@ import {
   RegularFileCleanupFailure,
   regularFileCancellation,
 } from "../filesystem/OwnedRegularFile.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import {
+  AnalysisCleanupLease,
   ArtifactResourceRetryFailure,
   type ArtifactResourceScope,
-} from "../artifacts/ArtifactResourceScope.js";
-import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/index.js";
 
 const OPERATION = "observe_native_calls";
 
@@ -54,16 +52,17 @@ export const nativeCallTargetFailure = (
     cause instanceof RegularFileOperationCancelled ||
     cause instanceof RegularFileCancelled
   )
-    return new AnalysisCancelledError(OPERATION, {
-      cause: cause.reason,
-      ...(cause instanceof RegularFileCancelled
+    return cancelledBy(
+      OPERATION,
+      carriedReason(cause.reason),
+      cause instanceof RegularFileCancelled
         ? {
             diagnostics: {
               completed_hash: jsonValueSchema.parse(cause.outcome.value),
             },
           }
-        : {}),
-    });
+        : {},
+    );
   const physical = stableFileHashCause(cause);
   if (physical instanceof RegularFileChangedError)
     return new EvidenceIntegrityError(
@@ -125,8 +124,7 @@ export const verifyNativeCallTarget = async (
           ? nativeCallTargetFailure(cause.outcome.cause, target.path)
           : cancellation === undefined
             ? undefined
-            : new AnalysisCancelledError(OPERATION, {
-                cause: cancellation.reason,
+            : cancelledBy(OPERATION, carriedReason(cancellation.reason), {
                 diagnostics: completed,
               });
       const framed = new ArtifactFileCleanupFailure(cause, cleanupLease);

@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import { digestCanonicalValue } from "../domain/canonicalDigest.js";
-import type { ProviderIdentity } from "./AnalysisProvider.js";
+import type { ProviderIdentity } from "../ports/AnalysisProvider.js";
 import type { BrowserScenario } from "../domain/browserScenario.js";
 import type { BrowserScenarioCapture } from "../domain/browserScenarioCapture.js";
 import {

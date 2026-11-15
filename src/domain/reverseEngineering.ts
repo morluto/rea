@@ -1,3 +1,4 @@
+import { timerDurationMsSchema } from "./analysisResourceLimits.js";
 import { z } from "zod";
 import { constants as bufferConstants } from "node:buffer";
 import { commandEvidenceDetailSchema } from "./commandObservation.js";
@@ -7,8 +8,6 @@ import { rejectUnpairedSurrogates } from "./stringPatterns.js";
 
 /** Omitted one-shot objdump/rizin wall clock. Preflight shares it; the command gets it again. */
 export const DEFAULT_REVERSE_COMMAND_TIMEOUT_MS = 120_000;
-/** Node timer ceiling. Larger deadlines would be clamped instead of honored. */
-export const MAX_REVERSE_COMMAND_TIMEOUT_MS = 2_147_483_647;
 
 /** Combined stdout/stderr admission, before UTF-8 decoding and Evidence expansion. */
 export const DEFAULT_REVERSE_COMMAND_OUTPUT_BYTES = 16 * 1024 * 1024;
@@ -16,7 +15,7 @@ export const DEFAULT_REVERSE_COMMAND_OUTPUT_BYTES = 16 * 1024 * 1024;
 export const MAX_REVERSE_COMMAND_OUTPUT_BYTES = Math.floor(
   (bufferConstants.MAX_STRING_LENGTH - 1024 * 1024) / (2 * 6),
 );
-export const reverseCommandOutputBytesSchema = z
+const reverseCommandOutputBytesSchema = z
   .number()
   .int()
   .min(1)
@@ -27,11 +26,7 @@ export const reverseCommandOutputBytesSchema = z
   );
 
 /** Per-call deadline for one-shot objdump and rizin commands. */
-export const reverseCommandTimeoutSchema = z
-  .number()
-  .int()
-  .min(1)
-  .max(MAX_REVERSE_COMMAND_TIMEOUT_MS)
+const reverseCommandTimeoutSchema = timerDurationMsSchema
   .exactOptional()
   .describe(
     "Wall-clock budget in milliseconds. Target preflight shares one budget across stat and digest, and the one-shot command receives that budget again (default 120000 each). Omitted means 120000. Applies on the next call. Output admission is separately controlled by max_output_bytes; does not raise Ghidra or Hopper startup deadlines or debugger session deadlines.",

@@ -2,8 +2,10 @@ import { createHash } from "node:crypto";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { crc32, inflateRaw } from "node:zlib";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import {
+  ArtifactReaderFailure,
+  assertArtifactReadActive,
+} from "../../resources/index.js";
 import {
   KERNEL_BUILD_CONFIG_CODECS,
   KERNEL_BUILD_CONFIG_NUMBER,
@@ -12,6 +14,7 @@ import {
   type KernelBuildConfigEntry,
 } from "../../domain/native/kernelBuildConfig.js";
 import { kernelCompressionCodecAt } from "./KernelCompressionCodec.js";
+import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 
 type Report = KernelBuildConfig;
 type Entry = KernelBuildConfigEntry;
@@ -234,7 +237,7 @@ const inflateGzipMember = async (
   return { kind: "member", output, end: trailer + 8 };
 };
 
-const decoder = new TextDecoder("utf-8", { fatal: true });
+const decoder = strictUtf8Decoder("strip-signature");
 /** C0 controls other than tab, LF and CR, plus DEL. */
 const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u;
 

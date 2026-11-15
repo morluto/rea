@@ -730,9 +730,10 @@ describe("CdpBrowserProvider: navigation commit and target identity", () => {
     const rejectedCapture = await new CdpBrowserProvider().inspectPage(
       input(crossOriginCapture),
     );
+    // The document changed, which is reported before the new document's scope.
     expect(rejectedCapture).toMatchObject({
       ok: false,
-      error: { _tag: "BrowserObservationError", reason: "target_not_allowed" },
+      error: { _tag: "BrowserObservationError", reason: "target_changed" },
     });
   });
 });

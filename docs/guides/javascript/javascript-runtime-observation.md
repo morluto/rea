@@ -119,7 +119,7 @@ The direct observations are:
 - `Debugger.scriptFailedToParse`, retained only as a bounded invalid-script
   count in `scripts.parse_failed_total`. A well-formed parse-failure
   event is distinct from malformed protocol data and does not make loaded
-  script coverage unavailable. Older Evidence may omit this count;
+  script coverage unavailable;
 - `Runtime.executionContextCreated`,
   `Runtime.executionContextDestroyed`, and
   `Runtime.executionContextsCleared`, establishing context lifecycle within

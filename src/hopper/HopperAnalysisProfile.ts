@@ -1,6 +1,8 @@
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceRetryFailure } from "../artifacts/ArtifactResourceScope.js";
+import {
+  AnalysisCleanupLease,
+  bindArtifactFileCleanup,
+  ArtifactResourceRetryFailure,
+} from "../resources/index.js";
 import {
   hashStableFile,
   stableFileHashCause,
@@ -19,7 +21,7 @@ import type {
   AnalysisProfileResolution,
   RetainedResourceScope,
   ProviderIdentity,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { createFunctionCoordinateContext } from "../domain/native/functionCoordinateContext.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import {
@@ -31,8 +33,9 @@ import {
   type HeaderArchitecture,
 } from "../domain/binaryTargetTypes.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -206,6 +209,7 @@ const resolveHopperAnalysisProfileInScope = async (
 export type HopperDeclinedArchitecture =
   | ElfMetadataArchitecture
   | "hexagon"
+  | "xtensa"
   | "arm64_32";
 
 export const isHopperDeclinedArchitecture = (
@@ -213,6 +217,7 @@ export const isHopperDeclinedArchitecture = (
 ): architecture is HopperDeclinedArchitecture =>
   isElfMetadataArchitecture(architecture) ||
   architecture === "hexagon" ||
+  architecture === "xtensa" ||
   architecture === "arm64_32";
 
 /**
@@ -391,8 +396,7 @@ const readHopperProfileFile = async <Value>(
     const diagnostics = { profile_file: { kind, path }, ...completed };
     const failure =
       cancellation !== undefined
-        ? new AnalysisCancelledError("open_binary", {
-            cause: cancellation.reason,
+        ? cancelledBy("open_binary", carriedReason(cancellation.reason), {
             cleanup,
             diagnostics,
           })

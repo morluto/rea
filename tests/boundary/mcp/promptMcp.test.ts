@@ -28,7 +28,7 @@ import {
   type AnalysisProviderCandidate,
   type CapabilityDescriptor,
   type ProviderIdentity,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
@@ -546,7 +546,7 @@ describe("guided prompt completion registry", () => {
       undefined,
       delivery,
       undefined,
-      "full",
+      undefined,
       undefined,
       families,
     );

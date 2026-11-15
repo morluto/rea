@@ -8,17 +8,18 @@ import {
 
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
-import type { DotnetBundleAdmission } from "./dotnet/DotnetBundleAdmission.js";
-import { readArtifactFileChunks } from "./readArtifactFileChunks.js";
-import { abortIfNeeded } from "./ArtifactHash.js";
 import {
+  ArtifactResourceScope,
   ArtifactReaderFailure,
   copyArtifactEntry,
   sameArtifactEntry,
   type ArtifactEntry,
   type ArtifactReader,
-} from "./ArtifactReader.js";
+  type ArtifactTraversalOptions,
+} from "../resources/index.js";
+import type { DotnetBundleAdmission } from "./dotnet/DotnetBundleAdmission.js";
+import { readArtifactFileChunks } from "../resources/index.js";
+import { abortIfNeeded } from "./ArtifactHash.js";
 import {
   findDotnetBundleHeader,
   readDotnetBundle,
@@ -66,7 +67,10 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
     });
   }
 
-  async *entries(signal?: AbortSignal): AsyncIterable<ArtifactEntry> {
+  async *entries(
+    signal?: AbortSignal,
+    options?: ArtifactTraversalOptions,
+  ): AsyncIterable<ArtifactEntry> {
     const bundle = await this.#scope.run(async () => {
       this.#assertOpen(signal);
       const source = await this.#source.readSelectedPath(signal);
@@ -132,6 +136,8 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
       yield entry;
     }
     await this.#source.readSelectedPath(signal);
+    // Every manifest file is listed; manifest damage fails the traversal.
+    options?.onCoverage?.({ status: "complete", limitations: [] });
   }
 
   async open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {

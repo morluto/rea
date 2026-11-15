@@ -12,11 +12,11 @@ import {
   artifactSelectedPathErrno,
   artifactReadCancelledBy,
   assertArtifactReadActive,
-} from "./ArtifactFileOperation.js";
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+} from "../resources/index.js";
 import { artifactFileAdmissionFailure } from "./ArtifactFileAdmission.js";
 import { hashReadable } from "./ArtifactHash.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 
 /** Verify an admitted descriptor against the regular file still named by its path. */
 export const assertArtifactFileSelectedSource = async (
@@ -33,7 +33,7 @@ export const assertArtifactFileSelectedSource = async (
         throw new ArtifactReaderFailure(
           "integrity",
           `${diagnosticLabel} source identity changed: ${path}`,
-          { cause },
+          { cause, integrityCheck: "container-identity" },
         );
       throw cause;
     }),
@@ -45,6 +45,7 @@ export const assertArtifactFileSelectedSource = async (
     throw new ArtifactReaderFailure(
       "integrity",
       `${diagnosticLabel} source identity changed: ${path}`,
+      { integrityCheck: "container-identity" },
     );
 };
 
@@ -147,7 +148,7 @@ export class ArtifactFileSource {
       throw new ArtifactReaderFailure(
         "integrity",
         `${this.diagnosticLabel} carrier changed after inventory`,
-        undefined,
+        { integrityCheck: "container-identity" },
         artifactIntegrityDetails(
           ".",
           { algorithm: "sha256", digest: expectedSha256 },
@@ -167,6 +168,7 @@ export class ArtifactFileSource {
       throw new ArtifactReaderFailure(
         "integrity",
         `${this.diagnosticLabel} source identity changed: ${this.path}`,
+        { integrityCheck: "container-identity" },
       );
     assertArtifactReadActive(signal);
     return source;
