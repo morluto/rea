@@ -572,6 +572,8 @@ export const registerContractCommand = <
           : (chosen.get(values[projection.operationBy.option]) ?? description);
       return withCommandCancellation((signal) =>
         logCliCommand(logger, description.command, async () => {
+          const options = selected.admitDeliveryOptions(values);
+          if (!options.ok) return projectAnalysisError(options.error);
           const read = await readJsonInputs(selected, values, signal);
           if (!read.ok) return read.error;
           const admitted = selected.admit(read.value);
@@ -869,6 +871,8 @@ export const registerRoutedCommand = (
                 })),
               ),
             );
+          const options = description.admitDeliveryOptions(shared.value);
+          if (!options.ok) return projectAnalysisError(options.error);
           const read = await readJsonInputs(
             description,
             shared.value,

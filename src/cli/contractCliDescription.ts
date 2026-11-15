@@ -567,6 +567,14 @@ export interface ContractCliDescription {
   readonly admit: (
     values: Readonly<Record<string, unknown>>,
   ) => Result<ContractCliAdmission, AnalysisInputError>;
+  /**
+   * Refuse inline JSON options and a delivery the options cannot select,
+   * before any JSON input is read, so an invalid invocation never waits on a
+   * file or stdin. `admit` still checks the admitted view with the input.
+   */
+  readonly admitDeliveryOptions: (
+    values: Readonly<Record<string, unknown>>,
+  ) => Result<void, AnalysisInputError>;
 }
 
 /** One contract from a contract group, keeping its exact schema types. */
@@ -2011,7 +2019,51 @@ export const describeContractCommand = <
         rename,
       );
     },
+    admitDeliveryOptions: (values) => {
+      const decoded = decodeInlineJson(contract.name, parameters, values);
+      if (!decoded.ok) return decoded;
+      if (!evidenceDelivery) return ok(undefined);
+      const view =
+        viewDelivery === undefined
+          ? undefined
+          : (decoded.value[rename("view")] as AnalysisViewRequest | undefined);
+      const detail = decoded.value[rename("detail")] as
+        | "complete"
+        | "summary"
+        | undefined;
+      const refused = cliEvidenceDeliveryInputError({
+        operation: contract.name,
+        detail: detail ?? (view === undefined ? "complete" : "summary"),
+        evidenceOutput: decoded.value.evidence_output as string | undefined,
+        view,
+      });
+      return refused === undefined ? ok(undefined) : err(refused);
+    },
   };
+};
+
+/**
+ * Decode each inline run-time JSON option. JSON inputs, which may name a
+ * file, are read and decoded by the command before admission.
+ */
+const decodeInlineJson = (
+  operation: string,
+  parameters: readonly ContractCliParameter[],
+  values: Readonly<Record<string, unknown>>,
+): Result<Record<string, unknown>, AnalysisInputError> => {
+  const decoded: Record<string, unknown> = { ...values };
+  for (const { key, runtimeJson, jsonInput } of parameters) {
+    if (runtimeJson === undefined || jsonInput) continue;
+    const parsed = parseCliJsonOption(
+      operation,
+      key,
+      values[key] as string | undefined,
+      runtimeJson,
+    );
+    if (!parsed.ok) return parsed;
+    decoded[key] = parsed.value;
+  }
+  return ok(decoded);
 };
 
 /**
@@ -2072,19 +2124,9 @@ const admitInvocation = (
   rename: (field: string) => string,
 ): Result<ContractCliAdmission, AnalysisInputError> => {
   const { evidenceDelivery, viewDelivery, parameters, shape } = command;
-  const decoded: Record<string, unknown> = { ...values };
-  for (const { key, runtimeJson, jsonInput } of parameters) {
-    // The command read and decoded a JSON input before admission.
-    if (runtimeJson === undefined || jsonInput) continue;
-    const parsed = parseCliJsonOption(
-      contract.name,
-      key,
-      values[key] as string | undefined,
-      runtimeJson,
-    );
-    if (!parsed.ok) return parsed;
-    decoded[key] = parsed.value;
-  }
+  const inline = decodeInlineJson(contract.name, parameters, values);
+  if (!inline.ok) return inline;
+  const decoded = inline.value;
   const input = toContractInput(decoded);
   const detail = evidenceDelivery
     ? (decoded[rename("detail")] as "complete" | "summary" | undefined)
