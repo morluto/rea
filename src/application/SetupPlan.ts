@@ -1,3 +1,5 @@
+import { dirname } from "node:path";
+
 import { SetupSkillInstallError, type SkillDestination } from "./SetupSkill.js";
 import type { LinuxPackageFamily } from "./HopperReleaseFeed.js";
 import {
@@ -488,5 +490,9 @@ const clientConfigurationDetail = (
       : " The HOPPER_LAUNCHER_PATH value shown above is the current fallback; if this plan installs Hopper, REA will replace it with the launcher path reported by that installation."
     : "";
   const persistence = registrationPersistenceDetail(client);
-  return `Add the REA MCP registration for ${client.displayName ?? client.name}; preserve unrelated configuration. The backup path reflects the configuration inspected for this plan; if that file changes before execution, setup will select a recovery path for its current contents. Command: ${command.map((part) => JSON.stringify(part)).join(" ")}.${environmentDetail}${hopperDetail}${persistence === undefined ? "" : ` ${persistence}`}`;
+  const privateProfile =
+    client.privateProfile === undefined
+      ? ""
+      : ` The profile is private: REA sets its folder ${dirname(client.configPath)} to mode 0700 and the file to 0600.`;
+  return `Add the REA MCP registration for ${client.displayName ?? client.name}; preserve unrelated configuration. The backup path reflects the configuration inspected for this plan; if that file changes before execution, setup will select a recovery path for its current contents. Command: ${command.map((part) => JSON.stringify(part)).join(" ")}.${environmentDetail}${hopperDetail}${privateProfile}${persistence === undefined ? "" : ` ${persistence}`}`;
 };

@@ -103,7 +103,12 @@ it("delivers the parsed control facts when data.tar is refused", async () => {
   try {
     const root = await createTestTempDirectory("rea-deb-mcp-partial-");
     const path = join(root, "bad-data.deb");
-    await writeFile(path, debPackageFixture({ corruptDataChecksum: true }));
+    const bytes = debPackageFixture({ corruptDataChecksum: true });
+    await writeFile(path, bytes);
+    // The data member's header follows the even-padded control member; its
+    // offset depends on the compressed control size, so derive it.
+    const dataHeader = bytes.indexOf("data.tar.gz", 8, "latin1");
+    const dataOffset = dataHeader + 60;
     const response = await client.callTool({
       name: "inspect_deb_package",
       arguments: { path },
@@ -118,7 +123,10 @@ it("delivers the parsed control facts when data.tar is refused", async () => {
           partial: {
             ar: {
               members: expect.arrayContaining([
-                expect.objectContaining({ name: "data.tar.gz", offset: 858 }),
+                expect.objectContaining({
+                  name: "data.tar.gz",
+                  offset: dataOffset,
+                }),
               ]),
             },
             control: {

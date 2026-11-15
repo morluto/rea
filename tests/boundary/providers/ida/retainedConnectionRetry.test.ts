@@ -10,6 +10,7 @@ import { elf } from "../../../../src/domain/binaryTarget.fixture.js";
 import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
 import { createIdaMcpConnection } from "../../../../src/ida/IdaMcpConnection.js";
 import { IdaSessionClient } from "../../../../src/ida/IdaSessionClient.js";
+import { idaConnectionDependencies } from "../../../support/idaConnectionDependencies.js";
 
 /**
  * A headless IDA supervisor over real stdio that answers the session
@@ -96,7 +97,11 @@ describe("retained headless IDA connection in a long-lived host", () => {
       timeoutMs: 5000,
       workspaceRoot,
     };
-    const connection = createIdaMcpConnection(config, process.env);
+    const connection = createIdaMcpConnection(
+      config,
+      process.env,
+      idaConnectionDependencies(),
+    );
     // Close the supervisor even when an assertion fails before cleanup does.
     onTestFinished(() => connection.close().catch(() => undefined));
     const client = new IdaSessionClient(config, target, connection);

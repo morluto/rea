@@ -199,6 +199,10 @@ export class PyInstallerArtifactReader implements ArtifactReader {
         throw new ArtifactReaderFailure(
           "integrity",
           `PyInstaller entry was not produced by this reader: ${entry.path}`,
+          {
+            integrityCheck:
+              stored === undefined ? "foreign-entry" : "entry-metadata",
+          },
         );
       if (entry.kind !== "file")
         throw new ArtifactReaderFailure(

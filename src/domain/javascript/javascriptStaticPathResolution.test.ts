@@ -23,7 +23,7 @@ it.each([
     if (path === null) {
       expect(analysis.role_paths).toEqual([]);
       expect(
-        analysis.analysis_coverage?.semantics.unknown_findings,
+        analysis.analysis_coverage.semantics.unknown_findings,
       ).toBeGreaterThan(0);
     } else {
       expect(analysis.role_paths).toMatchObject([
@@ -42,7 +42,7 @@ it.each(["loadFile", "loadURL"])(
     );
     expect(analysis.role_paths).toEqual([]);
     expect(
-      analysis.analysis_coverage?.semantics.unknown_findings,
+      analysis.analysis_coverage.semantics.unknown_findings,
     ).toBeGreaterThan(0);
     expect(analysis.limitations).toContain(
       "One or more static keys, expressions, or Electron boundary values were dynamic and remain unknown.",

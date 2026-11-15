@@ -40,8 +40,6 @@ interface ComparisonItemContext {
   readonly leftMethodsComplete: boolean;
   readonly rightMethodsComplete: boolean;
   readonly scope: ManagedComparisonScope;
-  /** Whether matching keyed signatures by resolved digests, not raw bytes. */
-  readonly signatureResolutionExamined: boolean;
   readonly sameArtifact: boolean;
   readonly leftAssembly: ManagedMemberInspection["assembly"];
   readonly rightAssembly: ManagedMemberInspection["assembly"];
@@ -60,11 +58,9 @@ const inventoryCovers = (
 
 /**
  * Declared type and name of each unpaired member, per side, whose signature
- * was not decoded, or was decoded but not resolved while matching keyed
- * resolved signatures.
+ * was not decoded, or was decoded but not resolved.
  */
 interface UndecodedOneSidedNames {
-  readonly resolved: boolean;
   readonly undecoded: Readonly<Record<"left" | "right", ReadonlySet<string>>>;
   readonly unresolved: Readonly<Record<"left" | "right", ReadonlySet<string>>>;
   readonly unknownOwners: Readonly<
@@ -530,13 +526,13 @@ const absenceLimitations = (
         `counterpart-signature-not-decoded: The ${opposite.opposite} ${opposite.inventory} inventory has an unpaired member with the same declared type and name whose signature was not decoded, so it may be this member with a changed signature.`,
       ]
     : []),
-  ...(unresolved(member, opposite.unpaired.resolved)
+  ...(unresolved(member)
     ? [
         `signature-not-resolved: The member's signature names a type REA could not name, so it was compared by raw bytes, which name types by build-local metadata row; a counterpart whose referenced type moved rows could not be found.`,
       ]
     : []),
   ...(member.signature.parse_status === "decoded" &&
-  !unresolved(member, opposite.unpaired.resolved) &&
+  !unresolved(member) &&
   opposite.unpaired.unresolved[opposite.opposite].has(identity)
     ? [
         `counterpart-signature-not-resolved: The ${opposite.opposite} ${opposite.inventory} inventory has an unpaired member with the same declared type and name whose signature names a type REA could not name, so it may be this member.`,
@@ -545,8 +541,7 @@ const absenceLimitations = (
 ];
 
 /** A known signature form whose type operands still compare by raw bytes. */
-const unresolved = (member: Method | Field, resolved: boolean): boolean =>
-  resolved &&
+const unresolved = (member: Method | Field): boolean =>
   member.signature.kind !== "unknown" &&
   member.signature.resolved_sha256 === null;
 
@@ -554,7 +549,6 @@ const unresolved = (member: Method | Field, resolved: boolean): boolean =>
 const pairedSignatureLimitations = (
   left: Method | Field,
   right: Method | Field,
-  examined: boolean,
 ): string[] => {
   if (
     left.signature.parse_status === "malformed" ||
@@ -563,7 +557,7 @@ const pairedSignatureLimitations = (
     return [
       "signature-malformed: At least one signature is malformed; equal signature bytes do not establish an unchanged member signature.",
     ];
-  return unresolved(left, examined) || unresolved(right, examined)
+  return unresolved(left) || unresolved(right)
     ? [
         "signature-not-resolved: At least one signature names a type REA could not resolve; equal build-local row bytes do not establish equivalent signature types.",
       ]
@@ -580,17 +574,14 @@ interface Unpaired {
   readonly identityUnavailable: boolean;
 }
 
-const undecodedOneSidedNames = (
-  members: {
-    readonly leftOnly: readonly Unpaired[];
-    readonly rightOnly: readonly Unpaired[];
-    readonly ambiguous: readonly {
-      readonly left: readonly Unpaired[];
-      readonly right: readonly Unpaired[];
-    }[];
-  },
-  resolved: boolean,
-): UndecodedOneSidedNames => {
+const undecodedOneSidedNames = (members: {
+  readonly leftOnly: readonly Unpaired[];
+  readonly rightOnly: readonly Unpaired[];
+  readonly ambiguous: readonly {
+    readonly left: readonly Unpaired[];
+    readonly right: readonly Unpaired[];
+  }[];
+}): UndecodedOneSidedNames => {
   const sides = {
     left: [
       ...members.leftOnly,
@@ -610,9 +601,7 @@ const undecodedOneSidedNames = (
     );
   const undecoded = (item: Method | Field) =>
     item.signature.parse_status !== "decoded";
-  const notResolved = (item: Method | Field) => unresolved(item, resolved);
   return {
-    resolved,
     unknownOwners: {
       left: new Set(
         sides.left.filter((x) => x.identityUnavailable).map((x) => x.item.name),
@@ -628,8 +617,8 @@ const undecodedOneSidedNames = (
       right: names(sides.right, undecoded),
     },
     unresolved: {
-      left: names(sides.left, notResolved),
-      right: names(sides.right, notResolved),
+      left: names(sides.left, unresolved),
+      right: names(sides.right, unresolved),
     },
   };
 };
@@ -738,7 +727,6 @@ export const buildMethodItems = (
     const signatureLimitations = pairedSignatureLimitations(
       pair.left.item,
       pair.right.item,
-      context.signatureResolutionExamined,
     );
     const locals = compareLocalSignatures(
       pair.left.item,
@@ -871,10 +859,7 @@ export const buildMethodItems = (
       ],
     });
   }
-  const undecoded = undecodedOneSidedNames(
-    matches,
-    context.signatureResolutionExamined,
-  );
+  const undecoded = undecodedOneSidedNames(matches);
   for (const item of matches.leftOnly)
     items.push(
       methodOnlyItem(
@@ -907,7 +892,6 @@ export const buildFieldItems = (
     const signatureLimitations = pairedSignatureLimitations(
       pair.left.item,
       pair.right.item,
-      context.signatureResolutionExamined,
     );
     const changed =
       signatureIdentity(pair.left.item.signature) !==
@@ -968,10 +952,7 @@ export const buildFieldItems = (
         ),
       ],
     });
-  const undecoded = undecodedOneSidedNames(
-    matches,
-    context.signatureResolutionExamined,
-  );
+  const undecoded = undecodedOneSidedNames(matches);
   for (const item of matches.leftOnly)
     items.push(
       fieldOnlyItem(

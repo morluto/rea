@@ -26,6 +26,7 @@ import {
   isTSImportEqualsDeclaration,
   isTSModuleDeclaration,
 } from "@babel/types";
+import { decodeStrictUtf8 } from "./strictUtf8.js";
 
 type ReferenceSourceImportKind =
   | "imports"
@@ -291,7 +292,7 @@ export const parseReferenceSourceImports = (
 
   let source: string;
   try {
-    source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    source = decodeStrictUtf8(bytes, "strip-signature");
   } catch {
     return {
       relationships: [],

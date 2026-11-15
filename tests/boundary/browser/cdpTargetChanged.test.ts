@@ -4,6 +4,10 @@ import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
 import { captureWebScreenshotInputSchema } from "../../../src/domain/webScreenshot.js";
 import { discoverWebMcpToolsInputSchema } from "../../../src/domain/webMcpDiscovery.js";
+import { observeWebSessionInputSchema } from "../../../src/domain/browserSession.js";
+import { inspectWebEventListenersInputSchema } from "../../../src/domain/webEventListeners.js";
+import { CdpWebRuntimeProvider } from "../../../src/browser/execution/CdpWebRuntimeProvider.js";
+import { startRuntimeBrowser } from "../../fixtures/webRuntime.js";
 import {
   startFakeCdpBrowser,
   type FakeOptions,
@@ -346,5 +350,247 @@ describe("screenshot capture", () => {
     if (result.ok) throw new Error("Expected target_changed");
     expect(result.error).toMatchObject({ reason: "target_changed" });
     expect(result.error.cause).toBeDefined();
+  });
+});
+
+/**
+ * Root navigation events reach every consumer through the target session's
+ * document owner, so the same event means the same thing to each of them.
+ * The `emits` command carries the event while the operation is running.
+ */
+type RootEvent = (
+  command: Parameters<NonNullable<FakeOptions["commandEvents"]>>[0],
+  origin: string,
+) => NonNullable<ReturnType<NonNullable<FakeOptions["commandEvents"]>>>[number];
+const rootEvents: Record<string, RootEvent> = {
+  "a malformed loader on the selected frame": (command, origin) =>
+    frameNavigated(command, {
+      id: "frame-main",
+      loaderId: 7,
+      url: `${origin}/app`,
+    }),
+  "a malformed loader on a replacement root frame": (command, origin) =>
+    frameNavigated(command, {
+      id: "frame-next",
+      loaderId: 7,
+      url: `${origin}/app`,
+    }),
+  "a same-document move to another origin": (command) => ({
+    method: "Page.navigatedWithinDocument",
+    ...(command.sessionId === undefined
+      ? {}
+      : { sessionId: command.sessionId }),
+    params: { frameId: "frame-main", url: "https://outside.example/" },
+  }),
+};
+const runWithRootEvent = async (
+  consumer: "page capture" | "screenshot",
+  event: RootEvent,
+) => {
+  const emits =
+    consumer === "page capture" ? "Network.enable" : "Page.getLayoutMetrics";
+  const browser = await start({
+    eventsBeforeReply: [emits],
+    commandResult: frameTrees(99, known, known),
+    commandEvents: (command, origin) =>
+      command.method === emits ? [event(command, origin)] : undefined,
+  });
+  const input = {
+    cdp_endpoint: browser.endpoint,
+    allowed_origins: [browser.allowedOrigin],
+    target_id: "allowed-page",
+  };
+  return consumer === "page capture"
+    ? await new CdpBrowserProvider().inspectPage(
+        inspectWebPageInputSchema.parse({ ...input, observation_ms: 0 }),
+      )
+    : await new CdpBrowserProvider().captureScreenshot(
+        captureWebScreenshotInputSchema.parse(input),
+      );
+};
+
+describe("root navigation events through the target session's document owner", () => {
+  // Before the owner, page capture ignored same-document events and reported
+  // a replacement root with a malformed loader as protocol_error; screenshot
+  // reported a malformed loader on its own frame as target_changed.
+  it.each([
+    [
+      "page capture",
+      "a malformed loader on the selected frame",
+      "protocol_error",
+    ],
+    [
+      "page capture",
+      "a malformed loader on a replacement root frame",
+      "target_changed",
+    ],
+    [
+      "page capture",
+      "a same-document move to another origin",
+      "target_not_allowed",
+    ],
+    [
+      "screenshot",
+      "a malformed loader on the selected frame",
+      "protocol_error",
+    ],
+    [
+      "screenshot",
+      "a malformed loader on a replacement root frame",
+      "target_changed",
+    ],
+    [
+      "screenshot",
+      "a same-document move to another origin",
+      "target_not_allowed",
+    ],
+  ] as const)("%s reports %s as %s", async (consumer, name, reason) => {
+    const event = rootEvents[name];
+    if (event === undefined) throw new Error(`Unknown event ${name}`);
+    const result = await runWithRootEvent(consumer, event);
+    expect(result).toMatchObject({ ok: false, error: { reason } });
+  });
+
+  // The runtime session checks navigation observed between its frame-tree
+  // reads first, so a reply that still shows the selected document cannot
+  // hide a commit of another one.
+  it.each([
+    ["another loader", "document-next", "target_changed"],
+    ["the selected loader", "document-1", null],
+  ] as const)(
+    "runtime listener inspection checks a commit of %s observed between reads",
+    async (_name, loaderId, reason) => {
+      const browser = await startRuntimeBrowser({
+        eventsBeforeReply: ["DOM.getDocument"],
+        commandEvents: (command, origin) =>
+          command.method === "DOM.getDocument"
+            ? [
+                frameNavigated(command, {
+                  id: "runtime-main",
+                  loaderId,
+                  url: `${origin}/app`,
+                }),
+              ]
+            : undefined,
+      });
+      trackBrowser(browser);
+      const result = await new CdpWebRuntimeProvider().inspectEventListeners(
+        inspectWebEventListenersInputSchema.parse({
+          cdp_endpoint: browser.endpoint,
+          target_id: "allowed-page",
+          allowed_origins: [browser.allowedOrigin],
+          selector: "#selected",
+        }),
+      );
+      if (reason === null) {
+        if (!result.ok) throw result.error;
+        return;
+      }
+      expect(result).toMatchObject({ ok: false, error: { reason } });
+    },
+  );
+
+  // A selection without a loader cannot be proven continuous with a document
+  // that later reports one, even when an event taught the owner that loader
+  // before the next frame-tree read.
+  it("runtime listener inspection reports a loader first seen after a loaderless selection", async () => {
+    let committed = false;
+    const browser = await startRuntimeBrowser({
+      eventsBeforeReply: ["DOM.getDocument"],
+      commandResult: (command, origin) =>
+        command.method === "Page.getFrameTree"
+          ? {
+              frameTree: {
+                frame: {
+                  id: "runtime-main",
+                  url: `${origin}/app`,
+                  ...(committed ? { loaderId: "document-next" } : {}),
+                },
+              },
+            }
+          : undefined,
+      commandEvents: (command, origin) => {
+        if (command.method !== "DOM.getDocument") return undefined;
+        committed = true;
+        return [
+          frameNavigated(command, {
+            id: "runtime-main",
+            loaderId: "document-next",
+            url: `${origin}/app`,
+          }),
+        ];
+      },
+    });
+    trackBrowser(browser);
+    const result = await new CdpWebRuntimeProvider().inspectEventListeners(
+      inspectWebEventListenersInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        target_id: "allowed-page",
+        allowed_origins: [browser.allowedOrigin],
+        selector: "#selected",
+      }),
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { reason: "target_changed" },
+    });
+  });
+});
+
+describe("observation window replay", () => {
+  // The observation window replays events buffered before its clock sample;
+  // each is scoped by the root frame it arrived under, not by a root
+  // replacement received after it.
+  it("observation scopes buffered rows by the root frame each arrived under", async () => {
+    const withinDocument = (
+      command: Parameters<NonNullable<FakeOptions["commandEvents"]>>[0],
+      frameId: string,
+      url: string,
+    ) => ({
+      method: "Page.navigatedWithinDocument",
+      ...(command.sessionId === undefined
+        ? {}
+        : { sessionId: command.sessionId }),
+      params: { frameId, url, navigationType: "historyApi" },
+    });
+    const browser = await start({
+      eventsBeforeReply: ["Performance.getMetrics"],
+      commandResult: (command) => {
+        if (command.method === "Performance.enable") return {};
+        if (command.method === "Performance.getMetrics")
+          return { metrics: [{ name: "Timestamp", value: 20 }] };
+        return undefined;
+      },
+      commandEvents: (command, origin) =>
+        command.method === "Performance.getMetrics"
+          ? [
+              withinDocument(command, "frame-main", `${origin}/app#before`),
+              frameNavigated(command, {
+                id: "frame-next",
+                loaderId: "loader-next",
+                url: `${origin}/next`,
+              }),
+              withinDocument(command, "frame-main", `${origin}/app#stale`),
+              withinDocument(command, "frame-next", `${origin}/next#after`),
+            ]
+          : undefined,
+    });
+    const result = await new CdpBrowserProvider().observeSession(
+      observeWebSessionInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 1,
+      }),
+    );
+    if (!result.ok) throw result.error;
+    expect(
+      result.value.timeline
+        .filter((row) => row.type === "same_document_navigation")
+        .map((row) => [row.frame_id, row.url]),
+    ).toEqual([
+      ["frame-main", `${browser.allowedOrigin}/app#before`],
+      ["frame-next", `${browser.allowedOrigin}/next#after`],
+    ]);
   });
 });

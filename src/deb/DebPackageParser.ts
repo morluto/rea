@@ -1,3 +1,4 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { constants, zstdDecompressSync } from "node:zlib";
 
 import { gunzip, isGzip } from "../domain/desktop/gzipDocument.js";
@@ -31,7 +32,6 @@ const XZ_MAGIC = Buffer.from([0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00]);
 const ZSTD_MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
 const BZ2_MAGIC = Buffer.from("BZh", "ascii");
 const ZSTD_WINDOW_LOG_MAX = 27;
-const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 /** Limitation wording owned by the parser; tests assert delivery through these. */
 export const DEB_PACKAGE_LIMITATIONS = {
@@ -90,7 +90,7 @@ const tarText = (
 
 const decodeUtf8 = (bytes: Uint8Array): string | null => {
   try {
-    return UTF8.decode(bytes);
+    return decodeStrictUtf8(bytes, "preserve");
   } catch {
     return null;
   }

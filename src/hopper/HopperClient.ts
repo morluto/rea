@@ -1,3 +1,7 @@
+import {
+  JsonLineBridgeReader,
+  type JsonLineBridgeFailure,
+} from "../process/JsonLineBridgeReader.js";
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { randomBytes, randomUUID } from "node:crypto";
 import { access } from "node:fs/promises";
@@ -13,6 +17,16 @@ import {
   OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import {
+  hopperBridgeReplyContracts,
+  parseHopperReply,
+  type HopperBridgeReplyContracts,
+  type ValueKeepingContracts,
+  type HopperContractReply,
+  type HopperReplyContracts,
+  parseHopperServerInfo,
+  type HopperServerInfo,
+} from "./HopperReplyContracts.js";
+import {
   hopperCancelledBySignal,
   type HopperCancelledError,
   type HopperError,
@@ -24,7 +38,7 @@ import {
   HopperTimeoutError,
 } from "../domain/hopperErrors.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { ConfigurationError } from "../domain/configurationErrors.js";
+import { readRuntimeSetting } from "../config/runtimeAnalysisSettings.js";
 import {
   hopperStartupFailure,
   type HopperStartupFailureDiagnostic,
@@ -65,10 +79,6 @@ import {
   type HopperOwnedResources,
 } from "./HopperCleanup.js";
 import { HOPPER_SHUTDOWN_TIMEOUT_MS } from "./HopperSessionValues.js";
-import {
-  parseHopperServerInfo,
-  type HopperServerInfo,
-} from "./HopperReplyContracts.js";
 import { connectHopperSocketOnce } from "./HopperSocketConnection.js";
 import {
   hopperLauncherFailureDiagnostic,
@@ -77,19 +87,26 @@ import {
 } from "./HopperProcessDiagnostic.js";
 import { DEFAULT_HOPPER_STARTUP_TIMEOUT_MS } from "../domain/analysisResourceLimits.js";
 import {
+  admitBridgeRequestLimit,
   bridgeRequestLimitMismatchError,
   bridgeRequestOversizeError,
   DEFAULT_BRIDGE_MAX_REQUEST,
   type BridgeMaxRequestBytes,
 } from "../config/bridgeMaxRequestBytes.js";
 import {
+  admitBridgeReplyLimit,
+  bridgeReplyOversizeError,
+  DEFAULT_BRIDGE_MAX_REPLY,
+  type BridgeMaxReplyBytes,
+} from "../config/bridgeMaxReplyBytes.js";
+import {
   HopperRequestQueue,
   type HopperRequestActivity,
 } from "./HopperRequestQueue.js";
-import { HopperResponseStream } from "./HopperResponseStream.js";
 import {
   type HopperBridgeEvent,
   type HopperBridgeMessage,
+  hopperReplyEnvelope,
   responseResult,
 } from "./protocol.js";
 
@@ -99,8 +116,15 @@ const HOPPER_PROCESS_DIAGNOSTIC_BYTES = 8 * 1024 * 1024;
 const SESSION_ROOT = process.platform === "darwin" ? "/tmp" : tmpdir();
 
 /** Dependencies, deadlines, and redacted diagnostics for one bridge client. */
-export interface HopperClientOptions {
+export interface HopperClientOptions<
+  Contracts extends HopperReplyContracts = HopperBridgeReplyContracts,
+> {
   readonly launcher: BridgeLauncher;
+  /**
+   * Reply contract for each callable method. Production uses the bridge's
+   * `hopperReplySchemas`; transport tests supply their own methods.
+   */
+  readonly replyContracts?: Contracts & ValueKeepingContracts<Contracts>;
   readonly runId?: string;
   readonly startupTimeoutMs?: number;
   readonly readStartupTimeoutMs?: () => number;
@@ -112,8 +136,16 @@ export interface HopperClientOptions {
     | undefined;
   /** Effective request ceiling. Omitted uses the 16 MiB default. */
   readonly bridgeMaxRequestBytes?: BridgeMaxRequestBytes;
+  /** Effective reply line ceiling. Omitted uses the 256 MiB default. */
+  readonly bridgeMaxReplyBytes?: BridgeMaxReplyBytes;
   readonly onDiagnostic?: (event: HopperDiagnostic) => void;
   readonly logger?: Logger;
+}
+
+/** Bridge ceilings admitted when a session started, kept for its cleanup. */
+interface HopperSessionLimits {
+  readonly requestLimit: BridgeMaxRequestBytes;
+  readonly replyLimit: BridgeMaxReplyBytes;
 }
 
 type HopperStartupResult = Result<HopperServerInfo, AnalysisError>;
@@ -139,13 +171,19 @@ type HopperClientCloseOptions = {
  * only terminates launch processes explicitly marked as owned; the normal
  * Hopper launcher does not confer ownership of the GUI application.
  */
-export class HopperClient {
+export class HopperClient<
+  Contracts extends HopperReplyContracts = HopperBridgeReplyContracts,
+> {
   readonly #options: Required<
     Pick<HopperClientOptions, "startupTimeoutMs" | "bridgeMaxRequestBytes">
   > &
-    HopperClientOptions;
+    HopperClientOptions<Contracts>;
+  readonly #contracts: Contracts & ValueKeepingContracts<Contracts>;
   readonly #requests: HopperRequestQueue;
-  readonly #responses: HopperResponseStream;
+  readonly #responses: JsonLineBridgeReader<
+    HopperBridgeMessage,
+    HopperRemoteError
+  >;
   readonly #logger: Logger;
   #socket: Socket | undefined;
   readonly #resources: HopperOwnedResources = {
@@ -156,6 +194,9 @@ export class HopperClient {
     externalApplication: undefined,
   };
   #token: string | undefined;
+  /** Reply ceiling admitted with the request on the wire; the default before any. */
+  #replyLimit: BridgeMaxReplyBytes = DEFAULT_BRIDGE_MAX_REPLY;
+  #sessionLimits: HopperSessionLimits | undefined;
   readonly #lineage = new ProviderRunLineage();
   #nextId = 1;
   #closing = false;
@@ -214,8 +255,16 @@ export class HopperClient {
     this.#rememberProcessFailure(error, []);
   };
 
-  constructor(options: HopperClientOptions) {
+  constructor(options: HopperClientOptions<Contracts>) {
     this.#logger = options.logger ?? silentLogger;
+    // The default type argument is the production table this default supplies.
+    // Without a table the type argument is its default, the production table.
+    // A caller that names another type argument but omits its table gets a
+    // typed refusal per method (see #typedReply), never a throw.
+    this.#contracts =
+      options.replyContracts ??
+      (hopperBridgeReplyContracts as unknown as Contracts &
+        ValueKeepingContracts<Contracts>);
     this.#options = {
       ...options,
       startupTimeoutMs:
@@ -224,7 +273,7 @@ export class HopperClient {
         options.bridgeMaxRequestBytes ?? DEFAULT_BRIDGE_MAX_REQUEST,
     };
     this.#requests = new HopperRequestQueue(
-      ({ id, method, params }, failed) => {
+      ({ id, method, params, requestLimit, replyLimit }, failed) => {
         const socket = this.#socket;
         const token = this.#token;
         if (socket === undefined || socket.destroyed || token === undefined) {
@@ -247,13 +296,14 @@ export class HopperClient {
           return;
         }
         const payloadBytes = Buffer.byteLength(payload);
-        if (payloadBytes > this.#options.bridgeMaxRequestBytes.maximumBytes) {
+        const admitted = requestLimit ?? DEFAULT_BRIDGE_MAX_REQUEST;
+        if (payloadBytes > admitted.maximumBytes) {
           this.#requests.accept(
             id,
             err(
               bridgeRequestOversizeError(
                 method,
-                this.#options.bridgeMaxRequestBytes,
+                admitted,
                 payloadBytes,
                 "Hopper",
               ),
@@ -261,16 +311,21 @@ export class HopperClient {
           );
           return;
         }
+        // This request now owns the wire, so its admitted ceiling bounds the
+        // next reply; a queued or refused request never changes it.
+        this.#replyLimit = replyLimit ?? DEFAULT_BRIDGE_MAX_REPLY;
         socket.write(`${payload}\n`, (cause) => {
           if (cause !== undefined && cause !== null) failed();
         });
       },
     );
-    this.#responses = new HopperResponseStream({
-      accept: (message) => this.#acceptBridgeMessage(message),
-      hasQueued: (id) => this.#requests.hasQueued(id),
-      nextRequestId: () => this.#nextId,
-      abort: (message, cause) => this.#abortProtocol(message, cause),
+    this.#responses = new JsonLineBridgeReader({
+      envelope: hopperReplyEnvelope,
+      maxReplyBytes: () => this.#replyLimit.maximumBytes,
+      deliver: (message) => this.#acceptBridgeMessage(message),
+      wasSent: (id) => id < this.#nextId && !this.#requests.hasQueued(id),
+      rejectInFlight: (cause) => this.#requests.failActive(cause),
+      fail: (failure) => this.#abortReplyStream(failure),
     });
   }
 
@@ -447,15 +502,13 @@ export class HopperClient {
           new HopperProtocolError("Hopper client is already started"),
       );
     }
-    let startupTimeoutMs: number;
-    try {
-      startupTimeoutMs =
+    const startupTimeout = readRuntimeSetting(
+      () =>
         this.#options.readStartupTimeoutMs?.() ??
-        this.#options.startupTimeoutMs;
-    } catch (cause: unknown) {
-      if (cause instanceof ConfigurationError) return err(cause);
-      throw cause;
-    }
+        this.#options.startupTimeoutMs,
+    );
+    if (!startupTimeout.ok) return startupTimeout;
+    const startupTimeoutMs = startupTimeout.value;
     this.#operationFailure = undefined;
     this.#startupFailureResult = undefined;
     this.#resources.shutdownConfirmed = false;
@@ -484,6 +537,22 @@ export class HopperClient {
   async #startWithin(
     deadline: ProviderStartupDeadline,
   ): Promise<Result<HopperServerInfo, AnalysisError>> {
+    // Admit both bridge ceilings before acquiring anything: an invalid launch
+    // seed is a configuration refusal, not a failure after Hopper started.
+    // Cleanup requests reuse these, so a setting reset after startup cannot
+    // refuse the shutdown that releases Hopper's document and files.
+    const requestLimit = admitBridgeRequestLimit(
+      this.#options.bridgeMaxRequestBytes,
+    );
+    if (!requestLimit.ok) return requestLimit;
+    const replyLimit = admitBridgeReplyLimit(
+      this.#options.bridgeMaxReplyBytes ?? DEFAULT_BRIDGE_MAX_REPLY,
+    );
+    if (!replyLimit.ok) return replyLimit;
+    this.#sessionLimits = {
+      requestLimit: requestLimit.value,
+      replyLimit: replyLimit.value,
+    };
     try {
       this.#resources.runtimeRoot = await PrivateRuntimeRoot.create({
         parent: SESSION_ROOT,
@@ -664,34 +733,66 @@ export class HopperClient {
       };
   }
 
-  /** Invoke one declared operation, returning timeout and cancellation as values. */
-  async callTool(
-    name: string,
+  /**
+   * Invoke one bridge method and validate its reply against that method's
+   * contract. Timeout, cancellation and a reply outside the contract
+   * (`HopperReplyContractError`, which keeps the raw reply) return as values.
+   * `operation` attributes a failure to the analyst operation the method serves.
+   */
+  async callTool<M extends keyof Contracts & string>(
+    method: M,
     arguments_: Readonly<Record<string, JsonValue>> = {},
     options: {
       readonly signal?: AbortSignal;
       /** Deadline after startup, including waiting for Hopper's serial bridge. */
       readonly timeoutMs?: number;
       readonly progress?: ProgressReporter;
+      readonly operation?: string;
     } = {},
-  ): Promise<Result<JsonValue, AnalysisError>> {
+  ): Promise<Result<HopperContractReply<Contracts, M>, AnalysisError>> {
     const started = await this.start(options.signal);
     if (!started.ok) return started;
-    return this.#normalizeToolResult(
-      name,
-      await this.#request(name, arguments_, options),
+    return this.#typedReply(
+      method,
+      options.operation ?? method,
+      await this.#request(method, arguments_, options),
     );
   }
 
   /** Dispatch against the connected bridge without invoking startup or retry. */
-  callToolIfReady(
-    name: string,
+  callToolIfReady<M extends keyof Contracts & string>(
+    method: M,
     arguments_: Readonly<Record<string, JsonValue>> = {},
     options: { readonly signal?: AbortSignal } = {},
-  ): Promise<Result<JsonValue, AnalysisError> | undefined> {
+  ): Promise<
+    Result<HopperContractReply<Contracts, M>, AnalysisError> | undefined
+  > {
     if (!this.isReady()) return Promise.resolve(undefined);
-    return this.#request(name, arguments_, options).then((result) =>
-      this.#normalizeToolResult(name, result),
+    return this.#request(method, arguments_, options).then((result) =>
+      this.#typedReply(method, method, result),
+    );
+  }
+
+  #typedReply<M extends keyof Contracts & string>(
+    method: M,
+    operation: string,
+    result: Result<JsonValue, AnalysisError>,
+  ): Result<HopperContractReply<Contracts, M>, AnalysisError> {
+    const normalized = this.#normalizeToolResult(method, result);
+    if (!normalized.ok) return normalized;
+    if (this.#contracts[method] === undefined)
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          "hopper",
+          operation,
+          `No reply contract is installed for the Hopper bridge method ${method}; its reply was not read.`,
+        ),
+      );
+    return parseHopperReply<Contracts, M>(
+      this.#contracts,
+      method,
+      normalized.value,
+      operation,
     );
   }
 
@@ -752,6 +853,17 @@ export class HopperClient {
     }
   }
 
+  /**
+   * The ceilings this session admitted at start, for its cleanup requests
+   * (reauthentication and shutdown): a setting refused after startup must not
+   * block the cleanup that releases Hopper's document and files.
+   */
+  #cleanupLimits(): { readonly limits?: HopperSessionLimits } {
+    return this.#sessionLimits === undefined
+      ? {}
+      : { limits: this.#sessionLimits };
+  }
+
   /** Reauthenticate this run after late readiness or a lost transport. */
   async #reconnectForCleanup(): Promise<void> {
     if (this.#socket?.destroyed === true) this.#releaseTransport();
@@ -804,6 +916,7 @@ export class HopperClient {
         {
           signal: controller.signal,
           timeoutMs: HOPPER_SHUTDOWN_TIMEOUT_MS,
+          ...this.#cleanupLimits(),
         },
       );
       if (
@@ -831,7 +944,14 @@ export class HopperClient {
         logger: this.#logger,
         onDiagnostic: this.#options.onDiagnostic,
         request: (method) =>
-          this.#request(method, {}, { timeoutMs: HOPPER_SHUTDOWN_TIMEOUT_MS }),
+          this.#request(
+            method,
+            {},
+            {
+              timeoutMs: HOPPER_SHUTDOWN_TIMEOUT_MS,
+              ...this.#cleanupLimits(),
+            },
+          ),
         retainDocument: options.retainDocument === true,
         releaseTransport: () => this.#releaseTransport(),
       });
@@ -1076,6 +1196,8 @@ export class HopperClient {
       readonly signal?: AbortSignal;
       readonly timeoutMs?: number;
       readonly progress?: ProgressReporter;
+      /** Ceilings already admitted, such as the session's for cleanup. */
+      readonly limits?: HopperSessionLimits;
     },
   ): Promise<Result<JsonValue, AnalysisError>> {
     const id = this.#nextId++;
@@ -1114,22 +1236,37 @@ export class HopperClient {
     const payloadValue = { id, token, method, params };
     // Count escaped JSON before the request can wait in the FIFO. A rejected
     // payload is not serialized, and an admitted one is serialized only when
-    // it reaches the wire.
+    // it reaches the wire. Both ceilings are admitted here, in the caller's
+    // context; a queued request is written later outside it.
+    const requestLimit =
+      options.limits === undefined
+        ? admitBridgeRequestLimit(this.#options.bridgeMaxRequestBytes)
+        : ok(options.limits.requestLimit);
+    if (!requestLimit.ok) return requestLimit;
+    const replyLimit =
+      options.limits === undefined
+        ? admitBridgeReplyLimit(
+            this.#options.bridgeMaxReplyBytes ?? DEFAULT_BRIDGE_MAX_REPLY,
+          )
+        : ok(options.limits.replyLimit);
+    if (!replyLimit.ok) return replyLimit;
     const measured = jsonValueByteLength(
       payloadValue,
-      this.#options.bridgeMaxRequestBytes.maximumBytes,
+      requestLimit.value.maximumBytes,
     );
-    if (measured > this.#options.bridgeMaxRequestBytes.maximumBytes)
+    if (measured > requestLimit.value.maximumBytes)
       return err(
         bridgeRequestOversizeError(
           method,
-          this.#options.bridgeMaxRequestBytes,
+          requestLimit.value,
           measured,
           "Hopper",
         ),
       );
     const startedAt = performance.now();
     const result = await this.#requests.run(id, method, params, {
+      requestLimit: requestLimit.value,
+      replyLimit: replyLimit.value,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       ...(options.timeoutMs === undefined
         ? {}
@@ -1255,6 +1392,38 @@ export class HopperClient {
           launcherFailure: this.#launcherOutcome(false),
         }),
       );
+    }
+  }
+
+  #abortReplyStream(failure: JsonLineBridgeFailure): void {
+    switch (failure.kind) {
+      case "reply_oversize":
+        this.#failAll(
+          bridgeReplyOversizeError(
+            "Hopper",
+            this.#replyLimit,
+            failure.observedBytes,
+          ),
+        );
+        this.#socket?.destroy();
+        return;
+      case "utf8":
+        this.#abortProtocol(
+          "Hopper bridge response is not valid UTF-8",
+          failure.cause,
+        );
+        return;
+      case "envelope":
+        this.#abortProtocol(failure.cause.message, failure.cause);
+        return;
+      case "unknown_id":
+        this.#abortProtocol("Hopper returned an unknown response id");
+        return;
+      case "connection_rejected":
+        this.#abortProtocol(
+          `Hopper rejected the connection: ${failure.cause.message}`,
+          failure.cause,
+        );
     }
   }
 
