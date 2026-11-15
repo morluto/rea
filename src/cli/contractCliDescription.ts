@@ -160,6 +160,19 @@ export interface CliContractProjection<
   readonly cliOptionDependencies?: Readonly<
     Partial<Record<keyof CliOptions & string, readonly string[]>>
   >;
+  /**
+   * A CLI-only option whose values select another contract with the same
+   * CLI projection, such as `--kind` choosing which inventory to search.
+   * Other values, including the option's default, select the registered
+   * contract.
+   */
+  readonly operationBy?: CliOperationChoice<keyof CliOptions & string>;
+}
+
+/** Contracts a CLI-only option selects in place of the registered one. */
+export interface CliOperationChoice<Option extends string = string> {
+  readonly option: Option;
+  readonly contracts: Readonly<Record<string, ProjectedContract>>;
 }
 
 /** Schemas of the CLI-only options of one command, keyed by CLI key. */
@@ -1740,4 +1753,38 @@ const admitInvocation = (
     operation: contract.name,
   });
   return refused === undefined ? ok({ input, delivery }) : err(refused);
+};
+
+/**
+ * Describe each contract an operation option selects. Each must project to
+ * the registered command's exact arguments, options and object-level option
+ * rules, so the help and schema the registered contract advertises hold for
+ * every choice.
+ */
+export const describeOperationChoices = (
+  description: ContractCliDescription,
+  projection: CliContractProjection<string, CliOptionShape>,
+): ReadonlyMap<unknown, ContractCliDescription> => {
+  const choices = new Map<unknown, ContractCliDescription>();
+  const signature = (described: ContractCliDescription): string =>
+    JSON.stringify([
+      described.parameters.map(({ key, positional, schema }) => [
+        key,
+        positional,
+        z.toJSONSchema(schema, { unrepresentable: "any" }),
+      ]),
+      described.optionConstraints ?? null,
+    ]);
+  const expected = signature(description);
+  for (const [value, contract] of Object.entries(
+    projection.operationBy?.contracts ?? {},
+  )) {
+    const described = describeContractCommand(contract, projection);
+    if (signature(described) !== expected)
+      throw new Error(
+        `${contract.name} does not project to ${description.command}'s options`,
+      );
+    choices.set(value, described);
+  }
+  return choices;
 };
