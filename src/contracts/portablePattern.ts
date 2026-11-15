@@ -423,6 +423,16 @@ class Projector {
       } else members.push(low);
     }
     this.#index++;
+    // As for literals: V8 without `u` reads an astral member as two UTF-16
+    // units, and the one-unit non-ASCII class emitted for it would reject it.
+    if (
+      members.some((member) =>
+        typeof member === "number"
+          ? member > 0xffff
+          : Array.isArray(member) && member[1] > 0xffff,
+      )
+    )
+      throw new Unexpressible();
     const source = this.source.slice(start, this.#index);
     const { ascii: matched, nonAscii } = this.#membership(source, members);
     const ascii = negated
