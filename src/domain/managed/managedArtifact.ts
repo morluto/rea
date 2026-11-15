@@ -1,10 +1,33 @@
 import { z } from "zod";
+import type { CoverageStatus } from "../coverage.js";
 import { digestSchema } from "../digests.js";
 import { managedFieldConstantSchema } from "./managedFieldConstant.js";
 
 /** Build-local ECMA-335 metadata token emitted as an eight-digit lowercase hex value. */
 export const managedMetadataTokenSchema = z.string().regex(/^0x[0-9a-f]{8}$/u);
 const offsetSchema = z.int().min(0);
+
+/**
+ * Parser coverage of one managed inspection. `unavailable` means the parser
+ * examined nothing of that kind, unlike `partial`, which records a known gap.
+ */
+export const managedInspectionStateSchema = z.enum([
+  "complete",
+  "partial",
+  "unavailable",
+]);
+export type ManagedInspectionState = z.infer<
+  typeof managedInspectionStateSchema
+>;
+
+/**
+ * What a result derived from one managed inspection can claim about its
+ * coverage: an unavailable inspection examined nothing, so what it would cover
+ * is unknown rather than partially known.
+ */
+export const managedInspectionCoverage = (
+  state: ManagedInspectionState,
+): CoverageStatus => (state === "unavailable" ? "unknown" : state);
 
 /** A 16-byte CLI metadata GUID without RFC 4122 version/variant restrictions. */
 export const cliMetadataGuidSchema = z
@@ -510,7 +533,7 @@ export const managedArtifactInspectionSchema = z.object({
   resources: z.array(managedResourceSchema),
   attributes: z.array(customAttributeSchema),
   coverage: z.object({
-    state: z.enum(["complete", "partial", "unavailable"]),
+    state: managedInspectionStateSchema,
     issues: z.array(managedParseIssueSchema),
   }),
   limitations: z.array(z.string()),
@@ -582,7 +605,7 @@ export const managedMemberInspectionSchema = z
         "Examined zero-based MethodDef row interval before declaring-type selection; null means the row scope was not recorded. Row coordinates are build-local and cannot prove cross-build member absence for a page.",
       ),
     coverage: z.object({
-      state: z.enum(["complete", "partial", "unavailable"]),
+      state: managedInspectionStateSchema,
       issues: z.array(managedParseIssueSchema),
     }),
     limitations: z.array(z.string()),
@@ -629,7 +652,7 @@ export const managedNativeBoundaryInspectionSchema = z.object({
     mixed_mode_or_native_header: z.boolean().nullable(),
   }),
   coverage: z.object({
-    state: z.enum(["complete", "partial", "unavailable"]),
+    state: managedInspectionStateSchema,
     issues: z.array(managedParseIssueSchema),
   }),
   limitations: z.array(z.string()),

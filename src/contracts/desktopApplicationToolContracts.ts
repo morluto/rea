@@ -12,6 +12,7 @@ import type { ToolContract } from "./toolContractTypes.js";
 export const DESKTOP_APPLICATION_TOOL_CONTRACTS = [
   {
     name: "inspect_desktop_application",
+    availability: "standalone",
     ...toolContractMetadata("inspect_desktop_application"),
     kind: "artifact-provider",
     requiresActiveTarget: true,

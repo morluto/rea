@@ -1,3 +1,4 @@
+import type { JavaScriptMemberMutationAllowance } from "../domain/javascript/javascriptSemanticWorkAllowance.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
@@ -248,6 +249,7 @@ interface SpecifierContext {
   readonly packages: ReadonlyMap<string, PackageMetadata>;
   readonly packageManifestPathLookup: ReferenceSourcePathLookup;
   readonly unobservedPath: (path: string) => boolean;
+  readonly memberMutationAllowance?: JavaScriptMemberMutationAllowance;
 }
 
 /** Earlier unobserved candidates must not be treated as absent. */
@@ -556,6 +558,7 @@ const appendFile = (
           entry.bytes,
           language,
           packageTypeForFile(entry.path, context),
+          context.memberMutationAllowance,
         );
   output.entries.push({
     path: entry.path,
@@ -647,6 +650,7 @@ export const parseReferenceSourceEntries = (
   read: ReferenceSourceRead,
   exclusions: HistoricalSourceGraphInput["exclusions"],
   signal?: AbortSignal,
+  memberMutationAllowance?: JavaScriptMemberMutationAllowance,
 ): ParsedReferenceSourceEntries => {
   const output: ParsedReferenceSourceEntries = {
     entries: [],
@@ -673,6 +677,9 @@ export const parseReferenceSourceEntries = (
     unobservedPath,
     packages: packageInventory.packages,
     packageManifestPathLookup: packageInventory.pathLookup,
+    ...(memberMutationAllowance === undefined
+      ? {}
+      : { memberMutationAllowance }),
   };
   for (const entry of read.entries) {
     if (signal?.aborted === true) break;
