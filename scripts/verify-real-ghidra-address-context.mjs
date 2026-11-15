@@ -82,7 +82,7 @@ try {
   connected = true;
   await call("open_binary", { path, provider_id: "ghidra" });
   const overview = parseEvidence(await call("binary_overview"));
-  assert.equal(overview.subject.digest.sha256, sha256);
+  assert.equal(overview.subject.identity.sha256, sha256);
   const base = overview.normalized_result.image_base;
   assert.match(base, /^0x[0-9a-f]+$/u);
   assert.notEqual(base, "0x0");

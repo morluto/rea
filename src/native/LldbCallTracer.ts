@@ -66,7 +66,7 @@ import {
   NativeCommandFailure,
   resolveXcrunTool,
   type ResolvedTool,
-} from "./CommandRunner.js";
+} from "../providers/NativeCommandRunner.js";
 import { projectPartialNativeCalls } from "./NativeCallObservation.js";
 import { LldbReadbackFiles } from "./LldbReadbackFiles.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";

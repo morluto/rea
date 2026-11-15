@@ -1,3 +1,4 @@
+import { unknownTarget } from "./targetIdentity.js";
 import { describe, expect, it } from "vitest";
 
 import { createEvidence, type Evidence } from "./evidence.js";
@@ -111,7 +112,7 @@ const processComparison = (
   extraLinks: readonly string[] = [],
 ): Evidence =>
   createEvidence(
-    undefined,
+    unknownTarget("derived-from-linked-evidence"),
     {
       id: "rea-process",
       name: "REA deterministic process harness",
@@ -136,7 +137,7 @@ const multiSourceProcessComparison = (
   right: readonly Evidence[],
 ): Evidence =>
   createEvidence(
-    undefined,
+    unknownTarget("derived-from-linked-evidence"),
     {
       id: "rea-process",
       name: "REA deterministic process harness",
@@ -207,7 +208,7 @@ const artifactComparison = (
   result?: JsonValue,
 ): Evidence =>
   createEvidence(
-    undefined,
+    unknownTarget("derived-from-linked-evidence"),
     {
       id: "rea-artifact-comparison",
       name: "REA artifact comparison",
@@ -631,7 +632,7 @@ describe("reconstruction verification integrity", () => {
     const comparison = processComparison(left, right, processResult());
     const mutations = Array.from({ length: 101 }, (_, index) =>
       createEvidence(
-        undefined,
+        unknownTarget("derived-from-linked-evidence"),
         { id: "fixture", name: "Fixture", version: "1" },
         {
           predicateType: "rea.residual-unknown-mutation",

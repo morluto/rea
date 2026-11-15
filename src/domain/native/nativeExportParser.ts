@@ -7,21 +7,21 @@ import {
   mappedFileOffset,
   imageFileMappings,
   readMappedCString,
-} from "../../domain/binaryContainer.js";
-import { architectureForElfMachine } from "../../domain/native/elfImage.js";
-import { readElfStringBytes } from "../../domain/native/elfStringBytes.js";
-import { readElfSymbol } from "../../domain/elfSymbol.js";
+} from "../binaryContainer.js";
+import { architectureForElfMachine } from "./elfImage.js";
+import { readElfStringBytes } from "./elfStringBytes.js";
+import { readElfSymbol } from "../elfSymbol.js";
 import {
   readElfDirectoryFromBuffer,
   type NativeSection,
-} from "../../domain/native/nativeSectionDirectory.js";
-import { readPeImage } from "../../domain/native/peImage.js";
+} from "./nativeSectionDirectory.js";
+import { readPeImage } from "./peImage.js";
 import {
   allKeyed,
   keyedBy,
   uniqueKeyed,
   type Keyed,
-} from "../../domain/keyedCollection.js";
+} from "../keyedCollection.js";
 import {
   MAX_NATIVE_EXPORT_ROWS,
   decodeElfExportName,
@@ -29,7 +29,7 @@ import {
   type NativeExportIssue,
   type NativeExports,
   type PeExport,
-} from "../../domain/native/nativeExports.js";
+} from "./nativeExports.js";
 
 type Artifact = NativeExports["artifact"];
 

@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../../src/domain/targetIdentity.js";
 import { expect, it } from "vitest";
 import { kunaQueryFailureForCaller } from "../../../../src/kuna/KunaQueryErrors.js";
 import {
@@ -19,7 +20,7 @@ const capturedOutput = {
   truncated: false,
 };
 const partialObservation = createEvidence(
-  undefined,
+  unknownTarget("not-observed"),
   { id: "kuna", name: "Kuna", version: null },
   {
     operation: "kuna:strings",

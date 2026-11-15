@@ -100,9 +100,8 @@ it("returns explicit complete artifact-bound Evidence without retention", async 
   expect(result.value.parameters).toEqual({ path: report.artifact.path });
   expect(result.value.normalized_result).toEqual(report);
   expect(result.value.subject).toMatchObject({
-    format: "file",
     local_path: report.artifact.path,
-    digest: { sha256: report.artifact.sha256 },
+    identity: { format: "file", sha256: report.artifact.sha256 },
   });
 });
 

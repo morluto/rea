@@ -1,3 +1,4 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
 import {
   gdbMiConstText,
   gdbMiResultHeader,
@@ -841,7 +842,7 @@ export class GdbSessionManager {
       const startupEvidence =
         startupEvidencePayload === undefined
           ? undefined
-          : createEvidence(undefined, session.provider, {
+          : createEvidence(unknownTarget("not-observed"), session.provider, {
               predicateType: "rea.debugger.startup-observation",
               operation: "start_gdb_session",
               parameters: {
@@ -856,9 +857,8 @@ export class GdbSessionManager {
                 ...startupEvidencePayload,
                 records: [...startupEvidencePayload.records],
               },
-              subjectUnavailableReason:
-                "No usable debugger session became ready during GDB startup.",
               limitations: [
+                "No usable debugger session became ready during GDB startup.",
                 "GDB startup failed before a usable session could be established; captured startup records are incomplete.",
                 ...(session.invalidUtf8Observed
                   ? [
@@ -1050,60 +1050,63 @@ export class GdbSessionManager {
               command,
               accepted.value,
             );
-            const evidence = createEvidence(undefined, session.provider, {
-              predicateType: "rea.debugger.console-observation",
-              operation: "gdb_console",
-              parameters: { session_id: sessionId, command },
-              result: {
-                command,
-                mi: result.mi,
-                records: [...result.records],
-                console: result.console,
-                target: result.target,
-                log: result.log,
-                output_truncated: result.output_truncated,
-                ...(result.output_limits === undefined
-                  ? {}
-                  : { output_limits: result.output_limits }),
-                ...(result.output_invalid_utf8
-                  ? { output_invalid_utf8: true as const }
-                  : {}),
-                completion_status: result.completion_status,
+            const evidence = createEvidence(
+              unknownTarget("not-observed"),
+              session.provider,
+              {
+                predicateType: "rea.debugger.console-observation",
+                operation: "gdb_console",
+                parameters: { session_id: sessionId, command },
+                result: {
+                  command,
+                  mi: result.mi,
+                  records: [...result.records],
+                  console: result.console,
+                  target: result.target,
+                  log: result.log,
+                  output_truncated: result.output_truncated,
+                  ...(result.output_limits === undefined
+                    ? {}
+                    : { output_limits: result.output_limits }),
+                  ...(result.output_invalid_utf8
+                    ? { output_invalid_utf8: true as const }
+                    : {}),
+                  completion_status: result.completion_status,
+                },
+                rawResult: {
+                  command,
+                  mi: result.mi,
+                  records: [...result.records],
+                  console: result.console,
+                  target: result.target,
+                  log: result.log,
+                  output_truncated: result.output_truncated,
+                  ...(result.output_limits === undefined
+                    ? {}
+                    : { output_limits: result.output_limits }),
+                  ...(result.output_invalid_utf8
+                    ? { output_invalid_utf8: true as const }
+                    : {}),
+                  completion_status: result.completion_status,
+                },
+                limitations: [
+                  "The active GDB inferior identity is not established by the debugger session identifier.",
+                  ...(result.mi.length === 0
+                    ? [
+                        "A separately tokenized read-only query confirmed return to GDB's command loop. The original result record could not be framed independently from raw stdout; its bytes remain in records and its result class is unknown.",
+                      ]
+                    : []),
+                  "MI records are returned as decoded text; their semantics depend on GDB version and target.",
+                  ...gdbRetainedOutputLimitations(result, acceptedOutput),
+                  ...(result.output_invalid_utf8
+                    ? [
+                        "MI stream bytes were not valid UTF-8; returned text contains replacement characters.",
+                      ]
+                    : []),
+                  "The unrestricted GDB console can access local shell, filesystem, network, and target controls.",
+                ],
               },
-              rawResult: {
-                command,
-                mi: result.mi,
-                records: [...result.records],
-                console: result.console,
-                target: result.target,
-                log: result.log,
-                output_truncated: result.output_truncated,
-                ...(result.output_limits === undefined
-                  ? {}
-                  : { output_limits: result.output_limits }),
-                ...(result.output_invalid_utf8
-                  ? { output_invalid_utf8: true as const }
-                  : {}),
-                completion_status: result.completion_status,
-              },
-              subjectUnavailableReason:
-                "The active GDB inferior identity is not established by the debugger session identifier.",
-              limitations: [
-                ...(result.mi.length === 0
-                  ? [
-                      "A separately tokenized read-only query confirmed return to GDB's command loop. The original result record could not be framed independently from raw stdout; its bytes remain in records and its result class is unknown.",
-                    ]
-                  : []),
-                "MI records are returned as decoded text; their semantics depend on GDB version and target.",
-                ...gdbRetainedOutputLimitations(result, acceptedOutput),
-                ...(result.output_invalid_utf8
-                  ? [
-                      "MI stream bytes were not valid UTF-8; returned text contains replacement characters.",
-                    ]
-                  : []),
-                "The unrestricted GDB console can access local shell, filesystem, network, and target controls.",
-              ],
-            });
+            );
             return ok({ result, evidence });
           } catch (cause) {
             if (cause instanceof AnalysisCancelledError) return err(cause);
@@ -1121,19 +1124,22 @@ export class GdbSessionManager {
                 ...processExit.partial,
                 command,
               };
-              const evidence = createEvidence(undefined, session.provider, {
-                predicateType: "rea.debugger.console-observation",
-                operation: "gdb_console",
-                parameters: { session_id: sessionId, command },
-                result: { ...result, records: [...result.records] },
-                rawResult: { ...result, records: [...result.records] },
-                subjectUnavailableReason:
-                  "The active GDB inferior identity is not established by the debugger session identifier.",
-                limitations: [
-                  "GDB exited before returning a correlated MI result record; only records retained for the active command are returned raw.",
-                  ...gdbRetainedOutputLimitations(result, acceptedOutput),
-                ],
-              });
+              const evidence = createEvidence(
+                unknownTarget("not-observed"),
+                session.provider,
+                {
+                  predicateType: "rea.debugger.console-observation",
+                  operation: "gdb_console",
+                  parameters: { session_id: sessionId, command },
+                  result: { ...result, records: [...result.records] },
+                  rawResult: { ...result, records: [...result.records] },
+                  limitations: [
+                    "The active GDB inferior identity is not established by the debugger session identifier.",
+                    "GDB exited before returning a correlated MI result record; only records retained for the active command are returned raw.",
+                    ...gdbRetainedOutputLimitations(result, acceptedOutput),
+                  ],
+                },
+              );
               const stopped = await this.#stopDebuggerOnly(session);
               if (stopped.status === "incomplete")
                 return err(
@@ -1694,7 +1700,7 @@ export class GdbSessionManager {
     const partialObservation =
       partial === undefined
         ? undefined
-        : createEvidence(undefined, session.provider, {
+        : createEvidence(unknownTarget("not-observed"), session.provider, {
             predicateType: "rea.debugger.console-observation",
             operation: "gdb_console",
             parameters: {
@@ -1703,9 +1709,8 @@ export class GdbSessionManager {
             },
             result: { ...partial, records: [...partial.records] },
             rawResult: { ...partial, records: [...partial.records] },
-            subjectUnavailableReason:
-              "The active GDB inferior identity is not established by the debugger session identifier.",
             limitations: [
+              "The active GDB inferior identity is not established by the debugger session identifier.",
               "The GDB MI protocol failed; retained records are partial and command completion is unknown.",
               "The unrestricted GDB console can access local shell, filesystem, network, and target controls.",
             ],
@@ -1926,27 +1931,30 @@ export class GdbSessionManager {
             ),
           },
         );
-        const evidence = createEvidence(undefined, session.provider, {
-          predicateType:
-            operation === "start_gdb_session"
-              ? "rea.debugger.startup-observation"
-              : "rea.debugger.console-observation",
-          operation,
-          parameters: {
-            session_id: session.id,
-            command: pending.evidenceCommand,
+        const evidence = createEvidence(
+          unknownTarget("not-observed"),
+          session.provider,
+          {
+            predicateType:
+              operation === "start_gdb_session"
+                ? "rea.debugger.startup-observation"
+                : "rea.debugger.console-observation",
+            operation,
+            parameters: {
+              session_id: session.id,
+              command: pending.evidenceCommand,
+            },
+            result: { ...partial, records: [...partial.records] },
+            rawResult: { ...partial, records: [...partial.records] },
+            limitations: [
+              "The active GDB inferior identity is not established by the debugger session identifier.",
+              `The GDB command exceeded its ${String(acceptedDeadline.value)} ms deadline (deadlineExpired). ${debuggerAdmissionRecovery(acceptedDeadline)} Retained MI and stream records are partial and command completion is unknown.`,
+              ...gdbRetainedOutputLimitations(partial, acceptedOutput),
+              "Cleanup of the owned GDB process was requested because output correlation could no longer be guaranteed.",
+              "The unrestricted GDB console can access local shell, filesystem, network, and target controls.",
+            ],
           },
-          result: { ...partial, records: [...partial.records] },
-          rawResult: { ...partial, records: [...partial.records] },
-          subjectUnavailableReason:
-            "The active GDB inferior identity is not established by the debugger session identifier.",
-          limitations: [
-            `The GDB command exceeded its ${String(acceptedDeadline.value)} ms deadline (deadlineExpired). ${debuggerAdmissionRecovery(acceptedDeadline)} Retained MI and stream records are partial and command completion is unknown.`,
-            ...gdbRetainedOutputLimitations(partial, acceptedOutput),
-            "Cleanup of the owned GDB process was requested because output correlation could no longer be guaranteed.",
-            "The unrestricted GDB console can access local shell, filesystem, network, and target controls.",
-          ],
-        });
+        );
         void this.#stopDebuggerOnly(session).then((stopped) => {
           if (
             stopped.status === "incomplete" &&
@@ -2019,24 +2027,27 @@ export class GdbSessionManager {
             : {}),
           completion_status: "unknown",
         };
-        const evidence = createEvidence(undefined, session.provider, {
-          predicateType: "rea.debugger.console-observation",
-          operation: "gdb_console",
-          parameters: {
-            session_id: session.id,
-            command: pending.evidenceCommand,
+        const evidence = createEvidence(
+          unknownTarget("not-observed"),
+          session.provider,
+          {
+            predicateType: "rea.debugger.console-observation",
+            operation: "gdb_console",
+            parameters: {
+              session_id: session.id,
+              command: pending.evidenceCommand,
+            },
+            result: { ...partial, records: [...partial.records] },
+            rawResult: { ...partial, records: [...partial.records] },
+            limitations: [
+              "The active GDB inferior identity is not established by the debugger session identifier.",
+              "The GDB command was cancelled; retained MI records are partial and command completion is unknown.",
+              ...gdbRetainedOutputLimitations(partial, acceptedOutput),
+              "Shutdown of the owned GDB process was requested because output correlation could no longer be guaranteed.",
+              "The unrestricted GDB console can access local shell, filesystem, network, and target controls.",
+            ],
           },
-          result: { ...partial, records: [...partial.records] },
-          rawResult: { ...partial, records: [...partial.records] },
-          subjectUnavailableReason:
-            "The active GDB inferior identity is not established by the debugger session identifier.",
-          limitations: [
-            "The GDB command was cancelled; retained MI records are partial and command completion is unknown.",
-            ...gdbRetainedOutputLimitations(partial, acceptedOutput),
-            "Shutdown of the owned GDB process was requested because output correlation could no longer be guaranteed.",
-            "The unrestricted GDB console can access local shell, filesystem, network, and target controls.",
-          ],
-        });
+        );
         session.pending.delete(token);
         session.protocolError = {
           code: "command-cancelled",

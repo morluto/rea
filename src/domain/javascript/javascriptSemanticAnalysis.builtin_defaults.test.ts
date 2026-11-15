@@ -58,6 +58,155 @@ it.each([
   expect(ir.configurationOperations.map(({ key }) => key)).toEqual(["MODE"]);
 });
 
+// Whether `process` still names the original global process object uses
+// activation timing, like the require loader. Each row states why the
+// replacement is proven to run after the read or write, or why it may not.
+it.each([
+  {
+    source: `const value = process.env.kept; for (const x of [1]) process = other;`,
+    keys: ["kept"],
+    why: "the loop is a later top-level statement, so it starts only after the read",
+  },
+  {
+    source: `const value = process.env.kept; for (const x of []) process = other;`,
+    keys: ["kept"],
+    why: "an empty array literal with unchanged array iteration never runs the body",
+  },
+  {
+    source: `process = wrap(process.env.kept);`,
+    keys: ["kept"],
+    why: "the right-hand side is evaluated before the assignment stores its value",
+  },
+  {
+    source: `process.env = {}; for (const x of [1]) process = other; const proc = require('process'); const mode = proc.env.wrong;`,
+    keys: [],
+    why: "the env write runs before the loop, so it reaches the original object",
+  },
+  {
+    source: `globalThis.process.env = {}; for (const x of [1]) globalThis.process = other; const proc = require('process'); const mode = proc.env.wrong;`,
+    keys: [],
+    why: "a qualified write before the loop reaches the original object",
+  },
+  {
+    source: `Array.prototype[Symbol.iterator] = gen; const value = process.env.maybe; for (const x of []) process = other;`,
+    keys: [],
+    why: "a replaced array iterator can yield from an empty literal",
+  },
+  {
+    source: `for (const x of [1]) process = other; const value = process.env.wrong;`,
+    keys: [],
+    why: "the loop body runs before the read",
+  },
+  {
+    source: `class Box { value = process.env.wrong; } for (const x of [1]) process = other; new Box();`,
+    keys: [],
+    why: "an instance field runs on construction, after the loop",
+  },
+  {
+    source: `process = class { value = process.env.wrong; }; new process();`,
+    keys: [],
+    why: "a field of the replacement class runs on construction, after the replacement",
+  },
+])(
+  "orders process replacement by activation: $source ($why)",
+  ({ source, keys }) => {
+    expect(
+      analyzeCommonJsSemanticFixture(source).configurationOperations.map(
+        ({ key }) => key,
+      ),
+    ).toEqual(keys);
+  },
+);
+
+// A write through `process` reaches the original object unless a replacement
+// is proven to run before it. A replacement that may run first is not enough.
+it.each([
+  {
+    source: `process.env = {}; while (ready) process = other;`,
+    keys: [],
+    why: "the loop body may never run, and runs only after the write",
+  },
+  {
+    source: `if (ready) process = other; process.env = {};`,
+    keys: [],
+    why: "the replacement may be skipped, so the write may reach the original",
+  },
+  {
+    source: `process.env = {}; if (ready) process = other;`,
+    keys: [],
+    why: "the write runs before the replacement",
+  },
+  {
+    source: `if (ready) globalThis.process = other; globalThis.process.env = {};`,
+    keys: [],
+    why: "a skipped qualified replacement leaves the original in place",
+  },
+  {
+    source: `function swap() { process = other; } swap(); process.env = {};`,
+    keys: [],
+    why: "a replacement inside a function body is not proven to run",
+  },
+  {
+    source: `function write() { process.env = {}; } write(); process = other;`,
+    keys: [],
+    why: "the write runs in a call made before the replacement",
+  },
+  {
+    source: `process = other; process.env = {};`,
+    keys: [],
+    why: "the replacement may be the original object itself",
+  },
+  {
+    source: `if (ready) process = other; patch(process);`,
+    keys: [],
+    why: "an escape that may reach the original is kept like a write",
+  },
+  {
+    source: `if (ready) globalThis.process = other; patch(globalThis.process);`,
+    keys: [],
+    why: "a qualified escape that may reach the original is kept",
+  },
+  {
+    source: `if (ready) process = other; process.env.kept = "";`,
+    keys: [],
+    why: "a nested write that may reach the original is kept",
+  },
+  {
+    source: `process = {}; patch(process);`,
+    keys: ["kept"],
+    why: "a fresh replacement always runs before the escape",
+  },
+  {
+    source: `process = {}; process.env = {};`,
+    keys: ["kept"],
+    why: "a fresh object always replaces the original before the write",
+  },
+  {
+    source: `globalThis.process = {}; process.env = {};`,
+    keys: ["kept"],
+    why: "a fresh qualified replacement always runs before the write",
+  },
+  {
+    source: `const original = process; process = {}; if (ready) process = original; process.env = {};`,
+    keys: [],
+    why: "a later conditional write may restore the original before the write",
+  },
+  {
+    source: `const host = ready ? globalThis : {}; host.process = {}; process.env = {};`,
+    keys: [],
+    why: "a write through a possible alias of the global object may not replace process",
+  },
+])(
+  "attributes process writes that may reach the original: $source ($why)",
+  ({ source, keys }) => {
+    expect(
+      analyzeCommonJsSemanticFixture(
+        `${source} const proc = require('process'); const mode = proc.env.kept;`,
+      ).configurationOperations.map(({ key }) => key),
+    ).toEqual(keys);
+  },
+);
+
 it("preserves exports captured before a later loader overwrite", () => {
   const ir = analyzeCommonJsSemanticFixture(`
     const fs=require('node:fs'); fs.readFileSync('before');

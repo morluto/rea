@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Cli } from "incur";
@@ -87,7 +88,7 @@ it.each([
     const snapshot = join(root, "snapshot.json");
     let allowProvider = true;
     await writeFile(path, "synthetic analysis database");
-    const history = createEvidence(undefined, identity, {
+    const history = createEvidence(unknownTarget("not-observed"), identity, {
       operation: "health",
       parameters: { facet: "historical-project-analysis-reports" },
       result: { origin: "caller-project" },

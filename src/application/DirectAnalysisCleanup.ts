@@ -19,10 +19,8 @@ import {
   analysisErrorWithCleanupFailure,
   analysisErrorWithCloseRejection,
 } from "../domain/analysisErrorCleanup.js";
-import {
-  tryParseEvidence,
-  withEvidenceCallerInputPath,
-} from "../domain/evidence.js";
+import { withEvidenceCallerInputPath } from "../domain/evidence.js";
+import { recognizeEvidence } from "../domain/evidenceValidation.js";
 
 /**
  * Project a one-shot failure for its invocation, which has released its
@@ -45,11 +43,13 @@ export const projectDirectAnalysisFailure = (
     partial !== null &&
     !Array.isArray(partial) &&
     partial.kind === "unretained-evidence";
-  const observation = tryParseEvidence(wrapped ? partial.evidence : partial);
+  // Only authenticated Evidence gains the request path; a record that fails
+  // authentication is projected as the owner reported it, never as absent.
+  const observation = recognizeEvidence(wrapped ? partial.evidence : partial);
   const rebound =
-    observation === undefined
+    !observation.ok || observation.value === undefined
       ? undefined
-      : withEvidenceCallerInputPath(observation, callerInputPath);
+      : withEvidenceCallerInputPath(observation.value, callerInputPath);
   const completed = sourcePublicationRecoveryOf(error)?.completed;
   const completedWithPath =
     completed?.kind === "unretained-evidence" ||

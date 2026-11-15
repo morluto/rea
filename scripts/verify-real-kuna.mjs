@@ -514,7 +514,7 @@ const verifyKuna = async (
       const pseudocode = await cold.call("procedure_pseudo_code", {
         procedure: address,
       });
-      assert.equal(pseudocode.structured.subject.digest.sha256, sha256);
+      assert.equal(pseudocode.structured.subject.identity.sha256, sha256);
       assert.equal(pseudocode.structured.provider.id, "kuna");
       const source = pseudocode.structured.raw_result?.source?.kind;
       // A fast export can finish before the first request reaches the
