@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { createHash } from "node:crypto";
 import {
   chmod,
@@ -19,7 +20,12 @@ import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ok, err } from "../domain/result.js";
-import type { NativeCommandRunner } from "./CommandRunner.js";
+import {
+  NativeCommandFailure,
+  XcrunCommandRunner,
+  type NativeCommandRunner,
+} from "./CommandRunner.js";
+import { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import type { NativeCallTracer } from "./LldbCallTracer.js";
 import { NativeMacOSProvider } from "./NativeMacOSProvider.js";
 import {
@@ -27,7 +33,10 @@ import {
   withSignatureTarget,
 } from "./SignatureTargetBinding.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import { resolvedAnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  primaryAnalysisError,
+  resolvedAnalysisError,
+} from "../domain/analysisErrorBase.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { signatureInspectionFixture } from "../../tests/fixtures/nativeCommands.js";
@@ -394,6 +403,209 @@ it("retains the snapshot root until its failed descriptor owner confirms release
   await expect(stat(root.path)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
+it.each([false, true])(
+  "retains completed signature facts when private-root cleanup fails: %s",
+  async (cleanupFails) => {
+    const target = await createTarget("same");
+    const resources = new ArtifactResourceScope();
+    const unrelated = new ArtifactResourceScope();
+    const facts = signatureInspectionFixture();
+    const root = await createRoot(cleanupFails ? 1 : 0);
+    try {
+      const result = await withSignatureTarget(
+        target,
+        resources,
+        async () => ok(facts),
+        undefined,
+        async () => root,
+      );
+      if (!cleanupFails) {
+        expect(result).toEqual(ok(facts));
+        await expect(stat(root.path)).rejects.toMatchObject({ code: "ENOENT" });
+        return;
+      }
+      if (result.ok) throw new Error("Expected root cleanup failure");
+      expect(result.error).toBeInstanceOf(ProviderCleanupError);
+      if (!(result.error instanceof ProviderCleanupError))
+        throw new Error("Expected retained cleanup owner");
+      expect(result.error.partialObservation).toBe(facts);
+      expect(result.error.completedObservation).toBe(facts);
+      expect(result.error.cleanupIncomplete).toBe(true);
+      expect(result.error.cleanupResources).toEqual([root.path]);
+      expect((await stat(root.path)).isDirectory()).toBe(true);
+      const peer = await withSignatureTarget(
+        target,
+        unrelated,
+        async () => ok(facts),
+        undefined,
+        createRoot,
+      );
+      expect(peer).toEqual(ok(facts));
+      await unrelated.close();
+      expect(result.error.cleanupIncomplete).toBe(true);
+      expect(result.error.cleanupResources).toEqual([root.path]);
+      await resources.close();
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect(result.error.cleanupResources).toEqual([]);
+      expect(result.error.partialObservation).toBe(facts);
+      expect(result.error.completedObservation).toBe(facts);
+      await expect(stat(root.path)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await unrelated.close();
+      await resources.close();
+    }
+  },
+);
+
+it("retains cancellation during failed cleanup retry without losing ownership", async () => {
+  const target = await createTarget("same");
+  const resources = new ArtifactResourceScope();
+  const controller = new AbortController();
+  const reason = { caller: "cancelled during cleanup retry" };
+  const root = await createRoot();
+  let attempts = 0;
+  const create = async () => ({
+    path: root.path,
+    async close() {
+      attempts += 1;
+      if (attempts === 2) controller.abort(reason);
+      if (attempts <= 2) throw new Error("controlled root close failure");
+      await root.close();
+    },
+  });
+  try {
+    const first = await withSignatureTarget(
+      target,
+      resources,
+      async () => ok(signatureInspectionFixture()),
+      undefined,
+      create,
+    );
+    if (first.ok) throw new Error("Expected retained root");
+    const second = await withSignatureTarget(
+      target,
+      resources,
+      unusedInspection,
+      controller.signal,
+      create,
+    );
+    if (second.ok) throw new Error("Expected failed cleanup retry");
+    expect(second.error.cleanupIncomplete).toBe(true);
+    expect(second.error.cleanupResources).toContain(root.path);
+    expect(second.error.cleanupPrimary?.secondaryFailures).toContainEqual(
+      expect.objectContaining({
+        _tag: "AnalysisCancelledError",
+        cause: reason,
+      }),
+    );
+    await resources.close();
+    expect(first.error.cleanupIncomplete).toBe(false);
+    expect(second.error.cleanupIncomplete).toBe(false);
+    await expect(stat(root.path)).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    await resources.close();
+  }
+});
+
+it("retains late cancellation when creating the signature root fails", async () => {
+  const target = await createTarget("same");
+  const resources = new ArtifactResourceScope();
+  const controller = new AbortController();
+  const reason = { caller: "cancelled during root creation" };
+  const physical = Object.assign(new Error("denied root creation"), {
+    code: "EACCES",
+  });
+  const result = await withSignatureTarget(
+    target,
+    resources,
+    unusedInspection,
+    controller.signal,
+    async () => {
+      controller.abort(reason);
+      throw physical;
+    },
+  );
+  if (result.ok) throw new Error("Expected root creation failure");
+  expect(result.error.cause).toBe(physical);
+  expect(result.error.secondaryFailures).toHaveLength(1);
+  expect(result.error.secondaryFailures[0]).toMatchObject({
+    _tag: "AnalysisCancelledError",
+    cause: reason,
+  });
+  expect(result.error.cleanupIncomplete).toBe(false);
+  await resources.close();
+});
+
+it("does not adopt a typed caller abort reason as a root-creation failure", async () => {
+  const target = await createTarget("same");
+  const resources = new ArtifactResourceScope();
+  const controller = new AbortController();
+  const reason = new ProviderCleanupError("foreign", ["unowned"], {});
+  const result = await withSignatureTarget(
+    target,
+    resources,
+    unusedInspection,
+    controller.signal,
+    async () => {
+      controller.abort(reason);
+      throw reason;
+    },
+  );
+  if (result.ok) throw new Error("Expected cancellation");
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisCancelledError",
+    cause: reason,
+  });
+  expect(result.error.cleanupResources).not.toContain("unowned");
+  await resources.close();
+});
+
+it.each([false, true])(
+  "retains late cancellation after a signature failure while root cleanup fails: %s",
+  async (cleanupFails) => {
+    const target = await createTarget("same");
+    const resources = new ArtifactResourceScope();
+    const controller = new AbortController();
+    const reason = { caller: "cancelled during root cleanup" };
+    const physical = new AnalysisOutputError(
+      "inspect_signature",
+      "inspection failed",
+    );
+    const root = await createRoot(cleanupFails ? 1 : 0);
+    try {
+      const result = await withSignatureTarget(
+        target,
+        resources,
+        async () => err(physical),
+        controller.signal,
+        async () => ({
+          path: root.path,
+          async close() {
+            try {
+              await root.close();
+            } finally {
+              controller.abort(reason);
+            }
+          },
+        }),
+      );
+      if (result.ok) throw new Error("Expected inspection failure");
+      expect(physical.secondaryFailures).toHaveLength(1);
+      expect(physical.secondaryFailures[0]).toMatchObject({
+        _tag: "AnalysisCancelledError",
+        cause: reason,
+      });
+      expect(result.error.cleanupIncomplete).toBe(cleanupFails);
+      await resources.close();
+      expect(resolvedAnalysisError(result.error)).toBe(physical);
+      expect(result.error.cleanupIncomplete).toBe(false);
+      await expect(stat(root.path)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await resources.close();
+    }
+  },
+);
+
 const opaqueReasons = [
   null,
   0,
@@ -645,3 +857,180 @@ it("does not adopt an inspection's arbitrary thrown cleanup marker", async () =>
   expect(result.error.cleanupResources).toEqual([]);
   await resources.close();
 });
+
+it.each(["io", "cancelled"] as const)(
+  "preserves a codesign %s failure when later target verification observes cancellation",
+  async (kind) => {
+    const target = await createTarget("registered source bytes");
+    const controller = new AbortController();
+    const reason = { caller: "cancel after codesign result", kind };
+    const output = {
+      stdout: "physical output",
+      stderr: "physical diagnostic",
+      stdoutBytes: 15,
+      stderrBytes: 19,
+      exitCode: null,
+      signal: null,
+      truncated: false,
+    };
+    const failure = new NativeCommandFailure(
+      "codesign",
+      kind,
+      null,
+      { cancellation: { reason } },
+      output,
+      "command cleanup remains unknown",
+      ["command-owner"],
+    );
+    const runner: NativeCommandRunner = {
+      run: async () => {
+        controller.abort(reason);
+        return err(failure);
+      },
+    };
+    const client = new NativeMacOSProvider(
+      {},
+      runner,
+      "darwin",
+      () => unusedTracer,
+      createRoot,
+    ).createClient(target);
+    try {
+      const result = await client.execute(
+        "inspect_signature",
+        {},
+        { signal: controller.signal },
+      );
+      if (result.ok) throw new Error("Expected codesign failure");
+      expect(result.error._tag).toBe(
+        kind === "cancelled"
+          ? "AnalysisCancelledError"
+          : "ProviderAdapterError",
+      );
+      expect(result.error.capturedOutput).toMatchObject({
+        stdout: output.stdout,
+        stderr: output.stderr,
+      });
+      expect(result.error.cleanupIncomplete).toBe(true);
+      expect(result.error.cleanupResources).toEqual(["command-owner"]);
+      if (kind === "cancelled") expect(result.error.cause).toBe(reason);
+      else {
+        expect(result.error.cause).toBe(failure);
+        expect(result.error.secondaryFailures).toContainEqual(
+          expect.objectContaining({
+            _tag: "AnalysisCancelledError",
+            cause: reason,
+          }),
+        );
+      }
+    } finally {
+      await client.close();
+    }
+  },
+);
+
+it.each(["unchanged", "cancelled", "changed"] as const)(
+  "keeps a codesign cleanup marker live after %s target verification",
+  async (outcome) => {
+    const target = await createTarget("registered source bytes");
+    const controller = new AbortController();
+    const reason = { request: "cancel after native command failure" };
+    const process = Object.assign(new EventEmitter(), {
+      exitCode: 1,
+      signalCode: null,
+      stdout: null,
+      stderr: null,
+      kill: () => {
+        throw new Error("Exited fixture must not be signalled");
+      },
+    });
+    let mayClean = false;
+    let cleanupAttempts = 0;
+    const owner = new ProviderProcessSupervisor({
+      process,
+      ownsProcessLifetime: true,
+      cleanup: async () => {
+        cleanupAttempts++;
+        return mayClean
+          ? { cleaned: true, signaled: false }
+          : { cleaned: false, reason: "codesign worker remains owned" };
+      },
+    });
+    process.emit("close", 1, null);
+    const failure = new NativeCommandFailure(
+      "codesign",
+      "io",
+      1,
+      { cleanupOwner: owner },
+      {
+        stdout: "physical output",
+        stderr: "physical diagnostic",
+        stdoutBytes: 15,
+        stderrBytes: 19,
+        exitCode: 1,
+        signal: null,
+        truncated: false,
+      },
+      "codesign worker remains owned",
+      ["native-command-process"],
+    );
+    const runner = new XcrunCommandRunner({}, async () => {
+      if (outcome === "cancelled") controller.abort(reason);
+      if (outcome === "changed")
+        await writeFile(target.path, "changed source bytes");
+      return err(failure);
+    });
+    const client = new NativeMacOSProvider(
+      {},
+      runner,
+      "darwin",
+      () => unusedTracer,
+      createRoot,
+    ).createClient(target);
+    onTestFinished(async () => {
+      mayClean = true;
+      expect((await client.close()).ok).toBe(true);
+    });
+    const result = await client.execute(
+      "inspect_signature",
+      {},
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("Expected codesign failure");
+    const primary = primaryAnalysisError(result.error);
+    expect(primary._tag).toBe(
+      outcome === "changed"
+        ? "AnalysisArtifactChangedError"
+        : "ProviderAdapterError",
+    );
+    if (outcome !== "changed") {
+      if (!(primary.cause instanceof NativeCommandFailure))
+        throw new Error("Expected physical codesign failure");
+      expect(primary.cause.cause).toBe(failure);
+      expect(primary.capturedOutput).toMatchObject({
+        stdout: "physical output",
+        stderr: "physical diagnostic",
+      });
+    }
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.cleanupResources).toEqual(["native-command-process"]);
+    expect(primary.secondaryFailures).toEqual(
+      outcome === "cancelled"
+        ? [
+            expect.objectContaining({
+              _tag: "AnalysisCancelledError",
+              cause: reason,
+            }),
+          ]
+        : [],
+    );
+    expect((await client.close()).ok).toBe(false);
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(cleanupAttempts).toBe(1);
+    mayClean = true;
+    expect((await client.close()).ok).toBe(true);
+    expect(cleanupAttempts).toBe(2);
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(result.error.cleanupResources).toEqual([]);
+  },
+);

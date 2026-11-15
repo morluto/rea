@@ -1,3 +1,7 @@
+import type {
+  FileMapping,
+  ZeroFillMapping,
+} from "../../domain/virtualFileMapping.js";
 import { decodeMachoFixedName } from "../AppleMachoNames.js";
 import {
   isMachoZeroFillSection,
@@ -13,10 +17,8 @@ import {
   BinaryFormatFailure,
   BinaryReader,
   type BinaryContainer,
-  type FileMapping,
   type ImageSection,
   type LoadRegion,
-  type ZeroFillMapping,
 } from "./BinaryContainer.js";
 import {
   MachoLoadCommandCursor,
@@ -32,7 +34,7 @@ export const readMachoImage = (bytes: Buffer): BinaryContainer => {
   const table = parsed.value;
   const { headerSize, commandBytes, littleEndian: little } = table;
   const bits = table.wide ? 64 : 32;
-  const reader = new BinaryReader(bytes, little);
+  const reader = new BinaryReader(bytes, little, "macho");
   const commandStart = reader.table(
     BigInt(headerSize),
     commandBytes,
@@ -235,6 +237,10 @@ const machoImageSection = ({
     declared_range: { offset: sectionOffset, size: sectionSize },
     segment_mapping: segmentMapping,
     segment_unmapped: segmentUnmapped,
+    relocations: {
+      offset: section.relocationOffset,
+      count: section.relocationCount,
+    },
     ...range,
     file_backed: fileBacked,
     read_only: readOnly,

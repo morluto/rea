@@ -5,12 +5,26 @@ import { Ajv2020 } from "ajv/dist/2020.js";
  * Verify canonical names, converted JSON Schemas, and session catalog metadata.
  * Only this operation needs built contracts; path checks remain source-only.
  */
-export const verifyCompleteToolCatalog = async (client, options) => {
-  const [{ requireMcpLifecycleResult, sortVerifierNames }, { TOOL_CONTRACTS }] =
-    await Promise.all([
-      import("./mcp-verifier-results.mjs"),
-      import("../../dist/contracts/toolContracts.js"),
-    ]);
+export const verifyCompleteToolCatalog = async (
+  client,
+  options,
+  environment = {},
+) => {
+  const [
+    { requireMcpLifecycleResult, sortVerifierNames },
+    { TOOL_CONTRACTS },
+    dialect,
+    { ADVERTISED_INPUT_DIALECT_BASELINE, ADVERTISED_OUTPUT_DIALECT_BASELINE },
+    { mcpInputSchemaProfileSchema },
+    { mcpOutputSchemaProfileSchema },
+  ] = await Promise.all([
+    import("./mcp-verifier-results.mjs"),
+    import("../../dist/contracts/toolContracts.js"),
+    import("../../dist/contracts/advertisedDialect.js"),
+    import("../../dist/contracts/advertisedDialectBaseline.js"),
+    import("../../dist/config/mcpInputSchemaProfile.js"),
+    import("../../dist/config/mcpOutputSchemaProfile.js"),
+  ]);
   const listed = await client.listTools(undefined, options);
   const canonical = sortVerifierNames(TOOL_CONTRACTS.map(({ name }) => name));
   const observed = sortVerifierNames(listed.tools.map(({ name }) => name));
@@ -36,6 +50,31 @@ export const verifyCompleteToolCatalog = async (client, options) => {
         );
     }
   }
+  // Compare the advertisement with the profiles actually passed to the server.
+  const inputProfile = mcpInputSchemaProfileSchema.parse(
+    environment.REA_MCP_INPUT_SCHEMA_PROFILE ?? "compact",
+  );
+  const outputProfile = mcpOutputSchemaProfileSchema.parse(
+    environment.REA_MCP_OUTPUT_SCHEMA_PROFILE ?? "full",
+  );
+  const regressions = [
+    ...dialect.advertisedDialectRegressions(
+      dialect.countAdvertisedDialectViolations(
+        listed.tools.flatMap(dialect.advertisedInputDialectViolations),
+      ),
+      ADVERTISED_INPUT_DIALECT_BASELINE[inputProfile],
+    ),
+    ...dialect.advertisedDialectRegressions(
+      dialect.countAdvertisedDialectViolations(
+        listed.tools.flatMap(dialect.advertisedOutputPatternViolations),
+      ),
+      ADVERTISED_OUTPUT_DIALECT_BASELINE[outputProfile],
+    ),
+  ];
+  if (regressions.length > 0)
+    throw new Error(
+      `packaged MCP advertises constructs outside the portable schema dialect: ${regressions.join("; ")}`,
+    );
   const sessionDefinition = listed.tools.find(
     ({ name }) => name === "binary_session",
   );

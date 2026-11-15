@@ -17,7 +17,7 @@ const configurationHost = (
 ): DoctorHost => ({
   ...systemDoctorHost({ environment: { ...environment } }),
   ...host({
-    installationPaths: () => Promise.resolve([]),
+    installationLaunchers: () => Promise.resolve([]),
     clientRegistrations: () => Promise.resolve([]),
   }),
 });
@@ -32,7 +32,7 @@ describe("doctor Hopper startup timeout", () => {
         value === undefined ? {} : { REA_HOPPER_STARTUP_TIMEOUT_MS: value },
     }),
     ...host({
-      installationPaths: () => Promise.resolve([]),
+      installationLaunchers: () => Promise.resolve([]),
       clientRegistrations: () => Promise.resolve([]),
       ...overrides,
     }),
@@ -330,6 +330,7 @@ describe("doctor MCP startup readiness", () => {
   const alignedCodex: ClientRegistrationStatus = {
     client: "codex",
     config_path: "/home/user/.codex/config.toml",
+    command_identity: "owned",
     command: ["/current/rea", "mcp"],
     state: "aligned",
     remediation: null,
@@ -724,8 +725,13 @@ describe("doctor installation identity", () => {
     const result = await runDoctor(
       undefined,
       host({
-        installationPaths: () =>
-          Promise.resolve(["/usr/local/bin/rea", "/home/user/bin/rea"]),
+        installationLaunchers: () =>
+          Promise.resolve(
+            ["/usr/local/bin", "/home/user/bin"].map((installation) => ({
+              path: `${installation}/rea`,
+              installation,
+            })),
+          ),
         installedSkillIdentity: () =>
           Promise.resolve({
             version: "10",
@@ -803,6 +809,7 @@ describe("doctor installation identity", () => {
             {
               client: "codex",
               config_path: "/home/user/.codex/config.toml",
+              command_identity: "owned",
               command: ["/old/rea", "mcp"],
               state: "stale",
               remediation:
@@ -868,6 +875,7 @@ describe("doctor scoped readiness", () => {
       {
         client: "codex",
         config_path: "/home/user/.codex/config.toml",
+        command_identity: "owned",
         command: ["/current/rea", "mcp"],
         state: "aligned",
         remediation: null,
@@ -875,6 +883,7 @@ describe("doctor scoped readiness", () => {
       {
         client: "cursor",
         config_path: "/home/user/.cursor/mcp.json",
+        command_identity: "unknown",
         command: ["/old/rea", "mcp"],
         state: "unknown",
         remediation: "Run rea setup to refresh this registration.",
@@ -919,6 +928,7 @@ describe("doctor scoped readiness", () => {
             {
               client: "kimi",
               config_path: "/home/user/.kimi-code/mcp.json",
+              command_identity: "owned",
               command: ["/current/rea", "mcp"],
               state: "aligned",
               remediation: null,
@@ -949,6 +959,7 @@ describe("Grok Bot readiness", () => {
       {
         client: "grok_bot",
         config_path: "/home/user/.grokbot",
+        command_identity: "unknown",
         command: [],
         state: "manual",
         remediation: "Add the connector from the Grok Bot chat.",
@@ -1009,6 +1020,7 @@ describe("doctor scoped readiness", () => {
             {
               client: "codex",
               config_path: "/home/user/.codex/config.toml",
+              command_identity: "owned",
               command: ["rea", "mcp"],
               state: "aligned",
               remediation: null,
@@ -1381,5 +1393,26 @@ describe("doctor target admission diagnostics", () => {
       }),
     );
     expect(result.checks).toContainEqual(targetCheck);
+  });
+});
+
+describe("doctor installation count", () => {
+  it("reports one installation when several launchers resolve to it", async () => {
+    const result = await runDoctor(
+      undefined,
+      host({
+        installationLaunchers: () =>
+          Promise.resolve(
+            ["rea", "rea.cmd"].map((name) => ({
+              path: `C:\\npm\\${name}`,
+              installation: "c:\\npm",
+            })),
+          ),
+      }),
+    );
+    expect(result.identity?.installations).toEqual({
+      paths: ["C:\\npm\\rea", "C:\\npm\\rea.cmd"],
+      state: "single",
+    });
   });
 });

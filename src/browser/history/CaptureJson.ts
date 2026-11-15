@@ -1,6 +1,7 @@
+import { escapeJsonPointerToken } from "../../domain/jsonPointer.js";
+import { captureBudgets } from "./CaptureBudgets.js";
 import { visit } from "jsonc-parser";
 import { LosslessNumber } from "lossless-json";
-import { WEB_NETWORK_CAPTURE_LIMITS } from "../../domain/webNetworkCapture.js";
 import { CaptureFormatError } from "./CaptureFormatError.js";
 import { TextDecoder } from "node:util";
 
@@ -20,7 +21,7 @@ const captureNodeAdmission = (maximumNodes: number | undefined) => {
     nodes++;
     if (maximumNodes !== undefined && nodes > maximumNodes)
       throw new CaptureFormatError(
-        "input-limit",
+        { name: "parser-nodes", maximum: maximumNodes },
         "JSON exceeds its parser node representation allowance.",
       );
   };
@@ -36,7 +37,7 @@ const selectCaptureObjectProperty = (
     throw new TypeError("JSON visitor emitted a property outside an object.");
   if (frame.members.has(key))
     throw new CaptureFormatError(
-      "format",
+      "malformed",
       `${format} JSON contains duplicate object members.`,
     );
   frame.pendingKey = key;
@@ -58,17 +59,17 @@ export const parseCaptureJson = (
       return `${parent.pointer}/${parent.items.length}`;
     return parent.pendingKey === undefined
       ? parent.pointer
-      : `${parent.pointer}/${parent.pendingKey.replaceAll("~", "~0").replaceAll("/", "~1")}`;
+      : `${parent.pointer}/${escapeJsonPointerToken(parent.pendingKey)}`;
   };
   // The document root is container level 1. Admit a container only while
   // its own level stays within the budget; values inside an admitted
   // container add no level, so empty and scalar-bearing containers agree.
   const admitContainer = (): void => {
     admitNode();
-    if (frames.length >= WEB_NETWORK_CAPTURE_LIMITS.depth)
+    if (frames.length >= captureBudgets().depth)
       throw new CaptureFormatError(
-        "input-limit",
-        `${format} exceeds the 64-level complete-evidence nesting budget. This release has no runtime override.`,
+        { name: "nesting-depth", maximum: captureBudgets().depth },
+        `${format} exceeds max_nesting_depth (${String(captureBudgets().depth)} levels).`,
         valuePointer(),
       );
   };
@@ -118,17 +119,20 @@ export const parseCaptureJson = (
         admitNode();
         if (typeof value === "number")
           append(new LosslessNumber(text.slice(offset, offset + length)));
-        else if (
-          value === null ||
-          typeof value === "boolean" ||
-          typeof value === "string"
-        )
-          append(value);
+        // jsonc-parser 3.3.1 builds an escaped string fragment by fragment,
+        // which V8 keeps as a rope several times larger than its text.
+        // JSON.parse of the same accepted token returns one flat string.
+        else if (typeof value === "string")
+          append(JSON.parse(text.slice(offset, offset + length)));
+        else if (value === null || typeof value === "boolean") append(value);
         else
           throw new TypeError("JSON visitor emitted an unsupported literal.");
       },
       onError: () => {
-        throw new CaptureFormatError("format", `${format} is malformed JSON.`);
+        throw new CaptureFormatError(
+          "malformed",
+          `${format} is malformed JSON.`,
+        );
       },
     },
     {
@@ -149,7 +153,7 @@ export const decodeCaptureText = (
     return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch {
     throw new CaptureFormatError(
-      "format",
+      "malformed",
       `${format} is not valid UTF-8 JSON.`,
     );
   }

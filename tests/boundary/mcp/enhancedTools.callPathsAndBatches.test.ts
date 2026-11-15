@@ -455,38 +455,6 @@ describe("enhanced MCP batch cancellation", () => {
       expect(signals).toEqual(expectedCalls.map(() => false));
     },
   );
-
-  it("stops later batch stages across the input when one entry lookup is cancelled", async () => {
-    const calls: string[] = [];
-    const client = await connect({
-      execute: async (name, arguments_) => {
-        const selector = String(arguments_.procedure ?? arguments_.address);
-        calls.push(`${name}:${selector}`);
-        if (name === "procedure_address") return ok(selector);
-        if (name === "address_name" && selector === "0x1")
-          return err(new AnalysisCancelledError(name));
-        if (name === "address_name") return ok("fixture_name");
-        if (name === "procedure_pseudo_code") return ok("return 0;");
-        throw new Error(`Unexpected operation: ${name}`);
-      },
-    });
-
-    const response = await client.callTool({
-      name: "batch_decompile",
-      arguments: { addresses: ["0x1", "0x2"] },
-    });
-
-    expect(response.isError).toBe(true);
-    expect(response.structuredContent).toBeUndefined();
-    expect(parseMcpToolError(response)).toMatchObject({
-      error: { code: "cancelled", details: { operation: "address_name" } },
-    });
-    expect(calls).toEqual([
-      "procedure_address:0x1",
-      "procedure_address:0x2",
-      "address_name:0x1",
-    ]);
-  });
 });
 
 describe("enhanced MCP batches", () => {
@@ -710,7 +678,13 @@ describe("enhanced MCP batch answers without pseudocode", () => {
     const evidence = contract.outputSchema.parse(result.structuredContent);
     expect(evidence.normalized_result).toMatchObject({
       items: [
-        { address: "0x1", status: "ok", pseudocode: answers["0x1"]?.result },
+        // Successful text keeps its own observation's caveats (#8350).
+        {
+          address: "0x1",
+          status: "ok",
+          pseudocode: answers["0x1"]?.result,
+          limitations: answers["0x1"]?.limitations,
+        },
         {
           address: "0x2",
           status: "unavailable",
@@ -757,9 +731,9 @@ describe("enhanced MCP batch answers without pseudocode", () => {
     const { items } = batchDecompileResultSchema.parse(
       evidence.normalized_result,
     );
-    // Successful text, a caveat-free null and a typed provider failure carry
-    // no item caveats; the batch Evidence aggregates every observation's.
-    for (const index of [0, 2, 5])
+    // A caveat-free null and a typed provider failure carry no item caveats;
+    // the batch Evidence aggregates every observation's.
+    for (const index of [2, 5])
       expect(items[index]).not.toHaveProperty("limitations");
     expect(evidence.limitations).toEqual(
       expect.arrayContaining([

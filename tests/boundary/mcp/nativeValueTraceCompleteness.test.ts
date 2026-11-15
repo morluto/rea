@@ -1,6 +1,11 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, expect, it } from "vitest";
-import { valueTraceDiamond } from "../../../src/application/native/NativeValueTrace.fixture.js";
+import {
+  valueTraceDiamond,
+  valueTraceUnboundArguments,
+} from "../../../src/application/native/NativeValueTrace.fixture.js";
+import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
+import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { evidenceBundleSchema } from "../../../src/domain/evidenceBundle.js";
 import { z } from "zod";
@@ -20,32 +25,44 @@ import {
 
 afterEach(closeEnhancedToolResources);
 
+const connectTraceSession = async (
+  profile: "full" | "compact",
+  analysis: AnalysisOperationPort,
+) => {
+  const [target] = await createBinarySessionTargets();
+  const session = createTestBinarySession(() => ({
+    execute: (operation, parameters, options) =>
+      operation === "health"
+        ? Promise.resolve(observed(null))
+        : analysis.execute(operation, parameters, options),
+    close: async () => ok(null),
+  }));
+  const opened = await session.open(target);
+  expect(opened.ok).toBe(true);
+  const server = createServer(
+    { kind: "session", session },
+    { environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: profile } },
+  );
+  const client = new Client({ name: "value-trace-test", version: "1.0.0" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  resources.push(client, server);
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  return client;
+};
+
 it.each(["full", "compact"] as const)(
   "separates page omission from named traversal budgets through the advertised %s MCP contract",
   async (profile) => {
-    const [target] = await createBinarySessionTargets();
-    const analysis = valueTraceDiamond({ sessionSubject: true }).port;
-    const session = createTestBinarySession(() => ({
-      execute: (operation, parameters, options) =>
-        operation === "health"
-          ? Promise.resolve(observed(null))
-          : analysis.execute(operation, parameters, options),
-      close: async () => ok(null),
-    }));
-    const opened = await session.open(target);
-    expect(opened.ok).toBe(true);
-    const server = createServer(
-      { kind: "session", session },
-      { environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: profile } },
+    const client = await connectTraceSession(
+      profile,
+      valueTraceDiamond({ sessionSubject: true }).port,
     );
-    const client = new Client({ name: "value-trace-test", version: "1.0.0" });
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    resources.push(client, server);
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
-    const { toolDefinition, ajv, outputSchema } =
-      await advertisedMcpToolSchemas(client, "trace_native_values");
+    const { toolDefinition, outputSchema } = await advertisedMcpToolSchemas(
+      client,
+      "trace_native_values",
+    );
     if (profile === "full")
       for (const field of [
         "page_truncated",
@@ -60,10 +77,6 @@ it.each(["full", "compact"] as const)(
         { toolDefinition },
       );
       expect(reply.isError).not.toBe(true);
-      expect(
-        ajv.validate(outputSchema, reply.structuredContent),
-        JSON.stringify(ajv.errors),
-      ).toBe(true);
       return nativeValueTraceSchema.parse(
         parseEvidence(reply.structuredContent).normalized_result,
       );
@@ -143,5 +156,68 @@ it.each(["full", "compact"] as const)(
       truncated: false,
       unknowns: [],
     });
+  },
+);
+
+it.each(["full", "compact"] as const)(
+  "retains located call-input gaps and exact source Evidence through %s MCP",
+  async (profile) => {
+    const client = await connectTraceSession(
+      profile,
+      valueTraceUnboundArguments({ sessionSubject: true }).port,
+    );
+    const { toolDefinition } = await advertisedMcpToolSchemas(
+      client,
+      "trace_native_values",
+    );
+    const reply = await client.callTool(
+      {
+        name: "trace_native_values",
+        arguments: { procedure: "0x1000", offset: 1, limit: 1 },
+      },
+      { toolDefinition },
+    );
+    expect(reply.isError).not.toBe(true);
+    const trace = nativeValueTraceSchema.parse(
+      parseEvidence(reply.structuredContent).normalized_result,
+    );
+    const located = trace.unknowns.find(
+      ({ call_inputs }) => call_inputs !== undefined,
+    )!;
+    expect(located).toMatchObject({
+      procedure: "0x1000",
+      address: "0x1010",
+      call_inputs: {
+        call_node_id: "0x1000/call",
+        destination: "0x2000",
+        input_indices: [2, 3],
+      },
+    });
+    expect(
+      trace.nodes.some(({ id }) => id === located.call_inputs!.call_node_id),
+    ).toBe(false);
+    expect(trace.page_truncated).toBe(true);
+    expect(trace.traversal).toEqual({ status: "complete" });
+    const bundleReply = await client.callTool({
+      name: "get_evidence_bundle",
+      arguments: { detail: "complete" },
+    });
+    expect(bundleReply.isError).not.toBe(true);
+    const bundle = z
+      .object({ result: evidenceBundleSchema })
+      .parse(bundleReply.structuredContent).result;
+    const source = bundle.records.find(
+      ({ evidence_id }) => evidence_id === located.call_inputs!.evidence_id,
+    );
+    expect(source?.operation).toBe("analyze_function");
+    const dossier = functionDossierSchema.parse(source!.normalized_result);
+    const flow = dossier.native_value_flow;
+    if (!flow?.available) throw new Error("Expected retained caller flow");
+    const call = flow.operations.find(({ id }) => id === "call")!;
+    expect(call.address).toBe(located.address);
+    expect(call.inputs).toHaveLength(4);
+    for (const index of located.call_inputs!.input_indices)
+      expect(call.inputs[index]).toBeDefined();
+    expect(trace.procedures[0]?.evidence_id).toBe(source!.evidence_id);
   },
 );

@@ -1,12 +1,21 @@
+import { cut } from "./compactValue.js";
+import { CHECK_VALUE_CHARS } from "./valueCuts.js";
 import type { JsonValue } from "../jsonValue.js";
 import {
   collapseWhitespace,
   countComparison,
+  type CountCheck,
   type DesktopTaskCheck,
   type PointerCheck,
 } from "./appTask.js";
 import type { DesktopStatePath } from "./desktopState.js";
-import { locatePointer, type Located } from "./viewPointer.js";
+import {
+  elementText,
+  isXmlElement,
+  locatePointer,
+  selectorTest,
+  type Located,
+} from "./viewPointer.js";
 import {
   viewlessEntryAt,
   zipArrayLeavesOut,
@@ -17,9 +26,25 @@ import {
 /** One file as the app's data/get reports it: its view, or why it has none. An absent file has no entry. */
 export interface TaskFileView {
   readonly format: string | null;
+  /** Present when the view is of the document inside a gzip file, which checks read as the document. */
+  readonly compression?: string;
   readonly view: JsonValue | null;
   readonly error?: string | null;
 }
+
+/** The format owns selector interpretation, including inside archive entries. */
+const selectorFormat = (
+  entry: TaskFileView | undefined,
+  pointer: string,
+): string | null | undefined => {
+  if (entry?.format !== "zip") return entry?.format;
+  const member = zipEntryAt(entry.view, pointer);
+  return typeof member === "object" &&
+    member !== null &&
+    typeof member.format === "string"
+    ? member.format
+    : "zip";
+};
 
 /**
  * How one check came out against one set of views. `undecided` marks a failure
@@ -34,6 +59,8 @@ export type TaskCheckOutcome = {
 };
 
 type Verdict = Omit<TaskCheckOutcome, "id">;
+/** A check that reads a file's view, every kind but the screen judge. */
+type FileCheck = Exclude<DesktopTaskCheck, { kind: "screen_judge" }>;
 type Check<Kind extends DesktopTaskCheck["kind"]> = Extract<
   DesktopTaskCheck,
   { kind: Kind }
@@ -44,10 +71,7 @@ const fail = (description: string): Verdict => ({
   passed: false,
   description,
 });
-const shown = (value: JsonValue): string => {
-  const text = JSON.stringify(value);
-  return text.length > 200 ? `${text.slice(0, 200)}…` : text;
-};
+type ShowValue = (value: JsonValue) => string;
 /** A failure for want of a readable or whole view, not for what the view holds. */
 const unread = (description: string): Verdict => ({
   ...fail(description),
@@ -90,11 +114,13 @@ export const sameJson = (
 /** A decimal numeral as FreeCAD and other apps write numbers in text, such as `5.0000000000000000`. */
 const NUMERAL = /^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$/u;
 
-/** A number, or a numeral string read as one; undefined for anything else or a numeral past the doubles. */
-const numberOf = (value: JsonValue): number | undefined => {
+/** A number, or a whitespace-trimmed numeral string read as one; undefined for anything else or a numeral past the doubles. */
+export const numberOf = (value: JsonValue): number | undefined => {
   if (typeof value === "number") return value;
-  if (typeof value !== "string" || !NUMERAL.test(value)) return undefined;
-  const number = Number(value);
+  if (typeof value !== "string") return undefined;
+  const text = value.trim();
+  if (!NUMERAL.test(text)) return undefined;
+  const number = Number(text);
   return Number.isFinite(number) ? number : undefined;
 };
 
@@ -126,7 +152,7 @@ const truncatedView = (format: string | null, view: JsonValue | null) => {
 
 /** A file's view of one format, or why the check cannot read it; an absent file reads as empty. */
 const viewOf = (
-  check: DesktopTaskCheck,
+  check: FileCheck,
   entry: TaskFileView | undefined,
   format: string | undefined,
 ): { view: JsonValue | null; truncated: boolean } | Verdict => {
@@ -143,11 +169,7 @@ const viewOf = (
   };
 };
 
-const compared = (
-  check: Check<"line_count" | "row_count">,
-  n: number,
-  what: string,
-): Verdict => {
+const compared = (check: CountCheck, n: number, what: string): Verdict => {
   const { operator, n: expected } = countComparison(check) ?? {
     operator: "equals",
     n: Number.NaN,
@@ -165,6 +187,7 @@ const compared = (
 const lineVerdict = (
   check: Check<"lines_present" | "lines_absent" | "line_count">,
   entry: TaskFileView | undefined,
+  shown: ShowValue,
 ): Verdict => {
   const read = viewOf(check, entry, "text");
   if ("passed" in read) return read;
@@ -199,14 +222,35 @@ const lineVerdict = (
   );
 };
 
-/** A value compared within a tolerance: numbers, and numeral strings, by their difference. */
+/**
+ * Whether `value` is an XML element whose joined text is the number: an XML
+ * file, or an XML entry inside a zip. A JSON object with the same shape is
+ * the value itself, not a cell.
+ */
+const joinsElementText = (
+  format: string | null | undefined,
+  view: JsonValue | null,
+  pointer: string,
+  value: JsonValue,
+): boolean => {
+  if (!isXmlElement(value)) return false;
+  if (format === "xml") return true;
+  if (format !== "zip") return false;
+  const entry = zipEntryAt(view, pointer);
+  return typeof entry === "object" && entry.format === "xml";
+};
+
+/** A value compared within a tolerance: numbers, and numeral strings, by their difference. An XML element's text is joined only when `join` says the view is XML. */
 const nearVerdict = (
   at: string,
   found: JsonValue,
   expected: number,
   tolerance: number,
+  join: boolean,
+  shown: ShowValue,
 ): Verdict => {
-  const number = numberOf(found);
+  const read = join ? elementText(found) : found;
+  const number = numberOf(read);
   const within = `within ${shown(tolerance)} of ${shown(expected)}`;
   if (number === undefined)
     return fail(`${at} is ${shown(found)}, not a number`);
@@ -256,11 +300,14 @@ const noValue = (
 const valueVerdict = (
   check: Check<"value_equals" | "value_absent">,
   entry: TaskFileView | undefined,
+  shown: ShowValue,
 ): Verdict => {
   const read = viewOf(check, entry, undefined);
   if ("passed" in read) return read;
   const located =
-    entry === undefined ? NOTHING : locatePointer(read.view, check.pointer);
+    entry === undefined
+      ? NOTHING
+      : locatePointer(read.view, check.pointer, entry.format);
   const at = `${check.file} at ${check.pointer}`;
   const unknown = unreadOrPartial(check, entry?.format, read, located);
   if (unknown !== undefined) return unknown;
@@ -278,8 +325,24 @@ const valueVerdict = (
   if (whole && truncated) return undecided(check.file);
   if (check.kind === "value_equals") {
     if (located.kind === "none") return noValue(at, located, truncated);
-    if (check.tolerance !== undefined && typeof check.value === "number")
-      return nearVerdict(at, located.value, check.value, check.tolerance);
+    if (check.tolerance !== undefined && typeof check.value === "number") {
+      // A cut element's kept runs can join into a number the file never held.
+      const join = joinsElementText(
+        entry?.format,
+        read.view,
+        check.pointer,
+        located.value,
+      );
+      if (join && truncated) return undecided(check.file);
+      return nearVerdict(
+        at,
+        located.value,
+        check.value,
+        check.tolerance,
+        join,
+        shown,
+      );
+    }
     return sameJson(located.value, check.value)
       ? pass(`${at} is ${shown(check.value)}`)
       : fail(`${at} is ${shown(located.value)}, not ${shown(check.value)}`);
@@ -290,43 +353,20 @@ const valueVerdict = (
     : fail(`${at} is ${shown(located.value)}`);
 };
 
-/** An element of REA's XML view: its tag name, attributes and children. */
-export const isXmlElement = (
-  value: JsonValue | null | undefined,
-): value is Record<string, JsonValue> & {
-  name: string;
-  children: JsonValue[];
-} =>
-  isRecord(value) &&
-  typeof value.name === "string" &&
-  isRecord(value.attributes) &&
-  Array.isArray(value.children);
-
-/**
- * An element's text as XPath's `string()` reads it from what the view keeps:
- * every text node among its children and its descendants', in document order.
- */
-export const elementText = (element: JsonValue): string => {
-  const parts: string[] = [];
-  const pending: JsonValue[] = [element];
-  for (let node = pending.pop(); node !== undefined; node = pending.pop())
-    if (typeof node === "string") parts.push(node);
-    else if (isXmlElement(node))
-      for (let index = node.children.length - 1; index >= 0; index -= 1)
-        pending.push(node.children[index] ?? null);
-  return parts.join("");
-};
-
 /**
  * Whether a string a pointer reaches is text of the document: a member of an
  * element's `children` (a text node) or `attributes` (an attribute's value),
  * rather than an element's name or a field of the DOCTYPE.
  */
-const isTextAt = (view: JsonValue | null, pointer: string): boolean => {
+const isTextAt = (
+  view: JsonValue | null,
+  pointer: string,
+  format: string | null,
+): boolean => {
   const segments = pointer.split("/");
   const field = segments.at(-2);
   if (field !== "children" && field !== "attributes") return false;
-  const owner = locatePointer(view, segments.slice(0, -2).join("/"));
+  const owner = locatePointer(view, segments.slice(0, -2).join("/"), format);
   return owner.kind === "value" && isXmlElement(owner.value);
 };
 
@@ -350,11 +390,16 @@ const comparedText = (
   check: Check<"text_equals" | "text_contains">,
   at: string,
   found: string,
+  shown: ShowValue,
 ): Verdict => {
   const collapse = check.normalize_whitespace === true;
   const text = collapse ? collapseWhitespace(found) : found;
   const value = collapse ? collapseWhitespace(check.value) : check.value;
-  const how = collapse ? " with whitespace collapsed" : "";
+  const read =
+    check.text_attribute === undefined
+      ? ""
+      : ` in its ${check.text_attribute} values`;
+  const how = `${read}${collapse ? " with whitespace collapsed" : ""}`;
   if (check.kind === "text_equals")
     return text === value
       ? pass(`${at} has the text ${shown(value)}${how}`)
@@ -368,6 +413,7 @@ const comparedText = (
 const textVerdict = (
   check: Check<"text_equals" | "text_contains">,
   entry: TaskFileView | undefined,
+  shown: ShowValue,
 ): Verdict => {
   const read = viewOf(check, entry, undefined);
   if ("passed" in read) return read;
@@ -376,7 +422,7 @@ const textVerdict = (
   const zip = entry.format === "zip";
   if (!zip && entry.format !== "xml")
     return fail(`${check.file} is read as ${String(entry.format)}, not xml`);
-  const located = locatePointer(read.view, check.pointer);
+  const located = locatePointer(read.view, check.pointer, entry.format);
   const unknown = unreadOrPartial(check, entry.format, read, located);
   if (unknown !== undefined) return unknown;
   const problem = zip ? notXmlEntry(check, read.view) : undefined;
@@ -395,18 +441,62 @@ const textVerdict = (
         )
       : noValue(at, located, false);
   const found = located.value;
+  // Only an element has attributes of its own and of its descendants to join.
+  const attribute = check.text_attribute;
   if (
     typeof found === "string"
-      ? !isTextAt(read.view, check.pointer)
+      ? attribute !== undefined ||
+        !isTextAt(read.view, check.pointer, entry.format)
       : !isXmlElement(found)
   )
     return fail(
-      `${at} is ${shown(found)}, not an element, a text node or an attribute value`,
+      `${at} is ${shown(found)}, not ${attribute === undefined ? "an element, a text node or an attribute value" : "an element"}`,
     );
   // A text node is whole. An element's text in a cut view may lack what the cut
   // dropped from its middle, so its kept runs can read as text it never had.
   if (typeof found !== "string" && truncated) return undecided(check.file);
-  return comparedText(check, at, elementText(found));
+  return comparedText(check, at, elementText(found, attribute), shown);
+};
+
+/** How many members of the array at a pointer, or of those a selector matches, compared with the expected number. */
+const memberVerdict = (
+  check: Check<"member_count">,
+  entry: TaskFileView | undefined,
+  shown: ShowValue,
+): Verdict => {
+  const { matching, pointer } = check;
+  const read = viewOf(check, entry, undefined);
+  if ("passed" in read) return read;
+  const located: Located =
+    entry === undefined
+      ? NOTHING
+      : locatePointer(read.view, pointer, entry.format);
+  const at = pointer === "" ? check.file : `${check.file} at ${pointer}`;
+  const unknown = unreadOrPartial(check, entry?.format, read, located);
+  if (unknown !== undefined) return unknown;
+  if (located.kind === "unresolved") return fail(`${at}: ${located.problem}`);
+  const cut =
+    entry?.format === "zip"
+      ? zipArrayLeavesOut(read.view, pointer)
+      : read.truncated;
+  if (located.kind === "none")
+    return cut ? undecided(check.file) : noValue(at, located, false);
+  const items = located.value;
+  if (!Array.isArray(items))
+    return fail(`${at} is ${shown(items)}, not an array`);
+  // A count is decided only on an array the view holds whole.
+  if (cut) return undecided(check.file);
+  // The parser refuses a `matching` that is no selector.
+  const meets =
+    matching === undefined
+      ? () => true
+      : (selectorTest(matching, selectorFormat(entry, pointer)) ??
+        (() => false));
+  return compared(
+    check,
+    items.filter(meets).length,
+    `member(s) of ${at}${matching === undefined ? "" : ` matching ${matching}`}`,
+  );
 };
 
 /** A table's columns and rows; a table the view lacks has none, unless the view left tables out. */
@@ -458,6 +548,7 @@ export const countTaskRows = (
 const rowVerdict = (
   check: Check<"row_present" | "row_absent" | "row_count">,
   entry: TaskFileView | undefined,
+  shown: ShowValue,
 ): Verdict => {
   const read = viewOf(check, entry, "sqlite");
   if ("passed" in read) return read;
@@ -490,8 +581,9 @@ const rowVerdict = (
 };
 
 const verdict = (
-  check: DesktopTaskCheck,
+  check: FileCheck,
   entry: TaskFileView | undefined,
+  shown: ShowValue,
 ): Verdict => {
   switch (check.kind) {
     case "file_present":
@@ -505,26 +597,43 @@ const verdict = (
     case "lines_present":
     case "lines_absent":
     case "line_count":
-      return lineVerdict(check, entry);
+      return lineVerdict(check, entry, shown);
     case "value_equals":
     case "value_absent":
-      return valueVerdict(check, entry);
+      return valueVerdict(check, entry, shown);
     case "text_equals":
     case "text_contains":
-      return textVerdict(check, entry);
+      return textVerdict(check, entry, shown);
     case "row_present":
     case "row_absent":
     case "row_count":
-      return rowVerdict(check, entry);
+      return rowVerdict(check, entry, shown);
+    case "member_count":
+      return memberVerdict(check, entry, shown);
   }
 };
 
-/** Evaluate each check against views by home path, as the exported verifier does. */
+/** Evaluate each check against views by home path, or its reader's view of its file by reader id, as the exported verifier does. */
 export const evaluateTaskChecks = (
   checks: readonly DesktopTaskCheck[],
   views: ReadonlyMap<string, TaskFileView>,
-): readonly TaskCheckOutcome[] =>
-  checks.map((check) => ({
+  readers: ReadonlyMap<string, TaskFileView> = new Map(),
+  redact: (value: JsonValue) => JsonValue = (value) => value,
+): readonly TaskCheckOutcome[] => {
+  const shown: ShowValue = (value) =>
+    cut(JSON.stringify(redact(value)), CHECK_VALUE_CHARS);
+  return checks.map((check) => ({
     id: check.id,
-    ...verdict(check, views.get(check.file)),
+    ...(check.kind === "screen_judge"
+      ? unread(
+          "a screen judge's question is answered from the computer's screen by the bundle's judge, which REA's evaluator does not run",
+        )
+      : verdict(
+          check,
+          "reader" in check && check.reader !== undefined
+            ? readers.get(check.reader)
+            : views.get(check.file),
+          shown,
+        )),
   }));
+};

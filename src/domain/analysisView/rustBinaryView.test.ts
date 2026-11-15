@@ -2,10 +2,8 @@ import { expect, it } from "vitest";
 import { createEvidence } from "../evidence.js";
 import { freezeJsonSnapshot } from "../immutableJson.js";
 import type { RustBinary } from "../rust/rustBinary.js";
-import {
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "./analysisView.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 
 const report: RustBinary = {
   artifact: { path: "/artifacts/rust", sha256: "a".repeat(64), bytes: 512 },
@@ -206,3 +204,40 @@ it("pages matching original indices and omits dependency vectors unless selected
     next_offset: null,
   });
 });
+
+it.each(["packages", "edges"] as const)(
+  "distinguishes unavailable Rust %s from decoded empty records",
+  (collection) => {
+    for (const available of [false, true]) {
+      const metadata = report.auditable_metadata!;
+      const result = projectAnalysisView(
+        parent({
+          ...report,
+          auditable_metadata: available
+            ? {
+                ...metadata,
+                packages: [],
+                root_package_index: null,
+                dependency_edges: [],
+                cyclic_dependency_indices: [],
+              }
+            : null,
+        }),
+        { kind: "rust", collection, offset: 3, limit: 1 },
+      );
+      if (!result.ok) throw result.error;
+      expect(result.value.coverage).toEqual({
+        status: available ? "empty" : "unavailable",
+        examined: 0,
+        total: available ? 0 : null,
+        next_offset: null,
+        exhausted: available,
+      });
+      expect(result.value).toMatchObject({
+        source_coverage: {
+          embedded_records: available ? "complete" : "unknown",
+        },
+      });
+    }
+  },
+);

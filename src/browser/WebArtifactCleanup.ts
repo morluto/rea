@@ -21,6 +21,7 @@ const cleanupOwner = (resource: string, close: () => Promise<void>) => {
       try {
         await close();
       } catch (cause: unknown) {
+        if (cause instanceof AnalysisError) lease.bindCleanupError(cause);
         retained =
           cause instanceof AnalysisError && cause.cleanupResources.length > 0
             ? cause.cleanupResources

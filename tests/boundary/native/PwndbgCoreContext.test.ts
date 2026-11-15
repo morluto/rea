@@ -1,8 +1,8 @@
-import { access, readFile } from "node:fs/promises";
+import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { join } from "node:path";
-import { expect, it, onTestFinished } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 import { OwnedCommandFailure } from "../../../src/process/OwnedCommand.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import {
@@ -18,6 +18,36 @@ import { inspectPwndbgCore } from "../../../src/native/pwndbg/PwndbgCoreContext.
 
 const diagnostics = { stdout: "", stderr: "", truncated: false };
 
+const accessFault = vi.hoisted(() => ({
+  handler: undefined as (() => Promise<void>) | undefined,
+}));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...original,
+    access: async (...args: Parameters<typeof original.access>) => {
+      if (accessFault.handler !== undefined) return accessFault.handler();
+      return original.access(...args);
+    },
+  };
+});
+
+const prepareDebuggerPaths = async (root: string) => {
+  const gdb = join(root, "gdb");
+  const init = join(root, "gdbinit.py");
+  const venv = join(root, "venv");
+  await writeFile(gdb, "");
+  await chmod(gdb, 0o700);
+  await writeFile(init, "");
+  await mkdir(venv);
+  return {
+    REA_PWNDBG_GDB: gdb,
+    REA_PWNDBG_GDBINIT: init,
+    REA_PWNDBG_VENV_PATH: venv,
+  };
+};
+
 it.each(["pre-aborted", "aborted-during-probe"] as const)(
   "observes cancellation at the debugger admission checkpoint: %s",
   async (scenario) => {
@@ -27,7 +57,7 @@ it.each(["pre-aborted", "aborted-during-probe"] as const)(
     const reason = { cancelled: scenario };
     const gdb = join(workspace.root, "missing-gdb");
     let probes = 0;
-    const probePath = async () => {
+    accessFault.handler = async () => {
       probes++;
       if (scenario === "aborted-during-probe") {
         await new Promise<void>((resolve) => {
@@ -40,6 +70,9 @@ it.each(["pre-aborted", "aborted-during-probe"] as const)(
       }
       throw new Error("path is unavailable");
     };
+    onTestFinished(() => {
+      accessFault.handler = undefined;
+    });
     if (scenario === "pre-aborted") controller.abort(reason);
     const inspection = inspectPwndbgCore({
       environment: {
@@ -52,7 +85,6 @@ it.each(["pre-aborted", "aborted-during-probe"] as const)(
       resources: new ArtifactResourceScope(),
       diagnostics,
       options: { signal: controller.signal },
-      probePath,
       timeoutMs: 30_000,
       runCommand: () => {
         throw new Error("No process should exist before cancellation");
@@ -65,6 +97,7 @@ it.each(["pre-aborted", "aborted-during-probe"] as const)(
       );
     expect(failure.cause).toBe(reason);
     expect(probes).toBe(scenario === "pre-aborted" ? 0 : 1);
+    accessFault.handler = undefined;
     await expect(
       access(join(workspace.root, "debugger")),
     ).rejects.toMatchObject({
@@ -74,6 +107,42 @@ it.each(["pre-aborted", "aborted-during-probe"] as const)(
 );
 
 const execute = promisify(execFile);
+
+it.each([
+  ["REA_PWNDBG_GDBINIT", "directory", "file"],
+  ["REA_PWNDBG_VENV_PATH", "file", "directory"],
+] as const)(
+  "rejects a %s path with the wrong kind",
+  async (setting, given, expected) => {
+    const workspace = await createTestWorkspace("rea-pwndbg-path-kind-");
+    onTestFinished(() => removeTestWorkspace(workspace.root));
+    const environment = await prepareDebuggerPaths(workspace.root);
+    const wrong = join(workspace.root, "wrong-kind");
+    if (given === "directory") await mkdir(wrong);
+    else await writeFile(wrong, "");
+    const failure = await inspectPwndbgCore({
+      environment: { ...environment, [setting]: wrong },
+      architecture: "x86_64-little-endian",
+      rootPath: workspace.root,
+      resources: new ArtifactResourceScope(),
+      diagnostics,
+      options: undefined,
+      timeoutMs: 30_000,
+      runCommand: () => {
+        throw new Error("No command may start after path refusal");
+      },
+    }).catch((cause: unknown) => cause);
+    expect(failure).toMatchObject({
+      _tag: "AnalysisCapabilityUnavailableError",
+      message: expect.stringContaining(
+        `${setting} is unavailable at ${wrong}: Expected a ${expected}.`,
+      ),
+    });
+    await expect(
+      access(join(workspace.root, "debugger")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
 
 it("establishes core-only debugger state before querying recorded mappings", async () => {
   await execute(
@@ -91,20 +160,16 @@ it.each(["x86_64-little-endian", "aarch64-little-endian"] as const)(
   async (architecture) => {
     const workspace = await createTestWorkspace("rea-pwndbg-profile-");
     onTestFinished(() => removeTestWorkspace(workspace.root));
+    const environment = await prepareDebuggerPaths(workspace.root);
     let requested = false;
     await expect(
       inspectPwndbgCore({
         architecture,
-        environment: {
-          REA_PWNDBG_GDB: join(workspace.root, "gdb"),
-          REA_PWNDBG_GDBINIT: join(workspace.root, "gdbinit.py"),
-          REA_PWNDBG_VENV_PATH: join(workspace.root, "venv"),
-        },
+        environment,
         rootPath: workspace.root,
         resources: new ArtifactResourceScope(),
         diagnostics,
         options: undefined,
-        probePath: async () => {},
         timeoutMs: 30_000,
         runCommand: async () => {
           const request: unknown = JSON.parse(
@@ -131,6 +196,7 @@ it.each(["cancelled", "physical-name", "physical-identity"])(
   async (outcome) => {
     const workspace = await createTestWorkspace("rea-pwndbg-command-outcome-");
     onTestFinished(() => removeTestWorkspace(workspace.root));
+    const environment = await prepareDebuggerPaths(workspace.root);
     const controller = new AbortController();
     const reason = { stage: "command handoff" };
     const failure = new OwnedCommandFailure(
@@ -142,17 +208,12 @@ it.each(["cancelled", "physical-name", "physical-identity"])(
     );
     if (outcome === "physical-name") failure.name = "AbortError";
     const inspection = inspectPwndbgCore({
-      environment: {
-        REA_PWNDBG_GDB: workspace.path("gdb"),
-        REA_PWNDBG_GDBINIT: workspace.path("gdbinit.py"),
-        REA_PWNDBG_VENV_PATH: workspace.path("venv"),
-      },
+      environment,
       architecture: "x86_64-little-endian",
       rootPath: workspace.root,
       resources: new ArtifactResourceScope(),
       diagnostics: { stdout: "basic evidence", stderr: "", truncated: false },
       options: { signal: controller.signal },
-      probePath: async () => {},
       timeoutMs: 30_000,
       runCommand: async () => {
         controller.abort(outcome === "physical-identity" ? failure : reason);
@@ -175,18 +236,14 @@ it.each(["cancelled", "physical-name", "physical-identity"])(
 it("reports a non-default debugger deadline instead of 30000 ms", async () => {
   const workspace = await createTestWorkspace("rea-pwndbg-deadline-");
   onTestFinished(() => removeTestWorkspace(workspace.root));
+  const environment = await prepareDebuggerPaths(workspace.root);
   const failure = await inspectPwndbgCore({
-    environment: {
-      REA_PWNDBG_GDB: workspace.path("gdb"),
-      REA_PWNDBG_GDBINIT: workspace.path("gdbinit.py"),
-      REA_PWNDBG_VENV_PATH: workspace.path("venv"),
-    },
+    environment,
     architecture: "x86_64-little-endian",
     rootPath: workspace.root,
     resources: new ArtifactResourceScope(),
     diagnostics,
     options: undefined,
-    probePath: async () => {},
     timeoutMs: 60_000,
     runCommand: () => {
       throw new OwnedCommandFailure("timeout", "deadline expired");
@@ -206,6 +263,13 @@ it("retains a physical debugger path failure when cancellation arrives in the pr
   onTestFinished(() => removeTestWorkspace(workspace.root));
   const controller = new AbortController();
   const physical = Object.assign(new Error("path denied"), { code: "EACCES" });
+  accessFault.handler = async () => {
+    controller.abort({ late: true });
+    throw physical;
+  };
+  onTestFinished(() => {
+    accessFault.handler = undefined;
+  });
   const inspection = inspectPwndbgCore({
     environment: {
       REA_PWNDBG_GDB: workspace.path("gdb"),
@@ -218,10 +282,6 @@ it("retains a physical debugger path failure when cancellation arrives in the pr
     diagnostics,
     options: { signal: controller.signal },
     timeoutMs: 30_000,
-    probePath: async () => {
-      controller.abort({ late: true });
-      throw physical;
-    },
     runCommand: () => {
       throw new Error("No command may start after probe failure");
     },

@@ -47,7 +47,6 @@ import {
 } from "./ClientRegistration.js";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
-import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { currentClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
 import { packageReadTargetChanged } from "./MsixPackageStorage.js";
@@ -67,7 +66,6 @@ import type {
   SetupProviderEnvironment,
 } from "./SetupTypes.js";
 import {
-  compactInputSchemaByDefault,
   registrationWriteBlocker,
   type SetupClient,
 } from "./SupportedClients.js";
@@ -787,7 +785,7 @@ const readZcodeFallbackServers = async (
         path,
         detail: ownershipBlocker,
       });
-    const environment = clientRegistrationEnvironment(parsed);
+    const environment = clientRegistrationEnvironment(parsed, client);
     if (!environment.ok)
       return err({
         kind: "malformed",
@@ -878,6 +876,7 @@ const registrationCurrent = (
   parsed: ClientConfigurationDocument,
   desired: unknown,
 ): boolean =>
+  parsed.requiresRewrite !== true &&
   (parsed.dialect !== "dsh" || dshDocument(parsed.document).ready) &&
   clientConfigurationValuesEqual(
     parsed.servers[PRODUCT_IDENTITY.mcpServerKey],
@@ -907,6 +906,7 @@ const clientConfigurationDesired = async (
   if (format === "dsh") {
     const validated = clientRegistrationEnvironment(
       effective,
+      client,
       providerEnvironment,
     );
     if (!validated.ok) throw validated.error;
@@ -920,6 +920,7 @@ const clientConfigurationDesired = async (
   }
   const validated = await clientRegistrationEnvironmentDetailsWithBudget(
     effective,
+    client,
     providerEnvironment,
     "effective",
     client.name === "codex" || client.name === "kimi"
@@ -932,24 +933,16 @@ const clientConfigurationDesired = async (
   // timeout facts; the target file's fragment remains the value being written.
   const environment = clientRegistrationEnvironment(
     parsed,
+    client,
     providerEnvironment,
     "fragment",
   );
   if (!environment.ok) throw environment.error;
-  const registrationEnvironment =
-    compactInputSchemaByDefault(client) &&
-    snapshotEnvironment(environment.value).REA_MCP_INPUT_SCHEMA_PROFILE ===
-      undefined
-      ? {
-          ...environment.value,
-          REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
-        }
-      : environment.value;
   const registration = refreshClientRegistration(
     client,
     format,
     launcher,
-    registrationEnvironment,
+    environment.value,
     parsed === undefined
       ? undefined
       : effectiveClientServer(parsed, PRODUCT_IDENTITY.mcpServerKey),

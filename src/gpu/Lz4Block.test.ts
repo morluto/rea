@@ -13,7 +13,7 @@ it.each(["10000000", "10000100", "f0ff", "f001", "00"])(
     await expect(decodeLz4Block(Buffer.from(hex, "hex"), 8)).rejects.toThrow();
   },
 );
-it("preserves caller cancellation before allocation work continues", async () => {
+it("preserves an already-aborted caller's cancellation", async () => {
   const signal = AbortSignal.abort("caller stopped");
   await expect(
     decodeLz4Block(Buffer.from("10aa", "hex"), 1, signal),

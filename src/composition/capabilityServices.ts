@@ -12,36 +12,35 @@ import {
 } from "./capabilityDeclarations.js";
 import { isAbsolute } from "node:path";
 import { createGpuCodeObjectsService } from "./gpu.js";
-import { createPacketCaptureService, tsharkHostSupported } from "./captures.js";
-import {
-  createSignalRecordingService,
-  sigrokHostSupported,
-} from "./signals.js";
+import { createPacketCaptureService } from "./captures.js";
+import { tsharkHostSupported } from "../captures/TsharkCaptureProvider.js";
+import { createSignalRecordingService } from "./signals.js";
+import { sigrokHostSupported } from "../signals/SigrokRecordingProvider.js";
 import { wasmArtifactModule } from "./wasm.js";
 import { apkSignatureModule } from "./apkSignature.js";
+import { evmInterfaceModule } from "./evm.js";
 import {
-  evmInterfaceModule,
   evmHostSupported,
   evmLimiterAvailability,
-} from "./evm.js";
+} from "../evm/EvmoleInterfaceProvider.js";
 import { createSqliteDatabaseService } from "./sqlite.js";
 import { createDesktopApplicationService } from "./desktop.js";
 import { DesktopBuildComputers } from "../application/desktop/DesktopBuildComputers.js";
 import { createGoBinaryService } from "./go.js";
 import { createRustBinaryService } from "./rust.js";
 import { createBeamService } from "./erlang.js";
+import { createV8CodeCacheService } from "./v8CodeCache.js";
 import { createModelArtifactService } from "./model.js";
 import { createIl2cppMetadataService } from "./il2cpp.js";
 import { createElectronFuseService } from "./electronFuses.js";
+import { createReleaseExposureService } from "./releaseExposure.js";
 import { createPythonPycService } from "./pythonPyc.js";
 import { createWebNetworkCaptureService } from "./webNetworkCaptures.js";
 import { createWebSourceLocationService } from "./webSourceLocations.js";
 import { createWebModuleTraceService } from "./webModules.js";
 import { createWebRuntimeService } from "./webRuntime.js";
-import {
-  createJavaScriptRecoveryProvider,
-  wakaruHostSupported,
-} from "./javascriptRecovery.js";
+import { createJavaScriptRecoveryProvider } from "./javascriptRecovery.js";
+import { wakaruHostSupported } from "../javascript/recovery/WakaruCommand.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { createReverseEngineeringService } from "./reverseEngineering.js";
 import type {
@@ -49,10 +48,8 @@ import type {
   CommandProviderLaunchFailures,
 } from "../application/reverse/ReverseEngineeringService.js";
 import { FirmwareAnalysisService } from "../application/firmware/FirmwareAnalysisService.js";
-import {
-  createFirmwareAnalysisProvider,
-  firmwareHostSupported,
-} from "./firmware.js";
+import { createFirmwareAnalysisProvider } from "./firmware.js";
+import { firmwareHostSupported } from "../firmware/FirmwareCommand.js";
 import { createAndroidAnalysisProvider } from "./android.js";
 import { createPcapAnalysisProvider } from "./pcap.js";
 import { createFlutterBuildAnalysisProvider } from "./flutter.js";
@@ -74,14 +71,18 @@ import {
   createPeImportsService,
   createNativeExportsService,
   createPeResourcesService,
+  createWindowsShortcutService,
   createRecordedCrashService,
   createBinaryLayoutService,
-  pwntoolsHostSupported,
   createDevicetreeService,
   createElfNotesService,
+  createNativeInitializersService,
+  createElfUnwindRangesService,
   createAppleIpsService,
   createKernelModuleService,
+  createKernelBuildConfigService,
 } from "./binaryDiagnostics.js";
+import { pwntoolsHostSupported } from "../native/pwntools/PwntoolsDecoder.js";
 
 import type { PacketCaptureService } from "../application/captures/PacketCaptureService.js";
 import type { SignalRecordingService } from "../application/signals/SignalRecordingService.js";
@@ -95,6 +96,7 @@ import type { ElectronFuseService } from "../application/electron/ElectronFuseSe
 import type { RustBinaryService } from "../application/rust/RustBinaryService.js";
 import type { PythonPycService } from "../application/python/PythonPycService.js";
 import type { BeamService } from "../application/erlang/BeamService.js";
+import type { V8CodeCacheService } from "../application/v8CodeCache/V8CodeCacheService.js";
 import type { RecordedCrashService } from "../application/binaryDiagnostics/RecordedCrashService.js";
 import type { BinaryLayoutService } from "../application/binaryDiagnostics/BinaryLayoutService.js";
 import type { BrowserObservationPort } from "../application/BrowserObservationPort.js";
@@ -115,6 +117,8 @@ import type { PcapAnalysisPort } from "../application/pcap/PcapAnalysisPort.js";
 import type { FlutterBuildAnalysisPort } from "../application/flutter/FlutterBuildAnalysisPort.js";
 import type { JebAnalysisPort } from "../application/jeb/JebAnalysisPort.js";
 import type { AdbDeviceAnalysisPort } from "../application/adb/AdbDeviceAnalysisPort.js";
+import type { BuildSettle } from "../application/desktop/DesktopBuildSettle.js";
+import type { BuildComputerDefaults } from "../desktop/BuildComputerEnvironment.js";
 
 /** Typed injection inputs shared by a capability host, independent of transport. */
 export interface CapabilityServiceOptions {
@@ -130,6 +134,7 @@ export interface CapabilityServiceOptions {
   readonly rustBinary?: RustBinaryService;
   readonly pythonPyc?: PythonPycService;
   readonly erlangBeam?: BeamService;
+  readonly v8CodeCache?: V8CodeCacheService;
   readonly electronFuses?: ElectronFuseService;
   readonly recordedCrash?: RecordedCrashService;
   readonly firmwareAnalysis?: FirmwareAnalysisPort;
@@ -152,6 +157,10 @@ export interface CapabilityServiceOptions {
   readonly electronActiveObservation?: ElectronActiveObservationPort;
   readonly javascriptRuntimeObservation?: JavaScriptRuntimeObservationPort;
   readonly fridaInstrumentation?: FridaInstrumentationPort;
+  /** How build computers read an app until its files settle; the shipped timing on real time unless a test shortens or clocks it. */
+  readonly desktopBuildSettle?: BuildSettle;
+  /** Where build computers look for unset settings; the host's PATH and REA cache unless a test isolates them. */
+  readonly desktopBuildDefaults?: BuildComputerDefaults;
   readonly reverseEngineering?: ReverseEngineeringService;
 }
 
@@ -325,7 +334,12 @@ const modules = {
   ),
   desktopApplication: service(() => createDesktopApplicationService()),
   desktopBuildComputers: capability(
-    ({ providerEnvironment }) => new DesktopBuildComputers(providerEnvironment),
+    ({ providerEnvironment, options }) =>
+      new DesktopBuildComputers(
+        providerEnvironment,
+        options.desktopBuildSettle,
+        options.desktopBuildDefaults,
+      ),
     (value) => value.closeAll(),
   ),
   goBinary: service(
@@ -337,6 +351,9 @@ const modules = {
   erlangBeam: service(
     ({ options }) => options.erlangBeam ?? createBeamService(),
   ),
+  v8CodeCache: service(
+    ({ options }) => options.v8CodeCache ?? createV8CodeCacheService(),
+  ),
   modelArtifact: service(() => createModelArtifactService()),
   gpuCodeObjects: service(() => createGpuCodeObjectsService()),
   il2cppMetadata: service(
@@ -346,14 +363,21 @@ const modules = {
   nativeExports: service(() => createNativeExportsService()),
   devicetree: service(() => createDevicetreeService()),
   elfNotes: service(() => createElfNotesService()),
+  nativeInitializers: service(() => createNativeInitializersService()),
+  elfUnwindRanges: service(() => createElfUnwindRangesService()),
   appleIps: service(() => createAppleIpsService()),
   kernelModule: service(() => createKernelModuleService()),
+  kernelBuildConfig: service(() => createKernelBuildConfigService()),
   peLoadConfig: service(() => createPeLoadConfigService()),
   binaryHardening: service(() => createBinaryHardeningService()),
   peCertificates: service(() => createPeCertificatesService()),
   peImports: service(() => createPeImportsService()),
+  windowsShortcut: service(() => createWindowsShortcutService()),
   electronFuses: service(
     ({ options }) => options.electronFuses ?? createElectronFuseService(),
+  ),
+  releaseExposure: service(({ environment, settings }) =>
+    createReleaseExposureService(environment, settings),
   ),
   pythonPyc: service(
     ({ options }) => options.pythonPyc ?? createPythonPycService(),
@@ -544,8 +568,8 @@ const modules = {
       },
     }),
   ),
-  cutter: service(({ providerEnvironment }) =>
-    createCutterBridgeService(providerEnvironment),
+  cutter: service(({ providerEnvironment, settings }) =>
+    createCutterBridgeService(providerEnvironment, { read: settings }),
   ),
   browserObservation: capability(
     ({ options }) => options.browserObservation,

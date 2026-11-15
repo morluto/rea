@@ -62,15 +62,16 @@ export const isImmutableEvidenceBundle = (
   typeof input === "object" && input !== null && immutableBundles.has(input);
 
 /** Caller input has valid shape but is not in authenticated canonical form. */
-export class NonCanonicalEvidenceBundleError extends TypeError {
-  constructor() {
-    super("Evidence bundle manifests are not canonical");
+class NonCanonicalEvidenceBundleError extends TypeError {
+  /** The top-level sections whose content differs from canonical form. */
+  constructor(readonly sections: readonly string[]) {
+    super(`Evidence bundle sections are not canonical: ${sections.join(", ")}`);
     this.name = "NonCanonicalEvidenceBundleError";
   }
 }
 
 /** Caller input lists the same Evidence record more than once. */
-export class DuplicateEvidenceRecordError extends TypeError {
+class DuplicateEvidenceRecordError extends TypeError {
   constructor() {
     super("Evidence bundle contains duplicate record IDs");
     this.name = "DuplicateEvidenceRecordError";
@@ -402,7 +403,13 @@ const authenticateBundle = (
     parsed.unknowns,
   );
   if (!equalJsonText(parsed, canonical))
-    throw new NonCanonicalEvidenceBundleError();
+    // Name only the sections that differ, so an unchanged section is not
+    // blamed for another section's ordering or content.
+    throw new NonCanonicalEvidenceBundleError(
+      (Object.keys(canonical) as (keyof EvidenceBundle)[]).filter(
+        (section) => !equalJsonText(parsed[section], canonical[section]),
+      ),
+    );
   if (seal) {
     freezeJsonSnapshot(canonical);
     immutableBundles.set(canonical, canonical);

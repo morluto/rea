@@ -8,8 +8,13 @@ import {
 } from "../../../src/contracts/managed/managedWorkflowExamples.js";
 import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
-import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import {
+  createTestBinarySession,
+  createTestProviderRouter,
+} from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { BinarySession } from "../../../src/application/binary/BinarySession.js";
+import { InvestigationRecords } from "../../../src/application/investigation/InvestigationRecords.js";
 
 const reference = (evidence: Evidence) => ({
   kind: "retained-evidence" as const,
@@ -56,6 +61,58 @@ const cases = [
     },
   },
 ] as const;
+
+it.each([
+  {
+    name: "import_managed_reconstruction",
+    input: MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE,
+    source: MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE.static_members,
+  },
+  {
+    name: "project_managed_application_graph",
+    input: MANAGED_APPLICATION_GRAPH_EXAMPLE,
+    source: MANAGED_APPLICATION_GRAPH_EXAMPLE.managed_members,
+  },
+])(
+  "preserves completed $name when source retention refuses",
+  async ({ name, input, source }) => {
+    const session = new BinarySession(
+      createTestProviderRouter(() => {
+        throw new Error("Evidence composition must not open a provider");
+      }),
+      new InvestigationRecords({ maximumRepresentationBytes: 0 }),
+    );
+    const { client } = await createApplicationMcpHarness({ session });
+    const response = await client.callTool({ name, arguments: input });
+    const error = parseMcpToolError(response).error;
+    expect(error).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        partial_observation: {
+          kind: "unretained-evidence",
+          evidence: source,
+        },
+        completed_observation: {
+          kind: "inline-evidence",
+          retention: "unknown",
+          source_closure: "not-established",
+          evidence: { operation: name, evidence_links: [source.evidence_id] },
+        },
+      },
+    });
+    const completed = error.details?.completed_observation;
+    if (
+      typeof completed !== "object" ||
+      completed === null ||
+      Array.isArray(completed)
+    )
+      throw new Error("Expected completed Evidence");
+    const evidence = parseEvidence(completed.evidence);
+    expect(session.hasEvidence(evidence.evidence_id)).toBe(false);
+    expect(session.hasEvidence(source.evidence_id)).toBe(false);
+    expect(session.exportEvidenceBundle().records).toEqual([]);
+  },
+);
 
 it("composes managed workflows from retained sources without opening an engine", async () => {
   const { client, session } = await createApplicationMcpHarness({

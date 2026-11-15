@@ -34,6 +34,7 @@ export const prepareManagedMemberRecovery = (
 ): ((offset: number | null) => ManagedMemberInspection) => {
   const capacityIssue = new ManagedRepresentationFailure(
     Number.MAX_SAFE_INTEGER,
+    budget.maximumBytes,
   ).issue;
   const report: ManagedMemberInspection = {
     ...inventory,

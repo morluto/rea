@@ -8,7 +8,7 @@ import {
 import {
   analysisViewResultSchema,
   type AnalysisViewResult,
-} from "../../domain/analysisView/analysisView.js";
+} from "../../domain/analysisView/analysisViewResult.js";
 import { scenarioCaptureRecords } from "../../domain/analysisView/scenarioCaptureRecords.js";
 import {
   readRecordedResponseBody,

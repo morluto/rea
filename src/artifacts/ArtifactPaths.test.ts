@@ -141,7 +141,7 @@ describe("English Unicode case collisions", () => {
     ).toBe(true);
   });
 
-  it("stays linear for large case-variant subtrees", () => {
+  it("bounds diagnostic lengths for large case-variant subtrees", () => {
     const count = 5_000;
     const paths = Array.from({ length: count }, (_, index) => [
       `Foo/a${String(index)}.txt`,
@@ -203,4 +203,15 @@ it("reserves prefix capacity atomically without declaring destination kinds", ()
   expect(() => registry.reservePath("a/b")).not.toThrow();
   registry.add("a/b", "file");
   expect(() => registry.add("a/b", "directory")).toThrow();
+});
+
+it("reports a file prefix conflict without inserting the candidate", () => {
+  const registry = new ArtifactPathRegistry({ maxParts: 4, maxNodes: 2 });
+  registry.reservePath("a/b");
+  expect(registry.conflicts("a/b")).toBe(true);
+  expect(registry.conflicts("a")).toBe(true);
+  expect(registry.conflicts("a/b/c")).toBe(true);
+  expect(registry.conflicts("a/c")).toBe(false);
+  expect(registry.conflicts("z")).toBe(false);
+  expect(() => registry.reservePath("z")).toThrow();
 });

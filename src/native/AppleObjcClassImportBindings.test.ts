@@ -1,7 +1,8 @@
+import { malformedInput } from "../domain/parseFailure.js";
 import { describe, expect, it } from "vitest";
 
 import type { PointerFixups } from "./AppleMachoFixups.js";
-import { parsePointerFixups } from "./AppleMachoFixups.js";
+import { parsePointerFixups } from "./AppleMachoFixups.fixture.js";
 import type { MachoLayout } from "./AppleMachoSelection.js";
 import { inspectObjcClassImportBindings } from "./AppleObjcClassImportBindings.js";
 
@@ -59,7 +60,7 @@ const createInput = (
     offset: (address, size = 1) => {
       if (address === 0x1000n && size === 8) return 0;
       if (address === 0x1008n && size === 8) return 8;
-      throw new RangeError("address is outside fixture");
+      throw malformedInput("macho", "address is outside fixture");
     },
   };
   return {

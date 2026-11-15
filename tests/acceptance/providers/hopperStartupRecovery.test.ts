@@ -1,16 +1,21 @@
+import {
+  closeVerifierResources,
+  withVerifierCleanup,
+} from "../../../scripts/lib/verifier-cleanup.mjs";
 import { spawn, type ChildProcess } from "node:child_process";
 import { access, copyFile, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { expect, onTestFinished, vi } from "vitest";
+import { expect, onTestFinished } from "vitest";
 import { z } from "zod";
 
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 import { acquireHopperTargetLease } from "../../../src/process/HopperLease.js";
+import { waitFor } from "../../support/testWait.js";
 
 const statusSchema = z.object({ result: z.object({ open: z.boolean() }) });
 const test = workspaceCliTest.skipIf(process.platform !== "darwin");
@@ -37,7 +42,7 @@ const closeWithLateBridge = async (
     { onprogress: () => closeStarted() },
   );
   let closeAcknowledged = false;
-  try {
+  return withVerifierCleanup(async () => {
     await awaitAcknowledgement(started, closing, "late bridge close progress");
     closeAcknowledged = true;
     // A verified close may remove the socket before the fixture can poll it.
@@ -45,15 +50,18 @@ const closeWithLateBridge = async (
     const owned = startBridge();
     expect((await closing).isError).not.toBe(true);
     return owned;
-  } finally {
-    if (!closeAcknowledged) await mcp.close();
-    await Promise.allSettled([closing]);
-  }
+  }, [
+    async () => {
+      if (!closeAcknowledged) await mcp.close();
+    },
+    async () => {
+      await Promise.allSettled([closing]);
+    },
+  ]);
 };
 
 test.for(["target", "loader"] as const)(
   "preserves a prepared target or refuses literal-unsafe %s before handoff",
-  { timeout: 90_000 },
   async (source, { workspace, cli }) => {
     const target = workspace.path(
       source === "target" ? 'quoted"target' : "loader-target",
@@ -86,8 +94,10 @@ test.for(["target", "loader"] as const)(
     });
     const mcp = new Client({ name: "hopper-literal-boundary", version: "1" });
     onTestFinished(async () => {
-      await mcp.close();
-      await transport.close();
+      await closeVerifierResources([
+        () => mcp.close(),
+        () => transport.close(),
+      ]);
     });
     await mcp.connect(transport);
     const call = (name: string, arguments_: Record<string, string> = {}) =>
@@ -123,7 +133,6 @@ test.for(["target", "loader"] as const)(
       const result = await cli.run({
         arguments: ["analyze", target, "--provider", "hopper", "--json"],
         environment,
-        timeoutMs: 15_000,
       });
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject({
@@ -180,8 +189,7 @@ test("recovers a denied Hopper launch through the same stdio MCP session and CLI
     stderr += chunk.toString();
   });
   onTestFinished(async () => {
-    await mcp.close();
-    await transport.close();
+    await closeVerifierResources([() => mcp.close(), () => transport.close()]);
   });
   await mcp.connect(transport);
   const call = (name: string, arguments_: Record<string, string> = {}) =>
@@ -193,8 +201,16 @@ test("recovers a denied Hopper launch through the same stdio MCP session and CLI
     const { error } = parseMcpToolError(await call(operation));
     expect(error).toMatchObject({
       code: "provider_unavailable",
+      category: "unavailable",
+      retryable: false,
       details: {
         stage: "launch",
+        provider_state: "unknown",
+        retry_action: "unknown",
+        launch_rejection: {
+          boundary: "apple_events_authorization",
+          reason: "not_authorized",
+        },
         launcher: {
           exit_code: 2,
           stderr: {
@@ -205,7 +221,11 @@ test("recovers a denied Hopper launch through the same stdio MCP session and CLI
         },
       },
     });
-    expect(error.message).toContain("Automation");
+    expect(error.remediation.action).toContain("client developer");
+    expect(error.remediation.action).toContain("Terminal");
+    expect(error.remediation.action).toContain(
+      "Retrying from the same unauthorized client will not succeed until authorization changes",
+    );
     const bootstrap = await readFile(receipt, "utf8");
     await expect(access(dirname(bootstrap))).rejects.toMatchObject({
       code: "ENOENT",
@@ -215,12 +235,20 @@ test("recovers a denied Hopper launch through the same stdio MCP session and CLI
   const deniedCli = await cli.run({
     arguments: ["analyze", target, "--provider", "hopper", "--json"],
     environment,
-    timeoutMs: 15_000,
   });
   expect(deniedCli.exitCode).toBe(1);
   expect(deniedCli.json).toMatchObject({
     code: "provider_unavailable",
-    details: { launcher: { exit_code: 2 } },
+    category: "unavailable",
+    retryable: false,
+    details: {
+      retry_action: "unknown",
+      launch_rejection: {
+        boundary: "apple_events_authorization",
+        reason: "not_authorized",
+      },
+      launcher: { exit_code: 2 },
+    },
   });
 
   await writeFile(mode, "bridge");
@@ -235,7 +263,6 @@ test("recovers a denied Hopper launch through the same stdio MCP session and CLI
 
 test.for(["handoff", "not-found"] as const)(
   "preserves an unconfirmed %s handoff and closes only a late bridge with matching run identity",
-  { timeout: 60_000 },
   async (launchMode, { workspace }) => {
     const target = workspace.path("target");
     await copyFile("/usr/bin/true", target);
@@ -266,9 +293,12 @@ test.for(["handoff", "not-found"] as const)(
     const children: ChildProcess[] = [];
     let runtime: string | undefined;
     onTestFinished(async () => {
-      await Promise.all(children.map(stopChild));
-      await mcp.close();
-      await transport.close();
+      await closeVerifierResources([
+        ...children.map((child) => () => stopChild(child)),
+        () => mcp.close(),
+        () => transport.close(),
+      ]);
+      // The parent remains owned until every child and transport closed.
       if (runtime !== undefined)
         await rm(runtime, { recursive: true, force: true });
     });
@@ -357,7 +387,7 @@ test.for(["handoff", "not-found"] as const)(
       [runId, "different-token"],
     ] as const) {
       const wrong = lateBridge(identity, credential);
-      await vi.waitFor(() => access(socket));
+      await waitFor(() => access(socket));
       expect(parseMcpToolError(await call("close_binary")).error.code).toBe(
         "cleanup_incomplete",
       );
@@ -367,7 +397,7 @@ test.for(["handoff", "not-found"] as const)(
       await rm(socket, { force: true });
     }
     const owned = await closeWithLateBridge(mcp, () => lateBridge(runId));
-    await vi.waitFor(() => expect(owned.exitCode).toBe(0));
+    await waitFor(() => expect(owned.exitCode).toBe(0));
     await expect(access(runtime)).rejects.toMatchObject({ code: "ENOENT" });
     await writeFile(mode, "bridge");
     expect((await call("open_binary", { path: target })).isError).not.toBe(

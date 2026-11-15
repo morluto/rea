@@ -302,7 +302,14 @@ it("retains partial JADX replies when owned cleanup also fails", async () => {
 });
 
 it("cleans an active engine when the MCP client disconnects", async () => {
-  const { provider, apk, launches } = await createJadxProtocolFixture("stall");
+  // Without a disconnect-driven stop, the operation deadline would also clean
+  // the stalled engine; keep it beyond any test deadline.
+  const { provider, apk, launches } = await createJadxProtocolFixture(
+    "stall",
+    undefined,
+    undefined,
+    { REA_JADX_OPERATION_TIMEOUT_MS: "2147483647" },
+  );
   const session = createTestBinarySession(() => {
     throw new Error("Unexpected native provider acquisition");
   });
@@ -314,7 +321,7 @@ it("cleans an active engine when the MCP client disconnects", async () => {
   const pending = client
     .callTool({ name: "inspect_android_package", arguments: { path: apk } })
     .catch(() => undefined);
-  await expect.poll(() => launches.length, { timeout: 10_000 }).toBe(1);
+  await expect.poll(() => launches.length).toBe(1);
   await client.close();
   await pending;
   await expect

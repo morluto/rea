@@ -419,5 +419,4 @@ it.each([false, true])(
       await Promise.all([client.close(), server.close()]);
     }
   },
-  20000,
 );

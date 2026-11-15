@@ -20,14 +20,14 @@ type StorageFingerprint =
 export interface CapturedStorageItems {
   readonly items: readonly {
     readonly key: string;
-    readonly value: string;
+    readonly value: string | undefined;
   }[];
   readonly complete: boolean;
 }
 
 export interface CapturedCache {
   readonly name: string;
-  readonly id: string;
+  readonly id: string | undefined;
 }
 
 interface StorageFingerprintContext {
@@ -106,7 +106,7 @@ const addStorageItems = (
       scope,
       identity: item.key,
       value: item.value,
-      complete: true,
+      complete: item.value !== undefined,
     });
 };
 
@@ -139,12 +139,7 @@ const addCookies = async (
     const value = cdpStringValue(cookie.value);
     const domain = cdpStringValue(cookie.domain);
     const path = cdpStringValue(cookie.path);
-    if (
-      name === undefined ||
-      value === undefined ||
-      domain === undefined ||
-      path === undefined
-    ) {
+    if (name === undefined || domain === undefined || path === undefined) {
       run.state.complete = false;
       continue;
     }
@@ -163,7 +158,7 @@ const addCookies = async (
         ...(partitionOpaque ? { partition_opaque: true } : {}),
       },
       value,
-      complete: !partitionOpaque,
+      complete: value !== undefined && !partitionOpaque,
     });
   }
 };
@@ -357,6 +352,10 @@ const addCaches = async (
   caches: readonly CapturedCache[],
 ): Promise<void> => {
   for (const cache of caches) {
+    if (cache.id === undefined) {
+      run.state.complete = false;
+      continue;
+    }
     let skipCount = 0;
     let returnCount: number | undefined;
     while (returnCount === undefined || skipCount < returnCount) {

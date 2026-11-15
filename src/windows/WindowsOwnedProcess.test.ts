@@ -226,22 +226,6 @@ describe("Windows Job Object memory limits", () => {
     expect(calls).toEqual([]);
   });
 
-  it("keeps the unlimited launch shape and rejects limit fields it did not request", async () => {
-    const { native, calls } = authority({
-      jobMemoryLimit: true,
-      polls: [
-        { ...settledPoll, memoryLimitReached: true, peakJobMemoryBytes: 1 },
-      ],
-    });
-    const child = launch(native);
-    const failure = once(child, "error");
-    expect(calls[0]?.arguments_).toHaveLength(4);
-    const [error] = await failure;
-    expect(error).toBeInstanceOf(Error);
-    expect(child.memoryLimitReached).toBe(false);
-    expect(child.peakJobMemoryBytes).toBeUndefined();
-  });
-
   it("passes the limit, verifies its read-back and reports a reached limit before exit", async () => {
     const { native, calls } = authority({
       jobMemoryLimit: true,
@@ -270,17 +254,6 @@ describe("Windows Job Object memory limits", () => {
     expect(child.peakJobMemoryBytes).toBe(LIMIT);
     await closed;
     expect(calls.at(-1)?.operation).toBe("process_close");
-  });
-
-  it("rejects a limited poll that omits the job's notification state", async () => {
-    const { native } = authority({
-      jobMemoryLimit: true,
-      polls: [settledPoll],
-    });
-    const child = launch(native, LIMIT);
-    const [error] = await once(child, "error");
-    expect(error).toBeInstanceOf(Error);
-    expect(child.memoryLimitReached).toBe(false);
   });
 
   it("refuses a launch whose applied limit differs from the request", () => {
@@ -650,6 +623,76 @@ describe("Windows output poll failure", () => {
       expect(closed).toBe(true);
     } finally {
       vi.useRealTimers();
+    }
+  });
+});
+
+describe("Windows Job Object poll shape validation", () => {
+  it("keeps the unlimited launch shape and rejects limit fields it did not request", async () => {
+    vi.useFakeTimers();
+    const { native, calls } = authority({
+      jobMemoryLimit: true,
+      polls: [
+        { ...settledPoll, memoryLimitReached: true, peakJobMemoryBytes: 1 },
+        settledPoll,
+      ],
+    });
+    const child = launch(native);
+    const errors: unknown[] = [];
+    child.on("error", (error) => errors.push(error));
+    const closed = new Promise<void>((resolve) =>
+      child.once("close", () => resolve()),
+    );
+    try {
+      await vi.advanceTimersByTimeAsync(25);
+      expect(calls[0]?.arguments_).toHaveLength(4);
+      const error = errors[0];
+      expect(error).toBeInstanceOf(Error);
+      expect(child.memoryLimitReached).toBe(false);
+      expect(child.peakJobMemoryBytes).toBeUndefined();
+    } finally {
+      try {
+        await vi.advanceTimersByTimeAsync(250);
+        await closed;
+        expect(
+          calls.filter(({ operation }) => operation === "process_close"),
+        ).toHaveLength(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    }
+  });
+
+  it("rejects a limited poll that omits the job's notification state", async () => {
+    vi.useFakeTimers();
+    const { native, calls } = authority({
+      jobMemoryLimit: true,
+      polls: [
+        settledPoll,
+        { ...settledPoll, memoryLimitReached: false, peakJobMemoryBytes: 0 },
+      ],
+    });
+    const child = launch(native, LIMIT);
+    const errors: unknown[] = [];
+    child.on("error", (error) => errors.push(error));
+    const closed = new Promise<void>((resolve) =>
+      child.once("close", () => resolve()),
+    );
+    try {
+      await vi.advanceTimersByTimeAsync(25);
+      const error = errors[0];
+      expect(error).toBeInstanceOf(Error);
+      expect(child.memoryLimitReached).toBe(false);
+    } finally {
+      try {
+        await vi.advanceTimersByTimeAsync(250);
+        await closed;
+        expect(
+          calls.filter(({ operation }) => operation === "process_close"),
+        ).toHaveLength(1);
+      } finally {
+        vi.useRealTimers();
+      }
     }
   });
 });

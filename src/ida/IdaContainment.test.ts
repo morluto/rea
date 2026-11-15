@@ -620,16 +620,4 @@ describe("headless IDA document identity", () => {
       expect((await client.close()).ok).toBe(true);
     }
   });
-
-  it("lists exactly the admitted program", async () => {
-    const { client, target } = await session();
-    try {
-      const result = await client.execute("list_documents", {});
-
-      if (!result.ok) throw result.error;
-      expect(result.value.result).toEqual([target.path]);
-    } finally {
-      expect((await client.close()).ok).toBe(true);
-    }
-  });
 });

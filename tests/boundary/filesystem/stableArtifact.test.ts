@@ -10,6 +10,7 @@ import {
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { expect, it, onTestFinished } from "vitest";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { readStableArtifact } from "../../../src/artifacts/readStableArtifact.js";
 import {
   artifactFileCompletion,
@@ -162,7 +163,7 @@ it.each(["complete", "fail"] as const)(
         settled = true;
       });
     try {
-      await entered;
+      await awaitAcknowledgement(entered, result, "stable artifact read");
       controller.abort(reason);
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(settled).toBe(false);
@@ -176,6 +177,7 @@ it.each(["complete", "fail"] as const)(
       expect(artifactFileCompletion(failure)).toBeUndefined();
       expect(descriptor?.fd).toBe(-1);
     } finally {
+      controller.abort(reason);
       release();
       await result;
     }

@@ -1,9 +1,15 @@
+import { readFile, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
 import {
   EDITED_NOTE,
+  HOME,
+  capture,
+  change,
+  retained,
   seedEndCapture,
   writeCaptureFolder,
 } from "../../../src/application/desktop/desktopCapture.fixture.js";
@@ -57,6 +63,108 @@ it("exports and drafts between the checkpoints the command names", async () => {
   });
 });
 
+it("installs the packages each --extra-package names beside the app, and refuses a name that is not a package's", async () => {
+  const capture = await writeCaptureFolder(seedEndCapture(), undefined, [
+    EDITED_NOTE,
+  ]);
+  const root = await createTestTempDirectory("desktop-cli-");
+  const extra = (bundle: string, ...names: string[]) =>
+    serve([
+      "export-desktop-application",
+      capture,
+      join(root, bundle),
+      ...names.flatMap((name) => ["--extra-package", name]),
+      "--json",
+    ]);
+
+  const exported = parseEvidence(
+    JSON.parse(
+      (await extra("bundle", "librsvg2-common", "openjdk-17-jre")).stdout,
+    ),
+  );
+  const refused = await extra("refused", "librsvg2-common", "Java 17");
+
+  expect(exported.parameters).toMatchObject({
+    extra_packages: ["librsvg2-common", "openjdk-17-jre"],
+  });
+  expect(
+    await readFile(join(root, "bundle/envs/notes/notes_app.py"), "utf8"),
+  ).toContain(
+    'packages=Packages(apt=["notes", "librsvg2-common", "openjdk-17-jre"])',
+  );
+  const named = (text: string) =>
+    text.includes("librsvg2-common") && text.includes("openjdk-17-jre");
+  expect(exported.limitations.filter(named)).toHaveLength(1);
+  expect(named(await readFile(join(root, "bundle/README.md"), "utf8"))).toBe(
+    true,
+  );
+  expect(JSON.parse(refused.stdout)).toMatchObject({
+    code: "invalid_request",
+    details: { issues: [{ path: ["extra_package"] }] },
+  });
+});
+
+it("names a dconf database that changed by the seed but could not be read, so the seed holds none of its settings", async () => {
+  // As GnuCash's "Show tips at startup", unticked before seed in a computer without dconf-cli.
+  const database = `${HOME}/.config/dconf/user`;
+  const tips = "GVariant show-tips=false";
+  const recorded = seedEndCapture();
+  const [baseline, seed, ...later] = recorded.state.checkpoints;
+  if (baseline === undefined || seed === undefined)
+    throw new Error("the fixture has a seed checkpoint");
+  const capture = await writeCaptureFolder(
+    {
+      ...recorded,
+      state: {
+        ...recorded.state,
+        checkpoints: [
+          baseline,
+          {
+            ...seed,
+            changes: [...seed.changes, change(database, { after: tips })],
+            retained: [...seed.retained, retained(database, tips)],
+          },
+          ...later,
+        ],
+      },
+    },
+    undefined,
+    [EDITED_NOTE, tips],
+  );
+  const root = await createTestTempDirectory("desktop-cli-");
+  const exportAt = async (bundle: string, seedCheckpoint: string) =>
+    parseEvidence(
+      JSON.parse(
+        (
+          await serve(
+            [
+              "export-desktop-application",
+              capture,
+              join(root, bundle),
+              "--seed-checkpoint",
+              seedCheckpoint,
+              "--end-checkpoint",
+              "end",
+              "--json",
+            ],
+            { REA_DCONF_COMMAND: join(root, "no-dconf") },
+          )
+        ).stdout,
+      ),
+    ).limitations.filter((line) => line.includes("~/.config/dconf/user"));
+
+  const unread = await exportAt("bundle", "seed");
+  // At baseline the database did not exist yet, so nothing was lost.
+  const before = await exportAt("baseline", "baseline");
+
+  expect(unread).toHaveLength(1);
+  expect(unread[0]).toContain("dconf is not installed (dconf-cli)");
+  expect(
+    await readFile(join(root, "bundle/envs/notes/notes_app.py"), "utf8"),
+  ).toContain('DCONF = ""');
+  expect(before).toEqual([]);
+});
+
 it.each([
   [["--exclude", ""], "exclude"],
   [["--state-path", ""], "statePath"],
@@ -83,3 +191,138 @@ it.each([
     });
   },
 );
+
+it.each([
+  { label: "omitted", policy: undefined },
+  { label: "empty", policy: {} },
+  { label: "selected", policy: { text_lines: 2 } },
+])(
+  "preserves %s desktop view policy separately from the effective policy",
+  async ({ policy }) => {
+    const folder = await writeCaptureFolder(seedEndCapture(), undefined, [
+      EDITED_NOTE,
+    ]);
+    const selected =
+      policy === undefined ? [] : ["--view-policy", JSON.stringify(policy)];
+    for (const command of [
+      "inspect-desktop-application-state",
+      "describe-desktop-application-task",
+    ]) {
+      const observed = await serve([command, folder, ...selected, "--json"]);
+      const evidence = parseEvidence(JSON.parse(observed.stdout));
+      if (policy === undefined)
+        expect(evidence.parameters).not.toHaveProperty("view_policy");
+      else expect(evidence.parameters.view_policy).toEqual(policy);
+      expect(evidence.normalized_result).toMatchObject({
+        effective_view_policy: {
+          text_lines: policy?.text_lines ?? 5000,
+          file_bytes: 67108864,
+        },
+      });
+    }
+  },
+);
+
+it("recovers a selected captured view and exports the same policy into the Python reader", async () => {
+  const path = `${HOME}/Documents/budget.txt`;
+  const text = "one\ntwo\nthree";
+  const local = capture();
+  const first = local.state.checkpoints[0];
+  if (first === undefined) throw new Error("missing fixture checkpoint");
+  const folder = await writeCaptureFolder(
+    {
+      ...local,
+      state: {
+        ...local.state,
+        checkpoints: [
+          { ...first, retained: [...first.retained, retained(path, text)] },
+          ...local.state.checkpoints.slice(1),
+        ],
+      },
+    },
+    undefined,
+    [text],
+  );
+  const inspect = async (lines: number) => {
+    const response = await serve([
+      "inspect-desktop-application-state",
+      folder,
+      "--state-path",
+      path,
+      "--view-policy",
+      JSON.stringify({ text_lines: lines }),
+      "--json",
+    ]);
+    expect(response.exitCode).toBe(0);
+    return parseEvidence(JSON.parse(response.stdout));
+  };
+  const limited = await inspect(2);
+  const recovered = await inspect(3);
+  expect(limited.normalized_result).toMatchObject({
+    paths: [
+      {
+        path,
+        versions: [{ view: { lines: ["one", "two"], truncated: true } }],
+      },
+    ],
+  });
+  expect(recovered.normalized_result).toMatchObject({
+    paths: [
+      {
+        path,
+        versions: [
+          {
+            checkpoint_index: 0,
+            sha256: retained(path, text).sha256,
+            view: { lines: ["one", "two", "three"], truncated: false },
+          },
+        ],
+      },
+    ],
+  });
+  const root = await createTestTempDirectory("desktop-view-policy-");
+  const bundle = join(root, "bundle");
+  const exported = await serve([
+    "export-desktop-application",
+    folder,
+    bundle,
+    "--view-policy",
+    '{"text_lines":3}',
+    "--json",
+  ]);
+  expect(exported.exitCode).toBe(0);
+  const module = await readFile(
+    join(bundle, "envs/notes/notes_app.py"),
+    "utf8",
+  );
+  const helpers = module
+    .split("@computer_app(")[0]
+    ?.split("\n")
+    .filter((line) => !line.includes("from agentenv_protocol"))
+    .join("\n");
+  const script = join(root, "reader.py");
+  await writeFile(
+    script,
+    `${helpers}\nprint(json.dumps(_text_view("notes.txt", "one\\ntwo\\nthree", 13)["view"]))\n`,
+  );
+  const actual = JSON.parse(
+    execFileSync(
+      process.platform === "win32" ? "python" : "python3",
+      ["-I", "-B", script],
+      { encoding: "utf8" },
+    ),
+  );
+  expect(actual).toEqual({
+    lines: ["one", "two", "three"],
+    line_count: 3,
+    truncated: false,
+  });
+  const invalid = await serve([
+    "inspect-desktop-application-state",
+    folder,
+    "--view-policy",
+    '{"text_lines":0}',
+    "--json",
+  ]);
+  expect(invalid.exitCode).toBe(1);
+});

@@ -1,3 +1,4 @@
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { createHash } from "node:crypto";
 import { constants, type BigIntStats } from "node:fs";
 import { lstat, open, type FileHandle } from "node:fs/promises";
@@ -19,6 +20,7 @@ import {
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
@@ -113,10 +115,19 @@ export const withSignatureTarget = async (
         assertRegularFileActive(signal);
         root = await createRoot();
       } catch (cause: unknown) {
-        return err(
+        const failure =
           cause instanceof RegularFileOperationCancelled
             ? signatureReadFailure(target, cause)
-            : snapshotFailure(target, "create", cause),
+            : snapshotFailure(target, "create", cause);
+        return err(
+          signal?.aborted
+            ? analysisErrorWithCancellation(
+                cause === signal.reason ? undefined : failure,
+                new AnalysisCancelledError("inspect_signature", {
+                  cause: signal.reason,
+                }),
+              )
+            : failure,
         );
       }
       const children = new ArtifactResourceScope();
@@ -161,12 +172,15 @@ export const withSignatureTarget = async (
         result = err(signatureReadFailure(target, cause));
       }
       const cleanup = await resources.release(owner);
-      if (result.ok && signal?.aborted)
+      if (signal?.aborted)
         result = err(
-          new AnalysisCancelledError("inspect_signature", {
-            cause: signal.reason,
-            partialObservation: result.value,
-          }),
+          analysisErrorWithCancellation(
+            result.ok ? undefined : result.error,
+            new AnalysisCancelledError("inspect_signature", {
+              cause: signal.reason,
+              ...(result.ok ? { partialObservation: result.value } : {}),
+            }),
+          ),
         );
       if (cleanup.kind === "failed") {
         const failure = signatureCleanupFailure(
@@ -174,6 +188,7 @@ export const withSignatureTarget = async (
           [root.path],
           cleanup.cause,
           "cleanup",
+          result.ok ? result.value : undefined,
         );
         new AnalysisCleanupLeaseGroup(failure, [owner.lease]);
         return combineCleanupFailure(result, failure);
@@ -181,6 +196,15 @@ export const withSignatureTarget = async (
       return result;
     });
   } catch (cause: unknown) {
+    const primary = signatureReadFailure(target, cause);
+    const outcome = signal?.aborted
+      ? analysisErrorWithCancellation(
+          cause === signal.reason ? undefined : primary,
+          new AnalysisCancelledError("inspect_signature", {
+            cause: signal.reason,
+          }),
+        )
+      : primary;
     const retained =
       cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined
         ? cause.cleanup
@@ -193,12 +217,9 @@ export const withSignatureTarget = async (
         "retry",
       );
       bindArtifactFileCleanup(cause, failure);
-      return combineCleanupFailure(
-        err(signatureReadFailure(target, cause)),
-        failure,
-      );
+      return combineCleanupFailure(err(outcome), failure);
     }
-    return err(signatureReadFailure(target, cause));
+    return err(outcome);
   }
 };
 
@@ -222,6 +243,7 @@ const signatureCleanupFailure = (
   resources: readonly string[],
   cause: unknown,
   phase: string,
+  completed?: InspectSignature,
 ): AnalysisError =>
   new ProviderCleanupError(
     NATIVE_MACOS_PROVIDER_IDENTITY.id,
@@ -231,7 +253,13 @@ const signatureCleanupFailure = (
       phase: `signature-snapshot-${phase}`,
       path: target.path,
     },
-    { operation: "inspect_signature", cause },
+    {
+      operation: "inspect_signature",
+      cause,
+      ...(completed === undefined
+        ? {}
+        : { partialObservation: completed, completedObservation: completed }),
+    },
   );
 
 const snapshotFailure = (
@@ -277,6 +305,10 @@ const copySignatureBytes = async (
       "file-size",
       `Signature target size is not exactly representable: ${target.path}`,
       null,
+      fixedAllowanceOptions("The exactly representable file size", "input", {
+        limit: Number.MAX_SAFE_INTEGER,
+        unit: "bytes",
+      }),
     );
   const hash = createHash("sha256");
   const chunk = Buffer.alloc(64 * 1024);

@@ -132,6 +132,10 @@ export class AnalysisProviderRegistry {
     >
   >();
   readonly #selectionCleanup = new Set<AnalysisError>();
+  readonly #candidateCleanup = new Map<
+    AnalysisProviderCandidate,
+    Set<AnalysisError>
+  >();
   readonly #profileResources = new ArtifactResourceScope();
   readonly #profileOwner: RetainedResourceScope = {
     retain: (owner, resource) =>
@@ -256,8 +260,41 @@ export class AnalysisProviderRegistry {
     }
     for (const provider of this.#providers) {
       if (provider.closeOwnedResources === undefined) continue;
-      const result = await provider.closeOwnedResources();
-      if (!result.ok) failures.push(result.error);
+      let result: Result<null, unknown>;
+      try {
+        result = await provider.closeOwnedResources();
+      } catch (cause: unknown) {
+        result = err(cause);
+      }
+      if (result.ok) {
+        for (const failure of this.#candidateCleanup.get(provider) ?? [])
+          failure.resolveCleanup();
+        this.#candidateCleanup.delete(provider);
+      } else {
+        const failure =
+          result.error instanceof AnalysisError &&
+          result.error.cleanupIncomplete
+            ? result.error
+            : new ProviderCleanupError(
+                provider.identity().id,
+                ["provider-owned resources"],
+                {
+                  reason: "provider resource close did not confirm completion",
+                },
+                {
+                  cause: result.error,
+                  cleanupPrimary:
+                    result.error instanceof AnalysisError
+                      ? result.error
+                      : undefined,
+                },
+              );
+        failures.push(failure);
+        const retained = this.#candidateCleanup.get(provider) ?? new Set();
+        retained.add(failure);
+        this.#candidateCleanup.set(provider, retained);
+        this.#selectionCleanup.add(failure);
+      }
     }
     for (const failure of this.#selectionCleanup) {
       if (failure.cleanupIncomplete) failures.push(failure);

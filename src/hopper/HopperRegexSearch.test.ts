@@ -1,7 +1,10 @@
 import { expect, it, vi } from "vitest";
 import { HopperRegexSearch } from "./HopperRegexSearch.js";
 import { err, ok } from "../domain/result.js";
-import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCapabilityUnavailableError,
+  OwnerCancellation,
+} from "../domain/analysisErrorCore.js";
 import {
   HopperRemoteError,
   HopperTimeoutError,
@@ -244,6 +247,45 @@ it.each(
     } finally {
       await search.close();
     }
+  },
+);
+
+it.each([false, true])(
+  "joins an active search on close and preserves earlier caller cancellation: %s",
+  async (callerFirst) => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const controller = new AbortController();
+    const search = new HopperRegexSearch({
+      callTool: async () => {
+        await gate;
+        return ok([]);
+      },
+    });
+    const pending = search.execute(
+      "search_strings",
+      { pattern: "fixture", mode: "regex", case_sensitive: false },
+      { signal: controller.signal },
+    );
+    if (callerFirst) controller.abort("caller stopped");
+    let finished = false;
+    const closing = search.close().then(() => {
+      finished = true;
+    });
+    await Promise.resolve();
+    expect(finished).toBe(false);
+    release();
+    expect(await pending).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCancelledError",
+        cause: callerFirst ? "caller stopped" : OwnerCancellation.ownerClosed,
+      },
+    });
+    await closing;
+    expect(finished).toBe(true);
   },
 );
 

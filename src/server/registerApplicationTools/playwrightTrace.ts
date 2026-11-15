@@ -42,8 +42,13 @@ export const registerPlaywrightTraceTool = (
             contract.name,
             () => service.inspect(input, context.mcpReq.signal),
           );
+          // A failed import can carry partial Evidence; retain it for views.
           if (!result.ok)
-            return server.delivery.toCallToolResult(result, contract);
+            return server.delivery.toPartialErrorToolResult(
+              result.error,
+              contract.returnsTargetContent,
+              options.recordEvidence,
+            );
           return deliverApplicationEvidence(
             server,
             options,

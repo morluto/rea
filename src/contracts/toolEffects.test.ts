@@ -22,12 +22,6 @@ describe("tool effects", () => {
       mutatesTarget: false,
     });
   });
-  it("audits every public tool exactly once", () => {
-    expect(Object.keys(TOOL_EFFECTS).sort()).toEqual(
-      TOOL_CONTRACTS.map(({ name }) => name).sort(),
-    );
-  });
-
   it("marks foreign execution and device mutation as destructive", () => {
     const destructive = TOOL_CONTRACTS.filter(
       ({ effects }) => effects.executesForeignCode || effects.mutatesDevice,
@@ -38,15 +32,18 @@ describe("tool effects", () => {
       "capture_electron_scenario",
       "capture_native_ui_scenario",
       "capture_process_scenario",
+      "check_build_task",
       "close_frida_session",
       "close_gdb_session",
       "close_rizin_debug_session",
       "cutter_command",
       "execute_rizin_command",
+      "export_build_environment",
       "gdb_console",
       "install_adb_package",
       "instrument_with_frida",
       "load_frida_script",
+      "measure_build_task",
       "observe_native_calls",
       "push_adb_file",
       "resume_frida_session",

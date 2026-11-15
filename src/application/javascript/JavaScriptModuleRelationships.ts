@@ -518,7 +518,11 @@ const relationshipEvidence = (
     limitations: [
       ...input.semantic.ir.limitations,
       ...semanticCoverageResourceLimits(input.semantic.ir.coverage).map(
-        semanticResourceLimitReason,
+        (limit) =>
+          semanticResourceLimitReason(
+            limit,
+            input.semantic.ir.coverage.precision,
+          ),
       ),
       ...limitations,
     ],
@@ -531,7 +535,10 @@ const semanticCoverage = (
   if (semantic.ir.coverage.status === "complete" && resourceLimits.length === 0)
     return completeApplicationCoverage();
   return partialApplicationCoverage(
-    semanticResourceLimitCoverage(resourceLimits),
+    semanticResourceLimitCoverage(
+      resourceLimits,
+      semantic.ir.coverage.precision,
+    ),
     semantic.ir.coverage.omittedCount,
   );
 };

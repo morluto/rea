@@ -6,7 +6,7 @@ import {
   apiContractSummaryViewResultSchema,
   apiContractPageViewResultSchema,
   graphqlContractPageViewResultSchema,
-} from "../domain/analysisView/analysisView.js";
+} from "../domain/analysisView/analysisViewResult.js";
 import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
 import { toolContractMetadata } from "./toolEffects.js";
 import type { ToolContract } from "./toolContractTypes.js";
@@ -18,7 +18,7 @@ export const API_CONTRACT_TOOL_CONTRACTS = [
     ...toolContractMetadata("inspect_api_contract"),
     kind: "application",
     description:
-      "Inspect local OpenAPI JSON (default) or GraphQL SDL offline; no session, network, endpoint requests or target execution. OpenAPI 3.0/3.1/3.2 inventories inline path operations with exact method/path keys, source JSON Pointers and source-scoped IDs; references stay unresolved and malformed siblings explicit. GraphQL format graphql-sdl inventories type/field declarations and optional operations_path field bindings, operation/fragment owners and explicit spread edges without expanding fragments. It preserves aliases, wrappers, source digests/UTF-16 ranges and unknown/model-only bindings; field resolution is not full operation validation. Introspection, contract diff and runtime behavior are outside scope. Default summary retains complete Evidence; view selects facts immediately, overriding detail. Retained inspect_analysis_view supports kind api-contract or graphql-contract with exact batch filters, fields and paging. Coverage describes examined declarations, independently of page exhaustion. Each file and expanded facts have 32 MiB allowances plus heap admission. GraphQL additionally bounds lexical tokens (262144), comments (65536) and subsequent AST traversal depth (128). Reply paging does not increase parser allowances.",
+      'Inspect declared APIs in local OpenAPI JSON or GraphQL SDL without a session, network requests or target execution. OpenAPI 3.0/3.1/3.2 returns inline method/path operations with source pointers; references remain unresolved. format:"graphql-sdl" returns types/fields and optional operations_path bindings, preserving aliases, fragment/spread owners and unknowns without expanding fragments or claiming full operation validation. Default summary retains Evidence; view overrides detail. For HTTP rows use view {kind:"api-contract",collection:"operations",methods:["GET"],limit:20}; GraphQL uses view {kind:"graphql-contract",collection:"references",limit:20}. inspect_analysis_view pages the same retained facts. Source declaration coverage stays separate from page exhaustion; paging does not increase parser allowances. Introspection, runtime behavior and contract comparison are outside scope.',
     inputSchema: inspectApiContractInputSchema,
     outputSchema: evidenceResultOf(
       z.union([

@@ -87,13 +87,7 @@ export const compactAdvertisedInputSchema = (
   // an honest, budget-fitting shape instead of an oversized one.
   return {
     schema: reduceToShallowProperties(
-      {
-        type: "object",
-        description:
-          (typeof schema.description === "string"
-            ? `${schema.description} `
-            : "") + INPUT_REDUCED_ANNOTATION,
-      },
+      { type: "object" },
       INPUT_REDUCED_ANNOTATION,
     ),
     presentation: "reduced",

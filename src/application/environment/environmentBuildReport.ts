@@ -1,3 +1,4 @@
+import { escapeJsonPointerToken } from "../../domain/jsonPointer.js";
 import { z } from "zod";
 import { basename } from "node:path";
 import { isIP } from "node:net";
@@ -136,9 +137,6 @@ const SCAN_BODY_LIMIT_BYTES = 4 * 1024 * 1024;
 const SCAN_VALUE_BUDGET = 524_288;
 /** Pointers the report lists; the count covers every match. */
 const REPORTED_POINTERS = 20;
-
-const pointerToken = (name: string): string =>
-  name.replaceAll("~", "~0").replaceAll("/", "~1");
 
 /** A held value: a non-empty string, or an array holding one. */
 const holdsValue = (value: unknown): boolean =>
@@ -307,7 +305,7 @@ const credentialTally = () => {
       const entries = Object.entries(value);
       for (let index = entries.length - 1; index >= 0; index--) {
         const [name, child] = entries[index]!;
-        const path = `${pointer}/${pointerToken(name)}`;
+        const path = `${pointer}/${escapeJsonPointerToken(name)}`;
         field(`${label} ${path}`, name, child);
         stack.push([child, path]);
       }
@@ -323,7 +321,7 @@ const credentialTally = () => {
       return;
     if (scanned.kind === "form") {
       for (const [name, value] of new URLSearchParams(scanned.text))
-        field(`${label} /${pointerToken(name)}`, name, value);
+        field(`${label} /${escapeJsonPointerToken(name)}`, name, value);
       return;
     }
     try {
@@ -378,7 +376,7 @@ export const scanCredentialNames = (
     if (typeof text !== "string")
       scan.entries(member(postData, "params"), label, (name, value) => {
         if (typeof value === "string")
-          scan.field(`${label} /${pointerToken(name)}`, name, value);
+          scan.field(`${label} /${escapeJsonPointerToken(name)}`, name, value);
       });
     else scan.body(scannableBody(text, member(postData, "mimeType")), label);
     scan.body(

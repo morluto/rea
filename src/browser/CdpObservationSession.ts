@@ -20,21 +20,19 @@ import {
   isHttpUrl,
   numberValue,
   recordValue,
-  recordsValue,
   cdpStringValue,
   type UnknownRecord,
 } from "./CdpCaptureValues.js";
 import {
-  mainFrameUrl,
   observeCdpFrameUrl,
-  observeMainFrameUrl,
   classifyCdpFrameUrl,
 } from "./CdpCaptureDocuments.js";
 import {
   selectCdpFrameIdentity,
-  cdpFrameRecordFacts,
   cdpFrameEventFacts,
 } from "./CdpFrameIdentity.js";
+import type { CdpCommandResult } from "./protocol/CdpCommands.js";
+import { observedFrameUrl } from "./protocol/CdpFrameTree.js";
 import { cdpTargetEventMatches } from "./CdpTargetEvents.js";
 
 import {
@@ -83,9 +81,9 @@ export const observeCdpSession = async (
     allowedOrigins,
     operation: "observe_web_session",
   });
-  const initialUrl = mainFrameUrl(initial) ?? "";
-  const mainFrameId = frameId(initial);
-  if (mainFrameId === undefined)
+  const initialUrl = observedFrameUrl(initial.root.url) ?? "";
+  const mainFrameId = initial.root.facts.frameId;
+  if (mainFrameId === null)
     throw new BrowserObservationError("inspect_web_page", "protocol_error");
   const capture = new TimelineCapture(allowedOrigins, mainFrameId, initialUrl);
   let removeListener = (): void => {};
@@ -135,13 +133,14 @@ export const observeCdpSession = async (
       context.sessionId,
       context.signal,
     );
-    await context.progress?.report({
-      phase: "browser_observation",
-      completed: 1,
-      total: 2,
-      message:
-        "Browser observation armed; perform the requested user action now",
-    });
+    if (!capture.stopped)
+      await context.progress?.report({
+        phase: "browser_observation",
+        completed: 1,
+        total: 2,
+        message:
+          "Browser observation armed; perform the requested user action now",
+      });
     let endReason = await waitForWindow(
       context.input.observation_ms,
       capture,
@@ -226,7 +225,7 @@ class TimelineCapture {
   }
 
   ingest(event: CdpTransportEvent): void {
-    if (this.#endReason !== undefined || this.#scopeExcluded) return;
+    if (this.stopped) return;
     if (!isTimelineEvent(event.method)) return;
     if (this.#armTimestamp === undefined) {
       this.#bufferBeforeArm(event);
@@ -236,7 +235,7 @@ class TimelineCapture {
   }
 
   #ingestArmed(event: CdpTransportEvent, bufferedBeforeArm = false): void {
-    if (this.#endReason !== undefined || this.#scopeExcluded) return;
+    if (this.stopped) return;
     const params = recordValue(event.params);
     if (params === undefined) {
       if (
@@ -320,6 +319,11 @@ class TimelineCapture {
     }
     this.#eventsBeforeArm.push(event);
     this.#eventsBeforeArmBytes += bytes;
+  }
+
+  /** One lifecycle fact controls event retention and readiness delivery. */
+  get stopped(): boolean {
+    return this.#endReason !== undefined || this.#scopeExcluded;
   }
 
   onEnd(listener: (reason: EndReason) => void): () => void {
@@ -735,12 +739,12 @@ class TimelineCapture {
   }
 }
 
-const performanceTimestamp = (value: unknown): number => {
-  const metrics = recordsValue(recordValue(value)?.metrics).filter(
-    ({ name }) => name === "Timestamp",
-  );
-  const timestamp = numberValue(metrics[0]?.value);
-  if (metrics.length !== 1 || timestamp === undefined || timestamp < 0)
+const performanceTimestamp = ({
+  metrics,
+}: CdpCommandResult<"Performance.getMetrics">): number => {
+  const timestamps = metrics.filter(({ name }) => name === "Timestamp");
+  const timestamp = timestamps[0]?.value;
+  if (timestamps.length !== 1 || timestamp === undefined || timestamp < 0)
     throw new BrowserObservationError("observe_web_session", "protocol_error", {
       detail:
         "Performance.getMetrics returned no valid monotonic Timestamp metric.",
@@ -801,14 +805,14 @@ const captureFinalUrl = async (
   allowedOrigins: ReadonlySet<string>,
 ): Promise<EndReason> => {
   if (capture.scopeExcluded) return "target_left_scope";
-  const result = await context.connection.send(
+  const tree = await context.connection.send(
     "Page.getFrameTree",
     {},
     context.sessionId,
     context.signal,
   );
   if (capture.scopeExcluded) return "target_left_scope";
-  const observation = observeMainFrameUrl(result);
+  const observation = tree.root.url;
   const facts = classifyCdpFrameUrl(observation, allowedOrigins);
   if (observation.kind !== "observed") capture.invalidateFinalUrl();
   if (facts.scope === "outside_policy" || facts.scope === "unsupported") {
@@ -818,11 +822,6 @@ const captureFinalUrl = async (
   if (facts.url !== undefined) capture.setFinalUrl(facts.url);
   return "window_elapsed";
 };
-
-const frameId = (result: unknown): string | undefined =>
-  cdpFrameRecordFacts(
-    recordValue(recordValue(recordValue(result)?.frameTree)?.frame),
-  ).frameId ?? undefined;
 
 const hasNoComparableProducerTimestamp = (method: string): boolean =>
   method === "Page.frameRequestedNavigation" ||
