@@ -345,6 +345,11 @@ const incurOptions = (description: ContractCliDescription): z.ZodType => {
       ...description.cliOnlyOptions.map(
         ({ key, schema }) => [key, schema] as const,
       ),
+      ...description.parameters.flatMap(({ selectorOption }) =>
+        selectorOption === undefined
+          ? []
+          : [[selectorOption.key, selectorOption.schema] as const],
+      ),
     ]),
   );
   const constrained =
@@ -410,7 +415,13 @@ export const registerContractCommand = <
       readonly args?: Readonly<Record<string, unknown>>;
       readonly options: Readonly<Record<string, unknown>>;
     }) => {
-      const values = { ...options, ...args };
+      const values: Record<string, unknown> = { ...options, ...args };
+      // A selector's positional and named option may share one key.
+      for (const { key, selectorOption } of description.parameters)
+        if (selectorOption !== undefined) {
+          values[key] = args?.[key];
+          values[selectorOption.valueKey] = options[selectorOption.key];
+        }
       return withCommandCancellation((signal) =>
         logCliCommand(logger, description.command, async () => {
           const admitted = description.admit(values);
