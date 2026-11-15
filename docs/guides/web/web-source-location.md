@@ -48,6 +48,11 @@ It includes generated-only mappings. This follows
 with one-based lines in REA's public contract. A point result does not establish
 coverage of a source range, execution or UI causality.
 
+Adjacent indexed sections may contribute mappings at the same generated
+position. Those candidates are retained together, with their own section,
+source, name and embedded-content identities. A mapping strictly after the
+following section's start remains an invalid overlap.
+
 Mapped entries preserve the raw source name/root, section path, section-local
 source index and flattened index. Duplicate URLs remain distinct, including
 entries with different embedded contents. Missing source names retain a null

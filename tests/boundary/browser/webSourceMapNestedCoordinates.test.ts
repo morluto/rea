@@ -134,7 +134,7 @@ it.each([
   });
 });
 
-it("treats the next section start as an exclusive end for the previous section", async () => {
+it("accepts mappings at the next section start and rejects mappings beyond it", async () => {
   const fetchSiblings = (firstMappings: string) =>
     fetchMap(
       JSON.stringify(
@@ -157,7 +157,56 @@ it("treats the next section start as an exclusive end for the previous section",
       },
     ],
   });
-  expect(await fetchSiblings("AAAA,UAAA")).toMatchObject({
+  const text = JSON.stringify(
+    indexed(
+      section(0, 0, {
+        ...leaf("same.ts", "AAAAA,UAAAA"),
+        names: ["first"],
+        sourcesContent: ["export const first = 1;"],
+      }),
+      section(0, 10, {
+        ...leaf("same.ts", "AAAAA"),
+        names: ["second"],
+        sourcesContent: ["export const second = 2;"],
+      }),
+    ),
+  );
+  expect(await fetchMap(text)).toMatchObject({
+    status: "included",
+    items: [
+      {
+        artifact: {
+          sha256: createHash("sha256").update(text).digest("hex"),
+          bytes: Buffer.byteLength(text),
+        },
+        original_sources: [
+          { source: `${origin}/same.ts`, declaration_index: 0 },
+          { source: `${origin}/same.ts`, declaration_index: 1 },
+        ],
+        mappings: [
+          {
+            generated_line: 1,
+            generated_column: 0,
+            declaration_index: 0,
+            name: "first",
+          },
+          {
+            generated_line: 1,
+            generated_column: 10,
+            declaration_index: 0,
+            name: "first",
+          },
+          {
+            generated_line: 1,
+            generated_column: 10,
+            declaration_index: 1,
+            name: "second",
+          },
+        ],
+      },
+    ],
+  });
+  expect(await fetchSiblings("AAAA,UAAA,CAAA")).toMatchObject({
     status: "unavailable",
     items: [
       {
