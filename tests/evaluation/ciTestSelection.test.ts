@@ -26,7 +26,7 @@ const plan = (files: readonly string[], sources: Record<string, string>) =>
   });
 
 const selectedFiles = (result: ReturnType<typeof plan>) =>
-  result.groups.flat().toSorted();
+  (result.mode === "selected" ? result.files : []).toSorted();
 
 it("follows test and verifier imports and directory scans, not production importers", () => {
   const sources = {
@@ -201,54 +201,59 @@ it("traces shared script modules to their tests and falls back for other consume
   });
 });
 
-it("parses only well-formed plans and derives one shard per selected group", () => {
+it("parses only well-formed plans and derives the selected shard count", () => {
   const selected = {
-    version: 2,
+    version: 3,
     mode: "selected",
     reason: "Affected tests: 2 changed",
-    groups: [["src/a.test.ts"], ["tests/b.test.ts"]],
+    files: ["src/a.test.ts", "tests/b.test.ts"],
+    shards: 2,
   };
   expect(
     testShards("fast", parseTestSelection(JSON.stringify(selected))),
   ).toEqual(["1/2", "2/2"]);
-  const full = { version: 2, mode: "full", reason: "Shared", groups: [] };
+  const full = { version: 3, mode: "full", reason: "Shared" };
   expect(testShards("fast", parseTestSelection(full))).toHaveLength(12);
   expect(testShards("full", parseTestSelection(full))).toHaveLength(6);
   for (const value of [
     "",
     "null",
+    { ...selected, version: 2 },
     { ...selected, mode: "candidate" },
-    { ...selected, groups: [[]] },
-    { ...selected, groups: [["src/a.ts"]] },
-    { ...selected, groups: [["/abs/a.test.ts"]] },
-    { ...selected, groups: [["src/a.test.ts"], ["src/a.test.ts"]] },
+    { ...selected, files: [] },
+    { ...selected, files: ["src/a.ts"] },
+    { ...selected, files: ["/abs/a.test.ts"] },
+    { ...selected, files: ["src/a.test.ts", "src/a.test.ts"] },
+    // More shards than files, or than one selection uses.
+    { ...selected, shards: 3 },
+    { ...selected, shards: 0 },
     {
       ...selected,
-      groups: Array.from({ length: 5 }, (_, i) => [`src/${i}.test.ts`]),
+      files: Array.from({ length: 5 }, (_, i) => `src/${i}.test.ts`),
+      shards: 5,
     },
+    { ...full, shards: 1 },
   ])
     expect(() => parseTestSelection(value)).toThrow(
       /Invalid portable test selection plan|JSON/u,
     );
 });
 
-it("runs only a group the plan defines", async () => {
+it("runs only a shard the plan defines", async () => {
   const group = fileURLToPath(
     new URL("../../scripts/ci/test-group.mjs", import.meta.url),
   );
   const selection = JSON.stringify({
-    version: 2,
+    version: 3,
     mode: "selected",
     reason: "Affected tests: 1 changed",
-    groups: [["src/a.test.ts"]],
+    files: ["src/a.test.ts"],
+    shards: 1,
   });
   for (const [shard, environment] of [
     ["2/2", selection],
     ["1/2", selection],
-    [
-      "1/1",
-      JSON.stringify({ version: 2, mode: "full", reason: "x", groups: [] }),
-    ],
+    ["1/1", JSON.stringify({ version: 3, mode: "full", reason: "x" })],
     ["1/1", ""],
   ] as const)
     await expect(
