@@ -39,6 +39,26 @@ describe("verifier CDP commands", () => {
     expect(unregistered).toEqual([]);
   });
 
+  it("keeps the reply members the verifiers read", () => {
+    expect(
+      parseCdpCommandResult("Target.closeTarget", { success: true }),
+    ).toEqual({ ok: true, value: { success: true } });
+    expect(
+      parseCdpCommandResult("Target.createTarget", { targetId: "page" }),
+    ).toEqual({ ok: true, value: { targetId: "page" } });
+    expect(
+      parseCdpCommandResult("Page.navigate", {
+        frameId: "main",
+        loaderId: "loader",
+      }),
+    ).toEqual({ ok: true, value: { frameId: "main", loaderId: "loader" } });
+    expect(
+      parseCdpCommandResult("Page.createIsolatedWorld", {
+        executionContextId: 3,
+      }),
+    ).toEqual({ ok: true, value: { executionContextId: 3 } });
+  });
+
   it("rejects an unregistered run-time name as a malformed reply", () => {
     for (const name of ["Page.notRegistered", "toString", "constructor"]) {
       expect(isCdpCommand(name)).toBe(false);

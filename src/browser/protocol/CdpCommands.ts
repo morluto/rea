@@ -229,7 +229,8 @@ const CDP_COMMAND_REPLIES = {
   }),
   "Target.activateTarget": acknowledgement,
   "Target.attachToTarget": z.object({ sessionId: z.string().min(1) }),
-  "Target.closeTarget": acknowledgement,
+  // Deprecated in the protocol but still sent; the verifiers check it.
+  "Target.closeTarget": z.object({ success: z.boolean() }),
   "Target.createTarget": z.object({ targetId: z.string().min(1) }),
   "Target.detachFromTarget": acknowledgement,
   "Target.getTargetInfo": z.object({
