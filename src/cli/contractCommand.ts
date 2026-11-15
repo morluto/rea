@@ -6,6 +6,7 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisInputError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -37,6 +38,7 @@ import {
   type CliOptionShape,
   type CliOptionValues,
   type ContractCliDescription,
+  type ContractCliEvidenceTargets,
   type ContractCliSessionTarget,
   type ContractField,
   type ProjectedContract,
@@ -70,14 +72,35 @@ export interface ContractCommandContext<
    */
   readonly sessionTarget: string | undefined;
   /**
-   * The session target's opening fields the caller selected, in the opening
-   * contract's spelling; empty without `sessionTarget.open`.
+   * The source contract and each Evidence target as the caller spelled it,
+   * in argv order, for a projection with `evidenceTargets`; undefined
+   * otherwise.
+   */
+  readonly evidenceTargets: CliEvidenceTargetSelection | undefined;
+  /**
+   * The session target's opening fields, or the Evidence targets' source
+   * fields, the caller selected, in that contract's spelling; empty when the
+   * projection declares none.
    */
   readonly opening: Readonly<Record<string, unknown>>;
   /** The admitted delivery, for a projection with `evidenceDelivery`. */
   readonly delivery: CliEvidenceDeliveryChoice | undefined;
   /** The projection's CLI-only options, whose effect the handler owns. */
   readonly cliOptions: CliOptions;
+}
+
+/** The Evidence targets one invocation selected. */
+export interface CliEvidenceTargetSelection {
+  /** The source contract each target runs. */
+  readonly source: string;
+  readonly targets: readonly {
+    /** The contract field the target's source Evidence supplies. */
+    readonly field: string;
+    /** The target's positional key. */
+    readonly key: string;
+    /** The target as the caller spelled it. */
+    readonly target: string;
+  }[];
 }
 
 /** A closeable one-shot service that inspects one contract input. */
@@ -263,6 +286,89 @@ export const runDirectOnTarget =
   };
 
 /**
+ * Run the source contract on each Evidence target in argv order with the
+ * source fields the caller selected, then compose the contract from that
+ * Evidence. A target's failure names its positional; a later failure
+ * retains the first target's completed Evidence.
+ */
+export const runOnEvidenceTargets =
+  (
+    runSource: (
+      target: string,
+      parameters: Readonly<Record<string, JsonValue>>,
+      signal: AbortSignal,
+    ) => Promise<Result<Evidence, AnalysisError>>,
+    compose: (
+      input: Readonly<Record<string, unknown>>,
+      context: ContractCommandContext & {
+        readonly evidenceTargets: CliEvidenceTargetSelection;
+      },
+    ) => Promise<Result<Evidence, AnalysisError>>,
+  ) =>
+  async (input: object, context: ContractCommandContext) => {
+    const { evidenceTargets, operation, signal } = context;
+    if (evidenceTargets === undefined)
+      throw new Error(`${operation} declares no Evidence targets`);
+    // Argv values are decoded text, and absent options are left out.
+    const parameters = context.opening as Readonly<Record<string, JsonValue>>;
+    const sources: Record<string, Evidence> = {};
+    let first: Evidence | undefined;
+    for (const { field, key, target } of evidenceTargets.targets) {
+      const source = await runSource(target, parameters, signal);
+      if (!source.ok) {
+        const failure =
+          first === undefined
+            ? source.error
+            : source.error.retainPartialObservation(first);
+        return projectCliInputFields(
+          {
+            error: "Analysis failed",
+            ...projectAnalysisError(failure, "invocation"),
+          },
+          { operation: evidenceTargets.source, fields: { path: key } },
+        );
+      }
+      sources[field] = source.value;
+      first ??= source.value;
+    }
+    let result: Result<Evidence, AnalysisError>;
+    try {
+      result = await compose(
+        { ...input, ...sources },
+        { ...context, evidenceTargets },
+      );
+    } catch (cause: unknown) {
+      // The completed source Evidence outlives a defect in the composition.
+      result = {
+        ok: false,
+        error: new AnalysisOutputError(
+          operation,
+          `${operation} produced invalid output`,
+          { cause },
+        ),
+      };
+    }
+    // A cancellation that arrives as the composition settles keeps its
+    // most complete Evidence.
+    if (result.ok && signal.aborted)
+      result = {
+        ok: false,
+        error: cancelledBy(operation, signal, {
+          partialObservation: result.value,
+        }),
+      };
+    if (result.ok) return result.value;
+    const failure =
+      first === undefined
+        ? result.error
+        : result.error.retainPartialObservation(first);
+    return {
+      error: "Analysis failed",
+      ...projectAnalysisError(failure, "invocation"),
+    };
+  };
+
+/**
  * Run an analysis that selects no target path through a closeable service
  * and finish its cleanup.
  */
@@ -310,17 +416,37 @@ export const deliverWithService =
     });
   };
 
-/** The session target's opening fields, when the command declares any. */
+/**
+ * The session target's opening fields, or the Evidence targets' source
+ * fields, when the command declares any.
+ */
 const admitOpening = (
   description: {
     readonly contract: { readonly name: string };
     readonly sessionTarget: ContractCliSessionTarget | undefined;
+    readonly evidenceTargets?: ContractCliEvidenceTargets | undefined;
   },
   values: Readonly<Record<string, unknown>>,
 ): Result<Readonly<Record<string, unknown>>, AnalysisError> =>
-  description.sessionTarget === undefined
-    ? { ok: true, value: {} }
-    : description.sessionTarget.admitOpening(description.contract.name, values);
+  description.sessionTarget !== undefined
+    ? description.sessionTarget.admitOpening(description.contract.name, values)
+    : description.evidenceTargets !== undefined
+      ? description.evidenceTargets.admitSource(
+          description.contract.name,
+          values,
+        )
+      : { ok: true, value: {} };
+
+/** Target positionals, then the contract's own, in argv order. */
+const commandPositionals = (
+  description: ContractCliDescription,
+): readonly { readonly key: string; readonly schema: z.ZodType }[] => [
+  ...(description.sessionTarget === undefined
+    ? []
+    : [description.sessionTarget]),
+  ...(description.evidenceTargets?.targets ?? []),
+  ...description.parameters.filter(({ positional }) => positional),
+];
 
 const descriptions = new WeakMap<CliInstance, ContractCliDescription[]>();
 
@@ -335,9 +461,10 @@ const incurOptions = (description: ContractCliDescription): z.ZodType => {
       ...description.parameters
         .filter(({ positional }) => !positional)
         .map(({ key, schema }) => [key, schema] as const),
-      ...(description.sessionTarget?.options ?? []).map(
-        ({ key, schema }) => [key, schema] as const,
-      ),
+      ...[
+        ...(description.sessionTarget?.options ?? []),
+        ...(description.evidenceTargets?.options ?? []),
+      ].map(({ key, schema }) => [key, schema] as const),
       ...description.cliOnlyOptions.map(
         ({ key, schema }) => [key, schema] as const,
       ),
@@ -381,12 +508,7 @@ export const registerContractCommand = <
 ): void => {
   const description = describeContractCommand(contract, projection);
   const chosen = describeOperationChoices(description, projection);
-  const positionals = [
-    ...(description.sessionTarget === undefined
-      ? []
-      : [description.sessionTarget]),
-    ...description.parameters.filter(({ positional }) => positional),
-  ];
+  const positionals = commandPositionals(description);
   const alias = Object.fromEntries(
     description.parameters.flatMap(({ key, alias: short, positional }) =>
       short === undefined || positional ? [] : [[key, short]],
@@ -443,6 +565,19 @@ export const registerContractCommand = <
                   description.sessionTarget === undefined
                     ? undefined
                     : (values[description.sessionTarget.key] as string),
+                evidenceTargets:
+                  description.evidenceTargets === undefined
+                    ? undefined
+                    : {
+                        source: description.evidenceTargets.source,
+                        targets: description.evidenceTargets.targets.map(
+                          ({ field, key }) => ({
+                            field,
+                            key,
+                            target: values[key] as string,
+                          }),
+                        ),
+                      },
                 opening: opening.value,
                 delivery: admitted.value.delivery,
                 cliOptions: selected.cliOptionValues(
@@ -505,12 +640,9 @@ export const targetRoute = <
 
 /** The argv arguments and options one description takes, keyed by CLI key. */
 const commandShape = (description: ContractCliDescription) => ({
-  args: [
-    ...(description.sessionTarget === undefined
-      ? []
-      : [description.sessionTarget]),
-    ...description.parameters.filter(({ positional }) => positional),
-  ].map(({ key, schema }) => [key, schema] as const),
+  args: commandPositionals(description).map(
+    ({ key, schema }) => [key, schema] as const,
+  ),
   // Routed descriptions declare no object-level rules, so this is the object.
   options: Object.fromEntries(
     Object.entries(
@@ -563,6 +695,7 @@ export const registerTargetRoutedCommand = (
       description.command !== command.command ||
       description.optionConstraints !== undefined ||
       description.checkOptions !== undefined ||
+      description.evidenceTargets !== undefined ||
       description.parameters.some(
         ({ selectorOption }) => selectorOption !== undefined,
       )
@@ -655,6 +788,7 @@ export const registerTargetRoutedCommand = (
               callerInputs: description.callerInputs(values),
               sessionTarget:
                 description.sessionTarget === undefined ? undefined : target,
+              evidenceTargets: undefined,
               opening: opening.value,
               delivery: admitted.value.delivery,
               cliOptions: description.cliOptionValues(

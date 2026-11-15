@@ -165,6 +165,10 @@ const registeredField = (
 const contractShape = (description: ContractCliDescription) =>
   description.fields;
 
+/** Contract fields the handler supplies from each Evidence target. */
+const targetFields = (description: ContractCliDescription): string[] =>
+  (description.evidenceTargets?.targets ?? []).map(({ field }) => field);
+
 /** The contract schema one parameter supplies: a field, or a flattened member. */
 const suppliedField = (
   description: ContractCliDescription,
@@ -335,6 +339,7 @@ describe("CLI commands projected from tool contracts", () => {
         [
           ...new Set(description.parameters.map(({ field }) => field)),
           ...Object.keys(description.omitted),
+          ...targetFields(description),
         ]
           .toSorted()
           .join(),
@@ -350,6 +355,7 @@ describe("CLI commands projected from tool contracts", () => {
         ...(description.sessionTarget === undefined
           ? []
           : [description.sessionTarget.key]),
+        ...(description.evidenceTargets?.targets ?? []).map(({ key }) => key),
         ...description.parameters
           .filter(({ positional }) => positional)
           .map(({ key }) => key),
@@ -366,6 +372,7 @@ describe("CLI commands projected from tool contracts", () => {
                 .filter(({ positional }) => !positional)
                 .map(({ key }) => key),
               ...(route.sessionTarget?.options ?? []).map(({ key }) => key),
+              ...(route.evidenceTargets?.options ?? []).map(({ key }) => key),
               ...route.cliOnlyOptions.map(({ key }) => key),
               ...route.parameters.flatMap(({ selectorOption }) =>
                 [selectorOption, selectorOption?.alternative].flatMap(
@@ -449,9 +456,19 @@ describe("CLI commands projected from tool contracts", () => {
         if (runtimeJson !== undefined && typeof values[key] === "string")
           values[key] = JSON.parse(values[key]) as unknown;
       const input = description.toContractInput(values);
-      expect(description.contract.inputSchema.safeParse(input).error).toBe(
-        undefined,
-      );
+      // The handler supplies each Evidence target's field from its source.
+      const targets = new Set(targetFields(description));
+      const admitted =
+        targets.size === 0
+          ? description.contract.inputSchema
+          : z.object(
+              Object.fromEntries(
+                Object.entries(contractShape(description)).filter(
+                  ([field]) => !targets.has(field),
+                ),
+              ),
+            );
+      expect(admitted.safeParse(input).error).toBe(undefined);
       for (const parameter of description.parameters)
         if (parameter.callerPath && parameter.positional) {
           expect(input[parameter.field]).toBe(absoluteCallerPath("rel/target"));

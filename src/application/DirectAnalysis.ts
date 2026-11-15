@@ -209,32 +209,15 @@ export const runProviderAnalysis = async (
     // Preserve the selected path and original arguments as request facts.
     const evidenceParameters = { ...arguments_, input_path: path };
     if (isManagedToolName(tool)) {
-      const original = await runManagedProviderAnalysis(
+      const evidence = await managedCallerEvidence(
         dependencies,
         path,
         tool,
         arguments_,
-        evidenceParameters,
         operationSignal,
       );
-      await dispatchQueuedInterrupts();
-      if (!original.ok)
-        return err(
-          cliError(
-            retainFinalCancellation(original.error, tool, operationSignal),
-            path,
-          ),
-        );
-      const evidence = withEvidenceCallerInputPath(original.value, path);
-      if (operationSignal.aborted)
-        return err(
-          cliError(
-            cancelledBy(tool, operationSignal, {
-              partialObservation: evidence,
-            }),
-          ),
-        );
-      return ok(evidence);
+      // Completed Evidence already carries the caller's path.
+      return evidence.ok ? evidence : err(cliError(evidence.error, path));
     }
     const admitted = admitOneShotOperation(tool, arguments_, operationSignal);
     if (!admitted.ok) return err(cliError(admitted.error, path));
@@ -257,6 +240,57 @@ export const runProviderAnalysis = async (
       },
     );
   });
+
+/**
+ * Run one managed operation on a caller-selected path, keeping its typed
+ * failure so a composed command can retain earlier Evidence beside it.
+ */
+export const runManagedProviderEvidence = (
+  dependencies: Pick<DirectAnalysisDependencies, "createManagedBinarySession">,
+  path: string,
+  tool: ManagedToolName,
+  arguments_: Readonly<Record<string, JsonValue>>,
+  signal?: AbortSignal,
+): Promise<Result<Evidence, AnalysisError>> =>
+  withProcessCancellation(signal, (operationSignal) =>
+    managedCallerEvidence(
+      dependencies,
+      path,
+      tool,
+      arguments_,
+      operationSignal,
+    ),
+  );
+
+/** Managed Evidence bound to the caller's path and its request facts. */
+const managedCallerEvidence = async (
+  dependencies: Pick<DirectAnalysisDependencies, "createManagedBinarySession">,
+  path: string,
+  tool: ManagedToolName,
+  arguments_: Readonly<Record<string, JsonValue>>,
+  operationSignal: AbortSignal,
+): Promise<Result<Evidence, AnalysisError>> => {
+  // Preserve the selected path and original arguments as request facts.
+  const original = await runManagedProviderAnalysis(
+    dependencies,
+    path,
+    tool,
+    arguments_,
+    { ...arguments_, input_path: path },
+    operationSignal,
+  );
+  await dispatchQueuedInterrupts();
+  if (!original.ok)
+    return err(retainFinalCancellation(original.error, tool, operationSignal));
+  const evidence = withEvidenceCallerInputPath(original.value, path);
+  if (operationSignal.aborted)
+    return err(
+      cancelledBy(tool, operationSignal, {
+        partialObservation: evidence,
+      }),
+    );
+  return ok(evidence);
+};
 
 /** Execute managed metadata inspection in an isolated managed-only session. */
 export const runManagedProviderExecution = async (
