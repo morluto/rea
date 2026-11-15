@@ -679,41 +679,45 @@ readiness for one task instead of auditing every integration, see
 Setup can configure these clients for REA's local MCP server. Grok Bot uses a manual
 hosted connector; see [its configuration](client-configuration.md#other-client-settings).
 
-| Client                  | `--client` value |
-| ----------------------- | ---------------- |
-| Claude Code             | `claude_code`    |
-| Claude Desktop          | `claude_desktop` |
-| Codex                   | `codex`          |
-| Cursor                  | `cursor`         |
-| CodeBuddy               | `codebuddy`      |
-| Cline CLI               | `cline`          |
-| Gemini CLI              | `gemini_cli`     |
-| Windsurf                | `windsurf`       |
-| Devin                   | `devin`          |
-| OpenCode                | `opencode`       |
-| Antigravity             | `antigravity`    |
-| GitHub Copilot CLI      | `copilot_cli`    |
-| Command Code            | `commandcode`    |
-| Qwen Code               | `qwen_code`      |
-| Kimi Code               | `kimi`           |
-| VS Code                 | `vscode`         |
-| Grok Build              | `grok_build`     |
-| OMP                     | `omp`            |
-| Pi                      | `pi`             |
-| Hermes                  | `hermes`         |
-| Qoder                   | `qoder`          |
-| Factory Droid           | `droid`          |
-| Trae                    | `trae`           |
-| WorkBuddy               | `workbuddy`      |
-| LM Studio               | `lm_studio`      |
-| ZCode                   | `zcode`          |
-| DeepSeek Harness        | `dsh`            |
-| FreeBuff                | `freebuff`       |
-| Cline VS Code extension | `cline_vscode`   |
-| Kiro                    | `kiro`           |
-| Mastra Code             | `mastracode`     |
-| Zed                     | `zed`            |
-| Amp                     | `amp`            |
+| Client                    | `--client` value        |
+| ------------------------- | ----------------------- |
+| Claude Code               | `claude_code`           |
+| Claude Desktop            | `claude_desktop`        |
+| Codex                     | `codex`                 |
+| Cursor                    | `cursor`                |
+| CodeBuddy                 | `codebuddy`             |
+| Cline CLI                 | `cline`                 |
+| Gemini CLI                | `gemini_cli`            |
+| Windsurf                  | `windsurf`              |
+| Devin                     | `devin`                 |
+| OpenCode                  | `opencode`              |
+| Antigravity               | `antigravity`           |
+| GitHub Copilot CLI        | `copilot_cli`           |
+| Command Code              | `commandcode`           |
+| Qwen Code                 | `qwen_code`             |
+| Kimi Code                 | `kimi`                  |
+| VS Code                   | `vscode`                |
+| Grok Build                | `grok_build`            |
+| OMP                       | `omp`                   |
+| Pi                        | `pi`                    |
+| Hermes                    | `hermes`                |
+| Qoder                     | `qoder`                 |
+| Factory Droid             | `droid`                 |
+| Trae                      | `trae`                  |
+| WorkBuddy                 | `workbuddy`             |
+| LM Studio                 | `lm_studio`             |
+| ZCode                     | `zcode`                 |
+| DeepSeek Harness          | `dsh`                   |
+| FreeBuff                  | `freebuff`              |
+| Cline VS Code extension   | `cline_vscode`          |
+| Cline in VS Code Insiders | `cline_vscode_insiders` |
+| Cline in VSCodium         | `cline_vscodium`        |
+| Cline in Cursor           | `cline_cursor`          |
+| Cline in Windsurf         | `cline_windsurf`        |
+| Kiro                      | `kiro`                  |
+| Mastra Code               | `mastracode`            |
+| Zed                       | `zed`                   |
+| Amp                       | `amp`                   |
 
 `droid`, `dsh`, `kimi`, `qoder`, `trae`, `workbuddy`, and `zcode` require
 `rea-agents@6.5.0` or later. The 6.4.0 registry check above does not cover them.
@@ -722,7 +726,8 @@ hosted connector; see [its configuration](client-configuration.md#other-client-s
 
 `lm_studio` requires a release after 6.8.0.
 
-`cline_vscode`, `kiro`, `mastracode`, `zed` and `amp` require a release after
+`cline_vscode`, `cline_vscode_insiders`, `cline_vscodium`, `cline_cursor`,
+`cline_windsurf`, `kiro`, `mastracode`, `zed` and `amp` require a release after
 6.9.0. Earlier releases could register them only through `rea mcp add`, and
 doctor, update and uninstall did not see those registrations. Current releases
 inspect, refresh and remove them like any other setup client.
