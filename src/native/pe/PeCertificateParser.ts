@@ -11,7 +11,7 @@ import {
   PeCertificateAsn1Failure,
   readAsn1,
 } from "./PeCertificateAsn1.js";
-import { readPeHeaders } from "./PeResourceLayout.js";
+import { readPeHeaders } from "../../artifacts/pe/PeResourceLayout.js";
 
 const fail = (message: string): never => {
   throw new ArtifactReaderFailure("format", message);

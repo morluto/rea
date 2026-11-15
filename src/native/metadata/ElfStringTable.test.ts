@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import {
   BinaryFormatFailure,
   isBinaryStringReadLimit,
-} from "./BinaryContainer.js";
+} from "../../domain/binaryContainer.js";
 import { readElfStringBytes } from "./ElfStringTable.js";
 
 it("preserves empty and non-UTF8 string-table bytes", () => {

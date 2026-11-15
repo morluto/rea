@@ -10,7 +10,7 @@ import {
 } from "../../domain/native/peResources.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { PeResourcesProvider } from "./PeResourcesProvider.js";
-import { peResourceFixture } from "./PeResources.fixture.js";
+import { peResourceFixture } from "../../artifacts/pe/PeResources.fixture.js";
 import { imageFileSizeRemediation } from "../../artifacts/StableArtifactFailure.js";
 
 const inspect = async (

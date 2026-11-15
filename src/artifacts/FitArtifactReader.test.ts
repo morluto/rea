@@ -22,7 +22,7 @@ import {
 import {
   cells,
   devicetreeFixture,
-} from "../firmware/devicetree/Devicetree.fixture.js";
+} from "../domain/firmware/devicetree.fixture.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";

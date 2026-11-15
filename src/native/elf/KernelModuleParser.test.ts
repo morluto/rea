@@ -6,7 +6,7 @@ import {
   kernelModuleSchema,
   MODULE_SIGNATURE_MAGIC,
 } from "../../domain/native/kernelModule.js";
-import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
+import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
 import {
   compressedKernelModuleContainer,
   kernelModuleFixture,

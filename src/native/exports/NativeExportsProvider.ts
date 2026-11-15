@@ -34,7 +34,7 @@ import { NATIVE_EXPORTS_PROVIDER } from "../../domain/investigationProviders.js"
 import {
   BinaryResourceFailure,
   binaryResourceAllowance,
-} from "../metadata/BinaryContainer.js";
+} from "../../domain/binaryContainer.js";
 import {
   NATIVE_EXPORT_LIMITS,
   type NativeExportLimit,
