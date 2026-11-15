@@ -23,11 +23,11 @@ import {
 } from "../process/ExecFileOutput.js";
 import {
   agentEnvReportedVersion,
-  BUILD_COMPUTER_SETTINGS,
   buildComputerArchiveDirectory,
   defaultBuildComputerArchive,
   programOnPath,
 } from "./BuildComputerEnvironment.js";
+import { BUILD_COMPUTER_SETTINGS } from "../domain/desktop/buildComputerSettings.js";
 import {
   desktopBuildOwnedCommandReason,
   runDesktopBuildOwnedCommand,

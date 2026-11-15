@@ -118,7 +118,7 @@ it("restores MCP tool availability after cancelling a target switch", async () =
       { signal: controller.signal },
     );
     const cancelled = expect(switching).rejects.toThrow();
-    await closing.promise;
+    await awaitAcknowledgement(closing.promise, switching, "provider close");
     controller.abort();
     await cancellationObserved.promise;
     release.resolve();

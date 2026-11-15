@@ -50,3 +50,18 @@ describe("withoutRecoveryList", () => {
     ).toBeUndefined();
   });
 });
+
+it("keeps a leading byte order mark among the bytes it ships", () => {
+  const bom = Buffer.from([0xef, 0xbb, 0xbf]);
+  const source = Buffer.concat([
+    bom,
+    Buffer.from(
+      registry(
+        `${KEPT}\n<item oor:path="/org.openoffice.Office.Recovery/RecoveryList">${RECOVERY}</item>`,
+      ),
+    ),
+  ]);
+  const shippedBytes = withoutRecoveryList(REGISTRY, source) ?? source;
+  expect(shippedBytes.subarray(0, 3).equals(bom)).toBe(true);
+  expect(shippedBytes.toString("utf8")).not.toContain("recovery_item_1");
+});

@@ -2,7 +2,7 @@
 export const mergeEnvironmentOverrides = <T>(
   existing: Readonly<Record<string, T>>,
   overrides: Readonly<Record<string, T>>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): Readonly<Record<string, T>> => {
   const selected = new Map<string, readonly [string, T]>();
   for (const layer of [existing, overrides])
@@ -17,7 +17,7 @@ export const mergeEnvironmentOverrides = <T>(
 /** Snapshot selected variables while preserving platform and caller precedence. */
 export const snapshotEnvironment = <T extends string | undefined>(
   environment: Readonly<Record<string, T>>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): Readonly<Record<string, T>> => {
   const selected = mergeEnvironmentOverrides({}, environment, platform);
   if (platform !== "win32") return selected;

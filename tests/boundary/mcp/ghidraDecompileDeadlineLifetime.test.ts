@@ -126,7 +126,7 @@ it("tells a finished CLI invocation to rerun with the launch setting, not to reu
   const { message } = cliFailure.parse(projected);
   expect(message.startsWith(BRIDGE_MESSAGE)).toBe(true);
   expect(message).not.toContain(GHIDRA_SESSION_RETAINED);
-}, 30_000);
+});
 
 it("keeps same-session and runtime-update guidance for a continuing MCP connection", async () => {
   const launcher = new GhidraFixtureLauncher("decompile_timed_out");
@@ -184,4 +184,4 @@ it("keeps same-session and runtime-update guidance for a continuing MCP connecti
     await harness.close();
     await expectReleased(launcher);
   }
-}, 30_000);
+});

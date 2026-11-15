@@ -1,8 +1,16 @@
 import { isDeepStrictEqual, parseArgs } from "node:util";
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { PACKET_ARTIFACTS } from "./packet-entry.mjs";
-import { SIGNAL_ARTIFACTS } from "./signal-entry.mjs";
+
+const packetArtifacts = new Set([
+  "wireshark-pgsql-jdbc.pcap",
+  "wireshark-dns.cap",
+  "wireshark-dhcp.pcap",
+]);
+const signalArtifacts = new Set([
+  "sigrok-uart-max3232e.sr",
+  "sigrok-i2c-nunchuk.sr",
+]);
 
 const { values } = parseArgs({
   options: {
@@ -81,8 +89,8 @@ for (const [side, answer] of [
 // coverage. Repeated equivalent deliveries must also match every observation
 // field except the receipt and parent IDs, which identify their own invocations.
 if (
-  Object.hasOwn(PACKET_ARTIFACTS, left.artifact) ||
-  Object.hasOwn(SIGNAL_ARTIFACTS, left.artifact) ||
+  packetArtifacts.has(left.artifact) ||
+  signalArtifacts.has(left.artifact) ||
   ["wireshark-http.cap", "wireshark-http_redirects.pcapng"].includes(
     left.artifact,
   )
@@ -103,9 +111,9 @@ if (
     });
     if (
       left.delivery === right.delivery &&
-      (!Object.hasOwn(PACKET_ARTIFACTS, left.artifact) ||
+      (!packetArtifacts.has(left.artifact) ||
         left.packet_selection === right.packet_selection) &&
-      (!Object.hasOwn(SIGNAL_ARTIFACTS, left.artifact) ||
+      (!signalArtifacts.has(left.artifact) ||
         left.signal_selection === right.signal_selection)
     ) {
       answer.delivery_observations = answer.delivery_observations.map(

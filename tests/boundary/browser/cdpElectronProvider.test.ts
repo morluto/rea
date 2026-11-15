@@ -828,7 +828,9 @@ describe("CdpElectronProvider malformed source replies", () => {
         error: {
           operation: "inspect_electron_page",
           reason: "protocol_error",
-          userMessage: expect.stringContaining("scriptSource must be a string"),
+          userMessage: expect.stringContaining(
+            "Debugger.getScriptSource returned a malformed result at /scriptSource",
+          ),
         },
       });
       expect(browser.commands.map(({ method }) => method)).toContain(

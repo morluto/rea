@@ -1,6 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
+import { minimalElfImage } from "../../fixtures/nativeHeaders.js";
 
 import {
   TextReader,
@@ -19,7 +20,7 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { harmonyApplicationProjectionResultSchema } from "../../../src/domain/harmony/harmonyApplication.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
+import { cliTest, type CliInvocation } from "../../support/cli/cliFixture.js";
 
 const harmony = {
   family: "HarmonyOS",
@@ -140,17 +141,14 @@ const fixtures = [
 
 cliTest.for(fixtures)(
   "preserves entry kinds in $family projections through CLI and stdio MCP",
-  { timeout: 60_000 },
   async (fixture, { cli }) => {
     const root = await createTestTempDirectory("rea-mobile-directory-");
     const environment = { HOME: root, USERPROFILE: root };
     const { call } = await connectLocalToolsMcp(environment);
     for (const mode of ["directories", "files", "nested"] as const) {
       // Keep one fresh dispatcher check per family; reuse later commands.
-      const run =
-        mode === "directories"
-          ? cli.run.bind(cli)
-          : runFileCli.bind(undefined, cli);
+      const run = (invocation: CliInvocation) =>
+        cli.run({ ...invocation, freshProcess: mode === "directories" });
       const writer = new ZipWriter(new Uint8ArrayWriter());
       for (const path of fixture.paths) {
         if (mode !== "files")
@@ -161,9 +159,7 @@ cliTest.for(fixtures)(
             path.endsWith(".dylib")
               ? new Uint8ArrayReader(thinMach(0xfeedfacf, 0x0100000c))
               : path.endsWith(".so")
-                ? new Uint8ArrayReader(
-                    Uint8Array.from([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1, 0]),
-                  )
+                ? new Uint8ArrayReader(Uint8Array.from(minimalElfImage()))
                 : new TextReader("opaque fixture content"),
           );
       }
@@ -320,15 +316,13 @@ cliTest.for([
   },
 ])(
   "preserves encrypted $family path facts through CLI and stdio MCP",
-  { timeout: 60_000 },
   async (fixture, { cli }) => {
     const root = await createTestTempDirectory("rea-mobile-encrypted-paths-");
     const environment = { HOME: root, USERPROFILE: root };
     const { call } = await connectLocalToolsMcp(environment);
     for (const encrypted of [false, true]) {
-      const run = encrypted
-        ? runFileCli.bind(undefined, cli)
-        : cli.run.bind(cli);
+      const run = (invocation: CliInvocation) =>
+        cli.run({ ...invocation, freshProcess: !encrypted });
       const writer = new ZipWriter(new Uint8ArrayWriter());
       for (const member of fixture.paths)
         await writer.add(

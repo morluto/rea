@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { invariantViolation } from "../domain/internalInvariant.js";
 import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 
@@ -18,8 +19,9 @@ import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { DEFAULT_MANAGED_SNAPSHOT_BYTES } from "../domain/managed/managedInspectionLimits.js";
@@ -147,7 +149,9 @@ export const hashManagedSource = async (
 const snapshotBudget = (options: ManagedSnapshotReadOptions): number => {
   const maxBytes = options.maxBytes ?? DEFAULT_MANAGED_SNAPSHOT_BYTES;
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1)
-    throw new RangeError("max_snapshot_bytes must be a positive safe integer");
+    throw invariantViolation(
+      "max_snapshot_bytes must be a positive safe integer",
+    );
   return maxBytes;
 };
 
@@ -171,9 +175,7 @@ const readManagedFile = <Value extends ManagedSourceObservation>(
         const failure =
           identity !== undefined && !identity.ok
             ? identity.error
-            : new AnalysisCancelledError(operation, {
-                cause: cancellation.reason,
-              });
+            : cancelledBy(operation, carriedReason(cancellation.reason));
         throw failure.retainPartialObservation({
           kind: "file-snapshot-hash",
           path,
@@ -252,9 +254,7 @@ export const managedCleanupError = (
           ? identity.error
           : cancellation === undefined
             ? undefined
-            : new AnalysisCancelledError(operation, {
-                cause: cancellation.reason,
-              });
+            : cancelledBy(operation, carriedReason(cancellation.reason));
     // This boundary produces only these snapshot facts. The descriptor owner
     // confirms completion independently of a failed final close.
     if (cause.outcome.kind === "completed") {
@@ -288,13 +288,15 @@ export const managedCleanupError = (
     );
     bindRegularFileCleanup(cause, error);
     if (cause.reason === "cancelled") {
-      const cancelled = new AnalysisCancelledError(operation, {
-        cause:
+      const cancelled = cancelledBy(
+        operation,
+        carriedReason(
           cause.cancellation === undefined
             ? cause.cause
             : cause.cancellation.reason,
-        partialObservation: cause.partialObservation,
-      });
+        ),
+        { partialObservation: cause.partialObservation },
+      );
       return analysisErrorWithCleanupFailure(
         cancelled,
         error,
@@ -313,7 +315,7 @@ const normalizeReadFailure = (
   signal?: AbortSignal,
 ): unknown => {
   if (signal?.aborted === true && cause === signal.reason)
-    return new AnalysisCancelledError(operation, { cause });
+    return cancelledBy(operation, carriedReason(cause));
   if (cause instanceof RegularFileChangedError)
     return new AnalysisArtifactChangedError(operation, path, cause.message, {
       cause,
@@ -322,7 +324,7 @@ const normalizeReadFailure = (
   return (
     classifyBinaryTargetFilesystemFailure(path, cause) ??
     (signal?.aborted === true
-      ? new AnalysisCancelledError(operation, { cause })
+      ? cancelledBy(operation, carriedReason(cause))
       : cause)
   );
 };

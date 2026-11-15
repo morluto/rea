@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../tests/fixtures/canonicalOutputSchema.js";
 import type { Client } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema } from "ajv";
@@ -440,9 +441,7 @@ const expectResourceSchemaBranches = async (client: Client): Promise<void> => {
       contract.outputSchema.safeParse(malformedEvidence).success,
       `${name} canonical rejects missing resource_root`,
     ).toBe(false);
-    const advertised = advertisedTools.get(name)?.outputSchema;
-    expect(advertised, `${name} is advertised`).toBeDefined();
-    if (advertised === undefined) continue;
+    const advertised = canonicalOutputSchema(name);
     const validateAdvertised = new Ajv2020({
       strict: false,
       validateFormats: false,

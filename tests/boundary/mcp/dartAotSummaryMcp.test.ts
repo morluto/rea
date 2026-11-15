@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { unlink } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -9,7 +10,7 @@ import { createFlutterBuildAnalysisProvider } from "../../../src/composition/flu
 import {
   analysisViewResultSchema,
   dartAotSummaryViewResultSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+} from "../../../src/domain/analysisView/analysisViewResult.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { flutterResultSchemas } from "../../../src/domain/flutter/flutterBuildAnalysis.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
@@ -46,23 +47,19 @@ it("retains the selected pool policy through MCP summary projection", async () =
   const definition = (await client.listTools()).tools.find(
     (tool) => tool.name === "inspect_dart_aot",
   );
-  if (definition?.outputSchema === undefined)
-    throw new Error("Missing AOT output schema");
-  const outputSchema: Record<string, unknown> = definition.outputSchema;
-  const ajv = new Ajv2020({ strict: false, validateFormats: false });
-  const filteredReply = await client.callTool({
-    name: "inspect_dart_aot",
-    arguments: {
-      path,
-      detail: "summary",
-      pool_policy: { contains: "package:animations/", uri_limit: 1 },
+  if (definition === undefined) throw new Error("Missing AOT output schema");
+  const filteredReply = await client.callTool(
+    {
+      name: "inspect_dart_aot",
+      arguments: {
+        path,
+        detail: "summary",
+        pool_policy: { contains: "package:animations/", uri_limit: 1 },
+      },
     },
-  });
+    { toolDefinition: definition },
+  );
   expect(filteredReply.isError).not.toBe(true);
-  expect(
-    ajv.validate(outputSchema, filteredReply.structuredContent),
-    JSON.stringify(ajv.errors),
-  ).toBe(true);
   const filteredView = dartAotSummaryViewResultSchema.parse(
     parseEvidence(filteredReply.structuredContent).normalized_result,
   );
@@ -84,9 +81,10 @@ it("honors explicit ABI and old full requests, validates SDK schemas and reuses 
   const { client, session } = harness;
   const catalog = (await client.listTools()).tools;
   const definition = catalog.find((tool) => tool.name === "inspect_dart_aot");
-  if (definition?.outputSchema === undefined)
-    throw new Error("Missing AOT output schema");
-  const outputSchema: Record<string, unknown> = definition.outputSchema;
+  if (definition === undefined) throw new Error("Missing AOT output schema");
+  const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+    definition.name,
+  );
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   expect(ajv.validateSchema(definition.inputSchema)).toBe(true);
   expect(ajv.validateSchema(outputSchema)).toBe(true);
@@ -97,15 +95,14 @@ it("honors explicit ABI and old full requests, validates SDK schemas and reuses 
       { path, detail: "summary" },
     ),
   ).toBe(false);
-  const reply = await client.callTool({
-    name: "inspect_dart_aot",
-    arguments: { path, abi: "x86_64", detail: "summary" },
-  });
+  const reply = await client.callTool(
+    {
+      name: "inspect_dart_aot",
+      arguments: { path, abi: "x86_64", detail: "summary" },
+    },
+    { toolDefinition: definition },
+  );
   expect(reply.isError).not.toBe(true);
-  expect(
-    ajv.validate(outputSchema, reply.structuredContent),
-    JSON.stringify(ajv.errors),
-  ).toBe(true);
   const receipt = parseEvidence(reply.structuredContent);
   const view = dartAotSummaryViewResultSchema.parse(receipt.normalized_result);
   const parent = session.evidenceById(view.parent_evidence_id);
@@ -201,7 +198,7 @@ it("honors explicit ABI and old full requests, validates SDK schemas and reuses 
   });
   if (!portable.ok) throw portable.error;
   expect(portable.value.normalized_result).toEqual(view);
-}, 30000);
+});
 
 it("preserves null snapshot facts and pool lower bounds after exhaustion, rejecting malformed and conflicting identities", async () => {
   const report = {
@@ -217,6 +214,7 @@ it("preserves null snapshot facts and pool lower bounds after exhaustion, reject
       sections: [],
     },
     string_pool: {
+      policy: {},
       coverage: "partial",
       package_uris: ["package:opaque/a.dart"],
       package_uri_count_at_least: 1000,

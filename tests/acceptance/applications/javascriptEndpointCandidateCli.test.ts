@@ -160,7 +160,7 @@ it("reports a candidate endpoint through the worker boundary in the public CLI",
     ({ target_node_id }) => target_node_id === endpoint?.node_id,
   );
   expect(edge?.properties).toMatchObject({ interpretation: "candidate" });
-}, 20_000);
+});
 
 it("preserves SQLite constructor certainty through the public worker and graph", async () => {
   const root = await createTestTempDirectory("rea-storage-candidate-cli-");
@@ -218,4 +218,4 @@ it("preserves SQLite constructor certainty through the public worker and graph",
       ]),
     },
   });
-}, 20_000);
+});
