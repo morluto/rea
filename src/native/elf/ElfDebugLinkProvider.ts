@@ -260,15 +260,6 @@ const selectedPath = (
     ? (input.candidate_path ?? input.path)
     : input.path;
 
-const readMessage = (
-  field: SelectedField,
-  path: string,
-  code: string,
-): string =>
-  field === "candidate_path"
-    ? `Selected debug file candidate could not be read (${code}): ${path}.`
-    : `Selected ELF image could not be read (${code}): ${path}.`;
-
 const elfDebugLinkFailurePrimary = (
   facts: ArtifactFilePrimaryFacts,
   input: InspectElfDebugLinkInput,
@@ -305,12 +296,17 @@ const elfDebugLinkFailurePrimary = (
         ),
       },
     );
-  const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
+  const formatFailure = parseFailureAnalysisError(
+    OPERATION,
+    path,
+    cause,
+    field,
+  );
   if (formatFailure !== undefined) return formatFailure;
   const identityFailure = projectOwnedArtifactIdentityFailure(
     facts,
     OPERATION,
-    input.path,
+    path,
   );
   if (identityFailure !== undefined) return identityFailure;
   if (
@@ -345,13 +341,14 @@ const elfDebugLinkFailurePrimary = (
       );
     }
     if (cause.reason === "path" || cause.reason === "format")
-      return stableArtifactInputFailure(cause, OPERATION);
+      return stableArtifactInputFailure(cause, OPERATION, field);
   }
   const fileFailure = projectSelectedArtifactFileFailure(
     cause,
     OPERATION,
-    input.path,
-    "ELF image",
+    path,
+    field === "candidate_path" ? "debug file candidate" : "ELF image",
+    field,
   );
   if (fileFailure !== undefined) return fileFailure;
   return new ArtifactOperationError(
