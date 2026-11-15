@@ -225,8 +225,12 @@ export const readClientRegistrationInspections = async (
       }
       const { document: parsed, configPath } = configuration.value;
       selectedConfigPath = configPath;
+      // A client applicable only through REA's registration has none to report.
+      const reportsAbsence =
+        selected || client.registrationApplicability !== true;
       if (parsed === undefined) {
-        record(unavailableStatus(client, "missing", configPath));
+        if (reportsAbsence)
+          record(unavailableStatus(client, "missing", configPath));
         continue;
       }
       const policy = await readClientPolicyBlock(
@@ -269,7 +273,8 @@ export const readClientRegistrationInspections = async (
           });
           continue;
         }
-        record(unavailableStatus(client, "missing", configPath));
+        if (reportsAbsence)
+          record(unavailableStatus(client, "missing", configPath));
         continue;
       }
       const effectiveClient: SetupClient =
@@ -662,7 +667,10 @@ const clientEvidencePresent = async (
   if (evidence.selected) return ok(true);
   const discoveryPaths = new Set(client.discoveryPaths ?? []);
   const paths = [
-    ...clientEvidencePaths(client),
+    // Only the registration file can hold what REA wrote.
+    ...(client.registrationApplicability === true
+      ? [client.configPath, ...(client.configPaths ?? [])]
+      : clientEvidencePaths(client)),
     ...(evidence.ownership ? clientOwnershipEvidencePaths(client) : []),
   ];
   let unavailable:

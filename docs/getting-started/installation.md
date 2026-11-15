@@ -718,6 +718,8 @@ hosted connector; see [its configuration](client-configuration.md#other-client-s
 | Mastra Code               | `mastracode`            |
 | Zed                       | `zed`                   |
 | Amp                       | `amp`                   |
+| ----------------------- | ---------------- |
+| MCPorter                | `mcporter`       |
 
 `droid`, `dsh`, `kimi`, `qoder`, `trae`, `workbuddy`, and `zcode` require
 `rea-agents@6.5.0` or later. The 6.4.0 registry check above does not cover them.
@@ -732,7 +734,7 @@ hosted connector; see [its configuration](client-configuration.md#other-client-s
 and Amp only through `rea mcp add`, and could not register Cline in VS Code
 Insiders, VSCodium, Cursor or Windsurf at all; doctor, update and uninstall did
 not see those registrations. Current releases inspect, refresh and remove them
-like any other setup client.
+like any other setup client. `mcporter`, `--client mcporter`,
 
 See [client configuration and troubleshooting](client-configuration.md) for
 configuration paths, profiles, trust policies, and schema-limit workarounds.
@@ -1296,7 +1298,7 @@ status while retaining successful client outcomes and recovery paths.
 User-level registration for a client that `rea setup` also supports uses that
 client's setup definition, so the same native read rules apply, and doctor,
 update and uninstall inspect, refresh and remove what it wrote. Goose, Junie,
-fx, MCPorter and Kilo Code are registered only by `rea mcp add` until their
+fx and Kilo Code are registered only by `rea mcp add` until their
 native layers and path overrides are modeled; doctor, update and uninstall do
 not yet see those registrations. Gemini CLI
 registration fails without writing when Gemini's system, defaults or trusted
@@ -1306,9 +1308,7 @@ to write a Claude Desktop MSIX configuration the running app could overwrite,
 or any file this process's MSIX AppData redirection would divert.
 fx registration follows `FX_HOME` and fails without writing when fx would
 refuse its value or when it contains `.` or `..` segments, which could name the
-home folder. MCPorter registration writes the file named by `MCPORTER_CONFIG`,
-resolved as MCPorter resolves it; otherwise it uses the first existing home file under an
-absolute `XDG_CONFIG_HOME/mcporter`, then `~/.mcporter`, as MCPorter loads them.
+home folder.
 
 `--no-global` writes only project-level settings. A selection containing Amp or
 another client without project storage fails before any writes; select those

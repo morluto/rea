@@ -694,3 +694,13 @@ it("detects MCPorter from the file MCPORTER_CONFIG selects in default registrati
     result.value.find((client) => client.id === "mcporter")?.configPath,
   ).toBe(join(home, "elsewhere", "mcporter.json"));
 });
+
+it("refuses a relative MCPORTER_CONFIG whose file depends on each command's directory", async () => {
+  const { result } = await resolveWith("mcporter", {
+    MCPORTER_CONFIG: "config/selected.json",
+  });
+  expect(result).toMatchObject({
+    ok: false,
+    error: { message: expect.stringContaining("MCPORTER_CONFIG is relative") },
+  });
+});
