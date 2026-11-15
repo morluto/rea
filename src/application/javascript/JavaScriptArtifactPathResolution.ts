@@ -1862,8 +1862,12 @@ const selectPackageExport = (
       };
     declared = keys;
     if (hasSubpaths) {
-      if (subpath.endsWith("/")) return { status: "unmatched", declared };
-      if (!subpath.includes("*") && Object.hasOwn(value, subpath))
+      // A trailing slash excludes exact keys, but can still match a wildcard.
+      if (
+        !subpath.endsWith("/") &&
+        !subpath.includes("*") &&
+        Object.hasOwn(value, subpath)
+      )
         target = Reflect.get(value, subpath);
       else {
         pattern = selectPackageSubpathPattern(keys, subpath);

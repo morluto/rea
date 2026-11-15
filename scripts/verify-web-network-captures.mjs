@@ -15,7 +15,6 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
 import { runOwnedCommand } from "../dist/process/OwnedCommand.js";
 import { WEB_NETWORK_CAPTURE_LIMITS } from "../dist/domain/webNetworkCapture.js";
 import {
@@ -24,6 +23,7 @@ import {
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 const executable = process.env.REA_MITMDUMP_COMMAND;
 if (
@@ -38,7 +38,7 @@ await access(executable);
 const entrypoint =
   process.argv[2] ?? fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const run = createVerifierRun();
-const runtime = await PrivateRuntimeRoot.create({
+const runtime = await VerifierFixture.open({
   prefix: "rea-history-verifier-",
 });
 const environment = Object.fromEntries(
@@ -893,16 +893,13 @@ try {
 } catch (cause) {
   failures.push(cause);
 } finally {
-  for (const cleanup of [
-    () => client.close(),
-    () => transport.close(),
-    () => runtime.close(),
-  ]) {
-    try {
-      await cleanup();
-    } catch (cause) {
-      failures.push(cause);
-    }
+  // The root is removed only after the client and transport confirm.
+  runtime.releaseAfter(() => client.close());
+  runtime.releaseAfter(() => transport.close());
+  try {
+    await runtime.release();
+  } catch (cause) {
+    failures.push(cause);
   }
 }
 const verifier = await completeVerifierRun(run);
@@ -920,9 +917,13 @@ if (failures.length > 0) {
       2,
     ),
   );
-  throw new AggregateError(
-    failures,
-    "Historical capture verification failed; analysis and cleanup failures are retained.",
+  throw Object.assign(
+    new AggregateError(
+      failures,
+      "Historical capture verification failed; analysis and cleanup failures are retained.",
+    ),
+    // The caller can retry the retained root from the final failure.
+    runtime.released ? {} : { cleanupLeases: [runtime] },
   );
 }
 console.log(

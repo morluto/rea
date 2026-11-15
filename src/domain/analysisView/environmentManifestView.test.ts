@@ -4,10 +4,8 @@ import {
   analysisViewLayoutEvidence,
   environmentManifestCaptureFixture,
 } from "../../../tests/fixtures/analysisView.js";
-import {
-  projectAnalysisView,
-  type AnalysisViewRequest,
-} from "./analysisView.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewRequest } from "./analysisViewRequest.js";
 import { analysisViewRequestSchema } from "./analysisViewRequest.js";
 
 type ManifestView = Extract<

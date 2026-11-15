@@ -147,7 +147,7 @@ it("preserves MCP analysis limits in retained Evidence and an exported bundle ro
   const imported = await call("import_evidence_bundle", { path });
   expect(imported.isError, JSON.stringify(imported.content)).not.toBe(true);
   expect(await getBundle(call)).toEqual(retained);
-}, 60_000);
+});
 
 cliTest(
   "retains caller limits and applicable file scopes after an actual analysis timeout",
@@ -195,10 +195,6 @@ cliTest(
     expect(parseMcpToolError(response)).toMatchObject({
       error: {
         code: "provider_timeout",
-        message: expect.stringContaining("server/provider deadline"),
-        remediation: {
-          action: expect.stringContaining("MCP client"),
-        },
         recovery: {
           kind: "inspect_timeout_state",
           operation: "analyze_javascript_application",
@@ -261,7 +257,6 @@ cliTest(
       expectFileAnalysisApplicability(evidence, interrupted);
     await client.ping();
   },
-  60_000,
 );
 
 cliTest(

@@ -28,7 +28,7 @@ const fixture = async (mcp: TestMcp, families?: ReadonlySet<string>) => {
     undefined,
     new ToolResultDelivery(1024 * 1024),
     undefined,
-    "full",
+    undefined,
     undefined,
     families,
   );

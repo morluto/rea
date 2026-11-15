@@ -1,10 +1,9 @@
 import { basename, dirname, isAbsolute, resolve } from "node:path";
-import { ArtifactResourceScope } from "../../../dist/artifacts/ArtifactResourceScope.js";
 import {
   readManagedSnapshot,
   verifyManagedSourceIdentity,
 } from "../../../dist/dotnet/ManagedSnapshot.js";
-import { withVerifierCleanup } from "../../lib/verifier-cleanup.mjs";
+import { withVerifierArtifactScope } from "../../lib/verifier-artifact-scope.mjs";
 
 import { parseBinaryTarget } from "../../../dist/application/BinaryTargetResolver.js";
 import { inspectManagedArtifactBytes } from "../../../dist/dotnet/ManagedArtifactInspector.js";
@@ -24,13 +23,10 @@ import {
 const READ_FILE_MAX_BYTES = 0x7fff_ffff;
 
 export async function verifyManagedAppManifest(rawManifest, manifestPath) {
-  const resources = new ArtifactResourceScope();
-  return withVerifierCleanup(
-    () =>
-      resources.run(() =>
-        verifyManifestSnapshot(rawManifest, manifestPath, resources),
-      ),
-    [() => resources.close()],
+  return withVerifierArtifactScope((resources) =>
+    resources.run(() =>
+      verifyManifestSnapshot(rawManifest, manifestPath, resources),
+    ),
   );
 }
 

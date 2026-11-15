@@ -10,8 +10,15 @@ import type {
   RetainedResourceScope,
 } from "../application/AnalysisProvider.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
-import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
+} from "../domain/analysisErrorCore.js";
+import {
+  closedAnalysisClientError,
+  ProviderAdapterError,
+} from "../domain/providerAdapterError.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
@@ -69,16 +76,9 @@ export class AnalysisClientCreation {
     operation: string,
     signal?: AbortSignal,
   ): Promise<Result<AnalysisClient, AnalysisError>> {
-    if (signal?.aborted)
-      return err(
-        new AnalysisCancelledError(operation, { cause: signal.reason }),
-      );
+    if (signal?.aborted) return err(cancelledBy(operation, signal));
     if (this.#closed)
-      return err(
-        new ProviderAdapterError(this.providerId, operation, {
-          diagnostics: { reason: "client_closed" },
-        }),
-      );
+      return err(closedAnalysisClientError(this.providerId, operation));
     if (this.#failure?.cleanupIncomplete)
       return err(
         analysisClientFailureForOperation(
@@ -111,9 +111,7 @@ export class AnalysisClientCreation {
     }
     const waited = await attempt.wait(signal);
     if (waited.status === "cancelled")
-      return err(
-        new AnalysisCancelledError(operation, { cause: signal?.reason }),
-      );
+      return err(cancelledBy(operation, carriedReason(waited.reason)));
     if (
       draining &&
       !signal?.aborted &&
@@ -131,10 +129,7 @@ export class AnalysisClientCreation {
           operation,
         ),
       );
-    if (signal?.aborted)
-      return err(
-        new AnalysisCancelledError(operation, { cause: signal.reason }),
-      );
+    if (signal?.aborted) return err(cancelledBy(operation, signal));
     return waited.value;
   }
 
@@ -142,11 +137,7 @@ export class AnalysisClientCreation {
     signal: AbortSignal,
   ): Promise<Result<AnalysisClient, AnalysisError>> {
     if (signal.aborted)
-      return err(
-        new AnalysisCancelledError("create_analysis_client", {
-          cause: signal.reason,
-        }),
-      );
+      return err(cancelledBy("create_analysis_client", signal));
     let primary: AnalysisError | undefined;
     try {
       this.#client = await this.create(signal, this.#inspectionOwner);
@@ -164,9 +155,7 @@ export class AnalysisClientCreation {
       this.#inspectionResources.retryCleanup(),
     );
     if (signal.aborted && primary === undefined)
-      primary = new AnalysisCancelledError("create_analysis_client", {
-        cause: signal.reason,
-      });
+      primary = cancelledBy("create_analysis_client", signal);
     if (!inspections.ok)
       primary =
         primary === undefined

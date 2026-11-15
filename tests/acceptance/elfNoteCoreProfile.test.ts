@@ -36,7 +36,7 @@ cliTest.for([
     bytes[8] = version;
     await writeFile(path, bytes);
     const hash = createHash("sha256").update(bytes).digest("hex");
-    const output = await cli.sharedCliRun!({
+    const output = await cli.run({
       arguments: ["inspect-elf-notes", path, "--json"],
     });
     expect(output.exitCode, output.stderr).toBe(0);

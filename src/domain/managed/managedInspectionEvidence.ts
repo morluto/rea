@@ -53,7 +53,9 @@ export const readManagedInspectionEvidence = <
       ]),
     );
   }
-  const payload = readEvidencePayload(schema, evidence.normalized_result);
+  const payload = readEvidencePayload(schema, evidence.normalized_result, {
+    within: ["normalized_result"],
+  });
   if (!payload.ok) return payload;
   const result = payload.value;
   const artifactSha256 = result.artifact.sha256;

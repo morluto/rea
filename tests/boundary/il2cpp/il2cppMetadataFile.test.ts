@@ -45,7 +45,7 @@ const failure = (
 const rejects = (
   bytes: Buffer,
   reason: Il2cppMetadataFailureReason,
-  kind: "unsupported" | "corrupt" = "corrupt",
+  kind: "unsupported" | "truncated" | "malformed" = "malformed",
 ) => {
   const rejected = failure(bytes);
   expect(rejected.reason).toBe(reason);
@@ -195,7 +195,7 @@ describe("rejected IL2CPP global-metadata", () => {
       bytes.writeUInt32LE(0xfab11baf, 0);
       const rejected = failure(bytes);
       expect(rejected.reason).toBe("truncated-header");
-      expect(rejected.kind).toBe("corrupt");
+      expect(rejected.kind).toBe("truncated");
       expect(rejected.message).toContain(
         "fewer than the 8-byte magic/version prefix",
       );
@@ -208,7 +208,7 @@ describe("rejected IL2CPP global-metadata", () => {
     bytes.writeUInt32LE(0xfab11baf, 0);
     const rejected = failure(bytes, readIl2cppMetadataForLinking);
     expect(rejected.reason).toBe("truncated-header");
-    expect(rejected.kind).toBe("corrupt");
+    expect(rejected.kind).toBe("truncated");
     expect(rejected.message).toContain("metadata version is unknown");
   });
 
@@ -216,6 +216,7 @@ describe("rejected IL2CPP global-metadata", () => {
     rejects(
       createIl2cppMetadataFixture().bytes.subarray(0, 200),
       "truncated-header",
+      "truncated",
     );
     rejects(
       mutated((fixture, bytes) =>
@@ -586,6 +587,7 @@ describe("IL2CPP global-metadata versions 29 and 31", () => {
     rejects(
       createIl2cppMetadataFixture({ version: 29 }).bytes.subarray(0, 200),
       "truncated-header",
+      "truncated",
     );
     rejects(
       mutated(

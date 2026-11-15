@@ -2,6 +2,7 @@ import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { expect, it, vi } from "vitest";
 
+import { OwnerCancellation } from "../../domain/analysisErrorCore.js";
 import { createEvidence } from "../../domain/evidence.js";
 import {
   createEvidenceBundle,
@@ -644,7 +645,9 @@ it.each(
       const result = await late;
       if (result.ok) throw new Error("Expected shutdown admission refusal");
       expect(result.error._tag).toBe("AnalysisCancelledError");
-      expect(result.error.cause).toBe(aborted ? reason : undefined);
+      expect(result.error.cause).toBe(
+        aborted ? reason : OwnerCancellation.ownerClosed,
+      );
       expect(mutation).not.toHaveBeenCalled();
       expect(await earlier).toMatchObject({ ok: true, value: { ok: true } });
       expect(calls.filter((name) => name === "address_name")).toHaveLength(1);

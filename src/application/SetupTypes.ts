@@ -44,6 +44,12 @@ export type ClientConfigurationResult =
     }
   | {
       readonly status: "failed";
+      /** A read-only layer above the write target overrides REA's entry. */
+      readonly reason: "read_only_override";
+      readonly detail: string;
+    }
+  | {
+      readonly status: "failed";
       readonly reason: "conflict";
       readonly backupPath?: string;
     }
@@ -288,6 +294,8 @@ export interface SetupConfirmationContext {
   readonly clientStates: readonly SetupClientState[];
   readonly selectedClientIds: readonly string[];
   readonly clientSelectionAllowed: boolean;
+  /** Known manual completion required after the approved local changes. */
+  readonly remediation?: string;
 }
 
 /** Adapter-owned selection and confirmation for the setup workflow. */

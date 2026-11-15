@@ -18,10 +18,9 @@ summary's `root_format_metadata` holds the image facts. Use its
 `extract_artifact` writes one file per segment and per signature block.
 
 For agent sessions, advertise the `session,artifact,application` tool families
-and consider setting both `REA_MCP_INPUT_SCHEMA_PROFILE` and
-`REA_MCP_OUTPUT_SCHEMA_PROFILE` to `compact`. The output profile bounds each
-advertised output schema to 4,096 bytes by relaxing nested client validation;
-REA still validates complete results against the canonical contracts. Pair
+and keep the default `compact` input profile and `off` output profile, which
+omits output schemas; REA still validates complete results against the
+canonical contracts. Pair
 this with retained summaries and selected inventory views to limit the context
 needed for one question. See [MCP contracts](reference/mcp-contracts.md) for the profiles
 and their client compatibility tradeoffs.
@@ -240,9 +239,11 @@ and a partition table sits where that origin puts `0x8000` (file offset
 `table_file_offset`, a limitation says to reopen the file with
 `format: "esp-flash-image"` and that `flash_offset`, and `inspect_artifact`
 lists the same `open_binary` call as a next probe. `flash_dump` is null for
-every other image. Evidence that REA recorded before it reported the field
-omits it; REA still reads and compares such Evidence, and the omission says
-nothing about where the file was read from.
+every other image. An Evidence bundle exported by an earlier release, without
+`evidence_format`, is refused; recreate the observation. A standalone Evidence
+record from before REA reported the field omits it; REA still reads and
+compares such a record, and the omission says nothing about where the file was
+read from.
 
 ## Limits
 

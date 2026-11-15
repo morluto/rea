@@ -14,7 +14,7 @@ export const createElectronActiveEvidence = (
   input: ElectronActiveObservationInput,
   result: ElectronActiveObservationResult,
   provider: ProviderIdentity,
-  resolvedInput?: CanonicalElectronActiveObservationInput,
+  resolvedInput: CanonicalElectronActiveObservationInput,
 ): Evidence =>
   createEvidence(undefined, provider, {
     predicateType: "rea.electron-active-scenario",
@@ -37,20 +37,16 @@ export const createElectronActiveEvidence = (
 
 const parameters = (
   input: ElectronActiveObservationInput,
-  resolvedInput?: CanonicalElectronActiveObservationInput,
+  resolvedInput: CanonicalElectronActiveObservationInput,
 ): EvidenceObservation["parameters"] => {
   const scenario = jsonObjectSchema.parse(input);
   return {
     ...scenario,
     scenario_sha256: digestCanonicalValue(scenario, "Electron scenario"),
-    ...(resolvedInput === undefined
-      ? {}
-      : {
-          resolved_paths: {
-            executable_path: resolvedInput.executable_path,
-            application_path: resolvedInput.application_path,
-            application_root: resolvedInput.application_root,
-          },
-        }),
+    resolved_paths: {
+      executable_path: resolvedInput.executable_path,
+      application_path: resolvedInput.application_path,
+      application_root: resolvedInput.application_root,
+    },
   };
 };

@@ -1,3 +1,4 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, expect, it } from "vitest";
@@ -6,7 +7,6 @@ import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { MCP_TRANSPORT_EVIDENCE_RECORDS } from "../../../src/domain/analysisErrorPresentation.js";
 import {
   EVIDENCE_RECORD_SELECTION_LIMIT,
-  EVIDENCE_RECORD_SELECTION_LIMITATIONS,
   evidenceRecordSelectionSchema,
 } from "../../../src/domain/evidenceRecordSummary.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
@@ -61,7 +61,7 @@ const canonical = (records: readonly Record_[]) =>
 
 const connect = async (
   options: {
-    readonly profile?: "full" | "compact";
+    readonly profile?: "compact";
     readonly maximumResponseBytes?: number;
     readonly records?: readonly ReturnType<typeof createEvidence>[];
   } = {},
@@ -76,7 +76,7 @@ const connect = async (
     serverOptions: {
       environment: {
         ...process.env,
-        REA_MCP_OUTPUT_SCHEMA_PROFILE: options.profile ?? "full",
+        REA_MCP_OUTPUT_SCHEMA_PROFILE: options.profile ?? "compact",
       },
       ...(options.maximumResponseBytes === undefined
         ? {}
@@ -85,13 +85,21 @@ const connect = async (
   });
   for (const record of options.records ?? LEDGER)
     expect(session.recordEvidence(record).ok).toBe(true);
+  const definitions = (await client.listTools()).tools.filter(
+    (tool) => tool.name === "get_evidence_bundle",
+  );
+  if (definitions.length !== 1 || definitions[0]?.outputSchema === undefined)
+    throw new Error("Expected one advertised evidence-bundle output schema");
+  const toolDefinition = definitions[0];
   const reply = (args: Record<string, unknown>) =>
-    client.callTool({ name: "get_evidence_bundle", arguments: args });
+    client.callTool(
+      { name: "get_evidence_bundle", arguments: args },
+      { toolDefinition: withCanonicalOutputSchema(toolDefinition) },
+    );
   const select = async (args: Record<string, unknown>) => {
     const result = await reply({ detail: "records", ...args });
     expect(result.isError, JSON.stringify(result)).not.toBe(true);
     return {
-      result,
       selection: evidenceRecordSelectionSchema.parse(
         z.object({ result: z.unknown() }).parse(result.structuredContent)
           .result,
@@ -101,7 +109,7 @@ const connect = async (
   return { client, session, reply, select };
 };
 
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "returns selected complete records with retained identities (%s)",
   async (profile) => {
     const { client, select } = await connect({ profile });
@@ -123,9 +131,11 @@ it.each(["full", "compact"] as const)(
     expect(parseEvidence(exact.selection.records[0]).evidence_id).toBe(
       annotatedA.evidence_id,
     );
-    // Historical and non-bundle labels come from their owning constant.
     expect(exact.selection.limitations).toEqual([
-      ...EVIDENCE_RECORD_SELECTION_LIMITATIONS,
+      expect.stringMatching(
+        /historical observations.*not establish current live/u,
+      ),
+      expect.stringMatching(/not an Evidence bundle.*cannot be imported/u),
     ]);
 
     const { tools } = await client.listTools();
@@ -140,11 +150,6 @@ it.each(["full", "compact"] as const)(
         limit: 1,
       }),
     ).toBe(true);
-    const outputSchema: Record<string, unknown> = tool.outputSchema!;
-    expect(ajv.validate(outputSchema, exact.result.structuredContent)).toBe(
-      true,
-    );
-
     // Pages follow canonical bundle order across distinct targets.
     const annotations = canonical([annotatedA, annotatedB]);
     const first = await select({

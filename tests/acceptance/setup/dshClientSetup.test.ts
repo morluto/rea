@@ -200,7 +200,6 @@ cliTest(
         arguments: [...args, "--json"],
         cwd: home,
         environment,
-        timeoutMs: 20_000,
       });
     const plan = await run(["setup", "--client", "dsh", "--dry-run"]);
     expect(plan.exitCode).toBe(0);
@@ -309,7 +308,10 @@ async function verifyGeneratedLauncher(
     command: registration.command,
     args: registration.args,
     cwd: home,
-    env: { PATH: process.env.PATH ?? "", ...environment },
+    env: {
+      PATH: process.env.PATH ?? "",
+      ...environment,
+    },
     stderr: "pipe",
   });
   const client = new Client({ name: "dsh-setup-lifecycle", version: "1" });

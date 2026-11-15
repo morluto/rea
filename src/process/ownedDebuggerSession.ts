@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 
 import {
   DEBUGGER_COMMAND_DEADLINE_SETTING,
@@ -7,7 +8,16 @@ import {
 } from "../config/debuggerSessionLimits.js";
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import type { AnalysisSettingId } from "../domain/analysisSettings.js";
-import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
+  AnalysisResourceConstraintError,
+  type AnalysisTimeoutRecovery,
+} from "../domain/analysisErrorCore.js";
+import type {
+  AnalysisError,
+  AnalysisErrorOptions,
+} from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { parseLinuxProcessStat } from "./LinuxProcessStat.js";
 import { OwnedDebuggerCleanupError } from "./ownedDebuggerCleanupError.js";
@@ -80,7 +90,7 @@ export const debuggerAdmissionRecovery = (
 export const fixedDeadlineGuidance = (
   what: string,
   timeoutMs: number,
-): { readonly userMessage: string; readonly remediationAction: string } => ({
+): AnalysisTimeoutRecovery => ({
   userMessage: `${what} reached its ${String(timeoutMs)} ms deadline (deadlineExpired). This release has no runtime override.`,
   remediationAction: `This ${String(timeoutMs)} ms deadline has no runtime override. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
 });
@@ -89,11 +99,7 @@ export const fixedDeadlineGuidance = (
 export const configurableDeadlineGuidance = (
   what: string,
   admission: DebuggerAdmissionLimit,
-): {
-  readonly userMessage: string;
-  readonly remediationAction: string;
-  readonly diagnostics: ReturnType<typeof debuggerAdmissionDiagnostics>;
-} => {
+): AnalysisTimeoutRecovery => {
   const recovery = debuggerAdmissionRecovery(admission);
   const limit = debuggerAnalysisLimit(admission);
   return {
@@ -129,6 +135,38 @@ export const debuggerResourceConstraintError = (
   );
 };
 
+/**
+ * Failure a debugger session keeps while its process is not confirmed stopped.
+ * A later cleanup retry reports it again, so it keeps the primary outcome: a
+ * cancellation stays a cancellation with the caller's reason instead of
+ * becoming a capability refusal for the target.
+ */
+export const retainedDebuggerCleanupFailure = (
+  debugger_: { readonly provider: string; readonly displayName: string },
+  operation: string,
+  reason: string,
+  resources: readonly string[],
+  options: AnalysisErrorOptions = {},
+): AnalysisError => {
+  const cleanup = { reason, resources: [...resources] };
+  const primary = options.cause;
+  if (primary instanceof AnalysisCancelledError)
+    return new AnalysisCancelledError(operation, {
+      ...options,
+      cause: primary.cause,
+      capturedOutput: options.capturedOutput ?? primary.capturedOutput,
+      partialObservation:
+        options.partialObservation ?? primary.partialObservation,
+      cleanup,
+    });
+  return new AnalysisCapabilityUnavailableError(
+    debugger_.provider,
+    operation,
+    `The owned ${debugger_.displayName} process could not be confirmed stopped: ${reason}`,
+    { ...options, cleanup },
+  );
+};
+
 const DETACH_TIMEOUT_MS = 1_000;
 const MAX_LATE_DEBUGGER_OUTPUT_BYTES = 64 * 1024;
 export type OwnedDebuggerDetachResult =
@@ -145,7 +183,7 @@ export type ProcessStartTimeReader = (pid: string) => Promise<string | null>;
 export const readLinuxProcessStartTime: ProcessStartTimeReader = async (
   pid,
 ) => {
-  if (process.platform !== "linux")
+  if (HOST_PLATFORM.platform !== "linux")
     throw new Error(
       "Inferior process identity verification requires Linux /proc.",
     );
@@ -306,7 +344,7 @@ export const stopOwnedDebuggerProcess = async (
   debuggerName: string,
   options: { readonly platform?: NodeJS.Platform } = {},
 ): Promise<OwnedDebuggerStopResult> => {
-  const platform = options.platform ?? process.platform;
+  const platform = options.platform ?? HOST_PLATFORM.platform;
   if (session.exited) {
     if (detachAttempts.has(session))
       return {

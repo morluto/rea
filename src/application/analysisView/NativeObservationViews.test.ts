@@ -13,11 +13,11 @@ import {
   nativeCallGraphSchema,
   type NativeCallGraph,
 } from "../../domain/native/nativeCallGraph.js";
+import type { AnalysisViewRequest } from "../../domain/analysisView/analysisViewRequest.js";
 import {
   analysisViewResultSchema,
-  type AnalysisViewRequest,
   type AnalysisViewResult,
-} from "../../domain/analysisView/analysisView.js";
+} from "../../domain/analysisView/analysisViewResult.js";
 import {
   inspectAnalysisView,
   projectRetainedAnalysis,

@@ -13,8 +13,9 @@ import {
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { InvestigationStatistics } from "../../domain/investigationLifecycle.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
+  cancelledBy,
+  OwnerCancellation,
 } from "../../domain/analysisErrorCore.js";
 import type { UnknownRegistryError } from "../../domain/unknownRegistryError.js";
 import type {
@@ -120,7 +121,7 @@ export abstract class BinarySessionRecords {
     evidence: Evidence,
   ): Result<"added" | "duplicate", AnalysisError> {
     if (this.#investigationDisposed)
-      return err(new AnalysisCancelledError("record_evidence"));
+      return err(cancelledBy("record_evidence", OwnerCancellation.ownerClosed));
     const recorded = this.#records.recordEvidence(evidence);
     if (recorded.ok && recorded.value === "added") this.#emitSnapshotChanged();
     return recorded;
@@ -200,7 +201,9 @@ export abstract class BinarySessionRecords {
     bundle: unknown,
   ): Result<EvidenceImportReceipt, AnalysisError> {
     if (this.#investigationDisposed)
-      return err(new AnalysisCancelledError("import_evidence_bundle"));
+      return err(
+        cancelledBy("import_evidence_bundle", OwnerCancellation.ownerClosed),
+      );
     const imported = this.#records.mergeEvidenceBundle(bundle);
     if (!imported.ok) return imported;
     this.#snapshot.refreshEvidenceMetadata(imported.value.replacements);
@@ -266,7 +269,9 @@ export abstract class BinarySessionRecords {
     snapshot: AnalysisSnapshot,
   ): Result<number, AnalysisError> {
     if (this.#investigationDisposed)
-      return err(new AnalysisCancelledError("import_analysis_snapshot"));
+      return err(
+        cancelledBy("import_analysis_snapshot", OwnerCancellation.ownerClosed),
+      );
     const active = this.activeAnalysisBinding();
     if (active !== undefined && this.#snapshotInvalidated)
       return err(
@@ -465,7 +470,7 @@ export abstract class BinarySessionRecords {
     input: RecordUnknownInput,
   ): Result<ResidualUnknown, AnalysisError> {
     if (this.#investigationDisposed)
-      return err(new AnalysisCancelledError("record_unknown"));
+      return err(cancelledBy("record_unknown", OwnerCancellation.ownerClosed));
     const target = this.activeAnalysisBinding()?.target;
     const recorded = this.#records.recordUnknown(input, target);
     if (recorded.ok) this.#emitSnapshotChanged();
@@ -477,7 +482,12 @@ export abstract class BinarySessionRecords {
     input: RecordUnknownInput,
   ): Result<ResidualUnknown | null, AnalysisError> {
     if (this.#investigationDisposed)
-      return err(new AnalysisCancelledError("record_evidence_with_unknown"));
+      return err(
+        cancelledBy(
+          "record_evidence_with_unknown",
+          OwnerCancellation.ownerClosed,
+        ),
+      );
     const recorded = this.#records.recordEvidenceWithUnknown(evidence, input);
     if (recorded.ok) this.#emitSnapshotChanged();
     return recorded;
@@ -487,7 +497,7 @@ export abstract class BinarySessionRecords {
     input: UpdateUnknownInput,
   ): Result<ResidualUnknown, AnalysisError> {
     if (this.#investigationDisposed)
-      return err(new AnalysisCancelledError("update_unknown"));
+      return err(cancelledBy("update_unknown", OwnerCancellation.ownerClosed));
     const target = this.activeAnalysisBinding()?.target;
     const updated = this.#records.updateUnknown(input, target);
     if (updated.ok) this.#emitSnapshotChanged();
