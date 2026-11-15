@@ -1,3 +1,4 @@
+import { contractNamed } from "./contractCliDescription.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
 import { realpath, stat } from "node:fs/promises";
@@ -31,8 +32,11 @@ import { localPathStringSchema } from "../domain/localPath.js";
 import type { ExecutableFormatHint } from "../domain/dosCom.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { registerDecompileDirectoryCommand } from "./decompileDirectoryCommand.js";
-import { decompileAnalysisSelection } from "../contracts/officialToolContracts.js";
-import { toolContract } from "../contracts/toolContracts.js";
+import {
+  decompileAnalysisSelection,
+  OFFICIAL_TOOL_CONTRACTS,
+} from "../contracts/officialToolContracts.js";
+import { ENHANCED_TOOL_CONTRACTS } from "../contracts/enhancedToolContracts.js";
 import {
   registerContractCommand,
   runDirectOnTarget,
@@ -102,7 +106,7 @@ const registerContractBinaryCommands = (
   registerContractCommand(
     cli,
     logger,
-    toolContract("binary_overview"),
+    contractNamed(ENHANCED_TOOL_CONTRACTS, "binary_overview"),
     {
       command: CLI_COMMANDS.inspect,
       description: "Inspect an app overview with evidence",
@@ -116,7 +120,7 @@ const registerContractBinaryCommands = (
   registerContractCommand(
     cli,
     logger,
-    toolContract("xrefs"),
+    contractNamed(OFFICIAL_TOOL_CONTRACTS, "xrefs"),
     {
       command: CLI_COMMANDS.xrefs,
       description: `List bounded, untyped references to an analyzed address. For typed incoming references, use inspect-native-instruction at the target address where supported. ${namedAddressGuidance} ${equalSelectorGuidance}`,
@@ -142,7 +146,7 @@ const registerContractBinaryCommands = (
   registerContractCommand(
     cli,
     logger,
-    toolContract("trace_feature"),
+    contractNamed(ENHANCED_TOOL_CONTRACTS, "trace_feature"),
     {
       command: CLI_COMMANDS.trace,
       description: `Trace a literal feature through analyzed references. ${querySelectorGuidance} ${equalSelectorGuidance}`,
@@ -169,7 +173,7 @@ const registerContractBinaryCommands = (
   registerContractCommand(
     cli,
     logger,
-    toolContract("analyze_function"),
+    contractNamed(ENHANCED_TOOL_CONTRACTS, "analyze_function"),
     {
       command: CLI_COMMANDS.function,
       description: `Analyze one complete function with evidence. ${addressOrProcedureGuidance} ${equalSelectorGuidance}`,
@@ -182,7 +186,7 @@ const registerContractBinaryCommands = (
   registerContractCommand(
     cli,
     logger,
-    toolContract("read_function_instructions"),
+    contractNamed(OFFICIAL_TOOL_CONTRACTS, "read_function_instructions"),
     {
       command: CLI_COMMANDS.instructions,
       description: `Read every raw instruction without decompiling. ${addressOrProcedureGuidance} ${equalSelectorGuidance}`,
