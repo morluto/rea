@@ -1000,6 +1000,112 @@ describe("web bundle endpoint candidate classification", () => {
   });
 });
 
+describe("web bundle cross-script finding deduplication", () => {
+  it("merges the same endpoint across scripts and keeps first occurrence order", () => {
+    const firstCapture = inspection("fetch('/shared'); fetch('/only-first');");
+    const secondScript = inspection("fetch('/shared'); fetch('/only-second');")
+      .scripts.items[0];
+    if (secondScript === undefined)
+      throw new Error("Missing second script fixture");
+    const firstKey = firstCapture.scripts.items[0]?.script_key;
+    if (firstKey === undefined) throw new Error("Missing first script fixture");
+    const secondKey = `scr_${"2".repeat(64)}`;
+    firstCapture.scripts.items.push({
+      ...secondScript,
+      script_key: secondKey,
+      url: `${origin}/assets/second.js`,
+    });
+    firstCapture.scripts.total += 1;
+
+    const result = analyzeWebBundleFixture(firstCapture);
+    const endpoints = result.observations.endpoints;
+    expect(endpoints.map(({ value }) => value)).toEqual([
+      "/shared",
+      "/only-first",
+      "/only-second",
+    ]);
+    const shared = endpoints[0];
+    expect(shared).toMatchObject({
+      value: "/shared",
+      mechanism: "call:fetch",
+      occurrences: 2,
+      script_keys: [firstKey, secondKey],
+    });
+    expect(shared?.location.script_key).toBe(firstKey);
+    expect(endpoints[1]).not.toHaveProperty("occurrences");
+    expect(endpoints[1]).not.toHaveProperty("script_keys");
+    expect(endpoints[2]).not.toHaveProperty("occurrences");
+    expect(webBundleAnalysisSchema.parse(result)).toEqual(result);
+    expect(result.limitations).toContain(
+      "Routes and endpoints are deduplicated across scripts by value and mechanism; the retained entry keeps the first occurrence's location, and occurrences and script_keys record the scripts that contained the same finding.",
+    );
+  });
+
+  it("merges the same route across scripts", () => {
+    const firstCapture = inspection(
+      'const routes = [{ path: "/users" }, { path: "/only-first" }];',
+    );
+    const secondScript = inspection(
+      'const routes = [{ path: "/users" }, { path: "/only-second" }];',
+    ).scripts.items[0];
+    if (secondScript === undefined)
+      throw new Error("Missing second script fixture");
+    const firstKey = firstCapture.scripts.items[0]?.script_key;
+    if (firstKey === undefined) throw new Error("Missing first script fixture");
+    const secondKey = `scr_${"2".repeat(64)}`;
+    firstCapture.scripts.items.push({
+      ...secondScript,
+      script_key: secondKey,
+      url: `${origin}/assets/second.js`,
+    });
+    firstCapture.scripts.total += 1;
+
+    const result = analyzeWebBundleFixture(firstCapture);
+    const routes = result.observations.routes;
+    expect(routes.map(({ value }) => value)).toEqual([
+      "/users",
+      "/only-first",
+      "/only-second",
+    ]);
+    expect(routes[0]).toMatchObject({
+      value: "/users",
+      occurrences: 2,
+      script_keys: [firstKey, secondKey],
+    });
+    expect(routes[0]?.location.script_key).toBe(firstKey);
+    expect(webBundleAnalysisSchema.parse(result)).toEqual(result);
+  });
+
+  it("keeps the same endpoint value under different mechanisms separate", () => {
+    const firstCapture = inspection("fetch('/shared');");
+    const secondScript = inspection(
+      'const xhr = new XMLHttpRequest(); xhr.open("GET", "/shared");',
+    ).scripts.items[0];
+    if (secondScript === undefined)
+      throw new Error("Missing second script fixture");
+    const secondKey = `scr_${"2".repeat(64)}`;
+    firstCapture.scripts.items.push({
+      ...secondScript,
+      script_key: secondKey,
+      url: `${origin}/assets/second.js`,
+    });
+    firstCapture.scripts.total += 1;
+
+    const result = analyzeWebBundleFixture(firstCapture);
+    const endpoints = result.observations.endpoints;
+    expect(endpoints.map(({ value, mechanism }) => [value, mechanism])).toEqual(
+      [
+        ["/shared", "call:fetch"],
+        ["/shared", "call:xhr.open"],
+      ],
+    );
+    expect(endpoints.every((entry) => entry.occurrences === undefined)).toBe(
+      true,
+    );
+    expect(webBundleAnalysisSchema.parse(result)).toEqual(result);
+  });
+});
+
 describe("web bundle configuration and navigation parity", () => {
   it("keeps configuration setting reads out of endpoints in both analyzers", () => {
     const source = `
