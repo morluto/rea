@@ -42,7 +42,6 @@
   "src/desktop/DesktopBuildSetupHost.ts": 1,
   "src/desktop/ScreenJudgeProcess.ts": 1,
   "src/domain/explicitSensitiveFailure.ts": 1,
-  "src/dotnet/ManagedSnapshot.ts": 2,
   "src/electron/ElectronFuseFailures.ts": 1,
   "src/evm/EvmoleInterfaceProvider.ts": 6,
   "src/firmware/FirmwareFailures.ts": 1,
