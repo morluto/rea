@@ -18,15 +18,14 @@ import {
 
 const parsed = (bytes: Buffer, fileSize = bytes.length) => {
   const result = parseAndroidBootHeader(bytes.subarray(0, 4096), fileSize);
-  expect(result.ok, JSON.stringify(result)).toBe(true);
-  if (!result.ok) throw new Error("unreachable");
+  if (!result.ok)
+    throw new Error(result.error.message, { cause: result.error });
   return result.value;
 };
 
 const failed = (bytes: Buffer, fileSize = bytes.length) => {
   const result = parseAndroidBootHeader(bytes.subarray(0, 4096), fileSize);
-  expect(result.ok).toBe(false);
-  if (result.ok) throw new Error("unreachable");
+  if (result.ok) throw new Error("Expected the header to be refused");
   return result.error;
 };
 
@@ -487,8 +486,8 @@ it("keeps colliding vendor ramdisk names unique", () => {
       sectionOffset: 4096,
       sectionSize: names.length * 4,
     });
-    expect(result.ok, JSON.stringify(result)).toBe(true);
-    if (!result.ok) throw new Error("unreachable");
+    if (!result.ok)
+      throw new Error(result.error.message, { cause: result.error });
     return result.value.components.map((item) => item.path);
   };
   expect(paths(["x", "x-2", "x"])).toEqual([

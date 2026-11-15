@@ -5,6 +5,7 @@ import { buffer } from "node:stream/consumers";
 import { expect, it, vi } from "vitest";
 
 import { AndroidBootImageArtifactReader } from "./AndroidBootImageArtifactReader.js";
+import { artifactFixedLimitFailure } from "./ArtifactReader.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
 import {
   buildBootImage,
@@ -70,13 +71,16 @@ it("rejects an excessive vendor ramdisk count before reading the table", async (
       () => undefined,
       (cause: unknown) => cause,
     );
-    expect(failure).toMatchObject({ reason: "limit", boundary: "capacity" });
-    const recovery = (failure as { userMessage?: string }).userMessage ?? "";
-    expect(recovery).toContain(
-      "Android vendor ramdisk table entry count of 4096 entries is a fixed allowance",
-    );
-    expect(recovery).toContain("This release has no runtime override.");
-    expect(recovery).toContain("additional host memory do not raise it");
+    // The limit's facts and the recovery its owning formatter produces.
+    expect(failure).toMatchObject({
+      reason: "limit",
+      boundary: "capacity",
+      userMessage: artifactFixedLimitFailure(
+        "Android vendor ramdisk table entry count",
+        4096,
+        "entries",
+      ).userMessage,
+    });
     expect(reads).toHaveBeenCalledTimes(1);
   } finally {
     await reader.close();
