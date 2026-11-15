@@ -38,11 +38,13 @@ import {
   staticSourceRelativeUrlPath,
   stringValue,
 } from "./javascriptStaticAnalysisHelpers.js";
-import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
+import {
+  createSemanticModuleInterop,
+  semanticModuleInteropWithAmbientWrites,
+} from "./javascriptModuleInterop.js";
 import {
   ambientBindingMayObserveWriteAt,
   ambientPathMayObserveAt,
-  semanticAmbientWriteGeneration,
 } from "./javascriptSemanticEffectLog.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
 import { semanticIterationSources } from "./javascriptSemanticIterationSources.js";
@@ -679,36 +681,6 @@ const selectedRequireSourcesAt = (
     : undefined;
 };
 
-const loaderInvocationInterops = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  {
-    readonly writes: number;
-    readonly interop: ReturnType<typeof createSemanticModuleInterop>;
-  }
->();
-
-const loaderInvocationInterop = (state: JavaScriptSemanticAnalysisState) => {
-  const prior = loaderInvocationInterops.get(state);
-  if (prior?.writes === semanticAmbientWriteGeneration(state))
-    return prior.interop;
-  const interop = createSemanticModuleInterop(state);
-  for (const effect of state.ambientWriteEffects)
-    if (effect.path[0] === "global")
-      interop.retainWrite(effect.node ?? state.program, [
-        "intrinsic",
-        ...effect.path
-          .slice(1)
-          .map((key) =>
-            key === null || typeof key === "object" ? null : String(key),
-          ),
-      ]);
-  loaderInvocationInterops.set(state, {
-    writes: semanticAmbientWriteGeneration(state),
-    interop,
-  });
-  return interop;
-};
-
 export interface JavaScriptRequireCallFact {
   readonly operation: "load" | "resolve";
   readonly loader: JavaScriptRequireLoaderFact;
@@ -890,7 +862,7 @@ export const semanticRequireCallAt = (
           : { sourceRelativePath: selected.sourceRelativePath }),
       };
   }
-  const interop = loaderInvocationInterop(state);
+  const interop = semanticModuleInteropWithAmbientWrites(state);
   if (!t.isNewExpression(node)) {
     // Invocation normalization retains the selected path identity. Keep its
     // filename alongside that path rather than selecting the outer call again.
@@ -1567,7 +1539,7 @@ export const semanticModuleRequireCallAt = (
   if (isCommonJsRequireDelegate(target, state, includeUnknown, node))
     return true;
   if (t.isNewExpression(node)) return false;
-  const interop = loaderInvocationInterop(state);
+  const interop = semanticModuleInteropWithAmbientWrites(state);
   return (
     interop.intrinsicInvocation(node, (callee) =>
       isCommonJsRequireDelegate(callee, state, false, node)
