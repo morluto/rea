@@ -1,4 +1,11 @@
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import type {
+  GpuCoverage,
+  GpuCodeObjectsInput,
+  GpuCodeObjects,
+  GpuObject,
+  GpuKernel,
+} from "../domain/gpu/gpuCodeObjects.js";
 import {
   CCOB_MAGIC,
   CLANG_BUNDLE_MAGIC,
@@ -12,12 +19,6 @@ import { readCudaFatbinary } from "./CudaFatbinary.js";
 import { decodeGpuPayload, decodeGpuPayloadStream } from "./GpuPayloadCodec.js";
 import { createHash } from "node:crypto";
 import { scheduler } from "node:timers/promises";
-import type {
-  GpuCodeObjectsInput,
-  GpuCodeObjects,
-  GpuObject,
-  GpuKernel,
-} from "../domain/gpu/gpuCodeObjects.js";
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
@@ -65,7 +66,7 @@ export class GpuInventory {
     "Static declarations only; no GPU execution, SASS disassembly, host launch correlation or runtime compatibility was verified.",
     "Object IDs are positional identities scoped to artifact.sha256. Locations inside decoded objects name their containing object; they are not file offsets.",
   ];
-  discovery: "complete" | "partial" = "complete";
+  discovery: GpuCoverage = "complete";
   examined_sections = 0;
   unknown_section_names = 0;
   #factBytes = 0;

@@ -48,7 +48,7 @@ import {
   isSourceMapSectionOverlap,
   sourceMapLimitFailure,
   type SourceMapLeaf,
-} from "../javascript/sourceMaps/SourceMapFormat.js";
+} from "../domain/sourceMapFormat.js";
 import {
   malformedInput,
   type ParseFailureError,
