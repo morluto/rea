@@ -10,6 +10,7 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../dist/domain/evidence.js";
+import { isOwnershipPsExecution } from "./lib/ownership-ps-trace.mjs";
 import {
   requireMcpOutput,
   requireMcpToolError,
@@ -162,23 +163,17 @@ try {
     if (mode === "mcp") assert.deepEqual(value.normalized_result, report);
     return report;
   };
+  // Ownership inventory runs ps from fixed system locations, so a caller PATH
+  // without ps neither hides nor replaces it and inspection still completes.
   const ownershipProbe = join(root.path, "ownership-prerequisite.hex");
   await writeFile(ownershipProbe, "0x00");
-  const missingInspection = await inspect(
-    "cli",
-    ownershipProbe,
-    "hex",
-    "unsupported_provider",
-    {
-      command: process.execPath,
-      prefix: [],
-      client,
-      environment: { ...environment, PATH: root.path },
-    },
-  );
-  assert.equal(missingInspection.code, "capability_unavailable");
-  assert.match(missingInspection.message, /procps-compatible ps/u);
-  assert.equal(missingInspection.details.operation, "prepare_owned_process");
+  const pathWithoutPs = await inspect("cli", ownershipProbe, "hex", undefined, {
+    command: process.execPath,
+    prefix: [],
+    client,
+    environment: { ...environment, PATH: root.path },
+  });
+  assert.equal(pathWithoutPs.bytecode.hex, "00");
   cases++;
   for (const [name, optimizer, viaIR] of [
     ["plain", false, false],
@@ -512,11 +507,7 @@ try {
           line.endsWith(" = 0") || / = -1 [A-Z]+/.test(line),
           `Incomplete exec observation: ${line}`,
         );
-        const ownershipInspection =
-          ["/usr/bin/ps", "/bin/ps"].includes(match[1]) &&
-          line.includes(
-            '["ps", "-axo", "pid=,ppid=,pgid=,uid=,stat=,command="]',
-          );
+        const ownershipInspection = isOwnershipPsExecution(line);
         assert.ok(
           [
             process.execPath,

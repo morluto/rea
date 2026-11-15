@@ -9,11 +9,8 @@ import {
 } from "../../../src/contracts/toolContracts.js";
 import { PROMPT_CONTRACTS } from "../../../src/contracts/promptContracts.js";
 import { advertisedInputJsonSchema } from "../../../src/contracts/toolSchemaMetadata.js";
-import {
-  describeAdvertisedTool,
-  presentAdvertisedInput,
-  presentAdvertisedInputSchema,
-} from "../../../src/contracts/compactInputSchema.js";
+import { advertiseTool } from "../../../src/contracts/advertisedTool.js";
+import { advertisedToolPresentation } from "../../../src/config/mcpOutputSchemaProfile.js";
 import { createCatalogDigests } from "../../../src/catalogIdentity.js";
 import {
   COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
@@ -90,10 +87,10 @@ describe("MCP compact input schema profile", () => {
     );
     for (const contract of TOOL_CONTRACTS)
       expect(compactTools.get(contract.name)?.inputSchema).toEqual(
-        presentAdvertisedInputSchema(
-          advertisedInputJsonSchema(contract),
-          compactPresentation,
-        ),
+        advertiseTool(
+          { inputSchema: advertisedInputJsonSchema(contract) },
+          advertisedToolPresentation("off", compactPresentation),
+        ).inputSchema,
       );
 
     const compactIdentity = createCatalogDigests();
@@ -124,12 +121,13 @@ it("extends tool descriptions only with input guidance", async () => {
     const contract = TOOL_CONTRACTS.find(({ name }) => name === tool.name);
     if (contract === undefined) throw new Error(`Missing ${tool.name}`);
     expect(tool.description, tool.name).toBe(
-      describeAdvertisedTool(
-        toolRegistrationOptions(contract).description,
-        presentAdvertisedInput(advertisedInputJsonSchema(contract), {
-          budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
-        }).guidance,
-      ),
+      advertiseTool(
+        {
+          description: toolRegistrationOptions(contract).description,
+          inputSchema: advertisedInputJsonSchema(contract),
+        },
+        advertisedToolPresentation("off"),
+      ).description,
     );
     expect(tool.inputSchema.description, tool.name).toBeUndefined();
   }

@@ -31,9 +31,12 @@ import {
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok } from "../../domain/result.js";
 import { NATIVE_EXPORTS_PROVIDER } from "../../domain/investigationProviders.js";
-import { BinaryResourceFailure } from "../metadata/BinaryContainer.js";
 import {
-  NativeExportLimitFailure,
+  BinaryResourceFailure,
+  binaryResourceAllowance,
+} from "../metadata/BinaryContainer.js";
+import {
+  NATIVE_EXPORT_LIMITS,
   type NativeExportLimit,
   parseNativeExports,
 } from "./NativeExportParser.js";
@@ -129,7 +132,7 @@ const nativeExportsFailurePrimary = (
       {
         cause,
         ...limitRecovery(
-          cause instanceof NativeExportLimitFailure ? cause.limit : null,
+          binaryResourceAllowance(cause, NATIVE_EXPORT_LIMITS),
           cause.maximum_bytes,
         ),
       },

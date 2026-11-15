@@ -1,4 +1,4 @@
-import { access, copyFile, cp, symlink } from "node:fs/promises";
+import { access, cp, symlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -6,6 +6,7 @@ import { describe, expect } from "vitest";
 
 import { unsupportedRuntimeMessage } from "../../../scripts/lib/runtime-admission.mjs";
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
+import { copyScriptsWithImports } from "../../support/scriptImportClosure.js";
 import type { TestWorkspace } from "../../support/workspace/workspaceFixture.js";
 
 const installCliRuntime = async (
@@ -13,7 +14,6 @@ const installCliRuntime = async (
   cliSource: string,
   resultOutput = "export const createCliResultOutput = () => undefined;\n",
 ): Promise<void> => {
-  await workspace.mkdir("scripts/lib");
   await workspace.mkdir("dist");
   // The bundle's entrypoints and shared chunks form one emitted runtime. The
   // one-shot owner and its output admission stay production code; only the
@@ -27,16 +27,8 @@ const installCliRuntime = async (
     workspace.path("node_modules"),
     "junction",
   );
+  await copyScriptsWithImports(["scripts/rea.mjs"], workspace.root);
   await Promise.all([
-    copyFile("scripts/rea.mjs", workspace.path("scripts/rea.mjs")),
-    copyFile(
-      "scripts/lib/cli-process-environment.mjs",
-      workspace.path("scripts/lib/cli-process-environment.mjs"),
-    ),
-    copyFile(
-      "scripts/lib/runtime-admission.mjs",
-      workspace.path("scripts/lib/runtime-admission.mjs"),
-    ),
     workspace.write(
       "package.json",
       JSON.stringify({ type: "module", version: "1.0.0" }),
@@ -359,28 +351,16 @@ describe("executable dispatcher", () => {
   workspaceCliTest(
     "explains how to restore a missing compiled runtime",
     async ({ processes, workspace }) => {
-      const scripts = await workspace.mkdir("scripts");
-      await workspace.mkdir("scripts/lib");
-      await Promise.all([
-        copyFile("scripts/rea.mjs", join(scripts, "rea.mjs")),
-        copyFile(
-          "scripts/lib/cli-process-environment.mjs",
-          workspace.path("scripts/lib/cli-process-environment.mjs"),
-        ),
-        copyFile(
-          "scripts/lib/runtime-admission.mjs",
-          workspace.path("scripts/lib/runtime-admission.mjs"),
-        ),
-        workspace.write(
-          "package.json",
-          JSON.stringify({ type: "module", version: "1.0.0" }),
-        ),
-      ]);
+      await copyScriptsWithImports(["scripts/rea.mjs"], workspace.root);
+      await workspace.write(
+        "package.json",
+        JSON.stringify({ type: "module", version: "1.0.0" }),
+      );
 
       for (const args of [["mcp"], ["mcp", "doctor"], ["--help"]]) {
         const result = await processes.run(
           process.execPath,
-          [join(scripts, "rea.mjs"), ...args],
+          [workspace.path("scripts/rea.mjs"), ...args],
           { cwd: workspace.root },
         );
         expect(result).toMatchObject({

@@ -10,6 +10,7 @@ import { toolContractMetadata } from "../toolEffects.js";
 export const V8_CODE_CACHE_TOOL_CONTRACTS = [
   {
     name: "inspect_v8_code_cache",
+    availability: "standalone",
     ...toolContractMetadata("inspect_v8_code_cache"),
     kind: "artifact-provider",
     description:
