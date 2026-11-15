@@ -28,7 +28,8 @@ import type {
   AnalysisCapturedOutput,
 } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
+  cancelledBy,
+  isAborted,
   AnalysisArtifactChangedError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
@@ -241,10 +242,8 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         ? "request"
         : options?.commandTimeoutSource;
     try {
-      if (options?.signal?.aborted)
-        throw new AnalysisCancelledError(OPERATION, {
-          cause: options.signal.reason,
-        });
+      if (isAborted(options?.signal))
+        throw cancelledBy(OPERATION, options.signal);
       const directory = environment.REA_WABT_BIN_DIRECTORY;
       if (directory === undefined || !isAbsolute(directory))
         throw new WabtAdmissionError("directory_not_absolute", {
@@ -752,16 +751,15 @@ export class WabtArtifactProvider implements WasmArtifactPort {
           "observed",
         );
       }
-      if (options?.signal?.aborted) {
+      if (isAborted(options?.signal)) {
         result = err(
           analysisErrorWithCancellation(
             result.ok ? undefined : result.error,
-            new AnalysisCancelledError(OPERATION, {
-              cause: options.signal.reason,
-              ...(partialObservation === undefined
-                ? {}
-                : { partialObservation }),
-            }),
+            cancelledBy(
+              OPERATION,
+              options.signal,
+              partialObservation === undefined ? {} : { partialObservation },
+            ),
           ),
         );
       }

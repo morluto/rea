@@ -172,9 +172,7 @@
     "src/signals/SigrokRecordingProvider.ts": 2,
     "src/sqlite/SqliteDatabaseFailures.ts": 4,
     "src/sqlite/SqliteDatabaseProvider.ts": 4,
-    "src/sqlite/SqliteDatabaseWorkerExecution.ts": 2,
-    "src/wasm/WabtArtifactProvider.ts": 2,
-    "src/wasm/WabtFailures.ts": 1
+    "src/sqlite/SqliteDatabaseWorkerExecution.ts": 2
   },
   "parser-format-failure-class": {
     "src/browser/assets/WebArtifactReads.ts": 1,
