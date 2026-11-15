@@ -282,8 +282,6 @@ cliTest(
       await assertRetainedPages(call, full.evidence_id, exported);
       const malformed = structuredClone(report);
       malformed.auditable_metadata!.dependency_edges[0]!.to_index = 999;
-      if (full.subject == null)
-        throw new Error("Missing complete Rust subject");
       const invalid = createEvidence(
         {
           path,
@@ -331,8 +329,6 @@ cliTest(
     const report = rustBinarySchema.parse(full.normalized_result);
     const metadata = report.auditable_metadata;
     if (metadata === null) throw new Error("Expected Rust dependency metadata");
-    if (full.subject == null)
-      throw new Error("Expected Rust artifact identity");
     const historical = createEvidence(
       {
         path,

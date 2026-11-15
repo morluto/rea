@@ -119,7 +119,10 @@ it("checks exact artifact identity and subject architecture for every Rust view"
     { sha256: "b".repeat(64) },
   ]) {
     const source = parent();
-    if (source.subject == null || fileIdentity(source.subject).format !== "elf")
+    if (
+      source.subject === undefined ||
+      fileIdentity(source.subject).format !== "elf"
+    )
       throw new Error("Missing ELF source");
     const input = {
       ...source,

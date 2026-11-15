@@ -23,7 +23,6 @@ it("checks each model parent digest independently of cached declarations and dis
     });
     if (!inspected.ok) throw inspected.error;
     const original = inspected.value;
-    if (original.subject === null) throw new Error("Missing full-file subject");
     const report = freezeJsonSnapshot(original.normalized_result);
     const parent = (name: string, targetPath: string, digest: string) =>
       createEvidence(

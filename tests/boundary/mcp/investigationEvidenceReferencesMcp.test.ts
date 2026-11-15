@@ -87,7 +87,6 @@ it("admits an independent inline dossier and composes its summary parent without
 it("keeps input capacity limits while composing dossiers that cannot be resent inline", async () => {
   const { session, client } = await harness("1024");
   const base = FUNCTION_COMPARISON_EXAMPLE.left;
-  if (base.subject === null) throw new Error("Missing fixture subject");
   const dossier = functionDossierSchema.parse(base.normalized_result);
   const source = createEvidence(
     {
@@ -218,7 +217,6 @@ it("reports missing sources for a retained dossier with a large link set", async
     }),
   );
   const base = FUNCTION_COMPARISON_EXAMPLE.left;
-  if (base.subject === null) throw new Error("Missing fixture subject");
   const links = Array.from(
     { length: 150_000 },
     (_, index) => `ev_${index.toString(16).padStart(64, "0")}`,

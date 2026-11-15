@@ -438,7 +438,6 @@ describe("HarmonyOS partial inventory classification", () => {
       ],
     );
     const inventory = await inventoryApplicationPackage(path);
-    if (inventory.subject === null) throw new Error("Missing fixture subject");
     const result = artifactInventoryResultSchema.parse(
       inventory.normalized_result,
     );

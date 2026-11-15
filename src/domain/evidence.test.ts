@@ -797,7 +797,7 @@ it("rejects a subject local path containing NUL while admitting an empty path", 
     parameters: {},
     result: true,
   });
-  expect(evidence.subject).not.toBeNull();
+  expect(evidence.subject.identity.kind).toBe("file");
   const withPath = (path: string) => ({
     ...evidence,
     subject: displayedEvidenceSubject(evidence.subject, { local_path: path }),

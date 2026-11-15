@@ -49,8 +49,7 @@ const nativeEvidenceWithExports = (
 ) => {
   const input = exampleInput();
   const native = input.native_observations[0];
-  if (native === undefined || native.subject === null)
-    throw new Error("missing native example");
+  if (native === undefined) throw new Error("missing native example");
   const macho = inspectMachoSchema.parse(native.normalized_result);
   return createEvidence(
     subjectless
@@ -422,8 +421,7 @@ it("treats a Mach-O ABI-prefixed export as an exact declared import", () => {
 it("reports module mismatch as a contradiction within supplied Evidence", () => {
   const input = exampleInput();
   const native = input.native_observations[0];
-  if (native === undefined || native.subject === null)
-    throw new Error("missing native example");
+  if (native === undefined) throw new Error("missing native example");
   const mismatched = createEvidence(
     {
       path: "/examples/other.dll",

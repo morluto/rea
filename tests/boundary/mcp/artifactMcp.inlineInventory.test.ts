@@ -48,8 +48,6 @@ const assertInventorySubjectValidation = async (
           .substeps[0]?.evidence.normalized_result
       : source.normalized_result;
   const inventory = artifactInventoryResultSchema.parse(result);
-  if (source.subject === null)
-    throw new Error("Fixture requires a known subject");
   for (const target of [
     unknownTarget("not-observed"),
     {

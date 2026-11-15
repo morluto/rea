@@ -24,7 +24,7 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 
 const emptyExportEvidence = () => {
   const original = MANAGED_NATIVE_VERIFICATION_EXAMPLE.native_observations[0];
-  if (original === undefined || original.subject === null)
+  if (original === undefined)
     throw new Error("Managed verification example is missing native Evidence");
   const result = inspectMachoSchema.parse(original.normalized_result);
   return createEvidence(
@@ -192,7 +192,7 @@ it("retains partial native export coverage after an observed match", async () =>
   });
   onTestFinished(harness.close);
   const original = MANAGED_NATIVE_VERIFICATION_EXAMPLE.native_observations[0];
-  if (original === undefined || original.subject === null)
+  if (original === undefined)
     throw new Error("Managed verification example is missing native Evidence");
   const report = inspectMachoSchema.parse(original.normalized_result);
   const native = createEvidence(

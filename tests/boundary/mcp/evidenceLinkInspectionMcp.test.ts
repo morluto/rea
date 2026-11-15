@@ -279,7 +279,6 @@ it("pages selected link rows in a stable order without skips or duplicates", asy
 
 it("reports the source a composed workflow refuses, and clears it on import", async () => {
   const dossier = FUNCTION_COMPARISON_EXAMPLE.left;
-  if (dossier.subject === null) throw new Error("Expected a subject");
   const health = record("get_project_health");
   const linked = createEvidence(
     {

@@ -54,7 +54,6 @@ it("reports invalid nested semantic graph Evidence as caller input through CLI a
   semanticGraph.graph_id = SEMANTIC_GRAPH_ID;
 
   const subject = sourceEvidence.subject;
-  if (subject === null) throw new Error("CLI Evidence must include a subject");
   const malformedEvidence = createEvidence(
     fileSubjectTarget(subject),
     sourceEvidence.provider,

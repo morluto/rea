@@ -16,8 +16,6 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 
 const observe = (relationshipCoverage: RelationshipCoverage) => {
   const template = FUNCTION_COMPARISON_EXAMPLE.left;
-  if (template.subject === null)
-    throw new Error("Expected artifact-bound fixture");
   const dossier = functionDossierSchema.parse(template.normalized_result);
   return createEvidence(
     {

@@ -46,8 +46,6 @@ const recreateSummary = (
   normalizedResult: Evidence["normalized_result"],
   parameters: Evidence["parameters"] = summary.parameters,
 ): Evidence => {
-  if (summary.subject === null)
-    throw new Error("artifact summary fixture must identify its subject");
   return createEvidence(fileSubjectTarget(summary.subject), summary.provider, {
     predicateType: summary.predicate_type,
     operation: summary.operation,
@@ -151,7 +149,7 @@ it("rejects summary facts that do not reproject from the complete parent", async
 
 it("accepts display-only subject changes excluded from Evidence identity", async () => {
   const { parent, summary } = await artifactSummary();
-  if (summary.subject === null)
+  if (summary.subject.identity.kind !== "file")
     throw new Error("artifact summary fixture must identify its subject");
   const displayOnly = parseEvidence({
     ...summary,

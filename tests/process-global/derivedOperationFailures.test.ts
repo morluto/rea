@@ -147,7 +147,6 @@ describe.each([
 
 const invalidFunctionOperationEvidence = () => {
   const left = FUNCTION_COMPARISON_EXAMPLE.left;
-  if (left.subject === null) throw new Error("Expected a function subject");
   return createEvidence(
     {
       ...fileSubjectTarget(left.subject),
@@ -170,7 +169,6 @@ const invalidFunctionOperationEvidence = () => {
 
 const malformedFunctionResultEvidence = () => {
   const left = FUNCTION_COMPARISON_EXAMPLE.left;
-  if (left.subject === null) throw new Error("Expected a function subject");
   return createEvidence(
     {
       ...fileSubjectTarget(left.subject),

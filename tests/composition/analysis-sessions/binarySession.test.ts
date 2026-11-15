@@ -670,7 +670,7 @@ describe("evidence metadata imports and snapshot cache", () => {
     const before = session.exportAnalysisSnapshot();
     if (!before.ok) throw before.error;
     const existing = session.exportEvidenceBundle().records[0];
-    if (existing === undefined || existing.subject === null)
+    if (existing === undefined)
       throw new Error("Expected artifact-bound Evidence");
     const addition = createEvidence(
       fileSubjectTarget(existing.subject),
@@ -741,7 +741,10 @@ describe("Evidence display metadata refresh", () => {
         const activeEvidence = baseline.value.evidence_bundle.records.find(
           ({ operation }) => operation === "address_name",
         );
-        if (activeEvidence === undefined || activeEvidence.subject === null)
+        if (
+          activeEvidence === undefined ||
+          activeEvidence.subject.identity.kind !== "file"
+        )
           throw new Error("Expected artifact-bound Evidence");
         const evidence =
           scope === "active"
@@ -752,7 +755,8 @@ describe("Evidence display metadata refresh", () => {
                 { operation: "health", parameters: {}, result: true },
               );
         expect(session.recordEvidence(evidence).ok).toBe(true);
-        if (evidence.subject === null) throw new Error("Expected a subject");
+        if (evidence.subject.identity.kind !== "file")
+          throw new Error("Expected a subject");
         const relocated = {
           ...evidence,
           subject: displayedEvidenceSubject(evidence.subject, {

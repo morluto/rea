@@ -20,8 +20,6 @@ export const historicalInventoryEvidence = (
   const inventory = artifactInventoryResultSchema.parse(
     source.normalized_result,
   );
-  if (source.subject === null)
-    throw new TypeError("Inventory has no artifact subject");
   const occurrences = inventory.occurrences.map(alter);
   const graphSha256 = artifactGraphDigest({
     nodes: inventory.nodes,
@@ -66,8 +64,6 @@ export const fragmentInventoryEvidence = (
     evidence.normalized_result,
   );
   const subject = evidence.subject;
-  if (subject === null)
-    throw new TypeError("Inventory has no artifact subject");
   return Array.from({ length: count }, (_, index) =>
     createEvidence(
       {

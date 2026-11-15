@@ -204,7 +204,7 @@ for (const missingSource of [false, true])
         session.evidenceForAnalysis(parent.evidence_id),
       );
 
-      if (source.subject === null)
+      if (source.subject.identity.kind !== "file")
         throw new Error("Expected a file-backed source");
       const relocated = {
         ...source,
@@ -226,7 +226,7 @@ for (const missingSource of [false, true])
         ancestor.evidence_id,
       ]);
       expect(Object.isFrozen(refreshed.value.sourceEvidence?.[0])).toBe(true);
-      if (parent.subject === null)
+      if (parent.subject.identity.kind !== "file")
         throw new Error("Expected a file-backed parent");
       const relocatedParent = {
         ...parent,

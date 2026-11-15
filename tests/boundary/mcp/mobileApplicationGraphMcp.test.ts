@@ -192,7 +192,6 @@ it("projects a single inventory page as partial and links only that source", asy
     inventory.normalized_result,
   );
   const subject = inventory.subject;
-  if (subject === null) throw new Error("Expected an inventory subject");
   const page = createEvidence(
     {
       path: fileSubjectDisplay(subject).local_path,

@@ -37,7 +37,8 @@ async function runUnicodeSourceMapComparison(
 ): Promise<void> {
   const baseApplication = SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE.application;
   const subject = baseApplication.subject;
-  if (subject === null) throw new Error("Application Evidence has no subject");
+  if (subject.identity.kind !== "file")
+    throw new Error("Application Evidence has no subject");
   const baseResult = javascriptApplicationAnalysisResultSchema.parse(
     baseApplication.normalized_result,
   );

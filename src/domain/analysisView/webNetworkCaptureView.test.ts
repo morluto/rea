@@ -161,7 +161,8 @@ it("checks each parent's subject even after its immutable capture has been valid
       { kind: "summary" },
     ).ok,
   ).toBe(false);
-  if (source.subject === null) throw new Error("Expected fixture subject");
+  if (source.subject.identity.kind !== "file")
+    throw new Error("Expected fixture subject");
   expect(
     projectAnalysisView(
       {
@@ -248,7 +249,8 @@ it("retains explicitly unknown digests and rejects a different subject digest", 
   expect(unknown.ok && unknown.value.unknowns.join(" ")).toContain(
     "excluded artifact digest",
   );
-  if (parent.subject === null) throw new Error("Expected fixture subject");
+  if (parent.subject.identity.kind !== "file")
+    throw new Error("Expected fixture subject");
   const mismatched = projectAnalysisView(
     {
       ...parent,

@@ -58,8 +58,6 @@ it("keeps a static trace subject unknown when legacy graph root evidence is omit
     ...semanticInput,
     application_graph_id: graph.graph_id,
   });
-  if (original.subject === null)
-    throw new Error("Expected application subject");
   const legacy = createEvidence(
     fileSubjectTarget(original.subject),
     original.provider,
@@ -88,8 +86,6 @@ const native = createEvidence(
 
 it("preserves the verified application subject in both trace workflows", async () => {
   const original = JAVASCRIPT_FEATURE_TRACE_EXAMPLE.application;
-  if (original.subject === null)
-    throw new Error("Expected application subject");
   const application = createEvidence(
     {
       path: fileSubjectDisplay(original.subject).local_path,

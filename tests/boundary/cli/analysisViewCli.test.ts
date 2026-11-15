@@ -562,7 +562,7 @@ cliTest(
     ).substeps[0]!.evidence;
     const path = join(root, "view.json");
     const reseal = (carrier: Evidence, result: JsonValue) => {
-      const subject = carrier.subject!;
+      const subject = carrier.subject;
       return createEvidence(
         {
           path: fileSubjectDisplay(subject).local_path,

@@ -1948,7 +1948,6 @@ const runCliWithRequestFile = async (
 /** The CLI keeps complete trace JSON; the shared view owner selects from the saved file. */
 const assertTraceFileView = async (root: string, traced: unknown) => {
   const parent = parseEvidence(traced);
-  if (parent.subject === null) throw new Error("Expected trace subject");
   const artifact = {
     path: parent.subject.local_path,
     sha256: fileIdentity(parent.subject).sha256,

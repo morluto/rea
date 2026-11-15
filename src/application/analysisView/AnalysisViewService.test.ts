@@ -231,7 +231,7 @@ it("keeps retained admission and payload ownership for a large capture when only
   expect(ledger.record(parent).ok).toBe(true);
   const retained = ledger.forAnalysis(parent.evidence_id)!;
   const payload = retained.normalized_result;
-  const subject = retained.subject!;
+  const subject = retained.subject;
   const selected = rebindEvidenceToTargetPath(retained, {
     ...fileSubjectTarget(subject),
     path: "/selected/capture.har",

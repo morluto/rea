@@ -249,7 +249,7 @@ describe("historical native comparison projections", () => {
     const binding = original.graph.nodes.find(
       ({ kind }) => kind === "native-export",
     );
-    if (binding === undefined || source.subject === null)
+    if (binding === undefined || source.subject.identity.kind !== "file")
       throw new Error("Missing fixture binding");
     const historical = (name: string, explicitEmpty = false) => {
       const artifact = binding.observations[0]!.evidence.artifact;
@@ -537,7 +537,8 @@ describe("JavaScript application workflow error diagnostics", () => {
     temporary.push(root);
     const evidence = await analyzeFixture(root);
     const subject = evidence.subject;
-    if (subject === null) throw new Error("Analysis Evidence subject missing");
+    if (subject.identity.kind !== "file")
+      throw new Error("Analysis Evidence must name its file");
     const inconsistentPath = "/different/application.js";
     const inconsistent = {
       ...evidence,
@@ -569,7 +570,6 @@ describe("JavaScript application workflow error diagnostics", () => {
     temporary.push(root);
     const evidence = await analyzeFixture(root);
     const subject = evidence.subject;
-    if (subject === null) throw new Error("Analysis Evidence subject missing");
     const result = javascriptApplicationAnalysisResultSchema.parse(
       evidence.normalized_result,
     );

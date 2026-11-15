@@ -252,7 +252,8 @@ it.each(["provider", "workflow"] as const)(
     });
     expect(ledger.record(alternative).ok).toBe(true);
     const relocate = (record: typeof evidence) => {
-      if (record.subject === null) throw new Error("Expected fixture subject");
+      if (record.subject.identity.kind !== "file")
+        throw new Error("Expected fixture subject");
       return {
         ...record,
         subject: displayedEvidenceSubject(record.subject, {
@@ -1506,7 +1507,8 @@ it("replays source-bearing entries only when their complete retained closure exi
       .lookup(target, profile, "procedure_info", parameters)
       ?.sourceEvidence?.map((record) => record.evidence_id),
   ).toEqual([source.evidence_id, parent.evidence_id]);
-  if (source.subject === null) throw new Error("Expected source subject");
+  if (source.subject.identity.kind !== "file")
+    throw new Error("Expected source subject");
   const ledger = new EvidenceLedger();
   for (const record of [parent, source, leaf])
     expect(ledger.record(record).ok).toBe(true);

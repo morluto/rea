@@ -137,7 +137,7 @@ it.each(cases)(
         ...evidence,
         subject: {
           ...evidence.subject,
-          identity: { ...evidence.subject!.identity, architecture: "x86" },
+          identity: { ...evidence.subject.identity, architecture: "x86" },
         },
       }),
     ).toThrow("semantic identifier");

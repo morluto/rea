@@ -211,7 +211,7 @@ it("omits large values by default, returns requested text inline and preserves p
   const changedSubject = projectAnalysisView(
     {
       ...parent,
-      subject: changedEvidenceSubject(parent.subject!, {
+      subject: changedEvidenceSubject(parent.subject, {
         sha256: "e".repeat(64),
       }),
     },

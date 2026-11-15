@@ -921,7 +921,6 @@ const withForeignMetadataAndNestedZipMember = (
     graphSha256,
   );
   const subject = evidence.subject;
-  if (subject === null) throw new Error("missing inventory subject");
   return createEvidence(
     {
       path: fileSubjectDisplay(subject).local_path,

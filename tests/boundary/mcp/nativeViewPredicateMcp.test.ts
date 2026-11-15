@@ -22,8 +22,6 @@ import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 
 const fixture = FUNCTION_COMPARISON_EXAMPLE.left;
-if (fixture.subject === null)
-  throw new Error("Expected artifact-bound fixture");
 const subject = fileSubjectTarget(fixture.subject);
 const selected = (
   operation: string,

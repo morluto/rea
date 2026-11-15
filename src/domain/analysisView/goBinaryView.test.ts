@@ -78,7 +78,8 @@ it.each(["digest", "format"] as const)(
   "rejects a Go parent whose authenticated %s conflicts with its report",
   (field) => {
     const input = parent();
-    if (input.subject == null) throw new Error("Expected artifact subject");
+    if (input.subject === undefined || input.subject.identity.kind !== "file")
+      throw new Error("Expected artifact subject");
     const subject = changedEvidenceSubject(
       input.subject,
       field === "digest" ? { sha256: "b".repeat(64) } : {},
@@ -112,9 +113,12 @@ it.each([
   "checks report architecture %j against subject %j for every Go view",
   (architecture, subjectArchitecture, accepted) => {
     const input = parent();
-    if (fileIdentity(input.subject).format !== "elf")
+    if (
+      input.subject === undefined ||
+      fileIdentity(input.subject).format !== "elf"
+    )
       throw new Error("Expected ELF subject");
-    const subject = changedEvidenceSubject(input.subject!, {
+    const subject = changedEvidenceSubject(input.subject, {
       architecture: subjectArchitecture,
     });
     const normalizedResult = { ...report, architecture };
@@ -139,7 +143,8 @@ it("revalidates the parent subject after immutable Go report facts have been cac
     sealedResult: true,
   };
   expect(projectAnalysisView(input, { kind: "summary" }).ok).toBe(true);
-  if (input.subject == null) throw new Error("Expected artifact subject");
+  if (input.subject === undefined || input.subject.identity.kind !== "file")
+    throw new Error("Expected artifact subject");
   expect(
     projectAnalysisView(
       {

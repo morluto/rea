@@ -1183,7 +1183,8 @@ it("refuses a parent whose subject is absent or names another digest", () => {
       view(),
     ),
   ).toMatchObject(refusal);
-  if (subject == null) throw new Error("Fixture evidence carries a subject");
+  if (subject.identity.kind !== "file")
+    throw new Error("Fixture evidence carries a subject");
   expect(
     projectAnalysisView(
       {

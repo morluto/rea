@@ -26,7 +26,7 @@ const EXPORTS = 130_000;
 /** Recreate the example's Mach-O Evidence with `count` exports, keeping its matching first row. */
 const machoExports = (count: number): Evidence => {
   const [source] = MANAGED_NATIVE_VERIFICATION_EXAMPLE.native_observations;
-  if (source?.subject == null) throw new Error("Missing native example");
+  if (source === undefined) throw new Error("Missing native example");
   const result = inspectMachoSchema.parse(source.normalized_result);
   const [match] = result.exports.items;
   if (match === undefined) throw new Error("Missing matching export");

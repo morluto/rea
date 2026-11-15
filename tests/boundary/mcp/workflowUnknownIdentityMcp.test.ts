@@ -29,8 +29,6 @@ const withClient = async (
 
 const pathSource = () => {
   const template = FUNCTION_COMPARISON_EXAMPLE.left;
-  if (template.subject === null)
-    throw new Error("Call-path fixtures must be artifact-bound");
   const dossier = functionDossierSchema.parse(template.normalized_result);
   return createEvidence(
     {
@@ -65,8 +63,6 @@ const pathSource = () => {
 
 const incompleteRight = (suffix: string) => {
   const template = FUNCTION_COMPARISON_EXAMPLE.right;
-  if (template.subject === null)
-    throw new Error("Comparison fixtures must be artifact-bound");
   return createEvidence(
     {
       path: `${template.subject.local_path}/${suffix}`,

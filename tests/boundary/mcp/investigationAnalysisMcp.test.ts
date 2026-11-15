@@ -220,7 +220,6 @@ it("keeps call-path publication ahead of close_binary record draining", async ()
 
 const dossierWithCallees = (addresses: readonly string[]) => {
   const base = FUNCTION_COMPARISON_EXAMPLE.left;
-  if (base.subject === null) throw new Error("missing dossier subject");
   return createEvidence(fileSubjectTarget(base.subject), base.provider, {
     predicateType: base.predicate_type,
     operation: base.operation,
@@ -326,7 +325,8 @@ it.each([
   "preserves $label coverage through public analyze_function then build_call_path",
   async (scenario) => {
     const base = FUNCTION_COMPARISON_EXAMPLE.left;
-    if (base.subject === null) throw new Error("missing fixture subject");
+    if (base.subject.identity.kind !== "file")
+      throw new Error("missing fixture subject");
     const provider = {
       id: "fixture",
       name: "Fixture analysis provider",

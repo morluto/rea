@@ -22,8 +22,6 @@ const sourceWithCoverage = (
   result: typeof template.normalized_result,
   relationshipCoverage: RelationshipCoverage,
 ) => {
-  if (template.subject === null)
-    throw new Error("Function comparison fixtures must be artifact-bound");
   return createEvidence(
     {
       path: `${template.subject.local_path}/${observation}`,
