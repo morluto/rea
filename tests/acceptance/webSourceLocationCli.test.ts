@@ -172,6 +172,29 @@ const expectColumnOutOfRange = (
   });
 };
 
+/**
+ * The CLI renders native separators; MCP keeps the caller's spelling and still
+ * selects the same manifest root from a forward-slash Windows path (#1078).
+ */
+const expectForwardSlashManifestTrace = async (
+  client: Client,
+  input: { readonly manifest_path: string } & Record<string, unknown>,
+  cliJson: unknown,
+) => {
+  const forwardSlash = input.manifest_path.replaceAll("\\", "/");
+  const forward = await client.callTool({
+    name: "trace_web_source_location",
+    arguments: { ...input, manifest_path: forwardSlash },
+  });
+  expect(forward.isError, JSON.stringify(forward)).not.toBe(true);
+  const { manifest: _manifest, ...cliRest } = (
+    cliJson as { normalized_result: Record<string, unknown> }
+  ).normalized_result;
+  expect(forward.structuredContent).toMatchObject({
+    normalized_result: { ...cliRest, manifest: { path: forwardSlash } },
+  });
+};
+
 cliTest(
   "accepts numeric UTF-16 coordinates and runs the actual owned source-map codec without a browser",
   // Allow cold CLI and MCP ownership preparation across the full parity sequence.
@@ -276,23 +299,20 @@ cliTest(
       }
     });
     await client.connect(transport);
-    const mcpResponse = await client.callTool({
-      name: "trace_web_source_location",
-      arguments: {
-        manifest_path: manifest,
-        script_index: 0,
-        source_map: { path: map, url: fixture.sourceMap.url },
-        generated_position: { line: 1, column: 0 },
-      },
-    });
-    expect(mcpResponse.isError, JSON.stringify(mcpResponse)).not.toBe(true);
-    expect(mcpResponse.structuredContent).toEqual(response.json);
-    await expectEqualPositionSummary(client, {
+    const input = {
       manifest_path: manifest,
       script_index: 0,
       source_map: { path: map, url: fixture.sourceMap.url },
       generated_position: { line: 1, column: 0 },
+    };
+    const mcpResponse = await client.callTool({
+      name: "trace_web_source_location",
+      arguments: input,
     });
+    expect(mcpResponse.isError, JSON.stringify(mcpResponse)).not.toBe(true);
+    expect(mcpResponse.structuredContent).toEqual(response.json);
+    await expectForwardSlashManifestTrace(client, input, response.json);
+    await expectEqualPositionSummary(client, input);
     const pastColumn = await client.callTool({
       name: "trace_web_source_location",
       arguments: {

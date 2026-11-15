@@ -94,6 +94,23 @@ cliTest(
     expect(response.isError).not.toBe(true);
     const expected = cliResponse.json;
     expect(response.structuredContent).toEqual(expected);
+    // The CLI renders native separators; MCP keeps the caller's spelling and
+    // still selects the same manifest root from a forward-slash Windows path.
+    const forwardSlash = manifestPath.replaceAll("\\", "/");
+    const forward = await client.callTool({
+      name: "trace_web_module_imports",
+      arguments: { manifest_path: forwardSlash, script_index: 0 },
+    });
+    expect(forward.isError, JSON.stringify(forward)).not.toBe(true);
+    const { manifest: _manifest, ...cliRest } = (
+      expected as { normalized_result: Record<string, unknown> }
+    ).normalized_result;
+    expect(forward.structuredContent).toMatchObject({
+      normalized_result: {
+        ...cliRest,
+        manifest: { path: forwardSlash, reported_output_directory: root },
+      },
+    });
   },
 );
 
