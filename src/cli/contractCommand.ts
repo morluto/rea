@@ -552,7 +552,9 @@ export const registerContractCommand = <
           : (chosen.get(values[projection.operationBy.option]) ?? description);
       return withCommandCancellation((signal) =>
         logCliCommand(logger, description.command, async () => {
-          const admitted = selected.admit(values);
+          const read = await readJsonInputs(selected, values, signal);
+          if (!read.ok) return read.error;
+          const admitted = selected.admit(read.value);
           if (!admitted.ok) return projectAnalysisError(admitted.error);
           const opening = admitOpening(selected, values);
           if (!opening.ok) return projectAnalysisError(opening.error);
@@ -780,7 +782,9 @@ export const registerTargetRoutedCommand = (
                 })),
               ),
             );
-          const admitted = description.admit(values);
+          const read = await readJsonInputs(description, values, signal);
+          if (!read.ok) return read.error;
+          const admitted = description.admit(read.value);
           if (!admitted.ok) return projectAnalysisError(admitted.error);
           const opening = admitOpening(description, values);
           if (!opening.ok) return projectAnalysisError(opening.error);
@@ -894,6 +898,59 @@ const refusedDocumentFieldError = (
     ? undefined
     : analysisInputErrorFromIssues(operation, issues, document);
 };
+
+/**
+ * Read and decode each JSON input the caller gave, inline or from a file,
+ * before the parameters are admitted. A file that cannot be read keeps its
+ * own failure; inline text that is not JSON is refused under its CLI key.
+ */
+const readJsonInputs = async (
+  description: ContractCliDescription,
+  values: Readonly<Record<string, unknown>>,
+  signal: AbortSignal,
+): Promise<
+  | { readonly ok: true; readonly value: Readonly<Record<string, unknown>> }
+  | { readonly ok: false; readonly error: JsonValue }
+> => {
+  const decoded: Record<string, unknown> = { ...values };
+  for (const { key, jsonInput, runtimeJson } of description.parameters) {
+    const text = values[key];
+    if (!jsonInput || typeof text !== "string") continue;
+    const parsed = await parseCliJsonInput(
+      text,
+      description.contract.name,
+      signal,
+    );
+    if (!parsed.ok)
+      return {
+        ok: false,
+        error: keepsOwnFailure(parsed.error)
+          ? parsed.error
+          : projectAnalysisError(
+              new AnalysisInputError(description.contract.name, undefined, [
+                {
+                  path: [key],
+                  reason: "invalid_format",
+                  expected: "JSON",
+                  ...(runtimeJson === undefined
+                    ? {}
+                    : { message: runtimeJson }),
+                },
+              ]),
+            ),
+      };
+    decoded[key] = parsed.value;
+  }
+  return { ok: true, value: decoded };
+};
+
+/** A file failure names the selected path, and a cancellation is its own. */
+const keepsOwnFailure = (error: JsonValue): boolean =>
+  typeof error === "object" &&
+  error !== null &&
+  !Array.isArray(error) &&
+  ("input_path" in error ||
+    (error as { readonly code?: unknown }).code === "cancelled");
 
 /**
  * Register one CLI command whose whole contract input is one JSON document.
