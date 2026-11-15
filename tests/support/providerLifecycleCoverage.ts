@@ -8,6 +8,13 @@
  * gap means naming its tests here and removing the gap entry. A newly
  * registered provider must add its own entry.
  *
+ * Stages: `launch` starts the owned process (including launch failure and
+ * refusal at the launch boundary); `handshake` is the first readiness or
+ * identity exchange after launch; `operation` is a completed analysis request;
+ * `cancel` is caller cancellation of admitted work; `cleanup` retains and
+ * reports a failed or unproven cleanup; `retry` releases a retained cleanup on
+ * a later attempt.
+ *
  * Providers that run in-process (no owned process or connection) are tracked
  * for operation and cancellation only. Their descriptor and snapshot cleanup
  * belongs to the resource owners' own tests.
@@ -114,8 +121,8 @@ const historicalCapture = (
     ),
     cleanup: covered(
       test(
-        "src/browser/history/CaptureFailures.test.ts",
-        "retains actual command status and both diagnostic streams when cleanup also fails",
+        HISTORICAL_DECODER,
+        "retains completed capture facts and binds final root cleanup to its retry lease",
       ),
     ),
     retry: covered(
@@ -180,11 +187,8 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     },
   },
   "aioquic-qlog-json": historicalCapture(
-    covered(
-      test(
-        "src/browser/history/QlogCapture.test.ts",
-        "derives interval unions per trace/direction while retaining event source order and extensions",
-      ),
+    gap(
+      "Successful qlog decoding is covered at the parser; no regression completes it through the decoder child.",
     ),
   ),
   "apk-signature": inProcess(
@@ -817,11 +821,8 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     },
   },
   "mitmproxy-native-tnetstring": historicalCapture(
-    covered(
-      test(
-        HISTORICAL_DECODER,
-        "binds independently selected mitmproxy configuration before runtime preparation",
-      ),
+    gap(
+      "The decoder tests bind mitmproxy configuration but no regression completes a mitmproxy capture.",
     ),
   ),
   "model-artifact": inProcess(
@@ -1186,11 +1187,8 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
           "classifies cancellation that arrives during final Electron detach",
         ),
       ),
-      cleanup: covered(
-        test(
-          CDP_CLEANUP_CANCELLATION,
-          "closes an Electron inspection session when cleanup is cancelled",
-        ),
+      cleanup: gap(
+        "No regression retains a failed Electron inspection cleanup; the cleanup tests cover cancellation during a successful close.",
       ),
       retry: gap("No regression for Electron inspection cleanup retry."),
     },
@@ -1292,7 +1290,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       cleanup: covered(
         test(
           "src/javascript/analysis/JavaScriptAnalysisWorker.inspection.test.ts",
-          "joins a late inspection cleanup handoff before worker close completes",
+          "retains a mixed identity batch's actual descriptor until the same owner retries",
         ),
       ),
       retry: covered(
@@ -1919,11 +1917,8 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
           "bounds the excerpt when cleanup also fails after the output budget",
         ),
       ),
-      retry: covered(
-        test(
-          "src/wasm/WabtArtifactProvider.test.ts",
-          "enforces a selected command deadline and completes a corrected retry after cleanup",
-        ),
+      retry: gap(
+        "No regression retries a failed WABT cleanup; the corrected-retry test runs after cleanup succeeds.",
       ),
     },
   },
@@ -1970,11 +1965,14 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
  * shrink: close a gap by naming its regression tests and removing the entry.
  */
 export const PROVIDER_LIFECYCLE_GAPS: readonly string[] = [
+  "aioquic-qlog-json:operation",
+  "mitmproxy-native-tnetstring:operation",
   "objdump.command:cleanup",
   "objdump.command:retry",
   "rea-apple-application:cleanup",
   "rea-apple-application:launch",
   "rea-apple-application:retry",
+  "rea-cdp-electron:cleanup",
   "rea-cdp-electron:handshake",
   "rea-cdp-electron:retry",
   "rea-dotnet-workflows:cancel",
@@ -1991,4 +1989,5 @@ export const PROVIDER_LIFECYCLE_GAPS: readonly string[] = [
   "sigrok-recording:retry",
   "sqlite:launch",
   "tshark-capture:retry",
+  "wabt-artifact:retry",
 ];
