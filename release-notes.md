@@ -16,6 +16,7 @@
 * **cli:** warn after mcp add writes Claude Desktop's configuration ([#10696](https://github.com/morluto/rea/issues/10696)) ([b0e3257](https://github.com/morluto/rea/commit/b0e32578ae2cd01e704cce8ac20c7ee3a332d719))
 * **cutter:** identify the running plugin's source and refuse a modified one ([#10731](https://github.com/morluto/rea/issues/10731)) ([0c38229](https://github.com/morluto/rea/commit/0c38229dd3534f62a0f6c5d3fe4e6ca3bc9e940d))
 * **errors:** type refusals at the producer with a total recovery ([#10577](https://github.com/morluto/rea/issues/10577)) ([e83e3fa](https://github.com/morluto/rea/commit/e83e3fa8a075484cbdfd46c4c563b7c4875fc3cf))
+* **pcap:** read tshark JSON packets through one envelope owner with an adjustable expansion bound ([#10788](https://github.com/morluto/rea/issues/10788)) ([c06a0b9](https://github.com/morluto/rea/commit/c06a0b9ee8ae379e361a4d65100ab0ed15f91857))
 * **python:** decode CPython 3.14 and 3.15 pyc code objects ([1d08253](https://github.com/morluto/rea/commit/1d08253ff2cb68838b93cf9275000c39bf1f507a)), closes [#8206](https://github.com/morluto/rea/issues/8206)
 * **setup:** expose explicit MCP catalog profile selection ([#9354](https://github.com/morluto/rea/issues/9354)) ([edc9304](https://github.com/morluto/rea/commit/edc93046692c120567553fb68390db6ec5bc98c7))
 
