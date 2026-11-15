@@ -28,23 +28,23 @@ it.each([
     layers: { "ip.addr": ["192.0.2.1"] },
     issue: {
       code: "invalid_type",
-      path: [0, "_source", "layers", "frame.number"],
+      path: [0, "frame.number"],
     },
   },
   {
     layers: { "frame.number": ["1"], "ip.addr": "192.0.2.1" },
-    issue: { code: "invalid_type", path: [0, "_source", "layers", "ip.addr"] },
+    issue: { code: "invalid_type", path: [0, "ip.addr"] },
   },
   {
     layers: { "frame.number": ["0"] },
     issue: {
       code: "invalid_format",
-      path: [0, "_source", "layers", "frame.number", 0],
+      path: [0, "frame.number", 0],
     },
   },
   {
     layers: { "frame.number": ["1", "2"] },
-    issue: { code: "too_big", path: [0, "_source", "layers", "frame.number"] },
+    issue: { code: "too_big", path: [0, "frame.number"] },
   },
 ])("rejects malformed producer fields: $layers", ({ layers, issue }) => {
   let failure: unknown;
@@ -103,4 +103,17 @@ it("validates every frame against the input read limit while allowing filtered g
   expect(parsePacketOutput(output, 7)).toHaveLength(2);
   expect(() => parsePacketOutput(output, 6)).toThrow(AnalysisOutputError);
   expect(parsePacketOutput(output, null)).toHaveLength(2);
+});
+
+it.each([
+  ["truncated JSON", '[{"_source":{"layers":'],
+  ["a non-array root", "{}"],
+  ["a packet without layers", '[{"_source":{}}]'],
+])("refuses %s as typed producer output", (_label, output) => {
+  expect(() => parsePacketOutput(output, null)).toThrow(
+    expect.objectContaining({
+      _tag: "AnalysisOutputError",
+      operation: "inspect_packet_capture",
+    }),
+  );
 });
