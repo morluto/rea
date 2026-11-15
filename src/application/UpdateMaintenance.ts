@@ -83,6 +83,22 @@ export const unresolvedMaintenanceRemediation = (
 ): string =>
   `REA did not maintain ${unresolved.length === 1 ? "one client" : `${String(unresolved.length)} clients`} whose registration is unknown: ${unresolved.map(unresolvedRegistrationDetail).join(" ")}`;
 
+/** A maintenance failure that still reports the unknown clients it found. */
+const unavailableMaintenance = (
+  remediation: string,
+  scope: MaintenanceScope | undefined,
+): IntegrationMaintenance => {
+  const unresolved = scope?.unresolved ?? [];
+  return {
+    status: "unavailable",
+    remediation:
+      unresolved.length === 0
+        ? remediation
+        : `${remediation} ${unresolvedMaintenanceRemediation(unresolved)}`,
+    ...(scope === undefined ? {} : { scope }),
+  };
+};
+
 /** Discover owned registrations and REA skills without writes. */
 export const existingMaintenanceScope = async (
   home: string,
@@ -148,8 +164,9 @@ export const planIntegrationMaintenance = async (
   execute: (command: readonly string[]) => Promise<Result<string, string>>,
   resources?: ArtifactResourceScope,
 ): Promise<IntegrationMaintenance> => {
+  let scope: MaintenanceScope | undefined;
   try {
-    const scope = await existingMaintenanceScope(
+    scope = await existingMaintenanceScope(
       home,
       entryPoint,
       environment,
@@ -159,17 +176,15 @@ export const planIntegrationMaintenance = async (
     // maintained clients and is reported, while every resolved client is
     // still maintained. Skill destinations are one shared selection.
     if ((scope.skillIssues?.length ?? 0) > 0)
-      return {
-        status: "unavailable",
-        scope,
-        remediation: `Integration maintenance is unresolved: ${[
-          ...(scope.unresolved ?? []).map(unresolvedRegistrationDetail),
-          ...(scope.skillIssues ?? []).map(
+      return unavailableMaintenance(
+        `Integration maintenance is unresolved: ${(scope.skillIssues ?? [])
+          .map(
             ({ client, path, detail }) =>
               `${client ?? "skill"} (${path}): ${detail}`,
-          ),
-        ].join(" ")}`,
-      };
+          )
+          .join(" ")}`,
+        scope,
+      );
     const current: IntegrationMaintenance = {
       status: "current",
       plannedActions: [],
@@ -188,14 +203,13 @@ export const planIntegrationMaintenance = async (
       `--skill=${String(scope.skill)}`,
     ];
     const execution = await execute([...command, "--dry-run", "--json"]);
-    if (!execution.ok)
-      return { status: "unavailable", remediation: execution.error };
+    if (!execution.ok) return unavailableMaintenance(execution.error, scope);
     const plan = setupPlanSchema.safeParse(JSON.parse(execution.value));
     if (!plan.success)
-      return {
-        status: "unavailable",
-        remediation: `The updated setup executable returned an invalid maintenance plan: ${plan.error.message}`,
-      };
+      return unavailableMaintenance(
+        `The updated setup executable returned an invalid maintenance plan: ${plan.error.message}`,
+        scope,
+      );
     if (plan.data.plannedActions.length === 0) return current;
     const allowedIds = new Set(
       scope.clients.map((client) => `configure_client:${client}`),
@@ -208,11 +222,10 @@ export const planIntegrationMaintenance = async (
           : !allowedIds.has(action.id),
       )
     )
-      return {
-        status: "unavailable",
-        remediation:
-          "The updated setup plan included an integration outside the existing REA maintenance scope.",
-      };
+      return unavailableMaintenance(
+        "The updated setup plan included an integration outside the existing REA maintenance scope.",
+        scope,
+      );
     return {
       status: "planned",
       scope,
@@ -229,9 +242,9 @@ export const planIntegrationMaintenance = async (
     // Without a supplied scope, the typed failure is the caller's cleanup capability.
     if (resources === undefined && cause instanceof RegularFileCleanupFailure)
       throw cause;
-    return {
-      status: "unavailable",
-      remediation: cause instanceof Error ? cause.message : String(cause),
-    };
+    return unavailableMaintenance(
+      cause instanceof Error ? cause.message : String(cause),
+      scope,
+    );
   }
 };
