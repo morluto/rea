@@ -36,7 +36,10 @@ import {
   windowsBatchCommand,
   WindowsBatchCommandError,
 } from "../process/WindowsBatchCommand.js";
-import { classifyLaunchFailure } from "../process/launchFailure.js";
+import {
+  classifyLaunchFailure,
+  executableLaunchRefusalOf,
+} from "../process/launchFailure.js";
 import { pcapToolUnavailable } from "./PcapConfiguration.js";
 import {
   attributePcapLimitedExit,
@@ -299,31 +302,26 @@ export const runPcapCommand = async (options: {
         `Cannot run selected tool ${command}: ${cause.message}`,
         details,
       );
-    const refusal = classifyLaunchFailure(cause);
     const selectedLimiter =
       options.nativeBound?.limiter?.command.invocationPath;
     const launchedPath = selectedLimiter ?? command;
+    const launchRefusal = executableLaunchRefusalOf(cause);
     const spawnRefusal =
-      refusal !== undefined &&
-      cause instanceof Error &&
-      "syscall" in cause &&
-      cause.syscall === `spawn ${launchedPath}` &&
-      "path" in cause &&
-      cause.path === launchedPath;
-    if (spawnRefusal && selectedLimiter !== undefined) {
-      const reason = `Selected capture limiter ${selectedLimiter} could not be launched (${refusal.code}).`;
+      launchRefusal?.executable === launchedPath ? launchRefusal : undefined;
+    if (spawnRefusal !== undefined && selectedLimiter !== undefined) {
+      const reason = `Selected capture limiter ${selectedLimiter} could not be launched (${spawnRefusal.code}).`;
       throw new AnalysisCapabilityUnavailableError("pcap", operation, reason, {
         ...details,
         userMessage: `${reason} ${PCAP_LIMITER_REMEDIATION}`,
         remediationAction: PCAP_LIMITER_REMEDIATION,
       });
     }
-    if (spawnRefusal)
+    if (spawnRefusal !== undefined)
       throw pcapToolUnavailable(
         operation,
-        refusal.kind === "missing"
-          ? `Selected tool ${command} was not found (${refusal.code})`
-          : `Selected tool ${command} exists but could not be executed (${refusal.code})`,
+        spawnRefusal.kind === "missing"
+          ? `Selected tool ${command} was not found (${spawnRefusal.code})`
+          : `Selected tool ${command} exists but could not be executed (${spawnRefusal.code})`,
         details,
       );
     const diagnostic =
@@ -337,7 +335,7 @@ export const runPcapCommand = async (options: {
         `Preparing the owned packet command failed: ${diagnostic}`,
         details,
       );
-    if (refusal !== undefined && !spawnRefusal)
+    if (classifyLaunchFailure(cause) !== undefined)
       throw new AnalysisProtocolError(
         `The packet command could not start; the failing stage is unknown: ${diagnostic}`,
         details,
