@@ -39,8 +39,16 @@ it("recovers the same complete Rust image after input and report budget changes"
     const projectedInput = projectAnalysisError(smallInput.error);
     expect(projectedInput).toMatchObject({
       code: "resource_constraint",
-      details: { reported_limits: { maximum_input_bytes: 4095 } },
+      details: {
+        reported_limits: { maximum_input_bytes: 4095 },
+        limit: {
+          control_kind: "parameter",
+          parameter: "producer_limits.input_bytes",
+          effective_value: 4095,
+        },
+      },
     });
+    expect(projectedInput.remediation.action).not.toContain("--");
     expect(projectedInput.remediation.action).toContain(
       "producer_limits.input_bytes",
     );
@@ -52,8 +60,16 @@ it("recovers the same complete Rust image after input and report budget changes"
     const projectedReport = projectAnalysisError(smallReport.error);
     expect(projectedReport).toMatchObject({
       code: "resource_constraint",
-      details: { reported_limits: { maximum_output_bytes: 16 } },
+      details: {
+        reported_limits: { maximum_output_bytes: 16 },
+        limit: {
+          control_kind: "parameter",
+          parameter: "producer_limits.output_bytes",
+          effective_value: 16,
+        },
+      },
     });
+    expect(projectedReport.remediation.action).not.toContain("--");
     expect(projectedReport.remediation.action).toContain(
       "producer_limits.output_bytes",
     );
@@ -64,6 +80,37 @@ it("recovers the same complete Rust image after input and report budget changes"
     if (!recovered.ok) throw recovered.error;
     expect(recovered.value.auditable_metadata?.packages).toHaveLength(2);
     expect(recovered.value.artifact.bytes).toBe(4096);
+    // Just below the smallest admitted budget, the dependency graph still
+    // fits but the complete report does not.
+    const inspectWithin = (output_bytes: number) =>
+      provider.inspect({
+        path,
+        producer_limits: { input_bytes: 4096, output_bytes },
+      });
+    let refused = 16;
+    let admitted = 16384;
+    while (admitted - refused > 1) {
+      const middle = Math.floor((refused + admitted) / 2);
+      if ((await inspectWithin(middle)).ok) admitted = middle;
+      else refused = middle;
+    }
+    const reportBytes = admitted;
+    const tightReport = await inspectWithin(reportBytes - 1);
+    if (tightReport.ok) throw new Error("Expected complete-report refusal");
+    const projectedTight = projectAnalysisError(tightReport.error);
+    expect(projectedTight).toMatchObject({
+      code: "resource_constraint",
+      message: expect.stringContaining("exceeds the inline output budget"),
+      details: {
+        reported_limits: { maximum_output_bytes: reportBytes - 1 },
+        limit: {
+          control_kind: "parameter",
+          parameter: "producer_limits.output_bytes",
+          effective_value: reportBytes - 1,
+        },
+      },
+    });
+    expect(projectedTight.remediation.action).not.toContain("--");
   } finally {
     await provider.close();
   }
