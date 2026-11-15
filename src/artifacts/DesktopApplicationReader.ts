@@ -12,9 +12,9 @@ import {
   ArtifactResourceScope,
   type ArtifactResourceOwner,
   abortIfNeeded,
+  translateArtifactFailure,
 } from "../resources/index.js";
 import { declaredArtifactEntries } from "./ArtifactTraversalObservation.js";
-import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
 import {
   inspectDesktopFile,
   RETAINED_FACT_BYTES,

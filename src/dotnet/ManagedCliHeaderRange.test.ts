@@ -8,7 +8,7 @@ import {
   buildManagedPeFixture,
   managedPeFixtureTarget,
 } from "./ManagedPe.fixture.js";
-import { readManagedPeLayout } from "./ManagedPeReader.js";
+import { readManagedPeLayout } from "../domain/managed/managedPeReader.js";
 import { ManagedStaticProvider } from "./ManagedStaticProvider.js";
 
 it.each([

@@ -17,10 +17,10 @@ import {
   parsePeRecordFacts,
   peRvaToFileOffset,
 } from "../domain/binaryTarget.js";
-import { readManagedMetadataLayout } from "../dotnet/ManagedMetadataLayout.js";
+import { readManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
 import { readManagedCliHeaderPrefix } from "../domain/managed/managedCliHeaderPrefix.js";
-import { readAssemblyReferenceName } from "../dotnet/ManagedMetadataInventoryRows.js";
-import { ManagedReaderFailure } from "../dotnet/ManagedReaderFailure.js";
+import { readAssemblyReferenceName } from "../domain/managed/managedMetadataInventoryRows.js";
+import { ManagedReaderFailure } from "../domain/managed/managedReaderFailure.js";
 import { ArtifactReaderFailure, abortIfNeeded } from "../resources/index.js";
 import { hasMachoMagic } from "../domain/apple/machoContainer.js";
 import {

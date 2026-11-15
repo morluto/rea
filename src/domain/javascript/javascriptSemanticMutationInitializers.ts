@@ -292,7 +292,10 @@ export const semanticEffectFollowsReference = (
   let current: t.Node | undefined = reference;
   let child: t.Node | undefined;
   while (current !== undefined && current !== effect) {
-    if (t.isFunction(current)) break;
+    // A function body or instance field value runs later, on its own
+    // activation, even when it is written inside the effect.
+    if (t.isFunction(current) || delayedInstanceFieldValue(current, child))
+      break;
     child = current;
     current = parents.get(current);
   }
@@ -358,17 +361,9 @@ export const semanticEffectTiming = (
     if (cardinality === "empty") return "after";
     if (cardinality === "nonempty") {
       const loopParent = state.parentsByNode.get(loop);
-      const crossesFunction = (node: t.Node): boolean => {
-        let current: t.Node | undefined = node;
-        while (current !== undefined) {
-          if (t.isFunction(current)) return true;
-          current = state.parentsByNode.get(current);
-        }
-        return false;
-      };
       if (
         loopParent === state.program &&
-        !crossesFunction(site) &&
+        runsInProgramActivation(site, state.program, state.parentsByNode) &&
         typeof loop.start === "number" &&
         typeof loop.end === "number" &&
         typeof site.start === "number"
@@ -385,16 +380,45 @@ export const semanticEffectTiming = (
   return "unknown";
 };
 
+/**
+ * Whether `node` runs when the program body itself runs: no function body or
+ * instance field value, which run later, on a call or a construction, lies
+ * between it and the program.
+ */
+const runsInProgramActivation = (
+  node: t.Node,
+  program: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+): boolean => {
+  let child: t.Node | undefined;
+  for (
+    let current: t.Node | undefined = node;
+    current !== undefined && current !== program;
+    current = parents.get(current)
+  ) {
+    if (t.isFunction(current) || delayedInstanceFieldValue(current, child))
+      return false;
+    child = current;
+  }
+  return true;
+};
+
+/** The for-in/of loop whose body runs `node` in the same activation. */
 const semanticEnclosingIteration = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): t.ForInStatement | t.ForOfStatement | undefined => {
-  let current: t.Node | undefined = node;
-  while (current !== undefined) {
+  let child: t.Node | undefined;
+  for (
+    let current: t.Node | undefined = node;
+    current !== undefined;
+    current = state.parentsByNode.get(current)
+  ) {
     if (t.isForInStatement(current) || t.isForOfStatement(current))
       return current;
-    if (t.isFunction(current)) return undefined;
-    current = state.parentsByNode.get(current);
+    if (t.isFunction(current) || delayedInstanceFieldValue(current, child))
+      return undefined;
+    child = current;
   }
   return undefined;
 };

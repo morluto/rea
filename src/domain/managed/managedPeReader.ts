@@ -1,18 +1,18 @@
-import { observeMzWindowsHeader } from "../domain/dosMz.js";
+import { observeMzWindowsHeader } from "../dosMz.js";
 import {
   readPeOptionalHeaderFixedFields,
   readPeOptionalHeaderDirectory,
   type PeOptionalHeaderFixedFields,
-} from "../domain/peOptionalHeader.js";
-import { readPeSectionHeader } from "../domain/peSectionHeader.js";
-import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
-import { readPeCoffHeader } from "../domain/peCoffHeader.js";
-import { decodePeMachine } from "../domain/peMachine.js";
-import { readManagedCliHeaderPrefix } from "../domain/managed/managedCliHeaderPrefix.js";
+} from "../peOptionalHeader.js";
+import { readPeSectionHeader } from "../peSectionHeader.js";
+import type { ManagedParseIssue } from "./managedArtifact.js";
+import { readPeCoffHeader } from "../peCoffHeader.js";
+import { decodePeMachine } from "../peMachine.js";
+import { readManagedCliHeaderPrefix } from "./managedCliHeaderPrefix.js";
 import {
   managedFailure,
   ManagedReaderFailure,
-} from "./ManagedReaderFailure.js";
+} from "./managedReaderFailure.js";
 
 interface PeSection {
   readonly virtualAddress: number;

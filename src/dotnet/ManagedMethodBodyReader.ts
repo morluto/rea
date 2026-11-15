@@ -8,12 +8,12 @@ import type { ManagedMethodImplementationFlags } from "./ManagedMethodDefinition
 import {
   admitManagedProjection,
   type ManagedDecodeBudget,
-} from "./ManagedDecodeBudget.js";
-import type { ManagedPeLayout } from "./ManagedPeReader.js";
+} from "../domain/managed/managedDecodeBudget.js";
+import type { ManagedPeLayout } from "../domain/managed/managedPeReader.js";
 import type {
   ManagedMethodBody,
   ParsedTokenInstruction,
-} from "./ManagedMemberInspectorCore.js";
+} from "../domain/managed/managedMemberInspectorCore.js";
 import {
   decodeInstructions,
   parseExceptionRegions,
@@ -25,13 +25,13 @@ import {
   type MetadataTokenFact,
   readMetadataBlob,
   sha256Bytes,
-} from "./ManagedMetadataHeaps.js";
+} from "../domain/managed/managedMetadataHeaps.js";
 import {
   readLocalSignatureFacts,
   isParsedTokenInstruction,
-} from "./ManagedMemberInspectorCore.js";
-import { ManagedReaderFailure } from "./ManagedReaderFailure.js";
-import type { ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
+} from "../domain/managed/managedMemberInspectorCore.js";
+import { ManagedReaderFailure } from "../domain/managed/managedReaderFailure.js";
+import type { ManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
 
 const EMPTY_CATCH_TOKENS: ReadonlyMap<number, MetadataTokenFact> = new Map();

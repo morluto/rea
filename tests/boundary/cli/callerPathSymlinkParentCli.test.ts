@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { describe, expect } from "vitest";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import { peResourceFixture } from "../../../src/artifacts/pe/PeResources.fixture.js";
+import { peResourceFixture } from "../../../src/domain/pe/peResources.fixture.js";
 import { createGoBinaryFixture } from "../../fixtures/go/image.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";

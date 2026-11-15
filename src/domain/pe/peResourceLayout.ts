@@ -5,16 +5,16 @@ import {
   readPeResourceDirectoryFacts,
   readPeResourceEntryFacts,
   readPeResourceNameFacts,
-} from "./PeResourceTreeFacts.js";
-import { parseMzHeaderEvidence } from "../../domain/dosMz.js";
-import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
-import { readPeCoffHeader } from "../../domain/peCoffHeader.js";
-import { readPeSectionHeader } from "../../domain/peSectionHeader.js";
-import { ArtifactReaderFailure } from "../../resources/index.js";
+} from "./peResourceTreeFacts.js";
+import { parseMzHeaderEvidence } from "../dosMz.js";
+import { BinaryFormatFailure } from "../binaryContainer.js";
+import { malformedInput, ParseFailureError } from "../parseFailure.js";
+import { readPeCoffHeader } from "../peCoffHeader.js";
+import { readPeSectionHeader } from "../peSectionHeader.js";
 import {
   readPeOptionalHeaderStructure,
   type PeOptionalHeaderFailure,
-} from "../../domain/peOptionalHeader.js";
+} from "../peOptionalHeader.js";
 
 const PE_RESOURCE_DATA_ENTRY_BYTES = 16;
 
@@ -28,8 +28,9 @@ const OPTIONAL_HEADER_FAILURES: Readonly<
     "PE directory count exceeds its optional header.",
 };
 
+/** The bytes violate the PE structure this parser admits. */
 export const peFailure = (message: string): never => {
-  throw new ArtifactReaderFailure("format", message);
+  throw malformedInput("pe", message);
 };
 
 export const requirePeRange = (
@@ -322,7 +323,7 @@ const openPeResourceTree = (
     );
   } catch (cause) {
     if (
-      (cause instanceof ArtifactReaderFailure && cause.reason === "format") ||
+      (cause instanceof ParseFailureError && cause.kind === "malformed") ||
       (cause instanceof BinaryFormatFailure && cause.kind === "unsupported")
     )
       return undefined;

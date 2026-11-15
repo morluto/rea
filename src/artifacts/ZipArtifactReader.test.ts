@@ -31,11 +31,13 @@ import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory
 import { openRegularFile } from "../filesystem/RegularFile.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { hashReadable } from "./ArtifactHash.js";
-import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
+import {
+  translateArtifactFailure,
+  ZipArtifactReader,
+} from "../resources/index.js";
 
 import { analysisErrorUserMessage } from "../domain/analysisErrorPresentation.js";
 import { waitFor } from "../../tests/support/testWait.js";
-import { ZipArtifactReader } from "../resources/index.js";
 
 const MINIMUM_ARTIFACT_EXPANDED_BYTES = 256 * 1024 * 1024;
 

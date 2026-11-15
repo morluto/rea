@@ -11,7 +11,7 @@ import { expect, it, vi } from "vitest";
 import { PyInstallerArtifactReader } from "../PyInstallerArtifactReader.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { hashReadable } from "../ArtifactHash.js";
-import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
+import { translateArtifactFailure } from "../../resources/index.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { marshalCode } from "../../python/PythonPyc.fixture.js";
 import * as artifactPaths from "../../resources/ArtifactPaths.js";
